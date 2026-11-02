@@ -393,6 +393,39 @@
   - Changes newer than the last acknowledgement exist only on the node.
   - Rewritten history (e.g. after a restore) is preserved but not applied; reconciling it is a person's decision.
 
+### ADR-0026 — KB support runs as per-requester kb sessions; KB changes are proposals accepted on the node
+- **Status:** Accepted, 2026-11-02.
+- **Context:** SM-KB-001…007 and SM-CTRL-005: optional KB repositories; any permitted agent asks; one support session
+  per requester with continuity, limits, queuing, cancellation, timeouts, idle sleep, recovery and cleanup;
+  correlation; mixed harnesses; concurrent KB writes in separate worktrees with serialized or reviewed acceptance and
+  preserved conflicts; KB sessions must not orchestrate workers or change policy; no MCP call may wait for an answer.
+- **Decision:**
+  - A KB is configured per space (repository folder, knowledge branch, the space role its sessions run as — a template
+    of kind `kb` —, entry instructions, an optional validator command, write policy `read_only` / `review` /
+    `serialized`, admitted requester roles, session limits). Admission is that configuration: asking is a scoped
+    operation, not permission to launch runs.
+  - Each requesting agent **instance** gets one session: its own `kb` run, instance (harness configuration and
+    conversation) and worktree on `kb/<kb>/<session>`. Sessions run within the KB's own `max_sessions` pool, separate
+    from workers, so workers waiting on KB answers cannot starve it; further requests queue.
+  - `spaceman_kb_ask` returns at once. One scheduler goroutine (woken by events, one timer for the nearest deadline)
+    dispatches each session's requests one at a time as durable SpaceMan messages, starts or resumes sessions
+    (resuming the harness conversation), times requests out, puts idle sessions to sleep by stopping their run, marks
+    sessions whose run died as failed and offers their request again (at most twice), and closes old sessions.
+  - The session answers with `spaceman_kb_answer` (basis `committed`, `proposal` or `none`, and evidence: paths and
+    revisions); the requester is notified by message and reads it with `spaceman_kb_get`. Claude's SendMessage is not
+    used (unverified across separate runs); the same tools work for Claude Code and Codex.
+  - KB sessions commit only on their branch and offer commits with `spaceman_kb_propose`. Acceptance is a node command
+    (`kb.accept`, protocol minor 2): the commit must be on the session's branch; the knowledge branch moves by
+    fast-forward or a clean merge built with `merge-tree`/`commit-tree` (no checkout, no hooks), only after the
+    validator passed in a temporary worktree, and only by compare-and-swap; a branch checked out anywhere is never
+    moved; conflicts change nothing and are reported. Review KBs wait for a person; serialized KBs accept one proposal
+    at a time. Results come back as `kb.result` and are resent after reconnects.
+  - KB sessions get no orchestration tools; the KB repository, role memory and the support conversation stay separate.
+- **Consequences:**
+  - The validator runs on the node with the node user's rights, like agent programs; configuring it needs kb:write.
+  - A session resumed after sleep continues its conversation only where the harness supports resume.
+  - Knowledge branches must not be checked out where SpaceMan should move them.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -404,7 +437,7 @@
 | K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). | — | done |
 | K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
-| K-8 | llm-knowledge-base-template layout and licence; Piebald dream prompts licence. | KB, dreamer | Fetch and record; attribute or paraphrase per licence. |
+| K-8 | ~~llm-knowledge-base-template layout and licence~~ **resolved 2026-11-02** (`docs/contracts/kb-template.md`: MIT code, CC BY 4.0 docs, keeper/consumer convention, `tools/kb.py check`); Piebald dream prompts licence still open. | dreamer | Fetch the dream prompts and record their licence before using them. |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |
 | K-11 | Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26). SpaceMan grants have no SSO source yet (OIDC lands in M4-01). | SM-AUTH-002 | When OIDC lands, store SSO grants under the subject `user:<id>#sso`, add that subject only for SSO sessions, and port the SR-26 test. |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |

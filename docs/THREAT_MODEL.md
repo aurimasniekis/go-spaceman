@@ -43,4 +43,5 @@ flowchart LR
 | T-13 | A browser terminal takes input without authorization | Watch-only default, takeover permission, server-side input gate, audit | SM-UI-004 |
 | T-14 | An event feedback loop (SpaceMan's own outbound events re-ingested) | Origin, causation headers and automation depth bounds | SM-EVT-016 |
 | T-17 | An agent plants Git hooks or config in its memory checkout so the node agent runs code, or rewrites shared memory history | Memory Git runs with hooks and fsmonitor disabled, no global or system config and explicit repository paths; publication is fast-forward or merge only; central accepts fast-forwards only and preserves anything else | SM-MEM-003, ADR-0025 |
+| T-19 | A KB session (or a question injected into it) rewrites accepted knowledge or orchestrates work | Sessions commit only on their own branch; acceptance is by a person or serialized after the check, fast-forward or clean merge with compare-and-swap, no hooks; KB sessions have no orchestration tools | SM-KB-005/006, ADR-0026 |
 | T-18 | A node writes another node's space memory | Central accepts memory only from the space's assigned node | SM-MEM-006, ADR-0025 |

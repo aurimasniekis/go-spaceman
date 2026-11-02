@@ -385,6 +385,94 @@ type InboxItem struct {
 	Version        int64
 }
 
+type KbProposal struct {
+	ID           string
+	KbID         string
+	SpaceID      string
+	SessionID    string
+	RequestID    string
+	Title        string
+	Summary      string
+	Branch       string
+	CommitID     string
+	State        string
+	MergedCommit string
+	Detail       string
+	CommandID    string
+	DecidedBy    string
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
+type KbRepo struct {
+	ID                    string
+	SpaceID               string
+	Slug                  string
+	Name                  string
+	Description           string
+	Repo                  string
+	BaseBranch            string
+	SpaceRole             string
+	EntryInstructions     string
+	ValidatorJson         string
+	WritePolicy           string
+	AllowedRolesJson      string
+	MaxSessions           int64
+	IdleSleepSeconds      int64
+	RequestTimeoutSeconds int64
+	SessionTtlSeconds     int64
+	Enabled               int64
+	CreatedAt             int64
+	CreatedBy             string
+	UpdatedAt             int64
+	Version               int64
+}
+
+type KbRequest struct {
+	ID                string
+	KbID              string
+	SpaceID           string
+	SessionID         string
+	RequesterRun      string
+	RequesterInstance string
+	RequesterRole     string
+	Kind              string
+	Question          string
+	TaskID            string
+	State             string
+	MessageID         string
+	Answer            string
+	Basis             string
+	EvidenceJson      string
+	Attempts          int64
+	Error             string
+	DeadlineAt        int64
+	CreatedAt         int64
+	DispatchedAt      sql.NullInt64
+	AnsweredAt        sql.NullInt64
+	UpdatedAt         int64
+}
+
+type KbSession struct {
+	ID             string
+	KbID           string
+	SpaceID        string
+	RequesterKey   string
+	RequesterRole  string
+	RequesterLabel string
+	InstanceID     string
+	HarnessSession string
+	Branch         string
+	RunID          string
+	State          string
+	Failures       int64
+	LastError      string
+	Answered       int64
+	LastActiveAt   int64
+	CreatedAt      int64
+	UpdatedAt      int64
+}
+
 type KeyringKey struct {
 	ID        string
 	Purpose   string

@@ -51,6 +51,8 @@ type Hub struct {
 	Tools ToolDispatcher
 	// Memory stores role memory the node syncs (ADR-0025); nil refuses syncs.
 	Memory MemoryStore
+	// KBResult receives the outcomes of kb.accept commands (ADR-0026).
+	KBResult func(ctx context.Context, nodeID string, res proto.KBResult)
 }
 
 // MemoryStore is central's role-memory storage as the hub sees it.
@@ -381,6 +383,15 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			}
 			_ = s.send(proto.TypeMemoryAck, svc.now(), ack)
 		}()
+		return nil
+	case proto.TypeKBResult:
+		var res proto.KBResult
+		if err := env.Decode(&res); err != nil {
+			return err
+		}
+		if h.KBResult != nil {
+			go h.KBResult(context.WithoutCancel(ctx), s.nodeID, res)
+		}
 		return nil
 	case proto.TypeMemoryStatus:
 		var st proto.MemoryStatus

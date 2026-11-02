@@ -65,6 +65,9 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'profile':
       void qc.invalidateQueries({ queryKey: keys.profiles })
       break
+    case 'kb':
+      void qc.invalidateQueries({ queryKey: ['kbs'] })
+      break
     case 'memory':
       void qc.invalidateQueries({ queryKey: ['memory'] })
       break

@@ -38,6 +38,7 @@ import { Route as SpacesSpaceIdIndexRouteImport } from './routes/spaces.$spaceId
 import { Route as SpacesSpaceIdEventsRouteImport } from './routes/spaces.$spaceId.events'
 import { Route as SpacesSpaceIdHumanRouteImport } from './routes/spaces.$spaceId.human'
 import { Route as SpacesSpaceIdInboxRouteImport } from './routes/spaces.$spaceId.inbox'
+import { Route as SpacesSpaceIdKnowledgeRouteImport } from './routes/spaces.$spaceId.knowledge'
 import { Route as SpacesSpaceIdMemoryRouteImport } from './routes/spaces.$spaceId.memory'
 import { Route as SpacesSpaceIdMessagesRouteImport } from './routes/spaces.$spaceId.messages'
 import { Route as SpacesSpaceIdQueueRouteImport } from './routes/spaces.$spaceId.queue'
@@ -193,6 +194,11 @@ const SpacesSpaceIdInboxRoute = SpacesSpaceIdInboxRouteImport.update({
   path: '/inbox',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdKnowledgeRoute = SpacesSpaceIdKnowledgeRouteImport.update({
+  id: '/knowledge',
+  path: '/knowledge',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdMemoryRoute = SpacesSpaceIdMemoryRouteImport.update({
   id: '/memory',
   path: '/memory',
@@ -266,6 +272,7 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
+  '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
@@ -300,6 +307,7 @@ export interface FileRoutesByTo {
   '/spaces': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
+  '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
@@ -340,6 +348,7 @@ export interface FileRoutesById {
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
+  '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
@@ -381,6 +390,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
+    | '/spaces/$spaceId/knowledge'
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
@@ -415,6 +425,7 @@ export interface FileRouteTypes {
     | '/spaces'
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/human'
+    | '/spaces/$spaceId/knowledge'
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
@@ -454,6 +465,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
+    | '/spaces/$spaceId/knowledge'
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
@@ -694,6 +706,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdInboxRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/knowledge': {
+      id: '/spaces/$spaceId/knowledge'
+      path: '/knowledge'
+      fullPath: '/spaces/$spaceId/knowledge'
+      preLoaderRoute: typeof SpacesSpaceIdKnowledgeRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/memory': {
       id: '/spaces/$spaceId/memory'
       path: '/memory'
@@ -797,6 +816,7 @@ interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdEventsRoute: typeof SpacesSpaceIdEventsRouteWithChildren
   SpacesSpaceIdHumanRoute: typeof SpacesSpaceIdHumanRoute
   SpacesSpaceIdInboxRoute: typeof SpacesSpaceIdInboxRouteWithChildren
+  SpacesSpaceIdKnowledgeRoute: typeof SpacesSpaceIdKnowledgeRoute
   SpacesSpaceIdMemoryRoute: typeof SpacesSpaceIdMemoryRoute
   SpacesSpaceIdMessagesRoute: typeof SpacesSpaceIdMessagesRoute
   SpacesSpaceIdQueueRoute: typeof SpacesSpaceIdQueueRoute
@@ -808,6 +828,7 @@ const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdEventsRoute: SpacesSpaceIdEventsRouteWithChildren,
   SpacesSpaceIdHumanRoute: SpacesSpaceIdHumanRoute,
   SpacesSpaceIdInboxRoute: SpacesSpaceIdInboxRouteWithChildren,
+  SpacesSpaceIdKnowledgeRoute: SpacesSpaceIdKnowledgeRoute,
   SpacesSpaceIdMemoryRoute: SpacesSpaceIdMemoryRoute,
   SpacesSpaceIdMessagesRoute: SpacesSpaceIdMessagesRoute,
   SpacesSpaceIdQueueRoute: SpacesSpaceIdQueueRoute,

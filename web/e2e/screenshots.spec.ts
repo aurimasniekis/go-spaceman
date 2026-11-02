@@ -93,7 +93,7 @@ test('documentation screenshots', async ({ page, browser }) => {
   startAgent(node.token)
   await expect.poll(async () => (await api.call<{ connected: boolean }>('GET', `/nodes/${node.node.id}`)).connected, { timeout: 30_000 }).toBe(true)
 
-  type Space = { id: string; version: number }
+  type Space = { id: string; version: number; workdir: string }
   const mk = (slug: string, name: string, description: string, goals: string) =>
     api.call<Space>('POST', '/spaces', { slug, name, description, goals, node_id: node.node.id, standing_instructions: 'Open a pull request for every change. Never push to main.' })
   const payments = await mk('payments', 'Payments platform', 'Card processing services and their release train', 'Keep the settlement pipeline green; ship the retry-budget change this week.')
@@ -167,13 +167,33 @@ test('documentation screenshots', async ({ page, browser }) => {
   await api.call('POST', '/approval-policies', { space_id: payments.id, operation: 'mcp.tickets.ticket_comment', uses: 1, valid_seconds: 3600,
     note: 'Comments are visible to the finance team.' })
 
+  // A knowledge base: a Git repository in the payments folder (knowledge on main, not checked out), sessions running as
+  // a kb role; the stub harness answers questions as a KB session would.
+  const kbRepo = join(env('SM_DIR'), 'agent', 'spaces', payments.workdir, 'repos', 'payments-kb')
+  mkdirSync(join(kbRepo, 'decisions'), { recursive: true })
+  writeFileSync(join(kbRepo, 'README.md'), '# Payments knowledge base\n\nDecisions, settlement rules and runbooks for the payments platform.\n')
+  writeFileSync(join(kbRepo, 'decisions', 'ADR-0002-retry-budget.md'), '# ADR-0002: Retry budget per batch\n\nStatus: accepted\n\nSettlement retries use a budget of 5 per batch.\n')
+  const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 'Alex Morgan', GIT_AUTHOR_EMAIL: 'alex@example.com', GIT_COMMITTER_NAME: 'Alex Morgan', GIT_COMMITTER_EMAIL: 'alex@example.com' }
+  for (const args of [['init', '-q', '-b', 'trunk'], ['add', '-A'], ['commit', '-q', '-m', 'Start the payments KB'], ['branch', 'main']])
+    execFileSync('git', ['-C', kbRepo, ...args], { env: gitEnv })
+  const tKB = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'kb-keeper', name: 'KB support', kind: 'kb', profile_id: sonnet.id, settings: {} })
+  await api.call('PUT', `/spaces/${payments.id}/roles/kb-support`, { template_id: tKB.id, settings: {} })
+  const kbase = await api.call<{ id: string }>('POST', `/spaces/${payments.id}/kbs`, { slug: 'payments', name: 'Payments knowledge', repo: 'repos/payments-kb',
+    base_branch: 'main', space_role: 'kb-support', write_policy: 'review', max_sessions: 2, validator: ['sh', '-c', 'test -f README.md'],
+    description: 'Decisions, settlement rules and runbooks.',
+    entry_instructions: 'Read README.md first. You are a consumer of this KB: answer from it and propose changes; never accept them.\n' +
+      '/kb-answer Settlement retries use a **budget of 5 per batch** (decisions/ADR-0002-retry-budget.md, accepted). Never retry inside the bank window.' })
+
   type Run = { id: string }
   const launch = (space: string, kind: string, role: string, harness: string, prompt: string) =>
     api.call<Run>('POST', `/spaces/${space}/runs`, { kind, role, harness, prompt })
   const control = await api.call<Run>('POST', `/spaces/${payments.id}/runs`, { role: 'control',
-    prompt: 'Coordinate the retry-budget change across the settlement services.\n/call tickets__ticket_comment {"id":"PAY-409","body":"Retry budget raised to 5 for weekend settlement."}' })
+    prompt: 'Coordinate the retry-budget change across the settlement services.\n' +
+      '/call spaceman_kb_ask {"kb":"payments","kind":"decision","question":"What retry budget did we decide for settlement, and where is it recorded?"}\n' +
+      '/call tickets__ticket_comment {"id":"PAY-409","body":"Retry budget raised to 5 for weekend settlement."}' })
   const reviewer = await launch(payments.id, 'worker', 'reviewer', 'codex', 'Review the open pull requests and summarise the risky ones.')
   const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.\n' +
+    '/call spaceman_kb_ask {"kb":"payments","kind":"context","question":"Are there rules about when settlement may retry?"}\n' +
     '/write decisions.md # Decisions\\n\\n- 2026-11-02: settlement retries use a budget of 5 per batch, not per item.\\n- 2026-11-02: never retry inside the bank window (01:00-03:00 UTC).\\n\n' +
     '/write notes/settlement-client.md # Settlement client\\n\\nRetries live in `RetryBudget` (services/settlement/client/retry.go). The budget resets per batch.\\n')
   await launch(docs.id, 'control', 'control', 'claude-code', 'Keep the guides in step with the UI.')
@@ -482,6 +502,19 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByRole('cell', { name: 'implementor-backend' }).click()
     await page.getByRole('button', { name: 'decisions.md' }).click()
     await expect(page.getByText('never retry inside the bank window')).toBeVisible()
+  })
+  await expect.poll(async () => {
+    const d = await api.call<{ requests: { state: string }[] }>('GET', `/spaces/${payments.id}/kbs/${kbase.id}`)
+    return d.requests.filter((r) => r.state === 'answered').length
+  }, { timeout: 60_000 }).toBeGreaterThan(0)
+  await capture(page, 'space-knowledge', async () => {
+    await page.goto(`/spaces/${payments.id}/knowledge`)
+    await expect(page.getByText('Payments knowledge')).toBeVisible()
+  })
+  await capture(page, 'kb-detail', async () => {
+    await page.goto(`/spaces/${payments.id}/knowledge`)
+    await page.getByText('Payments knowledge').click()
+    await expect(page.getByText('from accepted knowledge').first()).toBeVisible()
   })
   await capture(page, 'space-role-preview', async () => {
     await page.goto(`/spaces/${payments.id}`)

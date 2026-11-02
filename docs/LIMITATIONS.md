@@ -31,6 +31,15 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Knowledge bases
+- **Sessions are per agent instance.** A relaunched worker with a new instance gets a new session.
+- **Resumed conversations depend on the harness.** A session woken from sleep continues its conversation where the
+  harness supports resuming (Claude Code); otherwise it starts fresh with the same worktree.
+- **The knowledge branch must not be checked out** where SpaceMan should move it; acceptance refuses such a branch.
+- **The check runs with the node user's rights**, like agent programs.
+- **No proposal review by agents.** Accepting is a person's decision (reviewed) or automatic after the check
+  (serialized); there is no maintainer-agent workflow.
+
 ## Role memory
 - **Checkpoints need an idle signal or a run end.** A harness that never reports idle (OSC 7501) is checkpointed only
   when its run ends.

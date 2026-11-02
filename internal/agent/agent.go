@@ -290,6 +290,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.heartbeatLoop(hbCtx)
 			go a.catchUpRecordings(hbCtx)
 			go a.mem.resume(hbCtx)
+			go a.resendKBResults(hbCtx)
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant

@@ -1564,6 +1564,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/kb-proposals/{proposal_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a proposal
+         * @description The node merges it into the KB's base branch by fast-forward or a clean merge after the KB's check passes; conflicts are reported, never forced.
+         */
+        post: operations["accept-kb-proposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/kb-proposals/{proposal_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a proposal */
+        post: operations["reject-kb-proposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/kb-requests/{request_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a pending request */
+        post: operations["cancel-kb-request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/kbs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's knowledge bases with capacity and usage */
+        get: operations["list-kbs"];
+        put?: never;
+        /** Add a knowledge base */
+        post: operations["create-kb"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/kbs/{kb_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A knowledge base with its sessions, requests and proposals */
+        get: operations["get-kb"];
+        /** Edit a knowledge base */
+        put: operations["update-kb"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/mcp-servers": {
         parameters: {
             query?: never;
@@ -4124,6 +4214,197 @@ export interface components {
             /** @description Shown once; hand it to the user out of band */
             token: string;
         };
+        KbDetail: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/KbDetail.json
+             */
+            readonly $schema?: string;
+            kb: components["schemas"]["KbKB"];
+            proposals: components["schemas"]["KbProposal"][];
+            requests: components["schemas"]["KbRequest"][];
+            sessions: components["schemas"]["KbSession"][];
+        };
+        KbEvidence: {
+            /**
+             * @description Accepted knowledge, or a proposal not yet accepted
+             * @enum {string}
+             */
+            kind?: "committed" | "proposal";
+            path: string;
+            /** @description Commit the cited text is from */
+            revision?: string;
+        };
+        KbInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/KbInput.json
+             */
+            readonly $schema?: string;
+            allowed_roles?: string[];
+            base_branch?: string;
+            description?: string;
+            enabled?: boolean;
+            entry_instructions?: string;
+            /**
+             * Format: int64
+             * @description 60-86400; default 900
+             */
+            idle_sleep_seconds?: number;
+            /**
+             * Format: int64
+             * @description 1-16; default 2
+             */
+            max_sessions?: number;
+            name: string;
+            repo: string;
+            /**
+             * Format: int64
+             * @description 60-86400; default 1800
+             */
+            request_timeout_seconds?: number;
+            /**
+             * Format: int64
+             * @description 3600-2592000; default 604800
+             */
+            session_ttl_seconds?: number;
+            /** @description Fixed after creation */
+            slug?: string;
+            space_role: string;
+            validator?: string[];
+            /** @enum {string} */
+            write_policy?: "read_only" | "review" | "serialized";
+        };
+        KbKB: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/KbKB.json
+             */
+            readonly $schema?: string;
+            /** @description Requester roles admitted to support sessions; * admits every role */
+            allowed_roles: string[];
+            /** @description Where accepted knowledge lives */
+            base_branch: string;
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            enabled: boolean;
+            entry_instructions?: string;
+            id: string;
+            /** Format: int64 */
+            idle_sleep_seconds: number;
+            /**
+             * Format: int64
+             * @description Sessions running at once; further requests queue
+             */
+            max_sessions: number;
+            name: string;
+            /** @description Repository folder inside the space */
+            repo: string;
+            /** Format: int64 */
+            request_timeout_seconds: number;
+            /** Format: int64 */
+            session_ttl_seconds: number;
+            slug: string;
+            space_id: string;
+            /** @description The configured space role (kind kb) sessions run as */
+            space_role: string;
+            stats?: components["schemas"]["KbStats"];
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Command run on a proposal before it is accepted, e.g. [python3, tools/kb.py, check] */
+            validator: string[];
+            /** Format: int64 */
+            version: number;
+            /** @enum {string} */
+            write_policy: "read_only" | "review" | "serialized";
+        };
+        KbProposal: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/KbProposal.json
+             */
+            readonly $schema?: string;
+            branch: string;
+            commit: string;
+            /** Format: date-time */
+            created_at: string;
+            decided_by?: string;
+            detail?: string;
+            id: string;
+            merged_commit?: string;
+            request_id?: string;
+            session_id: string;
+            /** @enum {string} */
+            state: "proposed" | "accepting" | "accepted" | "rejected" | "conflict" | "failed";
+            summary?: string;
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        KbRequest: {
+            answer?: string;
+            /** Format: date-time */
+            answered_at?: string;
+            /** Format: int64 */
+            attempts: number;
+            /** @description committed: from accepted knowledge; proposal: from proposed changes; none: the KB does not know */
+            basis?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            deadline_at: string;
+            error?: string;
+            evidence: components["schemas"]["KbEvidence"][];
+            id: string;
+            kb_id: string;
+            kind: string;
+            question: string;
+            requester_role: string;
+            requester_run: string;
+            session_id: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "answered" | "failed" | "cancelled" | "timed_out";
+            task_id?: string;
+        };
+        KbSession: {
+            /** Format: int64 */
+            answered: number;
+            branch: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            failures: number;
+            id: string;
+            instance_id: string;
+            /** Format: date-time */
+            last_active_at: string;
+            last_error?: string;
+            requester_instance: string;
+            requester_label?: string;
+            requester_role: string;
+            run_id?: string;
+            /** @enum {string} */
+            state: "new" | "active" | "sleeping" | "failed" | "closed";
+        };
+        KbStats: {
+            /** Format: int64 */
+            active_sessions: number;
+            /** Format: int64 */
+            answered: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            open_requests: number;
+            /** Format: int64 */
+            pending_proposals: number;
+            /** Format: int64 */
+            sessions: number;
+        };
         "List-account-kindsResponse": {
             /**
              * Format: uri
@@ -4195,6 +4476,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["HumanType"][];
+        };
+        "List-kbsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-kbsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["KbKB"][];
         };
         "List-mcp-grantsResponse": {
             /**
@@ -4972,6 +5262,15 @@ export interface components {
              */
             readonly $schema?: string;
             recovery_codes: string[];
+        };
+        "Reject-kb-proposalRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Reject-kb-proposalRequest.json
+             */
+            readonly $schema?: string;
+            reason?: string;
         };
         "Reply-messageRequest": {
             /**
@@ -8956,6 +9255,243 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "accept-kb-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbProposal"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reject-kb-proposal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reject-kb-proposalRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbProposal"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-kb-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-kbs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-kbsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-kb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KbInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbKB"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-kb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbDetail"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-kb": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KbInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KbKB"];
                 };
             };
             /** @description Error */

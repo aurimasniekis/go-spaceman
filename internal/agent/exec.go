@@ -111,6 +111,8 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
 		go a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+	case proto.CmdKBAccept:
+		a.handleKBAccept(ctx, c)
 	case proto.CmdInterrupt:
 		a.ack(ctx, c, proto.AckAccepted, "")
 		if r, err := a.j.getRun(ctx, c.RunID); err == nil && r.TerminalID != "" {

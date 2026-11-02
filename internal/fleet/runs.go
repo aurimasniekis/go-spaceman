@@ -609,3 +609,25 @@ func (svc *Service) AuthenticateRun(ctx context.Context, tok string) (*RunPrinci
 	}
 	return nil, errBadCredential
 }
+
+// QueueSpaceCommand queues a space-level command (no run) for the space's node at its current lease generation,
+// inside the caller's transaction, and returns the command ID; call KickSpace after the commit. It fails while the
+// node holds no valid lease: work in a space only happens on its current node.
+func (svc *Service) QueueSpaceCommand(ctx context.Context, tx *store.Tx, spaceID, kind, key string, payload any) (string, error) {
+	sp, err := tx.Q.GetSpace(ctx, spaceID)
+	if err != nil {
+		return "", errSpaceNotFound
+	}
+	lease, err := tx.Q.GetLease(ctx, spaceID)
+	if err != nil || lease.State != "active" || !tx.Now.Before(time.UnixMicro(lease.ExpiresAt)) || lease.NodeID != sp.NodeID {
+		return "", apperr.New(apperr.CodeUnavailable, "the space's node is not connected (no valid execution lease)")
+	}
+	return svc.queueCommandID(ctx, tx, sp.NodeID, spaceID, "", lease.Generation, kind, key, payload)
+}
+
+// KickSpace wakes the delivery of commands to the space's node.
+func (svc *Service) KickSpace(ctx context.Context, spaceID string) {
+	if sp, err := svc.s.R().GetSpace(ctx, spaceID); err == nil {
+		svc.hub.Kick(sp.NodeID)
+	}
+}

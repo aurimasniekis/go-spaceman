@@ -25,7 +25,7 @@ const (
 	// Major is the protocol major version; MinMinor..MaxMinor is the range this build accepts.
 	Major    = 1
 	MinMinor = 0
-	MaxMinor = 2 // 1: agent tool calls (tool.call / tool.result); 2: role memory sync (memory.*)
+	MaxMinor = 2 // 1: agent tool calls (tool.call / tool.result); 2: role memory sync (memory.*), KB acceptance (kb.*)
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -43,6 +43,7 @@ const (
 	TypeToolCall     = "tool.call"     // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
 	TypeMemorySync   = "memory.sync"   // minor ≥ 2: new role-memory history, as a git bundle
 	TypeMemoryStatus = "memory.status" // minor ≥ 2: the node's view of its memory collections
+	TypeKBResult     = "kb.result"     // minor ≥ 2: the outcome of a kb.accept command
 
 	// central → node
 	TypeWelcome      = "welcome"
@@ -201,6 +202,7 @@ const (
 	CmdInterrupt = "run.interrupt"
 	CmdInput     = "run.input"
 	CmdPrepare   = "space.prepare"
+	CmdKBAccept  = "kb.accept" // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
 )
 
 // Skill is one skill version's files (guidance only; never executed by SpaceMan).
@@ -381,7 +383,7 @@ func (c Command) Validate() error {
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")
 		}
-	case CmdPrepare:
+	case CmdPrepare, CmdKBAccept:
 	default:
 		return fmt.Errorf("unknown command kind %q", c.Kind)
 	}
@@ -488,4 +490,34 @@ type MemoryCollectionStatus struct {
 	Conflicts      int        `json:"conflicts" doc:"Conflicts preserved on the node and not yet reconciled"`
 	Retries        int        `json:"retries"`
 	LastError      string     `json:"last_error,omitempty"`
+}
+
+// KBAcceptPayload asks the node to merge a KB proposal (ADR-0026): Commit must be on Branch (the session's branch); it
+// is merged into Target by fast-forward or a clean merge, the validator runs on the result, and Target moves only if it
+// still points where it did (compare-and-swap). Nothing is force-updated; a conflict leaves everything as it was.
+type KBAcceptPayload struct {
+	ProposalID string   `json:"proposal_id"`
+	Repo       string   `json:"repo"`
+	Branch     string   `json:"branch"`
+	Commit     string   `json:"commit"`
+	Target     string   `json:"target"`
+	Validator  []string `json:"validator,omitempty"`
+	Timeout    int      `json:"timeout_seconds,omitempty"`
+	Message    string   `json:"message"`
+}
+
+// KB acceptance results.
+const (
+	KBMerged   = "merged"
+	KBConflict = "conflict"
+	KBFailed   = "failed"
+)
+
+// KBResult reports a kb.accept outcome.
+type KBResult struct {
+	CommandID  string `json:"command_id"`
+	ProposalID string `json:"proposal_id"`
+	Result     string `json:"result"`
+	Merged     string `json:"merged,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 }

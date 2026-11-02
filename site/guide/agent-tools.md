@@ -26,6 +26,12 @@ Runs of a role granted an external MCP server also see that server's tools in th
 | `spaceman_attachment_get` | Fetch a `spaceman://attachment/<id>` (text, or base64 up to 512 KiB) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_ask` | Ask a person: question, approval, to-do or message | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_types` | Custom human-action types enabled in the space, with schemas | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_kb_list` | Knowledge bases the run may ask | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_kb_ask` | Ask a KB a question; returns at once, the answer arrives as a notice | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_kb_get` | Read a KB request: state, answer, basis and evidence | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_kb_cancel` | Withdraw a KB question | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_kb_answer` | (KB sessions) Answer a request with evidence | | | ✓ | |
+| `spaceman_kb_propose` | (KB sessions) Offer a commit for acceptance | | | ✓ | |
 | `spaceman_memory_status` | The role memory's sync state: preserved history, pending changes, conflicts | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_get` | Read a human action and its response | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_list` | List human actions (by default your own) | ✓ | ✓ | ✓ | ✓ |

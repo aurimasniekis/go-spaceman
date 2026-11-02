@@ -3,7 +3,8 @@
 // --mcp-config, and every prompt line "/call <tool> <json arguments>" becomes one tool call whose result is printed. A
 // call that needs a person's approval is retried every few seconds, the way an agent calls again after the approval
 // notice. A line "/write <path> <text>" writes text (\n for new lines) to a file in its role memory
-// ($SPACEMAN_MEMORY_DIR). Not part of any release.
+// ($SPACEMAN_MEMORY_DIR). With "/kb-answer <text>" it acts as a KB support session: it reads its SpaceMan messages and
+// answers every KB request with the text, citing README.md. Not part of any release.
 package main
 
 import (
@@ -38,7 +39,7 @@ func main() {
 		}
 	}
 	writes(prompt)
-	if mcpConfig != "" && strings.Contains(prompt, "/call ") {
+	if mcpConfig != "" && (strings.Contains(prompt, "/call ") || strings.Contains(prompt, "/kb-answer ")) {
 		calls(mcpConfig, prompt)
 	}
 	for i := 0; ; i++ {
@@ -71,9 +72,12 @@ func calls(path, prompt string) {
 			fmt.Fprintf(os.Stdout, "mcp %s: %v\r\n", name, err)
 			return
 		}
-		defer cs.Close()
 		for _, line := range strings.Split(prompt, "\n") {
 			line = strings.TrimSpace(line)
+			if text, ok := strings.CutPrefix(line, "/kb-answer "); ok {
+				go answerKB(ctx, cs, text)
+				continue
+			}
 			rest, ok := strings.CutPrefix(line, "/call ")
 			if !ok {
 				continue
@@ -134,5 +138,37 @@ func writes(prompt string) {
 			err = os.WriteFile(p, []byte(content), 0o600) //nolint:gosec // see above
 			fmt.Fprintf(os.Stdout, "wrote memory %s (%v)\r\n", name, err)
 		}
+	}
+}
+
+// answerKB answers KB requests from its messages for as long as the stub runs.
+func answerKB(ctx context.Context, cs *mcp.ClientSession, text string) {
+	done := map[string]bool{}
+	for {
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "spaceman_messages"})
+		if err != nil {
+			return
+		}
+		var inbox struct {
+			Messages []struct {
+				ID            string `json:"id"`
+				Kind          string `json:"kind"`
+				CorrelationID string `json:"correlation_id"`
+			} `json:"messages"`
+		}
+		if b, err := json.Marshal(res.StructuredContent); err == nil {
+			_ = json.Unmarshal(b, &inbox)
+		}
+		for _, m := range inbox.Messages {
+			if m.Kind != "request" || !strings.HasPrefix(m.CorrelationID, "kbq_") || done[m.ID] {
+				continue
+			}
+			done[m.ID] = true
+			fmt.Fprintf(os.Stdout, "\x1b[33m→ answering %s\x1b[0m\r\n", m.CorrelationID)
+			_, _ = cs.CallTool(ctx, &mcp.CallToolParams{Name: "spaceman_kb_answer", Arguments: map[string]any{"request_id": m.CorrelationID,
+				"answer": strings.ReplaceAll(text, `\n`, "\n"), "basis": "committed", "evidence": []map[string]string{{"path": "README.md"}}}})
+			_, _ = cs.CallTool(ctx, &mcp.CallToolParams{Name: "spaceman_message_ack", Arguments: map[string]any{"id": m.ID}})
+		}
+		time.Sleep(2 * time.Second)
 	}
 }

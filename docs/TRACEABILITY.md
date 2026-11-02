@@ -104,7 +104,7 @@
 | SM-CTRL-002 | M2-06 | implemented | Notifications to control for new inbox items, review/blocked/failed tasks and ended workers; idle wake through the notifier; bounded restart with session resume, then an urgent human action (`TestControlSupervisor`) |  |  |
 | SM-CTRL-003 | M2-06 | implemented | No worker launch tools for workers; no tool launches control; control cannot stop control (`TestControlLaunchesWorkersInWorktrees`, `TestCatalogs`) |  |  |
 | SM-CTRL-004 | M2-06 | partial | Operators pause, stop, reorder, cancel and launch (existing APIs); operator stops are never restarted (`TestControlSupervisor`) |  | Audited diagnostics exist as a run kind; reassignment UI pending. |
-| SM-CTRL-005 | | todo | | | |
+| SM-CTRL-005 | M3-07 | implemented | KB admission is the KB's configuration (admitted roles), set by operators; asking starts sessions only within the KB's own pool, separate from workers (`TestKBSupportSessions`: unadmitted role refused, second requester queued at capacity) | `make screenshots` (real stack): two requesters, two sessions | |
 | SM-CTRL-006 | M2-06 | partial | Task outcomes (queue), messages, human blockers tracked separately; memory errors arrive with M3-06 |  |  |
 | SM-COMM-001 | M2-06 | implemented | `TestSendFetchReply` (addressing, requests, replies resolve, correlation), `TestAcknowledge`, `internal/messages` `TestSendFetchReply`, `TestAcknowledge`, `TestNotifier`, `TestTools`; `internal/app` `TestMessagesDeliveredToIdleRuns` (real bridge, node agent, idle-gated input through the runner) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): operator request stored |  |
 | SM-COMM-002 | M2-06 | implemented | Acknowledgement only via `spaceman_message_ack` or an explicit operator action; recipient-only (`TestAcknowledge`, `TestTools`); notices carry no content (`TestNotifier`) |  |  |
@@ -151,13 +151,13 @@
 | SM-MEM-004 | M3-06 | implemented | Debounced idle checkpoints, bounded sync delay with backoff; status with uncheckpointed files, local commits, pending sync, last ack, conflicts, retries (`TestMemoryInstancesShareAndPreserve`, `TestMemoryAcks`, `TestReportAndWithoutGit`) | `make screenshots`: `space-memory` | |
 | SM-MEM-005 | M3-06 | partial | Flush when a run ends (`TestMemorySyncedToCentral`); central lists only acknowledged history | | Flushes before relocation and backups arrive with M4. |
 | SM-MEM-006 | M3-06 | implemented | Instances refresh at launch; only the space's node may sync (`TestApplyRefusesAndPreserves`); central offers no edits | | |
-| SM-KB-001 | | todo | | | |
-| SM-KB-002 | | todo | | | |
-| SM-KB-003 | | todo | | | |
-| SM-KB-004 | | todo | | | |
-| SM-KB-005 | | todo | | | |
-| SM-KB-006 | | todo | | | |
-| SM-KB-007 | | todo | | | |
+| SM-KB-001 | M3-07 | implemented | KB configuration with repository, knowledge branch, kb-kind space role, entry instructions, validator, write policy, admitted roles, limits (`TestKBSupportSessions`); the template is documented as an example (`docs/contracts/kb-template.md`) | `make screenshots` | |
+| SM-KB-002 | M3-07 | implemented | `spaceman_kb_ask` with kinds context, decision, discovery, proposal, documentation, consistency (`TestKBSupportSessions`) | `make screenshots`: control and a worker asked through the bridge | |
+| SM-KB-003 | M3-07 | implemented | Per-instance sessions, queuing at capacity, one request at a time, cancellation, idle sleep, recovery with bounded re-offers, task correlation, durable answers (`TestKBSupportSessions`); timeouts and cleanup in the scheduler | `make screenshots` | Conversation continuity after sleep depends on harness resume. |
+| SM-KB-004 | M3-07 | partial | MCP request/reply through SpaceMan messages and tools, harness-independent (`TestKBSupportSessions`) | `make screenshots` (stub harness through the real bridge) | Claude SendMessage is not used (unverified across runs); a real Codex session is not yet verified. |
+| SM-KB-005 | M3-07 | implemented | Session worktrees on their own branches; acceptance on the node by fast-forward or clean merge after the validator, compare-and-swap, conflicts refused and reported, serialized or reviewed; evidence with revisions; committed vs proposal basis (`TestKBSupportSessions`) | | |
+| SM-KB-006 | M3-07 | implemented | KB sessions get no orchestration tools (`TestKBSupportSessions`: worker launch refused); repository, memory and conversation are separate stores | | |
+| SM-KB-007 | M3-07 | implemented | Knowledge section: repositories, sessions with requester association, questions with answers and evidence, proposals with accept/reject, capacity, failures and usage counts | `make screenshots`: `space-knowledge`, `kb-detail` | Token usage per session arrives with M3-09. |
 | SM-DREAM-001 | | todo | | | |
 | SM-DREAM-002 | | todo | | | |
 | SM-DREAM-003 | | todo | | | |

@@ -210,6 +210,18 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/inbox/{item_id}` | `get-inbox-item` | Get an inbox item with its attachments |
 | `POST` | `/spaces/{space_id}/inbox/{item_id}/status` | `set-inbox-status` | Change an inbox item's processing status |
 
+### kb
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `POST` | `/spaces/{space_id}/kb-proposals/{proposal_id}/accept` | `accept-kb-proposal` | Accept a proposal |
+| `POST` | `/spaces/{space_id}/kb-proposals/{proposal_id}/reject` | `reject-kb-proposal` | Reject a proposal |
+| `POST` | `/spaces/{space_id}/kb-requests/{request_id}/cancel` | `cancel-kb-request` | Cancel a pending request |
+| `GET` | `/spaces/{space_id}/kbs` | `list-kbs` | A space's knowledge bases with capacity and usage |
+| `POST` | `/spaces/{space_id}/kbs` | `create-kb` | Add a knowledge base |
+| `GET` | `/spaces/{space_id}/kbs/{kb_id}` | `get-kb` | A knowledge base with its sessions, requests and proposals |
+| `PUT` | `/spaces/{space_id}/kbs/{kb_id}` | `update-kb` | Edit a knowledge base |
+
 ### mcp
 
 | Method | Path | Operation | Summary |
