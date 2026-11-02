@@ -248,6 +248,26 @@
   - The root token is a standing full-authority secret. Operators are told to store it offline and revoke it after creating administrators.
     The docs and the `/setup` flow say so.
 
+### ADR-0020 — Web UI content security policy allows WebAssembly for the terminal
+- **Status:** accepted (2026-11-02). **Security-relevant**: it relaxes the Pulse/Hallpass UI policy in two directives.
+- **Context:**
+  - The live and replay terminal uses ghostty-web 0.4.0 (MIT), which compiles Ghostty's VT parser as WebAssembly.
+  - The package inlines the module as a `data:application/wasm;base64,…` URL. It fetches that URL and calls `WebAssembly.instantiate` (verified in
+    `dist/ghostty-web.js`).
+  - The Pulse/Hallpass UI policy (`script-src 'self'`, `connect-src 'self'`) blocks both steps.
+- **Decision:** UI pages (not the API, whose policy stays `default-src 'none'`) are served with
+  `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;
+  connect-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'`.
+  - `'wasm-unsafe-eval'` allows compiling WebAssembly only. JavaScript `eval` and inline scripts stay forbidden, and `check-dist` fails a build
+    that contains an inline script.
+  - `connect-src data:` lets the page fetch its own inlined module. A `data:` URL carries no credentials and reaches no server, so it cannot be
+    used to exfiltrate data to another origin.
+  - `style-src 'unsafe-inline'` is inherited from Pulse and Hallpass (Mantine sets inline styles).
+- **Consequences:**
+  - Terminal output is untrusted program output. It is rendered by the VT parser onto a canvas, never as HTML.
+  - The terminal is watch-only (`disableStdin`): keystrokes in the page are never sent to the run. Operator input goes through the separate,
+    permission-checked `send-input` operation.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -256,7 +276,7 @@
 | K-2 | ~~Whether hc persists `env`.~~ **Resolved 2026-11-02:** yes, plaintext `restart_env` → ADR-0009 shim required. | — | done |
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
-| K-5 | ghostty-web npm package name, version, API. | Terminal UI | Inspect the package source before use. |
+| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). | — | done |
 | K-6 | Official Go MCP SDK version and streamable/stdio APIs. | MCP gateway | Inspect module source. |
 | K-7 | TipTap open-source extension set and Markdown serializer. | SM-ATT-003 | Inspect packages and licenses; exclude Pro extensions. |
 | K-8 | llm-knowledge-base-template layout and licence; Piebald dream prompts licence. | KB, dreamer | Fetch and record; attribute or paraphrase per licence. |

@@ -1,0 +1,56 @@
+// Night Owl (dark) and Light Owl (light) palettes by Sarah Drasner (MIT), adapted for SpaceMan (docs/THIRD_PARTY.md).
+export const nightOwl = {
+  bg: '#011627',
+  bgRaised: '#0b2942',
+  border: '#1d3b53',
+  fg: '#d6deeb',
+  dim: '#637777',
+  blue: '#82aaff',
+  purple: '#c792ea',
+  green: '#addb67',
+  teal: '#7fdbca',
+  yellow: '#ecc48d',
+  orange: '#f78c6c',
+  red: '#ef5350',
+  selection: '#1d3b53',
+}
+
+export const lightOwl = {
+  bg: '#fbfbfb',
+  bgRaised: '#f0f0f0',
+  border: '#d9d9d9',
+  fg: '#403f53',
+  dim: '#90a7b2',
+  blue: '#4876d6',
+  purple: '#994cc3',
+  green: '#08916a',
+  teal: '#0c969b',
+  yellow: '#c96765',
+  orange: '#aa0982',
+  red: '#de3d3b',
+  selection: '#e0e7ea',
+}
+
+/** Terminal colors for ghostty-web (Night Owl ANSI palette). */
+export const terminalTheme = {
+  background: nightOwl.bg,
+  foreground: nightOwl.fg,
+  cursor: '#80a4c2',
+  selectionBackground: nightOwl.selection,
+  black: '#011627',
+  red: '#ef5350',
+  green: '#22da6e',
+  yellow: '#addb67',
+  blue: '#82aaff',
+  magenta: '#c792ea',
+  cyan: '#21c7a8',
+  white: '#ffffff',
+  brightBlack: '#575656',
+  brightRed: '#ef5350',
+  brightGreen: '#22da6e',
+  brightYellow: '#ffeb95',
+  brightBlue: '#82aaff',
+  brightMagenta: '#c792ea',
+  brightCyan: '#7fdbca',
+  brightWhite: '#ffffff',
+}

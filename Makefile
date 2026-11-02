@@ -82,7 +82,7 @@ sqlc-check: bin/sqlc
 # Regenerate the OpenAPI document from the Go API definitions and the UI's TypeScript types from it.
 api:
 	$(GO) run ./cmd/spaceman openapi > api/openapi.json
-	cd web && pnpm exec openapi-typescript ../api/openapi.json -o src/api/schema.gen.ts
+	cd web && pnpm run gen:api
 
 # Fails when generated code drifts from the API definitions.
 api-check: api
@@ -94,6 +94,15 @@ web-install:
 
 web-build:
 	cd web && pnpm build
+
+.PHONY: web-check e2e
+# Typecheck, unit tests and the production build of the UI.
+web-check:
+	cd web && pnpm typecheck && pnpm test && pnpm build
+
+# Browser journey against a fresh local stack with a real agent and an isolated herdr-core core (needs hc).
+e2e:
+	scripts/e2e.sh --reporter=list
 
 .PHONY: test-fault test-real test-pulse
 # Fault-injection suite (crashes, disk full, interrupted recordings, disconnects); Go only.

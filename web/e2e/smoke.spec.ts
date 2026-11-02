@@ -1,0 +1,142 @@
+import { execFileSync, spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { expect, test, type Page } from '@playwright/test'
+
+import { totp } from './totp'
+
+/**
+ * The first-run journey through the real UI against a `scripts/dev-stack.sh` stack: setup with the root token, sign-in
+ * with TOTP enrollment, node creation and enrollment, a space, a launched run watched live, stopped, and replayed.
+ * The harness is the stack's stub; no model is contacted. Screenshots go to SM_SHOTS (for review, not committed here).
+ */
+
+const env = (k: string) => {
+  const v = process.env[k]
+  if (!v) throw new Error(`${k} is not set: source the env file printed by scripts/dev-stack.sh up`)
+  return v
+}
+
+const shots = process.env.SM_SHOTS ?? join(process.cwd(), 'test-results', 'shots')
+mkdirSync(shots, { recursive: true })
+// Mantine transitions run in JavaScript (not CSS), so let them settle before capturing.
+async function shot(page: Page, name: string) {
+  await page.waitForTimeout(350)
+  await page.screenshot({ path: join(shots, `${name}.png`), fullPage: false, animations: 'disabled' })
+}
+
+// Strips variables that would point the agent at a surrounding herdr-core terminal or the default core.
+function agentEnv(): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('HC_') && !k.startsWith('XDG_') && !k.startsWith('SPACEMAN_')) out[k] = v
+  return { ...out, HC_SESSION: env('SM_HC_SESSION'), HC_SOCKET: env('SM_HC_SOCKET'), XDG_STATE_HOME: `${env('SM_HC_HOME')}/state`, XDG_CONFIG_HOME: `${env('SM_HC_HOME')}/config` }
+}
+
+async function nextTotpWindow() {
+  const ms = 30_000 - (Date.now() % 30_000) + 750
+  await new Promise((r) => setTimeout(r, ms))
+}
+
+test.describe.configure({ mode: 'serial' })
+
+test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
+  test.setTimeout(180_000)
+  const email = 'alex@example.com'
+  // Generated per run (throwaway stack); saved with the TOTP secret in the stack directory for manual inspection.
+  const password = `e2e-${randomBytes(18).toString('base64url')}`
+
+  // Setup with the root token.
+  await page.goto('/')
+  await expect(page).toHaveURL(/\/login/)
+  await expect(page.getByText('SpaceMan is not set up yet')).toBeVisible()
+  await shot(page, 'login-not-set-up')
+  await page.getByRole('link', { name: 'Set up SpaceMan' }).click()
+  await page.getByLabel('Root token').fill(readFileSync(env('SM_ROOT_TOKEN_FILE'), 'utf8').trim())
+  await page.getByLabel('Name').fill('Alex Admin')
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password', { exact: true }).fill(password)
+  await page.getByLabel('Confirm password').fill(password)
+  await shot(page, 'setup')
+  await page.getByRole('button', { name: 'Create administrator' }).click()
+  await expect(page.getByText('Administrator created')).toBeVisible()
+  await page.getByRole('link', { name: 'Sign in' }).click()
+
+  // Password, then mandatory TOTP enrollment, recovery codes, and a fresh code.
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByText('Set up two-factor authentication')).toBeVisible()
+  const secret = (await page.locator('code').first().innerText()).trim()
+  expect(secret).toMatch(/^[A-Z2-7]+=*$/)
+  await shot(page, 'mfa-enroll')
+  await page.getByRole('textbox', { name: 'Code' }).fill(totp(secret))
+  await page.getByRole('button', { name: 'Enable' }).click()
+  await expect(page.getByText('Save your recovery codes')).toBeVisible()
+  await page.getByRole('button', { name: /I saved them/ }).click()
+  await nextTotpWindow()
+  await page.getByRole('textbox', { name: 'Code' }).fill(totp(secret))
+  await page.getByRole('button', { name: 'Verify' }).click()
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+  writeFileSync(join(env('SM_DIR'), 'admin.json'), JSON.stringify({ email, password, totp: secret }), { mode: 0o600 })
+
+  // A node, enrolled with the one-time token shown once.
+  await page.getByRole('link', { name: 'Nodes' }).click()
+  await page.getByRole('button', { name: 'Add node' }).click()
+  await page.getByLabel('Name').fill('dev-node')
+  await page.getByLabel('Description').fill('Local development node')
+  await page.getByRole('button', { name: 'Create and issue token' }).click()
+  const token = (await page.getByTestId('secret').innerText()).trim()
+  expect(token).toMatch(/^spaceman_en_/)
+  await shot(page, 'node-enrollment-token')
+  await page.getByRole('button', { name: 'Done' }).click()
+
+  const agent = join(env('SM_BIN'), 'spaceman-agent')
+  execFileSync(agent, ['-c', env('SM_AGENT_CONFIG'), 'enroll', '--token', token], { env: agentEnv() })
+  const log = openSync(join(env('SM_DIR'), 'agent.log'), 'a')
+  const child = spawn(agent, ['-c', env('SM_AGENT_CONFIG'), 'run'], { env: agentEnv(), stdio: ['ignore', log, log], detached: true })
+  child.unref()
+  writeFileSync(join(env('SM_DIR'), 'agent.pid'), String(child.pid))
+  await expect(page.getByText('connected', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await shot(page, 'nodes')
+
+  // A space pinned to the node.
+  await page.getByRole('link', { name: 'Spaces' }).click()
+  await page.getByRole('button', { name: 'New space' }).click()
+  await page.getByLabel('Name').fill('Payments platform')
+  await page.getByLabel('Slug').fill('payments')
+  await page.getByRole('textbox', { name: 'Pinned node' }).click()
+  await page.getByRole('option', { name: 'dev-node' }).click()
+  await page.getByLabel('Description', { exact: true }).fill('Card processing services and their release train')
+  await page.getByLabel('Goals').fill('Keep the settlement pipeline green; ship the retry-budget change this week.')
+  await page.getByRole('button', { name: 'Create space' }).click()
+  await expect(page.getByRole('heading', { name: /Payments platform/ })).toBeVisible()
+  await expect(page.getByText('valid')).toBeVisible({ timeout: 20_000 })
+  await shot(page, 'space')
+
+  // Launch a run and watch it live.
+  await page.getByRole('button', { name: 'Launch run' }).click()
+  await page.getByLabel('Initial prompt').fill('Review the open pull requests and summarise the risky ones.')
+  await shot(page, 'launch-run')
+  await page.getByRole('button', { name: 'Launch', exact: true }).click()
+  await expect(page).toHaveURL(/\/runs\/run_/)
+  await expect(page.getByText('Live · watch-only')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('running', { exact: true })).toBeVisible({ timeout: 20_000 })
+  await page.waitForTimeout(4_000)
+  await shot(page, 'run-live')
+
+  // Stop it, then replay the recording.
+  await page.getByRole('button', { name: 'Stop' }).click()
+  await page.getByRole('menuitem', { name: 'Stop the program' }).click()
+  await expect(page.getByText(/^(exited|failed)$/)).toBeVisible({ timeout: 30_000 })
+  await page.getByText('Replay', { exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
+  await page.waitForTimeout(500)
+  await shot(page, 'run-replay')
+
+  // Audit shows what happened.
+  await page.getByRole('link', { name: 'Audit log' }).click()
+  await expect(page.getByText('run.launched').first()).toBeVisible()
+  await shot(page, 'audit')
+})

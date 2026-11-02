@@ -10,6 +10,22 @@ import (
 	"strings"
 )
 
+// CSP is the policy for UI pages (ADR-0020): Pulse's policy plus WebAssembly compilation for the ghostty-web terminal,
+// whose module is inlined as a data: URL. The API keeps its own `default-src 'none'` policy.
+const CSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
+	"font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; " +
+	"object-src 'none'"
+
+// securityHeaders sets the browser hardening headers on every UI response.
+func securityHeaders(h http.Header) {
+	h.Set("Content-Security-Policy", CSP)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+}
+
 // Handler serves the UI: hashed assets are immutable and cached, every other path gets index.html (client-side
 // routing) with no-cache. Missing asset files are 404, never index.html, so broken references fail visibly.
 func Handler(files fs.FS) http.Handler {
@@ -22,6 +38,7 @@ func Handler(files fs.FS) http.Handler {
 	}
 	assets := http.FileServerFS(files)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		securityHeaders(w.Header())
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -22,13 +22,13 @@
 | M1-02 | Store: SQLite pools, data-dir lock, goose migrations, sqlc, IDs, clock, keyring, audit chain | SM-STORE-001, SM-OBS-003, SM-INV-001 | tested (simulated) |
 | M1-03 | API: huma, problem errors, idempotency, If-Match, pagination, change feed + SSE watch; management listener | SM-API-002, SM-OBS-001/002 | tested (simulated) + real smoke |
 | M1-04 | Auth: root-token bootstrap, first admin, Argon2id login, TOTP, sessions, CSRF, throttle, API tokens, Casbin | SM-AUTH-001/003/004/005/006 | tested (simulated) + real smoke; OIDC in M4-01 |
-| M1-05 | Node protocol: enrollment, connect, hello/capabilities, heartbeat, leases, fencing, node journal | SM-NODE-001…007 | tested (simulated); real-hc e2e pending |
+| M1-05 | Node protocol: enrollment, connect, hello/capabilities, heartbeat, leases, fencing, node journal | SM-NODE-001…007 | tested (simulated) + real (`TestRealNodeEndToEnd`, isolated hc core) |
 | M1-06 | hc runner: contract spikes K-1/K-2/K-3, client, idempotent launch, adoption, reconcile | SM-RUN-001/002, SM-NODE-004/008/009 | runner done (real-verified); node-side reconcile with M1-05 |
 | M1-07 | Harness adapters: Claude Code + Codex, isolated dirs, launch shim, MCP bridge (minimal tools) | SM-HARN-001/002/003, SM-ACCT-004 | implemented; real harness runs need a credential |
 | M1-08 | Spaces: CRUD, pinning, pause modes, archive/restore/purge; launch a run | SM-SPACE-001…004 | tested (simulated) |
-| M1-09 | Recording: zstd segments, upload, live view, replay | SM-REC-001…004 | local recording done; upload/live/replay pending |
-| M1-10 | Restart/disconnect reconciliation tests (central, node, hc) | SM-NODE-005/007/009 | todo |
-| M1-11 | Web shell: Night Owl theme, bootstrap/sign-in, spaces, nodes, overview, terminal | SM-UI-001/002/004 | todo |
+| M1-09 | Recording: zstd segments, upload, live view, replay | SM-REC-001…004 | tested (simulated) + real; UI replay/live in M1-11 |
+| M1-10 | Restart/disconnect reconciliation tests (central, node, hc) | SM-NODE-005/007/009 | partial: disconnect enforcement (simulated) and killed-agent lease guard (real); central-restart suite pending |
+| M1-11 | Web shell: Night Owl theme, bootstrap/sign-in, spaces, nodes, overview, terminal | SM-UI-001/002/004 | tested: vitest + browser journey (`make e2e`, real agent + isolated hc) |
 | M1-12 | Site skeleton, Mermaid, demo seed, Playwright screenshots, coverage inventory | SM-DOCS-001…005 | todo |
 
 ### M2 — Coordination core
@@ -97,6 +97,10 @@
 | 2026-11-02 | M1-03 | HTTP API (huma), rules table, CSRF/origin, If-Match, idempotency, SSE watch; serve/admin/keys/openapi CLI | `3b1d448` | e2e tests + real `serve` smoke |
 | 2026-11-02 | M1-06 | K-1 framed protocol decoded from real traffic (S-3) | `c959244` | real hc 0.1.16 |
 | 2026-11-02 | M1-06 | Runner interface + herdr-core framed client + core manager | `b8b70d7` | unit (fake core, -race) + real suite (`-tags real`) |
+| 2026-11-02 | M1-05/07/08 | Node enrollment, pinned spaces, leases with fencing, the node agent (journal, exec, lease guard, MCP bridge), harness adapters | `80d6372` | `TestFleetLifecycle`, `TestDisconnectEnforcement`; real `TestRealNodeEndToEnd` |
+| 2026-11-02 | M1-05 | Harness capability detection before dialing central | `1519f0f` | real node e2e |
+| 2026-11-02 | M1-09 | Recording shipped to central; live terminal SSE; replay/download/delete API | `4d979a7` | `TestRecordingShippedReplayedAndStreamed`; real node e2e |
+| 2026-11-02 | M1-11 | Web UI (Mantine 8 + Night Owl, TanStack Router/Query/Form, ghostty-web live/replay terminal), UI CSP (ADR-0020), lease grants in the change feed, dev stack + browser journey | this commit (`feat(web)`) | `make check`, `make web-check`, `make e2e` (Chromium, real agent + hc 0.1.16 isolated core, stub harness): pass; screenshots reviewed, not committed (M1-12) |
 
 ## 4. Process deviations
 

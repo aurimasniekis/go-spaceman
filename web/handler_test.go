@@ -23,6 +23,10 @@ func TestHandler(t *testing.T) {
 	if r := get("/requests/req_1"); r.Code != 200 || !strings.Contains(r.Body.String(), "SpaceMan") || r.Header().Get("Cache-Control") != "no-cache" {
 		t.Fatalf("SPA route: %d %v", r.Code, r.Header())
 	}
+	if r := get("/"); !strings.Contains(r.Header().Get("Content-Security-Policy"), "'wasm-unsafe-eval'") ||
+		strings.Contains(r.Header().Get("Content-Security-Policy"), "'unsafe-eval'") || r.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("UI security headers: %v", r.Header())
+	}
 	if r := get("/assets/app-abc123.js"); r.Code != 200 || !strings.Contains(r.Header().Get("Cache-Control"), "immutable") {
 		t.Fatalf("asset: %d %v", r.Code, r.Header())
 	}

@@ -1,0 +1,4162 @@
+{
+  "components": {
+    "schemas": {
+      "ApperrFieldError": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "type": "object"
+      },
+      "AuditPage": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AuditPage.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuditRecord"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "AuditRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "actor_type": {
+            "type": "string"
+          },
+          "at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "has_sensitive": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "source_ip": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "at",
+          "actor_type",
+          "action",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "AuditVerifyResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AuditVerifyResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "broken_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "events": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "head_hash": {
+            "contentEncoding": "base64",
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "problem": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "events",
+          "ok"
+        ],
+        "type": "object"
+      },
+      "AuthAPIToken": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AuthAPIToken.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/AuthzGrant"
+            },
+            "type": "array"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_used_ip": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "never_expires": {
+            "type": "boolean"
+          },
+          "parent_token_id": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revoked_by": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "user_id",
+          "grants",
+          "hint",
+          "created_at",
+          "never_expires"
+        ],
+        "type": "object"
+      },
+      "AuthCreateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AuthCreateInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "type": "array"
+          },
+          "mfa_required": {
+            "type": "boolean"
+          },
+          "password": {
+            "description": "Optional; otherwise invite or reset",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name",
+          "grants"
+        ],
+        "type": "object"
+      },
+      "AuthGrantInput": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "description": "A space ID, or \"*\" for every space and global administration",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "viewer",
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "domain"
+        ],
+        "type": "object"
+      },
+      "AuthRootToken": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AuthRootToken.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_used_ip": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "hint",
+          "created_at",
+          "created_by"
+        ],
+        "type": "object"
+      },
+      "AuthSessionInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_method": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_agent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "auth_method",
+          "created_at",
+          "last_seen_at",
+          "expires_at",
+          "ip",
+          "user_agent",
+          "current"
+        ],
+        "type": "object"
+      },
+      "AuthUser": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AuthUser.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/AuthzGrant"
+            },
+            "type": "array"
+          },
+          "has_password": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_login_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "mfa_enrolled": {
+            "type": "boolean"
+          },
+          "mfa_required": {
+            "type": "boolean"
+          },
+          "provisioned_via": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "enabled",
+          "provisioned_via",
+          "grants",
+          "has_password",
+          "mfa_enrolled",
+          "mfa_required",
+          "version",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AuthzGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "role",
+          "domain",
+          "source"
+        ],
+        "type": "object"
+      },
+      "Change-passwordRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Change-passwordRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "current": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "new": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "current",
+          "new"
+        ],
+        "type": "object"
+      },
+      "CodeInBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CodeInBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "code": {
+            "description": "TOTP code or recovery code",
+            "maxLength": 32,
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "Create-api-tokenRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Create-api-tokenRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_in_days": {
+            "format": "int64",
+            "maximum": 366,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "never_expires": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "grants"
+        ],
+        "type": "object"
+      },
+      "CreatedRootToken": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CreatedRootToken.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "root_token": {
+            "$ref": "#/components/schemas/AuthRootToken"
+          },
+          "secret": {
+            "description": "The root token; shown once. Store it offline.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root_token",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "CreatedToken": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CreatedToken.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "secret": {
+            "description": "The bearer token; shown once and never retrievable again",
+            "type": "string"
+          },
+          "token": {
+            "$ref": "#/components/schemas/AuthAPIToken"
+          }
+        },
+        "required": [
+          "token",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "EnrollConfirmed": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EnrollConfirmed.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "me": {
+            "$ref": "#/components/schemas/Me"
+          },
+          "recovery_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "recovery_codes",
+          "me"
+        ],
+        "type": "object"
+      },
+      "FleetCreateNodeInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetCreateNodeInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "description": "Lowercase DNS-like name, unique",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "FleetCreateSpaceInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetCreateSpaceInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "disconnect_policy": {
+            "description": "What the node does with runs after losing central beyond the grace",
+            "enum": [
+              "interrupt",
+              "kill"
+            ],
+            "type": "string"
+          },
+          "goals": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The node the space is pinned to",
+            "type": "string"
+          },
+          "slug": {
+            "description": "Lowercase URL-safe identifier, unique (3-48 characters)",
+            "type": "string"
+          },
+          "standing_instructions": {
+            "maxLength": 50000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "node_id"
+        ],
+        "type": "object"
+      },
+      "FleetLaunchInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetLaunchInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "account_ref": {
+            "type": "string"
+          },
+          "harness": {
+            "enum": [
+              "claude-code",
+              "codex"
+            ],
+            "type": "string"
+          },
+          "instance_id": {
+            "description": "Reuse an instance's harness config and memory checkout; empty creates one",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "control",
+              "worker",
+              "kb",
+              "dreamer",
+              "diagnostic"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 100000,
+            "type": "string"
+          },
+          "role": {
+            "description": "Agent kind/role, e.g. control, implementor-backend (not the harness)",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Resume this conversation when the harness supports it",
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "system": {
+            "maxLength": 100000,
+            "type": "string"
+          },
+          "workspace": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "role",
+          "harness"
+        ],
+        "type": "object"
+      },
+      "FleetLaunchSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "account_ref": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "system": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "FleetLease": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "generation": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "node_id",
+          "generation",
+          "state",
+          "expires_at",
+          "valid"
+        ],
+        "type": "object"
+      },
+      "FleetNode": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetNode.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "agent_version": {
+            "type": "string"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/ProtoCapabilities"
+          },
+          "capacity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "last_connect_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_disconnect_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocol_minor": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "active",
+              "disabled",
+              "revoked"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "state",
+          "labels",
+          "protocol_minor",
+          "capabilities",
+          "capacity",
+          "connected",
+          "version",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "FleetNodeEnrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetNodeEnrollment.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "node": {
+            "$ref": "#/components/schemas/FleetNode"
+          },
+          "token": {
+            "description": "Single-use; run spaceman-agent enroll with it on the node",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "token",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "FleetRun": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetRun.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "adopted": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "desired": {
+            "enum": [
+              "running",
+              "stopped"
+            ],
+            "type": "string"
+          },
+          "end_reason": {
+            "type": "string"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "generation": {
+            "description": "Lease generation the run belongs to",
+            "format": "int64",
+            "type": "integer"
+          },
+          "harness": {
+            "enum": [
+              "claude-code",
+              "codex"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "instance_id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "control",
+              "worker",
+              "kb",
+              "dreamer",
+              "diagnostic"
+            ],
+            "type": "string"
+          },
+          "launch": {
+            "$ref": "#/components/schemas/FleetLaunchSpec"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "observed": {
+            "enum": [
+              "pending",
+              "starting",
+              "running",
+              "stopping",
+              "exited",
+              "failed",
+              "lost",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "pid": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "description": "Program-reported status (OSC 7501): idle, working, done, blocked, error",
+            "type": "string"
+          },
+          "status_kind": {
+            "type": "string"
+          },
+          "terminal_id": {
+            "type": "string"
+          },
+          "turn": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "node_id",
+          "generation",
+          "kind",
+          "role",
+          "harness",
+          "instance_id",
+          "desired",
+          "observed",
+          "turn",
+          "adopted",
+          "launch",
+          "version",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "FleetSpace": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetSpace.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "archived_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "desired_node_id": {
+            "description": "Relocation target while a relocation is in progress",
+            "type": "string"
+          },
+          "disconnect_policy": {
+            "enum": [
+              "interrupt",
+              "kill"
+            ],
+            "type": "string"
+          },
+          "goals": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/components/schemas/FleetLease"
+          },
+          "name": {
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The pinned node (effective assignment)",
+            "type": "string"
+          },
+          "pause_mode": {
+            "enum": [
+              "",
+              "hold",
+              "interrupt",
+              "emergency"
+            ],
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "standing_instructions": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "paused",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "workdir": {
+            "description": "Managed folder name on the node",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "goals",
+          "standing_instructions",
+          "node_id",
+          "state",
+          "disconnect_policy",
+          "workdir",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "FleetUpdateSpaceInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetUpdateSpaceInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "disconnect_policy": {
+            "enum": [
+              "interrupt",
+              "kill"
+            ],
+            "type": "string"
+          },
+          "goals": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "standing_instructions": {
+            "maxLength": 50000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "goals",
+          "standing_instructions",
+          "disconnect_policy"
+        ],
+        "type": "object"
+      },
+      "Issue-resetResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Issue-resetResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "token": {
+            "description": "Shown once; hand it to the user out of band",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "List-nodesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-nodesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-runsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-runsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetRun"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-sessionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-sessionsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuthSessionInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-spacesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-spacesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetSpace"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-usersResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-usersResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuthUser"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "LoginInBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/LoginInBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "type": "object"
+      },
+      "Me": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Me.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "csrf_token": {
+            "type": "string"
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "limited": {
+            "description": "MFA verification or enrollment is still required",
+            "type": "boolean"
+          },
+          "method": {
+            "type": "string"
+          },
+          "needs_enroll": {
+            "type": "boolean"
+          },
+          "root": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AuthUser"
+          }
+        },
+        "required": [
+          "root",
+          "method",
+          "session_id",
+          "limited",
+          "needs_enroll",
+          "expires_at",
+          "domains"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Problem.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "code": {
+            "description": "Stable machine-readable error code",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ApperrFieldError"
+            },
+            "type": "array"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "description": "URI identifying the problem type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "type": "object"
+      },
+      "ProtoCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "arch": {
+            "type": "string"
+          },
+          "extra": {},
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "git": {
+            "$ref": "#/components/schemas/ProtoToolInfo"
+          },
+          "harnesses": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoHarnessInfo"
+            },
+            "type": "array"
+          },
+          "os": {
+            "type": "string"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/ProtoRunnerInfo"
+          }
+        },
+        "required": [
+          "os",
+          "arch",
+          "runner",
+          "harnesses",
+          "features"
+        ],
+        "type": "object"
+      },
+      "ProtoHarnessInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "error": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "available",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "ProtoRunnerInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "core_id": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "version",
+          "core_id"
+        ],
+        "type": "object"
+      },
+      "ProtoToolInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "path"
+        ],
+        "type": "object"
+      },
+      "Reauth-passwordRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Reauth-passwordRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "code": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "type": "object"
+      },
+      "RecordingPage": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RecordingPage.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "gaps": {
+            "description": "Sequence discontinuities and explicit gap records",
+            "format": "int64",
+            "type": "integer"
+          },
+          "more": {
+            "type": "boolean"
+          },
+          "next_after": {
+            "description": "Pass as after= to continue",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingRecord"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "description": "A segment ended in an incomplete frame (interrupted writer)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "records",
+          "truncated",
+          "gaps",
+          "next_after",
+          "more"
+        ],
+        "type": "object"
+      },
+      "RecordingRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "cols": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "d": {
+            "contentEncoding": "base64",
+            "type": "string"
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "k": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "rows": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "run": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "t": {
+            "description": "Unix microseconds",
+            "format": "int64",
+            "type": "integer"
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "t",
+          "k"
+        ],
+        "type": "object"
+      },
+      "Send-inputRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Send-inputRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "text": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "Set-node-stateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Set-node-stateRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "disabled",
+              "revoked"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      },
+      "Set-space-stateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Set-space-stateRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "hold",
+              "interrupt",
+              "emergency"
+            ],
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "paused",
+              "archived"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      },
+      "Set-user-grantsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Set-user-grantsRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "grants"
+        ],
+        "type": "object"
+      },
+      "Stop-runRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Stop-runRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "interrupt",
+              "kill"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "SystemInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SystemInfo.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bootstrapped": {
+            "type": "boolean"
+          },
+          "has_admin": {
+            "type": "boolean"
+          },
+          "local_login_disabled": {
+            "type": "boolean"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "ready",
+          "bootstrapped",
+          "has_admin",
+          "local_login_disabled"
+        ],
+        "type": "object"
+      },
+      "TOTPEnrollment": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TOTPEnrollment.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "otpauth_uri": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "secret",
+          "otpauth_uri"
+        ],
+        "type": "object"
+      },
+      "TokenListBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TokenListBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuthAPIToken"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "description": "API token (spaceman_at_…) or the bootstrap root token (spaceman_rt_…)",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "session": {
+        "description": "Web UI session cookie (sm_session on plain-http development)",
+        "in": "cookie",
+        "name": "__Host-sm_session",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "Administrative API for SpaceMan. Browser sessions use a session cookie and send the session's CSRF token in X-CSRF-Token on state-changing requests. Automation sends an API token (`Authorization: Bearer spaceman_at_…`). Updates require If-Match with the resource version; idempotent creates accept an Idempotency-Key header.",
+    "title": "SpaceMan API",
+    "version": "dev"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/admin/root-token": {
+      "delete": {
+        "operationId": "revoke-root-token",
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Revoke the root token",
+        "tags": [
+          "tokens"
+        ]
+      },
+      "get": {
+        "operationId": "get-root-token",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRootToken"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Active root token metadata",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/admin/root-token/rotate": {
+      "post": {
+        "operationId": "rotate-root-token",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedRootToken"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rotate the root token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/admin/tokens": {
+      "get": {
+        "operationId": "list-all-tokens",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenListBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Every API token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/admin/tokens/{token_id}": {
+      "delete": {
+        "operationId": "revoke-any-token",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "pattern": "^atk_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthAPIToken"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Revoke any API token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/audit": {
+      "get": {
+        "operationId": "list-audit",
+        "parameters": [
+          {
+            "description": "Opaque cursor from a previous response's next_cursor",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Opaque cursor from a previous response's next_cursor",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "target_id",
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "actor_id",
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Audit events, newest first",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/audit/verify": {
+      "post": {
+        "operationId": "verify-audit-chain",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditVerifyResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Verify the audit hash chain",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "login",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "User-Agent",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [],
+        "summary": "Sign in with email and password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "No Content",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Sign out (revokes this session)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "get-me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The signed-in principal",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/mfa/enroll": {
+      "post": {
+        "operationId": "start-enroll",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TOTPEnrollment"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Start TOTP enrollment",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/mfa/enroll/confirm": {
+      "post": {
+        "operationId": "confirm-enroll",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "User-Agent",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollConfirmed"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Confirm TOTP enrollment",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/mfa/verify": {
+      "post": {
+        "operationId": "verify-mfa",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "User-Agent",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Complete sign-in with a TOTP or recovery code",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/password": {
+      "post": {
+        "operationId": "change-password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Change-passwordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change your password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/reauth": {
+      "post": {
+        "operationId": "reauth-password",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "User-Agent",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reauth-passwordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Re-authenticate (step-up)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/sessions": {
+      "get": {
+        "operationId": "list-sessions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-sessionsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Your active sessions",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/sessions/{session_id}": {
+      "delete": {
+        "operationId": "revoke-session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Revoke one of your sessions",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/nodes": {
+      "get": {
+        "operationId": "list-nodes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-nodesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List nodes",
+        "tags": [
+          "nodes"
+        ]
+      },
+      "post": {
+        "operationId": "create-node",
+        "parameters": [
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetCreateNodeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetNodeEnrollment"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Register a node and issue its enrollment token",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/nodes/{node_id}": {
+      "get": {
+        "operationId": "get-node",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "pattern": "^nod_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetNode"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get a node",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/nodes/{node_id}/enrollment": {
+      "post": {
+        "operationId": "reissue-enrollment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "pattern": "^nod_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetNodeEnrollment"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Issue a new enrollment token (re-enrollment replaces the node's credentials)",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/nodes/{node_id}/state": {
+      "post": {
+        "operationId": "set-node-state",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "pattern": "^nod_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Set-node-stateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetNode"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Enable, disable or revoke a node (disable and revoke close its connection)",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/spaces": {
+      "get": {
+        "operationId": "list-spaces",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-spacesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Spaces you can see",
+        "tags": [
+          "spaces"
+        ]
+      },
+      "post": {
+        "operationId": "create-space",
+        "parameters": [
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetCreateSpaceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetSpace"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a space pinned to a node",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}": {
+      "delete": {
+        "operationId": "purge-space",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Permanently delete an archived space's records (never upstream repositories)",
+        "tags": [
+          "spaces"
+        ]
+      },
+      "get": {
+        "operationId": "get-space",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetSpace"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get a space",
+        "tags": [
+          "spaces"
+        ]
+      },
+      "put": {
+        "operationId": "update-space",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetUpdateSpaceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetSpace"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Edit a space's profile",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs": {
+      "get": {
+        "operationId": "list-runs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 100,
+              "format": "int64",
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-runsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's runs, newest first",
+        "tags": [
+          "runs"
+        ]
+      },
+      "post": {
+        "operationId": "launch-run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetLaunchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRun"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Launch a run on the space's node",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}": {
+      "get": {
+        "operationId": "get-run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRun"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get a run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/input": {
+      "post": {
+        "operationId": "send-input",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Send-inputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Send safe input to a run (delivered only while the program reports idle, unless forced)",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/recording": {
+      "delete": {
+        "operationId": "delete-recording",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete central's copy of a run's recording",
+        "tags": [
+          "recordings"
+        ]
+      },
+      "get": {
+        "description": "Records are output (base64), size, gap, close and truncation markers in sequence order.",
+        "operationId": "get-recording",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Return records with seq greater than this",
+            "explode": false,
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "description": "Return records with seq greater than this",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 1000,
+              "format": "int64",
+              "maximum": 5000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingPage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replay a run's terminal recording",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/stop": {
+      "post": {
+        "operationId": "stop-run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Stop-runRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRun"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Stop a run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/state": {
+      "post": {
+        "description": "hold admits no new work; interrupt also stops active runs politely; emergency kills them. Archiving needs no active runs.",
+        "operationId": "set-space-state",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Set-space-stateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetSpace"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Pause (hold, interrupt, emergency), resume, archive or restore a space",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/system/info": {
+      "get": {
+        "operationId": "get-system-info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemInfo"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [],
+        "summary": "Public system status",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/tokens": {
+      "get": {
+        "operationId": "list-my-tokens",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenListBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Your API tokens",
+        "tags": [
+          "tokens"
+        ]
+      },
+      "post": {
+        "description": "The token acts for you with the given grants, each of which must be within your own grants. Requests are authorized as both the token and you, so the token loses anything you lose.",
+        "operationId": "create-api-token",
+        "parameters": [
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Create-api-tokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedToken"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create an API token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/tokens/{token_id}": {
+      "delete": {
+        "operationId": "revoke-my-token",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "pattern": "^atk_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthAPIToken"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Revoke one of your API tokens",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/users": {
+      "get": {
+        "operationId": "list-users",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-usersResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List users",
+        "tags": [
+          "users"
+        ]
+      },
+      "post": {
+        "description": "Global administrators (and the root token, for the first administrator) create users with explicit grants. Without a password, issue a reset token afterwards and hand it over out of band.",
+        "operationId": "create-user",
+        "parameters": [
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthCreateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a user",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{user_id}": {
+      "get": {
+        "operationId": "get-user",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "pattern": "^usr_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get a user",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{user_id}/disable": {
+      "post": {
+        "operationId": "disable-user",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "pattern": "^usr_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Disable a user (revokes sessions; tokens stop working)",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{user_id}/enable": {
+      "post": {
+        "operationId": "enable-user",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "pattern": "^usr_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Enable a user",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{user_id}/grants": {
+      "put": {
+        "operationId": "set-user-grants",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "pattern": "^usr_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Set-user-grantsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace a user's manual grants",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{user_id}/reset-token": {
+      "post": {
+        "operationId": "issue-reset",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "pattern": "^usr_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Issue-resetResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Issue a one-time password reset token",
+        "tags": [
+          "users"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    },
+    {
+      "session": []
+    }
+  ],
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ]
+}

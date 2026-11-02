@@ -1,0 +1,32 @@
+body {
+  font-feature-settings: 'cv11', 'ss01', 'tnum';
+}
+
+.mono {
+  font-family: var(--sm-mono);
+  font-size: var(--mantine-font-size-sm);
+}
+
+/* Code reads exactly as typed: no programming ligatures. */
+code,
+pre,
+kbd,
+.mono {
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+}
+
+.sm-terminal {
+  background: #011627;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  padding: 6px;
+  overflow: hidden;
+}
+
+/* Visible keyboard focus everywhere (SM-UI-006). */
+:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 2px;
+}
+

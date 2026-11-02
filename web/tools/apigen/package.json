@@ -1,0 +1,13 @@
+{
+  "name": "spaceman-apigen",
+  "private": true,
+  "description": "Generates web/src/api/schema.gen.ts from api/openapi.json. Separate package because openapi-typescript needs the TypeScript 5 compiler API, while the app uses TypeScript 7 (same arrangement as go-pulse).",
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "gen": "openapi-typescript ../../../api/openapi.json -o ../../src/api/schema.gen.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}
