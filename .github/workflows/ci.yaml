@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 3 * * *" # nightly: long fuzzing and the Pulse/NATS integration suite
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: auto
+
+jobs:
+  go:
+    name: go (lint, vet, race tests, coverage, fuzz smoke, traceability)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+      - name: vet
+        run: make vet custom-vet
+      - name: sqlc drift check
+        run: make sqlc-check
+      - name: analyzer tests
+        run: make tools-test
+      - name: race tests
+        # The race detector slows SQLite transactions several-fold on shared runners; the 100 ms write-transaction guard is
+        # still enforced by the non-race coverage run below.
+        env:
+          SM_TEST_TX_MAX: 500ms
+        run: make race
+      - name: coverage floor
+        run: make coverage
+      - name: requirement traceability
+        run: make traceability
+      - name: fuzz smoke
+        run: make fuzz-smoke FUZZTIME=${{ github.event_name == 'schedule' && '10m' || '10s' }}
+
+  security:
+    name: security (govulncheck, gitleaks)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: gitleaks
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          "$(go env GOPATH)/bin/gitleaks" git --redact --verbose --config .gitleaks.toml .

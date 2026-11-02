@@ -6,7 +6,7 @@
 
 | Requirement | WP | Impl | Simulated evidence | Real evidence | Notes |
 |---|---|---|---|---|---|
-| SM-INV-001 | | todo | | | |
+| SM-INV-001 | M1-02 | partial | `internal/store` `TestLock*` (exclusive data-dir flock, second Open refused) |  | Lock implemented; "one active instance" also needs `serve` (M1-03). |
 | SM-INV-002 | | todo | | | |
 | SM-INV-003 | | todo | | | |
 | SM-INV-004 | | todo | | | |
@@ -24,9 +24,9 @@
 | SM-INV-016 | | todo | | | |
 | SM-INV-017 | | todo | | | |
 | SM-INV-018 | | todo | | | |
-| SM-WORK-001 | | todo | | | |
-| SM-WORK-002 | | todo | | | |
-| SM-WORK-003 | | todo | | | |
+| SM-WORK-001 | M1-01 | implemented | `scripts/check-traceability.py` (CI `make traceability`) |  |  |
+| SM-WORK-002 | M1-01 | implemented | — | docs/contracts/* with revisions; hc spikes S-0..S-2 (2026-11-02, real hc 0.1.16) |  |
+| SM-WORK-003 | M1-01 | implemented | — | commits in PLAN.md §3; D-1 deviation recorded |  |
 | SM-ARCH-001 | | todo | | | |
 | SM-ARCH-002 | | todo | | | |
 | SM-ARCH-003 | | todo | | | |
@@ -190,12 +190,12 @@
 | SM-LIMIT-001 | | todo | | | |
 | SM-LIMIT-002 | | todo | | | |
 | SM-LIMIT-003 | | todo | | | |
-| SM-OBS-001 | | todo | | | |
+| SM-OBS-001 | M1-02 | partial | `internal/obs` `TestLogger*`, `internal/obs/redact` tests |  | Logger + redaction done; HTTP/node log wiring pending. |
 | SM-OBS-002 | | todo | | | |
-| SM-OBS-003 | | todo | | | |
+| SM-OBS-003 | M1-02 | partial | `internal/audit` `TestAppendAndVerify*`, `TestCorrelation*` |  | Hash chain + verify done; durable read cursors and retention-gap signals pending (API). |
 | SM-OBS-004 | | todo | | | |
 | SM-OBS-005 | | todo | | | |
-| SM-STORE-001 | | todo | | | |
+| SM-STORE-001 | M1-02 | partial | `internal/store` tests (pools, pragmas, migrations, snapshots, network-FS refusal) |  | Central SQLite done; node journal pending (M1-05). |
 | SM-STORE-002 | | todo | | | |
 | SM-STORE-003 | | todo | | | |
 | SM-STORE-004 | | todo | | | |

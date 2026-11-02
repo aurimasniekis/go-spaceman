@@ -18,8 +18,8 @@
 ### M1 — Foundation and first real run
 | WP | Scope | Requirements | Status |
 |---|---|---|---|
-| M1-01 | Repo skeleton: go.mod, Makefile, lint, CI workflows, buildinfo, licence files | SM-WORK, SM-PKG-001 | in progress |
-| M1-02 | Store: SQLite pools, data-dir lock, goose migrations, sqlc, IDs, clock, keyring, audit chain | SM-STORE-001, SM-OBS-003, SM-INV-001 | todo |
+| M1-01 | Repo skeleton: go.mod, Makefile, lint, CI workflows, buildinfo, licence files | SM-WORK, SM-PKG-001 | implemented (CI web/pages/release jobs land with their dirs) |
+| M1-02 | Store: SQLite pools, data-dir lock, goose migrations, sqlc, IDs, clock, keyring, audit chain | SM-STORE-001, SM-OBS-003, SM-INV-001 | tested (simulated) |
 | M1-03 | API: huma, problem errors, idempotency, If-Match, pagination, change feed + SSE watch; management listener | SM-API-002, SM-OBS-001/002 | todo |
 | M1-04 | Auth: root-token bootstrap, first admin, Argon2id login, TOTP, sessions, CSRF, throttle, API tokens, Casbin | SM-AUTH-001/003/004/005/006 | todo |
 | M1-05 | Node protocol: enrollment, connect, hello/capabilities, heartbeat, leases, fencing, node journal | SM-NODE-001…007 | todo |
