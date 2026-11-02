@@ -21,7 +21,7 @@
 | SM-INV-013 | | todo | | | |
 | SM-INV-014 | | todo | | | |
 | SM-INV-015 | | todo | | | |
-| SM-INV-016 | | todo | | | |
+| SM-INV-016 | M1-04 | partial | `TestRootIsNotAUserAndLastAdminGuard` |  | Service-level invariant enforcement continues per feature. |
 | SM-INV-017 | | todo | | | |
 | SM-INV-018 | | todo | | | |
 | SM-WORK-001 | M1-01 | implemented | `scripts/check-traceability.py` (CI `make traceability`) |  |  |
@@ -169,12 +169,12 @@
 | SM-XSPACE-001 | | todo | | | |
 | SM-XSPACE-002 | | todo | | | |
 | SM-XSPACE-003 | | todo | | | |
-| SM-AUTH-001 | | todo | | | |
+| SM-AUTH-001 | M1-04 | partial | `internal/auth` (Hallpass-derived suite: Argon2id, TOTP replay, recovery codes, sessions idle/absolute, CSRF, throttle/enumeration, invite/reset, break-glass, review SR-01..SR-27) |  | HTTP wiring (M1-03) and OIDC (M4-01) pending; SSO-grant session scoping K-11. |
 | SM-AUTH-002 | | todo | | | |
-| SM-AUTH-003 | | todo | | | |
-| SM-AUTH-004 | | todo | | | |
-| SM-AUTH-005 | | todo | | | |
-| SM-AUTH-006 | | todo | | | |
+| SM-AUTH-003 | M1-04 | partial | `internal/authz` `TestSpaceScopedRoles`, `TestDomainsAndRoles` |  | Casbin RBAC-with-domains; API enforcement wiring pending (M1-03). |
+| SM-AUTH-004 | M1-04 | partial | `internal/authz` `TestSpaceScopedRoles` (terminal/takeover/secret/approval/node separation) |  |  |
+| SM-AUTH-005 | M1-04 | partial | `internal/auth` `TestRootTokenLifecycle`, `TestRootIsNotAUserAndLastAdminGuard` |  | CLI `admin bootstrap` + API pending. |
+| SM-AUTH-006 | M1-04 | partial | `internal/auth` `TestAPITokens*`, `internal/authz` `TestTokensBoundedByCreator` |  |  |
 | SM-AUTH-007 | | todo | | | |
 | SM-UI-001 | | todo | | | |
 | SM-UI-002 | | todo | | | |

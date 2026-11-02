@@ -63,7 +63,7 @@ type Metrics struct {
 	httpInFlight    prometheus.Gauge
 	sseClients      prometheus.Gauge
 	oidcLogins      *prometheus.CounterVec
-	operatorLogins  *prometheus.CounterVec
+	userLogins      *prometheus.CounterVec
 	nodesConnected  prometheus.Gauge
 	nodeConnects    *prometheus.CounterVec
 	nodeCommands    *prometheus.CounterVec
@@ -119,7 +119,7 @@ func New() *Metrics {
 	m.sseClients = f.gauge("sse_clients", "Connected live-event (SSE) streams.")
 
 	m.oidcLogins = f.counterVec("oidc_logins_total", "OIDC login completions by provider slug and outcome.", "provider", "outcome")
-	m.operatorLogins = f.counterVec("operator_logins_total", "Operator login attempts by method and outcome.", "method", "outcome")
+	m.userLogins = f.counterVec("user_logins_total", "User login attempts by method and outcome.", "method", "outcome")
 
 	m.nodesConnected = f.gauge("nodes_connected", "Node agents currently connected.")
 	m.nodeConnects = f.counterVec("node_connects_total", "Node agent connection attempts by result.", "result")
@@ -352,7 +352,7 @@ func (m *Metrics) SSEClientDisconnected() {
 	m.sseClients.Dec()
 }
 
-// --- Operator authentication ---
+// --- User authentication ---
 
 // OIDCLogin counts an OIDC login completion. provider is the configured provider slug (bounded).
 func (m *Metrics) OIDCLogin(provider string, o LoginOutcome) {
@@ -362,12 +362,12 @@ func (m *Metrics) OIDCLogin(provider string, o LoginOutcome) {
 	m.oidcLogins.WithLabelValues(m.oidcProviders.norm(provider), enumLoginOut.norm(string(o))).Inc()
 }
 
-// OperatorLogin counts an operator login attempt.
-func (m *Metrics) OperatorLogin(method LoginMethod, o LoginOutcome) {
+// UserLogin counts a user login attempt.
+func (m *Metrics) UserLogin(method LoginMethod, o LoginOutcome) {
 	if m == nil {
 		return
 	}
-	m.operatorLogins.WithLabelValues(enumLoginMeth.norm(string(method)), enumLoginOut.norm(string(o))).Inc()
+	m.userLogins.WithLabelValues(enumLoginMeth.norm(string(method)), enumLoginOut.norm(string(o))).Inc()
 }
 
 // --- Nodes and runs ---

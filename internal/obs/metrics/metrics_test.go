@@ -33,7 +33,7 @@ func exercise(m *Metrics) {
 	m.SSEClientConnected()
 	m.SSEClientDisconnected()
 	m.OIDCLogin("porch", LoginSuccess)
-	m.OperatorLogin(LoginPassword, LoginFailure)
+	m.UserLogin(LoginPassword, LoginFailure)
 	m.NodeConnected(1)
 	m.NodeConnect(NodeAccepted)
 	m.NodeCommand(CmdLaunch, CmdAccepted)
@@ -97,7 +97,7 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_http_requests_in_flight":               "gauge:",
 		"spaceman_sse_clients":                           "gauge:",
 		"spaceman_oidc_logins_total":                     "counter:outcome,provider",
-		"spaceman_operator_logins_total":                 "counter:method,outcome",
+		"spaceman_user_logins_total":                     "counter:method,outcome",
 		"spaceman_nodes_connected":                       "gauge:",
 		"spaceman_node_connects_total":                   "counter:result",
 		"spaceman_node_commands_total":                   "counter:result,type",
@@ -168,7 +168,7 @@ func TestEnumLabelsNormalized(t *testing.T) {
 	m.RunEnded(Harness(planted), RunEndReason(planted))
 	m.StoreTx("x", 0, TxResult(planted))
 	m.OIDCLogin(planted, LoginOutcome(planted))
-	m.OperatorLogin(LoginMethod(planted), LoginOutcome(planted))
+	m.UserLogin(LoginMethod(planted), LoginOutcome(planted))
 	m.HTTPRequest("GET /a/"+planted, "BREW", 999, 0)
 
 	if got := seriesValues(t, m, "spaceman_node_connects_total", "result"); !slices.Equal(got, []string{"other", "revoked"}) {

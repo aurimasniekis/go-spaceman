@@ -8,6 +8,22 @@ import (
 	"database/sql"
 )
 
+type ApiToken struct {
+	ID            string
+	Name          string
+	UserID        string
+	Mac           []byte
+	Hint          string
+	CreatedAt     int64
+	ExpiresAt     int64
+	NeverExpires  int64
+	ParentTokenID sql.NullString
+	LastUsedAt    sql.NullInt64
+	LastUsedIp    sql.NullString
+	RevokedAt     sql.NullInt64
+	RevokedBy     sql.NullString
+}
+
 type AuditEvent struct {
 	ID            string
 	Seq           int64
@@ -26,6 +42,27 @@ type AuditEvent struct {
 	Hash          []byte
 }
 
+type Change struct {
+	Seq          int64
+	At           int64
+	SpaceID      sql.NullString
+	ResourceType string
+	ResourceID   string
+	Action       string
+	Version      int64
+}
+
+type IdempotencyKey struct {
+	Principal   string
+	Operation   string
+	Key         string
+	RequestHash []byte
+	Status      int64
+	Body        []byte
+	CreatedAt   int64
+	ExpiresAt   int64
+}
+
 type KeyringKey struct {
 	ID        string
 	Purpose   string
@@ -35,6 +72,68 @@ type KeyringKey struct {
 	State     string
 	CreatedAt int64
 	UpdatedAt int64
+}
+
+type LoginThrottle struct {
+	Key           string
+	Failures      int64
+	NextAllowedAt int64
+	UpdatedAt     int64
+}
+
+type MfaTotp struct {
+	UserID      string
+	SecretEnc   []byte
+	ConfirmedAt sql.NullInt64
+	LastStep    int64
+	CreatedAt   int64
+}
+
+type MfaTotpPending struct {
+	UserID    string
+	SecretEnc []byte
+	CreatedAt int64
+	ExpiresAt int64
+}
+
+type OneTimeToken struct {
+	Hash      []byte
+	Kind      string
+	UserID    sql.NullString
+	DataJson  string
+	ExpiresAt int64
+	UsedAt    sql.NullInt64
+	CreatedAt int64
+	CreatedBy string
+}
+
+type RecoveryCode struct {
+	UserID    string
+	CodeHash  []byte
+	UsedAt    sql.NullInt64
+	CreatedAt int64
+}
+
+type RoleGrant struct {
+	Subject   string
+	Role      string
+	Domain    string
+	Source    string
+	SourceRef string
+	CreatedAt int64
+	CreatedBy string
+}
+
+type RootToken struct {
+	ID         string
+	Mac        []byte
+	Hint       string
+	CreatedAt  int64
+	CreatedBy  string
+	LastUsedAt sql.NullInt64
+	LastUsedIp sql.NullString
+	RevokedAt  sql.NullInt64
+	RevokedBy  sql.NullString
 }
 
 type Setting struct {
@@ -47,4 +146,45 @@ type Setting struct {
 type StoreSpaceProbe struct {
 	ID   int64
 	Data []byte
+}
+
+type User struct {
+	ID             string
+	Email          sql.NullString
+	DisplayName    string
+	Enabled        int64
+	ProvisionedVia string
+	MfaRequired    int64
+	Version        int64
+	CreatedAt      int64
+	CreatedBy      string
+	UpdatedAt      int64
+	DisabledAt     sql.NullInt64
+	LastLoginAt    sql.NullInt64
+}
+
+type UserLocalCredential struct {
+	UserID        string
+	PasswordPhc   string
+	ParamsVersion int64
+	ChangedAt     int64
+	MustChange    int64
+}
+
+type WebSession struct {
+	IDHash            []byte
+	UserID            string
+	CsrfSecret        []byte
+	AuthMethod        string
+	AuthProvider      string
+	MfaAt             sql.NullInt64
+	AuthAt            int64
+	CreatedAt         int64
+	LastSeenAt        int64
+	AbsoluteExpiresAt int64
+	Ip                string
+	UserAgent         string
+	RevokedAt         sql.NullInt64
+	RevokeReason      sql.NullString
+	DisplayID         string
 }

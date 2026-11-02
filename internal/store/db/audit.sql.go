@@ -131,3 +131,65 @@ func (q *Queries) LastAuditEvent(ctx context.Context) (LastAuditEventRow, error)
 	err := row.Scan(&i.Seq, &i.Hash)
 	return i, err
 }
+
+const listAuditPage = `-- name: ListAuditPage :many
+SELECT id, seq, at, actor_type, actor_id, "action", target_type, target_id, outcome, source_ip, correlation_id, details_json, details_enc, prev_hash, hash FROM audit_events
+WHERE (?1 IS NULL OR action = ?1)
+  AND (?2 IS NULL OR target_id = ?2)
+  AND (?3 IS NULL OR actor_id = ?3)
+  AND (?4 IS NULL OR seq < ?4)
+ORDER BY seq DESC LIMIT ?5
+`
+
+type ListAuditPageParams struct {
+	Action    interface{}
+	TargetID  interface{}
+	ActorID   interface{}
+	BeforeSeq interface{}
+	Lim       int64
+}
+
+func (q *Queries) ListAuditPage(ctx context.Context, arg ListAuditPageParams) ([]AuditEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listAuditPage,
+		arg.Action,
+		arg.TargetID,
+		arg.ActorID,
+		arg.BeforeSeq,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuditEvent{}
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.Seq,
+			&i.At,
+			&i.ActorType,
+			&i.ActorID,
+			&i.Action,
+			&i.TargetType,
+			&i.TargetID,
+			&i.Outcome,
+			&i.SourceIp,
+			&i.CorrelationID,
+			&i.DetailsJson,
+			&i.DetailsEnc,
+			&i.PrevHash,
+			&i.Hash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

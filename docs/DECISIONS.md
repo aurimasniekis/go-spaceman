@@ -227,6 +227,26 @@
 - **Consequences:** Same crypto, transaction and redaction behavior as Hallpass, including its tests. Bug fixes in either project should be
   considered for the other.
 
+### ADR-0019 — Root-token bootstrap, scoped API tokens, MFA for privileged grants
+- **Status:** accepted (2026-11-02). **Security-relevant change** relative to Hallpass, reviewed as follows.
+- **Context:**
+  - SM-AUTH-005 requires a full-scope, non-expiring root token, shown once. Hallpass instead issues a 30-minute setup token and has no root token.
+  - SM-AUTH-006 requires API tokens with scopes. Hallpass gives each token exactly one role.
+- **Decision:**
+  - **Bootstrap.** `spaceman admin bootstrap` runs offline, under the data-directory lock and with the KEK. It issues the root token `spaceman_rt_…`
+    (HMAC-stored, hint only), which holds `admin` in `*`.
+  - **First admin.** The root token creates the first administrator, through the API or the `/setup` UI.
+  - **Rotation and revocation.** Rotation is available online (global admin or root) and offline (CLI). Revocation is refused while no enabled
+    global administrator exists. Every step is audited.
+  - **What root cannot do.** Root cannot issue API tokens, since it is not a user. Root authority does not bypass service-level invariants.
+  - **API tokens.** Each token carries its own grant set, and each grant must be covered by the creator's grants (`authz.Covers`). Requests are
+    authorized as both token and creator (`AllowedAll`), so a token loses whatever its creator loses.
+  - **MFA.** TOTP is mandatory for local accounts holding any operator or admin grant, and for all local accounts when `auth.require_totp` is on
+    (the production default).
+- **Consequences:**
+  - The root token is a standing full-authority secret. Operators are told to store it offline and revoke it after creating administrators.
+    The docs and the `/setup` flow say so.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -240,4 +260,5 @@
 | K-7 | TipTap open-source extension set and Markdown serializer. | SM-ATT-003 | Inspect packages and licenses; exclude Pro extensions. |
 | K-8 | llm-knowledge-base-template layout and licence; Piebald dream prompts licence. | KB, dreamer | Fetch and record; attribute or paraphrase per licence. |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |
+| K-11 | Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26). SpaceMan grants have no SSO source yet (OIDC lands in M4-01). | SM-AUTH-002 | When OIDC lands, store SSO grants under the subject `user:<id>#sso`, add that subject only for SSO sessions, and port the SR-26 test. |
 | K-10 | Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode. | SM-ACCT-002 | Verify in a real opt-in run. |

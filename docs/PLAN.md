@@ -21,7 +21,7 @@
 | M1-01 | Repo skeleton: go.mod, Makefile, lint, CI workflows, buildinfo, licence files | SM-WORK, SM-PKG-001 | implemented (CI web/pages/release jobs land with their dirs) |
 | M1-02 | Store: SQLite pools, data-dir lock, goose migrations, sqlc, IDs, clock, keyring, audit chain | SM-STORE-001, SM-OBS-003, SM-INV-001 | tested (simulated) |
 | M1-03 | API: huma, problem errors, idempotency, If-Match, pagination, change feed + SSE watch; management listener | SM-API-002, SM-OBS-001/002 | todo |
-| M1-04 | Auth: root-token bootstrap, first admin, Argon2id login, TOTP, sessions, CSRF, throttle, API tokens, Casbin | SM-AUTH-001/003/004/005/006 | todo |
+| M1-04 | Auth: root-token bootstrap, first admin, Argon2id login, TOTP, sessions, CSRF, throttle, API tokens, Casbin | SM-AUTH-001/003/004/005/006 | in progress (services tested; HTTP/CLI wiring with M1-03) |
 | M1-05 | Node protocol: enrollment, connect, hello/capabilities, heartbeat, leases, fencing, node journal | SM-NODE-001…007 | todo |
 | M1-06 | hc runner: contract spikes K-1/K-2/K-3, client, idempotent launch, adoption, reconcile | SM-RUN-001/002, SM-NODE-004/008/009 | todo |
 | M1-07 | Harness adapters: Claude Code + Codex, isolated dirs, launch shim, MCP bridge (minimal tools) | SM-HARN-001/002/003, SM-ACCT-004 | todo |
@@ -90,7 +90,9 @@
 
 | Date | WP | Summary | Commits | Evidence |
 |---|---|---|---|---|
-| 2026-11-02 | M1-01 | Planning: prompt saved, contracts inspected, tracking docs created | root commit (see §4 D-1) | gitleaks: no leaks |
+| 2026-11-02 | M1-01 | Planning: prompt saved, contracts inspected, tracking docs created | `625719d` (root commit, see §4 D-1) | gitleaks: no leaks |
+| 2026-11-02 | M1-06 | herdr-core spikes S-0..S-2 against an isolated core; ADR-0009/0017 | `1bbee9e` | real hc 0.1.16 |
+| 2026-11-02 | M1-01/02 | Foundation: store, keyring, audit, obs, config, txscope, Makefile, CI | `afe13a8` | `make check` green |
 
 ## 4. Process deviations
 

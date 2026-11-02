@@ -13,3 +13,11 @@ FROM audit_events WHERE seq > ? ORDER BY seq LIMIT ?;
 
 -- name: CountAuditEvents :one
 SELECT count(*) FROM audit_events;
+
+-- name: ListAuditPage :many
+SELECT * FROM audit_events
+WHERE (sqlc.narg(action) IS NULL OR action = sqlc.narg(action))
+  AND (sqlc.narg(target_id) IS NULL OR target_id = sqlc.narg(target_id))
+  AND (sqlc.narg(actor_id) IS NULL OR actor_id = sqlc.narg(actor_id))
+  AND (sqlc.narg(before_seq) IS NULL OR seq < sqlc.narg(before_seq))
+ORDER BY seq DESC LIMIT sqlc.arg(lim);
