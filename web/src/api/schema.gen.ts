@@ -945,6 +945,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's recent messages between agents, control and operators */
+        get: operations["list-messages"];
+        put?: never;
+        /**
+         * Send a durable message to control, a role or a run
+         * @description The recipient is notified when its program is idle and reads it through its tools.
+         */
+        post: operations["send-message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/messages/{message_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A message */
+        get: operations["get-message"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/messages/{message_id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge a message addressed to operators */
+        post: operations["ack-message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/messages/{message_id}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reply to an agent's message
+         * @description A reply to a request resolves it.
+         */
+        post: operations["reply-message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/messages/{message_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close a message or request */
+        post: operations["resolve-message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/queue/decisions": {
         parameters: {
             query?: never;
@@ -2698,6 +2790,60 @@ export interface components {
             session_id: string;
             user?: components["schemas"]["AuthUser"];
         };
+        MessageList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/MessageList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["MessagesMessage"][];
+            /**
+             * Format: int64
+             * @description Messages to operators not yet acknowledged or resolved
+             */
+            operators_pending: number;
+        };
+        MessagesMessage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/MessagesMessage.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            acknowledged_at?: string;
+            acknowledged_by?: string;
+            /** Format: date-time */
+            available_at?: string;
+            /** @description Markdown; untrusted when an agent wrote it */
+            body: string;
+            correlation_id?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @enum {string} */
+            delivered_via?: "" | "terminal_notice" | "mcp_fetch" | "operator_view";
+            from_id?: string;
+            /** @enum {string} */
+            from_kind: "run" | "operator" | "system";
+            from_label?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "message" | "request" | "reply" | "notification";
+            reply_to?: string;
+            resolution?: string;
+            /** Format: date-time */
+            resolved_at?: string;
+            space_id: string;
+            /** @enum {string} */
+            state: "stored" | "available" | "acknowledged" | "resolved";
+            subject: string;
+            to_id?: string;
+            /** @enum {string} */
+            to_kind: "run" | "role" | "control" | "operators";
+            /** Format: int64 */
+            version: number;
+        };
         "Move-human-actionRequest": {
             /**
              * Format: uri
@@ -3041,6 +3187,15 @@ export interface components {
             readonly $schema?: string;
             recovery_codes: string[];
         };
+        "Reply-messageRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Reply-messageRequest.json
+             */
+            readonly $schema?: string;
+            body: string;
+        };
         "Reset-passwordRequest": {
             /**
              * Format: uri
@@ -3055,6 +3210,15 @@ export interface components {
             /** Format: date-time */
             expires_at: string;
             token: string;
+        };
+        "Resolve-messageRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Resolve-messageRequest.json
+             */
+            readonly $schema?: string;
+            resolution?: string;
         };
         "Resolve-quarantineRequest": {
             /**
@@ -3106,6 +3270,22 @@ export interface components {
             readonly $schema?: string;
             force?: boolean;
             text: string;
+        };
+        "Send-messageRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Send-messageRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Markdown */
+            body?: string;
+            correlation_id?: string;
+            /** @description Expect a reply */
+            request?: boolean;
+            subject: string;
+            /** @description control, role:<name> or run:<run id> */
+            to: string;
         };
         "Set-inbox-statusRequest": {
             /**
@@ -5483,6 +5663,213 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-messages": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "send-message": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Send-messageRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagesMessage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagesMessage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "ack-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagesMessage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reply-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reply-messageRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagesMessage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resolve-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Resolve-messageRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagesMessage"];
                 };
             };
             /** @description Error */

@@ -184,6 +184,17 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/inbox/{item_id}` | `get-inbox-item` | Get an inbox item with its attachments |
 | `POST` | `/spaces/{space_id}/inbox/{item_id}/status` | `set-inbox-status` | Change an inbox item's processing status |
 
+### messages
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/messages` | `list-messages` | A space's recent messages between agents, control and operators |
+| `POST` | `/spaces/{space_id}/messages` | `send-message` | Send a durable message to control, a role or a run |
+| `GET` | `/spaces/{space_id}/messages/{message_id}` | `get-message` | A message |
+| `POST` | `/spaces/{space_id}/messages/{message_id}/ack` | `ack-message` | Acknowledge a message addressed to operators |
+| `POST` | `/spaces/{space_id}/messages/{message_id}/reply` | `reply-message` | Reply to an agent's message |
+| `POST` | `/spaces/{space_id}/messages/{message_id}/resolve` | `resolve-message` | Close a message or request |
+
 ### queue
 
 | Method | Path | Operation | Summary |

@@ -31,6 +31,7 @@ export const keys = {
   accounts: ['accounts'] as const,
   accountKinds: ['account-kinds'] as const,
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
+  messages: (space: string) => ['messages', space] as const,
 }
 
 export interface AuditFilter {
@@ -199,4 +200,11 @@ export const useSpaceAccounts = (space: string) =>
   useQuery({
     queryKey: keys.spaceAccounts(space),
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/accounts', { params: { path: { space_id: space } } })).items,
+  })
+
+/** A space's recent messages and how many wait for operators. */
+export const useMessages = (space: string) =>
+  useQuery({
+    queryKey: keys.messages(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space } } })),
   })

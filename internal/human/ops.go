@@ -84,6 +84,7 @@ func (svc *Service) Respond(ctx context.Context, actor audit.Actor, spaceID, id 
 	if err != nil {
 		return nil, err
 	}
+	svc.notified()
 	return svc.Get(ctx, spaceID, id)
 }
 
@@ -141,6 +142,7 @@ func (svc *Service) Cancel(ctx context.Context, actor audit.Actor, spaceID, id s
 	if err != nil {
 		return nil, err
 	}
+	svc.notified()
 	return svc.Get(ctx, spaceID, id)
 }
 
@@ -342,6 +344,9 @@ func (svc *Service) Expire(ctx context.Context) (int, error) {
 			return n, err
 		}
 		n++
+	}
+	if n > 0 {
+		svc.notified()
 	}
 	return n, nil
 }

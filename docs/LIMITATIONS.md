@@ -34,9 +34,14 @@
 ## Human actions
 - **Approvals are advisory.** An approval decision is recorded, audited and sent to the requester, but SpaceMan does not
   yet enforce it on the operation; digest-bound enforcement arrives with the approval gateway (SM-APPR, M3).
-- **Responses are not pushed to agents yet.** Agents ask through `spaceman_human_ask` and read answers with
-  `spaceman_human_get`; notifications are stored durably, and delivery adapters that wake or notify the requester
-  arrive with agent messaging (SM-HUM-009, M2-06).
+- **No routing when the requester is gone.** A response for a run that ended waits as a stored notification; routing
+  it to control or a successor arrives with M4-07 (SM-HUM-009).
+
+## Messaging
+- **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
+  OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself.
+- **Native harness messaging is not used.** Claude Code's and Codex's own messaging features are not verified across
+  standalone runs, so SpaceMan does not rely on them (SM-COMM-003).
 - **Default types only.** Custom types with schema-driven forms arrive in M3 (SM-HTYPE). Reminders and escalation
   arrive in M4; expiry runs once a minute.
 

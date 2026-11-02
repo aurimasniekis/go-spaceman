@@ -163,6 +163,14 @@ type Service struct {
 	audit   *audit.Writer
 	changes *changefeed.Recorder
 	clock   clock.Clock
+	// OnNotify is called after a commit that stored a notification for an agent requester (wakes the notifier).
+	OnNotify func()
+}
+
+func (svc *Service) notified() {
+	if svc.OnNotify != nil {
+		svc.OnNotify()
+	}
 }
 
 // New returns the service.

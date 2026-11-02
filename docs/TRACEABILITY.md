@@ -106,10 +106,10 @@
 | SM-CTRL-004 | | todo | | | |
 | SM-CTRL-005 | | todo | | | |
 | SM-CTRL-006 | | todo | | | |
-| SM-COMM-001 | | todo | | | |
-| SM-COMM-002 | | todo | | | |
-| SM-COMM-003 | | todo | | | |
-| SM-COMM-004 | M2-06 | partial | Tool calls bounded (25 s central, 30 s bridge, 8 per node); dedup keys on inbox, tasks, human actions |  |  |
+| SM-COMM-001 | M2-06 | implemented | `TestSendFetchReply` (addressing, requests, replies resolve, correlation), `TestAcknowledge`, `internal/messages` `TestSendFetchReply`, `TestAcknowledge`, `TestNotifier`, `TestTools`; `internal/app` `TestMessagesDeliveredToIdleRuns` (real bridge, node agent, idle-gated input through the runner) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): operator request stored |  |
+| SM-COMM-002 | M2-06 | implemented | Acknowledgement only via `spaceman_message_ack` or an explicit operator action; recipient-only (`TestAcknowledge`, `TestTools`); notices carry no content (`TestNotifier`) |  |  |
+| SM-COMM-003 | M2-06 | partial | Delivery adapters: terminal notice via idle-gated safe input (refused while busy, throttled, retried), MCP fetch, next launch (role messages wait for a run) (`TestNotifier`, `TestMessagesDeliveredToIdleRuns`) |  | Native harness messaging and hooks are not used (not verified across standalone runs). |
+| SM-COMM-004 | M2-06 | implemented | Dedup keys on messages, inbox, tasks, human actions (`TestSendFetchReply`); tool calls bounded (25 s / 30 s / 8 per node) |  |  |
 | SM-HUM-001 | M2-07 | implemented | `internal/human` `TestOrderingListsAndCounts` (global list filtered by allowed spaces), `TestHumanActionsOverHTTP` (viewer sees only readable spaces; unreadable space 404) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): space tab and Needs you page |  |
 | SM-HUM-002 | M2-06 | implemented | Any run kind can submit (`spaceman_human_ask`, `TestAttachmentsAndHuman`); requester set from the credential (`TestAgentToolsOverBridge`) |  |  |
 | SM-HUM-003 | M2-07 | implemented | `TestTypeSpecificResponses`, `TestCreateValidation` (per-type request validation, informational vs action-required messages) |  |  |
@@ -118,7 +118,7 @@
 | SM-HUM-006 | M2-07 | partial | `TestCommentsAssignCancel` (claim/assign, comments not responses, cancel), `TestOrderingListsAndCounts` (sorting, type filter) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): answer in the drawer | Search and clarification requests arrive later. |
 | SM-HUM-007 | M2-07 | implemented | `TestConcurrentResponsesOneWins` (8 concurrent responses, one wins, one notification), If-Match 428/412/409 in `TestHumanActionsOverHTTP`, follow-ups in `TestCommentsAssignCancel` |  |  |
 | SM-HUM-008 | M2-06 | implemented | `spaceman_human_ask/get/list/cancel`: durable ID returned at once, dedup, own-only cancellation (`TestAttachmentsAndHuman`, `TestAgentToolsOverBridge`) |  | Type discovery with custom types arrives with SM-HTYPE. |
-| SM-HUM-009 | M2-07 | partial | Durable correlated notification rows for agent requesters on resolve/cancel/expire (`TestTypeSpecificResponses`, `TestConcurrentResponsesOneWins`) |  | Delivery adapters (wake, notify, route to control) arrive with M2-06. |
+| SM-HUM-009 | M2-06 | partial | Durable correlated notifications delivered by the notifier and `spaceman_messages`, acknowledged by the requester only (`TestNotifier`) |  | Routing to control or a successor when the requester is gone arrives with M4-07. |
 | SM-HUM-010 | M2-07 | implemented | `TestBlockingAffectsOnlyTheTask` (only the related task is skipped; response unblocks without changing state; expiry keeps it blocked), `TestCreateValidation` (FYI messages cannot block) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): blocking question on a task |  |
 | SM-HUM-011 | M2-07 | partial | `TestRequesterLimit` (per-run limit), per-space limit, `TestDedup`, expiry in `TestBlockingAffectsOnlyTheTask` |  | Reminders and escalation arrive in M4. |
 | SM-HTYPE-001 | | todo | | | |

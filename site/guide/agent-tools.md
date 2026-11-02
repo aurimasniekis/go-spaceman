@@ -25,6 +25,11 @@ come from the run's credential; tool arguments can never name another space.
 | `spaceman_human_get` | Read a human action and its response | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_list` | List human actions (by default your own) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_cancel` | Withdraw a pending action you asked (control: any) | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_messages` | Read waiting messages and human responses | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_message_send` | Message control, operators, a role or a run | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_message_reply` | Reply to a message (resolves a request) | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_message_ack` | Acknowledge a message or human response | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_message_resolve` | Close a request you sent or received | ✓ | ✓ | ✓ | ✓ |
 
 Rules that apply to every tool:
 

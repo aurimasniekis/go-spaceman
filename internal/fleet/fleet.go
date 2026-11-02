@@ -38,6 +38,10 @@ type Options struct {
 	// ResolveAccount picks the account a launch uses inside the launch transaction (SM-ACCT-003); it returns the
 	// account ID stored with the run. Nil: launches carry no account.
 	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (string, error)
+	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.
+	OnRunIdle func(runID string)
+	// OnCommandAck is called inside the transaction that records a node's command acknowledgement.
+	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, result string) error
 }
 
 // Service manages nodes, spaces, leases and runs.

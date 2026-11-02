@@ -238,16 +238,19 @@ type HumanComment struct {
 }
 
 type HumanNotification struct {
-	ID            string
-	ActionID      string
-	SpaceID       string
-	TargetRun     string
-	TargetSession string
-	TargetRole    string
-	Kind          string
-	State         string
-	CreatedAt     int64
-	DeliveredAt   sql.NullInt64
+	ID             string
+	ActionID       string
+	SpaceID        string
+	TargetRun      string
+	TargetSession  string
+	TargetRole     string
+	Kind           string
+	State          string
+	CreatedAt      int64
+	DeliveredAt    sql.NullInt64
+	NoticeCommand  string
+	NoticedAt      sql.NullInt64
+	AcknowledgedAt sql.NullInt64
 }
 
 type IdempotencyKey struct {
@@ -303,6 +306,33 @@ type LoginThrottle struct {
 	Failures      int64
 	NextAllowedAt int64
 	UpdatedAt     int64
+}
+
+type Message struct {
+	ID             string
+	SpaceID        string
+	FromKind       string
+	FromID         string
+	FromLabel      string
+	ToKind         string
+	ToID           string
+	Kind           string
+	Subject        string
+	Body           string
+	CorrelationID  string
+	ReplyTo        string
+	DedupKey       string
+	State          string
+	AvailableAt    sql.NullInt64
+	DeliveredVia   string
+	NoticeCommand  string
+	NoticedAt      sql.NullInt64
+	AcknowledgedAt sql.NullInt64
+	AcknowledgedBy string
+	ResolvedAt     sql.NullInt64
+	Resolution     string
+	CreatedAt      int64
+	Version        int64
 }
 
 type MfaTotp struct {

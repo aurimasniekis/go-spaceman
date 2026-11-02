@@ -1,6 +1,6 @@
 import { Badge, Group, Tabs } from '@mantine/core'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
-import { useHumanActions, useInbox } from '@/api/queries'
+import { useHumanActions, useInbox, useMessages } from '@/api/queries'
 
 /** Section links of a space; inbox and human actions show how many items wait. */
 export function SpaceNav({ spaceId }: { spaceId: string }) {
@@ -10,12 +10,14 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
   const fresh = inbox.data?.pages[0]?.counts.new ?? 0
   const human = useHumanActions(spaceId)
   const waiting = (human.data?.items ?? []).filter((a) => a.status === 'open' || a.status === 'in_progress').length
-  const value = path.includes('/inbox') ? 'inbox' : path.includes('/events') ? 'events' : path.includes('/queue') ? 'queue' : path.includes('/human') ? 'human' : 'overview'
+  const forOperators = useMessages(spaceId).data?.operators_pending ?? 0
+  const value = path.includes('/inbox') ? 'inbox' : path.includes('/events') ? 'events' : path.includes('/queue') ? 'queue' : path.includes('/human') ? 'human' : path.includes('/messages') ? 'messages' : 'overview'
   const to = {
     overview: { to: '/spaces/$spaceId', params: { spaceId } },
     inbox: { to: '/spaces/$spaceId/inbox', params: { spaceId } },
     queue: { to: '/spaces/$spaceId/queue', params: { spaceId } },
     human: { to: '/spaces/$spaceId/human', params: { spaceId } },
+    messages: { to: '/spaces/$spaceId/messages', params: { spaceId } },
     events: { to: '/spaces/$spaceId/events', params: { spaceId } },
   } as const
   return (
@@ -28,6 +30,9 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
         <Tabs.Tab value="queue">Queue</Tabs.Tab>
         <Tabs.Tab value="human">
           <Group gap={6} wrap="nowrap">Human actions{waiting > 0 && <Badge size="xs" color="owlYellow" circle={waiting < 10}>{waiting}</Badge>}</Group>
+        </Tabs.Tab>
+        <Tabs.Tab value="messages">
+          <Group gap={6} wrap="nowrap">Messages{forOperators > 0 && <Badge size="xs" color="owlYellow" circle={forOperators < 10}>{forOperators}</Badge>}</Group>
         </Tabs.Tab>
         <Tabs.Tab value="events">Events</Tabs.Tab>
       </Tabs.List>

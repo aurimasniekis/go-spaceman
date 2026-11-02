@@ -333,9 +333,12 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		cmd, _ := svc.s.R().GetNodeCommand(ctx, a.CommandID)
 		svc.opts.Metrics.NodeCommand(metrics.CommandType(cmd.Kind), metrics.CommandResult(a.Result))
 		return svc.s.W().TxNamed(ctx, "fleet.ack", func(tx *store.Tx) error {
-			_, err := tx.Q.AckCommand(ctx, db.AckCommandParams{State: a.Result, Reason: truncate(a.Reason, 500), AckedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
+			n, err := tx.Q.AckCommand(ctx, db.AckCommandParams{State: a.Result, Reason: truncate(a.Reason, 500), AckedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 				ID: a.CommandID, NodeID: s.nodeID})
-			return err
+			if err != nil || n == 0 || svc.opts.OnCommandAck == nil {
+				return err
+			}
+			return svc.opts.OnCommandAck(ctx, tx, a.CommandID, a.Result)
 		})
 	case proto.TypeRunReport:
 		var rep proto.RunReport

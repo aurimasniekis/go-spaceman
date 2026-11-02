@@ -63,11 +63,12 @@ var (
 	RecordingRead    = perm("recording", "read")
 	RecordingDelete  = perm("recording", "delete")
 
-	InboxRead   = perm("inbox", "read")
-	InboxWrite  = perm("inbox", "write")
-	QueueRead   = perm("queue", "read")
-	QueueWrite  = perm("queue", "write") // reorder, cancel, reassign
-	MessageRead = perm("message", "read")
+	InboxRead    = perm("inbox", "read")
+	InboxWrite   = perm("inbox", "write")
+	QueueRead    = perm("queue", "read")
+	QueueWrite   = perm("queue", "write") // reorder, cancel, reassign
+	MessageRead  = perm("message", "read")
+	MessageWrite = perm("message", "write") // send to agents, acknowledge, reply and resolve operator messages
 
 	HumanRead      = perm("human_action", "read")
 	HumanRespond   = perm("human_action", "respond") // answer, complete, acknowledge, comment, assign
@@ -121,7 +122,7 @@ var rolePermissions = map[Role][]Permission{
 		MemoryRead, SpaceConfigRead, TemplateRead, HumanTypeRead, PromptRead, MCPRead, SkillRead, NodeRead,
 	},
 	RoleOperator: {
-		SpaceWrite, RunControl, TerminalWatch, RecordingRead, InboxWrite, QueueWrite, HumanRespond, ApprovalDecide,
+		SpaceWrite, RunControl, TerminalWatch, RecordingRead, InboxWrite, QueueWrite, MessageWrite, HumanRespond, ApprovalDecide,
 		AttachmentWrite, SubscriptionWrite, ReplayExecute, KBWrite, MemoryWrite, SpaceConfigWrite, ConnectionRead,
 	},
 	// Admins hold every permission ("*"), including terminal takeover, diagnostics, recording deletion, secrets and,

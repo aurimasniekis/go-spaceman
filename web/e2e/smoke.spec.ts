@@ -261,6 +261,22 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByText('Nothing is waiting for you.')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Needs you', exact: true })).toBeVisible()
 
+  // Messages: an operator request to control is stored durably until a control run can see it.
+  await page.getByRole('link', { name: 'Spaces' }).click()
+  await page.getByRole('link', { name: 'Payments platform' }).click()
+  await page.getByRole('tab', { name: /Messages/ }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
+  const compose = page.getByRole('dialog', { name: 'Send a message' })
+  await compose.getByLabel('Subject').fill('Pause deploys until the bank window closes')
+  await compose.getByRole('textbox', { name: 'Message' }).fill('The bank maintenance window ends at **06:00 UTC**.')
+  await compose.getByLabel('Expect a reply (a request)').check()
+  await compose.getByRole('button', { name: 'Send', exact: true }).click()
+  const msg = page.getByRole('listitem', { name: /Pause deploys until the bank window closes/ })
+  await expect(msg).toContainText('stored')
+  await msg.click()
+  await expect(page.getByText('Not yet seen by a recipient')).toBeVisible()
+  await page.keyboard.press('Escape')
+
   // Audit shows what happened.
   await page.getByRole('link', { name: 'Audit log' }).click()
   await expect(page.getByText('run.launched').first()).toBeVisible()

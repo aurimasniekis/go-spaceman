@@ -183,13 +183,39 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 }
 
 func (svc *Service) queueCommand(ctx context.Context, tx *store.Tx, nodeID, spaceID, runID string, gen int64, kind, key string, payload any) error {
+	_, err := svc.queueCommandID(ctx, tx, nodeID, spaceID, runID, gen, kind, key, payload)
+	return err
+}
+
+func (svc *Service) queueCommandID(ctx context.Context, tx *store.Tx, nodeID, spaceID, runID string, gen int64, kind, key string, payload any) (string, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return tx.Q.InsertNodeCommand(ctx, db.InsertNodeCommandParams{ID: ids.New(ids.Command), NodeID: nodeID, SpaceID: spaceID,
+	id := ids.New(ids.Command)
+	return id, tx.Q.InsertNodeCommand(ctx, db.InsertNodeCommandParams{ID: id, NodeID: nodeID, SpaceID: spaceID,
 		RunID: sql.NullString{String: runID, Valid: runID != ""}, Generation: gen, Kind: kind, IdempotencyKey: key, PayloadJson: string(b),
 		CreatedAt: tx.NowMicros()})
+}
+
+// QueueNotice queues safe (idle-gated) input for a running run inside the caller's transaction and returns the
+// command ID; the node refuses it while the program is busy (SM-COMM-003). Call KickRun after the commit.
+func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text string) (string, error) {
+	r, err := tx.Q.GetRun(ctx, runID)
+	if err != nil {
+		return "", err
+	}
+	if r.Desired != "running" || ended(r.Observed) {
+		return "", apperr.New(apperr.CodePrecondition, "the run is not running")
+	}
+	return svc.queueCommandID(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdInput, "notice:"+ids.New(ids.Message), proto.InputPayload{Text: text})
+}
+
+// KickRun wakes the dispatch loop of the run's node.
+func (svc *Service) KickRun(ctx context.Context, runID string) {
+	if r, err := svc.s.R().GetRun(ctx, runID); err == nil {
+		svc.hub.Kick(r.NodeID)
+	}
 }
 
 // failUndispatched ends a run whose launch could not be sent (its account became unusable after the launch was
@@ -327,6 +353,7 @@ func (svc *Service) ListRuns(ctx context.Context, spaceID string, limit int) ([]
 // applyReport records a node's observation of a run. Reports for another node or an older lease generation are
 // fenced (SM-NODE-006); a run central wants stopped but the node reports running gets a new stop command.
 func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.RunReport) (fenced bool, err error) {
+	becameIdle := false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:
 	default:
@@ -371,8 +398,12 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 				return err
 			}
 		}
+		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State)
 		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
 	})
+	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
+		svc.opts.OnRunIdle(rep.RunID)
+	}
 	if fenced {
 		svc.opts.Metrics.LeaseFenced()
 	}

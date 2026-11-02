@@ -33,6 +33,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/messages"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/health"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
@@ -63,6 +64,9 @@ type Central struct {
 	Events *events.Service
 	// Queue is each space's execution queue (SM-QUEUE-*).
 	Queue *queue.Service
+	// Messages is durable communication between agents, control and operators (SM-COMM-*); Notifier delivers notices.
+	Messages *messages.Service
+	Notifier *messages.Notifier
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Accounts holds harness credentials (SM-ACCT-*).
@@ -111,7 +115,19 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(), Clock: o.Clock,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), ResolveAccount: accounts.Resolve})
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), ResolveAccount: accounts.Resolve,
+		// The notifier is created below; these hooks only run once the server serves.
+		OnRunIdle: func(string) {
+			if c.Notifier != nil {
+				c.Notifier.Kick()
+			}
+		},
+		OnCommandAck: func(ctx context.Context, tx *store.Tx, commandID, result string) error {
+			if c.Notifier == nil {
+				return nil
+			}
+			return c.Notifier.OnCommandAck(ctx, tx, commandID, result)
+		}})
 	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
 	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
 		if run.Launch.AccountRef == "" {
@@ -136,7 +152,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Inbox = inbox.New(st, c.Audit, c.Changes, c.Attachments)
 	c.Queue = queue.New(st, c.Audit, c.Changes)
 	c.Human = human.New(st, c.Audit, c.Changes, o.Clock)
-	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human})
+	c.Messages = messages.New(st, c.Audit, c.Changes)
+	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
+	c.Human.OnNotify = c.Notifier.Kick
+	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages)}})
 	c.Fleet.Hub().Tools = c.Tools.Dispatch
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Events.SeedBuiltins(ctx); err != nil {
@@ -189,7 +209,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -247,6 +267,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
 	go c.expireHumanActions(ctx)
+	go c.Notifier.Run(ctx)
 	go events.NewManager(c.Events, c.Log).Run(ctx)
 	c.Health.MarkReady()
 	c.Log.Info("spaceman serving", slog.String("listen", c.Cfg.HTTP.Listen), slog.String("management", c.Cfg.HTTP.ManagementListen),
@@ -321,13 +342,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules} {
 		for k, v := range m {
 			out[k] = v
 		}

@@ -38,6 +38,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   rotation applies to later launches.
 - Agent tools: every run's SpaceMan MCP server now serves the tools its kind may use, over the node connection: reading
   and adding inbox items, reading and managing tasks, fetching attachments, and asking people through human actions.
+- Messages: durable messages and requests between agents, control and operators, with delivery states SpaceMan tracks.
+  Idle agents get a one-line notice in their terminal; content is read through their tools. Human responses reach the
+  agent that asked the same way. Each space has a Messages tab.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

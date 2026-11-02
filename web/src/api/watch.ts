@@ -53,6 +53,9 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'task':
       if (c.space_id) void qc.invalidateQueries({ queryKey: keys.queue(c.space_id) })
       break
+    case 'message':
+      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.messages(c.space_id) })
+      break
     case 'human_action':
       if (c.space_id) void qc.invalidateQueries({ queryKey: keys.human(c.space_id) })
       void qc.invalidateQueries({ queryKey: keys.humanPending })

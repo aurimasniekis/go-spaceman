@@ -457,7 +457,7 @@ func (q *Queries) ListHumanComments(ctx context.Context, actionID string) ([]Hum
 }
 
 const listHumanNotifications = `-- name: ListHumanNotifications :many
-SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at FROM human_notifications WHERE action_id = ? ORDER BY created_at
+SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at FROM human_notifications WHERE action_id = ? ORDER BY created_at
 `
 
 func (q *Queries) ListHumanNotifications(ctx context.Context, actionID string) ([]HumanNotification, error) {
@@ -480,6 +480,9 @@ func (q *Queries) ListHumanNotifications(ctx context.Context, actionID string) (
 			&i.State,
 			&i.CreatedAt,
 			&i.DeliveredAt,
+			&i.NoticeCommand,
+			&i.NoticedAt,
+			&i.AcknowledgedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -557,7 +560,7 @@ func (q *Queries) ListPendingHumanActions(ctx context.Context, limit int64) ([]H
 }
 
 const listPendingNotifications = `-- name: ListPendingNotifications :many
-SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at FROM human_notifications WHERE space_id = ? AND state = 'pending' ORDER BY created_at LIMIT ?
+SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at FROM human_notifications WHERE space_id = ? AND state = 'pending' ORDER BY created_at LIMIT ?
 `
 
 type ListPendingNotificationsParams struct {
@@ -585,6 +588,9 @@ func (q *Queries) ListPendingNotifications(ctx context.Context, arg ListPendingN
 			&i.State,
 			&i.CreatedAt,
 			&i.DeliveredAt,
+			&i.NoticeCommand,
+			&i.NoticedAt,
+			&i.AcknowledgedAt,
 		); err != nil {
 			return nil, err
 		}

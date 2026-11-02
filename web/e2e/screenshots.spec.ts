@@ -165,6 +165,12 @@ test('documentation screenshots', async ({ page, browser }) => {
   await human(payments.id, { type: 'todo', title: "Confirm the bank's maintenance window", request: { steps: ['Email the bank integration contact', 'Record the window in the runbook'] } })
   await human(payments.id, { type: 'message', title: 'Weekend settlement runs are paused until Monday', request: { requires_ack: false }, priority: 'low' })
   await human(docs.id, { type: 'todo', title: 'Review the wording of the refunds API reference' })
+  // Messages from operators: a request to control, a note to every reviewer, one resolved.
+  const msg = (space: string, body: Record<string, unknown>) => api.call<{ id: string }>('POST', `/spaces/${space}/messages`, body)
+  await msg(payments.id, { to: 'control', subject: 'Hold deploys until the bank window closes', request: true, body: 'The window ends at **06:00 UTC** on Monday.' })
+  await msg(payments.id, { to: 'role:reviewer', subject: 'Check refund idempotency in every review', body: 'Duplicate refunds were reported twice this week.' })
+  const old = await msg(payments.id, { to: 'control', subject: 'Rotate the staging webhook secret after the freeze' })
+  await api.call('POST', `/spaces/${payments.id}/messages/${old.id}/resolve`, { resolution: 'done on Friday' })
   const answered = await human(payments.id, { type: 'question', title: 'Which currency should the refund export use?', request: { options: ['EUR', 'Original currency'] } })
   await api.call('POST', `/spaces/${payments.id}/human-actions/${answered.id}/respond`, { outcome: 'answered', answer: 'Original currency' }, { 'If-Match': `"${answered.version}"` })
 
@@ -305,6 +311,11 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Choose accounts' }).click()
     await expect(page.getByLabel('Allow team-claude')).toBeChecked()
+  })
+  await capture(page, 'messages', async () => {
+    await page.goto(`/spaces/${payments.id}/messages`)
+    await page.getByRole('listitem', { name: /Hold deploys until the bank window closes/ }).click()
+    await expect(page.getByText('Not yet seen by a recipient')).toBeVisible()
   })
   await capture(page, 'human-global', async () => {
     await page.goto('/human')

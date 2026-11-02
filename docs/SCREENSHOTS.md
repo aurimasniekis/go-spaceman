@@ -31,6 +31,7 @@
 | `human-global` | Human actions | Needs you: pending actions across spaces with the nav badge | current |
 | `human-space` | Human actions | A space's human actions, including a resolved one | current |
 | `human-form-default` | Human actions | Approval drawer with the advisory notice and distinct Approve/Deny | current |
+| `messages` | Agent messaging | A space's messages with delivery states and a request's detail | current |
 | `human-form-custom` | Custom types (M3) | Schema-driven form | todo |
 | `kb-sessions` | KB/support (M3) | KB support sessions | todo |
 | `events-catalog` | Events and subscriptions | Template catalog | current |
