@@ -455,6 +455,32 @@
         ],
         "type": "object"
       },
+      "BreakGlassStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/BreakGlassStatus.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "alert": {
+            "type": "boolean"
+          },
+          "at": {
+            "description": "Time of the most recent unacknowledged use",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alert"
+        ],
+        "type": "object"
+      },
       "Change-passwordRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1765,6 +1791,125 @@
         ],
         "type": "object"
       },
+      "Recovery-loginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Recovery-loginRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
+      "RecoveryOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RecoveryOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "me": {
+            "$ref": "#/components/schemas/Me"
+          },
+          "mfa_reset": {
+            "description": "The account's TOTP factor and recovery codes were removed",
+            "type": "boolean"
+          },
+          "password_reset": {
+            "$ref": "#/components/schemas/ResetToken"
+          }
+        },
+        "required": [
+          "me",
+          "mfa_reset"
+        ],
+        "type": "object"
+      },
+      "Regenerate-recovery-codesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Regenerate-recovery-codesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "recovery_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "recovery_codes"
+        ],
+        "type": "object"
+      },
+      "Reset-passwordRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Reset-passwordRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "type": "object"
+      },
+      "ResetToken": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "Send-inputRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2009,6 +2154,62 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/admin/break-glass": {
+      "get": {
+        "operationId": "get-break-glass",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BreakGlassStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Unacknowledged break-glass use",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/break-glass/acknowledge": {
+      "post": {
+        "description": "Clears the alert for every break-glass use recorded so far (audited).",
+        "operationId": "acknowledge-break-glass",
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Acknowledge break-glass use",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/root-token": {
       "delete": {
         "operationId": "revoke-root-token",
@@ -2487,6 +2688,38 @@
         ]
       }
     },
+    "/auth/mfa/recovery-codes": {
+      "post": {
+        "description": "The previous codes stop working. Needs a recent re-authentication with TOTP.",
+        "operationId": "regenerate-recovery-codes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Regenerate-recovery-codesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace your recovery codes",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/mfa/verify": {
       "post": {
         "operationId": "verify-mfa",
@@ -2630,6 +2863,101 @@
           }
         },
         "summary": "Re-authenticate (step-up)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/recover": {
+      "post": {
+        "description": "Recovery tokens come only from `spaceman admin recover` on the server. The user's other sessions, TOTP factor and recovery codes are removed; the session is limited until a new factor is enrolled when policy requires one.",
+        "operationId": "recovery-login",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "User-Agent",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Recovery-loginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryOut"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [],
+        "summary": "Sign in with a break-glass recovery token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/reset": {
+      "post": {
+        "description": "Reset tokens are issued by an administrator (or by a recovery login). Every session of the user ends.",
+        "operationId": "reset-password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reset-passwordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [],
+        "summary": "Set a new password with a reset token",
         "tags": [
           "auth"
         ]

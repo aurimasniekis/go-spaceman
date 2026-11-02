@@ -98,7 +98,7 @@ function UsersPage() {
       <CreateUserModal opened={creating} onClose={() => setCreating(false)} />
       {editing && <EditGrantsModal user={editing} onClose={() => setEditing(null)} />}
       <SecretModal title={`Password reset token for ${reset?.user ?? ''}`} secret={reset?.token ?? null} onClose={() => setReset(null)}>
-        <Text size="sm">Give it to the user over a trusted channel. It sets a new password once.</Text>
+        <Text size="sm">Give it to the user over a trusted channel. They open <b>{window.location.origin}/reset</b>, paste it and choose a new password. It works once.</Text>
       </SecretModal>
     </>
   )

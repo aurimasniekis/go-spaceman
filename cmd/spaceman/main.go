@@ -163,7 +163,7 @@ func adminCmd(g *globals) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Recovery login token (single use, expires %s):\n\n  %s\n\nOpen <public_url>/recover and paste it. This use is audited and raises an alert until acknowledged.\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "Recovery login token (single use, expires %s):\n\n  %s\n\nOpen <public_url>/recover and paste it, or POST it to /api/v1/auth/recover. This use is audited and raises an alert until acknowledged.\n",
 				exp.Format("2006-01-02 15:04 MST"), tok)
 			return nil
 		},

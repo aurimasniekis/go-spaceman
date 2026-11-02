@@ -40,7 +40,7 @@ export function setReauthHandler(h: ReauthHandler): () => void {
 }
 
 /** Paths that render without a session. */
-export const PUBLIC_PATHS = ['/login', '/setup']
+export const PUBLIC_PATHS = ['/login', '/setup', '/reset', '/recover']
 
 export function isPublicPath(path: string): boolean {
   return PUBLIC_PATHS.includes(path)

@@ -122,6 +122,10 @@ export function LoginPage({ returnTo }: { returnTo?: string }) {
           </pw.Subscribe>
         </Stack>
       </form>
+      <Group justify="space-between">
+        <Anchor component={Link} to="/reset" size="xs">I have a password reset token</Anchor>
+        <Anchor component={Link} to="/recover" size="xs">Recover access</Anchor>
+      </Group>
     </AuthLayout>
   )
 }

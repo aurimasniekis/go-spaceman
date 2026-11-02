@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/admin/break-glass": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Unacknowledged break-glass use */
+        get: operations["get-break-glass"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/break-glass/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acknowledge break-glass use
+         * @description Clears the alert for every break-glass use recorded so far (audited).
+         */
+        post: operations["acknowledge-break-glass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/root-token": {
         parameters: {
             query?: never;
@@ -192,6 +229,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/mfa/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace your recovery codes
+         * @description The previous codes stop working. Needs a recent re-authentication with TOTP.
+         */
+        post: operations["regenerate-recovery-codes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/mfa/verify": {
         parameters: {
             query?: never;
@@ -237,6 +294,46 @@ export interface paths {
         put?: never;
         /** Re-authenticate (step-up) */
         post: operations["reauth-password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with a break-glass recovery token
+         * @description Recovery tokens come only from `spaceman admin recover` on the server. The user's other sessions, TOTP factor and recovery codes are removed; the session is limited until a new factor is enrolled when policy requires one.
+         */
+        post: operations["recovery-login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set a new password with a reset token
+         * @description Reset tokens are issued by an administrator (or by a recovery login). Every session of the user ends.
+         */
+        post: operations["reset-password"];
         delete?: never;
         options?: never;
         head?: never;
@@ -812,6 +909,20 @@ export interface components {
             source_ref?: string;
             subject: string;
         };
+        BreakGlassStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/BreakGlassStatus.json
+             */
+            readonly $schema?: string;
+            alert: boolean;
+            /**
+             * Format: date-time
+             * @description Time of the most recent unacknowledged use
+             */
+            at?: string;
+        };
         "Change-passwordRequest": {
             /**
              * Format: uri
@@ -1286,6 +1397,51 @@ export interface components {
             t: number;
             why?: string;
         };
+        "Recovery-loginRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Recovery-loginRequest.json
+             */
+            readonly $schema?: string;
+            token: string;
+        };
+        RecoveryOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RecoveryOut.json
+             */
+            readonly $schema?: string;
+            me: components["schemas"]["Me"];
+            /** @description The account's TOTP factor and recovery codes were removed */
+            mfa_reset: boolean;
+            password_reset?: components["schemas"]["ResetToken"];
+        };
+        "Regenerate-recovery-codesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Regenerate-recovery-codesResponse.json
+             */
+            readonly $schema?: string;
+            recovery_codes: string[];
+        };
+        "Reset-passwordRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Reset-passwordRequest.json
+             */
+            readonly $schema?: string;
+            password: string;
+            token: string;
+        };
+        ResetToken: {
+            /** Format: date-time */
+            expires_at: string;
+            token: string;
+        };
         "Send-inputRequest": {
             /**
              * Format: uri
@@ -1379,6 +1535,62 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "get-break-glass": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BreakGlassStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "acknowledge-break-glass": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-root-token": {
         parameters: {
             query?: never;
@@ -1747,6 +1959,35 @@ export interface operations {
             };
         };
     };
+    "regenerate-recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Regenerate-recovery-codesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "verify-mfa": {
         parameters: {
             query?: never;
@@ -1838,6 +2079,73 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Me"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "recovery-login": {
+        parameters: {
+            query?: never;
+            header?: {
+                "User-Agent"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Recovery-loginRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reset-passwordRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

@@ -1,10 +1,10 @@
-import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { expect, test, type Page } from '@playwright/test'
 
+import { env, nextTotpWindow, startAgent } from './stack'
 import { totp } from './totp'
 
 /**
@@ -12,12 +12,6 @@ import { totp } from './totp'
  * with TOTP enrollment, node creation and enrollment, a space, a launched run watched live, stopped, and replayed.
  * The harness is the stack's stub; no model is contacted. Screenshots go to SM_SHOTS (for review, not committed here).
  */
-
-const env = (k: string) => {
-  const v = process.env[k]
-  if (!v) throw new Error(`${k} is not set: source the env file printed by scripts/dev-stack.sh up`)
-  return v
-}
 
 const shots = process.env.SM_SHOTS ?? join(process.cwd(), 'test-results', 'shots')
 mkdirSync(shots, { recursive: true })
@@ -27,22 +21,10 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: join(shots, `${name}.png`), fullPage: false, animations: 'disabled' })
 }
 
-// Strips variables that would point the agent at a surrounding herdr-core terminal or the default core.
-function agentEnv(): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {}
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('HC_') && !k.startsWith('XDG_') && !k.startsWith('SPACEMAN_')) out[k] = v
-  return { ...out, HC_SESSION: env('SM_HC_SESSION'), HC_SOCKET: env('SM_HC_SOCKET'), XDG_STATE_HOME: `${env('SM_HC_HOME')}/state`, XDG_CONFIG_HOME: `${env('SM_HC_HOME')}/config` }
-}
-
-async function nextTotpWindow() {
-  const ms = 30_000 - (Date.now() % 30_000) + 750
-  await new Promise((r) => setTimeout(r, ms))
-}
-
 test.describe.configure({ mode: 'serial' })
 
 test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   const email = 'alex@example.com'
   // Generated per run (throwaway stack); saved with the TOTP secret in the stack directory for manual inspection.
   const password = `e2e-${randomBytes(18).toString('base64url')}`
@@ -92,12 +74,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await shot(page, 'node-enrollment-token')
   await page.getByRole('button', { name: 'Done' }).click()
 
-  const agent = join(env('SM_BIN'), 'spaceman-agent')
-  execFileSync(agent, ['-c', env('SM_AGENT_CONFIG'), 'enroll', '--token', token], { env: agentEnv() })
-  const log = openSync(join(env('SM_DIR'), 'agent.log'), 'a')
-  const child = spawn(agent, ['-c', env('SM_AGENT_CONFIG'), 'run'], { env: agentEnv(), stdio: ['ignore', log, log], detached: true })
-  child.unref()
-  writeFileSync(join(env('SM_DIR'), 'agent.pid'), String(child.pid))
+  startAgent(token)
   await expect(page.getByText('connected', { exact: true })).toBeVisible({ timeout: 30_000 })
   await shot(page, 'nodes')
 
@@ -139,4 +116,26 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('link', { name: 'Audit log' }).click()
   await expect(page.getByText('run.launched').first()).toBeVisible()
   await shot(page, 'audit')
+
+  // Password reset: an administrator issues a single-use token, the user sets a new password at /reset and signs in.
+  await page.getByRole('link', { name: 'Users' }).click()
+  await page.getByRole('button', { name: 'Actions for Alex Admin' }).click()
+  await page.getByRole('menuitem', { name: 'Password reset token' }).click()
+  const reset = (await page.getByTestId('secret').innerText()).trim()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await page.goto('/reset')
+  const newPassword = `e2e-${randomBytes(18).toString('base64url')}`
+  await page.getByLabel('Reset token').fill(reset)
+  await page.getByLabel('New password').fill(newPassword)
+  await page.getByLabel('Confirm password').fill(newPassword)
+  await page.getByRole('button', { name: 'Set password' }).click()
+  await expect(page.getByText('Password changed')).toBeVisible()
+  await page.getByRole('link', { name: 'Sign in' }).click()
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(newPassword)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await nextTotpWindow()
+  await page.getByRole('textbox', { name: 'Code' }).fill(totp(secret))
+  await page.getByRole('button', { name: 'Verify' }).click()
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
 })

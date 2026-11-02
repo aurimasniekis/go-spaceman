@@ -1,13 +1,16 @@
-import { ActionIcon, AppShell, Badge, Group, Menu, NavLink, ScrollArea, Stack, Text, Tooltip, UnstyledButton, useComputedColorScheme, useMantineColorScheme } from '@mantine/core'
+import { ActionIcon, Alert, AppShell, Badge, Button, Group, Menu, NavLink, ScrollArea, Stack, Text, Tooltip, UnstyledButton, useComputedColorScheme, useMantineColorScheme } from '@mantine/core'
 import { useDisclosure, useLocalStorage } from '@mantine/hooks'
 import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLogout, IconMoon, IconSun, IconUserCircle } from '@tabler/icons-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
-import { api } from '@/api/client'
+import { api, check, unwrap } from '@/api/client'
 import { useMe } from '@/api/queries'
 import { useWatch } from '@/api/watch'
+import { hasGlobal } from '@/lib/access'
+import { datetime } from '@/lib/format'
 import { visibleNav } from '@/lib/nav'
+import { notifyError } from '@/lib/notify'
 import { Logo } from './Logo'
 
 function LiveIndicator() {
@@ -18,6 +21,32 @@ function LiveIndicator() {
     <Tooltip label={label}>
       <Badge color={color} variant="dot" size="sm" aria-label={label}>{state}</Badge>
     </Tooltip>
+  )
+}
+
+/**
+ * Raised after a break-glass recovery login (`spaceman admin recover`) until an administrator acknowledges it, so an
+ * unexpected recovery cannot go unnoticed.
+ */
+function BreakGlassBanner() {
+  const qc = useQueryClient()
+  const status = useQuery({ queryKey: ['break-glass'], queryFn: async () => unwrap(await api.GET('/admin/break-glass')), refetchInterval: 60_000 })
+  if (!status.data?.alert) return null
+  const ack = async () => {
+    try {
+      check(await api.POST('/admin/break-glass/acknowledge'))
+      void qc.invalidateQueries({ queryKey: ['break-glass'] })
+    } catch (e) {
+      notifyError(e)
+    }
+  }
+  return (
+    <Alert color="owlRed" title="Break-glass recovery was used" mb="md">
+      <Group justify="space-between" wrap="nowrap">
+        <span>An account was recovered with <code>spaceman admin recover</code> at {datetime(status.data.at)}. Check the audit log (<code>breakglass.login</code>), then acknowledge.</span>
+        <Button color="owlRed" variant="light" onClick={() => void ack()}>Acknowledge</Button>
+      </Group>
+    </Alert>
   )
 }
 
@@ -113,7 +142,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main>{children}</AppShell.Main>
+      <AppShell.Main>
+        {hasGlobal(me, 'admin') && <BreakGlassBanner />}
+        {children}
+      </AppShell.Main>
     </AppShell>
   )
 }

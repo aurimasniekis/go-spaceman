@@ -122,6 +122,7 @@ func Register(mux *http.ServeMux, d *Deps) huma.API {
 	api.UseMiddleware(d.authorizeOps(api))
 	registerSystem(api, d)
 	registerAuth(api, d)
+	registerRecovery(api, d)
 	registerUsers(api, d)
 	registerTokens(api, d)
 	registerAudit(api, d)

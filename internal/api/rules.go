@@ -50,6 +50,12 @@ var rules = map[string]Rule{
 	"list-sessions":   {Session: true, UserOnly: true},
 	"revoke-session":  {Session: true, UserOnly: true},
 	"change-password": {Session: true, UserOnly: true, Reauth: true},
+	// Token redemption is public: the single-use token is the credential (throttled and audited by the auth service).
+	"reset-password":            public(),
+	"recovery-login":            public(),
+	"regenerate-recovery-codes": {Session: true, UserOnly: true, Reauth: true, MFA: true},
+	"get-break-glass":           Global(authz.SystemRead),
+	"acknowledge-break-glass":   StepUp(authz.SystemWrite),
 
 	"list-users":      Global(authz.UserRead),
 	"get-user":        Global(authz.UserRead),

@@ -23,6 +23,7 @@ function AccountPage() {
       <Stack gap="lg">
         {me?.user && <Sessions />}
         {me?.user?.has_password && <ChangePassword />}
+        {me?.user?.mfa_enrolled && <RecoveryCodes />}
         {hasGlobal(me, 'admin') && <RootToken />}
       </Stack>
     </>
@@ -102,6 +103,30 @@ function ChangePassword() {
           </Stack>
         </form>
       </Card>
+    </div>
+  )
+}
+
+/** Replaces the recovery codes (the old ones stop working); needs a recent re-authentication with TOTP. */
+function RecoveryCodes() {
+  const [codes, setCodes] = useState<string[] | null>(null)
+  const regenerate = async () => {
+    try {
+      setCodes(unwrap(await api.POST('/auth/mfa/recovery-codes')).recovery_codes)
+    } catch (e) {
+      notifyError(e)
+    }
+  }
+  return (
+    <div>
+      <Title order={5} mb="xs">Recovery codes</Title>
+      <Card maw={520}>
+        <Stack gap="xs">
+          <Text size="sm">Each recovery code signs you in once if you lose your authenticator. Replacing them invalidates every earlier code.</Text>
+          <Group><Button variant="default" onClick={() => void regenerate()}>Replace recovery codes</Button></Group>
+        </Stack>
+      </Card>
+      <SecretModal title="New recovery codes" secret={codes ? codes.join('\n') : null} onClose={() => setCodes(null)} />
     </div>
   )
 }

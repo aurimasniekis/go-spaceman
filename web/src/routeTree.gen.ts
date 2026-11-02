@@ -14,6 +14,8 @@ import { Route as AccountRouteImport } from './routes/account'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as NodesRouteImport } from './routes/nodes'
+import { Route as RecoverRouteImport } from './routes/recover'
+import { Route as ResetRouteImport } from './routes/reset'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SpacesRouteImport } from './routes/spaces'
 import { Route as TokensRouteImport } from './routes/tokens'
@@ -46,6 +48,16 @@ const LoginRoute = LoginRouteImport.update({
 const NodesRoute = NodesRouteImport.update({
   id: '/nodes',
   path: '/nodes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecoverRoute = RecoverRouteImport.update({
+  id: '/recover',
+  path: '/recover',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetRoute = ResetRouteImport.update({
+  id: '/reset',
+  path: '/reset',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -95,6 +107,8 @@ export interface FileRoutesByFullPath {
   '/audit': typeof AuditRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
+  '/recover': typeof RecoverRoute
+  '/reset': typeof ResetRoute
   '/setup': typeof SetupRoute
   '/spaces': typeof SpacesRouteWithChildren
   '/tokens': typeof TokensRoute
@@ -110,6 +124,8 @@ export interface FileRoutesByTo {
   '/audit': typeof AuditRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
+  '/recover': typeof RecoverRoute
+  '/reset': typeof ResetRoute
   '/setup': typeof SetupRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -124,6 +140,8 @@ export interface FileRoutesById {
   '/audit': typeof AuditRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
+  '/recover': typeof RecoverRoute
+  '/reset': typeof ResetRoute
   '/setup': typeof SetupRoute
   '/spaces': typeof SpacesRouteWithChildren
   '/tokens': typeof TokensRoute
@@ -141,6 +159,8 @@ export interface FileRouteTypes {
     | '/audit'
     | '/login'
     | '/nodes'
+    | '/recover'
+    | '/reset'
     | '/setup'
     | '/spaces'
     | '/tokens'
@@ -156,6 +176,8 @@ export interface FileRouteTypes {
     | '/audit'
     | '/login'
     | '/nodes'
+    | '/recover'
+    | '/reset'
     | '/setup'
     | '/tokens'
     | '/users'
@@ -169,6 +191,8 @@ export interface FileRouteTypes {
     | '/audit'
     | '/login'
     | '/nodes'
+    | '/recover'
+    | '/reset'
     | '/setup'
     | '/spaces'
     | '/tokens'
@@ -185,6 +209,8 @@ export interface RootRouteChildren {
   AuditRoute: typeof AuditRoute
   LoginRoute: typeof LoginRoute
   NodesRoute: typeof NodesRoute
+  RecoverRoute: typeof RecoverRoute
+  ResetRoute: typeof ResetRoute
   SetupRoute: typeof SetupRoute
   SpacesRoute: typeof SpacesRouteWithChildren
   TokensRoute: typeof TokensRoute
@@ -226,6 +252,20 @@ declare module '@tanstack/react-router' {
       path: '/nodes'
       fullPath: '/nodes'
       preLoaderRoute: typeof NodesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recover': {
+      id: '/recover'
+      path: '/recover'
+      fullPath: '/recover'
+      preLoaderRoute: typeof RecoverRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset': {
+      id: '/reset'
+      path: '/reset'
+      fullPath: '/reset'
+      preLoaderRoute: typeof ResetRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -320,6 +360,8 @@ const rootRouteChildren: RootRouteChildren = {
   AuditRoute: AuditRoute,
   LoginRoute: LoginRoute,
   NodesRoute: NodesRoute,
+  RecoverRoute: RecoverRoute,
+  ResetRoute: ResetRoute,
   SetupRoute: SetupRoute,
   SpacesRoute: SpacesRouteWithChildren,
   TokensRoute: TokensRoute,
