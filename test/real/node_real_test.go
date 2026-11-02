@@ -240,6 +240,28 @@ func eventually(t *testing.T, d time.Duration, what string, f func() bool) {
 	}
 }
 
+// hcTerminals counts live terminals in the test's own core carrying a label (`hc ls --label K=V --json`).
+func (e *env) hcTerminals(t *testing.T, label string) int {
+	t.Helper()
+	cmd := exec.Command("hc", "ls", "--label", label, "--json")
+	cmd.Env = append(cleanEnv(), "HC_SESSION="+e.session, "HC_SOCKET="+e.socket, "XDG_STATE_HOME="+e.hcHome+"/state", "XDG_CONFIG_HOME="+e.hcHome+"/config")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("hc ls: %v", err)
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(out, &list) == nil {
+		return len(list)
+	}
+	var obj struct {
+		Terminals []json.RawMessage `json:"terminals"`
+	}
+	if err := json.Unmarshal(out, &obj); err != nil || obj.Terminals == nil {
+		t.Fatalf("unexpected hc ls output: %s", out)
+	}
+	return len(obj.Terminals)
+}
+
 type run1 struct {
 	ID, Observed, Desired, TerminalID string
 	Adopted                           bool
@@ -260,8 +282,10 @@ func (e *env) getRun(space, id string) run1 {
 // TestRealNodeEndToEnd: enroll → connect → pinned space → launch through the shim under a lease guard → recording →
 // agent restart adopts (no duplicate process) → SIGKILLed agent: the lease guard ends the run after lease + grace
 // (SM-NODE-004/007/008/009, SM-REC-002, SM-ACCT-004).
-func TestRealNodeEndToEnd(t *testing.T) {
-	e := newEnv(t)
+// launchRun enrolls a node, starts the agent, creates a pinned space (disconnect policy kill) and launches one stub run,
+// waiting until it runs. It returns the node, space and run IDs.
+func (e *env) launchRun(t *testing.T) (nodeID, spaceID, runID string) {
+	t.Helper()
 	var en struct {
 		Node  struct{ ID string } `json:"node"`
 		Token string              `json:"token"`
@@ -289,9 +313,31 @@ func TestRealNodeEndToEnd(t *testing.T) {
 		t.Fatalf("launch: %d", st)
 	}
 	eventually(t, 20*time.Second, "run running", func() bool { return e.getRun(sp.ID, r.ID).Observed == "running" })
+	return en.Node.ID, sp.ID, r.ID
+}
+
+// hcState returns "<state>/<reason>" of a terminal in the test's own core.
+func (e *env) hcState(id string) string {
+	cmd := exec.Command("hc", "get", id, "--json")
+	cmd.Env = append(cleanEnv(), "HC_SESSION="+e.session, "HC_SOCKET="+e.socket, "XDG_STATE_HOME="+e.hcHome+"/state", "XDG_CONFIG_HOME="+e.hcHome+"/config")
+	out, err := cmd.Output()
+	if err != nil {
+		return "error"
+	}
+	var term struct {
+		State  string `json:"state"`
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(out, &term)
+	return term.State + "/" + term.Reason
+}
+
+func TestRealNodeEndToEnd(t *testing.T) {
+	e := newEnv(t)
+	nodeID, spaceID, runID := e.launchRun(t)
 
 	// The secret file was consumed by the shim; the run token reached the harness env only.
-	runDir := filepath.Join(e.dir, "agent", "runs", r.ID)
+	runDir := filepath.Join(e.dir, "agent", "runs", runID)
 	if _, err := os.Stat(filepath.Join(runDir, "secrets.json")); !os.IsNotExist(err) {
 		t.Fatalf("secret file not unlinked by the launcher shim: %v", err)
 	}
@@ -312,34 +358,64 @@ func TestRealNodeEndToEnd(t *testing.T) {
 	})
 
 	// Agent restart (SIGTERM): the run keeps going and is adopted, not relaunched.
-	before := e.getRun(sp.ID, r.ID).TerminalID
+	before := e.getRun(spaceID, runID).TerminalID
 	e.stopAgent(syscall.SIGTERM)
 	e.startAgent()
 	eventually(t, 20*time.Second, "run running after agent restart", func() bool {
-		x := e.getRun(sp.ID, r.ID)
+		x := e.getRun(spaceID, runID)
 		return x.Observed == "running" && x.TerminalID == before
 	})
+
+	// Central restart (SIGTERM, then serve again on the same data): the agent reconnects, central reconciles, and the
+	// run continues on the same terminal; herdr-core holds exactly one terminal for it (no duplicate execution).
+	_ = e.central.Process.Signal(syscall.SIGTERM)
+	_ = e.central.Wait()
+	e.central = start(t, filepath.Join(e.dir, "central-2.log"), e.bin+"/spaceman", "-c", filepath.Join(e.dir, "central.yaml"), "serve")
+	waitHTTP(t, e.url+"/api/v1/system/info")
+	eventually(t, 20*time.Second, "node reconnected after central restart", func() bool {
+		var n struct{ Connected bool }
+		e.api("GET", "/nodes/"+nodeID, nil, &n)
+		return n.Connected
+	})
+	eventually(t, 20*time.Second, "run running after central restart", func() bool {
+		x := e.getRun(spaceID, runID)
+		return x.Observed == "running" && x.TerminalID == before
+	})
+	time.Sleep(3 * time.Second) // heartbeats, reconcile, command re-delivery
+	if n := e.hcTerminals(t, "spaceman.run="+runID); n != 1 {
+		t.Fatalf("herdr-core terminals for the run after restarts = %d, want 1", n)
+	}
 
 	// Dead daemon: SIGKILL the agent. The lease guard (a separate process inside herdr-core) ends the run once the
 	// lease file expires (lease 3s + grace 2s + guard slack 10s), with no daemon involved.
 	e.stopAgent(syscall.SIGKILL)
-	hcEnv := append(cleanEnv(), "HC_SESSION="+e.session, "HC_SOCKET="+e.socket, "XDG_STATE_HOME="+e.hcHome+"/state", "XDG_CONFIG_HOME="+e.hcHome+"/config")
-	state := func() string {
-		cmd := exec.Command("hc", "get", before, "--json")
-		cmd.Env = hcEnv
-		out, err := cmd.Output()
-		if err != nil {
-			return "error"
-		}
-		var term struct {
-			State  string `json:"state"`
-			Reason string `json:"reason"`
-		}
-		_ = json.Unmarshal(out, &term)
-		return term.State + "/" + term.Reason
-	}
+	state := func() string { return e.hcState(before) }
 	eventually(t, 40*time.Second, "lease guard ended the run of a dead agent", func() bool { return state() == "finished/killed" })
 	t.Logf("run terminal after dead-daemon enforcement: %s", state())
+}
+
+// TestRealDisconnectEnforcement (SM-NODE-007): central goes away while the agent stays up. The agent starts nothing new
+// and, for a space with disconnect policy "kill", ends its run after lease + grace. When central returns, the run is
+// reported ended and is not relaunched.
+func TestRealDisconnectEnforcement(t *testing.T) {
+	e := newEnv(t)
+	_, spaceID, runID := e.launchRun(t)
+	term := e.getRun(spaceID, runID).TerminalID
+	_ = e.central.Process.Signal(syscall.SIGTERM)
+	_ = e.central.Wait()
+	// Lease 3s + grace 2s, enforced by the live agent (not the lease guard, whose slack is longer).
+	eventually(t, 20*time.Second, "agent ended the run without central", func() bool { return strings.HasPrefix(e.hcState(term), "finished/") })
+	t.Logf("run terminal after disconnect enforcement: %s", e.hcState(term))
+	e.central = start(t, filepath.Join(e.dir, "central-2.log"), e.bin+"/spaceman", "-c", filepath.Join(e.dir, "central.yaml"), "serve")
+	waitHTTP(t, e.url+"/api/v1/system/info")
+	eventually(t, 20*time.Second, "central learns the run ended", func() bool {
+		o := e.getRun(spaceID, runID).Observed
+		return o == "exited" || o == "lost"
+	})
+	time.Sleep(3 * time.Second)
+	if n := e.hcTerminals(t, "spaceman.run="+runID); n != 0 {
+		t.Fatalf("live terminals for the run after reconnect = %d, want 0 (no relaunch)", n)
+	}
 }
 
 var _ = bufio.NewReader

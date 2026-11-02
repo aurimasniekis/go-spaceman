@@ -24,6 +24,9 @@ type Fake struct {
 	Starts  int // number of successful Start calls (duplicate detection in tests)
 	CoreID  string
 	BlockIO bool
+	// AfterStart, when set, runs after a successful Start returns its process to the runner (outside the lock). Tests
+	// use it to crash the agent between starting a program and recording that it started.
+	AfterStart func(runner.Process)
 }
 
 type fakeProc struct {
@@ -48,7 +51,15 @@ func (f *Fake) emit(kind string, p runner.Process) {
 }
 
 // Start implements runner.Runner.
-func (f *Fake) Start(_ context.Context, s runner.Spec) (*runner.Process, error) {
+func (f *Fake) Start(ctx context.Context, s runner.Spec) (*runner.Process, error) {
+	p, err := f.start(ctx, s)
+	if err == nil && f.AfterStart != nil {
+		f.AfterStart(*p)
+	}
+	return p, err
+}
+
+func (f *Fake) start(_ context.Context, s runner.Spec) (*runner.Process, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, fp := range f.procs {
@@ -263,6 +274,13 @@ func (f *Fake) Subscribe(ctx context.Context, _ map[string]string) (<-chan runne
 
 // Close implements runner.Runner.
 func (f *Fake) Close() error { return nil }
+
+// StartCount returns Starts under the lock.
+func (f *Fake) StartCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Starts
+}
 
 // LiveByLabel returns live processes with a label value.
 func (f *Fake) LiveByLabel(k, v string) []runner.Process {
