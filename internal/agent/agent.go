@@ -140,7 +140,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.log.Warn("mcp bridge socket", obs.Err(err))
 		}
 	}()
-	backoff := time.Second
+	// The first retry waits a second, or less when ReconnectMax is shorter: the cap applies to every attempt.
+	first := min(time.Second, a.o.ReconnectMax)
+	backoff := first
 	for {
 		start := a.now()
 		err := a.session(ctx)
@@ -149,7 +151,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		a.log.Warn("central connection lost", obs.Err(err))
 		if a.now().Sub(start) > time.Minute {
-			backoff = time.Second
+			backoff = first
 		}
 		select {
 		case <-ctx.Done():
