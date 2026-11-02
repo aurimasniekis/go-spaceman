@@ -313,13 +313,23 @@ func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string
 func (svc *Service) leaseFor(ctx context.Context, tx *store.Tx, sp db.Space) (proto.LeaseGrant, error) {
 	exp := tx.Now.Add(svc.opts.LeaseTTL)
 	gen := int64(1)
+	// granted is true when the lease starts, moves or resumes after expiry or revocation (not on a plain renewal); only
+	// then do watchers of the space need to refetch it.
+	granted := true
 	if l, err := tx.Q.GetLease(ctx, sp.ID); err == nil {
 		gen = l.Generation
 		if l.NodeID != sp.NodeID || l.State == "revoked" {
 			gen++
+		} else if l.ExpiresAt > tx.NowMicros() {
+			granted = false
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return proto.LeaseGrant{}, err
+	}
+	if granted {
+		if err := svc.record(ctx, tx, sp.ID, "space", sp.ID, "updated", sp.Version); err != nil {
+			return proto.LeaseGrant{}, err
+		}
 	}
 	if err := tx.Q.UpsertLease(ctx, db.UpsertLeaseParams{SpaceID: sp.ID, NodeID: sp.NodeID, Generation: gen, GrantedAt: tx.NowMicros(),
 		RenewedAt: tx.NowMicros(), ExpiresAt: exp.UnixMicro()}); err != nil {

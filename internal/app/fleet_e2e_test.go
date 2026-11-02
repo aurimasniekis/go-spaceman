@@ -23,6 +23,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // fleetEnv is a central on a real HTTP server (restartable on the same data directory) plus a node agent with an
@@ -179,6 +180,20 @@ func TestFleetLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	// SM-UI-006: the grant is a change of the space, so open pages refetch it (renewals are not).
+	changes, err := e.c.Store.R().ChangesAfter(ctx, db.ChangesAfterParams{After: 0, Lim: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spaceChanges := 0
+	for _, c := range changes {
+		if c.ResourceType == "space" && c.ResourceID == sp.ID {
+			spaceChanges++
+		}
+	}
+	if spaceChanges < 2 { // created + lease granted
+		t.Fatalf("space changes = %d, want at least 2 (created, lease granted)", spaceChanges)
+	}
 
 	ctrl, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: hns.KindClaude, Prompt: "hello"})
 	if err != nil {

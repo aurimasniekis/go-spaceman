@@ -334,8 +334,14 @@ func (h *Hub) syncLeases(ctx context.Context, s *session, claimed []proto.LeaseS
 		held := map[string]int64{}
 		for _, sp := range spaces {
 			if sp.State == "archived" || sp.DesiredNodeID.Valid {
-				if _, err := tx.Q.RevokeLease(ctx, db.RevokeLeaseParams{Now: tx.NowMicros(), SpaceID: sp.ID}); err != nil {
+				n, err := tx.Q.RevokeLease(ctx, db.RevokeLeaseParams{Now: tx.NowMicros(), SpaceID: sp.ID})
+				if err != nil {
 					return err
+				}
+				if n > 0 {
+					if err := svc.record(ctx, tx, sp.ID, "space", sp.ID, "updated", sp.Version); err != nil {
+						return err
+					}
 				}
 				continue
 			}
