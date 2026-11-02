@@ -200,7 +200,7 @@ func TestAPIBootstrapLoginAndConventions(t *testing.T) {
 	}
 	r = ui.do("POST", "/auth/mfa/enroll", nil)
 	expect(t, r, 200)
-	var enr api.Enrollment
+	var enr api.TOTPEnrollment
 	r.json(t, &enr)
 	secret, err := auth.DecodeTOTPSecret(enr.Secret)
 	if err != nil {
@@ -309,7 +309,7 @@ func loginAndIssueToken(t *testing.T, h *harness, email string, grants []map[str
 	r.json(t, &me)
 	ui.csrf = me.CSRFToken
 	r = ui.do("POST", "/auth/mfa/enroll", nil)
-	var enr api.Enrollment
+	var enr api.TOTPEnrollment
 	r.json(t, &enr)
 	secret, _ := auth.DecodeTOTPSecret(enr.Secret)
 	r = ui.do("POST", "/auth/mfa/enroll/confirm", map[string]string{"code": auth.TOTPCode(secret, auth.TOTPStep(h.clk.Now()))})

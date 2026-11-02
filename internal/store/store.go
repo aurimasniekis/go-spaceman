@@ -52,8 +52,8 @@ type Options struct {
 	Metrics *metrics.Metrics
 	// BusyTimeout overrides SQLite's busy_timeout (default 5s). Tests only.
 	BusyTimeout time.Duration
-	// migrations overrides the embedded migrations. Tests only.
-	migrations fs.FS
+	// Migrations overrides the embedded central migrations (the node agent journal and tests use their own).
+	Migrations fs.FS
 }
 
 // Store is an open SpaceMan database owned exclusively by this process.
@@ -89,12 +89,12 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	if opts.BusyTimeout <= 0 {
 		opts.BusyTimeout = DefaultBusyTimeout
 	}
-	if opts.migrations == nil {
+	if opts.Migrations == nil {
 		sub, err := fs.Sub(migrationFS, "migrations")
 		if err != nil {
 			return nil, err
 		}
-		opts.migrations = sub
+		opts.Migrations = sub
 	}
 	dir, err := filepath.Abs(opts.DataDir)
 	if err != nil {
@@ -144,10 +144,10 @@ func (s *Store) open(ctx context.Context, opts Options) error {
 		return err
 	}
 	if !opts.SkipMigrate {
-		if err := migrate(ctx, s.wdb, opts.migrations, s.dir, opts.PreMigrationSnapshots, s.clock, s.log); err != nil {
+		if err := migrate(ctx, s.wdb, opts.Migrations, s.dir, opts.PreMigrationSnapshots, s.clock, s.log); err != nil {
 			return err
 		}
-	} else if err := checkSchemaNotNewer(ctx, s.wdb, opts.migrations); err != nil {
+	} else if err := checkSchemaNotNewer(ctx, s.wdb, opts.Migrations); err != nil {
 		return err
 	}
 	if s.rdb, err = sql.Open("sqlite", readerDSN(path, opts.BusyTimeout)); err != nil {

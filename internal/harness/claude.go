@@ -1,0 +1,89 @@
+package harness
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"path/filepath"
+
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
+)
+
+// Claude is the Claude Code adapter (verified against 2.1.316, docs/contracts/harnesses.md).
+//
+//   - isolation: CLAUDE_CONFIG_DIR=<config>/claude per space and instance
+//   - session: --session-id <uuid> for a new conversation, --resume <id> to continue one
+//   - MCP: --mcp-config <file> --strict-mcp-config (only the SpaceMan bridge; no user-level servers leak in)
+//   - prompt: --append-system-prompt <text>; the initial instruction is the positional prompt
+//   - auth: CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY, through the launcher shim only
+//
+// Runs are interactive inside herdr-core so status arrives via OSC 7501 (verified live) — never print mode.
+type Claude struct{}
+
+// Kind implements Harness.
+func (Claude) Kind() string { return KindClaude }
+
+// Detect implements Harness.
+func (Claude) Detect(ctx context.Context, binary string) proto.HarnessInfo {
+	return detect(ctx, KindClaude, binary, []string{CapFixedSessionID, CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapSystemPrompt, CapTranscripts})
+}
+
+var claudePermissionModes = map[string]bool{"default": true, "acceptEdits": true, "plan": true, "auto": true, "dontAsk": true, "bypassPermissions": true}
+
+// Build implements Harness.
+func (Claude) Build(c Context) (Launch, error) {
+	if err := checkCommon(c); err != nil {
+		return Launch{}, err
+	}
+	p := c.Payload
+	cfg := filepath.Join(c.ConfigDir, "claude")
+	mcpPath := filepath.Join(c.RunDir, "mcp.json")
+	mcp, err := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{
+		"spaceman": map[string]any{"type": "stdio", "command": c.AgentBinary, "args": bridgeArgs(c)},
+	}}, "", "  ")
+	if err != nil {
+		return Launch{}, err
+	}
+	argv := []string{c.Binary}
+	session := p.SessionID
+	switch {
+	case p.Resume && session != "":
+		if !reUUID.MatchString(session) {
+			return Launch{}, errors.New("claude: session_id must be a UUID")
+		}
+		argv = append(argv, "--resume", session)
+	case session != "":
+		if !reUUID.MatchString(session) {
+			return Launch{}, errors.New("claude: session_id must be a UUID")
+		}
+		argv = append(argv, "--session-id", session)
+	default:
+		session = NewUUID()
+		argv = append(argv, "--session-id", session)
+	}
+	argv = append(argv, "--mcp-config", mcpPath, "--strict-mcp-config")
+	if p.Model != "" {
+		argv = append(argv, "--model", p.Model)
+	}
+	if m := p.Settings["permission_mode"]; m != "" {
+		if !claudePermissionModes[m] {
+			return Launch{}, errors.New("claude: unknown permission_mode")
+		}
+		argv = append(argv, "--permission-mode", m)
+	}
+	if p.SystemText != "" {
+		argv = append(argv, "--append-system-prompt", p.SystemText)
+	}
+	if p.Prompt != "" {
+		argv = append(argv, "--", p.Prompt)
+	}
+	env := commonEnv(c)
+	env["CLAUDE_CONFIG_DIR"] = cfg
+	return Launch{
+		Argv:      argv,
+		Env:       env,
+		Files:     map[string][]byte{mcpPath: mcp},
+		SecretEnv: secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
+		SessionID: session,
+	}, nil
+}

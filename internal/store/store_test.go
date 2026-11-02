@@ -263,16 +263,16 @@ const (
 func TestMigrationFailureAndSnapshot(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
-	s, err := Open(ctx, Options{DataDir: dir, migrations: migFS(map[string]string{"0001_a.sql": mig1})})
+	s, err := Open(ctx, Options{DataDir: dir, Migrations: migFS(map[string]string{"0001_a.sql": mig1})})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Close()
-	_, err = Open(ctx, Options{DataDir: dir, migrations: migFS(map[string]string{"0001_a.sql": mig1, "0002_b.sql": mig2, "0003_c.sql": bad3})})
+	_, err = Open(ctx, Options{DataDir: dir, Migrations: migFS(map[string]string{"0001_a.sql": mig1, "0002_b.sql": mig2, "0003_c.sql": bad3})})
 	if err == nil || !strings.Contains(err.Error(), "migration failed") {
 		t.Fatalf("expected migration failure, got %v", err)
 	}
-	s, err = Open(ctx, Options{DataDir: dir, SkipMigrate: true, migrations: migFS(map[string]string{"0001_a.sql": mig1, "0002_b.sql": mig2, "0003_c.sql": bad3})})
+	s, err = Open(ctx, Options{DataDir: dir, SkipMigrate: true, Migrations: migFS(map[string]string{"0001_a.sql": mig1, "0002_b.sql": mig2, "0003_c.sql": bad3})})
 	if err != nil {
 		t.Fatal(err)
 	}

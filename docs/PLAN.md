@@ -22,11 +22,11 @@
 | M1-02 | Store: SQLite pools, data-dir lock, goose migrations, sqlc, IDs, clock, keyring, audit chain | SM-STORE-001, SM-OBS-003, SM-INV-001 | tested (simulated) |
 | M1-03 | API: huma, problem errors, idempotency, If-Match, pagination, change feed + SSE watch; management listener | SM-API-002, SM-OBS-001/002 | tested (simulated) + real smoke |
 | M1-04 | Auth: root-token bootstrap, first admin, Argon2id login, TOTP, sessions, CSRF, throttle, API tokens, Casbin | SM-AUTH-001/003/004/005/006 | tested (simulated) + real smoke; OIDC in M4-01 |
-| M1-05 | Node protocol: enrollment, connect, hello/capabilities, heartbeat, leases, fencing, node journal | SM-NODE-001…007 | todo |
-| M1-06 | hc runner: contract spikes K-1/K-2/K-3, client, idempotent launch, adoption, reconcile | SM-RUN-001/002, SM-NODE-004/008/009 | todo |
-| M1-07 | Harness adapters: Claude Code + Codex, isolated dirs, launch shim, MCP bridge (minimal tools) | SM-HARN-001/002/003, SM-ACCT-004 | todo |
-| M1-08 | Spaces: CRUD, pinning, pause modes, archive/restore/purge; launch a run | SM-SPACE-001…004 | todo |
-| M1-09 | Recording: zstd segments, upload, live view, replay | SM-REC-001…004 | todo |
+| M1-05 | Node protocol: enrollment, connect, hello/capabilities, heartbeat, leases, fencing, node journal | SM-NODE-001…007 | tested (simulated); real-hc e2e pending |
+| M1-06 | hc runner: contract spikes K-1/K-2/K-3, client, idempotent launch, adoption, reconcile | SM-RUN-001/002, SM-NODE-004/008/009 | runner done (real-verified); node-side reconcile with M1-05 |
+| M1-07 | Harness adapters: Claude Code + Codex, isolated dirs, launch shim, MCP bridge (minimal tools) | SM-HARN-001/002/003, SM-ACCT-004 | implemented; real harness runs need a credential |
+| M1-08 | Spaces: CRUD, pinning, pause modes, archive/restore/purge; launch a run | SM-SPACE-001…004 | tested (simulated) |
+| M1-09 | Recording: zstd segments, upload, live view, replay | SM-REC-001…004 | local recording done; upload/live/replay pending |
 | M1-10 | Restart/disconnect reconciliation tests (central, node, hc) | SM-NODE-005/007/009 | todo |
 | M1-11 | Web shell: Night Owl theme, bootstrap/sign-in, spaces, nodes, overview, terminal | SM-UI-001/002/004 | todo |
 | M1-12 | Site skeleton, Mermaid, demo seed, Playwright screenshots, coverage inventory | SM-DOCS-001…005 | todo |
@@ -94,6 +94,9 @@
 | 2026-11-02 | M1-06 | herdr-core spikes S-0..S-2 against an isolated core; ADR-0009/0017 | `1bbee9e` | real hc 0.1.16 |
 | 2026-11-02 | M1-01/02 | Foundation: store, keyring, audit, obs, config, txscope, Makefile, CI | `afe13a8` | `make check` green |
 | 2026-11-02 | M1-04 | Auth services: users, Casbin authz, root token, scoped API tokens | `9cd4a30` | auth 82.3%, authz 87.8% coverage |
+| 2026-11-02 | M1-03 | HTTP API (huma), rules table, CSRF/origin, If-Match, idempotency, SSE watch; serve/admin/keys/openapi CLI | `3b1d448` | e2e tests + real `serve` smoke |
+| 2026-11-02 | M1-06 | K-1 framed protocol decoded from real traffic (S-3) | `c959244` | real hc 0.1.16 |
+| 2026-11-02 | M1-06 | Runner interface + herdr-core framed client + core manager | `b8b70d7` | unit (fake core, -race) + real suite (`-tags real`) |
 
 ## 4. Process deviations
 

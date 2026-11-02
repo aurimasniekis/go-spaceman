@@ -1,0 +1,511 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/runner"
+)
+
+// LeaseFile is the content of a space's lease file, read by the lease guard.
+type LeaseFile struct {
+	SpaceID    string    `json:"space_id"`
+	Generation int64     `json:"generation"`
+	ValidUntil time.Time `json:"valid_until"`
+}
+
+// guardSlack is how long after the daemon's own enforcement point the guard ends a space's runs (the daemon stops
+// them politely first; the guard is the hard bound when the daemon is gone).
+const guardSlack = 10 * time.Second
+
+func (a *Agent) grant(ctx context.Context, g proto.LeaseGrant) {
+	l := leaseRow{SpaceID: g.SpaceID, Generation: g.Generation, ExpiresAt: g.ExpiresAt, Workdir: g.Workdir, DisconnectPolicy: g.DisconnectPolicy, Grace: g.Grace}
+	if l.DisconnectPolicy == "" {
+		l.DisconnectPolicy = "interrupt"
+	}
+	a.mu.Lock()
+	prev, had := a.leases[g.SpaceID]
+	a.leases[g.SpaceID] = l
+	a.mu.Unlock()
+	if err := a.j.putLease(ctx, l); err != nil {
+		a.log.Warn("journal lease", obs.Err(err))
+	}
+	if err := writeJSONFile(a.leaseFile(g.SpaceID), LeaseFile{SpaceID: g.SpaceID, Generation: g.Generation,
+		ValidUntil: g.ExpiresAt.Add(g.Grace + guardSlack)}); err != nil {
+		a.log.Warn("lease file", obs.Err(err))
+	}
+	if err := os.MkdirAll(filepath.Join(a.spaceDir(g.Workdir), "work"), 0o700); err != nil {
+		a.log.Warn("space folder", obs.Err(err))
+	}
+	if had && prev.Generation != g.Generation {
+		// A new assignment epoch: runs of the old generation are fenced and stopped (SM-NODE-006).
+		a.stopSpaceRuns(ctx, g.SpaceID, func(r runRow) bool { return r.Generation != g.Generation }, "kill", "fenced: lease generation changed")
+	}
+}
+
+func (a *Agent) revoke(ctx context.Context, r proto.LeaseRevoke) {
+	a.mu.Lock()
+	l, ok := a.leases[r.SpaceID]
+	if ok && l.Generation == r.Generation {
+		delete(a.leases, r.SpaceID)
+	}
+	a.mu.Unlock()
+	if !ok || l.Generation != r.Generation {
+		return
+	}
+	_ = a.j.deleteLease(ctx, r.SpaceID)
+	_ = writeJSONFile(a.leaseFile(r.SpaceID), LeaseFile{SpaceID: r.SpaceID, Generation: r.Generation, ValidUntil: a.now()})
+	mode := r.Mode
+	if mode != "kill" {
+		mode = "interrupt"
+	}
+	a.stopSpaceRuns(ctx, r.SpaceID, func(runRow) bool { return true }, mode, "lease revoked: "+r.Reason)
+}
+
+// command handles one command. It is journaled before any side effect; a repeat is acknowledged as duplicate and
+// never re-executed (SM-NODE-004). Commands for a generation the node does not hold are rejected (fencing).
+func (a *Agent) command(ctx context.Context, c proto.Command) {
+	if err := c.Validate(); err != nil {
+		a.ack(ctx, c, proto.AckRejected, err.Error())
+		return
+	}
+	fresh, err := a.j.commandSeen(ctx, c)
+	if err != nil {
+		a.log.Warn("journal command", obs.Err(err))
+		return // no ack: central re-sends after reconnect
+	}
+	if !fresh {
+		a.ack(ctx, c, proto.AckDuplicate, "")
+		if r, err := a.j.getRun(ctx, c.RunID); err == nil {
+			a.report(ctx, r)
+		}
+		return
+	}
+	if c.Kind != proto.CmdStop {
+		if _, ok := a.lease(c.SpaceID, c.Generation); !ok {
+			a.j.commandDone(ctx, c.CommandID, "rejected", "no valid lease for this space and generation")
+			a.ack(ctx, c, proto.AckRejected, "no valid lease for this space and generation")
+			return
+		}
+	}
+	switch c.Kind {
+	case proto.CmdLaunch:
+		var p proto.LaunchPayload
+		if err := json.Unmarshal(c.Payload, &p); err != nil {
+			a.ack(ctx, c, proto.AckRejected, "bad launch payload")
+			return
+		}
+		a.ack(ctx, c, proto.AckAccepted, "")
+		go a.launch(context.WithoutCancel(ctx), c, p)
+	case proto.CmdStop:
+		var p proto.StopPayload
+		_ = json.Unmarshal(c.Payload, &p)
+		a.ack(ctx, c, proto.AckAccepted, "")
+		go a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+	case proto.CmdInterrupt:
+		a.ack(ctx, c, proto.AckAccepted, "")
+		if r, err := a.j.getRun(ctx, c.RunID); err == nil && r.TerminalID != "" {
+			_, _ = a.o.Runner.Interrupt(ctx, r.TerminalID)
+		}
+	case proto.CmdInput:
+		var p proto.InputPayload
+		_ = json.Unmarshal(c.Payload, &p)
+		r, err := a.j.getRun(ctx, c.RunID)
+		if err != nil || r.TerminalID == "" || ended(r.State) {
+			a.ack(ctx, c, proto.AckRejected, "run is not running")
+			return
+		}
+		if err := a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force); err != nil {
+			reason := "send failed"
+			if errors.Is(err, runner.ErrBusy) {
+				reason = "the program is busy; input not delivered (safe input)"
+			}
+			a.ack(ctx, c, proto.AckRejected, reason)
+			return
+		}
+		a.ack(ctx, c, proto.AckAccepted, "")
+	default:
+		a.ack(ctx, c, proto.AckRejected, "unsupported command")
+	}
+	a.j.commandDone(ctx, c.CommandID, "done", "")
+}
+
+// launch starts (or adopts) a run's process. The intent is journaled first; if a terminal with the run's name already
+// exists (a repeated delivery, or a restart between start and journal update) it is adopted (SM-NODE-004/009).
+func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPayload) {
+	log := a.log.With(slog.String(obs.FieldRunID, c.RunID), slog.String(obs.FieldSpaceID, c.SpaceID))
+	l, _ := a.lease(c.SpaceID, c.Generation)
+	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, Kind: p.Kind, Role: p.Role, Harness: p.Harness, InstanceID: p.InstanceID,
+		TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending, SessionID: p.SessionID}
+	if err := a.j.insertRun(ctx, row); err != nil {
+		log.Error("journal run intent", obs.Err(err))
+		return
+	}
+	row, _ = a.j.getRun(ctx, c.RunID)
+	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
+	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
+		a.observe(ctx, row, found[0], true)
+		return
+	}
+	fail := func(msg string, err error) {
+		row.State, row.Error = proto.RunFailed, msg
+		if err != nil {
+			row.Error = msg + ": " + err.Error()
+		}
+		_ = a.j.updateRun(ctx, row)
+		a.report(ctx, row)
+		log.Warn("launch failed", slog.String("reason", msg), obs.Err(err))
+	}
+	h, err := harness.Get(p.Harness)
+	if err != nil {
+		fail("unknown harness", err)
+		return
+	}
+	bin := a.o.HarnessBinaries[p.Harness]
+	if bin == "" {
+		fail("harness not installed on this node", nil)
+		return
+	}
+	guard, err := a.ensureGuard(ctx, c.SpaceID)
+	if err != nil {
+		fail("lease guard unavailable", err)
+		return
+	}
+	space := a.spaceDir(l.Workdir)
+	work := filepath.Join(space, "work")
+	if p.Workspace != "" {
+		work = filepath.Join(space, filepath.Clean("/"+p.Workspace))
+	}
+	rd := a.runDir(c.RunID)
+	for _, d := range []string{rd, work, filepath.Join(space, "instances", p.InstanceID)} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			fail("prepare folders", err)
+			return
+		}
+	}
+	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
+		WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p})
+	if err != nil {
+		fail("build launch", err)
+		return
+	}
+	for path, content := range built.Files {
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			fail("write harness files", err)
+			return
+		}
+	}
+	a.rememberRunToken(c.RunID, p.RunToken)
+	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
+		fail("write secret file", err)
+		return
+	}
+	argv := a.wrap(rd, built)
+	row.State, row.SessionID = proto.RunStarting, built.SessionID
+	_ = a.j.updateRun(ctx, row)
+	a.report(ctx, row)
+	proc, err := a.o.Runner.Start(ctx, runner.Spec{Name: row.TerminalName, Argv: argv, Cwd: work, Env: built.Env, Labels: labels, Parent: guard})
+	if errors.Is(err, runner.ErrNameTaken) {
+		if found, lerr := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); lerr == nil && len(found) > 0 {
+			a.observe(ctx, row, found[0], true)
+			return
+		}
+	}
+	if err != nil {
+		_ = os.Remove(filepath.Join(rd, SecretsFile))
+		fail("start", err)
+		return
+	}
+	a.observe(ctx, row, *proc, false)
+}
+
+func (a *Agent) wrap(runDir string, l harness.Launch) []string {
+	if a.o.Wrap != nil {
+		return a.o.Wrap(runDir, l)
+	}
+	return append([]string{a.o.AgentBinary, "launch", "--secrets-file", filepath.Join(runDir, SecretsFile), "--"}, l.Argv...)
+}
+
+// observe updates a run from the runner's view of its process.
+func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopted bool) {
+	row.TerminalID, row.CoreID, row.Identity, row.PID = p.ID, p.CoreID, p.Identity(), p.PID
+	row.Adopted = row.Adopted || adopted
+	row.Status, row.StatusKind, row.Turn = p.Status.State, p.Status.Kind, p.Turn
+	switch p.State {
+	case runner.StateLive:
+		if row.Desired == "stopped" {
+			row.State = proto.RunStopping
+		} else {
+			row.State = proto.RunRunning
+		}
+	case runner.StateFinished:
+		row.ExitCode, row.Reason = p.ExitCode, p.Reason
+		row.State = proto.RunExited
+		if p.Reason == "holder_lost" || p.Reason == "server_stop" || p.Reason == "host_shutdown" {
+			row.State = proto.RunLost
+		}
+	}
+	_ = a.j.updateRun(ctx, row)
+	a.report(ctx, row)
+	if p.State == runner.StateLive {
+		a.startRecorder(ctx, row)
+	}
+}
+
+// stop ends a run: interrupt, then kill if still live after grace; or kill at once.
+func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duration, reason string) {
+	row, err := a.j.getRun(ctx, runID)
+	if err != nil {
+		return
+	}
+	row.Desired = "stopped"
+	if ended(row.State) {
+		_ = a.j.updateRun(ctx, row)
+		a.report(ctx, row)
+		return
+	}
+	if row.TerminalID == "" {
+		row.State, row.Reason = proto.RunExited, "stopped before start"
+		_ = a.j.updateRun(ctx, row)
+		a.report(ctx, row)
+		return
+	}
+	row.State = proto.RunStopping
+	_ = a.j.updateRun(ctx, row)
+	a.report(ctx, row)
+	if mode != "kill" {
+		_, _ = a.o.Runner.Interrupt(ctx, row.TerminalID)
+		if grace <= 0 {
+			grace = 15 * time.Second
+		}
+		deadline := time.Now().Add(grace)
+		for time.Now().Before(deadline) {
+			p, err := a.o.Runner.Get(ctx, row.TerminalID)
+			if err != nil || p.State == runner.StateFinished {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	if p, err := a.o.Runner.Get(ctx, row.TerminalID); err == nil && p.State == runner.StateLive {
+		if _, err := a.o.Runner.Kill(ctx, row.TerminalID); err != nil {
+			a.log.Warn("kill", slog.String(obs.FieldRunID, runID), obs.Err(err))
+		}
+	}
+	a.log.Info("run stopped", slog.String(obs.FieldRunID, runID), slog.String("reason", reason))
+	// The finished event (monitor) records the final state; record it here too in case events are delayed.
+	if p, err := a.o.Runner.Get(ctx, row.TerminalID); err == nil {
+		row, _ = a.j.getRun(ctx, runID)
+		a.observe(ctx, row, *p, false)
+	}
+}
+
+func (a *Agent) stopSpaceRuns(ctx context.Context, spaceID string, match func(runRow) bool, mode, reason string) {
+	runs, err := a.j.runs(ctx, true)
+	if err != nil {
+		return
+	}
+	for _, r := range runs {
+		if r.SpaceID == spaceID && match(r) {
+			go a.stop(context.WithoutCancel(ctx), r.RunID, mode, 15*time.Second, reason)
+		}
+	}
+}
+
+// reconcileDesired applies central's desired state after (re)connection.
+func (a *Agent) reconcileDesired(ctx context.Context, rec proto.Reconcile) {
+	want := map[string]proto.DesiredRun{}
+	for _, d := range rec.Runs {
+		want[d.RunID] = d
+	}
+	runs, err := a.j.runs(ctx, true)
+	if err != nil {
+		return
+	}
+	for _, r := range runs {
+		d, ok := want[r.RunID]
+		switch {
+		case !ok:
+			// Unknown to central (or already ended there): report; central fences and stops it if needed.
+			a.report(ctx, r)
+		case d.Desired == "stopped" || d.Generation != r.Generation:
+			go a.stop(context.WithoutCancel(ctx), r.RunID, "interrupt", 15*time.Second, "central reconcile")
+		default:
+			a.report(ctx, r)
+		}
+	}
+}
+
+// reconcileRunner re-reads every managed terminal and brings the journal up to date (startup, missed events).
+func (a *Agent) reconcileRunner(ctx context.Context) error {
+	procs, err := a.o.Runner.List(ctx, map[string]string{"spaceman.managed": "1"}, true)
+	if err != nil {
+		return err
+	}
+	byRun := map[string]runner.Process{}
+	for _, p := range procs {
+		if id := p.Labels["spaceman.run"]; id != "" {
+			byRun[id] = p
+		}
+	}
+	runs, err := a.j.runs(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, r := range runs {
+		p, ok := byRun[r.RunID]
+		switch {
+		case ok:
+			a.observe(ctx, r, p, r.TerminalID == "" || r.TerminalID != p.ID)
+		case r.State == proto.RunPending:
+			// Intent journaled but never started (crash before start): leave it for central's reconcile; a launch
+			// re-delivery is a duplicate, so mark it failed rather than starting it silently.
+			r.State, r.Error = proto.RunFailed, "agent restarted before the process started"
+			_ = a.j.updateRun(ctx, r)
+		default:
+			r.State, r.Reason = proto.RunLost, "process not found in the runner"
+			_ = a.j.updateRun(ctx, r)
+		}
+	}
+	return nil
+}
+
+// monitor follows runner events to keep run states and statuses current (no polling).
+func (a *Agent) monitor(ctx context.Context) {
+	for ctx.Err() == nil {
+		evs, err := a.o.Runner.Subscribe(ctx, map[string]string{"spaceman.managed": "1"})
+		if err != nil {
+			a.log.Warn("runner events", obs.Err(err))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+		for ev := range evs {
+			switch ev.Kind {
+			case "snapshot", "missed", "restarted", "lost":
+				if err := a.reconcileRunner(ctx); err != nil {
+					a.log.Warn("runner reconcile", obs.Err(err))
+				}
+			case "finished", "status", "turn":
+				if ev.TerminalID == "" {
+					continue
+				}
+				row, err := a.j.runByTerminal(ctx, ev.TerminalID)
+				if err != nil {
+					continue
+				}
+				if p, err := a.o.Runner.Get(ctx, ev.TerminalID); err == nil {
+					a.observe(ctx, row, *p, false)
+				}
+			}
+		}
+	}
+}
+
+// enforce stops runs once central has been gone longer than the lease plus grace (SM-NODE-007). It wakes only at the
+// next deadline (one timer per node, not per space).
+func (a *Agent) enforce(ctx context.Context) {
+	for {
+		next := time.Hour
+		a.mu.Lock()
+		connected := a.connected
+		var expired []leaseRow
+		for _, l := range a.leases {
+			until := l.ExpiresAt.Add(l.Grace)
+			if !connected {
+				if !a.now().Before(until) {
+					expired = append(expired, l)
+				} else if d := until.Sub(a.now()); d < next {
+					next = d
+				}
+			}
+		}
+		for _, l := range expired {
+			delete(a.leases, l.SpaceID)
+		}
+		a.mu.Unlock()
+		for _, l := range expired {
+			a.log.Warn("lease expired without central; stopping the space's runs", slog.String(obs.FieldSpaceID, l.SpaceID), slog.String("policy", l.DisconnectPolicy))
+			a.stopSpaceRuns(ctx, l.SpaceID, func(runRow) bool { return true }, l.DisconnectPolicy, "central unreachable beyond lease and grace")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.wake:
+		case <-time.After(next):
+		}
+	}
+}
+
+// ensureGuard returns the space's live lease-guard terminal, starting it if needed (ADR-0017).
+func (a *Agent) ensureGuard(ctx context.Context, spaceID string) (string, error) {
+	name := GuardName(spaceID)
+	found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.guard": spaceID}, true)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range found {
+		if p.State == runner.StateLive {
+			return p.ID, nil
+		}
+		_ = a.o.Runner.Remove(ctx, p.ID)
+	}
+	p, err := a.o.Runner.Start(ctx, runner.Spec{Name: name, Argv: []string{a.o.AgentBinary, "lease-guard", "--lease-file", a.leaseFile(spaceID)},
+		Cwd: a.o.DataDir, Labels: map[string]string{"spaceman.guard": spaceID}})
+	if errors.Is(err, runner.ErrNameTaken) {
+		if found, lerr := a.o.Runner.List(ctx, map[string]string{"spaceman.guard": spaceID}, false); lerr == nil && len(found) > 0 {
+			return found[0].ID, nil
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	return p.ID, nil
+}
+
+// SecretsFile is the per-run secret file read (and unlinked) by the launcher shim.
+const SecretsFile = "secrets.json"
+
+func writeSecrets(runDir string, env map[string]string, runToken string) error {
+	all := map[string]string{}
+	for k, v := range env {
+		all[k] = v
+	}
+	if runToken != "" {
+		all["SPACEMAN_RUN_TOKEN"] = runToken
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	return writeJSONFile(filepath.Join(runDir, SecretsFile), all)
+}
+
+func (a *Agent) startRecorder(ctx context.Context, row runRow) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.recorders[row.RunID]; ok {
+		return
+	}
+	rctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	a.recorders[row.RunID] = cancel
+	go func() {
+		defer func() {
+			a.mu.Lock()
+			delete(a.recorders, row.RunID)
+			a.mu.Unlock()
+			cancel()
+		}()
+		a.record(rctx, row)
+	}()
+}

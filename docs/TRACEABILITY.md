@@ -7,11 +7,11 @@
 | Requirement | WP | Impl | Simulated evidence | Real evidence | Notes |
 |---|---|---|---|---|---|
 | SM-INV-001 | M1-02 | partial | `internal/store` `TestLock*` (exclusive data-dir flock, second Open refused) |  | Lock implemented; "one active instance" also needs `serve` (M1-03). |
-| SM-INV-002 | | todo | | | |
+| SM-INV-002 | M1-08 | implemented | spaces.node_id pinned; runs carry node + lease generation; relocation-only change |  |  |
 | SM-INV-003 | | todo | | | |
 | SM-INV-004 | | todo | | | |
 | SM-INV-005 | | todo | | | |
-| SM-INV-006 | | todo | | | |
+| SM-INV-006 | M1-08 | implemented | `ux_runs_one_control` unique index; `internal/app` `TestFleetLifecycle` (second control refused) |  |  |
 | SM-INV-007 | | todo | | | |
 | SM-INV-008 | | todo | | | |
 | SM-INV-009 | | todo | | | |
@@ -31,19 +31,19 @@
 | SM-ARCH-002 | | todo | | | |
 | SM-ARCH-003 | | todo | | | |
 | SM-ARCH-004 | | todo | | | |
-| SM-NODE-001 | | todo | | | |
-| SM-NODE-002 | | todo | | | |
-| SM-NODE-003 | | todo | | | |
-| SM-NODE-004 | M1-06 | partial | — | `TestRealLaunchAdoptObserveClose`: duplicate name → ErrNameTaken, label lookup adopts the same identity | Journal-before-launch in the node agent (M1-05). |
-| SM-NODE-005 | | todo | | | |
-| SM-NODE-006 | | todo | | | |
-| SM-NODE-007 | | todo | | | |
-| SM-NODE-008 | M1-06 | partial | — | `TestRealLeaseGuardParent` + spike S-2: guard program end kills run terminals | lease-guard command + node integration pending (M1-05/10). |
-| SM-NODE-009 | | todo | | | |
+| SM-NODE-001 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (enroll single-use, credential auth), `internal/fleet` revoke/disable via API |  | Credential rotation endpoint for agents pending. |
+| SM-NODE-002 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (capabilities: runner + 2 harnesses), `proto.Negotiate` |  |  |
+| SM-NODE-003 | M1-05 | implemented | `internal/proto` `TestCommandValidate`, `TestEnvelopeRoundTrip`; `internal/app` `TestFleetLifecycle` |  |  |
+| SM-NODE-004 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (central restart re-delivers; starts unchanged) | `TestRealLaunchAdoptObserveClose` (name_taken + label adoption) |  |
+| SM-NODE-005 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (runs `unknown` after disconnect) |  |  |
+| SM-NODE-006 | M1-05 | implemented | `fleet.applyReport` generation fencing; `internal/app` `TestFleetLifecycle` |  | Dedicated fencing test with a stale-generation report pending (M1-10). |
+| SM-NODE-007 | M1-05 | implemented | `TestDisconnectEnforcement` (run killed after lease+grace; launch refused centrally) |  | Real-hc variant pending (M1-10). |
+| SM-NODE-008 | M1-05 | partial | lease-guard command + parented runs (`agent.ensureGuard`) | `TestRealLeaseGuardParent` + spike S-2 | End-to-end with a SIGKILLed real agent pending (M1-10). |
+| SM-NODE-009 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (agent restart + central restart: no new Start) |  |  |
 | SM-SPACE-001 | | todo | | | |
-| SM-SPACE-002 | | todo | | | |
-| SM-SPACE-003 | | todo | | | |
-| SM-SPACE-004 | | todo | | | |
+| SM-SPACE-002 | M1-08 | partial | `internal/fleet` create/update/pause/resume/archive/restore/purge; `internal/app` `TestFleetLifecycle` |  | UI pending (M1-11). |
+| SM-SPACE-003 | M1-08 | implemented | `internal/app` `TestFleetLifecycle` (pause interrupt stops runs; launches refused while paused) |  |  |
+| SM-SPACE-004 | M1-08 | implemented | `fleet.PurgeSpace` deletes SpaceMan records only |  |  |
 | SM-SPACE-005 | | todo | | | |
 | SM-SPACE-006 | | todo | | | |
 | SM-SPACE-007 | | todo | | | |
@@ -57,12 +57,12 @@
 | SM-ACCT-001 | | todo | | | |
 | SM-ACCT-002 | | todo | | | |
 | SM-ACCT-003 | | todo | | | |
-| SM-ACCT-004 | | todo | | | |
+| SM-ACCT-004 | M1-07 | partial | launch secrets dispatch-time only (`TestLaunchPayloadRedacted`), shim `agent.LaunchShim`, unrelated secrets dropped (`TestClaudeBuild`) | spike S-1 (hc persists env) | Accounts catalog M3-01. |
 | SM-ACCT-005 | | todo | | | |
 | SM-ACCT-006 | | todo | | | |
-| SM-HARN-001 | | todo | | | |
-| SM-HARN-002 | | todo | | | |
-| SM-HARN-003 | | todo | | | |
+| SM-HARN-001 | M1-07 | partial | `internal/harness` `TestClaudeBuild`, `TestCodexBuild` |  | Real Claude/Codex runs need an account credential (see PLAN §4 note). |
+| SM-HARN-002 | M1-07 | implemented | per-space/instance CLAUDE_CONFIG_DIR / CODEX_HOME (`TestClaudeBuild`, `TestCodexBuild`) |  |  |
+| SM-HARN-003 | M1-07 | implemented | `Detect` capability lists; `proto.HarnessInfo` |  |  |
 | SM-HARN-004 | | todo | | | |
 | SM-RUN-001 | M1-06 | partial | `internal/runner/hc` `TestClientFramingAttachCreditResizeClose`, `TestClientCreditsAndInput`, `TestEventDecoding` | `hc_real_test.go` (`-tags real`, hc 0.1.16, macOS, 2026-11-02): launch, observe attach, close info, events, remove | Interrupt/send exercised with harnesses (M1-07). |
 | SM-RUN-002 | M1-06 | implemented | status comes only from hc `status`/`turn` fields (`runner.Status`) | OSC 7501 status verified live for Claude Code (contracts/herdr-core.md) |  |
@@ -183,9 +183,9 @@
 | SM-UI-005 | | todo | | | |
 | SM-UI-006 | | todo | | | |
 | SM-REC-001 | | todo | | | |
-| SM-REC-002 | | todo | | | |
-| SM-REC-003 | | todo | | | |
-| SM-REC-004 | | todo | | | |
+| SM-REC-002 | M1-09 | implemented | `internal/recording` `TestWriteReadResume`; agent observe-attach recorder |  |  |
+| SM-REC-003 | M1-09 | partial | `TestTornSegmentRecovers` |  | Upload/replay/download API pending. |
+| SM-REC-004 | M1-09 | partial | `TestQuotaTruncates`; recorder independent of viewers |  |  |
 | SM-REC-005 | | todo | | | |
 | SM-LIMIT-001 | | todo | | | |
 | SM-LIMIT-002 | | todo | | | |

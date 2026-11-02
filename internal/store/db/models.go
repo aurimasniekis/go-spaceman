@@ -52,6 +52,16 @@ type Change struct {
 	Version      int64
 }
 
+type ExecutionLease struct {
+	SpaceID    string
+	NodeID     string
+	Generation int64
+	State      string
+	GrantedAt  int64
+	RenewedAt  int64
+	ExpiresAt  int64
+}
+
 type IdempotencyKey struct {
 	Principal   string
 	Operation   string
@@ -96,6 +106,64 @@ type MfaTotpPending struct {
 	ExpiresAt int64
 }
 
+type Node struct {
+	ID               string
+	Name             string
+	Description      string
+	State            string
+	LabelsJson       string
+	AgentVersion     string
+	ProtocolMinor    int64
+	CapabilitiesJson string
+	Capacity         int64
+	LastSeenAt       sql.NullInt64
+	LastConnectAt    sql.NullInt64
+	LastDisconnectAt sql.NullInt64
+	LastIp           string
+	Version          int64
+	CreatedAt        int64
+	CreatedBy        string
+	UpdatedAt        int64
+}
+
+type NodeCommand struct {
+	ID             string
+	NodeID         string
+	SpaceID        string
+	RunID          sql.NullString
+	Generation     int64
+	Kind           string
+	IdempotencyKey string
+	PayloadJson    string
+	State          string
+	Reason         string
+	Attempts       int64
+	CreatedAt      int64
+	SentAt         sql.NullInt64
+	AckedAt        sql.NullInt64
+}
+
+type NodeCredential struct {
+	ID         string
+	NodeID     string
+	Mac        []byte
+	Hint       string
+	CreatedAt  int64
+	ExpiresAt  sql.NullInt64
+	RevokedAt  sql.NullInt64
+	LastUsedAt sql.NullInt64
+}
+
+type NodeEnrollment struct {
+	Mac       []byte
+	NodeID    string
+	Hint      string
+	ExpiresAt int64
+	UsedAt    sql.NullInt64
+	CreatedAt int64
+	CreatedBy string
+}
+
 type OneTimeToken struct {
 	Hash      []byte
 	Kind      string
@@ -136,11 +204,72 @@ type RootToken struct {
 	RevokedBy  sql.NullString
 }
 
+type Run struct {
+	ID           string
+	SpaceID      string
+	NodeID       string
+	Generation   int64
+	Kind         string
+	Role         string
+	Harness      string
+	InstanceID   string
+	SessionID    string
+	Desired      string
+	Observed     string
+	TerminalID   string
+	CoreID       string
+	Identity     string
+	Pid          int64
+	ExitCode     sql.NullInt64
+	EndReason    string
+	Error        string
+	Status       string
+	StatusKind   string
+	Turn         int64
+	Adopted      int64
+	LaunchJson   string
+	ManifestJson string
+	Version      int64
+	CreatedAt    int64
+	CreatedBy    string
+	StartedAt    sql.NullInt64
+	EndedAt      sql.NullInt64
+	ObservedAt   sql.NullInt64
+	UpdatedAt    int64
+}
+
+type RunCredential struct {
+	Mac       []byte
+	RunID     string
+	CreatedAt int64
+	RevokedAt sql.NullInt64
+}
+
 type Setting struct {
 	Key       string
 	Value     string
 	UpdatedAt int64
 	UpdatedBy sql.NullString
+}
+
+type Space struct {
+	ID                   string
+	Slug                 string
+	Name                 string
+	Description          string
+	Goals                string
+	StandingInstructions string
+	NodeID               string
+	DesiredNodeID        sql.NullString
+	State                string
+	PauseMode            string
+	DisconnectPolicy     string
+	Workdir              string
+	Version              int64
+	CreatedAt            int64
+	CreatedBy            string
+	UpdatedAt            int64
+	ArchivedAt           sql.NullInt64
 }
 
 type StoreSpaceProbe struct {

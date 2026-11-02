@@ -90,8 +90,8 @@ type codeIn struct {
 	}
 }
 
-// Enrollment is a started TOTP enrollment. The secret is shown once to the enrolling user.
-type Enrollment struct {
+// TOTPEnrollment is a started TOTP enrollment. The secret is shown once to the enrolling user.
+type TOTPEnrollment struct {
 	Secret string `json:"secret"`
 	URI    string `json:"otpauth_uri"`
 }
@@ -126,12 +126,12 @@ func registerAuth(api huma.API, d *Deps) {
 
 	huma.Register(api, huma.Operation{OperationID: "start-enroll", Method: http.MethodPost, Path: "/auth/mfa/enroll", Summary: "Start TOTP enrollment",
 		Tags: tags},
-		func(ctx context.Context, _ *struct{}) (*struct{ Body Enrollment }, error) {
+		func(ctx context.Context, _ *struct{}) (*struct{ Body TOTPEnrollment }, error) {
 			e, err := d.Auth.BeginTOTP(ctx, PrincipalFrom(ctx))
 			if err != nil {
 				return nil, d.fail(ctx, "auth.begin_totp", err)
 			}
-			return &struct{ Body Enrollment }{Body: Enrollment{Secret: e.Secret, URI: e.URI}}, nil
+			return &struct{ Body TOTPEnrollment }{Body: TOTPEnrollment{Secret: e.Secret, URI: e.URI}}, nil
 		})
 
 	huma.Register(api, huma.Operation{OperationID: "confirm-enroll", Method: http.MethodPost, Path: "/auth/mfa/enroll/confirm", Summary: "Confirm TOTP enrollment",
