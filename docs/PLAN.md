@@ -36,8 +36,8 @@
 |---|---|---|---|
 | M2-01 | Attachments + TipTap composer | SM-ATT-* | implemented: storage, API, composer, sanitizing renderer; MCP access with M2-06 |
 | M2-02 | Inbox (operator text/JSON/attachments, sources, statuses) | SM-INBOX-* | implemented: service, API, UI, live updates; other producers with their WPs |
-| M2-03 | Pulse ingestion: connections, durable consumers, dedup, quarantine, fan-out, metrics | SM-EVT-011…016 | implemented (backend, real SDK on an in-process NATS server); metrics, NATS Core and UI pending |
-| M2-04 | Event templates + subscriptions + GitHub presets + UI preview/testing | SM-EVT-001…010, 017 | engine, catalog, subscriptions and preview API implemented; UI pending |
+| M2-03 | Pulse ingestion: connections, durable consumers, dedup, quarantine, fan-out, metrics | SM-EVT-011…016 | implemented (real SDK on an in-process NATS server; UI; e2e via devpulse); metrics and NATS Core pending |
+| M2-04 | Event templates + subscriptions + GitHub presets + UI preview/testing | SM-EVT-001…010, 017 | implemented: engine, catalog, subscriptions, preview, UI, guide and screenshots |
 | M2-05 | Execution queue: ordering, dependencies, exclusions, eligibility, incidents, demotion | SM-QUEUE-* | todo |
 | M2-06 | Control + workers + worktrees + durable messages + delivery adapters | SM-CTRL-*, SM-COMM-*, SM-REPO-* | todo |
 | M2-07 | Human actions: default types, lifecycle, MCP, reply routing; per-space + global UI | SM-HUM-*, SM-HUI-* | todo |
@@ -107,7 +107,8 @@
 | 2026-11-02 | M2-01 | Attachments: content-addressed local store, sniffed types, quota and size limits, references, GC, multipart upload, safe serving | `8135106` | `internal/attachments` tests, `TestAttachmentsOverHTTP` |
 | 2026-11-02 | M2-01/02 | Inbox service, API and UI; TipTap composer with paste/drop/attach; sanitizing Markdown renderer; inbox screenshots and guide | `7e79bb8` | `internal/inbox` tests, `TestInboxOverHTTP`, `markdown.test.ts`; `make e2e` (composer → item → done); screenshots reviewed |
 | 2026-11-02 | M2-04 | Event template engine, GitHub seeds from the go-pulse-github contract, operator-mode NATS test server | `ebe8c8d` | `internal/events/template` 88.6%; real SDK durable round trip |
-| 2026-11-02 | M2-03/04 | Connections (sealed creds), template catalog with immutable versions and follow-latest, subscriptions with explicit cursors, ingestion manager (one durable per subscription), delivery history, quarantine with reprocess, events API | this commit (`feat(events)`) | `internal/events` integration tests ×3 `-race` (fan-out, filter, dedup, quarantine, replay/start-now), `TestEventsOverHTTP` |
+| 2026-11-02 | M2-03/04 | Connections (sealed creds), template catalog with immutable versions and follow-latest, subscriptions with explicit cursors, ingestion manager (one durable per subscription), delivery history, quarantine with reprocess, events API | `a1c4482` | `internal/events` integration tests ×3 `-race` (fan-out, filter, dedup, quarantine, replay/start-now), `TestEventsOverHTTP` |
+| 2026-11-02 | M2-04 | Events UI (catalog, template testing, connections, subscribe form, subscription page with grant, cursor, deliveries, quarantine), devpulse in the dev stack, events guide and screenshots | this commit (`feat(web)`) | `make e2e` (connection → subscription → published event → inbox item); screenshots reviewed |
 
 ## 4. Process deviations
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# A throwaway local SpaceMan stack for UI development, end-to-end tests and screenshots: central (with the embedded UI)
-# plus a node agent configuration that uses its own herdr-core core (never the default one) and a stub harness that
-# prints a few lines and ticks. Nothing here talks to a real model.
+# A throwaway local SpaceMan stack for UI development, end-to-end tests and screenshots: central (with the embedded UI),
+# a node agent configuration that uses its own herdr-core core (never the default one) and a stub harness that prints a
+# few lines and ticks, and a Pulse-shaped NATS server (devpulse) to publish sample events into. Nothing here talks to a
+# real model or a real Pulse deployment.
 #
 # Usage:
 #   scripts/dev-stack.sh up        builds, bootstraps and starts central; prints the stack directory
@@ -24,7 +25,10 @@ up() {
   mport=${SM_DEV_MANAGEMENT_PORT:-38181}
   mkdir -p "$dir/bin"
   if [[ "${SKIP_UI_BUILD:-}" != 1 ]]; then (cd "$root/web" && pnpm run build >/dev/null); fi
-  (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent)
+  (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent && go build -o "$dir/bin/" ./internal/events/pulsetest/devpulse)
+  mkdir -p "$dir/pulse"
+  "${clean_env[@]}" "$dir/bin/devpulse" serve -dir "$dir/pulse" -port "${SM_DEV_PULSE_PORT:-38422}" >"$dir/devpulse.log" 2>&1 &
+  echo $! >"$dir/devpulse.pid"
   local url="http://127.0.0.1:$port"
   cat >"$dir/central.yaml" <<YAML
 mode: development
@@ -68,12 +72,18 @@ export SM_AGENT_CONFIG=$dir/agent.yaml
 export SM_HC_SESSION=$session
 export SM_HC_SOCKET=$dir/hc.sock
 export SM_HC_HOME=$dir/agent/hc
+export SM_PULSE_DIR=$dir/pulse
 ENV
   for _ in $(seq 1 100); do
     curl -fsS "$url/api/v1/system/info" >/dev/null 2>&1 && break
     sleep 0.1
   done
   curl -fsS "$url/api/v1/system/info" >/dev/null
+  for _ in $(seq 1 100); do
+    [[ -s "$dir/pulse/url" ]] && break
+    sleep 0.1
+  done
+  [[ -s "$dir/pulse/url" ]] || { echo "devpulse did not start (see $dir/devpulse.log)" >&2; exit 1; }
   echo "$dir"
 }
 
@@ -83,7 +93,7 @@ down() {
   # shellcheck disable=SC1091
   source "$dir/env"
   local pids=()
-  for p in agent central; do
+  for p in agent central devpulse; do
     if [[ -f "$dir/$p.pid" ]]; then pids+=("$(cat "$dir/$p.pid")"); fi
   done
   if ((${#pids[@]})); then

@@ -74,3 +74,12 @@ export function idempotencyKey(): string {
 export function ifMatch(version: number): string {
   return `"${version}"`
 }
+
+export type EventConnection = Schemas['EventsConnection']
+export type EventTemplate = Schemas['EventsTemplate']
+export type TemplateVersion = Schemas['EventsTemplateVersion']
+export type Definition = Schemas['TemplateDefinition']
+export type Subscription = Schemas['EventsSubscription']
+export type Delivery = Schemas['EventsDelivery']
+export type QuarantineEntry = Schemas['EventsQuarantineEntry']
+export type Cursor = Schemas['EventsCursor']

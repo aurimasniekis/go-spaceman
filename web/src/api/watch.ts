@@ -38,6 +38,12 @@ export function applyChange(qc: QueryClient, c: Change) {
         void qc.invalidateQueries({ queryKey: keys.inboxItem(c.space_id, c.resource_id) })
       }
       break
+    case 'event_subscription':
+      if (c.space_id) {
+        void qc.invalidateQueries({ queryKey: keys.subscriptions(c.space_id) })
+        void qc.invalidateQueries({ queryKey: keys.subscription(c.space_id, c.resource_id) })
+      }
+      break
     case 'user':
       void qc.invalidateQueries({ queryKey: keys.users })
       break

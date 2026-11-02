@@ -1,5 +1,6 @@
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { expect, test, type Browser, type Page } from '@playwright/test'
@@ -127,6 +128,56 @@ test('documentation screenshots', async ({ page, browser }) => {
   const weekend = await inbox({ urgency: 'high', attachment_ids: [img.id, log.id],
     body: `Settlement retries fail on weekends\n\nThe batch job gives up after **three** attempts while the bank's API is in maintenance.\n\n- [ ] Confirm the maintenance window\n- [ ] Make the retry budget time-based\n\n![The stopped run](${img.uri})\n\n[settlement-job.log](${log.uri})` })
 
+  // Events: a Pulse connection (devpulse), GitHub issue subscriptions and published go-pulse-github events (one for another
+  // repository, filtered), and an alerts subscription with a schema that quarantines a malformed alert.
+  const pulseDir = env('SM_PULSE_DIR')
+  const conn = await api.call<{ id: string }>('POST', '/event-connections', { name: 'pulse-prod', url: readFileSync(join(pulseDir, 'url'), 'utf8').trim(),
+    creds: readFileSync(join(pulseDir, 'spaceman.creds'), 'utf8'), enabled: true })
+  const catalog = await api.call<{ items: { slug: string; versions: { id: string }[] }[] }>('GET', '/event-templates')
+  const issueTpl = catalog.items.find((t) => t.slug === 'github-issue')!
+  const issues = await api.call<{ id: string }>('POST', `/spaces/${payments.id}/subscriptions`, { name: 'settlement-service issues', connection_id: conn.id,
+    template_version_id: issueTpl.versions[0].id, follow: 'latest', vars: { account_key: 'example-org', repository: 'example-org/settlement-service' } })
+  await api.call('POST', `/spaces/${docs.id}/subscriptions`, { name: 'docs issues', connection_id: conn.id, template_version_id: issueTpl.versions[0].id,
+    vars: { account_key: 'example-org', repository: 'example-org/docs' } })
+  const alerts = await api.call<{ id: string }>('POST', `/spaces/${payments.id}/subscriptions`, { name: 'production alerts', connection_id: conn.id,
+    custom: { subject: 'evt.ops.alert.production', variables: [], filters: [], title: '{{data.name}} ({{data.severity}})', urgency: 'urgent',
+      body: '**{{data.name}}** fired: {{data.summary | default "(no summary)"}}', instructions: 'A production alert fired for the payments services.',
+      input_schema: { type: 'object', required: ['name', 'severity'] } } })
+  await expect.poll(async () => (await api.call<{ state: string }>('GET', `/spaces/${payments.id}/subscriptions/${issues.id}`)).state, { timeout: 30_000 }).toBe('running')
+  await expect.poll(async () => (await api.call<{ state: string }>('GET', `/spaces/${payments.id}/subscriptions/${alerts.id}`)).state, { timeout: 30_000 }).toBe('running')
+  const sampleFile = join(process.cwd(), '..', 'internal/events/template/testdata/pulse-github-issues-opened.json')
+  const sampleBase = JSON.parse(readFileSync(sampleFile, 'utf8')) as Record<string, any>
+  const tmp = join(env('SM_DIR'), 'events')
+  mkdirSync(tmp, { recursive: true })
+  const publish = (subject: string, type: string, data: unknown) => {
+    const file = join(tmp, `${Math.random().toString(36).slice(2)}.json`)
+    writeFileSync(file, JSON.stringify(data))
+    execFileSync(join(env('SM_BIN'), 'devpulse'), ['publish', '-dir', pulseDir, '-subject', subject, '-type', type, file])
+  }
+  const issueEvent = (repo: string, number: number, action: string, title: string, body: string) => {
+    const e = structuredClone(sampleBase)
+    e.repository.full_name = repo
+    e.resource.number = number
+    e.resource.html_url = `https://github.com/${repo}/issues/${number}`
+    e.github.action = action
+    e.payload.action = action
+    e.payload.issue.number = number
+    e.payload.issue.title = title
+    e.payload.issue.body = body
+    e.actor.login = 'sam-rivera'
+    return e
+  }
+  publish('evt.github.example-org.webhook.issues.opened', 'github.webhook.issues.opened.v1',
+    issueEvent('example-org/settlement-service', 118, 'opened', 'Retries give up during bank maintenance', 'Settlement retries stop after three attempts while the bank API is in its weekend maintenance window.'))
+  publish('evt.github.example-org.webhook.issues.opened', 'github.webhook.issues.opened.v1',
+    issueEvent('example-org/billing-ui', 7, 'opened', 'Dark mode contrast', 'Not for this space.'))
+  publish('evt.github.example-org.webhook.issues.labeled', 'github.webhook.issues.labeled.v1',
+    issueEvent('example-org/settlement-service', 118, 'labeled', 'Retries give up during bank maintenance', 'Labelled priority/high.'))
+  publish('evt.ops.alert.production', 'ops.alert.v1', { name: 'settlement_lag', severity: 'critical', summary: 'Settlement lag above 10 minutes.' })
+  publish('evt.ops.alert.production', 'ops.alert.v1', { name: 'refund_errors', summary: 'Missing severity: this one is malformed.' })
+  await expect.poll(async () => (await api.call<{ items: unknown[] }>('GET', `/spaces/${payments.id}/subscriptions/${issues.id}/deliveries`)).items.length, { timeout: 30_000 }).toBe(3)
+  await expect.poll(async () => (await api.call<{ quarantined: number }>('GET', `/spaces/${payments.id}/subscriptions/${alerts.id}`)).quarantined, { timeout: 30_000 }).toBe(1)
+
   // People and tokens.
   const samPw = password()
   await api.call('POST', '/users', { display_name: 'Sam Rivera', email: 'sam@example.com', password: samPw, mfa_required: true, grants: [{ role: 'operator', domain: payments.id }] })
@@ -196,6 +247,36 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.keyboard.type(' differs, the amount does not.')
     await page.locator('input[type=file]').setInputFiles([{ name: 'refunds-export.csv', mimeType: 'text/csv', buffer: Buffer.from('refund_id,amount\nrf_1,12.00\nrf_2,12.00\n') }])
     await expect(page.getByText('refunds-export.csv ·')).toBeVisible()
+  })
+  await capture(page, 'events-catalog', async () => {
+    await page.goto('/events')
+    await expect(page.getByText('GitHub pull requests')).toBeVisible()
+  })
+  await capture(page, 'event-template', async () => {
+    await page.goto('/events')
+    await page.getByRole('link', { name: 'GitHub issues' }).click()
+    await page.getByRole('button', { name: 'Test' }).click()
+    await expect(page.getByText('accepted', { exact: true })).toBeVisible()
+  })
+  await capture(page, 'events-subscribe', async () => {
+    await page.goto(`/spaces/${docs.id}/events`)
+    await page.getByRole('button', { name: 'Subscribe' }).click()
+    await page.getByLabel('Name').fill('docs pull requests')
+    await page.getByRole('textbox', { name: 'Connection' }).click()
+    await page.getByRole('option', { name: 'pulse-prod' }).click()
+    await page.getByRole('textbox', { name: 'Template' }).click()
+    await page.getByRole('option', { name: 'GitHub pull requests · v1' }).click()
+    await page.getByLabel('account_key').fill('example-org')
+    await page.getByLabel('repository').fill('example-org/docs')
+  })
+  await capture(page, 'events-subscription', async () => {
+    await page.goto(`/spaces/${payments.id}/events/${issues.id}`)
+    await expect(page.getByText('filtered', { exact: true })).toBeVisible()
+  })
+  await capture(page, 'events-quarantine', async () => {
+    await page.goto(`/spaces/${payments.id}/events/${alerts.id}`)
+    await page.getByRole('tab', { name: /Quarantine/ }).click()
+    await expect(page.getByRole('button', { name: 'Reprocess' })).toBeVisible()
   })
   await capture(page, 'setup-node-enroll', async () => {
     await page.goto('/nodes')

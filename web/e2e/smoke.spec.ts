@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -27,7 +28,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 test.describe.configure({ mode: 'serial' })
 
 test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
-  test.setTimeout(240_000)
+  test.setTimeout(300_000)
   const email = 'alex@example.com'
   // Generated per run (throwaway stack); saved with the TOTP secret in the stack directory for manual inspection.
   const password = `e2e-${randomBytes(18).toString('base64url')}`
@@ -143,6 +144,44 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await shot(page, 'inbox-item')
   await page.getByRole('button', { name: 'Mark done' }).click()
   await expect(page.getByText('Done', { exact: true }).first()).toBeVisible()
+
+  // Events: a Pulse connection (devpulse), a GitHub issues subscription, a published go-pulse-github event that arrives
+  // in the inbox, rendered as untrusted text.
+  await page.getByRole('link', { name: 'Events' }).click()
+  await page.getByRole('tab', { name: 'Connections' }).click()
+  await page.getByRole('button', { name: 'Add connection' }).click()
+  await page.getByLabel('Name').fill('dev-pulse')
+  await page.getByLabel('URL').fill(readFileSync(join(env('SM_PULSE_DIR'), 'url'), 'utf8').trim())
+  await page.getByLabel('Credentials (.creds)').fill(readFileSync(join(env('SM_PULSE_DIR'), 'spaceman.creds'), 'utf8'))
+  await page.getByRole('button', { name: 'Add connection' }).last().click()
+  await expect(page.getByRole('cell', { name: 'dev-pulse' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Templates' }).click()
+  await page.getByRole('link', { name: 'GitHub issues' }).click()
+  await page.getByRole('button', { name: 'Test' }).click()
+  await expect(page.getByText('accepted', { exact: true })).toBeVisible()
+  await shot(page, 'event-template')
+
+  await page.getByRole('link', { name: 'Spaces' }).click()
+  await page.getByRole('link', { name: 'Payments platform' }).click()
+  await page.getByRole('tab', { name: 'Events' }).click()
+  await page.getByRole('button', { name: 'Subscribe' }).click()
+  await page.getByLabel('Name').fill('tool issues')
+  await page.getByRole('textbox', { name: 'Connection' }).click()
+  await page.getByRole('option', { name: 'dev-pulse' }).click()
+  await page.getByRole('textbox', { name: 'Template' }).click()
+  await page.getByRole('option', { name: 'GitHub issues · v1' }).click()
+  await page.getByLabel('account_key').fill('example-org')
+  await page.getByLabel('repository').fill('example-org/tool')
+  await page.getByRole('button', { name: 'Subscribe' }).last().click()
+  await expect(page.getByRole('heading', { name: 'tool issues' })).toBeVisible()
+  await expect(page.getByText('running', { exact: true })).toBeVisible({ timeout: 30_000 })
+  execFileSync(join(env('SM_BIN'), 'devpulse'), ['publish', '-dir', env('SM_PULSE_DIR'), '-subject', 'evt.github.example-org.webhook.issues.opened',
+    '-type', 'github.webhook.issues.opened.v1', join(process.cwd(), '..', 'internal/events/template/testdata/pulse-github-issues-opened.json')])
+  await expect(page.getByText('accepted', { exact: true })).toBeVisible({ timeout: 30_000 })
+  await shot(page, 'event-subscription')
+  await page.getByRole('link', { name: 'open item' }).click()
+  await expect(page.getByRole('heading', { name: 'example-org/tool#42 opened: Bug <script>' })).toBeVisible()
+  await expect(page.locator('.sm-markdown script')).toHaveCount(0)
 
   // Audit shows what happened.
   await page.getByRole('link', { name: 'Audit log' }).click()

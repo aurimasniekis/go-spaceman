@@ -71,7 +71,7 @@
 | SM-INBOX-002 | M2-02 | implemented | `TestCreateAndGet`, `TestDedup`, `TestListPagesAndCounts`: source identity, content type, body or payload reference, correlation and dedup keys, received time, trusted metadata, urgency, status, subscription provenance |  |  |
 | SM-INBOX-003 | M2-02 | partial | `TestStatus` (defer with time, reject with reason, done with association, optimistic version, audited) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02): mark done | Control-side actions (reply, create human actions, planner, tasks) through MCP arrive with M2-06/M2-07. |
 | SM-INBOX-004 | M2-02 | implemented | Trusted metadata is set only by the authenticated caller (`TestCreateAndGet`); bodies are rendered through the sanitizer (`web` `markdown.test.ts`) |  | Event authority from subscription configuration lands with M2-03/M2-04. |
-| SM-EVT-001 | M2-03 | partial | Spaces subscribe with a template version or a custom definition: `internal/events` (real go-pulse v0.1.3 SDK against an in-process NATS server in operator mode, `pulsetest`) `TestTemplatesAndConnections`, `TestQuarantineAndReprocess` |  | Catalog/subscription UI pending (M2-04 UI). |
+| SM-EVT-001 | M2-03 | implemented | Spaces subscribe with a template version or a custom definition: `TestTemplatesAndConnections`, `TestQuarantineAndReprocess` | `make e2e` (real central + agent + hc 0.1.16 + devpulse NATS with the go-pulse SDK, Chromium, macOS, 2026-11-02) |  |
 | SM-EVT-002 | M2-04 | partial | `internal/events/template` `TestGitHubIssueSeed` (issue seed renders the go-pulse-github issues_opened event; repository is a payload filter) |  | Shared central catalog and subscriptions (M2-04 storage/API/UI). PR template has no upstream fixture. |
 | SM-EVT-003 | M2-03 | implemented | Separate tables and APIs for connections, templates/versions and subscriptions; connection credentials sealed and write-only (`TestTemplatesAndConnections`, `TestEventsOverHTTP`) |  |  |
 | SM-EVT-004 | M2-04 | implemented | Stable template IDs/slugs, immutable published versions, drafts, typed variables, input schema, subject/filter rules, inbox mapping (`TestTemplatesAndConnections`, `internal/events/template`) |  |  |
@@ -87,7 +87,7 @@
 | SM-EVT-014 | M2-03 | partial | `TestIngestFanOutAndProvenance`: the paused space receives its item |  | Wake/work deferral policy arrives with the queue and control (M2-05/06). |
 | SM-EVT-015 | M2-03 | implemented | `TestCursorSemantics` (replayed outcome distinct from duplicates and retries), audited cursor changes, `replay:execute` check (`TestEventsOverHTTP`) |  |  |
 | SM-EVT-016 | | todo | | | |
-| SM-EVT-017 | | todo | | | |
+| SM-EVT-017 | M2-04 | partial | Catalog, template page with sample testing (preview API), subscription form from template variables, delivery history, quarantine with reprocess/discard, replay dialog | `make e2e` (real central + agent + hc 0.1.16 + devpulse NATS with the go-pulse SDK, Chromium, macOS, 2026-11-02): connection, subscription, published go-pulse-github event → inbox item | Resulting-inbox preview shows rendered title/body; a visual custom-definition editor is JSON for now. |
 | SM-EVT-018 | M2-03 | partial | HTTP API for connections, templates, preview and subscriptions (`TestEventsOverHTTP`) |  | Terraform provider in M5. |
 | SM-EVT-019 | | todo | | | |
 | SM-QUEUE-001 | | todo | | | |

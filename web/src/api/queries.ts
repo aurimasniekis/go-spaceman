@@ -19,6 +19,11 @@ export const keys = {
   audit: (f: AuditFilter) => ['audit', f] as const,
   rootToken: ['root-token'] as const,
   inbox: (space: string) => ['inbox', space] as const,
+  connections: ['event-connections'] as const,
+  templates: ['event-templates'] as const,
+  template: (id: string) => ['event-template', id] as const,
+  subscriptions: (space: string) => ['subscriptions', space] as const,
+  subscription: (space: string, id: string) => ['subscription', space, id] as const,
   inboxItem: (space: string, id: string) => ['inbox-item', space, id] as const,
 }
 
@@ -118,4 +123,42 @@ export const useInboxItem = (space: string, id: string) =>
   useQuery({
     queryKey: keys.inboxItem(space, id),
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/inbox/{item_id}', { params: { path: { space_id: space, item_id: id } } })),
+  })
+
+export const useConnections = () =>
+  useQuery({ queryKey: keys.connections, queryFn: async () => unwrap(await api.GET('/event-connections')).items })
+
+export const useTemplates = () => useQuery({ queryKey: keys.templates, queryFn: async () => unwrap(await api.GET('/event-templates')).items })
+
+export const useTemplate = (id: string) =>
+  useQuery({ queryKey: keys.template(id), queryFn: async () => unwrap(await api.GET('/event-templates/{template_id}', { params: { path: { template_id: id } } })) })
+
+// Runtime state (running, error) comes from the ingestion manager without change-feed entries: refresh on a timer too.
+export const useSubscriptions = (space: string) =>
+  useQuery({
+    queryKey: keys.subscriptions(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/subscriptions', { params: { path: { space_id: space } } })).items,
+    refetchInterval: 10_000,
+  })
+
+export const useSubscription = (space: string, id: string) =>
+  useQuery({
+    queryKey: keys.subscription(space, id),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/subscriptions/{subscription_id}', { params: { path: { space_id: space, subscription_id: id } } })),
+    refetchInterval: 10_000,
+  })
+
+export const useDeliveries = (space: string, id: string) =>
+  useQuery({
+    queryKey: [...keys.subscription(space, id), 'deliveries'],
+    queryFn: async () =>
+      unwrap(await api.GET('/spaces/{space_id}/subscriptions/{subscription_id}/deliveries', { params: { path: { space_id: space, subscription_id: id }, query: { limit: 200 } } })).items,
+    refetchInterval: 10_000,
+  })
+
+export const useQuarantine = (space: string, id: string) =>
+  useQuery({
+    queryKey: [...keys.subscription(space, id), 'quarantine'],
+    queryFn: async () =>
+      unwrap(await api.GET('/spaces/{space_id}/subscriptions/{subscription_id}/quarantine', { params: { path: { space_id: space, subscription_id: id } } })).items,
   })

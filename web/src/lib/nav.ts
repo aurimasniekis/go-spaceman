@@ -1,12 +1,12 @@
-import { IconActivity, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
+import { IconActivity, IconBolt, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
 export interface NavItem {
-  to: '/' | '/spaces' | '/nodes' | '/users' | '/tokens' | '/audit' | '/account'
+  to: '/' | '/spaces' | '/nodes' | '/events' | '/users' | '/tokens' | '/audit' | '/account'
   label: string
   icon: typeof IconBox
-  group: 'Work' | 'Fleet' | 'Access'
+  group: 'Work' | 'Fleet' | 'Integrations' | 'Access'
   /** Shown only with a global grant (the API decides; this only hides links that would 403). */
   global?: boolean
 }
@@ -15,6 +15,7 @@ export const nav: NavItem[] = [
   { to: '/', label: 'Overview', icon: IconLayoutDashboard, group: 'Work' },
   { to: '/spaces', label: 'Spaces', icon: IconBox, group: 'Work' },
   { to: '/nodes', label: 'Nodes', icon: IconServer2, group: 'Fleet', global: true },
+  { to: '/events', label: 'Events', icon: IconBolt, group: 'Integrations' },
   { to: '/users', label: 'Users', icon: IconUsers, group: 'Access', global: true },
   { to: '/tokens', label: 'API tokens', icon: IconKey, group: 'Access' },
   { to: '/audit', label: 'Audit log', icon: IconListDetails, group: 'Access', global: true },

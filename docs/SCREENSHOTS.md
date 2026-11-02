@@ -30,7 +30,11 @@
 | `human-form-default` | Human actions (M2) | Question / approval form | todo |
 | `human-form-custom` | Custom types (M3) | Schema-driven form | todo |
 | `kb-sessions` | KB/support (M3) | KB support sessions | todo |
-| `events-subscription` | Pulse/templates (M2) | Subscription editor and preview | todo |
+| `events-catalog` | Events and subscriptions | Template catalog | current |
+| `event-template` | Events and subscriptions | Template definition with a sample test | current |
+| `events-subscribe` | Events and subscriptions | Subscription form with template variables | current |
+| `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history | current |
+| `events-quarantine` | Events and subscriptions | Quarantined event with reprocess/discard | current |
 | `memory-sync` | Memory/dreams (M3) | Memory collection sync state | todo |
 | `prompts-diff` | Prompts/profiles (M3) | Prompt version diff | todo |
 | `ops-backups` | Backups/operations (M4) | Operations page | todo |

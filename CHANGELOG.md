@@ -24,6 +24,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Attachments: files uploaded to a space with sniffed types, size and quota limits, safe serving and garbage collection.
 - Inbox per space: operator items in Markdown or JSON with attachments, urgency, statuses (in progress, deferred, rejected,
   done), deduplication by source key, and a TipTap editor that accepts pasted, dropped or attached images and files.
+- Pulse events: connections with encrypted credentials, a catalog of versioned event templates (built-in GitHub issue and
+  pull request templates), space subscriptions with one durable consumer each, explicit cursors (start now, replay),
+  delivery history, quarantine with reprocessing, and template testing with sample events.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

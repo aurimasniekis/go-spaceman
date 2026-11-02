@@ -91,7 +91,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const me = useMe().data
   const items = visibleNav(me)
   const width = collapsed ? 52 : 200
-  const groups = ['Work', 'Fleet', 'Access'] as const
+  const groups = ['Work', 'Fleet', 'Integrations', 'Access'] as const
 
   return (
     <AppShell header={{ height: 40 }} navbar={{ width, breakpoint: 'sm', collapsed: { mobile: !mobileOpen } }} padding="md">

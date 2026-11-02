@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "observation_id": "obs_example_issues_opened",
+  "publication_id": "01JBEXAMPLE0ISSUESOPENED0",
+  "account": {
+    "key": "example-org",
+    "login": "example-org",
+    "type": "organization"
+  },
+  "source": {
+    "collector": "webhook",
+    "installation_id": 555,
+    "hook_id": "7"
+  },
+  "github": {
+    "event": "issues",
+    "action": "opened",
+    "delivery_id": "d-1"
+  },
+  "actor": {
+    "id": 15481,
+    "login": "aurimasniekis",
+    "type": "User"
+  },
+  "repository": {
+    "id": 9001,
+    "full_name": "example-org/tool",
+    "owner": {
+      "id": 7001,
+      "login": "example-org",
+      "type": "Organization"
+    },
+    "private": true,
+    "visibility": "private"
+  },
+  "organization": {
+    "id": 7001,
+    "login": "example-org",
+    "type": "Organization"
+  },
+  "resource": {
+    "kind": "issue",
+    "id": 3001,
+    "node_id": "I_kw1",
+    "number": 42,
+    "url": "https://api.github.com/repos/example-org/tool/issues/42",
+    "html_url": "https://github.com/example-org/tool/issues/42"
+  },
+  "occurred_at": "2026-10-20T10:00:00Z",
+  "occurred_at_basis": "payload:issue.created_at",
+  "observed_at": "2026-10-27T12:00:00Z",
+  "collection_mode": "live",
+  "provenance": {
+    "authoritative": true,
+    "snapshot": false,
+    "inferred": false
+  },
+  "routing": {
+    "match": "installation_account"
+  },
+  "payload": {
+    "action": "opened",
+    "issue": {
+      "id": 3001,
+      "node_id": "I_kw1",
+      "number": 42,
+      "url": "https://api.github.com/repos/example-org/tool/issues/42",
+      "html_url": "https://github.com/example-org/tool/issues/42",
+      "title": "Bug <script>",
+      "created_at": "2026-10-20T10:00:00Z",
+      "body": "secret body"
+    },
+    "repository": {
+      "id": 9001,
+      "full_name": "example-org/tool",
+      "private": true,
+      "visibility": "private",
+      "owner": {
+        "id": 7001,
+        "login": "example-org",
+        "type": "Organization"
+      }
+    },
+    "organization": {
+      "id": 7001,
+      "login": "example-org",
+      "type": "Organization"
+    },
+    "sender": {
+      "id": 15481,
+      "login": "aurimasniekis",
+      "type": "User"
+    },
+    "installation": {
+      "id": 555,
+      "node_id": "x"
+    }
+  }
+}

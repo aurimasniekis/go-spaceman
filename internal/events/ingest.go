@@ -358,6 +358,10 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 	sctx, stop := context.WithCancel(ctx)
 	subID := s.ID
 	opts = append(opts, pulse.OnError(func(_ pulse.Event, err error) {
+		var qe *QuarantinedError
+		if errors.As(err, &qe) {
+			return // expected and recorded in quarantine, not a subscription error
+		}
 		m.svc.setState(subID, "running", err.Error())
 	}))
 	sub, err := c.client.Subscribe(sctx, s.EffectiveSubject, func(hctx context.Context, e pulse.Event) error {

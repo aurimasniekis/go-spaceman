@@ -192,6 +192,9 @@ func TestQuarantineAndReprocess(t *testing.T) {
 	f.publish("evt.ops.alert.fired", "ops.alert.v1", json.RawMessage(`{"name":"db-lag"}`), "")
 	eventually(t, "quarantined", func() bool { q, _ := f.svc.Quarantine(f.ctx, "spc_a", s.ID, "open"); return len(q) == 1 })
 	time.Sleep(1500 * time.Millisecond) // a nak would redeliver within a second
+	if g, _ := f.svc.GetSubscription(f.ctx, "spc_a", s.ID); g.LastError != "" || g.State != "running" {
+		t.Fatalf("a quarantined event is not a subscription error: %q %s", g.LastError, g.State)
+	}
 	if f.outcomes("spc_a", s.ID)[OutcomeQuarantined] != 1 || len(f.items("spc_a")) != 0 {
 		t.Fatalf("poison event redelivered: %v", f.outcomes("spc_a", s.ID))
 	}
