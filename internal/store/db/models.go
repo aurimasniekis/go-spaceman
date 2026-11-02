@@ -356,6 +356,37 @@ type LoginThrottle struct {
 	UpdatedAt     int64
 }
 
+type McpGrant struct {
+	ID        string
+	ServerID  string
+	SpaceID   string
+	Role      string
+	ToolsJson string
+	CreatedAt int64
+	CreatedBy string
+}
+
+type McpServer struct {
+	ID              string
+	Slug            string
+	Name            string
+	Description     string
+	Url             string
+	HeadersEnc      []byte
+	HeaderNamesJson string
+	HeadersVersion  int64
+	AllowPrivate    int64
+	ToolsJson       string
+	CallTimeoutMs   int64
+	MaxConcurrency  int64
+	MaxResultBytes  int64
+	Enabled         int64
+	CreatedAt       int64
+	CreatedBy       string
+	UpdatedAt       int64
+	Version         int64
+}
+
 type Message struct {
 	ID             string
 	SpaceID        string

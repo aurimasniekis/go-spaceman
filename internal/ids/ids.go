@@ -63,6 +63,7 @@ const (
 	Skill          = "skl"
 	SkillVersion   = "skv"
 	MCPServer      = "mcp"
+	MCPGrant       = "mcg"
 	EventConn      = "ecn"
 	EventTemplate  = "etp"
 	EventTemplVer  = "etv"

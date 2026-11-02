@@ -694,6 +694,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** External MCP servers (never their header values) */
+        get: operations["list-mcp-servers"];
+        put?: never;
+        /**
+         * Register an MCP server
+         * @description Header values are sealed and can never be read back. Agents see the server's tools only through a grant.
+         */
+        post: operations["create-mcp-server"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An MCP server */
+        get: operations["get-mcp-server"];
+        /**
+         * Edit an MCP server
+         * @description Open upstream sessions are closed; runs reconnect on their next call.
+         */
+        put: operations["update-mcp-server"];
+        post?: never;
+        /** Remove an MCP server and its grants */
+        delete: operations["delete-mcp-server"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect to the server and list its tools
+         * @description Uses a throwaway session under the same egress policy as runs.
+         */
+        post: operations["check-mcp-server"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Spaces and roles granted the server */
+        get: operations["list-mcp-grants"];
+        put?: never;
+        /** Grant the server to a space role */
+        post: operations["add-mcp-grant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}/grants/{grant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a grant
+         * @description Calls in flight finish; the next call of an affected run is refused.
+         */
+        delete: operations["revoke-mcp-grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -1345,6 +1446,23 @@ export interface paths {
          * @description Defer (until a time), reject, mark done or associate with existing work.
          */
         post: operations["set-inbox-status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** MCP servers granted in a space */
+        get: operations["list-space-mcp-grants"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3303,6 +3421,95 @@ export interface components {
             name: string;
             slug: string;
         };
+        GatewayDiscovered: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewayDiscovered.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            elapsed_ms: number;
+            error?: string;
+            ok: boolean;
+            /** @description The upstream's name and version */
+            server?: string;
+            tools: components["schemas"]["GatewayDiscoveredTool"][];
+        };
+        GatewayDiscoveredTool: {
+            description?: string;
+            name: string;
+            read_only: boolean;
+            /** @description False when the namespaced name would be too long or has characters models refuse */
+            usable: boolean;
+        };
+        GatewayGrant: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewayGrant.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            /** @description A space role name, or * for every role */
+            role: string;
+            server_id: string;
+            space_id: string;
+            /** @description Subset of the server's tools; empty grants all of them */
+            tools: string[];
+        };
+        GatewayServer: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewayServer.json
+             */
+            readonly $schema?: string;
+            /** @description Allow loopback and private addresses (and plain http). Off by default. */
+            allow_private: boolean;
+            /** Format: int64 */
+            call_timeout_ms: number;
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            enabled: boolean;
+            /** Format: int64 */
+            grants: number;
+            /** @description Names of the stored request headers; values are never returned */
+            header_names: string[];
+            /** Format: int64 */
+            headers_version: number;
+            id: string;
+            /**
+             * Format: int64
+             * @description Calls in flight to this server across all runs
+             */
+            max_concurrency: number;
+            /** Format: int64 */
+            max_result_bytes: number;
+            name: string;
+            /** @description Namespace of the server's tools: <slug>__<tool> */
+            slug: string;
+            /** @description Upstream tools offered to agents; empty offers every tool */
+            tools: string[];
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Streamable HTTP endpoint */
+            url: string;
+            /** Format: int64 */
+            version: number;
+        };
+        GatewaySpaceServer: {
+            enabled: boolean;
+            grant_id: string;
+            name: string;
+            role: string;
+            server_id: string;
+            slug: string;
+            tools: string[];
+        };
         HumanAction: {
             /**
              * Format: uri
@@ -3619,6 +3826,24 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["HumanType"][];
         };
+        "List-mcp-grantsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-mcp-grantsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["GatewayGrant"][];
+        };
+        "List-mcp-serversResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-mcp-serversResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["GatewayServer"][];
+        };
         "List-nodesResponse": {
             /**
              * Format: uri
@@ -3691,6 +3916,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["HumanSpaceType"][];
         };
+        "List-space-mcp-grantsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-mcp-grantsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["GatewaySpaceServer"][];
+        };
         "List-space-rolesResponse": {
             /**
              * Format: uri
@@ -3745,6 +3979,51 @@ export interface components {
             readonly $schema?: string;
             email: string;
             password: string;
+        };
+        MCPGrantBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/MCPGrantBody.json
+             */
+            readonly $schema?: string;
+            /** @description A space role name; * or empty for every role */
+            role?: string;
+            space_id: string;
+            /** @description Subset of the server's tools; empty grants all */
+            tools?: string[];
+        };
+        MCPServerBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/MCPServerBody.json
+             */
+            readonly $schema?: string;
+            /** @description Allow loopback and private addresses and plain http. Link-local addresses stay refused. */
+            allow_private?: boolean;
+            /** Format: int64 */
+            call_timeout_ms?: number;
+            description?: string;
+            /** @description Default true */
+            enabled?: boolean;
+            /** @description Request headers such as Authorization; sealed and never returned */
+            headers?: {
+                [key: string]: string;
+            };
+            /** Format: int64 */
+            max_concurrency?: number;
+            /** Format: int64 */
+            max_result_bytes?: number;
+            name: string;
+            /** @description On an edit, replace the stored headers with headers (empty clears them) */
+            set_headers?: boolean;
+            /** @description Namespace of the server's tools (<slug>__<tool>); required on create, fixed after */
+            slug?: string;
+            /** @description Upstream tools offered; empty offers all */
+            tools?: string[];
+            /** @description Streamable HTTP endpoint; https unless private networks are allowed */
+            url: string;
         };
         Me: {
             /**
@@ -6110,6 +6389,299 @@ export interface operations {
             };
         };
     };
+    "list-mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-mcp-serversResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-mcp-server": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPServerBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-mcp-server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-mcp-server": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPServerBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-mcp-server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "check-mcp-server": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayDiscovered"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-mcp-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-mcp-grantsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "add-mcp-grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPGrantBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayGrant"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "revoke-mcp-grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: string;
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-nodes": {
         parameters: {
             query?: never;
@@ -7668,6 +8240,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-mcp-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-mcp-grantsResponse"];
                 };
             };
             /** @description Error */

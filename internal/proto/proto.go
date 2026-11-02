@@ -416,6 +416,9 @@ type AgentTool struct {
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
 	ReadOnly    bool            `json:"read_only,omitempty"`
+	// Upstream marks a tool served by an external MCP server through the gateway (ADR-0023): its result is an MCP
+	// CallToolResult that the bridge passes through.
+	Upstream bool `json:"upstream,omitempty"`
 }
 
 // Negotiate picks the minor version both sides support, or fails.

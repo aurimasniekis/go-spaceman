@@ -7,6 +7,9 @@ credential on every call, so a run that ended (or was relaunched) loses its tool
 What a run may do depends on its **kind**, not on anything the model says. The space, the run and the requester always
 come from the run's credential; tool arguments can never name another space.
 
+Runs of a role granted an external MCP server also see that server's tools in the same SpaceMan server, named
+`<server>__<tool>`; see [MCP gateway](./mcp-gateway).
+
 | Tool | What it does | Control | Worker | KB, dreamer | Diagnostic |
 |---|---|:-:|:-:|:-:|:-:|
 | `spaceman_whoami` | The run's identity: run, space, role, kind, harness | ✓ | ✓ | ✓ | ✓ |

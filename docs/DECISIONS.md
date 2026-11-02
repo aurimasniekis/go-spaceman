@@ -309,6 +309,36 @@
   - A keyring compromise exposes active run tokens; they grant only that run's tools while it is active.
   - Internal errors reach the agent as "internal error"; details are logged centrally.
 
+### ADR-0023 — The MCP gateway gives each run its own upstream session and dials only allowed addresses (security-relevant)
+- **Status:** Accepted, 2026-11-02.
+- **Context:** SM-MCP-001/002 require external MCP servers to be reached through SpaceMan: agents never get their
+  address or credentials, grants are per space and role, and upstream sessions must not be assumed stateless or safe to
+  multiplex. An upstream address chosen by an administrator could also point at internal services (SSRF).
+- **Decision:**
+  - Servers are registered centrally (streamable HTTP only). Request headers are sealed with the keyring purpose
+    `credential` and are write-only; only their names are returned.
+  - A grant names a space and a space role (or `*`) and optionally a subset of tools. A server may also restrict the
+    tools it offers. Tools are exposed as `<slug>__<tool>`; slugs are unique and cannot contain `__`, so names never
+    collide with each other or with SpaceMan's own `spaceman_*` tools. Names longer than 64 characters are not offered.
+  - Agent calls travel the existing tool path (ADR-0022). Central opens **one upstream session per run and server**,
+    never shared or reused by another run, closed when the run ends, the grant is revoked, the server changes, after
+    10 idle minutes, or after a transport failure. At most 256 sessions are open at once.
+  - Every call re-reads the grants. A per-server call timeout (≤ 20 s), a per-server concurrency limit across runs, an
+    argument limit (256 KiB) and a result limit (≤ 4 MiB, enforced on the HTTP body as well) apply. Each call is audited
+    with run, server, tool and outcome, never arguments or results.
+  - The gateway client declares no client capabilities: upstream servers cannot ask the agent for sampling,
+    elicitation or roots. The standalone SSE stream is disabled.
+  - Egress: the dialer checks the address actually connected to, after DNS resolution. Link-local, multicast,
+    unspecified and broadcast addresses are always refused. Loopback, RFC 1918, CGNAT, unique-local IPv6 and the IPv6
+    translation prefixes are refused unless the server is marked `allow_private` by an administrator; plain http is
+    accepted only then. Environment proxies are ignored and redirects are never followed.
+- **Consequences:**
+  - Upstream state is per run: a relaunched run starts a fresh upstream session.
+  - Tools are listed when the harness starts its MCP bridge; tools granted later appear on the next launch, while a
+    revocation applies on the next call.
+  - Results are passed to the agent as the upstream sent them and are untrusted content (prompt injection risk).
+  - Configured approvals for gateway calls arrive with the approval gateway (M3-05).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -318,7 +348,7 @@
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
 | K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). | — | done |
-| K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream (streamable HTTP) clients are inspected with M3-03. | — | done |
+| K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | llm-knowledge-base-template layout and licence; Piebald dream prompts licence. | KB, dreamer | Fetch and record; attribute or paraphrase per licence. |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |

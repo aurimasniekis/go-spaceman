@@ -55,6 +55,15 @@ type Deps struct {
 	Human       *human.Service
 	// Extra registers more tools (messages, orchestration) on the same registry.
 	Extra []func(r *Registry)
+	// Upstream serves external MCP servers' tools through the gateway (ADR-0023); nil serves none.
+	Upstream Upstream
+}
+
+// Upstream is the MCP gateway as the registry sees it.
+type Upstream interface {
+	Catalog(ctx context.Context, p *fleet.RunPrincipal) []proto.AgentTool
+	Owns(name string) bool
+	Call(ctx context.Context, p *fleet.RunPrincipal, name string, args json.RawMessage) (json.RawMessage, error)
 }
 
 // Registry holds the tools.
@@ -115,7 +124,14 @@ func (r *Registry) Catalog(kind string) []proto.AgentTool {
 // Dispatch runs one call for an authenticated run (fleet.ToolDispatcher).
 func (r *Registry) Dispatch(ctx context.Context, p *fleet.RunPrincipal, name string, args json.RawMessage) (json.RawMessage, error) {
 	if name == proto.ToolCatalog {
-		return json.Marshal(r.Catalog(p.Kind))
+		list := r.Catalog(p.Kind)
+		if r.d.Upstream != nil {
+			list = append(list, r.d.Upstream.Catalog(ctx, p)...)
+		}
+		return json.Marshal(list)
+	}
+	if _, builtin := r.tools[name]; !builtin && r.d.Upstream != nil && r.d.Upstream.Owns(name) {
+		return r.d.Upstream.Call(ctx, p, name, args)
 	}
 	t, ok := r.tools[name]
 	if !ok {

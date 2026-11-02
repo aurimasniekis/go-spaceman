@@ -46,6 +46,8 @@
 | `prompt-detail` | Prompts | A prompt's draft editor (with extends) and published versions | current |
 | `roles` | Roles and profiles | Role templates with prompt binding and profile | current |
 | `skills` | Skills | Skill catalog with the built-in HallPass skill and a custom skill | current |
+| `mcp-servers` | MCP servers | Registered MCP servers with header names (never values), grants and limits | current |
+| `mcp-server-detail` | MCP servers | A server's connection check with its namespaced tools, and its grants to space roles | current |
 | `skill-detail` | Skills | A skill's files, published versions and draft editor | current |
 | `space-role-preview` | Roles and profiles | A space role's effective configuration with origins and system text | current |
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |

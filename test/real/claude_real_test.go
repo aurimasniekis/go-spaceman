@@ -3,13 +3,19 @@
 package real
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
 )
@@ -130,4 +136,76 @@ func TestRealClaudeUsesSpaceManTools(t *testing.T) {
 		t.Fatalf("stop: %d", st)
 	}
 	t.Logf("real Claude run %s used spaceman_inbox_add", runID)
+}
+
+// TestRealClaudeUsesGatewayTool (SM-MCP-001/002, ADR-0023): a real Claude Code run calls a tool of an external MCP
+// server through SpaceMan's gateway. The server (in this test process) requires a bearer token that only SpaceMan holds;
+// Claude sees the tool as tickets__ticket_get and passes the answer on through spaceman_inbox_add. Opt-in like the
+// tests above (Haiku, one short prompt).
+func TestRealClaudeUsesGatewayTool(t *testing.T) {
+	token := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
+	if os.Getenv("SPACEMAN_REAL_CLAUDE") != "1" || token == "" {
+		t.Skip("set SPACEMAN_REAL_CLAUDE=1 and CLAUDE_CODE_OAUTH_TOKEN to run a real, billed Claude Code run")
+	}
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude not installed")
+	}
+	var calls atomic.Int32
+	up := mcp.NewServer(&mcp.Implementation{Name: "tickets", Version: "1.0"}, nil)
+	type in struct {
+		ID string `json:"id"`
+	}
+	mcp.AddTool(up, &mcp.Tool{Name: "ticket_get", Description: "Read a ticket by ID.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+		func(_ context.Context, req *mcp.CallToolRequest, a in) (*mcp.CallToolResult, any, error) {
+			if req.Extra.Header.Get("Authorization") != "Bearer real-gateway-check" {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "unauthorized"}}}, nil, nil
+			}
+			calls.Add(1)
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Ticket " + a.ID + " status: AMBER-42"}}}, nil, nil
+		})
+	srv := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return up }, nil))
+	t.Cleanup(srv.Close)
+
+	e := newEnvWith(t, claude)
+	_, spaceID := e.setupSpace(t, token)
+	var s struct {
+		ID string `json:"id"`
+	}
+	if st := e.api("POST", "/mcp-servers", map[string]any{"slug": "tickets", "name": "Tickets", "url": srv.URL, "allow_private": true,
+		"headers": map[string]string{"Authorization": "Bearer real-gateway-check"}}, &s); st != 201 {
+		t.Fatalf("create server: %d", st)
+	}
+	if st := e.api("POST", "/mcp-servers/"+s.ID+"/grants", map[string]any{"space_id": spaceID, "role": "reviewer"}, nil); st != 201 {
+		t.Fatalf("grant: %d", st)
+	}
+	runID := e.launch(t, spaceID, map[string]any{"kind": "worker", "role": "reviewer", "harness": "claude-code", "model": "haiku",
+		"prompt": "Call the tickets__ticket_get tool with id \"PAY-7\". Then use spaceman_inbox_add exactly once with title \"Gateway check\" and the tool's answer as the body. Then reply FINISHED."})
+	var items struct {
+		Items []struct {
+			Title    string `json:"title"`
+			SourceID string `json:"source_id"`
+			ID       string `json:"id"`
+		} `json:"items"`
+	}
+	eventually(t, 180*time.Second, "Claude reported the upstream answer", func() bool {
+		e.api("GET", "/spaces/"+spaceID+"/inbox", nil, &items)
+		for _, it := range items.Items {
+			if it.Title == "Gateway check" && it.SourceID == runID {
+				var item struct {
+					Body string `json:"body"`
+				}
+				e.api("GET", "/spaces/"+spaceID+"/inbox/"+it.ID, nil, &item)
+				return strings.Contains(item.Body, "AMBER-42")
+			}
+		}
+		return false
+	})
+	if calls.Load() == 0 {
+		t.Fatal("the upstream tool was never called with SpaceMan's credential")
+	}
+	if st := e.api("POST", "/spaces/"+spaceID+"/runs/"+runID+"/stop", map[string]any{"mode": "kill", "reason": "real test done"}, nil); st != 200 {
+		t.Fatalf("stop: %d", st)
+	}
+	t.Logf("real Claude run %s called tickets__ticket_get through the gateway (%d upstream calls)", runID, calls.Load())
 }

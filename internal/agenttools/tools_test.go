@@ -232,3 +232,34 @@ func TestGuideListsEveryTool(t *testing.T) {
 		}
 	}
 }
+
+// fakeUpstream stands in for the MCP gateway.
+type fakeUpstream struct{ calls []string }
+
+func (u *fakeUpstream) Catalog(context.Context, *fleet.RunPrincipal) []proto.AgentTool {
+	return []proto.AgentTool{{Name: "up__echo", InputSchema: json.RawMessage(`{"type":"object"}`), Upstream: true}}
+}
+func (u *fakeUpstream) Owns(name string) bool { return strings.Contains(name, "__") }
+func (u *fakeUpstream) Call(_ context.Context, _ *fleet.RunPrincipal, name string, _ json.RawMessage) (json.RawMessage, error) {
+	u.calls = append(u.calls, name)
+	return json.RawMessage(`{"content":[]}`), nil
+}
+
+// ADR-0023: gateway tools join the catalog and are routed to the gateway; built-in names never are.
+func TestUpstreamRouting(t *testing.T) {
+	f := newFx(t)
+	up := &fakeUpstream{}
+	r := New(Deps{Inbox: f.r.d.Inbox, Queue: f.r.d.Queue, Attachments: f.r.d.Attachments, Human: f.r.d.Human, Upstream: up})
+	p := &fleet.RunPrincipal{Kind: KindWorker, RunID: "run_1", SpaceID: "spc_a"}
+	raw, err := r.Dispatch(f.ctx, p, proto.ToolCatalog, nil)
+	must(t, err)
+	if !strings.Contains(string(raw), `"up__echo"`) || !strings.Contains(string(raw), `"spaceman_inbox_add"`) {
+		t.Fatalf("catalog: %s", raw)
+	}
+	if _, err := r.Dispatch(f.ctx, p, "up__echo", nil); err != nil || len(up.calls) != 1 {
+		t.Fatalf("routed: %v %v", err, up.calls)
+	}
+	if _, err := r.Dispatch(f.ctx, p, "nope", nil); apperr.CodeOf(err) != apperr.CodeNotFound || len(up.calls) != 1 {
+		t.Fatalf("unknown tool: %v", err)
+	}
+}

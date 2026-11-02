@@ -247,7 +247,7 @@ func MCPBridge(ctx context.Context, in io.Reader, out io.Writer, run, socket str
 			return nil, m, err
 		})
 	for _, t := range fetchCatalog(ctx, call) {
-		name := t.Name
+		name, upstream := t.Name, t.Upstream
 		s.AddTool(&mcp.Tool{Name: name, Description: t.Description, InputSchema: t.InputSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: t.ReadOnly}},
 			func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				var args json.RawMessage
@@ -259,6 +259,14 @@ func MCPBridge(ctx context.Context, in io.Reader, out io.Writer, run, socket str
 					// Tool errors go to the model as results it can read and act on, not as protocol failures.
 					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil //nolint:nilerr // reported in the result
 				}
+				if upstream {
+					// An external server's result, relayed by central's gateway: passed through as the upstream sent it.
+					var res mcp.CallToolResult
+					if err := json.Unmarshal(raw, &res); err != nil {
+						return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "the upstream result could not be read"}}}, nil //nolint:nilerr // reported in the result
+					}
+					return &res, nil
+				}
 				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}, StructuredContent: raw}, nil
 			})
 	}
@@ -266,7 +274,7 @@ func MCPBridge(ctx context.Context, in io.Reader, out io.Writer, run, socket str
 }
 
 // fetchCatalog asks central for the run's tools, retrying briefly while the node connects. Entries without an object
-// input schema are skipped (the SDK refuses them).
+// input schema are skipped (the SDK refuses them), as are names that are neither SpaceMan's nor namespaced gateway tools.
 func fetchCatalog(ctx context.Context, call func(context.Context, string, json.RawMessage) (json.RawMessage, error)) []proto.AgentTool {
 	for attempt := 0; attempt < 5; attempt++ {
 		raw, err := call(ctx, proto.ToolCatalog, nil)
@@ -280,7 +288,7 @@ func fetchCatalog(ctx context.Context, call func(context.Context, string, json.R
 				var sch struct {
 					Type string `json:"type"`
 				}
-				if json.Unmarshal(t.InputSchema, &sch) == nil && sch.Type == "object" && strings.HasPrefix(t.Name, "spaceman_") {
+				if json.Unmarshal(t.InputSchema, &sch) == nil && sch.Type == "object" && (strings.HasPrefix(t.Name, "spaceman_") || (t.Upstream && strings.Contains(t.Name, "__"))) {
 					out = append(out, t)
 				}
 			}

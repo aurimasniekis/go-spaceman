@@ -19,6 +19,7 @@ PACKAGES=(
   internal/agenttools
   internal/catalog
   internal/messages
+  internal/gateway
 )
 
 fail=0

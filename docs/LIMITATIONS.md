@@ -31,6 +31,17 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## MCP gateway
+- **Streamable HTTP servers only.** Servers started as local processes (stdio) and the older SSE transport are not
+  supported; run such a server behind a streamable HTTP adapter.
+- **Static headers only.** Upstream OAuth flows are not supported; use a token in a header.
+- **Tools are listed at harness start.** A tool or grant added later reaches runs launched afterwards. Revocations and
+  disabling apply to the next call.
+- **No requests from servers.** Sampling, elicitation, roots and server notifications are not relayed.
+- **Upstream state is per run.** A relaunched run, or a run whose session failed or idled out, starts a new session.
+- **Approvals for gateway calls** are not enforced yet; they arrive with the approval gateway (M3-05).
+- **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
+
 ## Skills
 - **Codex runs get no skills.** Codex's skill loading has not been verified, so the node logs a warning and starts the
   run without them. Claude Code runs get them in `$CLAUDE_CONFIG_DIR/skills`.

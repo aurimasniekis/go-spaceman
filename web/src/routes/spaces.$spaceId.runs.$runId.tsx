@@ -132,6 +132,7 @@ type Manifest = {
   account_ref?: string
   skills?: { slug: string; number: number; pinned: boolean; sha256: string; origin: string }[] | null
   skills_unavailable?: string[]
+  mcp_servers?: { slug: string; version: number; tools?: string[] | null }[] | null
 }
 
 /** The non-secret configuration the run started with (SM-PROMPT-004); later catalog changes do not alter it. */
@@ -159,6 +160,9 @@ function ManifestCard({ manifest }: { manifest: unknown }) {
       </SimpleGrid>
       {(m.skills?.length ?? 0) > 0 && (
         <Text size="xs" mt="xs">Skills: {m.skills!.map((sk) => `${sk.slug} v${sk.number}${sk.pinned ? ' (pinned)' : ''}`).join(' · ')}</Text>
+      )}
+      {(m.mcp_servers?.length ?? 0) > 0 && (
+        <Text size="xs" mt={2}>MCP servers: {m.mcp_servers!.map((x) => `${x.slug}${x.tools?.length ? ` (${x.tools.join(', ')})` : ''}`).join(' · ')}</Text>
       )}
       {(m.skills_unavailable?.length ?? 0) > 0 && (
         <Text size="xs" c="owlYellow" mt={2}>Not installed (no published version): {m.skills_unavailable!.join(', ')}</Text>

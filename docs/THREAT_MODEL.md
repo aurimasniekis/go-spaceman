@@ -35,7 +35,9 @@ flowchart LR
 | T-07 | A custom schema field such as "approved" is treated as a grant | Enforcement uses only approval records SpaceMan created for gated operations | SM-HTYPE-006 |
 | T-08 | Cross-space data leaks through the global human page or KB | Casbin domain filtering in queries, explicit cross-space requests | SM-HUI-003, SM-XSPACE-003 |
 | T-09 | An uploaded attachment executes in the operator's browser (SVG/HTML XSS) | Download disposition, raster-only inline allowlist, nosniff, sandbox CSP, Markdown-only bodies with sanitizing render | SM-ATT-004, ADR-0013 |
-| T-10 | An upstream MCP server is reached via SSRF to internal addresses | Egress policy that denies private and loopback by default, plus an explicit allowlist | SM-MCP-002 |
+| T-10 | An upstream MCP server is reached via SSRF to internal addresses | The dialer checks the resolved address: link-local (cloud metadata) always refused, private and loopback refused unless an administrator allows them per server; no proxies, no redirects | SM-MCP-002, ADR-0023 |
+| T-15 | One run's upstream MCP session (logins, cursors) is used by another run | One upstream session per run and server, never shared; closed when the run ends or its grant is revoked | SM-MCP-002, ADR-0023 |
+| T-16 | An upstream MCP server or its results steer the agent (prompt injection) or ask it for data | Results are untrusted content; the gateway declares no client capabilities (no sampling, elicitation or roots); only granted tools are listed and each call is rechecked and audited | SM-MCP-002, ADR-0023 |
 | T-11 | A lost root token gives permanent full control | Shown once, verifier stored, use is audited, rotation and revocation, never handed to agents or nodes | SM-AUTH-005 |
 | T-12 | A crashed node daemon leaves runs going past the disconnect grace | Dead-daemon mechanism (pending K-3), reconcile on start | SM-NODE-008 |
 | T-13 | A browser terminal takes input without authorization | Watch-only default, takeover permission, server-side input gate, audit | SM-UI-004 |

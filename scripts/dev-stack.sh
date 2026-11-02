@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # A throwaway local SpaceMan stack for UI development, end-to-end tests and screenshots: central (with the embedded UI),
 # a node agent configuration that uses its own herdr-core core (never the default one) and a stub harness that prints a
-# few lines and ticks, and a Pulse-shaped NATS server (devpulse) to publish sample events into. Nothing here talks to a
-# real model or a real Pulse deployment.
+# few lines and ticks, a Pulse-shaped NATS server (devpulse) to publish sample events into, and a fake ticket-tracker MCP
+# server (devmcp, bearer token "dev-mcp-token") for the gateway. Nothing here talks to a real model or a real Pulse
+# deployment.
 #
 # Usage:
 #   scripts/dev-stack.sh up        builds, bootstraps and starts central; prints the stack directory
@@ -31,7 +32,7 @@ up() {
     echo "dev-stack: the UI build failed" >&2
     exit 1
   fi
-  if ! (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent && go build -o "$dir/bin/" ./internal/events/pulsetest/devpulse); then
+  if ! (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent && go build -o "$dir/bin/" ./internal/events/pulsetest/devpulse ./internal/gateway/gatewaytest/devmcp); then
     rm -rf "$dir"
     echo "dev-stack: the Go build failed" >&2
     exit 1
@@ -39,6 +40,8 @@ up() {
   mkdir -p "$dir/pulse"
   "${clean_env[@]}" "$dir/bin/devpulse" serve -dir "$dir/pulse" -port "${SM_DEV_PULSE_PORT:-38422}" >"$dir/devpulse.log" 2>&1 &
   echo $! >"$dir/devpulse.pid"
+  "${clean_env[@]}" "$dir/bin/devmcp" -port "${SM_DEV_MCP_PORT:-38431}" -token dev-mcp-token -url-file "$dir/mcp-url" >"$dir/devmcp.log" 2>&1 &
+  echo $! >"$dir/devmcp.pid"
   local url="http://127.0.0.1:$port"
   cat >"$dir/central.yaml" <<YAML
 mode: development
@@ -83,6 +86,7 @@ export SM_HC_SESSION=$session
 export SM_HC_SOCKET=$dir/hc.sock
 export SM_HC_HOME=$dir/agent/hc
 export SM_PULSE_DIR=$dir/pulse
+export SM_MCP_URL_FILE=$dir/mcp-url
 ENV
   for _ in $(seq 1 100); do
     curl -fsS "$url/api/v1/system/info" >/dev/null 2>&1 && break
@@ -94,6 +98,11 @@ ENV
     sleep 0.1
   done
   [[ -s "$dir/pulse/url" ]] || { echo "devpulse did not start (see $dir/devpulse.log)" >&2; exit 1; }
+  for _ in $(seq 1 100); do
+    [[ -s "$dir/mcp-url" ]] && break
+    sleep 0.1
+  done
+  [[ -s "$dir/mcp-url" ]] || { echo "devmcp did not start (see $dir/devmcp.log)" >&2; exit 1; }
   echo "$dir"
 }
 
@@ -103,7 +112,7 @@ down() {
   # shellcheck disable=SC1091
   source "$dir/env"
   local pids=()
-  for p in agent central devpulse; do
+  for p in agent central devpulse devmcp; do
     if [[ -f "$dir/$p.pid" ]]; then pids+=("$(cat "$dir/$p.pid")"); fi
   done
   if ((${#pids[@]})); then

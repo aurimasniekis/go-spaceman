@@ -40,6 +40,9 @@ export const keys = {
   roleOptions: (space: string) => ['role-options', space] as const,
   humanTypes: ['human-types'] as const,
   skills: ['skills'] as const,
+  mcpServers: ['mcp-servers'] as const,
+  mcpGrants: (id: string) => ['mcp-grants', id] as const,
+  spaceMcp: (id: string) => ['space-mcp', id] as const,
   spaceHumanTypes: (space: string) => ['space-human-types', space] as const,
 }
 
@@ -233,3 +236,8 @@ export const useSpaceHumanTypes = (space: string) =>
   useQuery({ queryKey: keys.spaceHumanTypes(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-types', { params: { path: { space_id: space } } })).items })
 
 export const useSkills = () => useQuery({ queryKey: keys.skills, queryFn: async () => unwrap(await api.GET('/skills')).items })
+export const useMcpServers = () => useQuery({ queryKey: keys.mcpServers, queryFn: async () => unwrap(await api.GET('/mcp-servers')).items })
+export const useMcpGrants = (id: string) =>
+  useQuery({ queryKey: keys.mcpGrants(id), queryFn: async () => unwrap(await api.GET('/mcp-servers/{server_id}/grants', { params: { path: { server_id: id } } })).items })
+export const useSpaceMcp = (spaceId: string) =>
+  useQuery({ queryKey: keys.spaceMcp(spaceId), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/mcp-servers', { params: { path: { space_id: spaceId } } })).items })

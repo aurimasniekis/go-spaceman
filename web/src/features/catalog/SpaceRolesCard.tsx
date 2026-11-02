@@ -3,7 +3,7 @@ import { IconPlus } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, unwrap, type SpaceRole } from '@/api/client'
-import { keys, useMe, useRoleOptions, useSpaceRoles } from '@/api/queries'
+import { keys, useMe, useRoleOptions, useSpaceMcp, useSpaceRoles } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { atLeast, roleIn } from '@/lib/access'
 import { notifyError } from '@/lib/notify'
@@ -19,6 +19,7 @@ export function SpaceRolesCard({ spaceId }: { spaceId: string }) {
   const [editing, setEditing] = useState<SpaceRole | 'new' | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const tplName = (id: string) => options.data?.templates.find((t) => t.id === id)?.name ?? id
+  const mcp = useSpaceMcp(spaceId).data ?? []
   return (
     <Card mb="md">
       <Group justify="space-between" mb="xs">
@@ -45,6 +46,11 @@ export function SpaceRolesCard({ spaceId }: { spaceId: string }) {
             ))}
           </Table.Tbody>
         </Table>
+      )}
+      {mcp.length > 0 && (
+        <Text size="xs" c="dimmed" mt="xs">
+          MCP servers: {mcp.map((m) => `${m.name} (${m.role === '*' ? 'every role' : m.role}${m.enabled ? '' : ', disabled'})`).join(' · ')}
+        </Text>
       )}
       {editing && <RoleModal spaceId={spaceId} role={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
       <Drawer opened={preview !== null} onClose={() => setPreview(null)} position="right" size="xl" title={`Role ${preview ?? ''}`}>

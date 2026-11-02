@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Roles and prompts: versioned prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates
   and space roles. Launches resolve them in a documented order with a permission-mode ceiling, and each run records its
   configuration in a manifest.
+- MCP gateway: administrators register external MCP servers with sealed headers and grant them to space roles. Runs
+  see their tools as `<server>__<tool>`, each run with its own upstream session; calls are rechecked, bounded, audited
+  and dialed only to addresses the egress policy allows.
 - Skills: a central catalog of versioned skills (SKILL.md plus reference files), including a built-in HallPass skill,
   assigned through role templates and space roles and written into each Claude Code run's config folder.
 - Custom human-action types: administrators define request and response schemas, outcomes and form hints; spaces enable

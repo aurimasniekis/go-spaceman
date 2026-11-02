@@ -156,6 +156,13 @@ test('documentation screenshots', async ({ page, browser }) => {
   await api.call('PUT', `/spaces/${payments.id}/roles/control`, { template_id: tControl.id, instructions: 'Settlement services live in services/settlement.', settings: {} })
   await api.call('PUT', `/spaces/${payments.id}/roles/reviewer`, { template_id: tReviewer.id, settings: {} })
 
+  // MCP gateway: the dev stack's fake ticket tracker, granted to control (every tool) and reviewer (read-only tools).
+  const mcpUrl = readFileSync(env('SM_MCP_URL_FILE'), 'utf8').trim()
+  const tickets = await api.call<{ id: string }>('POST', '/mcp-servers', { slug: 'tickets', name: 'Ticket tracker', url: mcpUrl, allow_private: true,
+    description: 'The payments team tracker (development fake).', headers: { Authorization: 'Bearer dev-mcp-token' } })
+  await api.call('POST', `/mcp-servers/${tickets.id}/grants`, { space_id: payments.id, role: 'control' })
+  await api.call('POST', `/mcp-servers/${tickets.id}/grants`, { space_id: payments.id, role: 'reviewer', tools: ['ticket_get', 'ticket_search'] })
+
   type Run = { id: string }
   const launch = (space: string, kind: string, role: string, harness: string, prompt: string) =>
     api.call<Run>('POST', `/spaces/${space}/runs`, { kind, role, harness, prompt })
@@ -420,6 +427,16 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/skills')
     await page.getByText('HallPass gateway').click()
     await expect(page.getByRole('tab', { name: 'references/commands.md' })).toBeVisible()
+  })
+  await capture(page, 'mcp-servers', async () => {
+    await page.goto('/mcp-servers')
+    await expect(page.getByText('Ticket tracker')).toBeVisible()
+  })
+  await capture(page, 'mcp-server-detail', async () => {
+    await page.goto('/mcp-servers')
+    await page.getByText('Ticket tracker').click()
+    await page.getByRole('button', { name: 'Check connection' }).click()
+    await expect(page.getByText('tickets__ticket_search')).toBeVisible()
   })
   await capture(page, 'space-role-preview', async () => {
     await page.goto(`/spaces/${payments.id}`)

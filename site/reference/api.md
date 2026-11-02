@@ -198,6 +198,21 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/inbox/{item_id}` | `get-inbox-item` | Get an inbox item with its attachments |
 | `POST` | `/spaces/{space_id}/inbox/{item_id}/status` | `set-inbox-status` | Change an inbox item's processing status |
 
+### mcp
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/mcp-servers` | `list-mcp-servers` | External MCP servers (never their header values) |
+| `POST` | `/mcp-servers` | `create-mcp-server` | Register an MCP server |
+| `DELETE` | `/mcp-servers/{server_id}` | `delete-mcp-server` | Remove an MCP server and its grants |
+| `GET` | `/mcp-servers/{server_id}` | `get-mcp-server` | An MCP server |
+| `PUT` | `/mcp-servers/{server_id}` | `update-mcp-server` | Edit an MCP server |
+| `POST` | `/mcp-servers/{server_id}/check` | `check-mcp-server` | Connect to the server and list its tools |
+| `GET` | `/mcp-servers/{server_id}/grants` | `list-mcp-grants` | Spaces and roles granted the server |
+| `POST` | `/mcp-servers/{server_id}/grants` | `add-mcp-grant` | Grant the server to a space role |
+| `DELETE` | `/mcp-servers/{server_id}/grants/{grant_id}` | `revoke-mcp-grant` | Revoke a grant |
+| `GET` | `/spaces/{space_id}/mcp-servers` | `list-space-mcp-grants` | MCP servers granted in a space |
+
 ### messages
 
 | Method | Path | Operation | Summary |

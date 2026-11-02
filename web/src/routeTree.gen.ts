@@ -17,6 +17,7 @@ import { Route as EventsRouteImport } from './routes/events'
 import { Route as HumanRouteImport } from './routes/human'
 import { Route as HumanTypesRouteImport } from './routes/human-types'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as McpServersRouteImport } from './routes/mcp-servers'
 import { Route as NodesRouteImport } from './routes/nodes'
 import { Route as RecoverRouteImport } from './routes/recover'
 import { Route as ResetRouteImport } from './routes/reset'
@@ -82,6 +83,11 @@ const HumanTypesRoute = HumanTypesRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpServersRoute = McpServersRouteImport.update({
+  id: '/mcp-servers',
+  path: '/mcp-servers',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NodesRoute = NodesRouteImport.update({
@@ -228,6 +234,7 @@ export interface FileRoutesByFullPath {
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
+  '/mcp-servers': typeof McpServersRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
@@ -263,6 +270,7 @@ export interface FileRoutesByTo {
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
+  '/mcp-servers': typeof McpServersRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
@@ -296,6 +304,7 @@ export interface FileRoutesById {
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
+  '/mcp-servers': typeof McpServersRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
@@ -334,6 +343,7 @@ export interface FileRouteTypes {
     | '/human'
     | '/human-types'
     | '/login'
+    | '/mcp-servers'
     | '/nodes'
     | '/recover'
     | '/reset'
@@ -369,6 +379,7 @@ export interface FileRouteTypes {
     | '/human'
     | '/human-types'
     | '/login'
+    | '/mcp-servers'
     | '/nodes'
     | '/recover'
     | '/reset'
@@ -401,6 +412,7 @@ export interface FileRouteTypes {
     | '/human'
     | '/human-types'
     | '/login'
+    | '/mcp-servers'
     | '/nodes'
     | '/recover'
     | '/reset'
@@ -438,6 +450,7 @@ export interface RootRouteChildren {
   HumanRoute: typeof HumanRoute
   HumanTypesRoute: typeof HumanTypesRoute
   LoginRoute: typeof LoginRoute
+  McpServersRoute: typeof McpServersRoute
   NodesRoute: typeof NodesRoute
   RecoverRoute: typeof RecoverRoute
   ResetRoute: typeof ResetRoute
@@ -507,6 +520,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mcp-servers': {
+      id: '/mcp-servers'
+      path: '/mcp-servers'
+      fullPath: '/mcp-servers'
+      preLoaderRoute: typeof McpServersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/nodes': {
@@ -780,6 +800,7 @@ const rootRouteChildren: RootRouteChildren = {
   HumanRoute: HumanRoute,
   HumanTypesRoute: HumanTypesRoute,
   LoginRoute: LoginRoute,
+  McpServersRoute: McpServersRoute,
   NodesRoute: NodesRoute,
   RecoverRoute: RecoverRoute,
   ResetRoute: ResetRoute,

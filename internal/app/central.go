@@ -32,6 +32,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/events"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
@@ -74,6 +75,8 @@ type Central struct {
 	Supervisor *control.Supervisor
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
+	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
+	Gateway *gateway.Service
 	// Catalog holds prompts, harness profiles, role templates and space roles (SM-PROMPT-*).
 	Catalog *catalog.Service
 	// Accounts holds harness credentials (SM-ACCT-*).
@@ -139,10 +142,21 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			for _, sk := range r.Skills {
 				in.Skills = append(in.Skills, proto.Skill{Name: sk.Slug, Version: sk.Number, SHA256: sk.SHA256, Files: sk.Files})
 			}
+			if c.Gateway != nil {
+				// What the role is granted at launch; every call is checked again against the grants of that moment.
+				mcp, err := c.Gateway.ForManifest(ctx, spaceID, in.Role)
+				if err != nil {
+					return nil, err
+				}
+				r.Manifest["mcp_servers"] = mcp
+			}
 			return r.Manifest, nil
 		},
 		// The notifier is created below; these hooks only run once the server serves.
 		OnRunEnded: func(runID string) {
+			if c.Gateway != nil {
+				c.Gateway.EndRun(runID)
+			}
 			if c.Supervisor != nil {
 				c.Supervisor.OnRunEnded(runID)
 			}
@@ -188,8 +202,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Queue.OnStatus = c.Supervisor.OnTaskStatus
+	c.Gateway = gateway.New(st, c.Keyring, c.Audit, c.Changes, gateway.Options{Log: obs.Component(log, "gateway")})
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue)}})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue)}, Upstream: c.Gateway})
 	c.Fleet.Hub().Tools = c.Tools.Dispatch
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Catalog.SeedBuiltins(ctx); err != nil {
@@ -229,6 +244,9 @@ func (c *Central) Close() error {
 		c.Fleet.Hub().CloseAll("central shutting down")
 		c.Fleet.Recordings().Close()
 	}
+	if c.Gateway != nil {
+		c.Gateway.Close()
+	}
 	return c.Store.Close()
 }
 
@@ -246,7 +264,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -380,13 +398,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules} {
 		for k, v := range m {
 			out[k] = v
 		}
