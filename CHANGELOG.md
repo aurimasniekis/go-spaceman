@@ -53,6 +53,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Roles and prompts: versioned prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates
   and space roles. Launches resolve them in a documented order with a permission-mode ceiling, and each run records its
   configuration in a manifest.
+- Custom human-action types: administrators define request and response schemas, outcomes and form hints; spaces enable
+  them; people answer through generated forms (or JSON) and agents discover them through their tools.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

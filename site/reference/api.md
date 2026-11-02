@@ -161,6 +161,20 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/event-templates/{template_id}/draft` | `save-template-draft` | Save the template's draft version |
 | `POST` | `/event-templates/preview` | `preview-event-template` | Test a definition against a sample event |
 
+### human-action-types
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/human-types` | `list-human-types` | The human-action type catalog |
+| `POST` | `/human-types` | `create-human-type` | Add a type (with a first draft) |
+| `GET` | `/human-types/{type_id}` | `get-human-type` | A type with its versions |
+| `PUT` | `/human-types/{type_id}/draft` | `save-human-type-draft` | Create or update the type's draft |
+| `POST` | `/human-types/{type_id}/publish` | `publish-human-type` | Publish the draft as the next immutable version |
+| `GET` | `/spaces/{space_id}/human-type-options` | `list-human-type-options` | Catalog types a space can enable (names and published versions only) |
+| `GET` | `/spaces/{space_id}/human-types` | `list-space-human-types` | Custom types enabled in the space, with the version each uses now |
+| `DELETE` | `/spaces/{space_id}/human-types/{type_id}` | `disable-space-human-type` | Stop new actions of a type in the space |
+| `PUT` | `/spaces/{space_id}/human-types/{type_id}` | `enable-space-human-type` | Enable a type in the space (follow the latest version or pin one; optionally as a variant) |
+
 ### human-actions
 
 | Method | Path | Operation | Summary |

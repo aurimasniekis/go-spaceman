@@ -24,6 +24,7 @@ export function applyChange(qc: QueryClient, c: Change) {
       void qc.invalidateQueries({ queryKey: keys.space(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.spaceAccounts(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.spaceRoles(c.resource_id) })
+      void qc.invalidateQueries({ queryKey: keys.spaceHumanTypes(c.resource_id) })
       break
     case 'account':
       void qc.invalidateQueries({ queryKey: keys.accounts })
@@ -63,6 +64,10 @@ export function applyChange(qc: QueryClient, c: Change) {
       break
     case 'profile':
       void qc.invalidateQueries({ queryKey: keys.profiles })
+      break
+    case 'human_type':
+      void qc.invalidateQueries({ queryKey: keys.humanTypes })
+      void qc.invalidateQueries({ queryKey: ['space-human-types'] })
       break
     case 'role_template':
       void qc.invalidateQueries({ queryKey: keys.roleTemplates })

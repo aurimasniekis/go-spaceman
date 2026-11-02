@@ -1547,6 +1547,69 @@
         ],
         "type": "object"
       },
+      "Create-human-typeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Create-human-typeRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "default_expiry_minutes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "default_priority": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "notes": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "request_schema": {
+            "description": "JSON Schema 2020-12, root {\"type\": \"object\"}; external references are refused"
+          },
+          "response_schema": {},
+          "slug": {
+            "maxLength": 63,
+            "type": "string"
+          },
+          "ui": {
+            "description": "{order: [field…], fields: {field: {label, help, widget, placeholder}}}"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "type": "object"
+      },
       "Create-promptRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1661,8 +1724,14 @@
               "question",
               "approval",
               "todo",
-              "message"
+              "message",
+              "custom"
             ],
+            "type": "string"
+          },
+          "type_slug": {
+            "description": "For type custom: a catalog type enabled in the space",
+            "maxLength": 63,
             "type": "string"
           }
         },
@@ -1802,6 +1871,67 @@
         },
         "required": [
           "lines"
+        ],
+        "type": "object"
+      },
+      "Enable-space-human-typeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Enable-space-human-typeRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "default_expiry_minutes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "default_priority": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "version_pin": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Enable-space-human-typeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Enable-space-human-typeResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HumanSpaceType"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -3067,14 +3197,7 @@
             "type": "array"
           },
           "outcome": {
-            "enum": [
-              "",
-              "answered",
-              "approved",
-              "denied",
-              "completed",
-              "acknowledged"
-            ],
+            "description": "answered, approved, denied, completed or acknowledged; custom types define their own",
             "type": "string"
           },
           "priority": {
@@ -3149,13 +3272,25 @@
               "question",
               "approval",
               "todo",
-              "message"
+              "message",
+              "custom"
             ],
             "type": "string"
           },
+          "type_slug": {
+            "description": "For custom types, the catalog type",
+            "type": "string"
+          },
+          "type_spec": {
+            "$ref": "#/components/schemas/HumanTypeSpec"
+          },
           "type_version": {
+            "description": "For custom types, the type version number the action was created with",
             "format": "int64",
             "type": "integer"
+          },
+          "type_version_id": {
+            "type": "string"
           },
           "updated_at": {
             "format": "date-time",
@@ -3280,6 +3415,292 @@
           "kind",
           "state",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "HumanSpaceType": {
+        "additionalProperties": false,
+        "properties": {
+          "default_expiry_minutes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "default_priority": {
+            "type": "string"
+          },
+          "label": {
+            "description": "The space's name for it (a variant); defaults to the type name",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "number": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "request_schema": {},
+          "response_schema": {},
+          "slug": {
+            "type": "string"
+          },
+          "type_id": {
+            "type": "string"
+          },
+          "ui": {},
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type_id",
+          "slug",
+          "name",
+          "label",
+          "pinned",
+          "version_id",
+          "number",
+          "request_schema",
+          "response_schema",
+          "ui",
+          "outcomes",
+          "default_priority",
+          "default_expiry_minutes"
+        ],
+        "type": "object"
+      },
+      "HumanType": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanType.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "latest": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/HumanTypeVersion"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "latest",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "HumanTypeDraftInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanTypeDraftInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "default_expiry_minutes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "default_priority": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "notes": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "request_schema": {
+            "description": "JSON Schema 2020-12, root {\"type\": \"object\"}; external references are refused"
+          },
+          "response_schema": {},
+          "ui": {
+            "description": "{order: [field…], fields: {field: {label, help, widget, placeholder}}}"
+          }
+        },
+        "type": "object"
+      },
+      "HumanTypeOption": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/PromptVersionN"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "versions"
+        ],
+        "type": "object"
+      },
+      "HumanTypeSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "request_schema": {},
+          "response_schema": {},
+          "ui": {}
+        },
+        "required": [
+          "request_schema",
+          "response_schema",
+          "ui",
+          "outcomes"
+        ],
+        "type": "object"
+      },
+      "HumanTypeVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "default_expiry_minutes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "default_priority": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "number": {
+            "description": "0 for the draft",
+            "format": "int64",
+            "type": "integer"
+          },
+          "outcomes": {
+            "description": "How a person can finish it, e.g. [\"done\", \"declined\"]",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "published_by": {
+            "type": "string"
+          },
+          "request_schema": {
+            "description": "JSON Schema 2020-12 of the request (root: object)"
+          },
+          "response_schema": {
+            "description": "JSON Schema 2020-12 of the response data (root: object)"
+          },
+          "state": {
+            "enum": [
+              "draft",
+              "published"
+            ],
+            "type": "string"
+          },
+          "type_id": {
+            "type": "string"
+          },
+          "ui": {
+            "description": "Safe form metadata: field order, labels, help and widgets; never code"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "type_id",
+          "number",
+          "state",
+          "request_schema",
+          "response_schema",
+          "ui",
+          "outcomes",
+          "default_priority",
+          "default_expiry_minutes",
+          "version"
         ],
         "type": "object"
       },
@@ -3583,6 +4004,54 @@
         ],
         "type": "object"
       },
+      "List-human-type-optionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-human-type-optionsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HumanTypeOption"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-human-typesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-human-typesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HumanType"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-nodesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3718,6 +4187,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/AuthSessionInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-space-human-typesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-space-human-typesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HumanSpaceType"
             },
             "type": "array"
           }
@@ -5279,18 +5772,16 @@
             "maxLength": 50000,
             "type": "string"
           },
+          "data": {
+            "description": "Custom types: the response, validated against the type version's response schema"
+          },
           "note": {
             "maxLength": 20000,
             "type": "string"
           },
           "outcome": {
-            "enum": [
-              "answered",
-              "approved",
-              "denied",
-              "completed",
-              "acknowledged"
-            ],
+            "description": "answered, approved, denied, completed, acknowledged, or a custom type's outcome",
+            "maxLength": 32,
             "type": "string"
           }
         },
@@ -8105,6 +8596,232 @@
         ]
       }
     },
+    "/human-types": {
+      "get": {
+        "operationId": "list-human-types",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-human-typesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The human-action type catalog",
+        "tags": [
+          "human-action-types"
+        ]
+      },
+      "post": {
+        "operationId": "create-human-type",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Create-human-typeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanType"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a type (with a first draft)",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
+    "/human-types/{type_id}": {
+      "get": {
+        "operationId": "get-human-type",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanType"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A type with its versions",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
+    "/human-types/{type_id}/draft": {
+      "put": {
+        "description": "Without If-Match a new draft is started; with it, the draft at that version is updated.",
+        "operationId": "save-human-type-draft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTypeDraftInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanType"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create or update the type's draft",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
+    "/human-types/{type_id}/publish": {
+      "post": {
+        "description": "Outstanding actions keep the version they were created with.",
+        "operationId": "publish-human-type",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanType"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Publish the draft as the next immutable version",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
     "/nodes": {
       "get": {
         "operationId": "list-nodes",
@@ -9856,6 +10573,194 @@
         "summary": "Respond to a human action",
         "tags": [
           "human-actions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/human-type-options": {
+      "get": {
+        "operationId": "list-human-type-options",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-human-type-optionsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Catalog types a space can enable (names and published versions only)",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
+    "/spaces/{space_id}/human-types": {
+      "get": {
+        "operationId": "list-space-human-types",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-space-human-typesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Custom types enabled in the space, with the version each uses now",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
+    "/spaces/{space_id}/human-types/{type_id}": {
+      "delete": {
+        "description": "Outstanding actions are unaffected.",
+        "operationId": "disable-space-human-type",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Stop new actions of a type in the space",
+        "tags": [
+          "human-action-types"
+        ]
+      },
+      "put": {
+        "operationId": "enable-space-human-type",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Enable-space-human-typeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Enable-space-human-typeResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Enable a type in the space (follow the latest version or pin one; optionally as a variant)",
+        "tags": [
+          "human-action-types"
         ]
       }
     },

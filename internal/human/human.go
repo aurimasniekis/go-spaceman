@@ -23,6 +23,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/schemautil"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -72,16 +73,19 @@ type MessageRequest struct {
 
 // Response is a person's answer.
 type Response struct {
-	Answer string `json:"answer,omitempty" maxLength:"50000"`
-	Note   string `json:"note,omitempty" maxLength:"20000"`
+	Answer string          `json:"answer,omitempty" maxLength:"50000"`
+	Note   string          `json:"note,omitempty" maxLength:"20000"`
+	Data   json.RawMessage `json:"data,omitempty" doc:"Custom types: the response, validated against the type version's response schema"`
 }
 
 // Action is one human action (SM-HUM-004).
 type Action struct {
 	ID               string          `json:"id"`
 	SpaceID          string          `json:"space_id"`
-	Type             string          `json:"type" enum:"question,approval,todo,message"`
-	TypeVersion      int64           `json:"type_version"`
+	Type             string          `json:"type" enum:"question,approval,todo,message,custom"`
+	TypeVersion      int64           `json:"type_version" doc:"For custom types, the type version number the action was created with"`
+	TypeVersionID    string          `json:"type_version_id,omitempty"`
+	TypeSlug         string          `json:"type_slug,omitempty" doc:"For custom types, the catalog type"`
 	Title            string          `json:"title"`
 	Body             string          `json:"body" doc:"Markdown, untrusted when an agent wrote it"`
 	Request          json.RawMessage `json:"request"`
@@ -102,7 +106,7 @@ type Action struct {
 	ExpiresAt        *time.Time      `json:"expires_at,omitempty"`
 	Assignee         string          `json:"assignee,omitempty"`
 	Status           string          `json:"status" enum:"open,in_progress,resolved,cancelled,expired"`
-	Outcome          string          `json:"outcome,omitempty" enum:",answered,approved,denied,completed,acknowledged"`
+	Outcome          string          `json:"outcome,omitempty" doc:"answered, approved, denied, completed or acknowledged; custom types define their own"`
 	Response         json.RawMessage `json:"response"`
 	RespondedBy      string          `json:"responded_by,omitempty"`
 	RespondedAt      *time.Time      `json:"responded_at,omitempty"`
@@ -111,8 +115,10 @@ type Action struct {
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 	Version          int64           `json:"version"`
-	Comments         []Comment       `json:"comments,omitempty"`
-	Notifications    []Notification  `json:"notifications,omitempty"`
+	// TypeSpec is the captured custom type version (schemas, safe UI metadata, outcomes); set by Get.
+	TypeSpec      *TypeSpec      `json:"type_spec,omitempty"`
+	Comments      []Comment      `json:"comments,omitempty"`
+	Notifications []Notification `json:"notifications,omitempty"`
 }
 
 // Comment is discussion on an action; it is never a response.
@@ -143,6 +149,7 @@ type Requester struct {
 // CreateInput is a new human action.
 type CreateInput struct {
 	Type          string
+	TypeSlug      string // custom types: the catalog type enabled in the space
 	Title, Body   string
 	Request       json.RawMessage
 	Requester     Requester
@@ -256,7 +263,7 @@ func tn(v sql.NullInt64) *time.Time {
 }
 
 func fromRow(r db.HumanAction) *Action {
-	return &Action{ID: r.ID, SpaceID: r.SpaceID, Type: r.Type, TypeVersion: r.TypeVersion, Title: r.Title, Body: r.Body, Request: json.RawMessage(r.RequestJson),
+	return &Action{ID: r.ID, SpaceID: r.SpaceID, Type: r.Type, TypeVersion: r.TypeVersion, TypeVersionID: r.TypeVersionID, TypeSlug: r.TypeSlug, Title: r.Title, Body: r.Body, Request: json.RawMessage(r.RequestJson),
 		RequesterKind: r.RequesterKind, RequesterID: r.RequesterID, RequesterRole: r.RequesterRole, RequesterRun: r.RequesterRun, RequesterSession: r.RequesterSession,
 		RequesterLabel: r.RequesterLabel, TaskID: r.TaskID, InboxItemID: r.InboxItemID, CorrelationID: r.CorrelationID, DedupKey: r.DedupKey, BlocksTask: r.BlocksTask == 1,
 		Priority: r.Priority, Rank: r.Rank, DueAt: tn(r.DueAt), ExpiresAt: tn(r.ExpiresAt), Assignee: r.Assignee, Status: r.Status, Outcome: r.Outcome,
@@ -276,14 +283,23 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 	if len(in.Body) > 100_000 {
 		v.Add("body", "at most 100000 bytes")
 	}
-	req, canBlock, err := validateRequest(in.Type, in.Request)
-	if err != nil {
-		v.Add("request", "%v", err)
+	var req json.RawMessage
+	canBlock := true
+	if in.Type == TypeCustom {
+		if in.TypeSlug == "" {
+			v.Add("type_slug", "custom actions name their type")
+		}
+		if len(in.Request) == 0 || string(in.Request) == "null" {
+			in.Request = json.RawMessage(`{}`)
+		}
+		req = in.Request
+	} else {
+		var err error
+		if req, canBlock, err = validateRequest(in.Type, in.Request); err != nil {
+			v.Add("request", "%v", err)
+		}
 	}
-	if in.Priority == "" {
-		in.Priority = "normal"
-	}
-	if !slices.Contains(priorityNames, in.Priority) {
+	if in.Priority != "" && !slices.Contains(priorityNames, in.Priority) {
 		v.Add("priority", "must be low, normal, high or urgent")
 	}
 	if in.BlocksTask && in.TaskID == "" {
@@ -303,7 +319,8 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 	}
 	id := ids.New(ids.HumanAction)
 	created := false
-	err = svc.s.W().TxNamed(ctx, "human.create", func(tx *store.Tx) error {
+	typeVersion, typeVersionID := int64(1), ""
+	err := svc.s.W().TxNamed(ctx, "human.create", func(tx *store.Tx) error {
 		created = false
 		sp, err := tx.Q.GetSpace(ctx, spaceID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -321,6 +338,30 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
+		}
+		if in.Type == TypeCustom {
+			st, err := spaceTypeBySlug(ctx, tx.Q, spaceID, in.TypeSlug)
+			if err != nil {
+				return err
+			}
+			sch, err := schemautil.CompileObject(st.RequestSchema)
+			if err != nil {
+				return err
+			}
+			if err := schemautil.Validate(sch, in.Request); err != nil {
+				return apperr.New(apperr.CodeInvalid, "the request does not match %s v%d: %v", st.Slug, st.Number, err)
+			}
+			typeVersion, typeVersionID = st.Number, st.VersionID
+			if in.Priority == "" {
+				in.Priority = st.DefaultPriority
+			}
+			if in.ExpiresAt == nil && st.DefaultExpiryMinutes > 0 {
+				e := svc.clock.Now().Add(time.Duration(st.DefaultExpiryMinutes) * time.Minute)
+				in.ExpiresAt = &e
+			}
+		}
+		if in.Priority == "" {
+			in.Priority = "normal"
 		}
 		if in.TaskID != "" {
 			t, err := tx.Q.GetTask(ctx, in.TaskID)
@@ -362,7 +403,8 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		if err != nil {
 			return err
 		}
-		if err := tx.Q.InsertHumanAction(ctx, db.InsertHumanActionParams{ID: id, SpaceID: spaceID, Type: in.Type, Title: in.Title, Body: in.Body, RequestJson: string(req),
+		if err := tx.Q.InsertHumanAction(ctx, db.InsertHumanActionParams{ID: id, SpaceID: spaceID, Type: in.Type, TypeVersion: typeVersion, TypeVersionID: typeVersionID,
+			TypeSlug: in.TypeSlug, Title: in.Title, Body: in.Body, RequestJson: string(req),
 			RequesterKind: in.Requester.Kind, RequesterID: in.Requester.ID, RequesterRole: in.Requester.Role, RequesterRun: in.Requester.Run,
 			RequesterSession: in.Requester.Session, RequesterLabel: in.Requester.Label, TaskID: in.TaskID, InboxItemID: in.InboxItemID, CorrelationID: in.CorrelationID,
 			DedupKey: in.DedupKey, BlocksTask: b2i(in.BlocksTask), Priority: in.Priority, Rank: max + gap, DueAt: nt(in.DueAt), ExpiresAt: nt(in.ExpiresAt),
@@ -409,6 +451,12 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Action, error
 		return nil, err
 	}
 	a := fromRow(r)
+	if r.Type == TypeCustom {
+		if tv, err := svc.s.R().GetHumanTypeVersion(ctx, r.TypeVersionID); err == nil {
+			v := typeVersionOut(tv)
+			a.TypeSpec = &TypeSpec{RequestSchema: v.RequestSchema, ResponseSchema: v.ResponseSchema, UI: v.UI, Outcomes: v.Outcomes}
+		}
+	}
 	cs, err := svc.s.R().ListHumanComments(ctx, id)
 	if err != nil {
 		return nil, err

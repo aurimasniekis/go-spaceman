@@ -32,7 +32,8 @@
 | `human-space` | Human actions | A space's human actions, including a resolved one | current |
 | `human-form-default` | Human actions | Approval drawer with the advisory notice and distinct Approve/Deny | current |
 | `messages` | Agent messaging | A space's messages with delivery states and a request's detail | current |
-| `human-form-custom` | Custom types (M3) | Schema-driven form | todo |
+| `human-form-custom` | Human action types | A custom type's request and schema-driven response form with its outcomes | current |
+| `human-types` | Human action types | Type catalog with schema editors and a live request form preview | current |
 | `kb-sessions` | KB/support (M3) | KB support sessions | todo |
 | `events-catalog` | Events and subscriptions | Template catalog | current |
 | `event-template` | Events and subscriptions | Template definition with a sample test | current |

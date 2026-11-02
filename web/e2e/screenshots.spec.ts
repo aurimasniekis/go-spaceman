@@ -218,6 +218,19 @@ test('documentation screenshots', async ({ page, browser }) => {
   await msg(payments.id, { to: 'role:reviewer', subject: 'Check refund idempotency in every review', body: 'Duplicate refunds were reported twice this week.' })
   const old = await msg(payments.id, { to: 'control', subject: 'Rotate the staging webhook secret after the freeze' })
   await api.call('POST', `/spaces/${payments.id}/messages/${old.id}/resolve`, { resolution: 'done on Friday' })
+  // A custom type: a deploy window request with a schema-driven form, enabled in payments as a variant.
+  const dw = await api.call<{ id: string; versions: { version: number; state: string }[] }>('POST', '/human-types', { slug: 'deploy-window', name: 'Deploy window',
+    description: 'Agree on when a production deployment may happen.',
+    request_schema: { type: 'object', required: ['environment', 'change'], properties: { environment: { type: 'string', enum: ['staging', 'production'], title: 'Environment' },
+      change: { type: 'string', title: 'Change' }, rollback: { type: 'string', title: 'Rollback plan' } }, additionalProperties: false },
+    response_schema: { type: 'object', required: ['window_start'], properties: { window_start: { type: 'string', format: 'date-time', title: 'Window starts' },
+      duration_minutes: { type: 'integer', title: 'Duration (minutes)' }, conditions: { type: 'string', title: 'Conditions' } }, additionalProperties: false },
+    ui: { order: ['window_start', 'duration_minutes', 'conditions'], fields: { conditions: { widget: 'textarea', help: 'Anything the deployer must check first' }, environment: { widget: 'radio' } } },
+    outcomes: ['scheduled', 'declined'], default_priority: 'high', default_expiry_minutes: 1440 })
+  await api.call('POST', `/human-types/${dw.id}/publish`, undefined, { 'If-Match': `"${dw.versions[0].version}"` })
+  await api.call('PUT', `/spaces/${payments.id}/human-types/${dw.id}`, { label: 'Production deploy window' })
+  await human(payments.id, { type: 'custom', type_slug: 'deploy-window', title: 'Deploy payments-api v2.14.0',
+    request: { environment: 'production', change: 'Time-based settlement retry budget', rollback: 'Redeploy v2.13.4' } })
   const answered = await human(payments.id, { type: 'question', title: 'Which currency should the refund export use?', request: { options: ['EUR', 'Original currency'] } })
   await api.call('POST', `/spaces/${payments.id}/human-actions/${answered.id}/respond`, { outcome: 'answered', answer: 'Original currency' }, { 'If-Match': `"${answered.version}"` })
 
@@ -359,6 +372,16 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Choose accounts' }).click()
     await expect(page.getByLabel('Allow team-claude')).toBeChecked()
+  })
+  await capture(page, 'human-types', async () => {
+    await page.goto('/human-types')
+    await page.getByRole('cell', { name: /Deploy window/ }).first().click()
+    await expect(page.getByText('Preview of the request form')).toBeVisible()
+  })
+  await capture(page, 'human-form-custom', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByRole('listitem', { name: /Deploy payments-api v2.14.0/ }).click()
+    await expect(page.getByText('Window starts')).toBeVisible()
   })
   await capture(page, 'messages', async () => {
     await page.goto(`/spaces/${payments.id}/messages`)

@@ -121,12 +121,12 @@
 | SM-HUM-009 | M2-06 | partial | Durable correlated notifications delivered by the notifier and `spaceman_messages`, acknowledged by the requester only (`TestNotifier`) |  | Routing to control or a successor when the requester is gone arrives with M4-07. |
 | SM-HUM-010 | M2-07 | implemented | `TestBlockingAffectsOnlyTheTask` (only the related task is skipped; response unblocks without changing state; expiry keeps it blocked), `TestCreateValidation` (FYI messages cannot block) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): blocking question on a task |  |
 | SM-HUM-011 | M2-07 | partial | `TestRequesterLimit` (per-run limit), per-space limit, `TestDedup`, expiry in `TestBlockingAffectsOnlyTheTask` |  | Reminders and escalation arrive in M4. |
-| SM-HTYPE-001 | | todo | | | |
-| SM-HTYPE-002 | | todo | | | |
-| SM-HTYPE-003 | | todo | | | |
-| SM-HTYPE-004 | | todo | | | |
-| SM-HTYPE-005 | | todo | | | |
-| SM-HTYPE-006 | | todo | | | |
+| SM-HTYPE-001 | M3-04 | implemented | Catalog with immutable versions, request/response JSON Schema 2020-12 (self-contained), safe UI metadata, outcomes, default priority and expiry (`internal/human` `TestTypeCatalog`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
+| SM-HTYPE-002 | M3-04 | implemented | Admins add types without code; spaces enable types following or pinned, with variant label and defaults (`TestCustomActions`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
+| SM-HTYPE-003 | M3-04 | implemented | Schema-driven forms with an always-available validated JSON editor; UI metadata refuses unknown keys and widgets (`TestTypeCatalog`, `SchemaForm`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
+| SM-HTYPE-004 | M3-04 | implemented | Requests and responses validated server-side; agents discover types with `spaceman_human_types` (`TestCustomActions`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
+| SM-HTYPE-005 | M3-04 | implemented | Actions record their type version; a breaking new version does not affect outstanding actions (`TestCustomActions`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
+| SM-HTYPE-006 | M3-04 | implemented | Custom outcomes are records only; responses never pass through approval permissions or grants (`TestCustomActions`, UI note) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
 | SM-APPR-001 | | todo | | | |
 | SM-APPR-002 | | todo | | | |
 | SM-APPR-003 | | todo | | | |
@@ -134,7 +134,7 @@
 | SM-APPR-005 | | todo | | | |
 | SM-APPR-006 | | todo | | | |
 | SM-HUI-001 | M2-07 | partial | `TestHumanActionsOverHTTP` (global view with counts per readable space) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): Needs you page, nav badge | Assigned-to-me, due/overdue filters and search arrive later. |
-| SM-HUI-002 | M2-07 | partial | `RespondForm`: distinct Send answer / Approve / Deny / Mark completed / Acknowledge; comments separate | `make e2e` (real stack, Chromium, macOS, 2026-11-02): option answer | Schema-driven forms arrive with SM-HTYPE (M3). |
+| SM-HUI-002 | M2-07, M3-04 | implemented | `RespondForm`: distinct Send answer / Approve / Deny / Mark completed / Acknowledge; custom types render schema-driven forms with one action per outcome; comments separate | `make e2e`, `make screenshots` (2026-11-02) | |
 | SM-HUI-003 | M2-07 | implemented | Blocking badge and task link in the drawer; unreadable spaces never listed or counted (`TestHumanActionsOverHTTP`) |  |  |
 | SM-HUI-004 | M2-07 | implemented | Per-space rank is durable (`TestOrderingListsAndCounts`); the global page sorts by age and never rewrites ranks |  |  |
 | SM-HUI-005 | M2-07 | implemented | Bulk claim and acknowledge-messages only; keyboard: rows are focusable, Enter opens |  |  |

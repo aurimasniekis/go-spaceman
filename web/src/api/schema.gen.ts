@@ -619,6 +619,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/human-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The human-action type catalog */
+        get: operations["list-human-types"];
+        put?: never;
+        /** Add a type (with a first draft) */
+        post: operations["create-human-type"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/human-types/{type_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A type with its versions */
+        get: operations["get-human-type"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/human-types/{type_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Create or update the type's draft
+         * @description Without If-Match a new draft is started; with it, the draft at that version is updated.
+         */
+        put: operations["save-human-type-draft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/human-types/{type_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish the draft as the next immutable version
+         * @description Outstanding actions keep the version they were created with.
+         */
+        post: operations["publish-human-type"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -1080,6 +1155,61 @@ export interface paths {
          */
         post: operations["respond-human-action"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-type-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog types a space can enable (names and published versions only) */
+        get: operations["list-human-type-options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Custom types enabled in the space, with the version each uses now */
+        get: operations["list-space-human-types"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-types/{type_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Enable a type in the space (follow the latest version or pin one; optionally as a variant) */
+        put: operations["enable-space-human-type"];
+        post?: never;
+        /**
+         * Stop new actions of a type in the space
+         * @description Outstanding actions are unaffected.
+         */
+        delete: operations["disable-space-human-type"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2445,6 +2575,28 @@ export interface components {
             name: string;
             slug: string;
         };
+        "Create-human-typeRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Create-human-typeRequest.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            default_expiry_minutes?: number;
+            /** @enum {string} */
+            default_priority?: "low" | "normal" | "high" | "urgent";
+            description?: string;
+            name: string;
+            notes?: string;
+            outcomes?: string[];
+            /** @description JSON Schema 2020-12, root {"type": "object"}; external references are refused */
+            request_schema?: unknown;
+            response_schema?: unknown;
+            slug: string;
+            /** @description {order: [field…], fields: {field: {label, help, widget, placeholder}}} */
+            ui?: unknown;
+        };
         "Create-promptRequest": {
             /**
              * Format: uri
@@ -2486,7 +2638,9 @@ export interface components {
             task_id?: string;
             title: string;
             /** @enum {string} */
-            type: "question" | "approval" | "todo" | "message";
+            type: "question" | "approval" | "todo" | "message" | "custom";
+            /** @description For type custom: a catalog type enabled in the space */
+            type_slug?: string;
         };
         CreateInboxInput: {
             /**
@@ -2540,6 +2694,29 @@ export interface components {
              */
             readonly $schema?: string;
             lines: components["schemas"]["CatalogDiffLine"][];
+        };
+        "Enable-space-human-typeRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Enable-space-human-typeRequest.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            default_expiry_minutes?: number;
+            /** @enum {string} */
+            default_priority?: "low" | "normal" | "high" | "urgent";
+            label?: string;
+            version_pin?: string;
+        };
+        "Enable-space-human-typeResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Enable-space-human-typeResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["HumanSpaceType"][];
         };
         EnrollConfirmed: {
             /**
@@ -3004,8 +3181,8 @@ export interface components {
             id: string;
             inbox_item_id?: string;
             notifications?: components["schemas"]["HumanNotification"][];
-            /** @enum {string} */
-            outcome?: "" | "answered" | "approved" | "denied" | "completed" | "acknowledged";
+            /** @description answered, approved, denied, completed or acknowledged; custom types define their own */
+            outcome?: string;
             /** @enum {string} */
             priority: "low" | "normal" | "high" | "urgent";
             /** Format: int64 */
@@ -3029,9 +3206,16 @@ export interface components {
             task_id?: string;
             title: string;
             /** @enum {string} */
-            type: "question" | "approval" | "todo" | "message";
-            /** Format: int64 */
+            type: "question" | "approval" | "todo" | "message" | "custom";
+            /** @description For custom types, the catalog type */
+            type_slug?: string;
+            type_spec?: components["schemas"]["HumanTypeSpec"];
+            /**
+             * Format: int64
+             * @description For custom types, the type version number the action was created with
+             */
             type_version: number;
+            type_version_id?: string;
             /** Format: date-time */
             updated_at: string;
             /** Format: int64 */
@@ -3066,6 +3250,102 @@ export interface components {
             state: "pending" | "delivered" | "acknowledged";
             target_role?: string;
             target_run?: string;
+        };
+        HumanSpaceType: {
+            /** Format: int64 */
+            default_expiry_minutes: number;
+            default_priority: string;
+            /** @description The space's name for it (a variant); defaults to the type name */
+            label: string;
+            name: string;
+            /** Format: int64 */
+            number: number;
+            outcomes: string[];
+            pinned: boolean;
+            request_schema: unknown;
+            response_schema: unknown;
+            slug: string;
+            type_id: string;
+            ui: unknown;
+            version_id: string;
+        };
+        HumanType: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanType.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            id: string;
+            /** Format: int64 */
+            latest: number;
+            name: string;
+            slug: string;
+            versions?: components["schemas"]["HumanTypeVersion"][];
+        };
+        HumanTypeDraftInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanTypeDraftInput.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            default_expiry_minutes?: number;
+            /** @enum {string} */
+            default_priority?: "low" | "normal" | "high" | "urgent";
+            notes?: string;
+            outcomes?: string[];
+            /** @description JSON Schema 2020-12, root {"type": "object"}; external references are refused */
+            request_schema?: unknown;
+            response_schema?: unknown;
+            /** @description {order: [field…], fields: {field: {label, help, widget, placeholder}}} */
+            ui?: unknown;
+        };
+        HumanTypeOption: {
+            description?: string;
+            id: string;
+            name: string;
+            slug: string;
+            versions: components["schemas"]["PromptVersionN"][];
+        };
+        HumanTypeSpec: {
+            outcomes: string[];
+            request_schema: unknown;
+            response_schema: unknown;
+            ui: unknown;
+        };
+        HumanTypeVersion: {
+            /** Format: int64 */
+            default_expiry_minutes: number;
+            /** @enum {string} */
+            default_priority: "low" | "normal" | "high" | "urgent";
+            id: string;
+            notes?: string;
+            /**
+             * Format: int64
+             * @description 0 for the draft
+             */
+            number: number;
+            /** @description How a person can finish it, e.g. ["done", "declined"] */
+            outcomes: string[];
+            /** Format: date-time */
+            published_at?: string;
+            published_by?: string;
+            /** @description JSON Schema 2020-12 of the request (root: object) */
+            request_schema: unknown;
+            /** @description JSON Schema 2020-12 of the response data (root: object) */
+            response_schema: unknown;
+            /** @enum {string} */
+            state: "draft" | "published";
+            type_id: string;
+            /** @description Safe form metadata: field order, labels, help and widgets; never code */
+            ui: unknown;
+            /** Format: int64 */
+            version: number;
         };
         InboxItem: {
             /**
@@ -3175,6 +3455,24 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["CatalogProfile"][];
         };
+        "List-human-type-optionsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-human-type-optionsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["HumanTypeOption"][];
+        };
+        "List-human-typesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-human-typesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["HumanType"][];
+        };
         "List-nodesResponse": {
             /**
              * Format: uri
@@ -3228,6 +3526,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AuthSessionInfo"][];
+        };
+        "List-space-human-typesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-human-typesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["HumanSpaceType"][];
         };
         "List-space-rolesResponse": {
             /**
@@ -3797,9 +4104,11 @@ export interface components {
              */
             readonly $schema?: string;
             answer?: string;
+            /** @description Custom types: the response, validated against the type version's response schema */
+            data?: unknown;
             note?: string;
-            /** @enum {string} */
-            outcome: "answered" | "approved" | "denied" | "completed" | "acknowledged";
+            /** @description answered, approved, denied, completed, acknowledged, or a custom type's outcome */
+            outcome: string;
         };
         RoleOption: {
             id: string;
@@ -5464,6 +5773,171 @@ export interface operations {
             };
         };
     };
+    "list-human-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-human-typesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-human-type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Create-human-typeRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanType"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-human-type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                type_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanType"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "save-human-type-draft": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                type_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HumanTypeDraftInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanType"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "publish-human-type": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                type_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanType"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-nodes": {
         parameters: {
             query?: never;
@@ -6583,6 +7057,134 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HumanAction"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-human-type-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-human-type-optionsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-human-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-human-typesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "enable-space-human-type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                type_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Enable-space-human-typeRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Enable-space-human-typeResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "disable-space-human-type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                type_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

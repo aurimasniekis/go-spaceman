@@ -253,7 +253,8 @@ func (r *Registry) registerAttachments() {
 // ---- human actions (SM-HUM-008) ----
 
 type humanAskIn struct {
-	Type          string         `json:"type" jsonschema:"question, approval, todo or message"`
+	Type          string         `json:"type" jsonschema:"question, approval, todo, message, or custom (then set custom_type)"`
+	CustomType    string         `json:"custom_type,omitempty" jsonschema:"a custom type's slug from spaceman_human_types; request must match its request schema"`
 	Title         string         `json:"title"`
 	Body          string         `json:"body,omitempty" jsonschema:"Markdown: context the person needs"`
 	Request       map[string]any `json:"request,omitempty" jsonschema:"question: {options:[...], allow_text}; approval: {action, details}; todo: {steps:[...]}; message: {requires_ack}"`
@@ -292,13 +293,21 @@ func (r *Registry) registerHuman() {
 				t := time.Now().Add(time.Duration(in.ExpiresInMins) * time.Minute)
 				exp = &t
 			}
-			a, created, err := r.d.Human.Create(ctx, actor(p), p.SpaceID, human.CreateInput{Type: in.Type, Title: in.Title, Body: in.Body, Request: req,
+			if in.CustomType != "" && in.Type == "" {
+				in.Type = human.TypeCustom
+			}
+			a, created, err := r.d.Human.Create(ctx, actor(p), p.SpaceID, human.CreateInput{Type: in.Type, TypeSlug: in.CustomType, Title: in.Title, Body: in.Body, Request: req,
 				Requester: human.Requester{Kind: "agent", ID: p.InstanceID, Role: p.Role, Run: p.RunID, Label: label(p)}, TaskID: in.TaskID,
 				BlocksTask: in.BlocksTask, Priority: in.Priority, ExpiresAt: exp, DedupKey: in.DedupKey, CorrelationID: in.CorrelationID})
 			if err != nil {
 				return nil, err
 			}
 			return map[string]any{"action_id": a.ID, "status": a.Status, "created": created}, nil
+		})
+	Add(r, "spaceman_human_types", "List the custom human-action types enabled in your space, with each one's request and response schema and outcomes. "+
+		"Use one with spaceman_human_ask (type custom, custom_type set to its slug).", allKinds, true,
+		func(ctx context.Context, p *fleet.RunPrincipal, _ struct{}) (any, error) {
+			return r.d.Human.SpaceTypes(ctx, p.SpaceID)
 		})
 	Add(r, "spaceman_human_get", "Read a human action of your space: its status, outcome and the person's response.", allKinds, true,
 		func(ctx context.Context, p *fleet.RunPrincipal, in humanIn) (any, error) {

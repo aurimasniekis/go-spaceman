@@ -22,6 +22,7 @@ come from the run's credential; tool arguments can never name another space.
 | `spaceman_task_set_status` | Move a task; a worker only its own task, to review or blocked | ✓ | own | | |
 | `spaceman_attachment_get` | Fetch a `spaceman://attachment/<id>` (text, or base64 up to 512 KiB) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_ask` | Ask a person: question, approval, to-do or message | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_human_types` | Custom human-action types enabled in the space, with schemas | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_get` | Read a human action and its response | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_list` | List human actions (by default your own) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_cancel` | Withdraw a pending action you asked (control: any) | ✓ | ✓ | ✓ | ✓ |

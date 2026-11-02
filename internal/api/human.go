@@ -25,6 +25,45 @@ var HumanRules = map[string]Rule{
 	"cancel-human-action":        InSpace(authz.HumanRespond),
 	"comment-human-action":       InSpace(authz.HumanRespond),
 	"move-human-action":          InSpace(authz.HumanRespond),
+	"list-human-types":           Global(authz.HumanTypeRead),
+	"get-human-type":             Global(authz.HumanTypeRead),
+	"create-human-type":          Global(authz.HumanTypeWrite),
+	"save-human-type-draft":      Global(authz.HumanTypeWrite),
+	"publish-human-type":         Global(authz.HumanTypeWrite),
+	"list-space-human-types":     InSpace(authz.HumanRead),
+	"list-human-type-options":    InSpace(authz.SpaceConfigRead),
+	"enable-space-human-type":    InSpace(authz.SpaceConfigWrite),
+	"disable-space-human-type":   InSpace(authz.SpaceConfigWrite),
+}
+
+// HumanTypeDraftInput is the editable content of a type version.
+type HumanTypeDraftInput struct {
+	RequestSchema        json.RawMessage `json:"request_schema,omitempty" doc:"JSON Schema 2020-12, root {\"type\": \"object\"}; external references are refused"`
+	ResponseSchema       json.RawMessage `json:"response_schema,omitempty"`
+	UI                   json.RawMessage `json:"ui,omitempty" doc:"{order: [field…], fields: {field: {label, help, widget, placeholder}}}"`
+	Outcomes             []string        `json:"outcomes,omitempty" maxItems:"10"`
+	DefaultPriority      string          `json:"default_priority,omitempty" enum:"low,normal,high,urgent"`
+	DefaultExpiryMinutes int64           `json:"default_expiry_minutes,omitempty" minimum:"0"`
+	Notes                string          `json:"notes,omitempty" maxLength:"2000"`
+}
+
+func (b HumanTypeDraftInput) draft() human.TypeDraft {
+	return human.TypeDraft{RequestSchema: b.RequestSchema, ResponseSchema: b.ResponseSchema, UI: b.UI, Outcomes: b.Outcomes, DefaultPriority: b.DefaultPriority,
+		DefaultExpiryMinutes: b.DefaultExpiryMinutes, Notes: b.Notes}
+}
+
+// HumanTypeOption is a published catalog type a space can enable.
+type HumanTypeOption struct {
+	ID          string           `json:"id"`
+	Slug        string           `json:"slug"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Versions    []PromptVersionN `json:"versions"`
+}
+
+// HumanTypePath identifies a type (ID or slug).
+type HumanTypePath struct {
+	TypeID string `path:"type_id" maxLength:"64"`
 }
 
 // HumanActionPath identifies a human action.
@@ -35,7 +74,8 @@ type HumanActionPath struct {
 
 // CreateHumanActionInput is an operator's new human action (agents create theirs through MCP tools).
 type CreateHumanActionInput struct {
-	Type          string          `json:"type" enum:"question,approval,todo,message"`
+	Type          string          `json:"type" enum:"question,approval,todo,message,custom"`
+	TypeSlug      string          `json:"type_slug,omitempty" maxLength:"63" doc:"For type custom: a catalog type enabled in the space"`
 	Title         string          `json:"title" maxLength:"200"`
 	Body          string          `json:"body,omitempty" maxLength:"100000" doc:"Markdown"`
 	Request       json.RawMessage `json:"request,omitempty" doc:"Type-specific request: question {options, allow_text}, approval {action, details}, todo {steps}, message {requires_ack}"`
@@ -138,7 +178,7 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				a, _, err := Idempotent(ctx, d, "create-human-action", in.IdempotencyKey, map[string]any{"space": in.SpaceID, "body": in.Body}, false, func() (*human.Action, error) {
 					actor := Actor(ctx)
 					b := in.Body
-					a, _, err := svc.Create(ctx, actor, in.SpaceID, human.CreateInput{Type: b.Type, Title: b.Title, Body: b.Body, Request: b.Request,
+					a, _, err := svc.Create(ctx, actor, in.SpaceID, human.CreateInput{Type: b.Type, TypeSlug: b.TypeSlug, Title: b.Title, Body: b.Body, Request: b.Request,
 						Requester: human.Requester{Kind: "operator", ID: actor.ID, Label: actorLabel(ctx)}, TaskID: b.TaskID, BlocksTask: b.BlocksTask,
 						Priority: b.Priority, DueAt: b.DueAt, ExpiresAt: b.ExpiresAt, DedupKey: b.DedupKey, CorrelationID: b.CorrelationID, FollowUpOf: b.FollowUpOf})
 					return a, err
@@ -156,7 +196,7 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				HumanActionPath
 				IfMatch
 				Body struct {
-					Outcome string `json:"outcome" enum:"answered,approved,denied,completed,acknowledged"`
+					Outcome string `json:"outcome" maxLength:"32" doc:"answered, approved, denied, completed, acknowledged, or a custom type's outcome"`
 					human.Response
 				}
 			}) (*humanOut, error) {
@@ -231,6 +271,176 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 					return nil, d.fail(ctx, "human.comment", err)
 				}
 				return humanResult(a), nil
+			})
+		ttags := []string{"human-action-types"}
+		huma.Register(api, huma.Operation{OperationID: "list-human-types", Method: http.MethodGet, Path: "/human-types", Summary: "The human-action type catalog", Tags: ttags},
+			func(ctx context.Context, _ *struct{}) (*struct {
+				Body struct {
+					Items []*human.HumanType `json:"items"`
+				}
+			}, error) {
+				l, err := svc.ListTypes(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []*human.HumanType `json:"items"`
+					}
+				}{}
+				out.Body.Items = l
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-human-type", Method: http.MethodGet, Path: "/human-types/{type_id}", Summary: "A type with its versions", Tags: ttags},
+			func(ctx context.Context, in *HumanTypePath) (*struct{ Body *human.HumanType }, error) {
+				t, err := svc.GetType(ctx, in.TypeID)
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.get", err)
+				}
+				return &struct{ Body *human.HumanType }{Body: t}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "create-human-type", Method: http.MethodPost, Path: "/human-types", Summary: "Add a type (with a first draft)",
+			Tags: ttags, DefaultStatus: http.StatusCreated},
+			func(ctx context.Context, in *struct {
+				Body struct {
+					Slug        string `json:"slug" maxLength:"63"`
+					Name        string `json:"name" maxLength:"120"`
+					Description string `json:"description,omitempty" maxLength:"2000"`
+					HumanTypeDraftInput
+				}
+			}) (*struct{ Body *human.HumanType }, error) {
+				t, err := svc.CreateType(ctx, Actor(ctx), in.Body.Slug, in.Body.Name, in.Body.Description, in.Body.draft())
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.create", err)
+				}
+				return &struct{ Body *human.HumanType }{Body: t}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "save-human-type-draft", Method: http.MethodPut, Path: "/human-types/{type_id}/draft",
+			Summary: "Create or update the type's draft", Description: "Without If-Match a new draft is started; with it, the draft at that version is updated.", Tags: ttags},
+			func(ctx context.Context, in *struct {
+				HumanTypePath
+				IfMatch
+				Body HumanTypeDraftInput
+			}) (*struct{ Body *human.HumanType }, error) {
+				v := int64(0)
+				if in.IfMatch.IfMatch != "" {
+					var err error
+					if v, err = in.Version(); err != nil {
+						return nil, d.fail(ctx, "human_types.draft", err)
+					}
+				}
+				t, err := svc.SaveTypeDraft(ctx, Actor(ctx), in.TypeID, v, in.Body.draft())
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.draft", err)
+				}
+				return &struct{ Body *human.HumanType }{Body: t}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "publish-human-type", Method: http.MethodPost, Path: "/human-types/{type_id}/publish",
+			Summary: "Publish the draft as the next immutable version", Description: "Outstanding actions keep the version they were created with.", Tags: ttags},
+			func(ctx context.Context, in *struct {
+				HumanTypePath
+				IfMatch
+			}) (*struct{ Body *human.HumanType }, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.publish", err)
+				}
+				t, err := svc.PublishType(ctx, Actor(ctx), in.TypeID, v)
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.publish", err)
+				}
+				return &struct{ Body *human.HumanType }{Body: t}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-human-types", Method: http.MethodGet, Path: "/spaces/{space_id}/human-types",
+			Summary: "Custom types enabled in the space, with the version each uses now", Tags: ttags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []human.SpaceType `json:"items"`
+				}
+			}, error) {
+				l, err := svc.SpaceTypes(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.space", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []human.SpaceType `json:"items"`
+					}
+				}{}
+				out.Body.Items = l
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-human-type-options", Method: http.MethodGet, Path: "/spaces/{space_id}/human-type-options",
+			Summary: "Catalog types a space can enable (names and published versions only)", Tags: ttags},
+			func(ctx context.Context, in *SpacePath) (*struct {
+				Body struct {
+					Items []HumanTypeOption `json:"items"`
+				}
+			}, error) {
+				l, err := svc.ListTypes(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.options", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []HumanTypeOption `json:"items"`
+					}
+				}{}
+				out.Body.Items = []HumanTypeOption{}
+				for _, t := range l {
+					o := HumanTypeOption{ID: t.ID, Slug: t.Slug, Name: t.Name, Description: t.Description, Versions: []PromptVersionN{}}
+					for _, v := range t.Versions {
+						if v.State == "published" {
+							o.Versions = append(o.Versions, PromptVersionN{ID: v.ID, Number: v.Number})
+						}
+					}
+					if len(o.Versions) > 0 {
+						out.Body.Items = append(out.Body.Items, o)
+					}
+				}
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "enable-space-human-type", Method: http.MethodPut, Path: "/spaces/{space_id}/human-types/{type_id}",
+			Summary: "Enable a type in the space (follow the latest version or pin one; optionally as a variant)", Tags: ttags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				TypeID string `path:"type_id" maxLength:"64"`
+				Body   struct {
+					VersionPin           string `json:"version_pin,omitempty" maxLength:"64"`
+					Label                string `json:"label,omitempty" maxLength:"120"`
+					DefaultPriority      string `json:"default_priority,omitempty" enum:"low,normal,high,urgent"`
+					DefaultExpiryMinutes int64  `json:"default_expiry_minutes,omitempty" minimum:"0"`
+				}
+			}) (*struct {
+				Body struct {
+					Items []human.SpaceType `json:"items"`
+				}
+			}, error) {
+				if err := svc.EnableType(ctx, Actor(ctx), in.SpaceID, in.TypeID, in.Body.VersionPin, in.Body.Label, in.Body.DefaultPriority, in.Body.DefaultExpiryMinutes); err != nil {
+					return nil, d.fail(ctx, "human_types.enable", err)
+				}
+				l, err := svc.SpaceTypes(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "human_types.enable", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []human.SpaceType `json:"items"`
+					}
+				}{}
+				out.Body.Items = l
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "disable-space-human-type", Method: http.MethodDelete, Path: "/spaces/{space_id}/human-types/{type_id}",
+			Summary: "Stop new actions of a type in the space", Description: "Outstanding actions are unaffected.", Tags: ttags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				TypeID string `path:"type_id" maxLength:"64"`
+			}) (*struct{}, error) {
+				if err := svc.DisableType(ctx, Actor(ctx), in.SpaceID, in.TypeID); err != nil {
+					return nil, d.fail(ctx, "human_types.disable", err)
+				}
+				return &struct{}{}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "move-human-action", Method: http.MethodPost, Path: "/spaces/{space_id}/human-actions/{action_id}/move",
 			Summary: "Reorder a pending human action", Tags: tags},

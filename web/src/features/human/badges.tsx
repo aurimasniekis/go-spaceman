@@ -1,18 +1,18 @@
 import { Badge } from '@mantine/core'
-import { IconChecklist, IconHelpCircle, IconMessage, IconShieldCheck } from '@tabler/icons-react'
+import { IconChecklist, IconForms, IconHelpCircle, IconMessage, IconShieldCheck } from '@tabler/icons-react'
 import type { HumanAction, HumanType } from '@/api/client'
 
-export const typeLabel: Record<HumanType, string> = { question: 'Question', approval: 'Approval', todo: 'To-do', message: 'Message' }
-export const typeIcon = { question: IconHelpCircle, approval: IconShieldCheck, todo: IconChecklist, message: IconMessage } as const
-const typeColor: Record<HumanType, string> = { question: 'owlBlue', approval: 'owlRed', todo: 'owlPurple', message: 'gray' }
+export const typeLabel: Record<HumanType, string> = { question: 'Question', approval: 'Approval', todo: 'To-do', message: 'Message', custom: 'Custom' }
+export const typeIcon = { question: IconHelpCircle, approval: IconShieldCheck, todo: IconChecklist, message: IconMessage, custom: IconForms } as const
+const typeColor: Record<HumanType, string> = { question: 'owlBlue', approval: 'owlRed', todo: 'owlPurple', message: 'gray', custom: 'owlGreen' }
 
 const statusColor: Record<HumanAction['status'], string> = { open: 'owlBlue', in_progress: 'owlPurple', resolved: 'owlGreen', cancelled: 'gray', expired: 'owlYellow' }
 export const statusLabel: Record<HumanAction['status'], string> = { open: 'Open', in_progress: 'In progress', resolved: 'Resolved', cancelled: 'Cancelled', expired: 'Expired' }
-const outcomeColor: Record<string, string> = { answered: 'owlGreen', approved: 'owlGreen', denied: 'owlRed', completed: 'owlGreen', acknowledged: 'owlGreen' }
+const outcomeColor: Record<string, string> = { answered: 'owlGreen', approved: 'owlGreen', denied: 'owlRed', completed: 'owlGreen', acknowledged: 'owlGreen', declined: 'owlRed', rejected: 'owlRed' }
 
-export function TypeBadge({ type }: { type: HumanType }) {
+export function TypeBadge({ type, slug }: { type: HumanType; slug?: string }) {
   const Icon = typeIcon[type]
-  return <Badge color={typeColor[type]} variant="light" leftSection={<Icon size={12} />}>{typeLabel[type]}</Badge>
+  return <Badge color={typeColor[type]} variant="light" leftSection={<Icon size={12} />}>{type === 'custom' && slug ? slug : typeLabel[type]}</Badge>
 }
 
 /** Lifecycle and outcome are separate (SM-HUM-005): a resolved approval can be approved or denied. */
@@ -38,4 +38,4 @@ export interface QuestionReq { options?: string[]; allow_text?: boolean }
 export interface ApprovalReq { action?: string; details?: string }
 export interface TodoReq { steps?: string[] }
 export interface MessageReq { requires_ack?: boolean }
-export interface Resp { answer?: string; note?: string }
+export interface Resp { answer?: string; note?: string; data?: unknown }

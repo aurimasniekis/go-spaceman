@@ -5,7 +5,6 @@
 package template
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 
 	"github.com/aurimasniekis/go-pulse/pkg/pulse/envelope"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/aurimasniekis/go-spaceman/internal/schemautil"
 )
 
 // Limits on rendered output.
@@ -250,23 +251,4 @@ func subjectTokens(s string) []subjectToken {
 	return out
 }
 
-// noRemote refuses every external reference: schemas are self-contained (no file or network access).
-type noRemote struct{}
-
-func (noRemote) Load(url string) (any, error) {
-	return nil, fmt.Errorf("external schema references are not allowed (%s)", url)
-}
-
-func compileSchema(raw json.RawMessage) (*jsonschema.Schema, error) {
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	c := jsonschema.NewCompiler()
-	c.DefaultDraft(jsonschema.Draft2020)
-	c.UseLoader(noRemote{})
-	if err := c.AddResource("urn:spaceman:input", doc); err != nil {
-		return nil, err
-	}
-	return c.Compile("urn:spaceman:input")
-}
+func compileSchema(raw json.RawMessage) (*jsonschema.Schema, error) { return schemautil.Compile(raw) }

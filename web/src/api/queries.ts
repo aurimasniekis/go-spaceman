@@ -38,6 +38,8 @@ export const keys = {
   roleTemplates: ['role-templates'] as const,
   spaceRoles: (space: string) => ['space-roles', space] as const,
   roleOptions: (space: string) => ['role-options', space] as const,
+  humanTypes: ['human-types'] as const,
+  spaceHumanTypes: (space: string) => ['space-human-types', space] as const,
 }
 
 export interface AuditFilter {
@@ -224,3 +226,7 @@ export const useSpaceRoles = (space: string) =>
   useQuery({ queryKey: keys.spaceRoles(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/roles', { params: { path: { space_id: space } } })).items })
 export const useRoleOptions = (space: string, enabled = true) =>
   useQuery({ queryKey: keys.roleOptions(space), enabled, queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/role-options', { params: { path: { space_id: space } } })) })
+
+export const useHumanTypes = (enabled = true) => useQuery({ queryKey: keys.humanTypes, enabled, queryFn: async () => unwrap(await api.GET('/human-types')).items })
+export const useSpaceHumanTypes = (space: string) =>
+  useQuery({ queryKey: keys.spaceHumanTypes(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-types', { params: { path: { space_id: space } } })).items })

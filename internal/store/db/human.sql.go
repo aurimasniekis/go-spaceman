@@ -42,8 +42,25 @@ func (q *Queries) CountPendingHuman(ctx context.Context) ([]CountPendingHumanRow
 	return items, nil
 }
 
+const deleteSpaceHumanType = `-- name: DeleteSpaceHumanType :execrows
+DELETE FROM space_human_types WHERE space_id = ? AND type_id = ?
+`
+
+type DeleteSpaceHumanTypeParams struct {
+	SpaceID string
+	TypeID  string
+}
+
+func (q *Queries) DeleteSpaceHumanType(ctx context.Context, arg DeleteSpaceHumanTypeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSpaceHumanType, arg.SpaceID, arg.TypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const expiredHumanActions = `-- name: ExpiredHumanActions :many
-SELECT id, space_id, type, type_version, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE expires_at IS NOT NULL AND expires_at <= ? AND status IN ('open', 'in_progress')
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE expires_at IS NOT NULL AND expires_at <= ? AND status IN ('open', 'in_progress')
 `
 
 func (q *Queries) ExpiredHumanActions(ctx context.Context, expiresAt sql.NullInt64) ([]HumanAction, error) {
@@ -60,6 +77,8 @@ func (q *Queries) ExpiredHumanActions(ctx context.Context, expiresAt sql.NullInt
 			&i.SpaceID,
 			&i.Type,
 			&i.TypeVersion,
+			&i.TypeVersionID,
+			&i.TypeSlug,
 			&i.Title,
 			&i.Body,
 			&i.RequestJson,
@@ -139,7 +158,7 @@ func (q *Queries) FinalizeHumanAction(ctx context.Context, arg FinalizeHumanActi
 }
 
 const getHumanAction = `-- name: GetHumanAction :one
-SELECT id, space_id, type, type_version, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE id = ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE id = ?
 `
 
 func (q *Queries) GetHumanAction(ctx context.Context, id string) (HumanAction, error) {
@@ -150,6 +169,8 @@ func (q *Queries) GetHumanAction(ctx context.Context, id string) (HumanAction, e
 		&i.SpaceID,
 		&i.Type,
 		&i.TypeVersion,
+		&i.TypeVersionID,
+		&i.TypeSlug,
 		&i.Title,
 		&i.Body,
 		&i.RequestJson,
@@ -185,7 +206,7 @@ func (q *Queries) GetHumanAction(ctx context.Context, id string) (HumanAction, e
 }
 
 const getHumanActionByDedup = `-- name: GetHumanActionByDedup :one
-SELECT id, space_id, type, type_version, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE space_id = ? AND dedup_key = ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE space_id = ? AND dedup_key = ?
 `
 
 type GetHumanActionByDedupParams struct {
@@ -201,6 +222,8 @@ func (q *Queries) GetHumanActionByDedup(ctx context.Context, arg GetHumanActionB
 		&i.SpaceID,
 		&i.Type,
 		&i.TypeVersion,
+		&i.TypeVersionID,
+		&i.TypeSlug,
 		&i.Title,
 		&i.Body,
 		&i.RequestJson,
@@ -235,17 +258,143 @@ func (q *Queries) GetHumanActionByDedup(ctx context.Context, arg GetHumanActionB
 	return i, err
 }
 
+const getHumanType = `-- name: GetHumanType :one
+SELECT id, slug, name, description, created_at, created_by, updated_at, version FROM human_types WHERE id = ?
+`
+
+func (q *Queries) GetHumanType(ctx context.Context, id string) (HumanType, error) {
+	row := q.db.QueryRowContext(ctx, getHumanType, id)
+	var i HumanType
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getHumanTypeBySlug = `-- name: GetHumanTypeBySlug :one
+SELECT id, slug, name, description, created_at, created_by, updated_at, version FROM human_types WHERE slug = ?
+`
+
+func (q *Queries) GetHumanTypeBySlug(ctx context.Context, slug string) (HumanType, error) {
+	row := q.db.QueryRowContext(ctx, getHumanTypeBySlug, slug)
+	var i HumanType
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getHumanTypeDraft = `-- name: GetHumanTypeDraft :one
+SELECT id, type_id, number, state, request_schema, response_schema, ui_json, outcomes_json, default_priority, default_expiry_minutes, notes, created_at, created_by, published_at, published_by, updated_at, version FROM human_type_versions WHERE type_id = ? AND state = 'draft'
+`
+
+func (q *Queries) GetHumanTypeDraft(ctx context.Context, typeID string) (HumanTypeVersion, error) {
+	row := q.db.QueryRowContext(ctx, getHumanTypeDraft, typeID)
+	var i HumanTypeVersion
+	err := row.Scan(
+		&i.ID,
+		&i.TypeID,
+		&i.Number,
+		&i.State,
+		&i.RequestSchema,
+		&i.ResponseSchema,
+		&i.UiJson,
+		&i.OutcomesJson,
+		&i.DefaultPriority,
+		&i.DefaultExpiryMinutes,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.PublishedAt,
+		&i.PublishedBy,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getHumanTypeVersion = `-- name: GetHumanTypeVersion :one
+SELECT id, type_id, number, state, request_schema, response_schema, ui_json, outcomes_json, default_priority, default_expiry_minutes, notes, created_at, created_by, published_at, published_by, updated_at, version FROM human_type_versions WHERE id = ?
+`
+
+func (q *Queries) GetHumanTypeVersion(ctx context.Context, id string) (HumanTypeVersion, error) {
+	row := q.db.QueryRowContext(ctx, getHumanTypeVersion, id)
+	var i HumanTypeVersion
+	err := row.Scan(
+		&i.ID,
+		&i.TypeID,
+		&i.Number,
+		&i.State,
+		&i.RequestSchema,
+		&i.ResponseSchema,
+		&i.UiJson,
+		&i.OutcomesJson,
+		&i.DefaultPriority,
+		&i.DefaultExpiryMinutes,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.PublishedAt,
+		&i.PublishedBy,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const getSpaceHumanType = `-- name: GetSpaceHumanType :one
+SELECT space_id, type_id, version_pin, label, default_priority, default_expiry_minutes, created_at, created_by FROM space_human_types WHERE space_id = ? AND type_id = ?
+`
+
+type GetSpaceHumanTypeParams struct {
+	SpaceID string
+	TypeID  string
+}
+
+func (q *Queries) GetSpaceHumanType(ctx context.Context, arg GetSpaceHumanTypeParams) (SpaceHumanType, error) {
+	row := q.db.QueryRowContext(ctx, getSpaceHumanType, arg.SpaceID, arg.TypeID)
+	var i SpaceHumanType
+	err := row.Scan(
+		&i.SpaceID,
+		&i.TypeID,
+		&i.VersionPin,
+		&i.Label,
+		&i.DefaultPriority,
+		&i.DefaultExpiryMinutes,
+		&i.CreatedAt,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
 const insertHumanAction = `-- name: InsertHumanAction :exec
-INSERT INTO human_actions (id, space_id, type, title, body, request_json, requester_kind, requester_id, requester_role, requester_run,
-  requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at,
-  follow_up_of, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO human_actions (id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id,
+  requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank,
+  due_at, expires_at, follow_up_of, created_at, created_by, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertHumanActionParams struct {
 	ID               string
 	SpaceID          string
 	Type             string
+	TypeVersion      int64
+	TypeVersionID    string
+	TypeSlug         string
 	Title            string
 	Body             string
 	RequestJson      string
@@ -275,6 +424,9 @@ func (q *Queries) InsertHumanAction(ctx context.Context, arg InsertHumanActionPa
 		arg.ID,
 		arg.SpaceID,
 		arg.Type,
+		arg.TypeVersion,
+		arg.TypeVersionID,
+		arg.TypeSlug,
 		arg.Title,
 		arg.Body,
 		arg.RequestJson,
@@ -355,8 +507,103 @@ func (q *Queries) InsertHumanNotification(ctx context.Context, arg InsertHumanNo
 	return err
 }
 
+const insertHumanType = `-- name: InsertHumanType :exec
+INSERT INTO human_types (id, slug, name, description, created_at, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertHumanTypeParams struct {
+	ID          string
+	Slug        string
+	Name        string
+	Description string
+	CreatedAt   int64
+	CreatedBy   string
+	UpdatedAt   int64
+}
+
+func (q *Queries) InsertHumanType(ctx context.Context, arg InsertHumanTypeParams) error {
+	_, err := q.db.ExecContext(ctx, insertHumanType,
+		arg.ID,
+		arg.Slug,
+		arg.Name,
+		arg.Description,
+		arg.CreatedAt,
+		arg.CreatedBy,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const insertHumanTypeVersion = `-- name: InsertHumanTypeVersion :exec
+INSERT INTO human_type_versions (id, type_id, number, state, request_schema, response_schema, ui_json, outcomes_json, default_priority,
+  default_expiry_minutes, notes, created_at, created_by, updated_at)
+VALUES (?, ?, 0, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertHumanTypeVersionParams struct {
+	ID                   string
+	TypeID               string
+	RequestSchema        string
+	ResponseSchema       string
+	UiJson               string
+	OutcomesJson         string
+	DefaultPriority      string
+	DefaultExpiryMinutes int64
+	Notes                string
+	CreatedAt            int64
+	CreatedBy            string
+	UpdatedAt            int64
+}
+
+func (q *Queries) InsertHumanTypeVersion(ctx context.Context, arg InsertHumanTypeVersionParams) error {
+	_, err := q.db.ExecContext(ctx, insertHumanTypeVersion,
+		arg.ID,
+		arg.TypeID,
+		arg.RequestSchema,
+		arg.ResponseSchema,
+		arg.UiJson,
+		arg.OutcomesJson,
+		arg.DefaultPriority,
+		arg.DefaultExpiryMinutes,
+		arg.Notes,
+		arg.CreatedAt,
+		arg.CreatedBy,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const latestHumanTypeVersion = `-- name: LatestHumanTypeVersion :one
+SELECT id, type_id, number, state, request_schema, response_schema, ui_json, outcomes_json, default_priority, default_expiry_minutes, notes, created_at, created_by, published_at, published_by, updated_at, version FROM human_type_versions WHERE type_id = ? AND state = 'published' ORDER BY number DESC LIMIT 1
+`
+
+func (q *Queries) LatestHumanTypeVersion(ctx context.Context, typeID string) (HumanTypeVersion, error) {
+	row := q.db.QueryRowContext(ctx, latestHumanTypeVersion, typeID)
+	var i HumanTypeVersion
+	err := row.Scan(
+		&i.ID,
+		&i.TypeID,
+		&i.Number,
+		&i.State,
+		&i.RequestSchema,
+		&i.ResponseSchema,
+		&i.UiJson,
+		&i.OutcomesJson,
+		&i.DefaultPriority,
+		&i.DefaultExpiryMinutes,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.PublishedAt,
+		&i.PublishedBy,
+		&i.UpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
 const listHumanActions = `-- name: ListHumanActions :many
-SELECT id, space_id, type, type_version, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE space_id = ? ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END, rank, created_at DESC LIMIT ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE space_id = ? ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END, rank, created_at DESC LIMIT ?
 `
 
 type ListHumanActionsParams struct {
@@ -378,6 +625,8 @@ func (q *Queries) ListHumanActions(ctx context.Context, arg ListHumanActionsPara
 			&i.SpaceID,
 			&i.Type,
 			&i.TypeVersion,
+			&i.TypeVersionID,
+			&i.TypeSlug,
 			&i.Title,
 			&i.Body,
 			&i.RequestJson,
@@ -497,8 +746,89 @@ func (q *Queries) ListHumanNotifications(ctx context.Context, actionID string) (
 	return items, nil
 }
 
+const listHumanTypeVersions = `-- name: ListHumanTypeVersions :many
+SELECT id, type_id, number, state, request_schema, response_schema, ui_json, outcomes_json, default_priority, default_expiry_minutes, notes, created_at, created_by, published_at, published_by, updated_at, version FROM human_type_versions WHERE type_id = ? ORDER BY state DESC, number DESC
+`
+
+func (q *Queries) ListHumanTypeVersions(ctx context.Context, typeID string) ([]HumanTypeVersion, error) {
+	rows, err := q.db.QueryContext(ctx, listHumanTypeVersions, typeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanTypeVersion{}
+	for rows.Next() {
+		var i HumanTypeVersion
+		if err := rows.Scan(
+			&i.ID,
+			&i.TypeID,
+			&i.Number,
+			&i.State,
+			&i.RequestSchema,
+			&i.ResponseSchema,
+			&i.UiJson,
+			&i.OutcomesJson,
+			&i.DefaultPriority,
+			&i.DefaultExpiryMinutes,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.PublishedAt,
+			&i.PublishedBy,
+			&i.UpdatedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHumanTypes = `-- name: ListHumanTypes :many
+SELECT id, slug, name, description, created_at, created_by, updated_at, version FROM human_types ORDER BY slug
+`
+
+func (q *Queries) ListHumanTypes(ctx context.Context) ([]HumanType, error) {
+	rows, err := q.db.QueryContext(ctx, listHumanTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanType{}
+	for rows.Next() {
+		var i HumanType
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.UpdatedAt,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingHumanActions = `-- name: ListPendingHumanActions :many
-SELECT id, space_id, type, type_version, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE status IN ('open', 'in_progress') ORDER BY created_at LIMIT ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE status IN ('open', 'in_progress') ORDER BY created_at LIMIT ?
 `
 
 func (q *Queries) ListPendingHumanActions(ctx context.Context, limit int64) ([]HumanAction, error) {
@@ -515,6 +845,8 @@ func (q *Queries) ListPendingHumanActions(ctx context.Context, limit int64) ([]H
 			&i.SpaceID,
 			&i.Type,
 			&i.TypeVersion,
+			&i.TypeVersionID,
+			&i.TypeSlug,
 			&i.Title,
 			&i.Body,
 			&i.RequestJson,
@@ -605,6 +937,42 @@ func (q *Queries) ListPendingNotifications(ctx context.Context, arg ListPendingN
 	return items, nil
 }
 
+const listSpaceHumanTypes = `-- name: ListSpaceHumanTypes :many
+SELECT space_id, type_id, version_pin, label, default_priority, default_expiry_minutes, created_at, created_by FROM space_human_types WHERE space_id = ? ORDER BY type_id
+`
+
+func (q *Queries) ListSpaceHumanTypes(ctx context.Context, spaceID string) ([]SpaceHumanType, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceHumanTypes, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceHumanType{}
+	for rows.Next() {
+		var i SpaceHumanType
+		if err := rows.Scan(
+			&i.SpaceID,
+			&i.TypeID,
+			&i.VersionPin,
+			&i.Label,
+			&i.DefaultPriority,
+			&i.DefaultExpiryMinutes,
+			&i.CreatedAt,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markHumanNotificationDelivered = `-- name: MarkHumanNotificationDelivered :execrows
 UPDATE human_notifications SET state = 'delivered', delivered_at = ? WHERE id = ? AND state = 'pending'
 `
@@ -631,6 +999,34 @@ func (q *Queries) MaxHumanRank(ctx context.Context, spaceID string) (int64, erro
 	var r int64
 	err := row.Scan(&r)
 	return r, err
+}
+
+const publishHumanTypeVersion = `-- name: PublishHumanTypeVersion :execrows
+UPDATE human_type_versions SET state = 'published', number = ?1, published_at = ?2, published_by = ?3,
+  version = version + 1, updated_at = ?2
+WHERE id = ?4 AND state = 'draft' AND version = ?5
+`
+
+type PublishHumanTypeVersionParams struct {
+	Number  int64
+	Now     sql.NullInt64
+	By      string
+	ID      string
+	Version int64
+}
+
+func (q *Queries) PublishHumanTypeVersion(ctx context.Context, arg PublishHumanTypeVersionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, publishHumanTypeVersion,
+		arg.Number,
+		arg.Now,
+		arg.By,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setHumanRank = `-- name: SetHumanRank :exec
@@ -673,4 +1069,74 @@ func (q *Queries) UpdateHumanAssignment(ctx context.Context, arg UpdateHumanAssi
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const updateHumanTypeDraft = `-- name: UpdateHumanTypeDraft :execrows
+UPDATE human_type_versions SET request_schema = ?, response_schema = ?, ui_json = ?, outcomes_json = ?, default_priority = ?,
+  default_expiry_minutes = ?, notes = ?, version = version + 1, updated_at = ?
+WHERE id = ? AND state = 'draft' AND version = ?
+`
+
+type UpdateHumanTypeDraftParams struct {
+	RequestSchema        string
+	ResponseSchema       string
+	UiJson               string
+	OutcomesJson         string
+	DefaultPriority      string
+	DefaultExpiryMinutes int64
+	Notes                string
+	UpdatedAt            int64
+	ID                   string
+	Version              int64
+}
+
+func (q *Queries) UpdateHumanTypeDraft(ctx context.Context, arg UpdateHumanTypeDraftParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateHumanTypeDraft,
+		arg.RequestSchema,
+		arg.ResponseSchema,
+		arg.UiJson,
+		arg.OutcomesJson,
+		arg.DefaultPriority,
+		arg.DefaultExpiryMinutes,
+		arg.Notes,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const upsertSpaceHumanType = `-- name: UpsertSpaceHumanType :exec
+INSERT INTO space_human_types (space_id, type_id, version_pin, label, default_priority, default_expiry_minutes, created_at, created_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (space_id, type_id) DO UPDATE SET version_pin = excluded.version_pin, label = excluded.label, default_priority = excluded.default_priority,
+  default_expiry_minutes = excluded.default_expiry_minutes
+`
+
+type UpsertSpaceHumanTypeParams struct {
+	SpaceID              string
+	TypeID               string
+	VersionPin           string
+	Label                string
+	DefaultPriority      string
+	DefaultExpiryMinutes int64
+	CreatedAt            int64
+	CreatedBy            string
+}
+
+func (q *Queries) UpsertSpaceHumanType(ctx context.Context, arg UpsertSpaceHumanTypeParams) error {
+	_, err := q.db.ExecContext(ctx, upsertSpaceHumanType,
+		arg.SpaceID,
+		arg.TypeID,
+		arg.VersionPin,
+		arg.Label,
+		arg.DefaultPriority,
+		arg.DefaultExpiryMinutes,
+		arg.CreatedAt,
+		arg.CreatedBy,
+	)
+	return err
 }

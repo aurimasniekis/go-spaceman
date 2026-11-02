@@ -73,7 +73,7 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
                 <Checkbox size="xs" aria-label={`Select ${a.title}`} checked={picked.includes(a.id)} onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setPicked(e.currentTarget.checked ? [...picked, a.id] : picked.filter((x) => x !== a.id))} />
               )}
-              <TypeBadge type={a.type} />
+              <TypeBadge type={a.type} slug={a.type_slug} />
               <Text size="sm" style={{ flex: 1 }} truncate>{a.title}</Text>
               <PriorityBadge priority={a.priority} />
               {a.type === 'message' && !(a.request as MessageReq)?.requires_ack && isPending(a) && <Badge variant="outline" color="gray">FYI</Badge>}

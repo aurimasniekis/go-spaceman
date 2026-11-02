@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
+	"github.com/aurimasniekis/go-spaceman/internal/schemautil"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -32,6 +33,13 @@ type RespondInput struct {
 }
 
 func pending(status string) bool { return status == Open || status == InProgress }
+
+func typeName(r db.HumanAction) string {
+	if r.Type == TypeCustom {
+		return r.TypeSlug
+	}
+	return r.Type
+}
 
 // load reads an action of a space inside a transaction and checks the expected version.
 func load(ctx context.Context, tx *store.Tx, spaceID, id string, version int64) (db.HumanAction, error) {
@@ -59,8 +67,31 @@ func (svc *Service) Respond(ctx context.Context, actor audit.Actor, spaceID, id 
 		if err != nil {
 			return err
 		}
-		if !slices.Contains(outcomes[r.Type], in.Outcome) {
-			return invalid("outcome", "a %s takes %s", r.Type, strings.Join(outcomes[r.Type], " or "))
+		allowed := outcomes[r.Type]
+		if r.Type == TypeCustom {
+			// The response is checked against the version the action was created with, whatever the type became since.
+			tv, err := tx.Q.GetHumanTypeVersion(ctx, r.TypeVersionID)
+			if err != nil {
+				return apperr.New(apperr.CodePrecondition, "the action's type version is missing")
+			}
+			_ = json.Unmarshal([]byte(tv.OutcomesJson), &allowed)
+			data := in.Data
+			if len(data) == 0 || string(data) == "null" {
+				data = json.RawMessage(`{}`)
+			}
+			sch, err := schemautil.CompileObject(json.RawMessage(tv.ResponseSchema))
+			if err != nil {
+				return err
+			}
+			if err := schemautil.Validate(sch, data); err != nil {
+				return invalid("data", "the response does not match %s v%d: %v", r.TypeSlug, r.TypeVersion, err)
+			}
+			in.Data = data
+		} else if len(in.Data) > 0 && string(in.Data) != "null" {
+			return invalid("data", "only custom types take response data")
+		}
+		if !slices.Contains(allowed, in.Outcome) {
+			return invalid("outcome", "a %s takes %s", typeName(r), strings.Join(allowed, " or "))
 		}
 		if len(in.Answer) > 50_000 || len(in.Note) > 20_000 {
 			return invalid("answer", "the response is too long")

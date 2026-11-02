@@ -1,9 +1,9 @@
-import { IconActivity, IconBell, IconBolt, IconCreditCard, IconFileText, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
+import { IconActivity, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
 export interface NavItem {
-  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/users' | '/tokens' | '/audit' | '/account'
+  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/human-types' | '/users' | '/tokens' | '/audit' | '/account'
   label: string
   icon: typeof IconBox
   group: 'Work' | 'Fleet' | 'Configuration' | 'Integrations' | 'Access'
@@ -22,6 +22,7 @@ export const nav: NavItem[] = [
   { to: '/nodes', label: 'Nodes', icon: IconServer2, group: 'Fleet', global: true },
   { to: '/prompts', label: 'Prompts', icon: IconFileText, group: 'Configuration', global: true },
   { to: '/roles', label: 'Roles & profiles', icon: IconUsersGroup, group: 'Configuration', global: true },
+  { to: '/human-types', label: 'Action types', icon: IconForms, group: 'Configuration', global: true },
   { to: '/events', label: 'Events', icon: IconBolt, group: 'Integrations' },
   { to: '/accounts', label: 'Accounts', icon: IconCreditCard, group: 'Integrations', global: true, admin: true },
   { to: '/users', label: 'Users', icon: IconUsers, group: 'Access', global: true },

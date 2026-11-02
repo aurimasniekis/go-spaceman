@@ -15,6 +15,7 @@ import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as HumanRouteImport } from './routes/human'
+import { Route as HumanTypesRouteImport } from './routes/human-types'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as NodesRouteImport } from './routes/nodes'
 import { Route as RecoverRouteImport } from './routes/recover'
@@ -70,6 +71,11 @@ const EventsRoute = EventsRouteImport.update({
 const HumanRoute = HumanRouteImport.update({
   id: '/human',
   path: '/human',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HumanTypesRoute = HumanTypesRouteImport.update({
+  id: '/human-types',
+  path: '/human-types',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -214,6 +220,7 @@ export interface FileRoutesByFullPath {
   '/audit': typeof AuditRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
+  '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
@@ -247,6 +254,7 @@ export interface FileRoutesByTo {
   '/accounts': typeof AccountsRoute
   '/audit': typeof AuditRoute
   '/human': typeof HumanRoute
+  '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
@@ -278,6 +286,7 @@ export interface FileRoutesById {
   '/audit': typeof AuditRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
+  '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
@@ -314,6 +323,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/events'
     | '/human'
+    | '/human-types'
     | '/login'
     | '/nodes'
     | '/recover'
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/audit'
     | '/human'
+    | '/human-types'
     | '/login'
     | '/nodes'
     | '/recover'
@@ -377,6 +388,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/events'
     | '/human'
+    | '/human-types'
     | '/login'
     | '/nodes'
     | '/recover'
@@ -412,6 +424,7 @@ export interface RootRouteChildren {
   AuditRoute: typeof AuditRoute
   EventsRoute: typeof EventsRouteWithChildren
   HumanRoute: typeof HumanRoute
+  HumanTypesRoute: typeof HumanTypesRoute
   LoginRoute: typeof LoginRoute
   NodesRoute: typeof NodesRoute
   RecoverRoute: typeof RecoverRoute
@@ -467,6 +480,13 @@ declare module '@tanstack/react-router' {
       path: '/human'
       fullPath: '/human'
       preLoaderRoute: typeof HumanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/human-types': {
+      id: '/human-types'
+      path: '/human-types'
+      fullPath: '/human-types'
+      preLoaderRoute: typeof HumanTypesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -738,6 +758,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuditRoute: AuditRoute,
   EventsRoute: EventsRouteWithChildren,
   HumanRoute: HumanRoute,
+  HumanTypesRoute: HumanTypesRoute,
   LoginRoute: LoginRoute,
   NodesRoute: NodesRoute,
   RecoverRoute: RecoverRoute,

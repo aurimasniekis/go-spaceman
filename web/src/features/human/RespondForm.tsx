@@ -8,8 +8,9 @@ import { keys } from '@/api/queries'
 import { errorMessage } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
 import type { ApprovalReq, MessageReq, QuestionReq, TodoReq } from './badges'
+import { SchemaForm } from './SchemaForm'
 
-type Outcome = 'answered' | 'approved' | 'denied' | 'completed' | 'acknowledged'
+type Outcome = string
 
 /**
  * The type-specific response form (SM-HUI-002). Each type has its own action: a question is answered, an approval is
@@ -19,6 +20,7 @@ type Outcome = 'answered' | 'approved' | 'denied' | 'completed' | 'acknowledged'
 export function RespondForm({ action, canDecide, onDone }: { action: HumanAction; canDecide: boolean; onDone?: (a: HumanAction) => void }) {
   const qc = useQueryClient()
   const [error, setError] = useState('')
+  const [data, setData] = useState<Record<string, unknown>>({})
   const req = (action.request ?? {}) as QuestionReq & ApprovalReq & TodoReq & MessageReq
   const options = req.options ?? []
   const freeText = options.length === 0 || !!req.allow_text
@@ -33,7 +35,7 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
       try {
         const next = unwrap(await api.POST('/spaces/{space_id}/human-actions/{action_id}/respond', {
           params: { path: { space_id: action.space_id, action_id: action.id }, header: { 'If-Match': ifMatch(action.version) } },
-          body: { outcome, answer, note: value.note || undefined },
+          body: { outcome, answer, note: value.note || undefined, data: action.type === 'custom' ? data : undefined },
         }))
         void qc.invalidateQueries({ queryKey: keys.human(action.space_id) })
         void qc.invalidateQueries({ queryKey: keys.humanPending })
@@ -46,7 +48,7 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
   const submit = (outcome: Outcome) => void form.handleSubmit({ outcome })
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); submit(action.type === 'question' ? 'answered' : action.type === 'todo' ? 'completed' : 'acknowledged') }}>
+    <form onSubmit={(e) => { e.preventDefault(); submit(action.type === 'question' ? 'answered' : action.type === 'todo' ? 'completed' : action.type === 'custom' ? (action.type_spec?.outcomes[0] ?? 'done') : 'acknowledged') }}>
       <Stack gap="sm">
         {action.type === 'question' && (
           <>
@@ -116,6 +118,20 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
           </>
         )}
 
+        {action.type === 'custom' && action.type_spec && (
+          <>
+            <SchemaForm label="Response" schema={action.type_spec.response_schema} ui={action.type_spec.ui} value={data} onChange={setData} />
+            <form.Field name="note">
+              {(f) => <Textarea label="Note" autosize minRows={2} maxRows={8} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+            </form.Field>
+            <Text size="xs" c="dimmed">A custom type records an answer; it never grants anything, whatever its outcomes are called.</Text>
+            <Group justify="flex-end">
+              {action.type_spec.outcomes.map((o, i) => (
+                <Button key={o} variant={i === 0 ? 'filled' : 'default'} onClick={() => submit(o)}>{o.replace(/_/g, ' ')}</Button>
+              ))}
+            </Group>
+          </>
+        )}
         {action.type === 'message' && (
           <Group justify="flex-end"><Button type="submit" leftSection={<IconCheck size={14} />}>Acknowledge</Button></Group>
         )}

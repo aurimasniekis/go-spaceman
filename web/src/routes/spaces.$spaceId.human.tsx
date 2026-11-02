@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { ActionList } from '@/features/human/ActionList'
 import { isPending } from '@/features/human/badges'
 import { NewActionModal } from '@/features/human/NewActionModal'
+import { SpaceTypesModal } from '@/features/human/SpaceTypesModal'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 
@@ -20,13 +21,19 @@ function SpaceHumanPage() {
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
   const [creating, setCreating] = useState(false)
+  const [types, setTypes] = useState(false)
   const [showFinal, setShowFinal] = useState(false)
   const all = list.data?.items ?? []
   const items = showFinal ? all : all.filter(isPending)
   return (
     <>
       <PageHeader title={space.data?.name ?? 'Space'} description="Requests for people in this space: separate from the inbox, the queue and agent messages."
-        actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>} />
+        actions={canWrite && (
+          <>
+            <Button variant="default" onClick={() => setTypes(true)}>Types</Button>
+            <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>
+          </>
+        )} />
       <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={list.error} />
       <Group justify="space-between" mb={6}>
@@ -35,6 +42,7 @@ function SpaceHumanPage() {
       </Group>
       <ActionList actions={items} empty="No pending human actions in this space." />
       <NewActionModal spaceId={spaceId} opened={creating} onClose={() => setCreating(false)} />
+      {types && <SpaceTypesModal spaceId={spaceId} onClose={() => setTypes(false)} />}
     </>
   )
 }

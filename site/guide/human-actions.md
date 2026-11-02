@@ -30,6 +30,32 @@ enforce the decision on the operation itself. Enforced approvals, bound to the e
 with the approval gateway.
 :::
 
+## Custom types
+
+Administrators add their own types under **Action types**, without code changes. A type has a **request schema** (what
+is asked), a **response schema** (what the person fills in), both in JSON Schema 2020-12, its **outcomes** (how it can
+end, for example *scheduled* or *declined*), a default priority and expiry, and optional form metadata: field order,
+labels, help text and a widget from a fixed list. Schemas cannot load anything from outside, and the metadata accepts
+plain text only, so a type can never run code in the UI.
+
+<Shot name="human-types" alt="Deploy window type with request and response schemas, form metadata, outcomes scheduled and declined, priority high and a 24-hour expiry" caption="A custom type in the catalog" />
+
+- Types are versioned like prompts: you edit a draft and **publish** an immutable version.
+- A space enables a type under **Human actions → Types**: following the latest version or pinned to one, and
+  optionally under its own label as a variant.
+- People choose an enabled type when creating an action; agents find them with `spaceman_human_types`.
+- SpaceMan checks every request and response against the schemas, and a response must end with one of the outcomes.
+- An action keeps the version it was created with: publishing a new version never invalidates outstanding requests.
+- Forms are generated from the schema. **Edit as JSON** is always available, and fields the form cannot show use the
+  JSON editor.
+
+<Shot name="human-form-custom" alt="A deploy window request with environment, change and rollback plan, and a response form with window start, duration and conditions, with Scheduled and Declined buttons" caption="Answering a custom type" />
+
+::: warning Outcomes are records, not permissions
+A custom outcome named *approved* is only a recorded answer. Custom types never grant anything; enforced approvals
+are a separate mechanism.
+:::
+
 ## Lifecycle
 
 An action is **open**, **in progress** (someone claimed it), **resolved**, **cancelled** (withdrawn) or **expired**.

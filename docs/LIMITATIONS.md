@@ -48,8 +48,9 @@
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself.
 - **Native harness messaging is not used.** Claude Code's and Codex's own messaging features are not verified across
   standalone runs, so SpaceMan does not rely on them (SM-COMM-003).
-- **Default types only.** Custom types with schema-driven forms arrive in M3 (SM-HTYPE). Reminders and escalation
-  arrive in M4; expiry runs once a minute.
+- **Reminders and escalation arrive in M4**; expiry runs once a minute.
+- **Schema forms cover common fields.** Strings (with formats and enums), numbers, booleans and string lists render as
+  fields; nested objects and other arrays use the JSON editor.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The

@@ -1,6 +1,6 @@
 import { Anchor, Badge, Button, Card, Divider, Group, Modal, Stack, Text, Textarea, Title } from '@mantine/core'
 import { IconHandGrab, IconUserMinus } from '@tabler/icons-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type HumanAction } from '@/api/client'
 import { keys, useMe } from '@/api/queries'
@@ -11,10 +11,15 @@ import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { HumanStatusBadge, isPending, PriorityBadge, requesterLabel, TypeBadge, type Resp } from './badges'
 import { RespondForm } from './RespondForm'
+import { DataView } from './SchemaForm'
 
 /** One human action: the request, its response form or recorded response, assignment, comments and notifications. */
-export function ActionDetail({ action, spaceName, onChanged }: { action: HumanAction; spaceName?: string; onChanged?: (a: HumanAction) => void }) {
+export function ActionDetail({ action: listed, spaceName, onChanged }: { action: HumanAction; spaceName?: string; onChanged?: (a: HumanAction) => void }) {
   const qc = useQueryClient()
+  // Lists omit comments, notifications and the custom type spec: the drawer reads the full action.
+  const full = useQuery({ queryKey: ['human-action', listed.space_id, listed.id, listed.version],
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-actions/{action_id}', { params: { path: { space_id: listed.space_id, action_id: listed.id } } })) })
+  const action = full.data && full.data.version >= listed.version ? full.data : listed
   const me = useMe().data
   const role = roleIn(me, action.space_id)
   const canRespond = atLeast(role, 'operator')
@@ -58,7 +63,7 @@ export function ActionDetail({ action, spaceName, onChanged }: { action: HumanAc
   return (
     <Stack gap="md">
       <Stack gap={4}>
-        <Group gap="xs"><TypeBadge type={action.type} /><HumanStatusBadge action={action} /><PriorityBadge priority={action.priority} />
+        <Group gap="xs"><TypeBadge type={action.type} slug={action.type_slug} /><HumanStatusBadge action={action} /><PriorityBadge priority={action.priority} />
           {action.blocks_task && <Badge variant="outline" color="owlYellow">blocks its task</Badge>}</Group>
         <Title order={3}>{action.title}</Title>
         <Text size="sm" c="dimmed">
@@ -76,6 +81,13 @@ export function ActionDetail({ action, spaceName, onChanged }: { action: HumanAc
         </Card>
       )}
 
+      {action.type === 'custom' && (
+        <Card withBorder>
+          <Text fw={600} mb={4}>Request</Text>
+          <Text size="xs" c="dimmed" mb="xs">Type {action.type_slug} v{action.type_version}{action.requester_kind === 'agent' ? ' · written by an agent: untrusted content' : ''}</Text>
+          <DataView data={action.request} schema={action.type_spec?.request_schema} ui={action.type_spec?.ui} />
+        </Card>
+      )}
       {pending && canRespond && (
         <Card withBorder>
           <Group justify="space-between" mb="sm">
@@ -95,6 +107,7 @@ export function ActionDetail({ action, spaceName, onChanged }: { action: HumanAc
           <Text fw={600} mb={4}>{action.status === 'resolved' ? `Response: ${action.outcome}` : action.status === 'cancelled' ? 'Withdrawn' : 'Expired without a response'}</Text>
           <Text size="sm" c="dimmed">{action.responded_by && `by ${action.responded_by} `}{action.responded_at && datetime(action.responded_at)}</Text>
           {resp.answer && <MarkdownView source={resp.answer} spaceId={action.space_id} />}
+          {action.type === 'custom' && resp.data !== undefined && <DataView data={resp.data} schema={action.type_spec?.response_schema} ui={action.type_spec?.ui} />}
           {resp.note && <Text size="sm" mt={4}>Note: {resp.note}</Text>}
           {action.status_reason && <Text size="sm" mt={4}>Reason: {action.status_reason}</Text>}
           <Text size="xs" c="dimmed" mt="xs">Responses are final. To correct one, create a follow-up.</Text>

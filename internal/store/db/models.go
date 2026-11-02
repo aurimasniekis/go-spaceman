@@ -211,6 +211,8 @@ type HumanAction struct {
 	SpaceID          string
 	Type             string
 	TypeVersion      int64
+	TypeVersionID    string
+	TypeSlug         string
 	Title            string
 	Body             string
 	RequestJson      string
@@ -266,6 +268,37 @@ type HumanNotification struct {
 	NoticeCommand  string
 	NoticedAt      sql.NullInt64
 	AcknowledgedAt sql.NullInt64
+}
+
+type HumanType struct {
+	ID          string
+	Slug        string
+	Name        string
+	Description string
+	CreatedAt   int64
+	CreatedBy   string
+	UpdatedAt   int64
+	Version     int64
+}
+
+type HumanTypeVersion struct {
+	ID                   string
+	TypeID               string
+	Number               int64
+	State                string
+	RequestSchema        string
+	ResponseSchema       string
+	UiJson               string
+	OutcomesJson         string
+	DefaultPriority      string
+	DefaultExpiryMinutes int64
+	Notes                string
+	CreatedAt            int64
+	CreatedBy            string
+	PublishedAt          sql.NullInt64
+	PublishedBy          string
+	UpdatedAt            int64
+	Version              int64
 }
 
 type IdempotencyKey struct {
@@ -606,6 +639,17 @@ type SpaceAccount struct {
 	IsDefault int64
 	CreatedAt int64
 	CreatedBy string
+}
+
+type SpaceHumanType struct {
+	SpaceID              string
+	TypeID               string
+	VersionPin           string
+	Label                string
+	DefaultPriority      string
+	DefaultExpiryMinutes int64
+	CreatedAt            int64
+	CreatedBy            string
 }
 
 type SpaceRole struct {
