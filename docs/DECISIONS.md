@@ -108,7 +108,8 @@
 - **Consequences:** Leakage tests only need to check directory scoping and the env passed to each run.
 
 ### ADR-0009 — Secret delivery to runs through a launcher shim
-- **Status:** proposed; depends on the hc env-persistence check (open item K-2)
+- **Status:** accepted (2026-11-02). K-2 verified: hc persists `terminal.run.env` in plaintext as `restart_env` in `terminals.json`
+  (0644), so the "if hc persists env" branch below applies.
 - **Context:** SM-ACCT-004 asks for runner persistence to be inspected before choosing a delivery mechanism. hc keeps
   `terminals.json`, and whether it stores `env` is unverified.
 - **Decision (pending verification):**
@@ -196,13 +197,43 @@
 - **Decision:** Use the Porch setup: `vitepress-plugin-mermaid` 2.0.17, `mermaid` 11.17.2, a `check-mermaid` script, base `/go-spaceman/`,
   and a `Shot` component for screenshots taken by Playwright from a seeded demo instance.
 
+### ADR-0017 — Dead-daemon enforcement via a per-space lease-guard parent terminal
+- **Status:** accepted (2026-11-02), based on spike S-2 in `docs/contracts/herdr-core.md`
+- **Context:** SM-NODE-008: a dead `spaceman-agent` cannot enforce its own disconnect timeout. hc ends child terminals when their parent's
+  program ends, unless `outlive_parent` is set.
+- **Decision:**
+  - **Guard terminal.** For each space with active runs, the node starts a guard terminal `g-<space short id>` (`no_parent:true`) running
+    `spaceman-agent lease-guard --lease-file <space run dir>/lease.json`.
+  - **Daemon side.** The daemon rewrites the lease file atomically. Its `valid_until` is the central lease expiry plus the disconnect grace.
+  - **Guard side.** The guard checks the file every second, uses only local time and the file, and exits when `now > valid_until` or the
+    file is missing or invalid.
+  - **Runs.** Every run terminal is started with `parent: g-<space>`, never with `outlive_parent`.
+  - **Restart.** When the daemon restarts it adopts the guard and its children if both are live. If the guard ended, the runs ended with it,
+    and the daemon reconciles them as stopped by lease expiry.
+- **Consequences:** Disconnect enforcement holds even if the daemon crashes or is SIGKILLed, as long as the hc core and holder are alive.
+  Documented limits:
+  - It does not hold if hc itself is killed (the programs die anyway, `holder_lost`).
+  - It does not hold if a node operator edits the lease file.
+  - Ending a terminal does not prove that processes spawned outside hc stopped.
+  - The graceful path, where the daemon is alive, sends `terminal.interrupt` first, then `kill`, per the space's disconnect policy.
+
+### ADR-0018 — Foundation packages derived from Hallpass
+- **Status:** accepted (2026-11-02)
+- **Context:** The brief asks SpaceMan to follow Hallpass's actual implementation for storage, keyring, audit and observability, and to prefer
+  sibling repositories for exact conventions. Hallpass is Apache-2.0 by the same author, and its foundations are tested and security-reviewed.
+- **Decision:** These packages are adapted from go-hallpass v0.7.0 (`bdd8329`) with renamed identifiers, SpaceMan migrations and SpaceMan metric
+  families, rather than rewritten: `internal/{store,keyring,audit,ids,clock,buildinfo,obs,config}` and `tools/analyzers/txscope`.
+  Inherited comments that cite Hallpass requirement IDs are marked "Hallpass HP-…". Attribution is in NOTICE.
+- **Consequences:** Same crypto, transaction and redaction behavior as Hallpass, including its tests. Bug fixes in either project should be
+  considered for the other.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
 |---|---|---|---|
 | K-1 | hc framed protocol byte layout (DATA/RESIZE/CREDIT/CLOSE frames) is undocumented in `hc schema`. | ADR-0010, live terminal | Spike: proxy `hc attach` through a recording socket proxy against an isolated core; document; fallback PTY tee. |
-| K-2 | Whether hc persists `terminal.run.env` in `terminals.json`. | ADR-0009 | Spike on an isolated core with a dummy env var. |
-| K-3 | hc `parent` / `outlive_parent` semantics when the parent terminal finishes. | SM-NODE-008 | Spike; if children are killed, use a lease-guard parent terminal; else document limitation. |
+| K-2 | ~~Whether hc persists `env`.~~ **Resolved 2026-11-02:** yes, plaintext `restart_env` → ADR-0009 shim required. | — | done |
+| K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
 | K-5 | ghostty-web npm package name, version, API. | Terminal UI | Inspect the package source before use. |
 | K-6 | Official Go MCP SDK version and streamable/stdio APIs. | MCP gateway | Inspect module source. |

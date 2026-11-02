@@ -16,6 +16,7 @@
 - **Single active central instance.** No high availability. Recovery is restore-from-backup (ADR-0001).
 
 ## Pending verification (not yet guaranteed)
-- **Dead-daemon enforcement** of the disconnect policy depends on herdr-core `parent` semantics. Until K-3 is verified, a `spaceman-agent`
-  that crashes leaves its runs going until the agent restarts and reconciles (SM-NODE-008).
+- **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
+  mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned
+  outside hc have stopped (SM-NODE-008). The end-to-end SpaceMan test is still pending (M1-10).
 - **Terminal recording** depends on the herdr-core framed attach protocol (K-1).

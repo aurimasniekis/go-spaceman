@@ -47,4 +47,32 @@ stopped_by_restart, spawn_pending`), `status{state,app,kind,msg,progress,title}`
 - K-3: `parent` / `outlive_parent` kill semantics. Results go in the section below as spikes complete.
 
 ## Spike results
-(none yet)
+
+All spikes ran against an **isolated** core:
+- `HC_SESSION=smspike`, with private `XDG_STATE_HOME` and `XDG_CONFIG_HOME`, and the `HC_TERMINAL_*` variables unset.
+- `config.toml` sets `socket=<short path>` and `notes=false`.
+- Run on 2026-11-02 with hc 0.1.16 on macOS. Scripts are kept out of the repo, and the procedure is reproduced in `test/real/hc_contract_test.go` (M1-06).
+
+### S-0: socket path limit
+`hc server start` with a long `XDG_STATE_HOME` failed:
+`{"kind":"usage","message":"the socket path for session \"smspike\" is too long here (167 bytes; this system allows 103)"}`.
+→ `spaceman-agent` always writes `config.toml` with an explicit short `socket` path in a 0700 directory, and checks its length (≤103 bytes
+on macOS, ≤107 on Linux `sun_path`).
+
+### S-1 (K-2): env persistence — **hc persists env in plaintext**
+`terminal.run{env:{SM_SPIKE_CANARY:"canary-value-7731"}}` → `terminals.json` contained `"restart_env": {"SM_SPIKE_CANARY": "canary-value-7731"}`.
+The file mode was **0644** inside a 0700 directory. The persisted record also had `program_started_ms`, `holder`, `scope` and `foreground`.
+→ **Secrets must never be passed through `terminal.run.env`.** ADR-0009 (launcher shim reading a 0600 file it unlinks) is now required.
+
+### S-2 (K-3): parent/child lifetime — **children end with the parent's program**
+- Schema text: `parent` = "Parent terminal (default: the terminal it is started from)". `outlive_parent` = "Keep it running when its parent's
+  program ends (by default it ends too)". `no_parent` = "No parent, even when started from a terminal". `die_with_parent` = "Ignored".
+- Parent program **exited by itself** (`sleep 3`, exit 0) → child `state=finished, reason=killed, exit_code=129` (SIGHUP).
+- Parent **killed** (`terminal.kill`) → plain child `reason=killed`. A child with `outlive_parent:true` stayed `live`.
+→ A **lease-guard parent terminal** is a real dead-daemon mechanism:
+  - The guard is a separate `spaceman-agent lease-guard` process inside hc. It reads a lease file that the daemon renews, and it exits
+    when the lease expires. hc then ends every run terminal parented to it.
+  - **Limits:**
+    - It relies on the hc core and holder being alive. If hc itself dies, programs are lost anyway (`holder_lost`).
+    - Ending a terminal's program does not prove the program's own descendants (processes it spawned outside hc) stopped (SM-SEC-001).
+    - Every SpaceMan-launched terminal passes `parent` or `no_parent` explicitly, so it never inherits the caller's terminal as parent by accident.
