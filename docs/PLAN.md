@@ -47,7 +47,7 @@
 | WP | Scope | Requirements | Status |
 |---|---|---|---|
 | M3-01 | Accounts + encrypted secrets + resolution | SM-ACCT-* | implemented (pulled forward for real runs): service, API, Accounts page, space bindings, launch choice, real Claude run; Codex ChatGPT login open (K-9) |
-| M3-02 | Prompts catalog, harness profiles, role templates, resolution, manifests | SM-PROMPT-* | todo |
+| M3-02 | Prompts catalog, harness profiles, role templates, resolution, manifests | SM-PROMPT-* | implemented: catalog service and API, resolution with origins and policy ceiling, manifests, Prompts and Roles pages, space roles, launch by role, guide and screenshots |
 | M3-03 | MCP gateway (upstreams, grants, limits, SSRF) + skills incl. Hallpass | SM-MCP-* | todo |
 | M3-04 | Human-action type catalog, custom schemas, schema forms | SM-HTYPE-* | todo |
 | M3-05 | Enforced approvals | SM-APPR-* | todo |
@@ -117,7 +117,8 @@
 | 2026-11-02 | M2-06 | Durable messages (stored/available/acknowledged/resolved, requests and replies, dedup), notifier delivering content-free notices through idle-gated input, human responses delivered the same way, messaging tools, operator Messages tab | `e8d05f9` | `internal/messages` tests (83.6%), `TestMessagesDeliveredToIdleRuns`, `make e2e` |
 | 2026-11-02 | M2-06 | Control: orchestration tools (worker launch/stop for eligible tasks, runs list), per-worker git worktrees on the node, notifications to control for actionable events, bounded control restart with session resume and an urgent human action beyond the budget | `cf6de6d` | `TestPrepareWorktree`, `TestControlLaunchesWorkersInWorktrees`, `TestControlSupervisor` |
 | 2026-11-02 | M2-06 | Real evidence: a real Claude Code session used a SpaceMan tool through the bridge; the token was found nowhere at rest | `3ee3ad8` | `TestRealClaudeUsesSpaceManTools` (opt-in, Haiku) |
-| 2026-11-02 | M2-08 | Accessibility: axe audits of every UI screenshot page and every site page in both themes, all violations fixed (contrast palette, named controls, nav semantics, task checkboxes, replay slider, search button), contrast unit tests | this commit (`fix(a11y)`) | `make screenshots`, `make site-check`, `theme/contrast.test.ts` |
+| 2026-11-02 | M2-08 | Accessibility: axe audits of every UI screenshot page and every site page in both themes, all violations fixed (contrast palette, named controls, nav semantics, task checkboxes, replay slider, search button), contrast unit tests | `e238b03` | `make screenshots`, `make site-check`, `theme/contrast.test.ts` |
+| 2026-11-02 | M3-02 | Prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates, space roles, layered resolution with origins and a permission-mode ceiling, run manifests with dependency versions; space standing instructions now reach runs | this commit (`feat(catalog)`) | `internal/catalog` tests (80.8%), `make screenshots` (launch by role on the real stack) |
 
 ## 4. Process deviations
 

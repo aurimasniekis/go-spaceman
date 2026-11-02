@@ -24,8 +24,18 @@ up() {
   port=${SM_DEV_PORT:-38180}
   mport=${SM_DEV_MANAGEMENT_PORT:-38181}
   mkdir -p "$dir/bin"
-  if [[ "${SKIP_UI_BUILD:-}" != 1 ]]; then (cd "$root/web" && pnpm run build >/dev/null); fi
-  (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent && go build -o "$dir/bin/" ./internal/events/pulsetest/devpulse)
+  # A failed build prints its output and leaves nothing behind.
+  if [[ "${SKIP_UI_BUILD:-}" != 1 ]] && ! (cd "$root/web" && pnpm run build >"$dir/ui-build.log" 2>&1); then
+    cat "$dir/ui-build.log" >&2
+    rm -rf "$dir"
+    echo "dev-stack: the UI build failed" >&2
+    exit 1
+  fi
+  if ! (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent && go build -o "$dir/bin/" ./internal/events/pulsetest/devpulse); then
+    rm -rf "$dir"
+    echo "dev-stack: the Go build failed" >&2
+    exit 1
+  fi
   mkdir -p "$dir/pulse"
   "${clean_env[@]}" "$dir/bin/devpulse" serve -dir "$dir/pulse" -port "${SM_DEV_PULSE_PORT:-38422}" >"$dir/devpulse.log" 2>&1 &
   echo $! >"$dir/devpulse.pid"

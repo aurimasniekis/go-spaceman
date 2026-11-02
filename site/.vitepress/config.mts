@@ -71,6 +71,7 @@ export default withMermaid(
             { text: 'Agent tools', link: '/guide/agent-tools' },
             { text: 'Messages', link: '/guide/messages' },
             { text: 'Control and workers', link: '/guide/control' },
+            { text: 'Roles and prompts', link: '/guide/roles-and-prompts' },
             { text: 'Events and subscriptions', link: '/guide/events' },
             { text: 'Project status', link: '/guide/status' },
           ],

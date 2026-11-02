@@ -1,12 +1,12 @@
-import { IconActivity, IconBell, IconBolt, IconCreditCard, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
+import { IconActivity, IconBell, IconBolt, IconCreditCard, IconFileText, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
 export interface NavItem {
-  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/users' | '/tokens' | '/audit' | '/account'
+  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/users' | '/tokens' | '/audit' | '/account'
   label: string
   icon: typeof IconBox
-  group: 'Work' | 'Fleet' | 'Integrations' | 'Access'
+  group: 'Work' | 'Fleet' | 'Configuration' | 'Integrations' | 'Access'
   /** Shows the number of pending human actions. */
   pendingBadge?: boolean
   /** Shown only to global administrators (accounts hold credentials). */
@@ -20,6 +20,8 @@ export const nav: NavItem[] = [
   { to: '/human', label: 'Needs you', icon: IconBell, group: 'Work', pendingBadge: true },
   { to: '/spaces', label: 'Spaces', icon: IconBox, group: 'Work' },
   { to: '/nodes', label: 'Nodes', icon: IconServer2, group: 'Fleet', global: true },
+  { to: '/prompts', label: 'Prompts', icon: IconFileText, group: 'Configuration', global: true },
+  { to: '/roles', label: 'Roles & profiles', icon: IconUsersGroup, group: 'Configuration', global: true },
   { to: '/events', label: 'Events', icon: IconBolt, group: 'Integrations' },
   { to: '/accounts', label: 'Accounts', icon: IconCreditCard, group: 'Integrations', global: true, admin: true },
   { to: '/users', label: 'Users', icon: IconUsers, group: 'Access', global: true },

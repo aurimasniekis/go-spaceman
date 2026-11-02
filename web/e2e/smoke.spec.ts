@@ -261,6 +261,18 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByText('Nothing is waiting for you.')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Needs you', exact: true })).toBeVisible()
 
+  // Prompts: a role prompt is created as a draft and published as version 1.
+  await page.getByRole('link', { name: 'Prompts' }).click()
+  await page.getByRole('button', { name: 'New prompt' }).click()
+  const np = page.getByRole('dialog', { name: 'New prompt' })
+  await np.getByLabel('Name').fill('Payments reviewer')
+  await np.getByLabel('Slug').fill('payments-reviewer')
+  await np.getByLabel('First draft').fill('Review refunds for idempotency.')
+  await np.getByRole('button', { name: 'Create' }).click()
+  await expect(page.getByRole('heading', { name: 'Payments reviewer' })).toBeVisible()
+  await page.getByRole('button', { name: 'Publish' }).click()
+  await expect(page.getByText('Version 1', { exact: true })).toBeVisible()
+
   // Messages: an operator request to control is stored durably until a control run can see it.
   await page.getByRole('link', { name: 'Spaces' }).click()
   await page.getByRole('link', { name: 'Payments platform' }).click()

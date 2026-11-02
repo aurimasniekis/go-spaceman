@@ -116,7 +116,49 @@ function RunPage() {
         <Detail label="Exit code" value={r.exit_code !== undefined && ended ? String(r.exit_code) : '—'} mono />
       </SimpleGrid>
       {r.error && <ErrorAlert error={new Error(r.error)} title="Run error" />}
+      <ManifestCard manifest={r.manifest} />
     </Stack>
+  )
+}
+
+type Manifest = {
+  effective?: Record<string, { value: string; origin: string }>
+  prompt?: { slug: string; number: number; pinned: boolean; sha256: string }
+  space_role?: { name: string; revision: number }
+  template?: { slug: string; revision: number }
+  profile?: { slug: string; revision: number }
+  dependencies?: Record<string, string | number>
+  policy?: { version: number; max_permission_mode: string }
+  account_ref?: string
+}
+
+/** The non-secret configuration the run started with (SM-PROMPT-004); later catalog changes do not alter it. */
+function ManifestCard({ manifest }: { manifest: unknown }) {
+  const m = (manifest ?? {}) as Manifest
+  const eff = Object.entries(m.effective ?? {}).filter(([k]) => k !== 'system_text_sha256').sort(([a], [b]) => a.localeCompare(b))
+  if (eff.length === 0 && !m.dependencies) return null
+  return (
+    <Card>
+      <Text fw={600} mb={4}>Configuration at launch</Text>
+      <Text size="xs" c="dimmed" mb="xs">
+        {[m.space_role && `role ${m.space_role.name} r${m.space_role.revision}`, m.template && `template ${m.template.slug} r${m.template.revision}`,
+          m.profile && `profile ${m.profile.slug} r${m.profile.revision}`, m.prompt && `prompt ${m.prompt.slug} v${m.prompt.number}${m.prompt.pinned ? ' (pinned)' : ''}`,
+          m.account_ref && `account ${m.account_ref}`, m.policy && `policy v${m.policy.version} (max permission mode ${m.policy.max_permission_mode})`]
+          .filter(Boolean).join(' · ')}
+      </Text>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={4}>
+        {eff.map(([k, f]) => (
+          <Group key={k} gap={6} wrap="nowrap">
+            <Text size="xs" className="mono" c="dimmed">{k}</Text>
+            <Text size="xs" className="mono" truncate>{f.value}</Text>
+            <Text size="xs" c="dimmed">({f.origin.replace('_', ' ')})</Text>
+          </Group>
+        ))}
+      </SimpleGrid>
+      {m.dependencies && (
+        <Text size="xs" c="dimmed" mt="xs">Versions: {Object.entries(m.dependencies).filter(([, v]) => v !== '' && v !== undefined).map(([k, v]) => `${k} ${v}`).join(' · ')}</Text>
+      )}
+    </Card>
   )
 }
 

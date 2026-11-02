@@ -909,6 +909,449 @@
         },
         "type": "object"
       },
+      "CatalogDiffLine": {
+        "additionalProperties": false,
+        "properties": {
+          "op": {
+            "enum": [
+              "same",
+              "add",
+              "del"
+            ],
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "text"
+        ],
+        "type": "object"
+      },
+      "CatalogField": {
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "enum": [
+              "builtin",
+              "profile",
+              "template",
+              "space_role",
+              "launch",
+              "policy"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "CatalogProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CatalogProfile.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "harness": {
+            "enum": [
+              "claude-code",
+              "codex"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "harness",
+          "settings",
+          "revision",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "CatalogPrompt": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CatalogPrompt.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "forked_from": {
+            "description": "The prompt version this prompt was forked from",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "role",
+              "dream",
+              "kb",
+              "event",
+              "general"
+            ],
+            "type": "string"
+          },
+          "latest": {
+            "description": "The newest published version number (0: none yet)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogPromptVersion"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "kind",
+          "latest",
+          "created_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "CatalogPromptRef": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "number": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "pinned": {
+            "description": "false: the role follows the latest published version",
+            "type": "boolean"
+          },
+          "prompt_id": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt_id",
+          "slug",
+          "version_id",
+          "number",
+          "pinned",
+          "sha256",
+          "content",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "CatalogPromptVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CatalogPromptVersion.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "description": "Markdown",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "extends": {
+            "description": "A published version of another prompt this one builds on; its content comes first",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "number": {
+            "description": "0 for the draft",
+            "format": "int64",
+            "type": "integer"
+          },
+          "prompt_id": {
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "published_by": {
+            "type": "string"
+          },
+          "sha256": {
+            "description": "Of the resolved content (with what it extends)",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "draft",
+              "published"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "prompt_id",
+          "number",
+          "state",
+          "body",
+          "sha256",
+          "created_at",
+          "created_by",
+          "version"
+        ],
+        "type": "object"
+      },
+      "CatalogRoleTemplate": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CatalogRoleTemplate.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "control",
+              "worker",
+              "kb",
+              "dreamer",
+              "diagnostic"
+            ],
+            "type": "string"
+          },
+          "memory_conventions": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "prompt_id": {
+            "type": "string"
+          },
+          "prompt_pin": {
+            "description": "A published version ID; empty follows the latest version",
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "kind",
+          "settings",
+          "revision",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "CatalogSpaceRole": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CatalogSpaceRole.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "instructions": {
+            "description": "Space-specific text appended after the role's prompt",
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "prompt_id": {
+            "type": "string"
+          },
+          "prompt_pin": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "space_id",
+          "name",
+          "template_id",
+          "settings",
+          "revision",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
       "Change-passwordRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1104,6 +1547,53 @@
         ],
         "type": "object"
       },
+      "Create-promptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Create-promptRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "description": "Markdown",
+            "maxLength": 200000,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "role",
+              "dream",
+              "kb",
+              "event",
+              "general"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 63,
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
       "CreateHumanActionInput": {
         "additionalProperties": false,
         "properties": {
@@ -1288,6 +1778,30 @@
         "required": [
           "token",
           "secret"
+        ],
+        "type": "object"
+      },
+      "Diff-prompt-versionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Diff-prompt-versionsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogDiffLine"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines"
         ],
         "type": "object"
       },
@@ -1920,6 +2434,7 @@
             "type": "string"
           },
           "harness": {
+            "description": "Required unless the role's profile sets it",
             "enum": [
               "claude-code",
               "codex"
@@ -1931,6 +2446,7 @@
             "type": "string"
           },
           "kind": {
+            "description": "Required unless role names a configured space role",
             "enum": [
               "control",
               "worker",
@@ -1949,7 +2465,7 @@
             "type": "string"
           },
           "role": {
-            "description": "Agent kind/role, e.g. control, implementor-backend (not the harness)",
+            "description": "A configured space role (its template, profile and prompt apply), or a free role name",
             "type": "string"
           },
           "session_id": {
@@ -1976,9 +2492,7 @@
           }
         },
         "required": [
-          "kind",
-          "role",
-          "harness"
+          "role"
         ],
         "type": "object"
       },
@@ -2237,6 +2751,7 @@
           "launch": {
             "$ref": "#/components/schemas/FleetLaunchSpec"
           },
+          "manifest": {},
           "node_id": {
             "type": "string"
           },
@@ -2309,7 +2824,8 @@
           "launch",
           "version",
           "created_at",
-          "created_by"
+          "created_by",
+          "manifest"
         ],
         "type": "object"
       },
@@ -2459,6 +2975,33 @@
           "goals",
           "standing_instructions",
           "disconnect_policy"
+        ],
+        "type": "object"
+      },
+      "Fork-promptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Fork-promptRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 63,
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
         ],
         "type": "object"
       },
@@ -3016,6 +3559,30 @@
         ],
         "type": "object"
       },
+      "List-harness-profilesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-harness-profilesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogProfile"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-nodesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3040,6 +3607,30 @@
         ],
         "type": "object"
       },
+      "List-promptsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-promptsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogPrompt"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-quarantineResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3055,6 +3646,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/EventsQuarantineEntry"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-role-templatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-role-templatesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogRoleTemplate"
             },
             "type": "array"
           }
@@ -3103,6 +3718,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/AuthSessionInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-space-rolesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-space-rolesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogSpaceRole"
             },
             "type": "array"
           }
@@ -3534,6 +4173,55 @@
         ],
         "type": "object"
       },
+      "Preview": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Preview.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "effective": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogField"
+            },
+            "type": "object"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/CatalogPromptRef"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "system_text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "harness",
+          "settings",
+          "system_text",
+          "effective"
+        ],
+        "type": "object"
+      },
       "PreviewInput": {
         "additionalProperties": false,
         "properties": {
@@ -3664,6 +4352,70 @@
           "title",
           "status",
           "code"
+        ],
+        "type": "object"
+      },
+      "ProfileInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ProfileInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "harness": {
+            "enum": [
+              "claude-code",
+              "codex"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "slug": {
+            "maxLength": 63,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "PromptVersionN": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "number": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "number"
         ],
         "type": "object"
       },
@@ -4547,6 +5299,95 @@
         ],
         "type": "object"
       },
+      "RoleOption": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/PromptVersionN"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "type": "object"
+      },
+      "RoleOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RoleOptions.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/RoleOption"
+            },
+            "type": "array"
+          },
+          "prompts": {
+            "items": {
+              "$ref": "#/components/schemas/RoleOption"
+            },
+            "type": "array"
+          },
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/RoleOption"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "templates",
+          "profiles",
+          "prompts"
+        ],
+        "type": "object"
+      },
+      "Rollback-promptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Rollback-promptRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "version_id": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id"
+        ],
+        "type": "object"
+      },
       "SampleEvent": {
         "additionalProperties": false,
         "properties": {
@@ -4575,6 +5416,37 @@
         "required": [
           "subject",
           "data"
+        ],
+        "type": "object"
+      },
+      "Save-prompt-draftRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Save-prompt-draftRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 200000,
+            "type": "string"
+          },
+          "extends": {
+            "description": "A published version of another prompt to build on",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "notes": {
+            "maxLength": 2000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
         ],
         "type": "object"
       },
@@ -4908,6 +5780,54 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "SpaceRoleInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SpaceRoleInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "instructions": {
+            "maxLength": 50000,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "profile_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "prompt_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "prompt_pin": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "template_id": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "required": [
+          "template_id"
         ],
         "type": "object"
       },
@@ -5269,6 +6189,69 @@
         "required": [
           "path",
           "op"
+        ],
+        "type": "object"
+      },
+      "TemplateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TemplateInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "control",
+              "worker",
+              "kb",
+              "dreamer",
+              "diagnostic"
+            ],
+            "type": "string"
+          },
+          "memory_conventions": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "profile_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "prompt_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "prompt_pin": {
+            "description": "A published version ID; empty follows the latest",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "slug": {
+            "maxLength": 63,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -6969,6 +7952,99 @@
         ]
       }
     },
+    "/harness-profiles": {
+      "get": {
+        "operationId": "list-harness-profiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-harness-profilesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Harness profiles",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/harness-profiles/{profile_id}": {
+      "put": {
+        "description": "An update bumps the revision; it applies to later launches.",
+        "operationId": "save-harness-profile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogProfile"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create (profile_id \"new\") or update a harness profile",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
     "/human-actions": {
       "get": {
         "description": "Only spaces where you have human_action:read are included.",
@@ -7243,6 +8319,513 @@
         "summary": "Enable, disable or revoke a node (disable and revoke close its connection)",
         "tags": [
           "nodes"
+        ]
+      }
+    },
+    "/prompt-diff": {
+      "get": {
+        "operationId": "diff-prompt-versions",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Diff-prompt-versionsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Line diff between two prompt versions",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/prompt-versions/{version_id}/fork": {
+      "post": {
+        "description": "The new prompt records where it came from; forks never merge back automatically.",
+        "operationId": "fork-prompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Fork-promptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPrompt"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Fork a published version into a new prompt",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/prompts": {
+      "get": {
+        "operationId": "list-prompts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-promptsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The prompt catalog",
+        "tags": [
+          "prompts"
+        ]
+      },
+      "post": {
+        "operationId": "create-prompt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Create-promptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPrompt"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a prompt (with a first draft)",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/prompts/{prompt_id}": {
+      "get": {
+        "operationId": "get-prompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPrompt"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A prompt with its draft and versions",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/prompts/{prompt_id}/draft": {
+      "delete": {
+        "operationId": "discard-prompt-draft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Discard the draft",
+        "tags": [
+          "prompts"
+        ]
+      },
+      "put": {
+        "description": "Without If-Match, a new draft is started (refused if one exists); with it, the draft at that version is updated.",
+        "operationId": "save-prompt-draft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Save-prompt-draftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPromptVersion"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create or update the prompt's draft",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/prompts/{prompt_id}/publish": {
+      "post": {
+        "description": "Roles that follow the prompt use it from their next launch.",
+        "operationId": "publish-prompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPromptVersion"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Publish the draft as the next immutable version",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/prompts/{prompt_id}/rollback": {
+      "post": {
+        "operationId": "rollback-prompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prompt_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Rollback-promptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogPromptVersion"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Publish an earlier version's content as a new version",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/role-templates": {
+      "get": {
+        "operationId": "list-role-templates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-role-templatesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Role templates",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/role-templates/{template_id}": {
+      "put": {
+        "operationId": "save-role-template",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogRoleTemplate"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create (template_id \"new\") or update a role template",
+        "tags": [
+          "roles"
         ]
       }
     },
@@ -9039,6 +10622,245 @@
         "summary": "Set the queue policy",
         "tags": [
           "queue"
+        ]
+      }
+    },
+    "/spaces/{space_id}/role-options": {
+      "get": {
+        "operationId": "list-role-options",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleOptions"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Templates, profiles and prompts a space role can use (names only)",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/spaces/{space_id}/roles": {
+      "get": {
+        "operationId": "list-space-roles",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-space-rolesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's roles",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/spaces/{space_id}/roles/{name}": {
+      "delete": {
+        "operationId": "delete-space-role",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 48,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove a role from the space",
+        "tags": [
+          "roles"
+        ]
+      },
+      "put": {
+        "description": "Non-empty fields override the role template's; changes apply to later launches.",
+        "operationId": "save-space-role",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 48,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceRoleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSpaceRole"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Configure a role in the space",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
+    "/spaces/{space_id}/roles/{name}/preview": {
+      "get": {
+        "operationId": "preview-space-role",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 48,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preview"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A role's effective configuration and where each value comes from",
+        "tags": [
+          "roles"
         ]
       }
     },

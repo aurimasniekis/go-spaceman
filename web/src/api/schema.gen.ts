@@ -562,6 +562,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/harness-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Harness profiles */
+        get: operations["list-harness-profiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/harness-profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Create (profile_id "new") or update a harness profile
+         * @description An update bumps the revision; it applies to later launches.
+         */
+        put: operations["save-harness-profile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/human-actions": {
         parameters: {
             query?: never;
@@ -645,6 +682,170 @@ export interface paths {
         put?: never;
         /** Enable, disable or revoke a node (disable and revoke close its connection) */
         post: operations["set-node-state"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prompt-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Line diff between two prompt versions */
+        get: operations["diff-prompt-versions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prompt-versions/{version_id}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fork a published version into a new prompt
+         * @description The new prompt records where it came from; forks never merge back automatically.
+         */
+        post: operations["fork-prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The prompt catalog */
+        get: operations["list-prompts"];
+        put?: never;
+        /** Add a prompt (with a first draft) */
+        post: operations["create-prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prompts/{prompt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A prompt with its draft and versions */
+        get: operations["get-prompt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prompts/{prompt_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Create or update the prompt's draft
+         * @description Without If-Match, a new draft is started (refused if one exists); with it, the draft at that version is updated.
+         */
+        put: operations["save-prompt-draft"];
+        post?: never;
+        /** Discard the draft */
+        delete: operations["discard-prompt-draft"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prompts/{prompt_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish the draft as the next immutable version
+         * @description Roles that follow the prompt use it from their next launch.
+         */
+        post: operations["publish-prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/prompts/{prompt_id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish an earlier version's content as a new version */
+        post: operations["rollback-prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/role-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Role templates */
+        get: operations["list-role-templates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/role-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Create (template_id "new") or update a role template */
+        put: operations["save-role-template"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1081,6 +1282,78 @@ export interface paths {
         get?: never;
         /** Set the queue policy */
         put: operations["set-queue-policy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/role-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Templates, profiles and prompts a space role can use (names only) */
+        get: operations["list-role-options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's roles */
+        get: operations["list-space-roles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/roles/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Configure a role in the space
+         * @description Non-empty fields override the role template's; changes apply to later launches.
+         */
+        put: operations["save-space-role"];
+        post?: never;
+        /** Remove a role from the space */
+        delete: operations["delete-space-role"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/roles/{name}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A role's effective configuration and where each value comes from */
+        get: operations["preview-space-role"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1942,6 +2215,164 @@ export interface components {
             readonly $schema?: string;
             reason?: string;
         };
+        CatalogDiffLine: {
+            /** @enum {string} */
+            op: "same" | "add" | "del";
+            text: string;
+        };
+        CatalogField: {
+            /** @enum {string} */
+            origin: "builtin" | "profile" | "template" | "space_role" | "launch" | "policy";
+            value: string;
+        };
+        CatalogProfile: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogProfile.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            id: string;
+            model?: string;
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            settings: {
+                [key: string]: string;
+            };
+            slug: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        CatalogPrompt: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogPrompt.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            /** @description The prompt version this prompt was forked from */
+            forked_from?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "role" | "dream" | "kb" | "event" | "general";
+            /**
+             * Format: int64
+             * @description The newest published version number (0: none yet)
+             */
+            latest: number;
+            name: string;
+            slug: string;
+            /** Format: int64 */
+            version: number;
+            versions?: components["schemas"]["CatalogPromptVersion"][];
+        };
+        CatalogPromptRef: {
+            content: string;
+            /** Format: int64 */
+            number: number;
+            origin: string;
+            /** @description false: the role follows the latest published version */
+            pinned: boolean;
+            prompt_id: string;
+            sha256: string;
+            slug: string;
+            version_id: string;
+        };
+        CatalogPromptVersion: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogPromptVersion.json
+             */
+            readonly $schema?: string;
+            /** @description Markdown */
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** @description A published version of another prompt this one builds on; its content comes first */
+            extends?: string;
+            id: string;
+            notes?: string;
+            /**
+             * Format: int64
+             * @description 0 for the draft
+             */
+            number: number;
+            prompt_id: string;
+            /** Format: date-time */
+            published_at?: string;
+            published_by?: string;
+            /** @description Of the resolved content (with what it extends) */
+            sha256: string;
+            /** @enum {string} */
+            state: "draft" | "published";
+            /** Format: int64 */
+            version: number;
+        };
+        CatalogRoleTemplate: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogRoleTemplate.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            memory_conventions?: string;
+            name: string;
+            profile_id?: string;
+            prompt_id?: string;
+            /** @description A published version ID; empty follows the latest version */
+            prompt_pin?: string;
+            /** Format: int64 */
+            revision: number;
+            settings: {
+                [key: string]: string;
+            };
+            slug: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        CatalogSpaceRole: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogSpaceRole.json
+             */
+            readonly $schema?: string;
+            /** @description Space-specific text appended after the role's prompt */
+            instructions?: string;
+            model?: string;
+            name: string;
+            profile_id?: string;
+            prompt_id?: string;
+            prompt_pin?: string;
+            /** Format: int64 */
+            revision: number;
+            settings: {
+                [key: string]: string;
+            };
+            space_id: string;
+            template_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
         "Change-passwordRequest": {
             /**
              * Format: uri
@@ -2011,6 +2442,21 @@ export interface components {
             readonly $schema?: string;
             definition: components["schemas"]["TemplateDefinition"];
             description?: string;
+            name: string;
+            slug: string;
+        };
+        "Create-promptRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Create-promptRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Markdown */
+            body?: string;
+            description?: string;
+            /** @enum {string} */
+            kind: "role" | "dream" | "kb" | "event" | "general";
             name: string;
             slug: string;
         };
@@ -2085,6 +2531,15 @@ export interface components {
             /** @description The bearer token; shown once and never retrievable again */
             secret: string;
             token: components["schemas"]["AuthAPIToken"];
+        };
+        "Diff-prompt-versionsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Diff-prompt-versionsResponse.json
+             */
+            readonly $schema?: string;
+            lines: components["schemas"]["CatalogDiffLine"][];
         };
         EnrollConfirmed: {
             /**
@@ -2320,15 +2775,21 @@ export interface components {
              */
             readonly $schema?: string;
             account_ref?: string;
-            /** @enum {string} */
-            harness: "claude-code" | "codex";
+            /**
+             * @description Required unless the role's profile sets it
+             * @enum {string}
+             */
+            harness?: "claude-code" | "codex";
             /** @description Reuse an instance's harness config and memory checkout; empty creates one */
             instance_id?: string;
-            /** @enum {string} */
-            kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            /**
+             * @description Required unless role names a configured space role
+             * @enum {string}
+             */
+            kind?: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
             model?: string;
             prompt?: string;
-            /** @description Agent kind/role, e.g. control, implementor-backend (not the harness) */
+            /** @description A configured space role (its template, profile and prompt apply), or a free role name */
             role: string;
             /** @description Resume this conversation when the harness supports it */
             session_id?: string;
@@ -2438,6 +2899,7 @@ export interface components {
             /** @enum {string} */
             kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
             launch: components["schemas"]["FleetLaunchSpec"];
+            manifest: unknown;
             node_id: string;
             /** @enum {string} */
             observed: "pending" | "starting" | "running" | "stopping" | "exited" | "failed" | "lost" | "unknown";
@@ -2507,6 +2969,16 @@ export interface components {
             goals: string;
             name: string;
             standing_instructions: string;
+        };
+        "Fork-promptRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Fork-promptRequest.json
+             */
+            readonly $schema?: string;
+            name: string;
+            slug: string;
         };
         HumanAction: {
             /**
@@ -2694,6 +3166,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["EventsTemplate"][];
         };
+        "List-harness-profilesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-harness-profilesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["CatalogProfile"][];
+        };
         "List-nodesResponse": {
             /**
              * Format: uri
@@ -2703,6 +3184,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["FleetNode"][];
         };
+        "List-promptsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-promptsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["CatalogPrompt"][];
+        };
         "List-quarantineResponse": {
             /**
              * Format: uri
@@ -2711,6 +3201,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["EventsQuarantineEntry"][];
+        };
+        "List-role-templatesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-role-templatesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["CatalogRoleTemplate"][];
         };
         "List-runsResponse": {
             /**
@@ -2729,6 +3228,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AuthSessionInfo"][];
+        };
+        "List-space-rolesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-rolesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["CatalogSpaceRole"][];
         };
         "List-spacesResponse": {
             /**
@@ -2886,6 +3394,25 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        Preview: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Preview.json
+             */
+            readonly $schema?: string;
+            effective: {
+                [key: string]: components["schemas"]["CatalogField"];
+            };
+            harness: string;
+            kind: string;
+            model?: string;
+            prompt?: components["schemas"]["CatalogPromptRef"];
+            settings: {
+                [key: string]: string;
+            };
+            system_text: string;
+        };
         PreviewInput: {
             /**
              * Format: uri
@@ -2936,6 +3463,28 @@ export interface components {
             title: string;
             /** @description URI identifying the problem type */
             type: string;
+        };
+        ProfileInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ProfileInput.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            /** @enum {string} */
+            harness?: "claude-code" | "codex";
+            model?: string;
+            name: string;
+            settings?: {
+                [key: string]: string;
+            };
+            slug?: string;
+        };
+        PromptVersionN: {
+            id: string;
+            /** Format: int64 */
+            number: number;
         };
         ProtoCapabilities: {
             arch: string;
@@ -3252,6 +3801,33 @@ export interface components {
             /** @enum {string} */
             outcome: "answered" | "approved" | "denied" | "completed" | "acknowledged";
         };
+        RoleOption: {
+            id: string;
+            kind?: string;
+            name: string;
+            slug: string;
+            versions?: components["schemas"]["PromptVersionN"][];
+        };
+        RoleOptions: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RoleOptions.json
+             */
+            readonly $schema?: string;
+            profiles: components["schemas"]["RoleOption"][];
+            prompts: components["schemas"]["RoleOption"][];
+            templates: components["schemas"]["RoleOption"][];
+        };
+        "Rollback-promptRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Rollback-promptRequest.json
+             */
+            readonly $schema?: string;
+            version_id: string;
+        };
         SampleEvent: {
             data: unknown;
             id?: string;
@@ -3260,6 +3836,18 @@ export interface components {
             /** Format: date-time */
             time?: string;
             type?: string;
+        };
+        "Save-prompt-draftRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Save-prompt-draftRequest.json
+             */
+            readonly $schema?: string;
+            body: string;
+            /** @description A published version of another prompt to build on */
+            extends?: string;
+            notes?: string;
         };
         "Save-template-draftRequest": {
             /**
@@ -3382,6 +3970,23 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["AccountsBinding"][];
         };
+        SpaceRoleInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceRoleInput.json
+             */
+            readonly $schema?: string;
+            instructions?: string;
+            model?: string;
+            profile_id?: string;
+            prompt_id?: string;
+            prompt_pin?: string;
+            settings?: {
+                [key: string]: string;
+            };
+            template_id: string;
+        };
         "Stop-runRequest": {
             /**
              * Format: uri
@@ -3498,6 +4103,27 @@ export interface components {
             path: string;
             value?: string;
             values?: string[];
+        };
+        TemplateInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TemplateInput.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            /** @enum {string} */
+            kind?: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            memory_conventions?: string;
+            name: string;
+            profile_id?: string;
+            prompt_id?: string;
+            /** @description A published version ID; empty follows the latest */
+            prompt_pin?: string;
+            settings?: {
+                [key: string]: string;
+            };
+            slug?: string;
         };
         TemplateVariable: {
             default?: string;
@@ -4739,6 +5365,73 @@ export interface operations {
             };
         };
     };
+    "list-harness-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-harness-profilesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "save-harness-profile": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogProfile"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-pending-human-actions": {
         parameters: {
             query?: {
@@ -4920,6 +5613,369 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetNode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "diff-prompt-versions": {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Diff-prompt-versionsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "fork-prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Fork-promptRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPrompt"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-promptsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Create-promptRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPrompt"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                prompt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPrompt"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "save-prompt-draft": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                prompt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Save-prompt-draftRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPromptVersion"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "discard-prompt-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                prompt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "publish-prompt": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                prompt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPromptVersion"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "rollback-prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                prompt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Rollback-promptRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPromptVersion"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-role-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-role-templatesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "save-role-template": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRoleTemplate"];
                 };
             };
             /** @description Error */
@@ -5980,6 +7036,166 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueuePolicy"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-role-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleOptions"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-rolesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "save-space-role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpaceRoleInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSpaceRole"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-space-role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "preview-space-role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preview"];
                 };
             };
             /** @description Error */

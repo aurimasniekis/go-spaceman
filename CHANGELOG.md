@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Fixed
+- A space's goals and standing instructions now reach every run's system prompt (the launch dialog already said so).
 - Accessibility (WCAG 2.1 AA): contrast of dimmed text, accent colors and badges in both themes; named close buttons,
   account menu, replay slider and task-list checkboxes; space sections are navigation links; the docs site's search
   button, links and code colors.
@@ -49,6 +50,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Control and workers: control starts and stops workers for eligible tasks through its tools, each writer in its own git
   worktree (never reset or deleted). Control is notified of new inbox items, tasks awaiting review and ended workers,
   and is restarted with its session resumed if it stops unexpectedly, at most three times an hour.
+- Roles and prompts: versioned prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates
+  and space roles. Launches resolve them in a documented order with a permission-mode ceiling, and each run records its
+  configuration in a manifest.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

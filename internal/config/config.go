@@ -64,7 +64,15 @@ type Config struct {
 	Auth      AuthConfig      `yaml:"auth"`
 	Nodes     NodesConfig     `yaml:"nodes"`
 	Artifacts ArtifactsConfig `yaml:"artifacts"`
+	Harness   HarnessPolicy   `yaml:"harness"`
 	Shutdown  ShutdownConfig  `yaml:"shutdown"`
+}
+
+// HarnessPolicy holds policy ceilings applied to every launch, whatever layer set the value (SM-PROMPT-003).
+type HarnessPolicy struct {
+	// MaxPermissionMode is the most permissive Claude Code permission mode a run may get: plan, default, dontAsk,
+	// acceptEdits, auto (default) or bypassPermissions. A higher mode from a profile, role or launch is lowered to it.
+	MaxPermissionMode string `yaml:"max_permission_mode"`
 }
 
 // KEKConfig locates the master key-encryption key.

@@ -75,6 +75,12 @@ func (c *Config) Validate() error {
 	v.durationRange("nodes.enrollment_ttl", c.Nodes.EnrollmentTTL, time.Minute, 30*24*time.Hour)
 	v.durationRange("nodes.command_timeout", c.Nodes.CommandTimeout, time.Second, 10*time.Minute)
 
+	switch c.Harness.MaxPermissionMode {
+	case "plan", "default", "dontAsk", "acceptEdits", "auto", "bypassPermissions":
+	default:
+		v.add("harness.max_permission_mode must be plan, default, dontAsk, acceptEdits, auto or bypassPermissions, got %q", c.Harness.MaxPermissionMode)
+	}
+
 	switch c.Artifacts.Backend {
 	case "local":
 		if c.Artifacts.LocalDir != "" && !filepath.IsAbs(c.Artifacts.LocalDir) {

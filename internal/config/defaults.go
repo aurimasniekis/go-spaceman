@@ -33,6 +33,7 @@ func Default() *Config {
 			CommandTimeout:    Duration(30 * time.Second),
 		},
 		Artifacts: ArtifactsConfig{Backend: "local", SpaceQuotaBytes: 1 << 30},
+		Harness:   HarnessPolicy{MaxPermissionMode: "auto"},
 		Shutdown:  ShutdownConfig{Timeout: Duration(30 * time.Second)},
 	}
 }

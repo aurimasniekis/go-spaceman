@@ -40,5 +40,10 @@
 | `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history | current |
 | `events-quarantine` | Events and subscriptions | Quarantined event with reprocess/discard | current |
 | `memory-sync` | Memory/dreams (M3) | Memory collection sync state | todo |
-| `prompts-diff` | Prompts/profiles (M3) | Prompt version diff | todo |
+| `prompts-diff` | Prompts | Line diff between two published versions of a prompt | current |
+| `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
+| `prompt-detail` | Prompts | A prompt's draft editor (with extends) and published versions | current |
+| `roles` | Roles and profiles | Role templates with prompt binding and profile | current |
+| `space-role-preview` | Roles and profiles | A space role's effective configuration with origins and system text | current |
+| `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
 | `ops-backups` | Backups/operations (M4) | Operations page | todo |

@@ -116,10 +116,43 @@ test('documentation screenshots', async ({ page, browser }) => {
     await api.call('PUT', `/spaces/${sp.id}/accounts`, { items: [{ account_id: teamClaude.id, default: true }, { account_id: ciAnthropic.id }, { account_id: teamCodex.id, default: true }] })
   }
 
+  // Catalog: an engineering base prompt and a control prompt that extends it (two versions), a reviewer prompt; profiles;
+  // role templates; and the payments space's roles. Control is then launched by its role alone.
+  type P = { id: string; versions: { id: string; state: string; version: number; number: number }[] }
+  const prompt = async (slug: string, name: string, body: string) => api.call<P>('POST', '/prompts', { slug, name, kind: 'role', body })
+  const publishPrompt = async (id: string) => {
+    const p = await api.call<P>('GET', `/prompts/${id}`)
+    const d = p.versions.find((v) => v.state === 'draft')!
+    return api.call<{ id: string; number: number }>('POST', `/prompts/${id}/publish`, undefined, { 'If-Match': `"${d.version}"` })
+  }
+  // Updates the current draft (with its version) or starts a new one.
+  const redraft = async (id: string, body: string, extendsId = '', notes = '') => {
+    const d = (await api.call<P>('GET', `/prompts/${id}`)).versions.find((v) => v.state === 'draft')
+    return api.call('PUT', `/prompts/${id}/draft`, { body, extends: extendsId || undefined, notes }, d ? { 'If-Match': `"${d.version}"` } : {})
+  }
+  const basePrompt = await prompt('engineering-base', 'Engineering base', '## How we work\n\n- Small pull requests, one concern each.\n- Tests before the fix.\n- Never push to main; open a pull request.')
+  const baseV1 = await publishPrompt(basePrompt.id)
+  const ctl = await prompt('control', 'Control', '')
+  await redraft(ctl.id, '## Your role\n\nYou coordinate this space: read the inbox, keep the queue in order, start one worker per eligible task, and review results before marking work done.', baseV1.id)
+  await publishPrompt(ctl.id)
+  await redraft(ctl.id, '## Your role\n\nYou coordinate this space: read the inbox, keep the queue in order, start one worker per eligible task, and review results before marking work done.\n\nAsk a person before anything that touches production.', baseV1.id, 'Ask before production changes')
+  await publishPrompt(ctl.id)
+  const rev = await prompt('reviewer', 'Reviewer', 'Review open pull requests for correctness, tests and refund idempotency. Summarise risky changes first.')
+  await publishPrompt(rev.id)
+  type Prof = { id: string }
+  const sonnet = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'claude-default', name: 'Claude Code (default model)', harness: 'claude-code', model: '',
+    settings: { permission_mode: 'acceptEdits' }, description: 'Interactive Claude Code; edits accepted, commands asked.' })
+  const codexProf = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'codex-default', name: 'Codex (default model)', harness: 'codex', model: '', settings: {} })
+  const tControl = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'control', name: 'Control', kind: 'control', profile_id: sonnet.id, prompt_id: ctl.id,
+    memory_conventions: 'Keep decisions in memory/decisions.md with absolute dates.', settings: {} })
+  const tReviewer = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'reviewer', name: 'Reviewer', kind: 'worker', profile_id: codexProf.id, prompt_id: rev.id, settings: {} })
+  await api.call('PUT', `/spaces/${payments.id}/roles/control`, { template_id: tControl.id, instructions: 'Settlement services live in services/settlement.', settings: {} })
+  await api.call('PUT', `/spaces/${payments.id}/roles/reviewer`, { template_id: tReviewer.id, settings: {} })
+
   type Run = { id: string }
   const launch = (space: string, kind: string, role: string, harness: string, prompt: string) =>
     api.call<Run>('POST', `/spaces/${space}/runs`, { kind, role, harness, prompt })
-  const control = await launch(payments.id, 'control', 'control', 'claude-code', 'Coordinate the retry-budget change across the settlement services.')
+  const control = await api.call<Run>('POST', `/spaces/${payments.id}/runs`, { role: 'control', prompt: 'Coordinate the retry-budget change across the settlement services.' })
   const reviewer = await launch(payments.id, 'worker', 'reviewer', 'codex', 'Review the open pull requests and summarise the risky ones.')
   const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.')
   await launch(docs.id, 'control', 'control', 'claude-code', 'Keep the guides in step with the UI.')
@@ -269,8 +302,9 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'run-launch', async () => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Launch run' }).click()
-    await page.getByLabel('Role').fill('implementor-frontend')
-    await page.getByLabel('Initial prompt').fill('Show the retry budget on the merchant dashboard.')
+    await page.getByRole('textbox', { name: 'Space role' }).click()
+    await page.getByRole('option', { name: 'reviewer' }).click()
+    await page.getByLabel('Initial prompt').fill('Review the open refund pull requests; flag anything that is not idempotent.')
   })
   await capture(page, 'terminal-live', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
@@ -330,6 +364,33 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/messages`)
     await page.getByRole('listitem', { name: /Hold deploys until the bank window closes/ }).click()
     await expect(page.getByText('Not yet seen by a recipient')).toBeVisible()
+  })
+  await capture(page, 'prompts', async () => {
+    await page.goto('/prompts')
+    await expect(page.getByText('Engineering base')).toBeVisible()
+  })
+  await capture(page, 'prompt-detail', async () => {
+    await page.goto(`/prompts/${ctl.id}`)
+    await expect(page.getByText('Version 2 · Ask before production changes')).toBeVisible()
+  })
+  await capture(page, 'prompts-diff', async () => {
+    await page.goto(`/prompts/${ctl.id}`)
+    await page.getByRole('button', { name: 'Diff' }).first().click()
+    await expect(page.getByLabel('Diff')).toContainText('Ask a person before anything that touches production.')
+  })
+  await capture(page, 'roles', async () => {
+    await page.goto('/roles')
+    await expect(page.getByRole('cell', { name: /Reviewer/ }).first()).toBeVisible()
+  })
+  await capture(page, 'space-role-preview', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByRole('button', { name: 'Effective configuration' }).first().click()
+    await expect(page.getByText('System text')).toBeVisible()
+  })
+  await capture(page, 'run-manifest', async () => {
+    await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
+    await page.getByText('Configuration at launch').scrollIntoViewIfNeeded()
+    await expect(page.getByText('Configuration at launch')).toBeVisible()
   })
   await capture(page, 'human-global', async () => {
     await page.goto('/human')

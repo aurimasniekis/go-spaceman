@@ -191,6 +191,21 @@ type ExecutionLease struct {
 	ExpiresAt  int64
 }
 
+type HarnessProfile struct {
+	ID           string
+	Slug         string
+	Name         string
+	Harness      string
+	Model        string
+	SettingsJson string
+	Description  string
+	Revision     int64
+	CreatedAt    int64
+	CreatedBy    string
+	UpdatedAt    int64
+	Version      int64
+}
+
 type HumanAction struct {
 	ID               string
 	SpaceID          string
@@ -419,6 +434,35 @@ type OneTimeToken struct {
 	CreatedBy string
 }
 
+type Prompt struct {
+	ID          string
+	Slug        string
+	Name        string
+	Kind        string
+	Description string
+	ForkedFrom  string
+	CreatedAt   int64
+	CreatedBy   string
+	UpdatedAt   int64
+	Version     int64
+}
+
+type PromptVersion struct {
+	ID          string
+	PromptID    string
+	Number      int64
+	State       string
+	Body        string
+	Extends     string
+	Notes       string
+	CreatedAt   int64
+	CreatedBy   string
+	PublishedAt sql.NullInt64
+	PublishedBy string
+	UpdatedAt   int64
+	Version     int64
+}
+
 type QueueDecision struct {
 	ID          int64
 	SpaceID     string
@@ -454,6 +498,24 @@ type RoleGrant struct {
 	SourceRef string
 	CreatedAt int64
 	CreatedBy string
+}
+
+type RoleTemplate struct {
+	ID                string
+	Slug              string
+	Name              string
+	Kind              string
+	Description       string
+	ProfileID         string
+	PromptID          string
+	PromptPin         string
+	MemoryConventions string
+	SettingsJson      string
+	Revision          int64
+	CreatedAt         int64
+	CreatedBy         string
+	UpdatedAt         int64
+	Version           int64
 }
 
 type RootToken struct {
@@ -544,6 +606,23 @@ type SpaceAccount struct {
 	IsDefault int64
 	CreatedAt int64
 	CreatedBy string
+}
+
+type SpaceRole struct {
+	SpaceID      string
+	Name         string
+	TemplateID   string
+	ProfileID    string
+	PromptID     string
+	PromptPin    string
+	Model        string
+	SettingsJson string
+	Instructions string
+	Revision     int64
+	CreatedAt    int64
+	CreatedBy    string
+	UpdatedAt    int64
+	Version      int64
 }
 
 type StoreSpaceProbe struct {

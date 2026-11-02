@@ -19,11 +19,14 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as NodesRouteImport } from './routes/nodes'
 import { Route as RecoverRouteImport } from './routes/recover'
 import { Route as ResetRouteImport } from './routes/reset'
+import { Route as RolesRouteImport } from './routes/roles'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SpacesRouteImport } from './routes/spaces'
 import { Route as TokensRouteImport } from './routes/tokens'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as EventsIndexRouteImport } from './routes/events.index'
+import { Route as PromptsIndexRouteImport } from './routes/prompts.index'
+import { Route as PromptsPromptIdRouteImport } from './routes/prompts.$promptId'
 import { Route as SpacesIndexRouteImport } from './routes/spaces.index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces.$spaceId'
 import { Route as EventsTemplatesTemplateIdRouteImport } from './routes/events.templates.$templateId'
@@ -89,6 +92,11 @@ const ResetRoute = ResetRouteImport.update({
   path: '/reset',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RolesRoute = RolesRouteImport.update({
+  id: '/roles',
+  path: '/roles',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -113,6 +121,16 @@ const EventsIndexRoute = EventsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => EventsRoute,
+} as any)
+const PromptsIndexRoute = PromptsIndexRouteImport.update({
+  id: '/prompts/',
+  path: '/prompts/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PromptsPromptIdRoute = PromptsPromptIdRouteImport.update({
+  id: '/prompts/$promptId',
+  path: '/prompts/$promptId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SpacesIndexRoute = SpacesIndexRouteImport.update({
   id: '/',
@@ -200,12 +218,15 @@ export interface FileRoutesByFullPath {
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
+  '/roles': typeof RolesRoute
   '/setup': typeof SetupRoute
   '/spaces': typeof SpacesRouteWithChildren
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
+  '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
   '/events/': typeof EventsIndexRoute
+  '/prompts/': typeof PromptsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
@@ -230,10 +251,13 @@ export interface FileRoutesByTo {
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
+  '/roles': typeof RolesRoute
   '/setup': typeof SetupRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
+  '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/events': typeof EventsIndexRoute
+  '/prompts': typeof PromptsIndexRoute
   '/spaces': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
@@ -258,12 +282,15 @@ export interface FileRoutesById {
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
   '/reset': typeof ResetRoute
+  '/roles': typeof RolesRoute
   '/setup': typeof SetupRoute
   '/spaces': typeof SpacesRouteWithChildren
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
+  '/prompts/$promptId': typeof PromptsPromptIdRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
   '/events/': typeof EventsIndexRoute
+  '/prompts/': typeof PromptsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
@@ -291,12 +318,15 @@ export interface FileRouteTypes {
     | '/nodes'
     | '/recover'
     | '/reset'
+    | '/roles'
     | '/setup'
     | '/spaces'
     | '/tokens'
     | '/users'
+    | '/prompts/$promptId'
     | '/spaces/$spaceId'
     | '/events/'
+    | '/prompts/'
     | '/spaces/'
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/events'
@@ -321,10 +351,13 @@ export interface FileRouteTypes {
     | '/nodes'
     | '/recover'
     | '/reset'
+    | '/roles'
     | '/setup'
     | '/tokens'
     | '/users'
+    | '/prompts/$promptId'
     | '/events'
+    | '/prompts'
     | '/spaces'
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/human'
@@ -348,12 +381,15 @@ export interface FileRouteTypes {
     | '/nodes'
     | '/recover'
     | '/reset'
+    | '/roles'
     | '/setup'
     | '/spaces'
     | '/tokens'
     | '/users'
+    | '/prompts/$promptId'
     | '/spaces/$spaceId'
     | '/events/'
+    | '/prompts/'
     | '/spaces/'
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/events'
@@ -380,10 +416,13 @@ export interface RootRouteChildren {
   NodesRoute: typeof NodesRoute
   RecoverRoute: typeof RecoverRoute
   ResetRoute: typeof ResetRoute
+  RolesRoute: typeof RolesRoute
   SetupRoute: typeof SetupRoute
   SpacesRoute: typeof SpacesRouteWithChildren
   TokensRoute: typeof TokensRoute
   UsersRoute: typeof UsersRoute
+  PromptsPromptIdRoute: typeof PromptsPromptIdRoute
+  PromptsIndexRoute: typeof PromptsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -458,6 +497,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ResetRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/roles': {
+      id: '/roles'
+      path: '/roles'
+      fullPath: '/roles'
+      preLoaderRoute: typeof RolesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/setup': {
       id: '/setup'
       path: '/setup'
@@ -492,6 +538,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/events/'
       preLoaderRoute: typeof EventsIndexRouteImport
       parentRoute: typeof EventsRoute
+    }
+    '/prompts/': {
+      id: '/prompts/'
+      path: '/prompts'
+      fullPath: '/prompts/'
+      preLoaderRoute: typeof PromptsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prompts/$promptId': {
+      id: '/prompts/$promptId'
+      path: '/prompts/$promptId'
+      fullPath: '/prompts/$promptId'
+      preLoaderRoute: typeof PromptsPromptIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/spaces/': {
       id: '/spaces/'
@@ -682,10 +742,13 @@ const rootRouteChildren: RootRouteChildren = {
   NodesRoute: NodesRoute,
   RecoverRoute: RecoverRoute,
   ResetRoute: ResetRoute,
+  RolesRoute: RolesRoute,
   SetupRoute: SetupRoute,
   SpacesRoute: SpacesRouteWithChildren,
   TokensRoute: TokensRoute,
   UsersRoute: UsersRoute,
+  PromptsPromptIdRoute: PromptsPromptIdRoute,
+  PromptsIndexRoute: PromptsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
@@ -46,9 +47,13 @@ type Run struct {
 	Version    int64      `json:"version"`
 	CreatedAt  time.Time  `json:"created_at"`
 	CreatedBy  string     `json:"created_by" doc:"Who launched it: user:<id>, agent:<run id>, root or system:<component>"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	EndedAt    *time.Time `json:"ended_at,omitempty"`
-	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	// Manifest is the non-secret resolved configuration the run started with (SM-PROMPT-004): prompt versions and
+	// content, profile, template and space-role revisions, effective values with their origins, account reference,
+	// dependency and policy versions.
+	Manifest   json.RawMessage `json:"manifest"`
+	StartedAt  *time.Time      `json:"started_at,omitempty"`
+	EndedAt    *time.Time      `json:"ended_at,omitempty"`
+	ObservedAt *time.Time      `json:"observed_at,omitempty"`
 }
 
 // LaunchSpec is the non-secret launch description stored with the run.
@@ -66,7 +71,7 @@ func runFromRow(r db.Run) *Run {
 	out := &Run{ID: r.ID, SpaceID: r.SpaceID, NodeID: r.NodeID, Generation: r.Generation, Kind: r.Kind, Role: r.Role, Harness: r.Harness,
 		InstanceID: r.InstanceID, SessionID: r.SessionID, Desired: r.Desired, Observed: r.Observed, TerminalID: r.TerminalID, PID: r.Pid,
 		EndReason: r.EndReason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind, Turn: r.Turn, Adopted: r.Adopted == 1, Version: r.Version,
-		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), CreatedBy: r.CreatedBy, StartedAt: microsPtr(r.StartedAt), EndedAt: microsPtr(r.EndedAt), ObservedAt: microsPtr(r.ObservedAt)}
+		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), CreatedBy: r.CreatedBy, Manifest: json.RawMessage(r.ManifestJson), StartedAt: microsPtr(r.StartedAt), EndedAt: microsPtr(r.EndedAt), ObservedAt: microsPtr(r.ObservedAt)}
 	if r.ExitCode.Valid {
 		v := r.ExitCode.Int64
 		out.ExitCode = &v
@@ -83,9 +88,9 @@ var (
 
 // LaunchInput starts a run.
 type LaunchInput struct {
-	Kind       string            `json:"kind" enum:"control,worker,kb,dreamer,diagnostic"`
-	Role       string            `json:"role" doc:"Agent kind/role, e.g. control, implementor-backend (not the harness)"`
-	Harness    string            `json:"harness" enum:"claude-code,codex"`
+	Kind       string            `json:"kind,omitempty" enum:"control,worker,kb,dreamer,diagnostic" doc:"Required unless role names a configured space role"`
+	Role       string            `json:"role" doc:"A configured space role (its template, profile and prompt apply), or a free role name"`
+	Harness    string            `json:"harness,omitempty" enum:"claude-code,codex" doc:"Required unless the role's profile sets it"`
 	InstanceID string            `json:"instance_id,omitempty" doc:"Reuse an instance's harness config and memory checkout; empty creates one"`
 	SessionID  string            `json:"session_id,omitempty" doc:"Resume this conversation when the harness supports it"`
 	Prompt     string            `json:"prompt,omitempty" maxLength:"100000"`
@@ -101,6 +106,13 @@ type LaunchInput struct {
 // New work is refused while the space is paused, archived or relocating, or when the node holds no valid lease
 // (it is disconnected): disconnected nodes start no new work (SM-NODE-007), and placement never changes (SM-INV-003).
 func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID string, in LaunchInput) (*Run, error) {
+	var resolved map[string]any
+	if svc.opts.ResolveLaunch != nil {
+		var err error
+		if resolved, err = svc.opts.ResolveLaunch(ctx, spaceID, &in); err != nil {
+			return nil, err
+		}
+	}
 	v := &apperr.Validation{}
 	switch in.Kind {
 	case "control", "worker", "kb", "dreamer", "diagnostic":
@@ -171,8 +183,12 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		spec := LaunchSpec{Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace, Worktree: in.Worktree,
 			AccountRef: in.AccountRef}
 		specJSON, _ := json.Marshal(spec)
-		manifest, _ := json.Marshal(map[string]any{"harness": in.Harness, "role": in.Role, "kind": in.Kind, "lease_generation": lease.Generation,
-			"account_ref": in.AccountRef, "model": in.Model})
+		m := map[string]any{"harness": in.Harness, "role": in.Role, "kind": in.Kind, "lease_generation": lease.Generation,
+			"account_ref": in.AccountRef, "model": in.Model, "settings": in.Settings, "dependencies": dependencyVersions(ctx, tx, sp.NodeID, in.Harness)}
+		for k, v := range resolved {
+			m[k] = v
+		}
+		manifest, _ := json.Marshal(m)
 		if err := tx.Q.InsertRun(ctx, db.InsertRunParams{ID: runID, SpaceID: spaceID, NodeID: sp.NodeID, Generation: lease.Generation, Kind: in.Kind,
 			Role: in.Role, Harness: in.Harness, InstanceID: in.InstanceID, SessionID: in.SessionID, LaunchJson: string(specJSON), ManifestJson: string(manifest),
 			CreatedAt: tx.NowMicros(), CreatedBy: actorRef(actor), UpdatedAt: tx.NowMicros()}); err != nil {
@@ -258,6 +274,26 @@ func (svc *Service) KickRun(ctx context.Context, runID string) {
 	if r, err := svc.s.R().GetRun(ctx, runID); err == nil {
 		svc.hub.Kick(r.NodeID)
 	}
+}
+
+// dependencyVersions records what the run depends on, as the node last reported it (SM-PROMPT-004).
+func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness string) map[string]any {
+	out := map[string]any{"central": buildinfo.Get().Version, "node_protocol": proto.Major}
+	n, err := tx.Q.GetNode(ctx, nodeID)
+	if err != nil {
+		return out
+	}
+	out["spaceman_agent"] = n.AgentVersion
+	var caps proto.Capabilities
+	if json.Unmarshal([]byte(n.CapabilitiesJson), &caps) == nil {
+		out["runner"] = caps.Runner.Kind + " " + caps.Runner.Version
+		for _, h := range caps.Harnesses {
+			if h.Kind == harness {
+				out[harness] = h.Version
+			}
+		}
+	}
+	return out
 }
 
 // failUndispatched ends a run whose launch could not be sent (its account became unusable after the launch was

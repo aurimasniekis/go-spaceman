@@ -24,6 +24,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
+	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
@@ -72,6 +73,8 @@ type Central struct {
 	Supervisor *control.Supervisor
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
+	// Catalog holds prompts, harness profiles, role templates and space roles (SM-PROMPT-*).
+	Catalog *catalog.Service
 	// Accounts holds harness credentials (SM-ACCT-*).
 	Accounts *accounts.Service
 	// Human holds requests for people: questions, approvals, to-dos and messages (SM-HUM-*).
@@ -116,9 +119,23 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		PasswordMinBytes: cfg.Auth.PasswordMinLength, SessionIdle: cfg.Auth.SessionIdle.D(), SessionAbsolute: cfg.Auth.SessionAbsolute.D(),
 		ReauthWindow: cfg.Auth.ReauthWindow.D(), RequireTOTP: cfg.Auth.RequireTOTP, Clock: o.Clock, Metrics: m,
 	})
+	c.Catalog = catalog.New(st, c.Audit, c.Changes, catalog.Options{MaxPermissionMode: cfg.Harness.MaxPermissionMode})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(), Clock: o.Clock,
 		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), ResolveAccount: accounts.Resolve,
+		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
+			sp, err := st.R().GetSpace(ctx, spaceID)
+			if err != nil {
+				return nil, nil //nolint:nilerr // the launch reports a missing space itself
+			}
+			r, err := c.Catalog.Resolve(ctx, st.R(), sp, catalog.Launch{Role: in.Role, Kind: in.Kind, Harness: in.Harness, Model: in.Model,
+				Settings: in.Settings, SystemText: in.SystemText})
+			if err != nil {
+				return nil, err
+			}
+			in.Kind, in.Harness, in.Model, in.Settings, in.SystemText = r.Kind, r.Harness, r.Model, r.Settings, r.SystemText
+			return r.Manifest, nil
+		},
 		// The notifier is created below; these hooks only run once the server serves.
 		OnRunEnded: func(runID string) {
 			if c.Supervisor != nil {
@@ -220,7 +237,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -354,13 +371,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules} {
 		for k, v := range m {
 			out[k] = v
 		}

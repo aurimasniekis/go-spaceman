@@ -162,10 +162,10 @@
 | SM-DREAM-002 | | todo | | | |
 | SM-DREAM-003 | | todo | | | |
 | SM-DREAM-004 | | todo | | | |
-| SM-PROMPT-001 | | todo | | | |
-| SM-PROMPT-002 | | todo | | | |
-| SM-PROMPT-003 | | todo | | | |
-| SM-PROMPT-004 | | todo | | | |
+| SM-PROMPT-001 | M3-02 | implemented | Drafts, immutable publication, follow and pin, extend (bounded depth), fork with provenance, line diff, rollback through a new version; one system for role, dream, KB, event and general prompts (`internal/catalog` `TestPromptLifecycle`, `TestResolution`, `TestValidation`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): control launched by role alone; the harness received the resolved system text and permission mode | No automatic fork merging (by design). |
+| SM-PROMPT-002 | M3-02 | implemented | Harness profiles (harness, model, settings) and role templates (kind, prompt binding, profile, memory conventions) with revisions (`internal/catalog` `TestPromptLifecycle`, `TestResolution`, `TestValidation`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): control launched by role alone; the harness received the resolved system text and permission mode | Capability defaults per profile are not modelled yet. |
+| SM-PROMPT-003 | M3-02 | implemented | Layer order, field-specific merging, origins per effective value, permission-mode policy ceiling (`TestResolution`); preview endpoint and UI | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): control launched by role alone; the harness received the resolved system text and permission mode |  |
+| SM-PROMPT-004 | M3-02 | implemented | Run manifest: prompt version and content, revisions, effective values with origins, account reference, dependency versions, policy version (`TestResolution`, run page) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): control launched by role alone; the harness received the resolved system text and permission mode | Skills and grants join the manifest with M3-03. |
 | SM-XSPACE-001 | | todo | | | |
 | SM-XSPACE-002 | | todo | | | |
 | SM-XSPACE-003 | | todo | | | |

@@ -17,6 +17,7 @@ PACKAGES=(
   internal/human
   internal/accounts
   internal/agenttools
+  internal/catalog
   internal/messages
 )
 

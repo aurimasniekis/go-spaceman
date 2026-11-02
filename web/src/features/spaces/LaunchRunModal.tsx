@@ -4,13 +4,16 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type LaunchInput, type Node, type Space } from '@/api/client'
-import { keys, useSpaceAccounts } from '@/api/queries'
+import { keys, useSpaceAccounts, useSpaceRoles } from '@/api/queries'
 import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError } from '@/lib/form'
 
 const ROLE_RE = /^[a-z][a-z0-9-]{0,47}$/
 
-const KINDS: { value: LaunchInput['kind']; label: string }[] = [
+type Kind = NonNullable<LaunchInput['kind']>
+type Harness = NonNullable<LaunchInput['harness']>
+
+const KINDS: { value: Kind; label: string }[] = [
   { value: 'control', label: 'Control — coordinates the space' },
   { value: 'worker', label: 'Worker — implements one task' },
   { value: 'diagnostic', label: 'Diagnostic — one-off investigation' },
@@ -24,16 +27,19 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
   const [key, setKey] = useState(idempotencyKey)
   const available = (node?.capabilities.harnesses ?? []).filter((h) => h.available).map((h) => h.kind)
   const bound = useSpaceAccounts(space.id).data ?? []
+  const roles = useSpaceRoles(space.id).data ?? []
 
   const form = useForm({
-    defaultValues: { harness: (available[0] ?? 'claude-code') as LaunchInput['harness'], kind: 'control' as LaunchInput['kind'], role: 'control', model: '', prompt: '', system: '', workspace: '', account: '', repo: '', branch: '' },
+    defaultValues: { spaceRole: '', harness: (available[0] ?? 'claude-code') as Harness, kind: 'control' as Kind, role: 'control', model: '', prompt: '', system: '', workspace: '', account: '', repo: '', branch: '' },
     onSubmit: async ({ value }) => {
       setError('')
       try {
         const run = unwrap(
           await api.POST('/spaces/{space_id}/runs', {
             params: { path: { space_id: space.id }, header: { 'Idempotency-Key': key } },
-            body: { ...value, account: undefined, repo: undefined, branch: undefined, account_ref: value.account || undefined, model: value.model || undefined,
+            body: { ...value, spaceRole: undefined, account: undefined, repo: undefined, branch: undefined, account_ref: value.account || undefined, model: value.model || undefined,
+              // A configured role brings its own kind and harness (its template and profile); a free role names them.
+              ...(value.spaceRole ? { role: value.spaceRole, kind: undefined, harness: undefined } : {}),
               worktree: value.repo ? { repo: value.repo, branch: value.branch || `spaceman/${value.role}` } : undefined, prompt: value.prompt || undefined, system: value.system || undefined, workspace: value.workspace || undefined },
           }),
         )
@@ -58,26 +64,41 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
       >
         <Stack gap="sm">
           {node && !node.connected && <Text c="owlYellow" size="sm">The pinned node {node.name} is offline; the launch waits until it reconnects.</Text>}
-          <SimpleGrid cols={2}>
-            <form.Field name="harness">
-              {(f) => (
-                <Select label="Harness" allowDeselect={false} value={f.state.value} onChange={(v) => v && f.handleChange(v as LaunchInput['harness'])}
-                  data={[
-                    { value: 'claude-code', label: `Claude Code${available.includes('claude-code') ? '' : ' (not detected)'}` },
-                    { value: 'codex', label: `Codex${available.includes('codex') ? '' : ' (not detected)'}` },
-                  ]} />
-              )}
+          {roles.length > 0 && (
+            <form.Field name="spaceRole">
+              {(f) => <Select label="Space role" description="A configured role brings its template, profile and prompt" allowDeselect={false}
+                value={f.state.value || 'custom'} onChange={(v) => f.handleChange(v === 'custom' || !v ? '' : v)}
+                data={[...roles.map((r) => ({ value: r.name, label: r.name })), { value: 'custom', label: 'Another role (choose kind and harness)' }]} />}
             </form.Field>
-            <form.Field name="kind">
-              {(f) => <Select label="Run kind" allowDeselect={false} value={f.state.value} onChange={(v) => v && f.handleChange(v as LaunchInput['kind'])} data={KINDS} />}
-            </form.Field>
-            <form.Field name="role" validators={{ onChange: ({ value }) => (!ROLE_RE.test(value) ? 'Lowercase letters, digits and dashes' : undefined) }}>
-              {(f) => <TextInput label="Role" description="e.g. control, implementor-backend" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
-            </form.Field>
-            <form.Field name="model">
-              {(f) => <TextInput label="Model" description="Harness default when empty" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-            </form.Field>
-          </SimpleGrid>
+          )}
+          <form.Subscribe selector={(st) => st.values.spaceRole}>
+            {(spaceRole) => (
+              <SimpleGrid cols={2}>
+                {!spaceRole && (
+                  <>
+                    <form.Field name="harness">
+                      {(f) => (
+                        <Select label="Harness" allowDeselect={false} value={f.state.value} onChange={(v) => v && f.handleChange(v as Harness)}
+                          data={[
+                            { value: 'claude-code', label: `Claude Code${available.includes('claude-code') ? '' : ' (not detected)'}` },
+                            { value: 'codex', label: `Codex${available.includes('codex') ? '' : ' (not detected)'}` },
+                          ]} />
+                      )}
+                    </form.Field>
+                    <form.Field name="kind">
+                      {(f) => <Select label="Run kind" allowDeselect={false} value={f.state.value} onChange={(v) => v && f.handleChange(v as Kind)} data={KINDS} />}
+                    </form.Field>
+                    <form.Field name="role" validators={{ onChange: ({ value }) => (!ROLE_RE.test(value) ? 'Lowercase letters, digits and dashes' : undefined) }}>
+                      {(f) => <TextInput label="Role" description="e.g. control, implementor-backend" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
+                    </form.Field>
+                  </>
+                )}
+                <form.Field name="model">
+                  {(f) => <TextInput label="Model" description={spaceRole ? "The role's model when empty" : 'Harness default when empty'} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+                </form.Field>
+              </SimpleGrid>
+            )}
+          </form.Subscribe>
           <form.Subscribe selector={(st) => st.values.harness}>
             {(harness) => {
               const usable = bound.filter((b) => b.harness === harness && b.enabled)

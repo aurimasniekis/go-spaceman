@@ -195,6 +195,20 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/messages/{message_id}/reply` | `reply-message` | Reply to an agent's message |
 | `POST` | `/spaces/{space_id}/messages/{message_id}/resolve` | `resolve-message` | Close a message or request |
 
+### prompts
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/prompt-diff` | `diff-prompt-versions` | Line diff between two prompt versions |
+| `POST` | `/prompt-versions/{version_id}/fork` | `fork-prompt` | Fork a published version into a new prompt |
+| `GET` | `/prompts` | `list-prompts` | The prompt catalog |
+| `POST` | `/prompts` | `create-prompt` | Add a prompt (with a first draft) |
+| `GET` | `/prompts/{prompt_id}` | `get-prompt` | A prompt with its draft and versions |
+| `DELETE` | `/prompts/{prompt_id}/draft` | `discard-prompt-draft` | Discard the draft |
+| `PUT` | `/prompts/{prompt_id}/draft` | `save-prompt-draft` | Create or update the prompt's draft |
+| `POST` | `/prompts/{prompt_id}/publish` | `publish-prompt` | Publish the draft as the next immutable version |
+| `POST` | `/prompts/{prompt_id}/rollback` | `rollback-prompt` | Publish an earlier version's content as a new version |
+
 ### queue
 
 | Method | Path | Operation | Summary |
@@ -212,6 +226,20 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/escalate` | `escalate-task` | Escalate a task |
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/move` | `move-task` | Place a task in the queue |
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/status` | `set-task-status` | Change a task's state |
+
+### roles
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/harness-profiles` | `list-harness-profiles` | Harness profiles |
+| `PUT` | `/harness-profiles/{profile_id}` | `save-harness-profile` | Create (profile_id "new") or update a harness profile |
+| `GET` | `/role-templates` | `list-role-templates` | Role templates |
+| `PUT` | `/role-templates/{template_id}` | `save-role-template` | Create (template_id "new") or update a role template |
+| `GET` | `/spaces/{space_id}/role-options` | `list-role-options` | Templates, profiles and prompts a space role can use (names only) |
+| `GET` | `/spaces/{space_id}/roles` | `list-space-roles` | A space's roles |
+| `DELETE` | `/spaces/{space_id}/roles/{name}` | `delete-space-role` | Remove a role from the space |
+| `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
+| `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
 
 ### subscriptions
 

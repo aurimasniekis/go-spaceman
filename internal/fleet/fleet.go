@@ -38,6 +38,10 @@ type Options struct {
 	// ResolveAccount picks the account a launch uses inside the launch transaction (SM-ACCT-003); it returns the
 	// account ID stored with the run. Nil: launches carry no account.
 	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (string, error)
+	// ResolveLaunch fills a launch from the space's configured role and catalogs (kind, harness, model, settings, system
+	// text) before validation, and returns what the run manifest records about it (SM-PROMPT-003/004). Nil: launches are
+	// used as given.
+	ResolveLaunch func(ctx context.Context, spaceID string, in *LaunchInput) (map[string]any, error)
 	// OnRunEnded is called after a run was recorded as ended (exited, failed or lost).
 	OnRunEnded func(runID string)
 	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.

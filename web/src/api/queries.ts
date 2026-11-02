@@ -32,6 +32,12 @@ export const keys = {
   accountKinds: ['account-kinds'] as const,
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
   messages: (space: string) => ['messages', space] as const,
+  prompts: ['prompts'] as const,
+  prompt: (id: string) => ['prompt', id] as const,
+  profiles: ['harness-profiles'] as const,
+  roleTemplates: ['role-templates'] as const,
+  spaceRoles: (space: string) => ['space-roles', space] as const,
+  roleOptions: (space: string) => ['role-options', space] as const,
 }
 
 export interface AuditFilter {
@@ -208,3 +214,13 @@ export const useMessages = (space: string) =>
     queryKey: keys.messages(space),
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space } } })),
   })
+
+export const usePrompts = () => useQuery({ queryKey: keys.prompts, queryFn: async () => unwrap(await api.GET('/prompts')).items })
+export const usePrompt = (id: string) =>
+  useQuery({ queryKey: keys.prompt(id), queryFn: async () => unwrap(await api.GET('/prompts/{prompt_id}', { params: { path: { prompt_id: id } } })) })
+export const useProfiles = () => useQuery({ queryKey: keys.profiles, queryFn: async () => unwrap(await api.GET('/harness-profiles')).items })
+export const useRoleTemplates = () => useQuery({ queryKey: keys.roleTemplates, queryFn: async () => unwrap(await api.GET('/role-templates')).items })
+export const useSpaceRoles = (space: string) =>
+  useQuery({ queryKey: keys.spaceRoles(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/roles', { params: { path: { space_id: space } } })).items })
+export const useRoleOptions = (space: string, enabled = true) =>
+  useQuery({ queryKey: keys.roleOptions(space), enabled, queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/role-options', { params: { path: { space_id: space } } })) })
