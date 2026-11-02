@@ -30,6 +30,10 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   - Inherited `CLAUDE_CODE_CHILD_SESSION` (set inside another Claude Code session) turns transcript saving off; the
     launcher shim removes inherited session markers.
   - hc reports `status {app: claude-code, state: done}` and `turn: 1` after the reply (OSC 7501).
+  - In the default (auto) permission mode, an interactive session called a tool of the SpaceMan MCP server
+    (`--mcp-config` + `--strict-mcp-config`, stdio `spaceman-agent mcp-bridge`) without a permission prompt
+    (`TestRealClaudeUsesSpaceManTools`). Searching the whole test directory afterwards found the setup-token nowhere
+    in clear (central database, agent folders, hc state, logs, the instance's Claude config).
 - **Status:** native OSC 7501 reporting (see herdr-core.md).
 - **Hidden flags:** `--channels`, `--dangerously-load-development-channels` (strings only, so **not** relied on until verified).
 - **Print mode:** `-p`, `--output-format stream-json`, `--max-budget-usd`. Used only by opt-in real tests, never for managed runs, which are interactive in hc.

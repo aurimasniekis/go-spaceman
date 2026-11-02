@@ -141,9 +141,9 @@
 | SM-HUI-006 | M2-07 | partial | Pending counts on the nav and the space tab; blocking badges | `make e2e` (real stack, Chromium, macOS, 2026-11-02) | Notification preferences arrive later. |
 | SM-HUI-007 | | todo | | | |
 | SM-HUI-008 | | todo | | | |
-| SM-MCP-001 | M2-06 | partial | Agents get only the SpaceMan bridge (`--strict-mcp-config`, `TestClaudeBuild`); `TestAgentToolsOverBridge` |  | External MCP server registry arrives with M3-03. |
+| SM-MCP-001 | M2-06 | partial | Agents get only the SpaceMan bridge (`--strict-mcp-config`, `TestClaudeBuild`); `TestAgentToolsOverBridge` | `test/real` `TestRealClaudeUsesSpaceManTools` (Claude Code 2.1.316 Haiku via setup-token account, real bridge, node connection and central, macOS, 2026-11-02): `spaceman_inbox_add` item attributed to the run | External MCP server registry arrives with M3-03. |
 | SM-MCP-002 | | todo | | | |
-| SM-MCP-003 | M2-06 | partial | `internal/agenttools` `TestCatalogs`, `TestInboxAndTasks`, `TestAttachmentsAndHuman`, `TestGuideListsEveryTool`; `TestAgentToolsOverBridge` |  | Messages and orchestration tools follow in M2-06; memory, KB and cross-space tools with their packages. |
+| SM-MCP-003 | M2-06 | partial | `internal/agenttools` `TestCatalogs`, `TestInboxAndTasks`, `TestAttachmentsAndHuman`, `TestGuideListsEveryTool`; `TestAgentToolsOverBridge` | `test/real` `TestRealClaudeUsesSpaceManTools` (Claude Code 2.1.316 Haiku via setup-token account, real bridge, node connection and central, macOS, 2026-11-02): `spaceman_inbox_add` item attributed to the run | Messages and orchestration tools follow in M2-06; memory, KB and cross-space tools with their packages. |
 | SM-MCP-004 | | todo | | | |
 | SM-MEM-001 | | todo | | | |
 | SM-MEM-002 | | todo | | | |

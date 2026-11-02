@@ -93,3 +93,41 @@ func TestRealClaudeRun(t *testing.T) {
 	})
 	t.Logf("real Claude run %s answered and was stopped", runID)
 }
+
+// TestRealClaudeUsesSpaceManTools (SM-MCP-001/003, ADR-0012/0022): a real Claude Code run calls a SpaceMan tool through
+// its MCP bridge, the node connection and central; the inbox item it adds is attributed to the run. Opt-in and
+// budget-bounded like TestRealClaudeRun.
+func TestRealClaudeUsesSpaceManTools(t *testing.T) {
+	token := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
+	if os.Getenv("SPACEMAN_REAL_CLAUDE") != "1" || token == "" {
+		t.Skip("set SPACEMAN_REAL_CLAUDE=1 and CLAUDE_CODE_OAUTH_TOKEN to run a real, billed Claude Code run")
+	}
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude not installed")
+	}
+	e := newEnvWith(t, claude)
+	_, spaceID := e.setupSpace(t, token)
+	runID := e.launch(t, spaceID, map[string]any{"kind": "worker", "role": "reviewer", "harness": "claude-code", "model": "haiku",
+		"prompt": "Use the spaceman_inbox_add tool exactly once with body \"Real tool check\" and title \"Real tool check\". Then reply with the word FINISHED and nothing else."})
+	var items struct {
+		Items []struct {
+			Title      string `json:"title"`
+			SourceKind string `json:"source_kind"`
+			SourceID   string `json:"source_id"`
+		} `json:"items"`
+	}
+	eventually(t, 150*time.Second, "Claude added an inbox item through SpaceMan", func() bool {
+		e.api("GET", "/spaces/"+spaceID+"/inbox", nil, &items)
+		for _, it := range items.Items {
+			if it.Title == "Real tool check" && it.SourceKind == "worker" && it.SourceID == runID {
+				return true
+			}
+		}
+		return false
+	})
+	if st := e.api("POST", "/spaces/"+spaceID+"/runs/"+runID+"/stop", map[string]any{"mode": "kill", "reason": "real test done"}, nil); st != 200 {
+		t.Fatalf("stop: %d", st)
+	}
+	t.Logf("real Claude run %s used spaceman_inbox_add", runID)
+}
