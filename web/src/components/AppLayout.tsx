@@ -126,7 +126,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 {items
                   .filter((n) => n.group === g)
                   .map((n) => {
-                    const active = n.to === '/' ? path === '/' : path.startsWith(n.to)
+                    const active = n.to === '/' ? path === '/' : path === n.to || path.startsWith(`${n.to}/`)
                     const link = (
                       <NavLink key={n.to} component={Link} to={n.to} active={active} label={collapsed ? undefined : n.label}
                         leftSection={<n.icon size={16} stroke={1.6} />} aria-label={n.pendingBadge && pending > 0 ? `${n.label} (${pending} pending)` : n.label} onClick={closeMobile}

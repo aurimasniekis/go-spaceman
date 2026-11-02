@@ -89,6 +89,19 @@ test('documentation screenshots', async ({ page, browser }) => {
   await expect.poll(async () => (await api.call<{ lease?: { valid: boolean } }>('GET', `/spaces/${payments.id}`)).lease?.valid, { timeout: 30_000 }).toBe(true)
   await expect.poll(async () => (await api.call<{ lease?: { valid: boolean } }>('GET', `/spaces/${docs.id}`)).lease?.valid, { timeout: 30_000 }).toBe(true)
 
+  // Accounts: a subscription token and an API key for Claude Code, an OpenAI key for Codex (stub values; the stub harness
+  // ignores them), bound to the active spaces with defaults.
+  type Acc = { id: string }
+  const account = (name: string, kind: string, description: string, enabled = true) =>
+    api.call<Acc>('POST', '/accounts', { name, kind, description, enabled, secret: `stub-${name}` })
+  const teamClaude = await account('team-claude', 'claude_oauth_token', 'Team subscription (claude setup-token)')
+  const ciAnthropic = await account('ci-anthropic', 'anthropic_api_key', 'Metered API key for CI spaces')
+  const teamCodex = await account('team-codex', 'openai_api_key', 'Team OpenAI project key')
+  await account('old-claude', 'claude_oauth_token', 'Replaced in October', false)
+  for (const sp of [payments, docs]) {
+    await api.call('PUT', `/spaces/${sp.id}/accounts`, { items: [{ account_id: teamClaude.id, default: true }, { account_id: ciAnthropic.id }, { account_id: teamCodex.id, default: true }] })
+  }
+
   type Run = { id: string }
   const launch = (space: string, kind: string, role: string, harness: string, prompt: string) =>
     api.call<Run>('POST', `/spaces/${space}/runs`, { kind, role, harness, prompt })
@@ -283,6 +296,15 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/queue`)
     await page.getByRole('listitem', { name: /Load-test the new retry budget/ }).click()
     await expect(page.getByText('Not eligible now')).toBeVisible()
+  })
+  await capture(page, 'accounts', async () => {
+    await page.goto('/accounts')
+    await expect(page.getByText('Team subscription (claude setup-token)')).toBeVisible()
+  })
+  await capture(page, 'space-accounts', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByRole('button', { name: 'Choose accounts' }).click()
+    await expect(page.getByLabel('Allow team-claude')).toBeChecked()
   })
   await capture(page, 'human-global', async () => {
     await page.goto('/human')

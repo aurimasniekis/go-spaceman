@@ -22,6 +22,11 @@ export function applyChange(qc: QueryClient, c: Change) {
       void qc.invalidateQueries({ queryKey: keys.spaces })
       void qc.invalidateQueries({ queryKey: keys.queue(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.space(c.resource_id) })
+      void qc.invalidateQueries({ queryKey: keys.spaceAccounts(c.resource_id) })
+      break
+    case 'account':
+      void qc.invalidateQueries({ queryKey: keys.accounts })
+      void qc.invalidateQueries({ queryKey: ['space-accounts'] })
       break
     case 'run':
       if (c.space_id) {

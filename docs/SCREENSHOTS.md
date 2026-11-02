@@ -15,6 +15,8 @@
 | `setup-node-enroll` | First node and space, Nodes and leases | Nodes | current |
 | `space-create` | First node and space | Space create form | current |
 | `space-overview` | Site landing, First node and space | Space overview with lease and runs | current |
+| `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
+| `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
 | `terminal-replay` | Site landing, Terminals and recordings | Replay with seek and speed | current |

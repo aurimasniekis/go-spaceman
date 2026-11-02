@@ -21,6 +21,7 @@ var globalReadPerm = map[string]authz.Permission{
 	"node":     authz.NodeRead,
 	"token":    authz.TokenAdmin,
 	"template": authz.TemplateRead,
+	"account":  authz.AccountRead,
 }
 
 const (

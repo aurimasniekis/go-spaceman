@@ -25,11 +25,18 @@ Once the node renews its next heartbeat, the space shows a valid **execution lea
 
 <Shot name="space-overview" alt="Space page with node, valid lease generation 1, and three runs" caption="A space with its lease and runs" />
 
+## Give the space an account
+
+Runs need a credential for their harness. An administrator adds it once under **Accounts** (a Claude subscription
+token from `claude setup-token`, an Anthropic API key or an OpenAI API key), then uses **Choose accounts** on the space
+page to allow it for the space. See [Accounts](/operators/accounts).
+
 ## Launch a run
 
 **Launch run** starts one harness session on the pinned node. Pick the harness (the dialog says if the node did not
-detect it), the run kind and role, and optionally a model, an initial prompt, extra system prompt text and a workspace
-folder inside the space's working directory. A space has at most one control run.
+detect it), the run kind and role, and optionally an account (the space's default is used otherwise), a model, an
+initial prompt, extra system prompt text and a workspace folder inside the space's working directory. A space has at
+most one control run.
 
 <Shot name="run-launch" alt="Launch run dialog with harness, kind, role, model and prompt fields" caption="Launching a run" />
 

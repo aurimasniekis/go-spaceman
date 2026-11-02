@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/account-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Supported credential kinds and the harness each one is for */
+        get: operations["list-account-kinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Harness accounts (never their secrets) */
+        get: operations["list-accounts"];
+        put?: never;
+        /**
+         * Add a harness account
+         * @description The secret is sealed and can never be read back.
+         */
+        post: operations["create-account"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An account (never its secret) */
+        get: operations["get-account"];
+        /**
+         * Edit or rotate an account
+         * @description A secret rotates the credential for later launches; running harnesses keep the one they started with.
+         */
+        put: operations["update-account"];
+        post?: never;
+        /** Delete an account and its bindings */
+        delete: operations["delete-account"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/break-glass": {
         parameters: {
             query?: never;
@@ -623,6 +683,27 @@ export interface paths {
         post?: never;
         /** Permanently delete an archived space's records (never upstream repositories) */
         delete: operations["purge-space"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Accounts the space's runs may use */
+        get: operations["list-space-accounts"];
+        /**
+         * Set the accounts the space's runs may use
+         * @description At most one default per harness. Launches use the named account, else the default, else the only bound account; otherwise they are refused.
+         */
+        put: operations["set-space-accounts"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1440,6 +1521,93 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AccountBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AccountBody.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            /** @description Default true */
+            enabled?: boolean;
+            /**
+             * @description Required on create; never changes
+             * @enum {string}
+             */
+            kind?: "claude_oauth_token" | "anthropic_api_key" | "openai_api_key";
+            metadata?: {
+                [key: string]: string;
+            };
+            name: string;
+            /** @description The credential. Required on create; on an edit, a value rotates it and empty keeps it. Never returned. */
+            secret?: string;
+        };
+        AccountList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AccountList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["AccountsAccount"][];
+        };
+        AccountsAccount: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AccountsAccount.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            enabled: boolean;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            id: string;
+            /** @enum {string} */
+            kind: "claude_oauth_token" | "anthropic_api_key" | "openai_api_key";
+            metadata: {
+                [key: string]: string;
+            };
+            name: string;
+            /** Format: date-time */
+            secret_rotated_at: string;
+            /**
+             * Format: int64
+             * @description Increases with every rotation; the secret itself is never returned
+             */
+            secret_version: number;
+            /**
+             * Format: int64
+             * @description Number of spaces bound to the account
+             */
+            spaces: number;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        AccountsBinding: {
+            account_id: string;
+            /** @description The account the space's runs of this harness use unless a launch names another */
+            default: boolean;
+            enabled: boolean;
+            /**
+             * @description Set by the server from the account kind
+             * @enum {string}
+             */
+            harness?: "claude-code" | "codex";
+            name?: string;
+        };
+        AccountsKind: {
+            env: string;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            label: string;
+            name: string;
+        };
         "Add-task-blockerRequest": {
             /**
              * Format: uri
@@ -1653,6 +1821,11 @@ export interface components {
             source: string;
             source_ref?: string;
             subject: string;
+        };
+        BindingInput: {
+            account_id: string;
+            /** @description The account the space's runs of its harness use unless a launch names another */
+            default?: boolean;
         };
         BreakGlassStatus: {
             /**
@@ -2397,6 +2570,15 @@ export interface components {
             /** @description Shown once; hand it to the user out of band */
             token: string;
         };
+        "List-account-kindsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-account-kindsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["AccountsKind"][];
+        };
         "List-event-connectionsResponse": {
             /**
              * Format: uri
@@ -2950,6 +3132,15 @@ export interface components {
             /** @enum {string} */
             state: "active" | "disabled" | "revoked";
         };
+        "Set-space-accountsRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Set-space-accountsRequest.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["BindingInput"][];
+        };
         "Set-space-stateRequest": {
             /**
              * Format: uri
@@ -2991,6 +3182,15 @@ export interface components {
              */
             readonly $schema?: string;
             grants: components["schemas"]["AuthGrantInput"][];
+        };
+        SpaceAccounts: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceAccounts.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["AccountsBinding"][];
         };
         "Stop-runRequest": {
             /**
@@ -3152,6 +3352,201 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "list-account-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-account-kindsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-account": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountsAccount"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountsAccount"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-account": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountsAccount"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-break-glass": {
         parameters: {
             query?: never;
@@ -4502,6 +4897,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceAccounts"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-space-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Set-space-accountsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceAccounts"];
+                };
             };
             /** @description Error */
             default: {

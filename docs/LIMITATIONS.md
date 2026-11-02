@@ -25,6 +25,12 @@
   `issues_opened` fixture (derived from its code), not against a running pulse-github. There is no upstream pull request
   fixture.
 
+## Accounts
+- **No Codex ChatGPT login.** Codex runs use an OpenAI API key; ChatGPT-plan logins (`auth.json`) are not supported yet (K-9).
+- **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence.
+- **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
+  2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
+
 ## Human actions
 - **Approvals are advisory.** An approval decision is recorded, audited and sent to the requester, but SpaceMan does not
   yet enforce it on the operation; digest-bound enforcement arrives with the approval gateway (SM-APPR, M3).

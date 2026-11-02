@@ -15,6 +15,7 @@ PACKAGES=(
   internal/events/template
   internal/attachments
   internal/human
+  internal/accounts
 )
 
 fail=0

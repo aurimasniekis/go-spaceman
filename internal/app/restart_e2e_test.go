@@ -30,6 +30,7 @@ func TestRestartReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bindStubAccounts(t, e.c, sp.ID)
 	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
 
 	// 1. Crash between "program started" and "start recorded".

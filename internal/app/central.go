@@ -17,6 +17,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -61,6 +62,8 @@ type Central struct {
 	Events *events.Service
 	// Queue is each space's execution queue (SM-QUEUE-*).
 	Queue *queue.Service
+	// Accounts holds harness credentials (SM-ACCT-*).
+	Accounts *accounts.Service
 	// Human holds requests for people: questions, approvals, to-dos and messages (SM-HUM-*).
 	Human *human.Service
 
@@ -105,7 +108,18 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(), Clock: o.Clock,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings")})
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), ResolveAccount: accounts.Resolve})
+	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
+	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
+		if run.Launch.AccountRef == "" {
+			return nil, nil
+		}
+		env, err := c.Accounts.SecretEnv(ctx, run.SpaceID, run.Harness, run.Launch.AccountRef)
+		if errors.Is(err, accounts.ErrUnavailable) {
+			return nil, fmt.Errorf("%w: account %s was deleted, disabled or unbound after the launch", fleet.ErrCredentialsUnavailable, run.Launch.AccountRef)
+		}
+		return env, err
+	}
 	if cfg.Artifacts.Backend != "local" {
 		_ = st.Close()
 		return nil, fmt.Errorf("artifacts.backend %q is not implemented yet; use \"local\"", cfg.Artifacts.Backend)
@@ -170,7 +184,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -302,13 +316,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules} {
 		for k, v := range m {
 			out[k] = v
 		}

@@ -46,7 +46,7 @@
 ### M3 — Configuration, intelligence, memory
 | WP | Scope | Requirements | Status |
 |---|---|---|---|
-| M3-01 | Accounts + encrypted secrets + resolution | SM-ACCT-* | todo |
+| M3-01 | Accounts + encrypted secrets + resolution | SM-ACCT-* | implemented (pulled forward for real runs): service, API, Accounts page, space bindings, launch choice, real Claude run; Codex ChatGPT login open (K-9) |
 | M3-02 | Prompts catalog, harness profiles, role templates, resolution, manifests | SM-PROMPT-* | todo |
 | M3-03 | MCP gateway (upstreams, grants, limits, SSRF) + skills incl. Hallpass | SM-MCP-* | todo |
 | M3-04 | Human-action type catalog, custom schemas, schema forms | SM-HTYPE-* | todo |
@@ -110,7 +110,9 @@
 | 2026-11-02 | M2-03/04 | Connections (sealed creds), template catalog with immutable versions and follow-latest, subscriptions with explicit cursors, ingestion manager (one durable per subscription), delivery history, quarantine with reprocess, events API | `a1c4482` | `internal/events` integration tests ×3 `-race` (fan-out, filter, dedup, quarantine, replay/start-now), `TestEventsOverHTTP` |
 | 2026-11-02 | M2-04 | Events UI (catalog, template testing, connections, subscribe form, subscription page with grant, cursor, deliveries, quarantine), devpulse in the dev stack, events guide and screenshots | `d14ba20` | `make e2e` (connection → subscription → published event → inbox item); screenshots reviewed |
 | 2026-11-02 | M2-05 | Execution queue: insertion by priority/policy, authoritative moves, dedup that never re-promotes, escalation by policy, dependencies (cycles rejected), blockers, exclusions, active limit, selection with skip reasons, states with preemption; API, UI with drag and keyboard sorting, create task from inbox | `9bb3c22` | `internal/queue` tests, `TestQueueOverHTTP`, `make e2e` (inbox → task, Alt+↑, start) |
-| 2026-11-02 | M2-07 | Human actions: question, approval (advisory), to-do and message types with distinct responses; lifecycle separate from outcome; atomic finalization; claim, comments, withdraw, expiry, follow-ups, dedup and limits; blocking only the related task; durable requester notifications; Needs you page with nav badge, per-space tab, safe bulk actions | this commit (`feat(human)`) | `internal/human` tests (84%), `TestHumanActionsOverHTTP`, `make e2e` (blocking question answered) |
+| 2026-11-02 | M2-07 | Human actions: question, approval (advisory), to-do and message types with distinct responses; lifecycle separate from outcome; atomic finalization; claim, comments, withdraw, expiry, follow-ups, dedup and limits; blocking only the related task; durable requester notifications; Needs you page with nav badge, per-space tab, safe bulk actions | `d7f295a` | `internal/human` tests (84%), `TestHumanActionsOverHTTP`, `make e2e` (blocking question answered) |
+| 2026-11-02 | M1-07 | Spike S-5 with a setup-token: interactive Claude needs first-run state and folder trust seeded; shim scrubs inherited session markers and node credentials (ADR-0021, K-10 resolved) | `8d5cf8b` | `TestScrubEnv`, `TestMergeJSONFile`, `TestClaudeBuild` |
+| 2026-11-02 | M3-01 | Accounts: sealed write-only credentials, kinds per harness, space bindings with defaults, deterministic resolution at launch, current secret at dispatch, unusable account fails the run; Accounts page, space card, launch choice | this commit (`feat(accounts)`) | `internal/accounts` tests (85.8%), `TestFleetLifecycle`, `make e2e`, `test/real` `TestRealClaudeRun` (real Claude Code, Haiku) |
 
 ## 4. Process deviations
 

@@ -27,6 +27,10 @@ import (
 // the wire, never stored with the command (ADR-0009).
 type SecretsResolver func(ctx context.Context, run *Run) (map[string]string, error)
 
+// ErrCredentialsUnavailable is returned (wrapped) by a SecretsResolver when the run's account can no longer be used;
+// the run is then failed instead of being retried forever.
+var ErrCredentialsUnavailable = errors.New("the run's account is no longer usable")
+
 // Hub holds the live node connections. Each connection has one reader loop and one writer goroutine; work for a node
 // is triggered by Kick (after a commit) rather than by polling (SM-ARCH-004).
 type Hub struct {
@@ -406,6 +410,12 @@ func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
 		}
 		for _, c := range cmds {
 			msg, err := h.materialize(ctx, c)
+			if errors.Is(err, ErrCredentialsUnavailable) && c.RunID.Valid {
+				if ferr := h.svc.failUndispatched(ctx, c.RunID.String, err.Error()); ferr != nil {
+					s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
+				}
+				continue
+			}
 			if err != nil {
 				s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
 				continue

@@ -63,6 +63,11 @@ func build(t *testing.T, out string) {
 func cleanEnv() []string {
 	var out []string
 	for _, kv := range os.Environ() {
+		// Harness credentials and session markers from the developer's shell never reach the stack: runs get them only
+		// from SpaceMan accounts.
+		if strings.HasPrefix(kv, "CLAUDE") || strings.HasPrefix(kv, "ANTHROPIC_") || strings.HasPrefix(kv, "OPENAI_") || strings.HasPrefix(kv, "CODEX_") {
+			continue
+		}
 		if !strings.HasPrefix(kv, "HC_") && !strings.HasPrefix(kv, "SPACEMAN_") && !strings.HasPrefix(kv, "XDG_") {
 			out = append(out, kv)
 		}
@@ -70,7 +75,10 @@ func cleanEnv() []string {
 	return out
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, "") }
+
+// newEnvWith starts central and configures an agent whose Claude Code binary is claude ("" uses a stub script).
+func newEnvWith(t *testing.T, claude string) *env {
 	t.Helper()
 	if _, err := exec.LookPath("hc"); err != nil {
 		t.Skip("hc not installed")
@@ -106,6 +114,10 @@ log: {level: debug, format: text}
 	stub := filepath.Join(dir, "stub-claude.sh")
 	must(t, os.WriteFile(stub, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '0.0.0 (stub)'; exit 0; fi\necho stub-harness-started \"$@\"\nif [ -n \"$CLAUDE_CODE_OAUTH_TOKEN\" ]; then echo has-token; fi\n"+
 		"env | grep -c SPACEMAN_RUN_TOKEN\ni=0; while true; do echo tick-$i; i=$((i+1)); sleep 0.5; done\n"), 0o700))
+	claudeBin := stub
+	if claude != "" {
+		claudeBin = claude
+	}
 	e.session = "smr" + filepath.Base(dir)[7:]
 	e.socket = filepath.Join(dir, "hc.sock")
 	e.hcHome = filepath.Join(dir, "agent", "hc")
@@ -116,7 +128,7 @@ central: {url: %s, credential_file: %s/agent/node.credential, reconnect_max: 1s}
 runner: {session: %s, socket: %s}
 harness: {claude_binary: %s, codex_binary: %s}
 log: {level: debug, format: text}
-`, dir, e.url, dir, e.session, e.socket, stub, stub)), 0o600))
+`, dir, e.url, dir, e.session, e.socket, claudeBin, stub)), 0o600))
 	t.Cleanup(func() {
 		e.stopAgent(syscall.SIGTERM)
 		if e.central != nil && e.central.Process != nil {
@@ -286,6 +298,15 @@ func (e *env) getRun(space, id string) run1 {
 // waiting until it runs. It returns the node, space and run IDs.
 func (e *env) launchRun(t *testing.T) (nodeID, spaceID, runID string) {
 	t.Helper()
+	nodeID, spaceID = e.setupSpace(t, "stub-token") // the stub harness ignores the credential
+	runID = e.launch(t, spaceID, map[string]any{"kind": "worker", "role": "implementor-backend", "harness": "claude-code", "prompt": "hello"})
+	return nodeID, spaceID, runID
+}
+
+// setupSpace enrolls a node, starts the agent, creates a pinned space (disconnect policy kill) and binds a Claude
+// account holding token as its default (SM-ACCT-003). It returns the node and space IDs once the lease is granted.
+func (e *env) setupSpace(t *testing.T, token string) (nodeID, spaceID string) {
+	t.Helper()
 	var en struct {
 		Node  struct{ ID string } `json:"node"`
 		Token string              `json:"token"`
@@ -307,13 +328,26 @@ func (e *env) launchRun(t *testing.T) (nodeID, spaceID, runID string) {
 	if st := e.api("POST", "/spaces", map[string]any{"slug": "real-space", "name": "Real", "node_id": en.Node.ID, "disconnect_policy": "kill"}, &sp); st != 201 {
 		t.Fatalf("create space: %d", st)
 	}
+	var acc struct{ ID string }
+	if st := e.api("POST", "/accounts", map[string]any{"name": "real-claude", "kind": "claude_oauth_token", "secret": token}, &acc); st != 201 {
+		t.Fatalf("create account: %d", st)
+	}
+	if st := e.api("PUT", "/spaces/"+sp.ID+"/accounts", map[string]any{"items": []map[string]any{{"account_id": acc.ID, "default": true}}}, nil); st != 200 {
+		t.Fatalf("bind account: %d", st)
+	}
 	time.Sleep(1500 * time.Millisecond) // lease grant on the next heartbeat
+	return en.Node.ID, sp.ID
+}
+
+// launch starts a run and waits until it runs.
+func (e *env) launch(t *testing.T, spaceID string, body map[string]any) string {
+	t.Helper()
 	var r struct{ ID string }
-	if st := e.api("POST", "/spaces/"+sp.ID+"/runs", map[string]any{"kind": "worker", "role": "implementor-backend", "harness": "claude-code", "prompt": "hello"}, &r); st != 201 {
+	if st := e.api("POST", "/spaces/"+spaceID+"/runs", body, &r); st != 201 {
 		t.Fatalf("launch: %d", st)
 	}
-	eventually(t, 20*time.Second, "run running", func() bool { return e.getRun(sp.ID, r.ID).Observed == "running" })
-	return en.Node.ID, sp.ID, r.ID
+	eventually(t, 20*time.Second, "run running", func() bool { return e.getRun(spaceID, r.ID).Observed == "running" })
+	return r.ID
 }
 
 // hcState returns "<state>/<reason>" of a terminal in the test's own core.

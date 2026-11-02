@@ -28,6 +28,9 @@ export const keys = {
   inboxItem: (space: string, id: string) => ['inbox-item', space, id] as const,
   human: (space: string) => ['human', space] as const,
   humanPending: ['human', 'pending'] as const,
+  accounts: ['accounts'] as const,
+  accountKinds: ['account-kinds'] as const,
+  spaceAccounts: (space: string) => ['space-accounts', space] as const,
 }
 
 export interface AuditFilter {
@@ -184,3 +187,16 @@ export const useHumanActions = (space: string) =>
 /** Pending human actions across every space the principal can read, with counts (the nav badge). */
 export const useHumanPending = (enabled = true) =>
   useQuery({ queryKey: keys.humanPending, enabled, queryFn: async () => unwrap(await api.GET('/human-actions')) })
+
+export const useAccounts = (enabled = true) =>
+  useQuery({ queryKey: keys.accounts, enabled, queryFn: async () => unwrap(await api.GET('/accounts')).items })
+
+export const useAccountKinds = () =>
+  useQuery({ queryKey: keys.accountKinds, staleTime: Infinity, queryFn: async () => unwrap(await api.GET('/account-kinds')).items })
+
+/** The accounts a space's runs may use (names only, never secrets). */
+export const useSpaceAccounts = (space: string) =>
+  useQuery({
+    queryKey: keys.spaceAccounts(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/accounts', { params: { path: { space_id: space } } })).items,
+  })

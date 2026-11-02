@@ -120,8 +120,6 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 	if in.InstanceID == "" {
 		in.InstanceID = ids.New(ids.Instance)
 	}
-	spec := LaunchSpec{Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace, AccountRef: in.AccountRef}
-	specJSON, _ := json.Marshal(spec)
 	runID := ids.New(ids.Run)
 	var nodeID string
 	err := svc.s.W().TxNamed(ctx, "fleet.launch_run", func(tx *store.Tx) error {
@@ -146,6 +144,13 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			return err
 		}
 		nodeID = sp.NodeID
+		if svc.opts.ResolveAccount != nil {
+			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.AccountRef); err != nil {
+				return err
+			}
+		}
+		spec := LaunchSpec{Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace, AccountRef: in.AccountRef}
+		specJSON, _ := json.Marshal(spec)
 		manifest, _ := json.Marshal(map[string]any{"harness": in.Harness, "role": in.Role, "kind": in.Kind, "lease_generation": lease.Generation,
 			"account_ref": in.AccountRef, "model": in.Model})
 		if err := tx.Q.InsertRun(ctx, db.InsertRunParams{ID: runID, SpaceID: spaceID, NodeID: sp.NodeID, Generation: lease.Generation, Kind: in.Kind,
@@ -184,6 +189,33 @@ func (svc *Service) queueCommand(ctx context.Context, tx *store.Tx, nodeID, spac
 	return tx.Q.InsertNodeCommand(ctx, db.InsertNodeCommandParams{ID: ids.New(ids.Command), NodeID: nodeID, SpaceID: spaceID,
 		RunID: sql.NullString{String: runID, Valid: runID != ""}, Generation: gen, Kind: kind, IdempotencyKey: key, PayloadJson: string(b),
 		CreatedAt: tx.NowMicros()})
+}
+
+// failUndispatched ends a run whose launch could not be sent (its account became unusable after the launch was
+// accepted): the launch command is cancelled and the run is failed with the reason, so it does not wait forever.
+func (svc *Service) failUndispatched(ctx context.Context, runID, reason string) error {
+	return svc.s.W().TxNamed(ctx, "fleet.run_undispatched", func(tx *store.Tx) error {
+		r, err := tx.Q.GetRun(ctx, runID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Q.CancelRunCommands(ctx, db.CancelRunCommandsParams{Reason: reason, RunID: sql.NullString{String: runID, Valid: true}}); err != nil {
+			return err
+		}
+		if _, err := tx.Q.UpdateRunObserved(ctx, db.UpdateRunObservedParams{Observed: proto.RunFailed, EndReason: "account_unavailable", Error: reason,
+			Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, MarkEnded: 1, ID: r.ID, Generation: r.Generation}); err != nil {
+			return err
+		}
+		if _, err := tx.Q.RevokeRunCredentials(ctx, db.RevokeRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RunID: r.ID}); err != nil {
+			return err
+		}
+		if err := svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "run.launch_failed", Target: audit.Target{Type: "run", ID: r.ID},
+			Details: map[string]any{"space_id": r.SpaceID, "reason": reason}})
+		return err
+	})
 }
 
 // StopRun sets a run's desired state to stopped and queues a stop command (interrupt politely, then kill after the

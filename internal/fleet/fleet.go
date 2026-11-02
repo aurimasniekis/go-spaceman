@@ -35,6 +35,9 @@ type Options struct {
 	Metrics           *metrics.Metrics
 	// RecordingsDir stores central copies of node recordings (empty: <none>, recordings are not accepted).
 	RecordingsDir string
+	// ResolveAccount picks the account a launch uses inside the launch transaction (SM-ACCT-003); it returns the
+	// account ID stored with the run. Nil: launches carry no account.
+	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (string, error)
 }
 
 // Service manages nodes, spaces, leases and runs.

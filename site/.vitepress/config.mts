@@ -71,6 +71,7 @@ export default withMermaid(
             { text: 'Install from source', link: '/operators/install' },
             { text: 'Sign-in and access', link: '/operators/access' },
             { text: 'Nodes and leases', link: '/operators/nodes' },
+            { text: 'Accounts', link: '/operators/accounts' },
             { text: 'Terminals and recordings', link: '/operators/terminals' },
           ],
         },

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -179,6 +180,7 @@ func TestFleetLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accts := bindStubAccounts(t, e.c, sp.ID)
 	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
 	// SM-UI-006: the grant is a change of the space, so open pages refetch it (renewals are not).
 	changes, err := e.c.Store.R().ChangesAfter(ctx, db.ChangesAfterParams{After: 0, Lim: 1000})
@@ -206,6 +208,25 @@ func TestFleetLifecycle(t *testing.T) {
 	procs := e.run.LiveByLabel("spaceman.run", ctrl.ID)
 	if len(procs) != 1 || procs[0].Parent == "" || !strings.Contains(strings.Join(procs[0].Argv, " "), "--session-id") {
 		t.Fatalf("run process %+v", procs)
+	}
+	// SM-ACCT-004: the account's credential reaches the run only through the shim's file (the fake runner does not run
+	// the shim, so the file is still there), never through the runner's environment; the run records the account.
+	sec, err := os.ReadFile(filepath.Join(e.agentDir, "runs", ctrl.ID, agent.SecretsFile))
+	if err != nil || !strings.Contains(string(sec), `"CLAUDE_CODE_OAUTH_TOKEN":"stub-claude-token"`) {
+		t.Fatalf("secrets file %s %v", sec, err)
+	}
+	for _, spec := range e.run.Specs {
+		for k, v := range spec.Env {
+			if strings.Contains(v, "stub-claude-token") {
+				t.Fatalf("credential in the runner environment: %s", k)
+			}
+		}
+		if strings.Contains(strings.Join(spec.Argv, " "), "stub-claude-token") {
+			t.Fatal("credential in the runner argv")
+		}
+	}
+	if e.run1(ctrl.ID).Launch.AccountRef != accts["claude_oauth_token"] {
+		t.Fatalf("run account %q", e.run1(ctrl.ID).Launch.AccountRef)
 	}
 	// SM-INV-006: at most one authoritative control run.
 	if _, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: hns.KindCodex}); err == nil {
@@ -268,6 +289,7 @@ func TestDisconnectEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bindStubAccounts(t, e.c, sp.ID)
 	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
 	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor-backend", Harness: hns.KindClaude})
 	if err != nil {
@@ -300,6 +322,7 @@ func TestRecordingShippedReplayedAndStreamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bindStubAccounts(t, e.c, sp.ID)
 	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
 	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor-backend", Harness: hns.KindCodex})
 	if err != nil {

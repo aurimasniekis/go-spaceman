@@ -126,6 +126,19 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}/runs/{run_id}/recording` | `delete-recording` | Delete central's copy of a run's recording |
 | `GET` | `/spaces/{space_id}/runs/{run_id}/recording` | `get-recording` | Replay a run's terminal recording |
 
+### accounts
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/account-kinds` | `list-account-kinds` | Supported credential kinds and the harness each one is for |
+| `GET` | `/accounts` | `list-accounts` | Harness accounts (never their secrets) |
+| `POST` | `/accounts` | `create-account` | Add a harness account |
+| `DELETE` | `/accounts/{account_id}` | `delete-account` | Delete an account and its bindings |
+| `GET` | `/accounts/{account_id}` | `get-account` | An account (never its secret) |
+| `PUT` | `/accounts/{account_id}` | `update-account` | Edit or rotate an account |
+| `GET` | `/spaces/{space_id}/accounts` | `list-space-accounts` | Accounts the space's runs may use |
+| `PUT` | `/spaces/{space_id}/accounts` | `set-space-accounts` | Set the accounts the space's runs may use |
+
 ### attachments
 
 | Method | Path | Operation | Summary |

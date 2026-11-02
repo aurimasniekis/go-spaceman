@@ -9,6 +9,7 @@ import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { NodeState, RunState, SpaceState } from '@/components/StatusBadge'
+import { SpaceAccountsCard } from '@/features/accounts/SpaceAccountsCard'
 import { LaunchRunModal } from '@/features/spaces/LaunchRunModal'
 import { SpaceFormModal } from '@/features/spaces/SpaceFormModal'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
@@ -111,6 +112,7 @@ function SpacePage() {
           <Text fw={600} size="xl" mt={2}>{active.length}</Text>
         </Card>
       </SimpleGrid>
+      <SpaceAccountsCard spaceId={s.id} />
 
       <Tabs defaultValue="runs" keepMounted={false}>
         <Tabs.List>

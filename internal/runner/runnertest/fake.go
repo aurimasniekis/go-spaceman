@@ -16,12 +16,14 @@ import (
 
 // Fake is an in-memory runner.
 type Fake struct {
-	mu      sync.Mutex
-	next    int
-	procs   map[string]*fakeProc
-	subs    []chan runner.Event
-	seq     uint64
-	Starts  int // number of successful Start calls (duplicate detection in tests)
+	mu     sync.Mutex
+	next   int
+	procs  map[string]*fakeProc
+	subs   []chan runner.Event
+	seq    uint64
+	Starts int // number of successful Start calls (duplicate detection in tests)
+	// Specs records every successful Start's spec, so tests can check what reached the runner (and herdr-core state).
+	Specs   []runner.Spec
 	CoreID  string
 	BlockIO bool
 	// AfterStart, when set, runs after a successful Start returns its process to the runner (outside the lock). Tests
@@ -74,6 +76,7 @@ func (f *Fake) start(_ context.Context, s runner.Spec) (*runner.Process, error) 
 	}
 	f.next++
 	f.Starts++
+	f.Specs = append(f.Specs, s)
 	labels := map[string]string{}
 	for k, v := range s.Labels {
 		labels[k] = v

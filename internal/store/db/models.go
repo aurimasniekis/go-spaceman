@@ -8,6 +8,22 @@ import (
 	"database/sql"
 )
 
+type Account struct {
+	ID              string
+	Name            string
+	Kind            string
+	Description     string
+	MetadataJson    string
+	SecretEnc       []byte
+	SecretVersion   int64
+	SecretRotatedAt int64
+	Enabled         int64
+	CreatedAt       int64
+	CreatedBy       string
+	UpdatedAt       int64
+	Version         int64
+}
+
 type ApiToken struct {
 	ID            string
 	Name          string
@@ -488,6 +504,15 @@ type Space struct {
 	CreatedBy            string
 	UpdatedAt            int64
 	ArchivedAt           sql.NullInt64
+}
+
+type SpaceAccount struct {
+	SpaceID   string
+	AccountID string
+	Harness   string
+	IsDefault int64
+	CreatedAt int64
+	CreatedBy string
 }
 
 type StoreSpaceProbe struct {

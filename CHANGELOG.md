@@ -33,6 +33,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Human actions: questions, approvals (advisory for now), to-dos and messages for people, separate from the inbox and the
   queue, with type-specific responses, claiming, comments, withdrawal, expiry and follow-ups. An action can block its
   task until someone responds. A "Needs you" page lists pending actions across the spaces you can read.
+- Accounts: Claude subscription tokens, Anthropic and OpenAI API keys stored sealed and never shown again, allowed per
+  space with a default per harness. Launches pick the account deterministically and refuse clearly when none fits;
+  rotation applies to later launches.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

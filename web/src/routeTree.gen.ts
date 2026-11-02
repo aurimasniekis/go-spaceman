@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
+import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as HumanRouteImport } from './routes/human'
@@ -45,6 +46,11 @@ const IndexRoute = IndexRouteImport.update({
 const AccountRoute = AccountRouteImport.update({
   id: '/account',
   path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountsRoute = AccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuditRoute = AuditRouteImport.update({
@@ -180,6 +186,7 @@ const SpacesSpaceIdRunsRunIdRoute = SpacesSpaceIdRunsRunIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
   '/audit': typeof AuditRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
@@ -209,6 +216,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
   '/audit': typeof AuditRoute
   '/human': typeof HumanRoute
   '/login': typeof LoginRoute
@@ -234,6 +242,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
+  '/accounts': typeof AccountsRoute
   '/audit': typeof AuditRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
@@ -265,6 +274,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/account'
+    | '/accounts'
     | '/audit'
     | '/events'
     | '/human'
@@ -294,6 +304,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/account'
+    | '/accounts'
     | '/audit'
     | '/human'
     | '/login'
@@ -318,6 +329,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/account'
+    | '/accounts'
     | '/audit'
     | '/events'
     | '/human'
@@ -348,6 +360,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AccountRoute: typeof AccountRoute
+  AccountsRoute: typeof AccountsRoute
   AuditRoute: typeof AuditRoute
   EventsRoute: typeof EventsRouteWithChildren
   HumanRoute: typeof HumanRoute
@@ -375,6 +388,13 @@ declare module '@tanstack/react-router' {
       path: '/account'
       fullPath: '/account'
       preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accounts': {
+      id: '/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AccountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/audit': {
@@ -633,6 +653,7 @@ const SpacesRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AccountRoute: AccountRoute,
+  AccountsRoute: AccountsRoute,
   AuditRoute: AuditRoute,
   EventsRoute: EventsRouteWithChildren,
   HumanRoute: HumanRoute,

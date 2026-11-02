@@ -54,13 +54,13 @@
 | SM-REPO-004 | | todo | | | |
 | SM-REPO-005 | | todo | | | |
 | SM-REPO-006 | | todo | | | |
-| SM-ACCT-001 | | todo | | | |
-| SM-ACCT-002 | | todo | | | |
-| SM-ACCT-003 | | todo | | | |
-| SM-ACCT-004 | M1-07 | partial | launch secrets dispatch-time only (`TestLaunchPayloadRedacted`), shim, unrelated secrets dropped (`TestClaudeBuild`) | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): secrets file unlinked by shim; run token absent from hc terminals.json | Accounts catalog M3-01. |
-| SM-ACCT-005 | | todo | | | |
-| SM-ACCT-006 | | todo | | | |
-| SM-HARN-001 | M1-07 | partial | `internal/harness` `TestClaudeBuild`, `TestCodexBuild` |  | Real Claude/Codex runs need an account credential (see PLAN §4 note). |
+| SM-ACCT-001 | M3-01 | implemented | `internal/accounts` `TestCreateIsWriteOnly` (sealed, validation, unique names); account kinds catalog extensible (`accounts.Kinds`) | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02) |  |
+| SM-ACCT-002 | M3-01 | partial | Kinds: Claude setup-token, Anthropic API key, OpenAI API key (`TestClaudeBuild`, `TestCodexBuild`) | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02): interactive run authenticated with the setup-token | Codex ChatGPT login (`auth.json`) open (K-9); no real Codex run yet. |
+| SM-ACCT-003 | M3-01 | implemented | `TestResolution` (named, default, only bound, disabled skipped, incompatible refused, clear errors); app tests refuse launches without accounts | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02) |  |
+| SM-ACCT-004 | M3-01 | implemented | Dispatch-time secrets only (`TestLaunchPayloadRedacted`), `TestFleetLifecycle` (credential in the shim file only, never in runner env/argv), `TestScrubEnv` (no node-level credentials), unusable account fails the run at dispatch | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02): secrets file unlinked; token absent from hc terminals.json |  |
+| SM-ACCT-005 | M3-01 | implemented | Write-only API (never returned), audit details without secrets, idempotency fingerprint without the secret, validation errors drop values | `TestRealClaudeRun`: token absent from central data dir, central and agent logs, hc state | Node operators can read runtime secrets (LIMITATIONS). |
+| SM-ACCT-006 | M3-01 | implemented | `TestSecretEnvAndRotation` (rotation applies to later dispatches; edit without a secret keeps it) |  |  |
+| SM-HARN-001 | M1-07 | implemented | `internal/harness` `TestClaudeBuild`, `TestCodexBuild` | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02): interactive Claude Code run answered; first-run state and folder trust seeded (ADR-0021) | No real Codex run yet. |
 | SM-HARN-002 | M1-07 | implemented | per-space/instance CLAUDE_CONFIG_DIR / CODEX_HOME (`TestClaudeBuild`, `TestCodexBuild`) |  |  |
 | SM-HARN-003 | M1-07 | implemented | `Detect` capability lists; `proto.HarnessInfo` |  |  |
 | SM-HARN-004 | | todo | | | |

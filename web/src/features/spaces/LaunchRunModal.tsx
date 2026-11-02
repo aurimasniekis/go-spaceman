@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type LaunchInput, type Node, type Space } from '@/api/client'
-import { keys } from '@/api/queries'
+import { keys, useSpaceAccounts } from '@/api/queries'
 import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError } from '@/lib/form'
 
@@ -23,16 +23,17 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
   const [error, setError] = useState('')
   const [key, setKey] = useState(idempotencyKey)
   const available = (node?.capabilities.harnesses ?? []).filter((h) => h.available).map((h) => h.kind)
+  const bound = useSpaceAccounts(space.id).data ?? []
 
   const form = useForm({
-    defaultValues: { harness: (available[0] ?? 'claude-code') as LaunchInput['harness'], kind: 'control' as LaunchInput['kind'], role: 'control', model: '', prompt: '', system: '', workspace: '' },
+    defaultValues: { harness: (available[0] ?? 'claude-code') as LaunchInput['harness'], kind: 'control' as LaunchInput['kind'], role: 'control', model: '', prompt: '', system: '', workspace: '', account: '' },
     onSubmit: async ({ value }) => {
       setError('')
       try {
         const run = unwrap(
           await api.POST('/spaces/{space_id}/runs', {
             params: { path: { space_id: space.id }, header: { 'Idempotency-Key': key } },
-            body: { ...value, model: value.model || undefined, prompt: value.prompt || undefined, system: value.system || undefined, workspace: value.workspace || undefined },
+            body: { ...value, account: undefined, account_ref: value.account || undefined, model: value.model || undefined, prompt: value.prompt || undefined, system: value.system || undefined, workspace: value.workspace || undefined },
           }),
         )
         void qc.invalidateQueries({ queryKey: keys.runs(space.id) })
@@ -76,6 +77,22 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
               {(f) => <TextInput label="Model" description="Harness default when empty" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
             </form.Field>
           </SimpleGrid>
+          <form.Subscribe selector={(st) => st.values.harness}>
+            {(harness) => {
+              const usable = bound.filter((b) => b.harness === harness && b.enabled)
+              const dflt = usable.find((b) => b.default) ?? (usable.length === 1 ? usable[0] : undefined)
+              return (
+                <form.Field name="account">
+                  {(f) => (
+                    <Select label="Account" clearable value={f.state.value || null} onChange={(v) => f.handleChange(v ?? '')}
+                      placeholder={dflt ? `Space default: ${dflt.name}` : usable.length ? 'Choose an account' : 'No account bound'}
+                      description={usable.length === 0 ? 'No enabled account for this harness is bound to the space; the launch will be refused.' : undefined}
+                      data={usable.map((b) => ({ value: b.account_id, label: b.name ?? b.account_id }))} />
+                  )}
+                </form.Field>
+              )
+            }}
+          </form.Subscribe>
           <form.Field name="prompt">
             {(f) => <Textarea label="Initial prompt" autosize minRows={3} maxRows={10} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
