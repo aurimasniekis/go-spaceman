@@ -169,7 +169,7 @@
 | SM-XSPACE-001 | | todo | | | |
 | SM-XSPACE-002 | | todo | | | |
 | SM-XSPACE-003 | | todo | | | |
-| SM-AUTH-001 | M1-04 | partial | `internal/auth` (Hallpass-derived suite: Argon2id, TOTP replay, recovery codes, sessions idle/absolute, CSRF, throttle/enumeration, invite/reset, break-glass, review SR-01..SR-27) |  | HTTP wiring (M1-03) and OIDC (M4-01) pending; SSO-grant session scoping K-11. |
+| SM-AUTH-001 | M1-04 | partial | `internal/auth` (Hallpass-derived suite: Argon2id, TOTP replay, recovery codes, sessions idle/absolute, CSRF, throttle/enumeration, invite/reset, break-glass, review SR-01..SR-27); HTTP: `TestAPIBootstrapLoginAndConventions`, `TestAPIRecoveryAndReset` (reset token, break-glass login + alert + acknowledgement, recovery-code regeneration with step-up) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02): sign-in with TOTP enrollment, password reset at `/reset` | OIDC (M4-01) pending; SSO-grant session scoping K-11; invitations have no HTTP surface yet. |
 | SM-AUTH-002 | | todo | | | |
 | SM-AUTH-003 | M1-04 | partial | `internal/authz` `TestSpaceScopedRoles`, `TestDomainsAndRoles` |  | Casbin RBAC-with-domains; API enforcement wiring pending (M1-03). |
 | SM-AUTH-004 | M1-04 | partial | `internal/authz` `TestSpaceScopedRoles` (terminal/takeover/secret/approval/node separation) |  |  |
@@ -206,11 +206,11 @@
 | SM-API-003 | | todo | | | |
 | SM-API-004 | | todo | | | |
 | SM-API-005 | | todo | | | |
-| SM-DOCS-001 | | todo | | | |
-| SM-DOCS-002 | | todo | | | |
-| SM-DOCS-003 | | todo | | | |
-| SM-DOCS-004 | | todo | | | |
-| SM-DOCS-005 | | todo | | | |
+| SM-DOCS-001 | M1-12 | partial | `site/` VitePress (Porch setup), Night Owl branding; `make site-check` builds with dead-link checking | | Guides exist for implemented features only (concepts, try locally, first space, install from source, access, nodes, terminals, API reference, security, development); the remaining guides land with their features. Not published yet. |
+| SM-DOCS-002 | M1-12 | partial | 12 shots × 2 themes of the real UI (`docs/SCREENSHOTS.md`), fictional seed data, stub harness | `scripts/screenshots.sh` run 2026-11-02 against a real stack (central + agent + hc 0.1.16) | Shots for M2–M4 areas are `todo` in the inventory. |
+| SM-DOCS-003 | M1-12 | implemented | `web/e2e/screenshots.spec.ts` seeds through the API; fixed 1440×900 viewport, both themes, alt text and captions enforced by `site/scripts/check-shots.mjs` | `scripts/screenshots.sh` (2026-11-02) | Relative times reflect capture time (not frozen); PNGs are 30-85 KB without a separate optimizer. |
+| SM-DOCS-004 | M1-12 | implemented | `vitepress-plugin-mermaid`; `site/scripts/check-mermaid.mjs` parses every diagram in docs/, site/ and README with the real Mermaid parser (7 diagrams) | rendered pages reviewed in Chromium (2026-11-02) | |
+| SM-DOCS-005 | M1-12 | partial | CI `site` job: build (dead links), screenshot references, Mermaid, API reference drift; `.github/workflows/pages.yaml` deploys to GitHub Pages | | Accessibility checks (axe) pending; the site has not been published. |
 | SM-PKG-001 | | todo | | | |
 | SM-PKG-002 | | todo | | | |
 | SM-PKG-003 | | todo | | | |

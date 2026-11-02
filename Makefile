@@ -126,8 +126,10 @@ site:
 site-dev:
 	cd site && pnpm dev
 
-site-check:
-	cd site && pnpm check
+# Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, and API reference drift.
+site-check: site
+	cd site && pnpm check:mermaid
+	git diff --exit-code -- site/reference/api.md
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).
 screenshots:

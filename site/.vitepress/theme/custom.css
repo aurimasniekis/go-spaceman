@@ -1,0 +1,71 @@
+/* Adapted from Porch site/.vitepress/theme/custom.css (Apache-2.0, same author). Night Owl / Light Owl palette (MIT, Sarah Drasner). */
+:root {
+  --vp-c-brand-1: #4876d6;
+  --vp-c-brand-2: #5a86e0;
+  --vp-c-brand-3: #3a63bd;
+  --vp-c-brand-soft: rgba(72, 118, 214, 0.12);
+  --vp-c-bg: #fbfbfb;
+  --vp-c-bg-alt: #f0f0f0;
+  --vp-c-text-1: #403f53;
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #4876d6 20%, #994cc3);
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, rgba(72, 118, 214, 0.35) 50%, rgba(153, 76, 195, 0.3) 50%);
+  --vp-home-hero-image-filter: blur(56px);
+  --sm-shot-border: #d9d9d9;
+}
+
+.dark {
+  --vp-c-brand-1: #82aaff;
+  --vp-c-brand-2: #a3c0ff;
+  --vp-c-brand-3: #6a95f0;
+  --vp-c-brand-soft: rgba(130, 170, 255, 0.16);
+  --vp-c-bg: #011627;
+  --vp-c-bg-alt: #01111e;
+  --vp-c-bg-elv: #0b2942;
+  --vp-c-bg-soft: #0b2942;
+  --vp-c-text-1: #d6deeb;
+  --vp-c-divider: #1d3b53;
+  --vp-home-hero-name-background: linear-gradient(120deg, #82aaff 20%, #c792ea);
+  --sm-shot-border: #1d3b53;
+}
+
+.sm-shot {
+  margin: 20px 0;
+}
+
+.sm-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--sm-shot-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(1, 22, 39, 0.12);
+}
+
+.sm-shot figcaption {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--vp-c-text-2);
+  text-align: center;
+}
+
+.dark .sm-shot .sm-light,
+html:not(.dark) .sm-shot .sm-dark {
+  display: none;
+}
+
+.sm-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+  gap: 8px 24px;
+}
+
+.sm-gallery .sm-shot {
+  margin: 8px 0;
+}
+
+.sm-home {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: 0 24px 48px;
+}

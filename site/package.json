@@ -1,0 +1,24 @@
+{
+  "name": "spaceman-site",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "node scripts/gen-api.mjs && node scripts/check-shots.mjs && vitepress build",
+    "preview": "vitepress preview",
+    "gen:api": "node scripts/gen-api.mjs",
+    "check:mermaid": "node scripts/check-mermaid.mjs",
+    "check:shots": "node scripts/check-shots.mjs"
+  },
+  "devDependencies": {
+    "mermaid": "11.17.2",
+    "playwright-core": "1.64.1",
+    "vitepress": "1.6.4",
+    "vitepress-plugin-mermaid": "2.0.17"
+  }
+}

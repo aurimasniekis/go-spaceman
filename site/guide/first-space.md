@@ -1,0 +1,42 @@
+# First node and space
+
+This guide continues from [Try it locally](/guide/try-locally) or a real [installation](/operators/install), with one
+connected node.
+
+## Nodes
+
+The **Nodes** page shows every node, whether it is connected, the agent version, its herdr-core core and which harnesses
+it found. A node that was created but never enrolled stays **pending**.
+
+<Shot name="setup-node-enroll" alt="Nodes page with build-01 connected and gpu-02 pending" caption="One connected node, one waiting for enrollment" />
+
+Enrollment tokens are single use and expire. **New enrollment token** in a node's menu issues another; **Disable** keeps a
+node from connecting, and **Revoke credential** ends its access for good.
+
+## Create a space
+
+In **Spaces → New space**, give the space a name, a slug and the node it is pinned to. Goals and standing instructions are
+given to every agent in the space. The disconnect policy decides what the node does with running work when it loses
+central beyond the grace period: **interrupt** (keep the session resumable) or **stop**.
+
+<Shot name="space-create" alt="New space dialog with name, slug, pinned node, goals and standing instructions" caption="Creating a space pinned to build-01" />
+
+Once the node renews its next heartbeat, the space shows a valid **execution lease**.
+
+<Shot name="space-overview" alt="Space page with node, valid lease generation 1, and three runs" caption="A space with its lease and runs" />
+
+## Launch a run
+
+**Launch run** starts one harness session on the pinned node. Pick the harness (the dialog says if the node did not
+detect it), the run kind and role, and optionally a model, an initial prompt, extra system prompt text and a workspace
+folder inside the space's working directory. A space has at most one control run.
+
+<Shot name="run-launch" alt="Launch run dialog with harness, kind, role, model and prompt fields" caption="Launching a run" />
+
+The run page opens on the live terminal. **Stop** interrupts the session (it stays resumable) or stops the program;
+**Message the agent** delivers text the next time the agent is idle. See [Terminals and recordings](/operators/terminals).
+
+## Pause a space
+
+**Pause** has three modes: **Hold** admits no new work and lets running agents finish, **Interrupt** also interrupts
+running agents and stops them, and **Emergency stop** also kills every run at once. **Resume** admits work again.

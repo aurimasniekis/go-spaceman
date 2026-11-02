@@ -3,6 +3,8 @@ import { defineConfig, devices } from '@playwright/test'
 // Runs against a stack from `scripts/dev-stack.sh up` (SM_URL and friends come from its env file).
 export default defineConfig({
   testDir: './e2e',
+  // The documentation capture runs only through scripts/screenshots.sh (it needs its own fresh stack).
+  testIgnore: process.env.SM_SCREENSHOTS_OUT ? [] : ['**/screenshots.spec.ts'],
   timeout: 90_000,
   fullyParallel: false,
   workers: 1,

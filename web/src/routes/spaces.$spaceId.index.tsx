@@ -19,7 +19,7 @@ export const Route = createFileRoute('/spaces/$spaceId/')({ component: SpacePage
 
 const PAUSE_MODES: { mode: 'hold' | 'interrupt' | 'emergency'; label: string; detail: string }[] = [
   { mode: 'hold', label: 'Hold', detail: 'No new work starts; running agents continue' },
-  { mode: 'interrupt', label: 'Interrupt', detail: 'Interrupt running agents at the next safe point' },
+  { mode: 'interrupt', label: 'Interrupt', detail: 'Interrupt running agents and stop them' },
   { mode: 'emergency', label: 'Emergency stop', detail: 'Stop every run now' },
 ]
 

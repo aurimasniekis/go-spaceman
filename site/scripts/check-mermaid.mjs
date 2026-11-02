@@ -1,0 +1,53 @@
+// Copied from Porch site/scripts/check-mermaid.mjs (Apache-2.0, same author).
+// Parses every ```mermaid block in docs/, site/ and README.md with the real Mermaid parser in headless Chromium and fails on any
+// syntax error. VitePress renders diagrams client-side, so a broken diagram would otherwise only show up in a browser.
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { chromium } from 'playwright-core';
+
+const root = path.resolve(import.meta.dirname, '..', '..');
+const files = [];
+for (const dir of ['docs', 'site']) {
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (p.endsWith('.md')) files.push(p);
+    }
+  };
+  walk(path.join(root, dir));
+}
+files.push(path.join(root, 'README.md'));
+const blocks = [];
+for (const f of files) {
+  const re = /```mermaid\n([\s\S]*?)```/g;
+  const s = fs.readFileSync(f, 'utf8');
+  let m;
+  let i = 0;
+  while ((m = re.exec(s))) blocks.push({ f: path.relative(root, f), i: i++, src: m[1] });
+}
+const mermaidJS = createRequire(import.meta.url).resolve('mermaid/dist/mermaid.min.js');
+const browser = await chromium.launch();
+const page = await browser.newPage();
+await page.setContent('<!doctype html><html><body></body></html>');
+await page.addScriptTag({ path: mermaidJS });
+let bad = 0;
+for (const b of blocks) {
+  const err = await page.evaluate(async (src) => {
+    try {
+      await window.mermaid.parse(src);
+      return null;
+    } catch (e) {
+      return String(e?.message ?? e).slice(0, 400);
+    }
+  }, b.src);
+  if (err) {
+    bad++;
+    console.error(`${b.f} diagram #${b.i}:\n${err}\n`);
+  }
+}
+await browser.close();
+console.log(`mermaid: ${blocks.length} diagrams, ${bad} with errors`);
+process.exit(bad ? 1 : 0);

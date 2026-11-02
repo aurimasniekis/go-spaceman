@@ -29,7 +29,7 @@
 | M1-09 | Recording: zstd segments, upload, live view, replay | SM-REC-001…004 | tested (simulated) + real; UI replay/live in M1-11 |
 | M1-10 | Restart/disconnect reconciliation tests (central, node, hc) | SM-NODE-005/007/009 | tested (simulated + real): agent/central restarts, crash between start and journal, exit while down, disconnect enforcement; stale-generation fencing test with relocation (M4) |
 | M1-11 | Web shell: Night Owl theme, bootstrap/sign-in, spaces, nodes, overview, terminal | SM-UI-001/002/004 | tested: vitest + browser journey (`make e2e`, real agent + isolated hc) |
-| M1-12 | Site skeleton, Mermaid, demo seed, Playwright screenshots, coverage inventory | SM-DOCS-001…005 | todo |
+| M1-12 | Site skeleton, Mermaid, demo seed, Playwright screenshots, coverage inventory | SM-DOCS-001…005 | implemented: site with guides for implemented features, 12 real shots × 2 themes, CI site job, Pages workflow (not published); axe checks pending |
 
 ### M2 — Coordination core
 | WP | Scope | Requirements | Status |
@@ -101,7 +101,9 @@
 | 2026-11-02 | M1-05 | Harness capability detection before dialing central | `1519f0f` | real node e2e |
 | 2026-11-02 | M1-09 | Recording shipped to central; live terminal SSE; replay/download/delete API | `4d979a7` | `TestRecordingShippedReplayedAndStreamed`; real node e2e |
 | 2026-11-02 | M1-11 | Web UI (Mantine 8 + Night Owl, TanStack Router/Query/Form, ghostty-web live/replay terminal), UI CSP (ADR-0020), lease grants in the change feed, dev stack + browser journey | `9b02552`, `c32e0d9` | `make check`, `make web-check`, `make e2e` (Chromium, real agent + hc 0.1.16 isolated core, stub harness): pass; screenshots reviewed, not committed (M1-12) |
-| 2026-11-02 | M1-10 | Restart reconciliation: crash between program start and journal (adoption), exit while the agent is down, central + agent restart; real central restart and real disconnect enforcement | this commit (`test(fleet)`) | `TestRestartReconciliation` 5× `-race`; `-tags real` `TestRealNodeEndToEnd`, `TestRealDisconnectEnforcement` pass (hc 0.1.16 isolated core) |
+| 2026-11-02 | M1-10 | Restart reconciliation: crash between program start and journal (adoption), exit while the agent is down, central + agent restart; real central restart and real disconnect enforcement | `dc22aaa` | `TestRestartReconciliation` 5× `-race`; `-tags real` `TestRealNodeEndToEnd`, `TestRealDisconnectEnforcement` pass (hc 0.1.16 isolated core) |
+| 2026-11-02 | M1-04 | Reset and recovery tokens were not redeemable (services without HTTP/UI): `/auth/reset`, `/auth/recover`, recovery-code regeneration, break-glass alert; `/reset` and `/recover` pages | `8ea777a` | `TestAPIRecoveryAndReset`; `make e2e` covers a password reset |
+| 2026-11-02 | M1-12 | VitePress site (Porch setup) with guides for implemented features, generated API reference, README, real screenshots (`scripts/screenshots.sh`), screenshot/Mermaid checks, CI site job, Pages workflow | this commit (`docs(site)`) | `make site-check` (build with dead-link check, 7 Mermaid diagrams, API drift); screenshots reviewed |
 
 ## 4. Process deviations
 
