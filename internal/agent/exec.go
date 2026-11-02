@@ -113,6 +113,8 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		go a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
 	case proto.CmdKBAccept:
 		a.handleKBAccept(ctx, c)
+	case proto.CmdDreamDone:
+		a.handleDreamCommit(ctx, c)
 	case proto.CmdInterrupt:
 		a.ack(ctx, c, proto.AckAccepted, "")
 		if r, err := a.j.getRun(ctx, c.RunID); err == nil && r.TerminalID != "" {
@@ -191,6 +193,14 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		dir, err := prepareWorktree(ctx, space, *p.Worktree)
 		if err != nil {
 			fail("prepare worktree", err)
+			return
+		}
+		work = dir
+	}
+	if p.Dream != nil {
+		dir, err := a.prepareDream(ctx, c.SpaceID, space, c.RunID, p.InstanceID, *p.Dream)
+		if err != nil {
+			fail("prepare the dream", err)
 			return
 		}
 		work = dir

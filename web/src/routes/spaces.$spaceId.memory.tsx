@@ -8,6 +8,7 @@ import { useMe, useMemory, useSpace } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
 import { PageHeader } from '@/components/PageHeader'
+import { DreamsCard } from '@/features/memory/DreamsCard'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
@@ -33,6 +34,7 @@ function MemoryPage() {
       <PageHeader title={space.data?.name ?? 'Space'} description="Role memory: notes each role keeps across runs, shared by every instance of the role and preserved centrally." />
       <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={mem.error} />
+      <DreamsCard spaceId={spaceId} />
       {mem.data && !mem.data.available && (
         <Alert color="owlYellow" icon={<IconAlertTriangle size={16} />} mb="md" title="Central cannot store memory">Install git on the central host; nodes keep their memory and sync once it can.</Alert>
       )}

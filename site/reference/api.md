@@ -158,6 +158,16 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/attachments` | `upload-attachment` | Upload an attachment |
 | `GET` | `/spaces/{space_id}/attachments/{attachment_id}` | `get-attachment` | Attachment metadata |
 
+### dreams
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/dreams` | `list-dreams` | A space's dream configurations |
+| `POST` | `/spaces/{space_id}/dreams` | `create-dream` | Add a dream configuration |
+| `PUT` | `/spaces/{space_id}/dreams/{dream_id}` | `update-dream` | Edit a dream configuration |
+| `GET` | `/spaces/{space_id}/dreams/{dream_id}/runs` | `dream-runs` | Recent dreams of a configuration |
+| `POST` | `/spaces/{space_id}/dreams/{dream_id}/start` | `start-dream` | Dream now |
+
 ### events
 
 | Method | Path | Operation | Summary |

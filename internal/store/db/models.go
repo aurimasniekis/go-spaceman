@@ -133,6 +133,48 @@ type Change struct {
 	Version      int64
 }
 
+type DreamConfig struct {
+	ID                  string
+	SpaceID             string
+	Slug                string
+	Name                string
+	SpaceRole           string
+	InstanceID          string
+	MemoryRolesJson     string
+	TranscriptRolesJson string
+	IncludeOwn          int64
+	Instructions        string
+	IntervalHours       int64
+	MaxMinutes          int64
+	MaxTokens           int64
+	MaxFiles            int64
+	MaxBytes            int64
+	Enabled             int64
+	NextDueAt           sql.NullInt64
+	CreatedAt           int64
+	CreatedBy           string
+	UpdatedAt           int64
+	Version             int64
+}
+
+type DreamRun struct {
+	ID              string
+	ConfigID        string
+	SpaceID         string
+	RunID           string
+	TriggerKind     string
+	State           string
+	Summary         string
+	FindingsJson    string
+	NoChange        int64
+	CommitCommandID string
+	Detail          string
+	StartedAt       int64
+	DeadlineAt      int64
+	EndedAt         sql.NullInt64
+	UpdatedAt       int64
+}
+
 type EventConnection struct {
 	ID        string
 	Name      string

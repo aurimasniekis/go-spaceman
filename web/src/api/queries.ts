@@ -44,6 +44,7 @@ export const keys = {
   approvalPolicies: ['approval-policies'] as const,
   memory: (spaceId: string) => ['memory', spaceId] as const,
   kbs: (spaceId: string) => ['kbs', spaceId] as const,
+  dreams: (spaceId: string) => ['dreams', spaceId] as const,
   mcpGrants: (id: string) => ['mcp-grants', id] as const,
   spaceMcp: (id: string) => ['space-mcp', id] as const,
   spaceHumanTypes: (space: string) => ['space-human-types', space] as const,
@@ -252,3 +253,5 @@ export const useKBs = (spaceId: string) =>
 export const useKB = (spaceId: string, id: string | null) =>
   useQuery({ queryKey: [...keys.kbs(spaceId), id], enabled: !!id,
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/kbs/{kb_id}', { params: { path: { space_id: spaceId, kb_id: id! } } })) })
+export const useDreams = (spaceId: string) =>
+  useQuery({ queryKey: keys.dreams(spaceId), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/dreams', { params: { path: { space_id: spaceId } } })).items })

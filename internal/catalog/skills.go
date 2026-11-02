@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -290,8 +291,11 @@ func (svc *Service) ListSkills(ctx context.Context) ([]*Skill, error) {
 	return out, nil
 }
 
-// SeedBuiltins adds the built-in skills (published as version 1) when they are missing.
+// SeedBuiltins adds the built-in skills and prompts (published as version 1) when they are missing.
 func (svc *Service) SeedBuiltins(ctx context.Context) error {
+	if err := svc.seedPrompts(ctx); err != nil {
+		return err
+	}
 	for _, b := range skills.Builtins() {
 		if _, err := svc.s.R().GetSkillBySlug(ctx, b.Slug); err == nil {
 			continue
@@ -385,4 +389,26 @@ func resolveSkills(ctx context.Context, q *db.Queries, tplRefs, roleRefs []Skill
 		out = append(out, ResolvedSkill{Slug: sk.Slug, VersionID: v.ID, Number: v.Number, Pinned: p.ref.Pin != "", SHA256: sv.SHA256, Origin: p.origin, Files: sv.Files})
 	}
 	return out, skipped
+}
+
+//go:embed builtin/dream-consolidation.md
+var dreamPrompt string
+
+// seedPrompts adds SpaceMan's own built-in prompts: the dreamer's method (ADR-0027).
+func (svc *Service) seedPrompts(ctx context.Context) error {
+	if _, err := svc.s.R().GetPromptBySlug(ctx, "dream-consolidation"); err == nil {
+		return nil
+	}
+	p, err := svc.CreatePrompt(ctx, audit.System, "dream-consolidation", "Dream: memory consolidation", "dream",
+		"How the dreamer consolidates role memory: orient, search narrowly, consolidate, correct, preserve provenance, prune conservatively.", dreamPrompt)
+	if err != nil {
+		return err
+	}
+	for _, v := range p.Versions {
+		if v.State == "draft" {
+			_, err = svc.Publish(ctx, audit.System, p.ID, v.Version)
+			return err
+		}
+	}
+	return nil
 }

@@ -493,9 +493,31 @@ test('documentation screenshots', async ({ page, browser }) => {
     const m = await api.call<{ items: { role: string; head?: string }[] }>('GET', `/spaces/${payments.id}/memory`)
     return m.items.find((c) => c.role === 'implementor-backend')?.head ?? ''
   }, { timeout: 30_000 }).not.toBe('')
+  // The dreamer: a dreamer role using the built-in dream prompt, and a nightly dream started now. The stub reports
+  // what it found the way a dreamer would.
+  const prompts = await api.call<{ items: { id: string; slug: string }[] }>('GET', '/prompts')
+  const dreamPrompt = prompts.items.find((p) => p.slug === 'dream-consolidation')!
+  const tDream = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'dreamer', name: 'Dreamer', kind: 'dreamer', profile_id: sonnet.id,
+    prompt_id: dreamPrompt.id, settings: {} })
+  await api.call('PUT', `/spaces/${payments.id}/roles/dreamer`, { template_id: tDream.id, settings: {} })
+  const nightly = await api.call<{ id: string }>('POST', `/spaces/${payments.id}/dreams`, { slug: 'nightly', name: 'Nightly consolidation', space_role: 'dreamer',
+    memory_roles: ['implementor-backend', 'control'], interval_hours: 24, max_minutes: 20, max_files: 20,
+    instructions: 'Focus on settlement decisions.\n/call spaceman_dream_report {"summary":"Read the new implementor-backend transcript segment and both memories. ' +
+      'The retry budget and the bank window are already recorded in decisions.md; nothing needed changing.","no_change":true,' +
+      '"findings":[{"kind":"insight","summary":"Retries and the bank window are documented in two places; consider linking them from the README."}]}' })
+  await api.call('POST', `/spaces/${payments.id}/dreams/${nightly.id}/start`)
+  await expect.poll(async () => {
+    const l = await api.call<{ items: { id: string; last_run?: { state: string } }[] }>('GET', `/spaces/${payments.id}/dreams`)
+    return l.items.find((d) => d.id === nightly.id)?.last_run?.state ?? ''
+  }, { timeout: 60_000 }).toBe('succeeded')
   await capture(page, 'space-memory', async () => {
     await page.goto(`/spaces/${payments.id}/memory`)
     await expect(page.getByText('in sync').first()).toBeVisible({ timeout: 20_000 })
+  })
+  await capture(page, 'dream-runs', async () => {
+    await page.goto(`/spaces/${payments.id}/memory`)
+    await page.getByRole('button', { name: 'Nightly consolidation' }).click()
+    await expect(page.getByText('consider linking them from the README')).toBeVisible()
   })
   await capture(page, 'memory-files', async () => {
     await page.goto(`/spaces/${payments.id}/memory`)

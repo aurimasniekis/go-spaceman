@@ -31,6 +31,13 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Dreams
+- **Token budgets are advisory.** The dreamer is told its token budget; SpaceMan enforces only the time budget (by
+  stopping the run) and the evidence budget.
+- **Transcripts are found where harnesses keep them** (Claude Code `projects/`, Codex `sessions/` in each instance's
+  folder); other formats are not offered.
+- **Evidence is copied** into the dream's folder on the node; it is as sensitive as the transcripts.
+
 ## Knowledge bases
 - **Sessions are per agent instance.** A relaunched worker with a new instance gets a new session.
 - **Resumed conversations depend on the harness.** A session woken from sleep continues its conversation where the

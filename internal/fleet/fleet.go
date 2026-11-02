@@ -46,8 +46,9 @@ type Options struct {
 	OnRunEnded func(runID string)
 	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.
 	OnRunIdle func(runID string)
-	// OnCommandAck is called inside the transaction that records a node's command acknowledgement.
-	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, result string) error
+	// OnCommandAck is called inside the transaction that records a node's command acknowledgement (with the command's
+	// kind and the node's reason).
+	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error
 }
 
 // Service manages nodes, spaces, leases and runs.

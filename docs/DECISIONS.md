@@ -426,6 +426,34 @@
   - A session resumed after sleep continues its conversation only where the harness supports resume.
   - Knowledge branches must not be checked out where SpaceMan should move them.
 
+### ADR-0027 — Dreams consolidate memory through ordinary checkouts; evidence advances only after a checkpoint
+- **Status:** Accepted, 2026-11-02.
+- **Context:** SM-DREAM-001…004: a dreamer is a normal agent on the space's node; it reads permitted transcripts,
+  memories, KB repositories and instructions without administrative APIs or recordings; scheduled and manual runs with
+  time, token and evidence budgets; bounded discovery; evidence positions advance only after results are durably
+  checkpointed; its own transcripts are excluded by default; a set prompt method; findings go to control, KB or human
+  actions; a no-change dream is a success.
+- **Decision:**
+  - A dream configuration names a space role whose template is of kind `dreamer`, the role memories it consolidates,
+    whose transcripts it may read (its own role excluded unless configured), an interval (0 = manual), a time budget
+    (enforced: the run is stopped and the dream is `timed_out`), a token budget (told to the dreamer; not enforced) and
+    an evidence budget (files and bytes). One scheduler goroutine with one timer starts due dreams and enforces budgets;
+    one dream per configuration runs at a time; the configuration keeps one dreamer instance across dreams.
+  - The node prepares `<space>/dreams/<run>`: the dreamer instance's ordinary checkouts of the target memories
+    (`memory/<role>`), copies of transcript bytes written since the configuration's committed position (Claude Code
+    `projects/**/*.jsonl` and Codex `sessions/**/*.jsonl` under the space's instances; at most 5000 entries walked;
+    newest first, within the budget), and `DREAM.md`. The positions read are journaled as pending.
+  - The dreamer reports with `spaceman_dream_report` (summary, changes, findings, `no_change`) and publishes findings
+    with the ordinary tools. Central then sends `dream.commit`: the node checkpoints and publishes each memory checkout
+    first and only then commits the pending positions; its ack marks the dream `succeeded` (or `failed`) and central
+    stops the run. A dream that ends without reporting, or runs out of time, advances nothing.
+  - The method is SpaceMan's own built-in prompt `dream-consolidation` (seeded in the prompt catalog): orient, search
+    narrowly, consolidate, correct contradictions, preserve provenance, absolute dates, compact indexes, conservative
+    pruning, flag instruction conflicts, never rewrite policy, never promote personal notes into authority.
+- **Consequences:**
+  - Dream memory changes merge with other instances' like any checkpoint; conflicts are preserved (ADR-0025).
+  - Copies of transcript segments live in the dream folder on the node; they are as sensitive as the transcripts.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -437,7 +465,7 @@
 | K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). | — | done |
 | K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
-| K-8 | ~~llm-knowledge-base-template layout and licence~~ **resolved 2026-11-02** (`docs/contracts/kb-template.md`: MIT code, CC BY 4.0 docs, keeper/consumer convention, `tools/kb.py check`); Piebald dream prompts licence still open. | dreamer | Fetch the dream prompts and record their licence before using them. |
+| K-8 | ~~llm-knowledge-base-template layout and licence; Piebald dream prompts licence.~~ **Resolved 2026-11-02:** KB template in `docs/contracts/kb-template.md`. Piebald-AI/claude-code-system-prompts is MIT, but its files are extracted Claude Code prompts whose text the repository licence may not cover; SpaceMan's dream prompt is written from the brief's principles and copies none of it (ADR-0027). | — | done |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |
 | K-11 | Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26). SpaceMan grants have no SSO source yet (OIDC lands in M4-01). | SM-AUTH-002 | When OIDC lands, store SSO grants under the subject `user:<id>#sso`, add that subject only for SSO sessions, and port the SR-26 test. |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |

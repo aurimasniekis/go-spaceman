@@ -202,7 +202,8 @@ const (
 	CmdInterrupt = "run.interrupt"
 	CmdInput     = "run.input"
 	CmdPrepare   = "space.prepare"
-	CmdKBAccept  = "kb.accept" // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
+	CmdKBAccept  = "kb.accept"    // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
+	CmdDreamDone = "dream.commit" // minor ≥ 2: checkpoint a dream's memory, then advance its evidence positions
 )
 
 // Skill is one skill version's files (guidance only; never executed by SpaceMan).
@@ -334,6 +335,8 @@ type LaunchPayload struct {
 	Skills []Skill `json:"skills,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
 	AccountRef string `json:"account_ref,omitempty"`
+	// Dream asks the node to prepare a dream workspace (minor ≥ 2, ADR-0027).
+	Dream *DreamSpec `json:"dream,omitempty"`
 	// Secrets and RunToken are injected by central only into the message on the wire at dispatch time; they are
 	// never stored with the command, logged or echoed in reports. The node writes them only to the run's 0600 secret
 	// file, which the launcher shim reads and unlinks before exec (ADR-0009); they never reach the runner's env.
@@ -384,6 +387,10 @@ func (c Command) Validate() error {
 			return errors.New("invalid run_id")
 		}
 	case CmdPrepare, CmdKBAccept:
+	case CmdDreamDone:
+		if !reRun.MatchString(c.RunID) {
+			return errors.New("invalid run_id")
+		}
 	default:
 		return fmt.Errorf("unknown command kind %q", c.Kind)
 	}
@@ -520,4 +527,16 @@ type KBResult struct {
 	Result     string `json:"result"`
 	Merged     string `json:"merged,omitempty"`
 	Detail     string `json:"detail,omitempty"`
+}
+
+// DreamSpec describes a dream's workspace (ADR-0027): the role memories it consolidates, whose transcripts it may read
+// and the evidence budget. Transcripts are read from the space's instances on the node; only what is new since the
+// dream configuration's last committed position is offered.
+type DreamSpec struct {
+	ConfigID        string   `json:"config_id"`
+	MemoryRoles     []string `json:"memory_roles"`
+	TranscriptRoles []string `json:"transcript_roles"` // "*" for every role
+	ExcludeRoles    []string `json:"exclude_roles,omitempty"`
+	MaxFiles        int      `json:"max_files"`
+	MaxBytes        int64    `json:"max_bytes"`
 }

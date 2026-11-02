@@ -350,7 +350,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			if err != nil || n == 0 || svc.opts.OnCommandAck == nil {
 				return err
 			}
-			return svc.opts.OnCommandAck(ctx, tx, a.CommandID, a.Result)
+			return svc.opts.OnCommandAck(ctx, tx, a.CommandID, cmd.Kind, a.Result, a.Reason)
 		})
 	case proto.TypeRunReport:
 		var rep proto.RunReport

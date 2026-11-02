@@ -1290,6 +1290,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/dreams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's dream configurations */
+        get: operations["list-dreams"];
+        put?: never;
+        /** Add a dream configuration */
+        post: operations["create-dream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/dreams/{dream_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Edit a dream configuration */
+        put: operations["update-dream"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/dreams/{dream_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent dreams of a configuration */
+        get: operations["dream-runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/dreams/{dream_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dream now
+         * @description Starts a dreamer run unless one of this configuration is still going.
+         */
+        post: operations["start-dream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/human-actions": {
         parameters: {
             query?: never;
@@ -3391,6 +3463,136 @@ export interface components {
             readonly $schema?: string;
             lines: components["schemas"]["CatalogDiffLine"][];
         };
+        "Dream-runsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Dream-runsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["DreamRun"][];
+        };
+        DreamConfig: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DreamConfig.json
+             */
+            readonly $schema?: string;
+            enabled: boolean;
+            id: string;
+            /** @description Also read the dreamer's own transcripts (off by default) */
+            include_own: boolean;
+            instructions?: string;
+            /**
+             * Format: int64
+             * @description 0: manual only
+             */
+            interval_hours: number;
+            last_run?: components["schemas"]["DreamRun"];
+            /**
+             * Format: int64
+             * @description Transcript bytes offered per dream
+             */
+            max_bytes: number;
+            /**
+             * Format: int64
+             * @description Transcript files offered per dream
+             */
+            max_files: number;
+            /** Format: int64 */
+            max_minutes: number;
+            /**
+             * Format: int64
+             * @description Given to the dreamer as its budget; not enforced by SpaceMan
+             */
+            max_tokens: number;
+            /** @description Role memories the dream consolidates; * for every role */
+            memory_roles: string[];
+            name: string;
+            /** Format: date-time */
+            next_due_at?: string;
+            slug: string;
+            space_id: string;
+            /** @description A configured space role whose template is of kind dreamer */
+            space_role: string;
+            /** @description Roles whose transcripts it may read; * for every role */
+            transcript_roles: string[];
+            /** Format: int64 */
+            version: number;
+        };
+        DreamFinding: {
+            /** @description Where it comes from (files, transcript lines) */
+            evidence?: string;
+            /**
+             * @description What sort of finding
+             * @enum {string}
+             */
+            kind: "contradiction" | "instruction_conflict" | "stale" | "insight" | "question";
+            summary: string;
+        };
+        DreamInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DreamInput.json
+             */
+            readonly $schema?: string;
+            enabled?: boolean;
+            include_own?: boolean;
+            instructions?: string;
+            /**
+             * Format: int64
+             * @description 0-720; 0 runs only manually
+             */
+            interval_hours?: number;
+            /**
+             * Format: int64
+             * @description 64 KiB-64 MiB; default 2 MiB
+             */
+            max_bytes?: number;
+            /**
+             * Format: int64
+             * @description 1-200; default 20
+             */
+            max_files?: number;
+            /**
+             * Format: int64
+             * @description 5-240; default 30
+             */
+            max_minutes?: number;
+            /** Format: int64 */
+            max_tokens?: number;
+            memory_roles?: string[];
+            name: string;
+            slug?: string;
+            space_role: string;
+            transcript_roles?: string[];
+        };
+        DreamRun: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/DreamRun.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            deadline_at: string;
+            detail?: string;
+            /** Format: date-time */
+            ended_at?: string;
+            findings: components["schemas"]["DreamFinding"][];
+            id: string;
+            no_change: boolean;
+            run_id?: string;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            state: "running" | "reported" | "succeeded" | "failed" | "timed_out";
+            summary?: string;
+            /** @enum {string} */
+            trigger: "manual" | "schedule";
+        };
         "Enable-space-human-typeRequest": {
             /**
              * Format: uri
@@ -4431,6 +4633,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["ApprovalsApproval"][];
+        };
+        "List-dreamsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-dreamsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["DreamConfig"][];
         };
         "List-event-connectionsResponse": {
             /**
@@ -8647,6 +8858,177 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-dreams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-dreamsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-dream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DreamInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-dream": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                dream_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DreamInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamConfig"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "dream-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                dream_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dream-runsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "start-dream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                dream_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DreamRun"];
                 };
             };
             /** @description Error */

@@ -100,8 +100,10 @@ type LaunchInput struct {
 	Workspace  string            `json:"workspace,omitempty" maxLength:"256"`
 	Worktree   *proto.Worktree   `json:"worktree,omitempty" doc:"Run in a git worktree of a repository inside the space folder"`
 	// Skills are filled by resolution from the space role (not part of the API).
-	Skills     []proto.Skill `json:"-"`
-	AccountRef string        `json:"account_ref,omitempty"`
+	Skills []proto.Skill `json:"-"`
+	// Dream prepares a dream workspace (set by the dream scheduler, not part of the API).
+	Dream      *proto.DreamSpec `json:"-"`
+	AccountRef string           `json:"account_ref,omitempty"`
 }
 
 // LaunchRun creates a run pinned to the space's node and current lease generation and queues the launch command.
@@ -201,7 +203,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: in.SessionID,
 			Resume: in.SessionID != "", Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
-			Worktree: in.Worktree, Skills: in.Skills, AccountRef: in.AccountRef}
+			Worktree: in.Worktree, Skills: in.Skills, AccountRef: in.AccountRef, Dream: in.Dream}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
 		}
@@ -614,6 +616,11 @@ func (svc *Service) AuthenticateRun(ctx context.Context, tok string) (*RunPrinci
 // inside the caller's transaction, and returns the command ID; call KickSpace after the commit. It fails while the
 // node holds no valid lease: work in a space only happens on its current node.
 func (svc *Service) QueueSpaceCommand(ctx context.Context, tx *store.Tx, spaceID, kind, key string, payload any) (string, error) {
+	return svc.QueueSpaceCommandForRun(ctx, tx, spaceID, "", kind, key, payload)
+}
+
+// QueueSpaceCommandForRun is QueueSpaceCommand for a command about one run (dream.commit).
+func (svc *Service) QueueSpaceCommandForRun(ctx context.Context, tx *store.Tx, spaceID, runID, kind, key string, payload any) (string, error) {
 	sp, err := tx.Q.GetSpace(ctx, spaceID)
 	if err != nil {
 		return "", errSpaceNotFound
@@ -622,7 +629,7 @@ func (svc *Service) QueueSpaceCommand(ctx context.Context, tx *store.Tx, spaceID
 	if err != nil || lease.State != "active" || !tx.Now.Before(time.UnixMicro(lease.ExpiresAt)) || lease.NodeID != sp.NodeID {
 		return "", apperr.New(apperr.CodeUnavailable, "the space's node is not connected (no valid execution lease)")
 	}
-	return svc.queueCommandID(ctx, tx, sp.NodeID, spaceID, "", lease.Generation, kind, key, payload)
+	return svc.queueCommandID(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, kind, key, payload)
 }
 
 // KickSpace wakes the delivery of commands to the space's node.

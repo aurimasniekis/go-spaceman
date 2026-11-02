@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Roles and prompts: versioned prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates
   and space roles. Launches resolve them in a documented order with a permission-mode ceiling, and each run records its
   configuration in a manifest.
+- Dreams: a dreamer agent consolidates role memory from new transcript segments on demand or on a schedule, within
+  time and evidence budgets; it reports findings, and the evidence it read counts as done only after its memory
+  changes are checkpointed. A built-in prompt describes the method.
 - Knowledge bases: agents ask a space's KB repositories through their tools; each requester gets its own support
   session (queued at capacity, put to sleep when idle, recovered when it fails); answers cite evidence and say whether
   they rest on accepted knowledge; proposals are accepted on the node after the KB's check, never forced.
