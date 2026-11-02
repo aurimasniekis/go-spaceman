@@ -1,0 +1,34 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Local runtime data and secrets — never commit
+/data/
+/.spaceman/
+*.kek
+kek
+*.db
+*.db-wal
+*.db-shm
+*.smrec.zst.partial
+
+# Frontend
+node_modules/
+/web/dist/
+/web/test-results/
+/web/playwright-report/
+/web/blob-report/
+/site/.vitepress/dist/
+/site/.vitepress/cache/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Binaries at repo root
+/spaceman
+/spaceman-agent

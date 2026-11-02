@@ -1,0 +1,4 @@
+title = "spaceman gitleaks config"
+
+[extend]
+useDefault = true

@@ -1,0 +1,42 @@
+# SpaceMan — Threat model
+
+> Living document. Threat IDs (`T-NN`) are stable. Each mitigation names the requirement or ADR that implements it and the test that
+> verifies it, once that test exists.
+
+## Assets
+Harness credentials (Claude OAuth tokens, OpenAI/Codex keys); upstream MCP credentials; Pulse `.creds`; node credentials; run credentials;
+root and API tokens; the KEK and keyring; operator sessions; source code in workspaces; memory and KB repositories; transcripts and
+recordings (may contain secrets); human-action responses (may be sensitive); attachments; the audit log.
+
+## Actors
+Operators (viewer/operator/admin, space-scoped); the root token holder; node operators with shell access; agents (models running inside
+harnesses, possibly prompt-injected); external event publishers (via Pulse); upstream MCP servers; network attackers.
+
+## Trust boundaries
+```mermaid
+flowchart LR
+  B["Browser (operator)"] -->|"TLS, session + CSRF"| C["spaceman central"]
+  T["API / Terraform / CLI"] -->|"TLS, bearer token"| C
+  N["spaceman-agent"] -->|"TLS WebSocket, node credential"| C
+  A["Harness process (agent)"] -->|"stdio MCP via bridge, run credential"| N
+  P["Pulse / NATS"] -->|"creds + TLS; payload untrusted"| C
+  C -->|"egress policy"| U["Upstream MCP servers"]
+```
+
+## Threats
+| ID | Threat | Mitigation | Requirement / ADR |
+|---|---|---|---|
+| T-01 | A prompt-injected agent tries to act as control or launch arbitrary workers | Run credentials bound to role, authorized centrally per tool, workers cannot promote themselves | SM-CTRL-003, ADR-0012 |
+| T-02 | A stale or duplicated launch runs twice after a restart | Lease generation fencing, hc name/label adoption, journal-before-launch | SM-NODE-004/006/009, ADR-0006/0007 |
+| T-03 | Event text injects instructions or authority | Raw payload stored apart from trusted rendered instructions, authority only from source config and policy | SM-INBOX-004, SM-EVT-008 |
+| T-04 | Template variables broaden a NATS subscription | Typed variables, a token regex that forbids `*`/`>`, filter validated against the granted subject | SM-EVT-010 |
+| T-05 | Secrets leak through logs, manifests, API reads or hc state | Write-only secrets, redaction, launcher shim (no secrets in hc env) | SM-ACCT-005, ADR-0009 |
+| T-06 | An approval is replayed or applied to changed arguments | Argument digest binding, single-use and limited uses, recheck at execution | SM-APPR-002/003 |
+| T-07 | A custom schema field such as "approved" is treated as a grant | Enforcement uses only approval records SpaceMan created for gated operations | SM-HTYPE-006 |
+| T-08 | Cross-space data leaks through the global human page or KB | Casbin domain filtering in queries, explicit cross-space requests | SM-HUI-003, SM-XSPACE-003 |
+| T-09 | An uploaded attachment executes in the operator's browser (SVG/HTML XSS) | Download disposition, raster-only inline allowlist, nosniff, sandbox CSP, Markdown-only bodies with sanitizing render | SM-ATT-004, ADR-0013 |
+| T-10 | An upstream MCP server is reached via SSRF to internal addresses | Egress policy that denies private and loopback by default, plus an explicit allowlist | SM-MCP-002 |
+| T-11 | A lost root token gives permanent full control | Shown once, verifier stored, use is audited, rotation and revocation, never handed to agents or nodes | SM-AUTH-005 |
+| T-12 | A crashed node daemon leaves runs going past the disconnect grace | Dead-daemon mechanism (pending K-3), reconcile on start | SM-NODE-008 |
+| T-13 | A browser terminal takes input without authorization | Watch-only default, takeover permission, server-side input gate, audit | SM-UI-004 |
+| T-14 | An event feedback loop (SpaceMan's own outbound events re-ingested) | Origin, causation headers and automation depth bounds | SM-EVT-016 |
