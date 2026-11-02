@@ -42,6 +42,8 @@ type fleetEnv struct {
 	agentDir string
 	cred     string
 	done     chan struct{}
+	// bridge is the agent's MCP bridge socket (short path: unix socket limit).
+	bridge string
 }
 
 func newFleetEnv(t *testing.T) *fleetEnv {
@@ -58,7 +60,12 @@ func newFleetEnv(t *testing.T) *fleetEnv {
 	if err := keyring.WriteKEKFile(cfg.KEK.File, k); err != nil {
 		t.Fatal(err)
 	}
-	e := &fleetEnv{t: t, cfg: cfg, run: runnertest.New(), agentDir: filepath.Join(dir, "agent")}
+	sock, err := os.MkdirTemp("/tmp", "smb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sock) })
+	e := &fleetEnv{t: t, cfg: cfg, run: runnertest.New(), agentDir: filepath.Join(dir, "agent"), bridge: filepath.Join(sock, "b.sock")}
 	e.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { (*e.handler.Load()).ServeHTTP(w, r) }))
 	cfg.PublicURL = "http://" + e.srv.Listener.Addr().String()
 	e.startCentral()
@@ -128,7 +135,7 @@ func (e *fleetEnv) startAgent() {
 	}
 	a := agent.New(j, agent.Options{DataDir: e.agentDir, CentralURL: e.srv.URL, Credential: e.cred, Runner: e.run,
 		RunnerInfo: proto.RunnerInfo{Kind: "fake", CoreID: "fakecore"}, HarnessBinaries: map[string]string{hns.KindClaude: "/usr/bin/true", hns.KindCodex: "/usr/bin/true"},
-		AgentBinary: "/usr/bin/true", ReconnectMax: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
+		AgentBinary: "/usr/bin/true", BridgeSocket: e.bridge, ReconnectMax: 200 * time.Millisecond, Capacity: 4, Log: testLog()})
 	e.agentFn, e.agentJ, e.done = cancel, j, make(chan struct{})
 	go func() { _ = a.Run(ctx); close(e.done) }()
 }

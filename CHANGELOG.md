@@ -36,6 +36,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Accounts: Claude subscription tokens, Anthropic and OpenAI API keys stored sealed and never shown again, allowed per
   space with a default per harness. Launches pick the account deterministically and refuse clearly when none fits;
   rotation applies to later launches.
+- Agent tools: every run's SpaceMan MCP server now serves the tools its kind may use, over the node connection: reading
+  and adding inbox items, reading and managing tasks, fetching attachments, and asking people through human actions.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

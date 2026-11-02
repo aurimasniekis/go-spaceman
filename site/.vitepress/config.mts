@@ -61,6 +61,7 @@ export default withMermaid(
             { text: 'The inbox', link: '/guide/inbox' },
             { text: 'The execution queue', link: '/guide/queue' },
             { text: 'Human actions', link: '/guide/human-actions' },
+            { text: 'Agent tools', link: '/guide/agent-tools' },
             { text: 'Events and subscriptions', link: '/guide/events' },
             { text: 'Project status', link: '/guide/status' },
           ],

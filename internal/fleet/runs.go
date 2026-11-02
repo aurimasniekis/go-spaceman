@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -427,8 +428,19 @@ type RunPrincipal struct {
 	Generation int64
 }
 
-// issueRunToken creates a fresh run credential, revoking earlier ones (a re-dispatched launch gets a new token).
-func (svc *Service) issueRunToken(ctx context.Context, runID string) (string, error) {
+// runToken returns the run's credential, creating it on first use. A run keeps one token for its lifetime: the launch
+// may be re-sent until the node acknowledges it, and every copy must carry the token the harness already holds. The
+// token is stored as a MAC (for authentication) and sealed (for re-delivery); revocation ends it (run ended).
+func (svc *Service) runToken(ctx context.Context, runID string) (string, error) {
+	if enc, err := svc.s.R().GetActiveRunToken(ctx, runID); err == nil {
+		b, err := svc.kr.Open(keyring.PurposeCredential, runTokenAAD(runID), enc)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
 	tok, err := randToken(RunTokenPrefix)
 	if err != nil {
 		return "", err
@@ -437,14 +449,23 @@ func (svc *Service) issueRunToken(ctx context.Context, runID string) (string, er
 	if err != nil {
 		return "", err
 	}
+	sealed, err := svc.kr.Seal(keyring.PurposeCredential, runTokenAAD(runID), []byte(tok))
+	if err != nil {
+		return "", err
+	}
 	err = svc.s.W().TxNamed(ctx, "fleet.issue_run_token", func(tx *store.Tx) error {
-		if _, err := tx.Q.RevokeRunCredentials(ctx, db.RevokeRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RunID: runID}); err != nil {
+		// Another dispatch may have created it meanwhile: reuse that one.
+		if enc, err := tx.Q.GetActiveRunToken(ctx, runID); err == nil {
+			b, err := svc.kr.Open(keyring.PurposeCredential, runTokenAAD(runID), enc)
+			tok = string(b)
 			return err
 		}
-		return tx.Q.InsertRunCredential(ctx, db.InsertRunCredentialParams{Mac: m, RunID: runID, CreatedAt: tx.NowMicros()})
+		return tx.Q.InsertRunCredential(ctx, db.InsertRunCredentialParams{Mac: m, RunID: runID, CreatedAt: tx.NowMicros(), TokenEnc: sealed})
 	})
 	return tok, err
 }
+
+func runTokenAAD(runID string) []byte { return []byte("run_token:" + runID) }
 
 // AuthenticateRun resolves a run credential while the run is active and its credential unrevoked.
 func (svc *Service) AuthenticateRun(ctx context.Context, tok string) (*RunPrincipal, error) {

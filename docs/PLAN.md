@@ -39,7 +39,7 @@
 | M2-03 | Pulse ingestion: connections, durable consumers, dedup, quarantine, fan-out, metrics | SM-EVT-011…016 | implemented (real SDK on an in-process NATS server; UI; e2e via devpulse); metrics and NATS Core pending |
 | M2-04 | Event templates + subscriptions + GitHub presets + UI preview/testing | SM-EVT-001…010, 017 | implemented: engine, catalog, subscriptions, preview, UI, guide and screenshots |
 | M2-05 | Execution queue: ordering, dependencies, exclusions, eligibility, incidents, demotion | SM-QUEUE-* | implemented: service, API, UI with drag and keyboard sorting, guide, screenshots |
-| M2-06 | Control + workers + worktrees + durable messages + delivery adapters | SM-CTRL-*, SM-COMM-*, SM-REPO-* | todo |
+| M2-06 | Control + workers + worktrees + durable messages + delivery adapters | SM-CTRL-*, SM-COMM-*, SM-REPO-* | in progress: agent tool gateway done (catalog per kind, inbox/tasks/attachments/human tools); messages, orchestration, worktrees next |
 | M2-07 | Human actions: default types, lifecycle, MCP, reply routing; per-space + global UI | SM-HUM-*, SM-HUI-* | implemented (MCP tools and notification delivery with M2-06): service, API, global and per-space UI, guide, screenshots |
 | M2-08 | Docs + screenshots for M2 | SM-DOCS | todo |
 
@@ -112,7 +112,8 @@
 | 2026-11-02 | M2-05 | Execution queue: insertion by priority/policy, authoritative moves, dedup that never re-promotes, escalation by policy, dependencies (cycles rejected), blockers, exclusions, active limit, selection with skip reasons, states with preemption; API, UI with drag and keyboard sorting, create task from inbox | `9bb3c22` | `internal/queue` tests, `TestQueueOverHTTP`, `make e2e` (inbox → task, Alt+↑, start) |
 | 2026-11-02 | M2-07 | Human actions: question, approval (advisory), to-do and message types with distinct responses; lifecycle separate from outcome; atomic finalization; claim, comments, withdraw, expiry, follow-ups, dedup and limits; blocking only the related task; durable requester notifications; Needs you page with nav badge, per-space tab, safe bulk actions | `d7f295a` | `internal/human` tests (84%), `TestHumanActionsOverHTTP`, `make e2e` (blocking question answered) |
 | 2026-11-02 | M1-07 | Spike S-5 with a setup-token: interactive Claude needs first-run state and folder trust seeded; shim scrubs inherited session markers and node credentials (ADR-0021, K-10 resolved) | `8d5cf8b` | `TestScrubEnv`, `TestMergeJSONFile`, `TestClaudeBuild` |
-| 2026-11-02 | M3-01 | Accounts: sealed write-only credentials, kinds per harness, space bindings with defaults, deterministic resolution at launch, current secret at dispatch, unusable account fails the run; Accounts page, space card, launch choice | this commit (`feat(accounts)`) | `internal/accounts` tests (85.8%), `TestFleetLifecycle`, `make e2e`, `test/real` `TestRealClaudeRun` (real Claude Code, Haiku) |
+| 2026-11-02 | M3-01 | Accounts: sealed write-only credentials, kinds per harness, space bindings with defaults, deterministic resolution at launch, current secret at dispatch, unusable account fails the run; Accounts page, space card, launch choice | `bb70d0f` | `internal/accounts` tests (85.8%), `TestFleetLifecycle`, `make e2e`, `test/real` `TestRealClaudeRun` (real Claude Code, Haiku) |
+| 2026-11-02 | M2-06 | Agent tool gateway: protocol minor 1 tool calls, central authentication per call, catalogs per run kind, inbox/task/attachment/human tools; one sealed token per run (ADR-0022); agent inbox items audited | this commit (`feat(agents)`) | `internal/agenttools` tests (86.7%), `TestAgentToolsOverBridge` |
 
 ## 4. Process deviations
 

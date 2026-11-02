@@ -291,6 +291,24 @@
     same trust an operator gives by launching an agent there; the permission mode still governs tool use.
   - Keys are taken from observed 2.1.316 behaviour, not a documented API; a harness upgrade is re-verified by the real suite.
 
+### ADR-0022 — Agent tools travel over the node connection; one sealed credential per run
+- **Status:** accepted (2026-11-02). **Security-relevant**: run tokens are now also stored encrypted.
+- **Context:**
+  - ADR-0012 puts agents behind `spaceman-agent mcp-bridge`, forwarding to central over the node connection.
+  - Launch commands are re-sent until the node acknowledges them. Issuing a new token on every send revoked the token
+    the running harness already held, so its tool calls failed (found by `TestAgentToolsOverBridge`).
+- **Decision:**
+  - Node protocol minor 1 adds `tool.call` and `tool.result`. The node forwards a call only for a run whose token it
+    issued; central authenticates the token itself, checks that the run belongs to that node, and runs the tool with a
+    25-second deadline and at most 8 concurrent calls per node. The bridge waits at most 30 seconds.
+  - The bridge asks central for the run's catalog (`_catalog`) and serves exactly those tools. Grants are by run kind,
+    in code (`internal/agenttools`); arguments can never select another space or requester.
+  - A run has one token for its lifetime. It is stored as a MAC (authentication) and sealed with the keyring purpose
+    `credential` (re-delivery). Ending the run revokes it.
+- **Consequences:**
+  - A keyring compromise exposes active run tokens; they grant only that run's tools while it is active.
+  - Internal errors reach the agent as "internal error"; details are logged centrally.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -300,7 +318,7 @@
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
 | K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). | — | done |
-| K-6 | Official Go MCP SDK version and streamable/stdio APIs. | MCP gateway | Inspect module source. |
+| K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream (streamable HTTP) clients are inspected with M3-03. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | llm-knowledge-base-template layout and licence; Piebald dream prompts licence. | KB, dreamer | Fetch and record; attribute or paraphrase per licence. |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |

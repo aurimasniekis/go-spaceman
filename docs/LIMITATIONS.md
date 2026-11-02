@@ -34,9 +34,9 @@
 ## Human actions
 - **Approvals are advisory.** An approval decision is recorded, audited and sent to the requester, but SpaceMan does not
   yet enforce it on the operation; digest-bound enforcement arrives with the approval gateway (SM-APPR, M3).
-- **Agents cannot create human actions yet.** Operators create them in the UI or API; the agents' MCP tools arrive with
-  control and workers (SM-HUM-008, M2-06). Notifications for agent requesters are stored durably, but no delivery
-  adapter consumes them yet (SM-HUM-009).
+- **Responses are not pushed to agents yet.** Agents ask through `spaceman_human_ask` and read answers with
+  `spaceman_human_get`; notifications are stored durably, and delivery adapters that wake or notify the requester
+  arrive with agent messaging (SM-HUM-009, M2-06).
 - **Default types only.** Custom types with schema-driven forms arrive in M3 (SM-HTYPE). Reminders and escalation
   arrive in M4; expiry runs once a minute.
 

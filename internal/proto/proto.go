@@ -25,7 +25,7 @@ const (
 	// Major is the protocol major version; MinMinor..MaxMinor is the range this build accepts.
 	Major    = 1
 	MinMinor = 0
-	MaxMinor = 0
+	MaxMinor = 1 // 1: agent tool calls (tool.call / tool.result)
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -40,6 +40,7 @@ const (
 	TypeAck       = "ack"
 	TypeRunReport = "run.report"
 	TypeRecording = "recording.chunk"
+	TypeToolCall  = "tool.call" // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
 
 	// central → node
 	TypeWelcome      = "welcome"
@@ -48,6 +49,7 @@ const (
 	TypeCommand      = "command"
 	TypeReconcile    = "reconcile" // central's desired state for every run assigned to the node
 	TypeRecordingAck = "recording.ack"
+	TypeToolResult   = "tool.result" // minor ≥ 1
 	TypeError        = "error"
 )
 
@@ -360,6 +362,39 @@ func (c Command) Validate() error {
 		return fmt.Errorf("unknown command kind %q", c.Kind)
 	}
 	return nil
+}
+
+// MinorTools is the first minor version that carries agent tool calls.
+const MinorTools = 1
+
+// ToolCall is one agent tool call (ADR-0012). Central authenticates RunToken itself; the node only forwards calls whose
+// token it issued to that run. ToolCatalog asks for the tools the run may use.
+type ToolCall struct {
+	CallID   string          `json:"call_id"`
+	RunID    string          `json:"run_id"`
+	RunToken string          `json:"run_token"`
+	Tool     string          `json:"tool"`
+	Args     json.RawMessage `json:"args,omitempty"`
+}
+
+// ToolCatalog is the reserved tool name that lists a run's tools.
+const ToolCatalog = "_catalog"
+
+// ToolResult answers a ToolCall. Code is an apperr code when OK is false.
+type ToolResult struct {
+	CallID string          `json:"call_id"`
+	OK     bool            `json:"ok"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  string          `json:"error,omitempty"`
+	Code   string          `json:"code,omitempty"`
+}
+
+// AgentTool describes one tool in a run's catalog.
+type AgentTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+	ReadOnly    bool            `json:"read_only,omitempty"`
 }
 
 // Negotiate picks the minor version both sides support, or fails.

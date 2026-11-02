@@ -18,6 +18,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/aurimasniekis/go-spaceman/internal/accounts"
+	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -62,6 +63,8 @@ type Central struct {
 	Events *events.Service
 	// Queue is each space's execution queue (SM-QUEUE-*).
 	Queue *queue.Service
+	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
+	Tools *agenttools.Registry
 	// Accounts holds harness credentials (SM-ACCT-*).
 	Accounts *accounts.Service
 	// Human holds requests for people: questions, approvals, to-dos and messages (SM-HUM-*).
@@ -133,6 +136,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Inbox = inbox.New(st, c.Audit, c.Changes, c.Attachments)
 	c.Queue = queue.New(st, c.Audit, c.Changes)
 	c.Human = human.New(st, c.Audit, c.Changes, o.Clock)
+	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human})
+	c.Fleet.Hub().Tools = c.Tools.Dispatch
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Events.SeedBuiltins(ctx); err != nil {
 		_ = st.Close()

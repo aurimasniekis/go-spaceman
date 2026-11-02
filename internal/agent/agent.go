@@ -82,6 +82,10 @@ type Agent struct {
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
+	// minor is the negotiated protocol minor version of the current connection.
+	minor int
+	// toolCalls are the agent tool calls waiting for central's result, by call ID.
+	toolCalls map[string]chan proto.ToolResult
 }
 
 // New prepares an agent; Run starts it.
@@ -271,7 +275,7 @@ func (a *Agent) session(ctx context.Context) error {
 				return err
 			}
 			a.mu.Lock()
-			a.connected, a.lostAt = true, time.Time{}
+			a.connected, a.lostAt, a.minor = true, time.Time{}, w.Minor
 			if w.HeartbeatInterval > 0 {
 				a.heartbeat = w.HeartbeatInterval
 			}
@@ -307,6 +311,11 @@ func (a *Agent) session(ctx context.Context) error {
 			var ack proto.RecordingAck
 			if err := env.Decode(&ack); err == nil {
 				a.recordingAck(ack)
+			}
+		case proto.TypeToolResult:
+			var res proto.ToolResult
+			if err := env.Decode(&res); err == nil {
+				a.toolResult(res)
 			}
 		case proto.TypeError:
 			var e proto.Error

@@ -15,4 +15,6 @@ attribution needs specific mention.
 | go-pulse v0.1.3 SDK (`pkg/pulse`) | Event consumption (durable subscriptions) | Apache-2.0 | Go module dependency, pinned at the inspected commit `9aba53b`. |
 | go-pulse-github v0.1.0 fixture | `internal/events/template/testdata/pulse-github-issues-opened.json` wraps `testdata/webhooks/issues_opened.json` | MIT | Derivation documented in that folder's README. |
 | nats-server v2.15.1, nats.go, nats jwt, nkeys | In-process NATS server for tests (`internal/events/pulsetest`), NATS client | Apache-2.0 | The server is linked only into test binaries and the `devpulse` development tool, never into `spaceman` or `spaceman-agent`. |
+| MCP Go SDK v1.8.0 (`github.com/modelcontextprotocol/go-sdk`) | The agent's stdio MCP server (`spaceman-agent mcp-bridge`) | Apache-2.0 and MIT (licence transition stated in its LICENSE) | Go module dependency. |
+| jsonschema-go v0.4.3 (`github.com/google/jsonschema-go`) | JSON Schemas of agent tool inputs | MIT | Go module dependency. |
 | santhosh-tekuri/jsonschema v6.0.3 | Event template input schemas (JSON Schema 2020-12) | Apache-2.0 | External references are disabled. |

@@ -16,6 +16,7 @@ PACKAGES=(
   internal/attachments
   internal/human
   internal/accounts
+  internal/agenttools
 )
 
 fail=0

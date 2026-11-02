@@ -31,6 +31,13 @@ type SecretsResolver func(ctx context.Context, run *Run) (map[string]string, err
 // the run is then failed instead of being retried forever.
 var ErrCredentialsUnavailable = errors.New("the run's account is no longer usable")
 
+// ToolDispatcher runs an authenticated agent's tool call (ADR-0012). The catalog call (proto.ToolCatalog) returns
+// the run's tools as []proto.AgentTool.
+type ToolDispatcher func(ctx context.Context, p *RunPrincipal, tool string, args json.RawMessage) (json.RawMessage, error)
+
+// toolCallTimeout bounds one agent tool call: MCP calls are never held open indefinitely (SM-COMM-004).
+const toolCallTimeout = 25 * time.Second
+
 // Hub holds the live node connections. Each connection has one reader loop and one writer goroutine; work for a node
 // is triggered by Kick (after a commit) rather than by polling (SM-ARCH-004).
 type Hub struct {
@@ -40,6 +47,8 @@ type Hub struct {
 	sessions map[string]*session
 	// Secrets attaches run secrets to launches (nil: none).
 	Secrets SecretsResolver
+	// Tools runs agent tool calls (nil: agents only have the node's local tools).
+	Tools ToolDispatcher
 }
 
 type session struct {
@@ -51,6 +60,8 @@ type session struct {
 	done   chan struct{}
 	once   sync.Once
 	log    *slog.Logger
+	// tools bounds concurrent agent tool calls from this node.
+	tools chan struct{}
 }
 
 func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }
@@ -144,7 +155,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(proto.MaxMessage)
-	s := &session{nodeID: node.ID, credID: credID, conn: conn, out: make(chan []byte, 256), kick: make(chan struct{}, 1), done: make(chan struct{}),
+	s := &session{nodeID: node.ID, credID: credID, conn: conn, out: make(chan []byte, 256), kick: make(chan struct{}, 1), done: make(chan struct{}), tools: make(chan struct{}, 8),
 		log: obs.Component(h.svc.opts.Log, "fleet").With(slog.String(obs.FieldNodeID, node.ID))}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if err := h.run(context.WithoutCancel(ctx), s, ip); err != nil && !errors.Is(err, net.ErrClosed) {
@@ -261,6 +272,42 @@ func (h *Hub) writer(ctx context.Context, s *session) {
 	}
 }
 
+// toolCall authenticates the run itself (the node's word is not enough), checks that the run belongs to this node, and
+// runs the tool with a deadline. Internal errors are not described to the agent.
+func (h *Hub) toolCall(ctx context.Context, s *session, call proto.ToolCall) {
+	ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
+	defer cancel()
+	reply := func(res proto.ToolResult) {
+		res.CallID = call.CallID
+		_ = s.send(proto.TypeToolResult, h.svc.now(), res)
+	}
+	p, err := h.svc.AuthenticateRun(ctx, call.RunToken)
+	if err != nil || p.RunID != call.RunID {
+		reply(proto.ToolResult{Error: "the run credential is not valid (the run ended or was relaunched)", Code: string(apperr.CodeUnauthorized)})
+		return
+	}
+	if r, err := h.svc.s.R().GetRun(ctx, p.RunID); err != nil || r.NodeID != s.nodeID {
+		reply(proto.ToolResult{Error: "the run is not assigned to this node", Code: string(apperr.CodeForbidden)})
+		return
+	}
+	if h.Tools == nil {
+		reply(proto.ToolResult{Error: "agent tools are not available", Code: string(apperr.CodeUnavailable)})
+		return
+	}
+	out, err := h.Tools(ctx, p, call.Tool, call.Args)
+	if err != nil {
+		code := apperr.CodeOf(err)
+		msg := err.Error()
+		if code == "" {
+			s.log.Warn("agent tool call failed", slog.String("tool", call.Tool), slog.String(obs.FieldRunID, p.RunID), obs.Err(err))
+			code, msg = "internal", "internal error"
+		}
+		reply(proto.ToolResult{Error: msg, Code: string(code)})
+		return
+	}
+	reply(proto.ToolResult{OK: true, Result: out})
+}
+
 func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error {
 	svc := h.svc
 	switch env.Type {
@@ -303,6 +350,22 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 				Payload: mustJSON(proto.StopPayload{Mode: "kill", Reason: "fenced: stale lease generation or unknown run"})})
 		}
 		return err
+	case proto.TypeToolCall:
+		var call proto.ToolCall
+		if err := env.Decode(&call); err != nil {
+			return err
+		}
+		select {
+		case s.tools <- struct{}{}:
+			go func() {
+				defer func() { <-s.tools }()
+				h.toolCall(ctx, s, call)
+			}()
+		default:
+			_ = s.send(proto.TypeToolResult, svc.now(), proto.ToolResult{CallID: call.CallID, Error: "too many concurrent tool calls from this node; retry",
+				Code: string(apperr.CodeRateLimited)})
+		}
+		return nil
 	case proto.TypeRecording:
 		var c proto.RecordingChunk
 		if err := env.Decode(&c); err != nil {
@@ -441,7 +504,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand) (proto.Command,
 	if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
 		return msg, err
 	}
-	tok, err := h.svc.issueRunToken(ctx, c.RunID.String)
+	tok, err := h.svc.runToken(ctx, c.RunID.String)
 	if err != nil {
 		return msg, err
 	}

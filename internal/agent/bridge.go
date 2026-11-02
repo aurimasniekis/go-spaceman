@@ -11,11 +11,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // The MCP bridge (ADR-0012): each harness runs `spaceman-agent mcp-bridge` as its only SpaceMan MCP server (stdio).
@@ -35,6 +38,7 @@ type bridgeResponse struct {
 	OK     bool            `json:"ok"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
+	Code   string          `json:"code,omitempty"`
 }
 
 // WhoAmI is the identity of the calling run.
@@ -123,6 +127,8 @@ func (a *Agent) bridgeCall(ctx context.Context, req bridgeRequest) bridgeRespons
 		return bridgeResponse{Error: "run is not active"}
 	}
 	switch req.Tool {
+	default:
+		return a.forwardTool(ctx, req)
 	case "whoami":
 		b, _ := json.Marshal(WhoAmI{RunID: r.RunID, SpaceID: r.SpaceID, Kind: r.Kind, Role: r.Role, Harness: r.Harness, InstanceID: r.InstanceID,
 			State: r.State, Generation: r.Generation})
@@ -134,21 +140,80 @@ func (a *Agent) bridgeCall(ctx context.Context, req bridgeRequest) bridgeRespons
 		b, _ := json.Marshal(map[string]any{"pong": true, "central_connected": connected, "agent_version": buildinfo.Get().Version})
 		return bridgeResponse{OK: true, Result: b}
 	}
-	return bridgeResponse{Error: "unknown tool"}
 }
 
-// MCPBridge runs the stdio MCP server for one harness process.
+// bridgeTimeout bounds a forwarded call end to end (central's own deadline is shorter).
+const bridgeTimeout = 30 * time.Second
+
+// forwardTool sends a tool call to central over the node connection and waits for its result (ADR-0012). Central
+// authenticates the run token itself.
+func (a *Agent) forwardTool(ctx context.Context, req bridgeRequest) bridgeResponse {
+	a.mu.Lock()
+	connected, minor := a.connected, a.minor
+	a.mu.Unlock()
+	if !connected {
+		return bridgeResponse{Error: "SpaceMan central is not reachable from this node right now; retry later", Code: "unavailable"}
+	}
+	if minor < proto.MinorTools {
+		return bridgeResponse{Error: "SpaceMan central does not support agent tools yet (upgrade central)", Code: "unavailable"}
+	}
+	id := ids.New(ids.Message)
+	ch := make(chan proto.ToolResult, 1)
+	a.mu.Lock()
+	if a.toolCalls == nil {
+		a.toolCalls = map[string]chan proto.ToolResult{}
+	}
+	a.toolCalls[id] = ch
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		delete(a.toolCalls, id)
+		a.mu.Unlock()
+	}()
+	if err := a.send(ctx, proto.TypeToolCall, proto.ToolCall{CallID: id, RunID: req.Run, RunToken: req.Token, Tool: req.Tool, Args: req.Args}); err != nil {
+		return bridgeResponse{Error: "could not reach SpaceMan central; retry later", Code: "unavailable"}
+	}
+	t := time.NewTimer(bridgeTimeout)
+	defer t.Stop()
+	select {
+	case res := <-ch:
+		if !res.OK {
+			return bridgeResponse{Error: res.Error, Code: res.Code}
+		}
+		return bridgeResponse{OK: true, Result: res.Result}
+	case <-t.C:
+		return bridgeResponse{Error: "SpaceMan did not answer in time; the call may or may not have taken effect, check before retrying", Code: "unavailable"}
+	case <-ctx.Done():
+		return bridgeResponse{Error: "the node agent is shutting down", Code: "unavailable"}
+	}
+}
+
+func (a *Agent) toolResult(res proto.ToolResult) {
+	a.mu.Lock()
+	ch := a.toolCalls[res.CallID]
+	a.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- res:
+		default:
+		}
+	}
+}
+
+// MCPBridge runs the stdio MCP server for one harness process. Besides the local identity tools it serves the run's
+// catalog from central: exactly the tools the run's kind may use (ADR-0012). If central cannot be reached at start,
+// only the local tools are served and spaceman_ping says why.
 func MCPBridge(ctx context.Context, in io.Reader, out io.Writer, run, socket string) error {
 	token := os.Getenv("SPACEMAN_RUN_TOKEN")
-	call := func(ctx context.Context, tool string) (json.RawMessage, error) {
+	call := func(ctx context.Context, tool string, args json.RawMessage) (json.RawMessage, error) {
 		var d net.Dialer
 		c, err := d.DialContext(ctx, "unix", socket)
 		if err != nil {
 			return nil, fmt.Errorf("the SpaceMan node agent is not reachable: %w", err)
 		}
 		defer c.Close()
-		_ = c.SetDeadline(time.Now().Add(30 * time.Second))
-		if err := json.NewEncoder(c).Encode(bridgeRequest{Run: run, Token: token, Tool: tool}); err != nil {
+		_ = c.SetDeadline(time.Now().Add(bridgeTimeout + 5*time.Second))
+		if err := json.NewEncoder(c).Encode(bridgeRequest{Run: run, Token: token, Tool: tool, Args: args}); err != nil {
 			return nil, err
 		}
 		var res bridgeResponse
@@ -163,7 +228,7 @@ func MCPBridge(ctx context.Context, in io.Reader, out io.Writer, run, socket str
 	s := mcp.NewServer(&mcp.Implementation{Name: "spaceman", Version: buildinfo.Get().Version}, nil)
 	mcp.AddTool(s, &mcp.Tool{Name: "spaceman_whoami", Description: "Your SpaceMan identity: run, space, role, agent kind and harness."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, WhoAmI, error) {
-			raw, err := call(ctx, "whoami")
+			raw, err := call(ctx, "whoami", nil)
 			if err != nil {
 				return nil, WhoAmI{}, err
 			}
@@ -173,7 +238,7 @@ func MCPBridge(ctx context.Context, in io.Reader, out io.Writer, run, socket str
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "spaceman_ping", Description: "Check that SpaceMan is reachable from this session."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, map[string]any, error) {
-			raw, err := call(ctx, "ping")
+			raw, err := call(ctx, "ping", nil)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -181,7 +246,53 @@ func MCPBridge(ctx context.Context, in io.Reader, out io.Writer, run, socket str
 			err = json.Unmarshal(raw, &m)
 			return nil, m, err
 		})
+	for _, t := range fetchCatalog(ctx, call) {
+		name := t.Name
+		s.AddTool(&mcp.Tool{Name: name, Description: t.Description, InputSchema: t.InputSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: t.ReadOnly}},
+			func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var args json.RawMessage
+				if req.Params != nil {
+					args = req.Params.Arguments
+				}
+				raw, err := call(ctx, name, args)
+				if err != nil {
+					// Tool errors go to the model as results it can read and act on, not as protocol failures.
+					return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil //nolint:nilerr // reported in the result
+				}
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}, StructuredContent: raw}, nil
+			})
+	}
 	return s.Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(in), Writer: nopWriteCloser{out}})
+}
+
+// fetchCatalog asks central for the run's tools, retrying briefly while the node connects. Entries without an object
+// input schema are skipped (the SDK refuses them).
+func fetchCatalog(ctx context.Context, call func(context.Context, string, json.RawMessage) (json.RawMessage, error)) []proto.AgentTool {
+	for attempt := 0; attempt < 5; attempt++ {
+		raw, err := call(ctx, proto.ToolCatalog, nil)
+		if err == nil {
+			var list []proto.AgentTool
+			if json.Unmarshal(raw, &list) != nil {
+				return nil
+			}
+			out := list[:0]
+			for _, t := range list {
+				var sch struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(t.InputSchema, &sch) == nil && sch.Type == "object" && strings.HasPrefix(t.Name, "spaceman_") {
+					out = append(out, t)
+				}
+			}
+			return out
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(time.Second):
+		}
+	}
+	return nil
 }
 
 type nopWriteCloser struct{ io.Writer }

@@ -164,7 +164,10 @@ UPDATE node_commands SET state = 'cancelled', reason = ? WHERE run_id = ? AND st
 SELECT * FROM node_commands WHERE run_id = ? ORDER BY created_at;
 
 -- name: InsertRunCredential :exec
-INSERT INTO run_credentials (mac, run_id, created_at) VALUES (?, ?, ?);
+INSERT INTO run_credentials (mac, run_id, created_at, token_enc) VALUES (?, ?, ?, ?);
+
+-- name: GetActiveRunToken :one
+SELECT token_enc FROM run_credentials WHERE run_id = ? AND revoked_at IS NULL AND token_enc IS NOT NULL ORDER BY created_at DESC LIMIT 1;
 
 -- name: GetRunCredential :one
 SELECT c.mac, c.run_id, c.revoked_at, r.space_id, r.kind, r.role, r.instance_id, r.desired, r.observed, r.generation

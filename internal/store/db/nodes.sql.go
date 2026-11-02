@@ -79,6 +79,17 @@ func (q *Queries) ExpireNodeCredential(ctx context.Context, arg ExpireNodeCreden
 	return err
 }
 
+const getActiveRunToken = `-- name: GetActiveRunToken :one
+SELECT token_enc FROM run_credentials WHERE run_id = ? AND revoked_at IS NULL AND token_enc IS NOT NULL ORDER BY created_at DESC LIMIT 1
+`
+
+func (q *Queries) GetActiveRunToken(ctx context.Context, runID string) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, getActiveRunToken, runID)
+	var token_enc []byte
+	err := row.Scan(&token_enc)
+	return token_enc, err
+}
+
 const getLease = `-- name: GetLease :one
 SELECT space_id, node_id, generation, state, granted_at, renewed_at, expires_at FROM execution_leases WHERE space_id = ?
 `
@@ -515,17 +526,23 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
 }
 
 const insertRunCredential = `-- name: InsertRunCredential :exec
-INSERT INTO run_credentials (mac, run_id, created_at) VALUES (?, ?, ?)
+INSERT INTO run_credentials (mac, run_id, created_at, token_enc) VALUES (?, ?, ?, ?)
 `
 
 type InsertRunCredentialParams struct {
 	Mac       []byte
 	RunID     string
 	CreatedAt int64
+	TokenEnc  []byte
 }
 
 func (q *Queries) InsertRunCredential(ctx context.Context, arg InsertRunCredentialParams) error {
-	_, err := q.db.ExecContext(ctx, insertRunCredential, arg.Mac, arg.RunID, arg.CreatedAt)
+	_, err := q.db.ExecContext(ctx, insertRunCredential,
+		arg.Mac,
+		arg.RunID,
+		arg.CreatedAt,
+		arg.TokenEnc,
+	)
 	return err
 }
 

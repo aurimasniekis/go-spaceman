@@ -222,7 +222,8 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		if err := svc.changes.Record(ctx, tx, spaceID, "inbox_item", id, "created", 1); err != nil {
 			return err
 		}
-		if actor.Type == audit.ActorUser || actor.Type == audit.ActorRoot {
+		// Event ingestion (the system actor) is recorded per delivery instead; people, tokens and agents are audited.
+		if actor.Type != audit.ActorSystem {
 			_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "inbox.item_created", Target: audit.Target{Type: "inbox_item", ID: id},
 				Details: map[string]any{"space_id": spaceID, "source_kind": in.SourceKind, "content_type": in.ContentType, "attachments": len(in.AttachmentIDs)}})
 		}

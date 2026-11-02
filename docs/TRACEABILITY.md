@@ -102,22 +102,22 @@
 | SM-QUEUE-010 | M2-05 | implemented | No automatic transition to done; `ResolveBlockersByRef` leaves task state unchanged (`TestEligibility`, `TestStatesAndPreemption`) |  |  |
 | SM-CTRL-001 | | todo | | | |
 | SM-CTRL-002 | | todo | | | |
-| SM-CTRL-003 | | todo | | | |
+| SM-CTRL-003 | M2-06 | partial | Control-only tools refused for workers (`TestCatalogs`, `TestAgentToolsOverBridge`) |  | Worker launch tools arrive with M2-06 control. |
 | SM-CTRL-004 | | todo | | | |
 | SM-CTRL-005 | | todo | | | |
 | SM-CTRL-006 | | todo | | | |
 | SM-COMM-001 | | todo | | | |
 | SM-COMM-002 | | todo | | | |
 | SM-COMM-003 | | todo | | | |
-| SM-COMM-004 | | todo | | | |
+| SM-COMM-004 | M2-06 | partial | Tool calls bounded (25 s central, 30 s bridge, 8 per node); dedup keys on inbox, tasks, human actions |  |  |
 | SM-HUM-001 | M2-07 | implemented | `internal/human` `TestOrderingListsAndCounts` (global list filtered by allowed spaces), `TestHumanActionsOverHTTP` (viewer sees only readable spaces; unreadable space 404) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): space tab and Needs you page |  |
-| SM-HUM-002 | M2-07 | partial | Requester kinds agent/operator/system set by the server, never by the body (`TestTypeSpecificResponses`) |  | Agent submission through MCP arrives with M2-06. |
+| SM-HUM-002 | M2-06 | implemented | Any run kind can submit (`spaceman_human_ask`, `TestAttachmentsAndHuman`); requester set from the credential (`TestAgentToolsOverBridge`) |  |  |
 | SM-HUM-003 | M2-07 | implemented | `TestTypeSpecificResponses`, `TestCreateValidation` (per-type request validation, informational vs action-required messages) |  |  |
 | SM-HUM-004 | M2-07 | implemented | Fields in migration 0008 and `human.Action`; `TestHumanActionsOverHTTP` |  | Event refs arrive with event-created actions; evidence attachments with MCP. |
 | SM-HUM-005 | M2-07 | implemented | `TestTypeSpecificResponses` (status and outcome separate), `TestCommentsAssignCancel` (cancel without outcome), `TestBlockingAffectsOnlyTheTask` (expiry without outcome) |  |  |
 | SM-HUM-006 | M2-07 | partial | `TestCommentsAssignCancel` (claim/assign, comments not responses, cancel), `TestOrderingListsAndCounts` (sorting, type filter) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): answer in the drawer | Search and clarification requests arrive later. |
 | SM-HUM-007 | M2-07 | implemented | `TestConcurrentResponsesOneWins` (8 concurrent responses, one wins, one notification), If-Match 428/412/409 in `TestHumanActionsOverHTTP`, follow-ups in `TestCommentsAssignCancel` |  |  |
-| SM-HUM-008 | M2-07 | partial | Idempotent create with dedup returns the durable ID (`TestDedup`, Idempotency-Key on the API) |  | MCP tools arrive with M2-06. |
+| SM-HUM-008 | M2-06 | implemented | `spaceman_human_ask/get/list/cancel`: durable ID returned at once, dedup, own-only cancellation (`TestAttachmentsAndHuman`, `TestAgentToolsOverBridge`) |  | Type discovery with custom types arrives with SM-HTYPE. |
 | SM-HUM-009 | M2-07 | partial | Durable correlated notification rows for agent requesters on resolve/cancel/expire (`TestTypeSpecificResponses`, `TestConcurrentResponsesOneWins`) |  | Delivery adapters (wake, notify, route to control) arrive with M2-06. |
 | SM-HUM-010 | M2-07 | implemented | `TestBlockingAffectsOnlyTheTask` (only the related task is skipped; response unblocks without changing state; expiry keeps it blocked), `TestCreateValidation` (FYI messages cannot block) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): blocking question on a task |  |
 | SM-HUM-011 | M2-07 | partial | `TestRequesterLimit` (per-run limit), per-space limit, `TestDedup`, expiry in `TestBlockingAffectsOnlyTheTask` |  | Reminders and escalation arrive in M4. |
@@ -141,9 +141,9 @@
 | SM-HUI-006 | M2-07 | partial | Pending counts on the nav and the space tab; blocking badges | `make e2e` (real stack, Chromium, macOS, 2026-11-02) | Notification preferences arrive later. |
 | SM-HUI-007 | | todo | | | |
 | SM-HUI-008 | | todo | | | |
-| SM-MCP-001 | | todo | | | |
+| SM-MCP-001 | M2-06 | partial | Agents get only the SpaceMan bridge (`--strict-mcp-config`, `TestClaudeBuild`); `TestAgentToolsOverBridge` |  | External MCP server registry arrives with M3-03. |
 | SM-MCP-002 | | todo | | | |
-| SM-MCP-003 | | todo | | | |
+| SM-MCP-003 | M2-06 | partial | `internal/agenttools` `TestCatalogs`, `TestInboxAndTasks`, `TestAttachmentsAndHuman`, `TestGuideListsEveryTool`; `TestAgentToolsOverBridge` |  | Messages and orchestration tools follow in M2-06; memory, KB and cross-space tools with their packages. |
 | SM-MCP-004 | | todo | | | |
 | SM-MEM-001 | | todo | | | |
 | SM-MEM-002 | | todo | | | |

@@ -477,6 +477,7 @@ type RunCredential struct {
 	RunID     string
 	CreatedAt int64
 	RevokedAt sql.NullInt64
+	TokenEnc  []byte
 }
 
 type Setting struct {
