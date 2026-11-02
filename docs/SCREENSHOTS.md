@@ -26,9 +26,9 @@
 | `inbox-list` | The inbox | Space inbox with status filter and counts | current |
 | `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
 | `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |
-| `human-global` | Global human handling (M2) | Global human actions page | todo |
-| `human-space` | Human actions (M2) | Per-space human queue | todo |
-| `human-form-default` | Human actions (M2) | Question / approval form | todo |
+| `human-global` | Human actions | Needs you: pending actions across spaces with the nav badge | current |
+| `human-space` | Human actions | A space's human actions, including a resolved one | current |
+| `human-form-default` | Human actions | Approval drawer with the advisory notice and distinct Approve/Deny | current |
 | `human-form-custom` | Custom types (M3) | Schema-driven form | todo |
 | `kb-sessions` | KB/support (M3) | KB support sessions | todo |
 | `events-catalog` | Events and subscriptions | Template catalog | current |

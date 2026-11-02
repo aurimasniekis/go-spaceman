@@ -502,6 +502,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/human-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pending human actions across your spaces
+         * @description Only spaces where you have human_action:read are included.
+         */
+        get: operations["list-pending-human-actions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -639,6 +659,144 @@ export interface paths {
         get: operations["get-attachment"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's human actions
+         * @description Pending actions first in their order, then recent final ones.
+         */
+        get: operations["list-human-actions"];
+        put?: never;
+        /**
+         * Ask a person for something
+         * @description The requester is the signed-in operator. A repeated dedup key returns the original.
+         */
+        post: operations["create-human-action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A human action with its comments and notifications */
+        get: operations["get-human-action"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions/{action_id}/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign (claim) or unassign a human action
+         * @description An empty assignee returns the action to open.
+         */
+        post: operations["assign-human-action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions/{action_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Withdraw a pending human action
+         * @description A blocked task is unblocked; the requester is notified.
+         */
+        post: operations["cancel-human-action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions/{action_id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Comment on a human action
+         * @description Comments are discussion and never count as a response.
+         */
+        post: operations["comment-human-action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions/{action_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reorder a pending human action */
+        post: operations["move-human-action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions/{action_id}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Respond to a human action
+         * @description Outcomes depend on the type: question → answered, approval → approved or denied (needs approval:decide), todo → completed, message → acknowledged. Responses are final; of concurrent responses exactly one wins.
+         */
+        post: operations["respond-human-action"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1298,6 +1456,16 @@ export interface components {
             field: string;
             message: string;
         };
+        "Assign-human-actionRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Assign-human-actionRequest.json
+             */
+            readonly $schema?: string;
+            /** @description A user ID, or empty to unassign */
+            assignee: string;
+        };
         AttachmentOut: {
             /**
              * Format: uri
@@ -1500,6 +1668,15 @@ export interface components {
              */
             at?: string;
         };
+        "Cancel-human-actionRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Cancel-human-actionRequest.json
+             */
+            readonly $schema?: string;
+            reason?: string;
+        };
         "Change-passwordRequest": {
             /**
              * Format: uri
@@ -1519,6 +1696,16 @@ export interface components {
             readonly $schema?: string;
             /** @description TOTP code or recovery code */
             code: string;
+        };
+        "Comment-human-actionRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Comment-human-actionRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Markdown */
+            body: string;
         };
         ConnectionBody: {
             /**
@@ -1561,6 +1748,34 @@ export interface components {
             description?: string;
             name: string;
             slug: string;
+        };
+        CreateHumanActionInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateHumanActionInput.json
+             */
+            readonly $schema?: string;
+            /** @description Block the task until a person responds */
+            blocks_task?: boolean;
+            /** @description Markdown */
+            body?: string;
+            correlation_id?: string;
+            dedup_key?: string;
+            /** Format: date-time */
+            due_at?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** @description Correct an earlier action without changing it */
+            follow_up_of?: string;
+            /** @enum {string} */
+            priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Type-specific request: question {options, allow_text}, approval {action, details}, todo {steps}, message {requires_ack} */
+            request?: unknown;
+            task_id?: string;
+            title: string;
+            /** @enum {string} */
+            type: "question" | "approval" | "todo" | "message";
         };
         CreateInboxInput: {
             /**
@@ -2023,6 +2238,93 @@ export interface components {
             name: string;
             standing_instructions: string;
         };
+        HumanAction: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanAction.json
+             */
+            readonly $schema?: string;
+            assignee?: string;
+            blocks_task: boolean;
+            /** @description Markdown, untrusted when an agent wrote it */
+            body: string;
+            comments?: components["schemas"]["HumanComment"][];
+            correlation_id?: string;
+            /** Format: date-time */
+            created_at: string;
+            dedup_key?: string;
+            /** Format: date-time */
+            due_at?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            follow_up_of?: string;
+            id: string;
+            inbox_item_id?: string;
+            notifications?: components["schemas"]["HumanNotification"][];
+            /** @enum {string} */
+            outcome?: "" | "answered" | "approved" | "denied" | "completed" | "acknowledged";
+            /** @enum {string} */
+            priority: "low" | "normal" | "high" | "urgent";
+            /** Format: int64 */
+            rank: number;
+            request: unknown;
+            requester_id?: string;
+            /** @enum {string} */
+            requester_kind: "agent" | "operator" | "system";
+            requester_label?: string;
+            requester_role?: string;
+            requester_run?: string;
+            requester_session?: string;
+            /** Format: date-time */
+            responded_at?: string;
+            responded_by?: string;
+            response: unknown;
+            space_id: string;
+            /** @enum {string} */
+            status: "open" | "in_progress" | "resolved" | "cancelled" | "expired";
+            status_reason?: string;
+            task_id?: string;
+            title: string;
+            /** @enum {string} */
+            type: "question" | "approval" | "todo" | "message";
+            /** Format: int64 */
+            type_version: number;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        HumanActionList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanActionList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["HumanAction"][];
+        };
+        HumanComment: {
+            author: string;
+            author_label?: string;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+        };
+        HumanNotification: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            delivered_at?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "resolved" | "cancelled" | "expired";
+            /** @enum {string} */
+            state: "pending" | "delivered" | "acknowledged";
+            target_role?: string;
+            target_run?: string;
+        };
         InboxItem: {
             /**
              * Format: uri
@@ -2214,6 +2516,16 @@ export interface components {
             session_id: string;
             user?: components["schemas"]["AuthUser"];
         };
+        "Move-human-actionRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Move-human-actionRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Place before this pending action; empty places it last */
+            before?: string;
+        };
         "Move-taskRequest": {
             /**
              * Format: uri
@@ -2225,6 +2537,21 @@ export interface components {
             before_id?: string;
             /** @enum {string} */
             to?: "top" | "bottom";
+        };
+        PendingHumanActions: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PendingHumanActions.json
+             */
+            readonly $schema?: string;
+            /** @description Pending actions per space you can read */
+            counts: {
+                [key: string]: number;
+            };
+            items: components["schemas"]["HumanAction"][];
+            /** Format: int64 */
+            total: number;
         };
         PreviewInput: {
             /**
@@ -2556,6 +2883,18 @@ export interface components {
             readonly $schema?: string;
             /** @enum {string} */
             action: "reprocess" | "discard";
+        };
+        "Respond-human-actionRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Respond-human-actionRequest.json
+             */
+            readonly $schema?: string;
+            answer?: string;
+            note?: string;
+            /** @enum {string} */
+            outcome: "answered" | "approved" | "denied" | "completed" | "acknowledged";
         };
         SampleEvent: {
             data: unknown;
@@ -3815,6 +4154,38 @@ export interface operations {
             };
         };
     };
+    "list-pending-human-actions": {
+        parameters: {
+            query?: {
+                type?: "question" | "approval" | "todo" | "message" | "";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingHumanActions"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-nodes": {
         parameters: {
             query?: never;
@@ -4203,6 +4574,307 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-human-actions": {
+        parameters: {
+            query?: {
+                pending?: boolean;
+                type?: "question" | "approval" | "todo" | "message" | "";
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanActionList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-human-action": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateHumanActionInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-human-action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "assign-human-action": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Assign-human-actionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-human-action": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Cancel-human-actionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "comment-human-action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Comment-human-actionRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "move-human-action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Move-human-actionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "respond-human-action": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Respond-human-actionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
                 };
             };
             /** @description Error */

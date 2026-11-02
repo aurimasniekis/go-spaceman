@@ -25,6 +25,15 @@
   `issues_opened` fixture (derived from its code), not against a running pulse-github. There is no upstream pull request
   fixture.
 
+## Human actions
+- **Approvals are advisory.** An approval decision is recorded, audited and sent to the requester, but SpaceMan does not
+  yet enforce it on the operation; digest-bound enforcement arrives with the approval gateway (SM-APPR, M3).
+- **Agents cannot create human actions yet.** Operators create them in the UI or API; the agents' MCP tools arrive with
+  control and workers (SM-HUM-008, M2-06). Notifications for agent requesters are stored durably, but no delivery
+  adapter consumes them yet (SM-HUM-009).
+- **Default types only.** Custom types with schema-driven forms arrive in M3 (SM-HTYPE). Reminders and escalation
+  arrive in M4; expiry runs once a minute.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned

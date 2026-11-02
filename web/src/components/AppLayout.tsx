@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { api, check, unwrap } from '@/api/client'
-import { useMe } from '@/api/queries'
+import { useHumanPending, useMe } from '@/api/queries'
 import { useWatch } from '@/api/watch'
 import { hasGlobal } from '@/lib/access'
 import { datetime } from '@/lib/format'
@@ -90,6 +90,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname })
   const me = useMe().data
   const items = visibleNav(me)
+  const pending = useHumanPending(!!me && !me.limited).data?.total ?? 0
   const width = collapsed ? 52 : 200
   const groups = ['Work', 'Fleet', 'Integrations', 'Access'] as const
 
@@ -128,7 +129,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     const active = n.to === '/' ? path === '/' : path.startsWith(n.to)
                     const link = (
                       <NavLink key={n.to} component={Link} to={n.to} active={active} label={collapsed ? undefined : n.label}
-                        leftSection={<n.icon size={16} stroke={1.6} />} aria-label={n.label} onClick={closeMobile} />
+                        leftSection={<n.icon size={16} stroke={1.6} />} aria-label={n.pendingBadge && pending > 0 ? `${n.label} (${pending} pending)` : n.label} onClick={closeMobile}
+                        rightSection={n.pendingBadge && pending > 0 && !collapsed ? <Badge size="xs" color="owlYellow" circle={pending < 10}>{pending}</Badge> : undefined} />
                     )
                     return collapsed ? <Tooltip key={n.to} label={n.label} position="right">{link}</Tooltip> : link
                   })}

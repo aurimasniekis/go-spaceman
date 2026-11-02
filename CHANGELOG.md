@@ -30,6 +30,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Execution queue per space: one explicit order (priority on arrival, operators after), incident policy, dependencies with
   cycle detection, explicit blockers, exclusive resources, an active-task limit, selection with recorded skip reasons, and
   drag or keyboard reordering. Inbox items can become tasks.
+- Human actions: questions, approvals (advisory for now), to-dos and messages for people, separate from the inbox and the
+  queue, with type-specific responses, claiming, comments, withdrawal, expiry and follow-ups. An action can block its
+  task until someone responds. A "Needs you" page lists pending actions across the spaces you can read.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

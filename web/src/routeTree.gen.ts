@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as EventsRouteImport } from './routes/events'
+import { Route as HumanRouteImport } from './routes/human'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as NodesRouteImport } from './routes/nodes'
 import { Route as RecoverRouteImport } from './routes/recover'
@@ -27,6 +28,7 @@ import { Route as SpacesSpaceIdRouteImport } from './routes/spaces.$spaceId'
 import { Route as EventsTemplatesTemplateIdRouteImport } from './routes/events.templates.$templateId'
 import { Route as SpacesSpaceIdIndexRouteImport } from './routes/spaces.$spaceId.index'
 import { Route as SpacesSpaceIdEventsRouteImport } from './routes/spaces.$spaceId.events'
+import { Route as SpacesSpaceIdHumanRouteImport } from './routes/spaces.$spaceId.human'
 import { Route as SpacesSpaceIdInboxRouteImport } from './routes/spaces.$spaceId.inbox'
 import { Route as SpacesSpaceIdQueueRouteImport } from './routes/spaces.$spaceId.queue'
 import { Route as SpacesSpaceIdEventsIndexRouteImport } from './routes/spaces.$spaceId.events.index'
@@ -53,6 +55,11 @@ const AuditRoute = AuditRouteImport.update({
 const EventsRoute = EventsRouteImport.update({
   id: '/events',
   path: '/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HumanRoute = HumanRouteImport.update({
+  id: '/human',
+  path: '/human',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -126,6 +133,11 @@ const SpacesSpaceIdEventsRoute = SpacesSpaceIdEventsRouteImport.update({
   path: '/events',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdHumanRoute = SpacesSpaceIdHumanRouteImport.update({
+  id: '/human',
+  path: '/human',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdInboxRoute = SpacesSpaceIdInboxRouteImport.update({
   id: '/inbox',
   path: '/inbox',
@@ -170,6 +182,7 @@ export interface FileRoutesByFullPath {
   '/account': typeof AccountRoute
   '/audit': typeof AuditRoute
   '/events': typeof EventsRouteWithChildren
+  '/human': typeof HumanRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
@@ -183,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
+  '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
@@ -196,6 +210,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/account': typeof AccountRoute
   '/audit': typeof AuditRoute
+  '/human': typeof HumanRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
@@ -206,6 +221,7 @@ export interface FileRoutesByTo {
   '/events': typeof EventsIndexRoute
   '/spaces': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
@@ -220,6 +236,7 @@ export interface FileRoutesById {
   '/account': typeof AccountRoute
   '/audit': typeof AuditRoute
   '/events': typeof EventsRouteWithChildren
+  '/human': typeof HumanRoute
   '/login': typeof LoginRoute
   '/nodes': typeof NodesRoute
   '/recover': typeof RecoverRoute
@@ -233,6 +250,7 @@ export interface FileRoutesById {
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
+  '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
@@ -249,6 +267,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/audit'
     | '/events'
+    | '/human'
     | '/login'
     | '/nodes'
     | '/recover'
@@ -262,6 +281,7 @@ export interface FileRouteTypes {
     | '/spaces/'
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/events'
+    | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
     | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId/'
@@ -275,6 +295,7 @@ export interface FileRouteTypes {
     | '/'
     | '/account'
     | '/audit'
+    | '/human'
     | '/login'
     | '/nodes'
     | '/recover'
@@ -285,6 +306,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/spaces'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId'
     | '/spaces/$spaceId/events/$subscriptionId'
@@ -298,6 +320,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/audit'
     | '/events'
+    | '/human'
     | '/login'
     | '/nodes'
     | '/recover'
@@ -311,6 +334,7 @@ export interface FileRouteTypes {
     | '/spaces/'
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/events'
+    | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
     | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId/'
@@ -326,6 +350,7 @@ export interface RootRouteChildren {
   AccountRoute: typeof AccountRoute
   AuditRoute: typeof AuditRoute
   EventsRoute: typeof EventsRouteWithChildren
+  HumanRoute: typeof HumanRoute
   LoginRoute: typeof LoginRoute
   NodesRoute: typeof NodesRoute
   RecoverRoute: typeof RecoverRoute
@@ -364,6 +389,13 @@ declare module '@tanstack/react-router' {
       path: '/events'
       fullPath: '/events'
       preLoaderRoute: typeof EventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/human': {
+      id: '/human'
+      path: '/human'
+      fullPath: '/human'
+      preLoaderRoute: typeof HumanRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -464,6 +496,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdEventsRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/human': {
+      id: '/spaces/$spaceId/human'
+      path: '/human'
+      fullPath: '/spaces/$spaceId/human'
+      preLoaderRoute: typeof SpacesSpaceIdHumanRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/inbox': {
       id: '/spaces/$spaceId/inbox'
       path: '/inbox'
@@ -558,6 +597,7 @@ const SpacesSpaceIdInboxRouteWithChildren =
 
 interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdEventsRoute: typeof SpacesSpaceIdEventsRouteWithChildren
+  SpacesSpaceIdHumanRoute: typeof SpacesSpaceIdHumanRoute
   SpacesSpaceIdInboxRoute: typeof SpacesSpaceIdInboxRouteWithChildren
   SpacesSpaceIdQueueRoute: typeof SpacesSpaceIdQueueRoute
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
@@ -566,6 +606,7 @@ interface SpacesSpaceIdRouteChildren {
 
 const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdEventsRoute: SpacesSpaceIdEventsRouteWithChildren,
+  SpacesSpaceIdHumanRoute: SpacesSpaceIdHumanRoute,
   SpacesSpaceIdInboxRoute: SpacesSpaceIdInboxRouteWithChildren,
   SpacesSpaceIdQueueRoute: SpacesSpaceIdQueueRoute,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
@@ -594,6 +635,7 @@ const rootRouteChildren: RootRouteChildren = {
   AccountRoute: AccountRoute,
   AuditRoute: AuditRoute,
   EventsRoute: EventsRouteWithChildren,
+  HumanRoute: HumanRoute,
   LoginRoute: LoginRoute,
   NodesRoute: NodesRoute,
   RecoverRoute: RecoverRoute,

@@ -28,6 +28,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/events"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -60,6 +61,8 @@ type Central struct {
 	Events *events.Service
 	// Queue is each space's execution queue (SM-QUEUE-*).
 	Queue *queue.Service
+	// Human holds requests for people: questions, approvals, to-dos and messages (SM-HUM-*).
+	Human *human.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -115,6 +118,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock})
 	c.Inbox = inbox.New(st, c.Audit, c.Changes, c.Attachments)
 	c.Queue = queue.New(st, c.Audit, c.Changes)
+	c.Human = human.New(st, c.Audit, c.Changes, o.Clock)
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Events.SeedBuiltins(ctx); err != nil {
 		_ = st.Close()
@@ -166,7 +170,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -223,6 +227,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	}
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
+	go c.expireHumanActions(ctx)
 	go events.NewManager(c.Events, c.Log).Run(ctx)
 	c.Health.MarkReady()
 	c.Log.Info("spaceman serving", slog.String("listen", c.Cfg.HTTP.Listen), slog.String("management", c.Cfg.HTTP.ManagementListen),
@@ -244,6 +249,24 @@ func (c *Central) Serve(ctx context.Context) error {
 		return runErr
 	}
 	return nil
+}
+
+// expireHumanActions finalizes human actions past their expiry once a minute (SM-HUM-011).
+func (c *Central) expireHumanActions(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		if n, err := c.Human.Expire(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Warn("expire human actions", obs.Err(err))
+		} else if n > 0 {
+			c.Log.Info("expired human actions", slog.Int("count", n))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // housekeeping purges expired sessions, one-time tokens and idempotency records hourly (one goroutine for the whole
@@ -278,13 +301,14 @@ func (c *Central) housekeeping(ctx context.Context) {
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
-		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil)}}
+		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
+		api.RegisterHuman(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules} {
 		for k, v := range m {
 			out[k] = v
 		}

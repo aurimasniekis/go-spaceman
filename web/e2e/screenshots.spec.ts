@@ -142,6 +142,19 @@ test('documentation screenshots', async ({ page, browser }) => {
   await task({ title: 'Load-test the new retry budget', depends_on: [budget.id], exclusions: ['env:staging'] })
   await task({ title: 'Remove stale feature flags', priority: 'low', status: 'backlog' })
 
+  // Human actions: one of each type (a blocking question on a task), one in another space, and an answered one.
+  const human = (space: string, body: Record<string, unknown>) => api.call<T>('POST', `/spaces/${space}/human-actions`, body)
+  await human(payments.id, { type: 'question', title: 'Should retries span the whole bank maintenance window?', task_id: budget.id, blocks_task: true, priority: 'high',
+    body: 'The window is up to **6 hours** on Sundays. Spanning it means a batch can settle late instead of failing.',
+    request: { options: ['Span the whole window', 'Cap at 2 hours, then alert'], allow_text: true } })
+  await human(payments.id, { type: 'approval', title: 'Deploy the settlement retry change to production', request: { action: 'Deploy payments-api v2.14.0 to production',
+    details: 'Changes the retry budget from three attempts to a time-based budget. Rollback: redeploy v2.13.4.' } })
+  await human(payments.id, { type: 'todo', title: "Confirm the bank's maintenance window", request: { steps: ['Email the bank integration contact', 'Record the window in the runbook'] } })
+  await human(payments.id, { type: 'message', title: 'Weekend settlement runs are paused until Monday', request: { requires_ack: false }, priority: 'low' })
+  await human(docs.id, { type: 'todo', title: 'Review the wording of the refunds API reference' })
+  const answered = await human(payments.id, { type: 'question', title: 'Which currency should the refund export use?', request: { options: ['EUR', 'Original currency'] } })
+  await api.call('POST', `/spaces/${payments.id}/human-actions/${answered.id}/respond`, { outcome: 'answered', answer: 'Original currency' }, { 'If-Match': `"${answered.version}"` })
+
   // Events: a Pulse connection (devpulse), GitHub issue subscriptions and published go-pulse-github events (one for another
   // repository, filtered), and an alerts subscription with a schema that quarantines a malformed alert.
   const pulseDir = env('SM_PULSE_DIR')
@@ -270,6 +283,20 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/queue`)
     await page.getByRole('listitem', { name: /Load-test the new retry budget/ }).click()
     await expect(page.getByText('Not eligible now')).toBeVisible()
+  })
+  await capture(page, 'human-global', async () => {
+    await page.goto('/human')
+    await expect(page.getByText('Review the wording of the refunds API reference')).toBeVisible()
+  })
+  await capture(page, 'human-space', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByLabel('Show resolved, withdrawn and expired').check()
+    await expect(page.getByText('Which currency should the refund export use?')).toBeVisible()
+  })
+  await capture(page, 'human-form-default', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByRole('listitem', { name: /Deploy the settlement retry change/ }).click()
+    await expect(page.getByText('Advisory decision')).toBeVisible()
   })
   await capture(page, 'events-catalog', async () => {
     await page.goto('/events')

@@ -175,6 +175,65 @@ type ExecutionLease struct {
 	ExpiresAt  int64
 }
 
+type HumanAction struct {
+	ID               string
+	SpaceID          string
+	Type             string
+	TypeVersion      int64
+	Title            string
+	Body             string
+	RequestJson      string
+	RequesterKind    string
+	RequesterID      string
+	RequesterRole    string
+	RequesterRun     string
+	RequesterSession string
+	RequesterLabel   string
+	TaskID           string
+	InboxItemID      string
+	CorrelationID    string
+	DedupKey         string
+	BlocksTask       int64
+	Priority         string
+	Rank             int64
+	DueAt            sql.NullInt64
+	ExpiresAt        sql.NullInt64
+	Assignee         string
+	Status           string
+	Outcome          string
+	ResponseJson     string
+	RespondedBy      string
+	RespondedAt      sql.NullInt64
+	StatusReason     string
+	FollowUpOf       string
+	CreatedAt        int64
+	CreatedBy        string
+	UpdatedAt        int64
+	Version          int64
+}
+
+type HumanComment struct {
+	ID          string
+	ActionID    string
+	Body        string
+	Author      string
+	AuthorLabel string
+	CreatedAt   int64
+}
+
+type HumanNotification struct {
+	ID            string
+	ActionID      string
+	SpaceID       string
+	TargetRun     string
+	TargetSession string
+	TargetRole    string
+	Kind          string
+	State         string
+	CreatedAt     int64
+	DeliveredAt   sql.NullInt64
+}
+
 type IdempotencyKey struct {
 	Principal   string
 	Operation   string

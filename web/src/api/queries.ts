@@ -26,6 +26,8 @@ export const keys = {
   queue: (space: string) => ['queue', space] as const,
   subscription: (space: string, id: string) => ['subscription', space, id] as const,
   inboxItem: (space: string, id: string) => ['inbox-item', space, id] as const,
+  human: (space: string) => ['human', space] as const,
+  humanPending: ['human', 'pending'] as const,
 }
 
 export interface AuditFilter {
@@ -172,3 +174,13 @@ export const useNext = (space: string) =>
     queryKey: [...keys.queue(space), 'next'],
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/queue/next', { params: { path: { space_id: space } } })),
   })
+
+export const useHumanActions = (space: string) =>
+  useQuery({
+    queryKey: keys.human(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-actions', { params: { path: { space_id: space } } })),
+  })
+
+/** Pending human actions across every space the principal can read, with counts (the nav badge). */
+export const useHumanPending = (enabled = true) =>
+  useQuery({ queryKey: keys.humanPending, enabled, queryFn: async () => unwrap(await api.GET('/human-actions')) })

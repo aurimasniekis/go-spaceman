@@ -60,6 +60,7 @@ export default withMermaid(
             { text: 'First node and space', link: '/guide/first-space' },
             { text: 'The inbox', link: '/guide/inbox' },
             { text: 'The execution queue', link: '/guide/queue' },
+            { text: 'Human actions', link: '/guide/human-actions' },
             { text: 'Events and subscriptions', link: '/guide/events' },
             { text: 'Project status', link: '/guide/status' },
           ],

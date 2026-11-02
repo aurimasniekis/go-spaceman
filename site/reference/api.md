@@ -148,6 +148,20 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/event-templates/{template_id}/draft` | `save-template-draft` | Save the template's draft version |
 | `POST` | `/event-templates/preview` | `preview-event-template` | Test a definition against a sample event |
 
+### human-actions
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/human-actions` | `list-pending-human-actions` | Pending human actions across your spaces |
+| `GET` | `/spaces/{space_id}/human-actions` | `list-human-actions` | A space's human actions |
+| `POST` | `/spaces/{space_id}/human-actions` | `create-human-action` | Ask a person for something |
+| `GET` | `/spaces/{space_id}/human-actions/{action_id}` | `get-human-action` | A human action with its comments and notifications |
+| `POST` | `/spaces/{space_id}/human-actions/{action_id}/assign` | `assign-human-action` | Assign (claim) or unassign a human action |
+| `POST` | `/spaces/{space_id}/human-actions/{action_id}/cancel` | `cancel-human-action` | Withdraw a pending human action |
+| `POST` | `/spaces/{space_id}/human-actions/{action_id}/comments` | `comment-human-action` | Comment on a human action |
+| `POST` | `/spaces/{space_id}/human-actions/{action_id}/move` | `move-human-action` | Reorder a pending human action |
+| `POST` | `/spaces/{space_id}/human-actions/{action_id}/respond` | `respond-human-action` | Respond to a human action |
+
 ### inbox
 
 | Method | Path | Operation | Summary |

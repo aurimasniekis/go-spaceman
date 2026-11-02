@@ -110,17 +110,17 @@
 | SM-COMM-002 | | todo | | | |
 | SM-COMM-003 | | todo | | | |
 | SM-COMM-004 | | todo | | | |
-| SM-HUM-001 | | todo | | | |
-| SM-HUM-002 | | todo | | | |
-| SM-HUM-003 | | todo | | | |
-| SM-HUM-004 | | todo | | | |
-| SM-HUM-005 | | todo | | | |
-| SM-HUM-006 | | todo | | | |
-| SM-HUM-007 | | todo | | | |
-| SM-HUM-008 | | todo | | | |
-| SM-HUM-009 | | todo | | | |
-| SM-HUM-010 | | todo | | | |
-| SM-HUM-011 | | todo | | | |
+| SM-HUM-001 | M2-07 | implemented | `internal/human` `TestOrderingListsAndCounts` (global list filtered by allowed spaces), `TestHumanActionsOverHTTP` (viewer sees only readable spaces; unreadable space 404) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): space tab and Needs you page |  |
+| SM-HUM-002 | M2-07 | partial | Requester kinds agent/operator/system set by the server, never by the body (`TestTypeSpecificResponses`) |  | Agent submission through MCP arrives with M2-06. |
+| SM-HUM-003 | M2-07 | implemented | `TestTypeSpecificResponses`, `TestCreateValidation` (per-type request validation, informational vs action-required messages) |  |  |
+| SM-HUM-004 | M2-07 | implemented | Fields in migration 0008 and `human.Action`; `TestHumanActionsOverHTTP` |  | Event refs arrive with event-created actions; evidence attachments with MCP. |
+| SM-HUM-005 | M2-07 | implemented | `TestTypeSpecificResponses` (status and outcome separate), `TestCommentsAssignCancel` (cancel without outcome), `TestBlockingAffectsOnlyTheTask` (expiry without outcome) |  |  |
+| SM-HUM-006 | M2-07 | partial | `TestCommentsAssignCancel` (claim/assign, comments not responses, cancel), `TestOrderingListsAndCounts` (sorting, type filter) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): answer in the drawer | Search and clarification requests arrive later. |
+| SM-HUM-007 | M2-07 | implemented | `TestConcurrentResponsesOneWins` (8 concurrent responses, one wins, one notification), If-Match 428/412/409 in `TestHumanActionsOverHTTP`, follow-ups in `TestCommentsAssignCancel` |  |  |
+| SM-HUM-008 | M2-07 | partial | Idempotent create with dedup returns the durable ID (`TestDedup`, Idempotency-Key on the API) |  | MCP tools arrive with M2-06. |
+| SM-HUM-009 | M2-07 | partial | Durable correlated notification rows for agent requesters on resolve/cancel/expire (`TestTypeSpecificResponses`, `TestConcurrentResponsesOneWins`) |  | Delivery adapters (wake, notify, route to control) arrive with M2-06. |
+| SM-HUM-010 | M2-07 | implemented | `TestBlockingAffectsOnlyTheTask` (only the related task is skipped; response unblocks without changing state; expiry keeps it blocked), `TestCreateValidation` (FYI messages cannot block) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): blocking question on a task |  |
+| SM-HUM-011 | M2-07 | partial | `TestRequesterLimit` (per-run limit), per-space limit, `TestDedup`, expiry in `TestBlockingAffectsOnlyTheTask` |  | Reminders and escalation arrive in M4. |
 | SM-HTYPE-001 | | todo | | | |
 | SM-HTYPE-002 | | todo | | | |
 | SM-HTYPE-003 | | todo | | | |
@@ -133,12 +133,12 @@
 | SM-APPR-004 | | todo | | | |
 | SM-APPR-005 | | todo | | | |
 | SM-APPR-006 | | todo | | | |
-| SM-HUI-001 | | todo | | | |
-| SM-HUI-002 | | todo | | | |
-| SM-HUI-003 | | todo | | | |
-| SM-HUI-004 | | todo | | | |
-| SM-HUI-005 | | todo | | | |
-| SM-HUI-006 | | todo | | | |
+| SM-HUI-001 | M2-07 | partial | `TestHumanActionsOverHTTP` (global view with counts per readable space) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): Needs you page, nav badge | Assigned-to-me, due/overdue filters and search arrive later. |
+| SM-HUI-002 | M2-07 | partial | `RespondForm`: distinct Send answer / Approve / Deny / Mark completed / Acknowledge; comments separate | `make e2e` (real stack, Chromium, macOS, 2026-11-02): option answer | Schema-driven forms arrive with SM-HTYPE (M3). |
+| SM-HUI-003 | M2-07 | implemented | Blocking badge and task link in the drawer; unreadable spaces never listed or counted (`TestHumanActionsOverHTTP`) |  |  |
+| SM-HUI-004 | M2-07 | implemented | Per-space rank is durable (`TestOrderingListsAndCounts`); the global page sorts by age and never rewrites ranks |  |  |
+| SM-HUI-005 | M2-07 | implemented | Bulk claim and acknowledge-messages only; keyboard: rows are focusable, Enter opens |  |  |
+| SM-HUI-006 | M2-07 | partial | Pending counts on the nav and the space tab; blocking badges | `make e2e` (real stack, Chromium, macOS, 2026-11-02) | Notification preferences arrive later. |
 | SM-HUI-007 | | todo | | | |
 | SM-HUI-008 | | todo | | | |
 | SM-MCP-001 | | todo | | | |

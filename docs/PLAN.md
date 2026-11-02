@@ -40,7 +40,7 @@
 | M2-04 | Event templates + subscriptions + GitHub presets + UI preview/testing | SM-EVT-001…010, 017 | implemented: engine, catalog, subscriptions, preview, UI, guide and screenshots |
 | M2-05 | Execution queue: ordering, dependencies, exclusions, eligibility, incidents, demotion | SM-QUEUE-* | implemented: service, API, UI with drag and keyboard sorting, guide, screenshots |
 | M2-06 | Control + workers + worktrees + durable messages + delivery adapters | SM-CTRL-*, SM-COMM-*, SM-REPO-* | todo |
-| M2-07 | Human actions: default types, lifecycle, MCP, reply routing; per-space + global UI | SM-HUM-*, SM-HUI-* | todo |
+| M2-07 | Human actions: default types, lifecycle, MCP, reply routing; per-space + global UI | SM-HUM-*, SM-HUI-* | implemented (MCP tools and notification delivery with M2-06): service, API, global and per-space UI, guide, screenshots |
 | M2-08 | Docs + screenshots for M2 | SM-DOCS | todo |
 
 ### M3 — Configuration, intelligence, memory
@@ -109,7 +109,8 @@
 | 2026-11-02 | M2-04 | Event template engine, GitHub seeds from the go-pulse-github contract, operator-mode NATS test server | `ebe8c8d` | `internal/events/template` 88.6%; real SDK durable round trip |
 | 2026-11-02 | M2-03/04 | Connections (sealed creds), template catalog with immutable versions and follow-latest, subscriptions with explicit cursors, ingestion manager (one durable per subscription), delivery history, quarantine with reprocess, events API | `a1c4482` | `internal/events` integration tests ×3 `-race` (fan-out, filter, dedup, quarantine, replay/start-now), `TestEventsOverHTTP` |
 | 2026-11-02 | M2-04 | Events UI (catalog, template testing, connections, subscribe form, subscription page with grant, cursor, deliveries, quarantine), devpulse in the dev stack, events guide and screenshots | `d14ba20` | `make e2e` (connection → subscription → published event → inbox item); screenshots reviewed |
-| 2026-11-02 | M2-05 | Execution queue: insertion by priority/policy, authoritative moves, dedup that never re-promotes, escalation by policy, dependencies (cycles rejected), blockers, exclusions, active limit, selection with skip reasons, states with preemption; API, UI with drag and keyboard sorting, create task from inbox | this commit (`feat(queue)`) | `internal/queue` tests, `TestQueueOverHTTP`, `make e2e` (inbox → task, Alt+↑, start) |
+| 2026-11-02 | M2-05 | Execution queue: insertion by priority/policy, authoritative moves, dedup that never re-promotes, escalation by policy, dependencies (cycles rejected), blockers, exclusions, active limit, selection with skip reasons, states with preemption; API, UI with drag and keyboard sorting, create task from inbox | `9bb3c22` | `internal/queue` tests, `TestQueueOverHTTP`, `make e2e` (inbox → task, Alt+↑, start) |
+| 2026-11-02 | M2-07 | Human actions: question, approval (advisory), to-do and message types with distinct responses; lifecycle separate from outcome; atomic finalization; claim, comments, withdraw, expiry, follow-ups, dedup and limits; blocking only the related task; durable requester notifications; Needs you page with nav badge, per-space tab, safe bulk actions | this commit (`feat(human)`) | `internal/human` tests (84%), `TestHumanActionsOverHTTP`, `make e2e` (blocking question answered) |
 
 ## 4. Process deviations
 
