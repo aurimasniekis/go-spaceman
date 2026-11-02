@@ -88,6 +88,53 @@ type Agent struct {
 	toolCalls map[string]chan proto.ToolResult
 	// mem keeps role memory (ADR-0025).
 	mem *memManager
+	// bg tracks background work (memory checkpoints, usage, transcript uploads, KB acceptance, dream commits) that Run
+	// waits for when it stops; stopping refuses new work.
+	bgMu     sync.Mutex
+	bg       sync.WaitGroup
+	stopping bool
+}
+
+// track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
+func (a *Agent) track(f func()) {
+	a.bgMu.Lock()
+	if a.stopping {
+		a.bgMu.Unlock()
+		return
+	}
+	a.bg.Add(1)
+	a.bgMu.Unlock()
+	defer a.bg.Done()
+	f()
+}
+
+// goTrack is track on its own goroutine.
+func (a *Agent) goTrack(f func()) {
+	a.bgMu.Lock()
+	if a.stopping {
+		a.bgMu.Unlock()
+		return
+	}
+	a.bg.Add(1)
+	a.bgMu.Unlock()
+	go func() {
+		defer a.bg.Done()
+		f()
+	}()
+}
+
+// drain stops new background work and waits (bounded) for what is running.
+func (a *Agent) drain(limit time.Duration) {
+	a.bgMu.Lock()
+	a.stopping = true
+	a.bgMu.Unlock()
+	done := make(chan struct{})
+	go func() { a.bg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(limit):
+		a.log.Warn("background work still running at shutdown")
+	}
 }
 
 // New prepares an agent; Run starts it.
@@ -127,6 +174,7 @@ func RunName(runID string) string     { return "r-" + strings.TrimPrefix(runID, 
 // agent adopts its programs instead of starting duplicates (SM-NODE-009).
 func (a *Agent) Run(ctx context.Context) error {
 	a.mem.base = context.WithoutCancel(ctx)
+	defer a.drain(30 * time.Second)
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err

@@ -200,7 +200,7 @@ func copyRange(src, dst string, from, n int64) error {
 // handleDreamCommit checkpoints a dream's memory checkouts and only then commits its evidence positions. The ack says
 // whether that worked (central marks the dream succeeded or failed).
 func (a *Agent) handleDreamCommit(ctx context.Context, c proto.Command) {
-	go func() {
+	a.goTrack(func() {
 		ctx := context.WithoutCancel(ctx)
 		if err := a.dreamCommit(ctx, c); err != nil {
 			a.j.commandDone(ctx, c.CommandID, "rejected", err.Error())
@@ -209,7 +209,7 @@ func (a *Agent) handleDreamCommit(ctx context.Context, c proto.Command) {
 		}
 		a.j.commandDone(ctx, c.CommandID, "done", "")
 		a.ack(ctx, c, proto.AckAccepted, "")
-	}()
+	})
 }
 
 func (a *Agent) dreamCommit(ctx context.Context, c proto.Command) error {

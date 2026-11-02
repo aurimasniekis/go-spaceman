@@ -146,13 +146,13 @@ func (a *Agent) handleKBAccept(ctx context.Context, c proto.Command) {
 		return
 	}
 	a.ack(ctx, c, proto.AckAccepted, "")
-	go func() {
+	a.goTrack(func() {
 		ctx := context.WithoutCancel(ctx)
 		res := a.kbAccept(ctx, c, p)
 		b, _ := json.Marshal(res)
 		a.j.commandDone(ctx, c.CommandID, "done", string(b))
 		_ = a.send(ctx, proto.TypeKBResult, res)
-	}()
+	})
 }
 
 // resendKBResults reports recent acceptance results again (central ignores those it already has).

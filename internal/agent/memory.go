@@ -167,7 +167,7 @@ func (m *memManager) kick(r runRow) {
 		m.mu.Lock()
 		delete(m.timers, key)
 		m.mu.Unlock()
-		m.checkpoint(m.base, r.SpaceID, r.Role, r.InstanceID, "idle")
+		m.a.track(func() { m.checkpoint(m.base, r.SpaceID, r.Role, r.InstanceID, "idle") })
 	})
 }
 
@@ -312,7 +312,7 @@ func (m *memManager) scheduleSync(spaceID, role string, delay time.Duration) {
 	if t, ok := m.syncs[key]; ok {
 		t.Stop()
 	}
-	m.syncs[key] = time.AfterFunc(delay, func() { m.sync(m.base, spaceID, role) })
+	m.syncs[key] = time.AfterFunc(delay, func() { m.a.track(func() { m.sync(m.base, spaceID, role) }) })
 }
 
 // sync sends new shared history to central. The answer arrives as a memory.ack.

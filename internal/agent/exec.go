@@ -313,8 +313,11 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
 	switch {
 	case ended(row.State) && !ended(prev.State):
-		go a.mem.flush(context.WithoutCancel(ctx), row, "run ended")
-		go a.usageFinal(context.WithoutCancel(ctx), row)
+		bctx := context.WithoutCancel(ctx)
+		a.goTrack(func() {
+			a.mem.flush(bctx, row, "run ended")
+			a.usageFinal(bctx, row)
+		})
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)

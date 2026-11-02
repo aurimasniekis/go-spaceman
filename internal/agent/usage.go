@@ -155,9 +155,11 @@ func (a *Agent) usageKick(ctx context.Context, r runRow) {
 	}
 	t := time.AfterFunc(usageDebounce, func() {
 		usageTimers.Delete(r.RunID)
-		if cur, err := a.j.getRun(ctx, r.RunID); err == nil && !ended(cur.State) && a.protocolAtLeast(proto.MinorMemory) {
-			_ = a.send(ctx, proto.TypeUsage, a.usageReport(cur, false))
-		}
+		a.track(func() {
+			if cur, err := a.j.getRun(ctx, r.RunID); err == nil && !ended(cur.State) && a.protocolAtLeast(proto.MinorMemory) {
+				_ = a.send(ctx, proto.TypeUsage, a.usageReport(cur, false))
+			}
+		})
 	})
 	usageTimers.Store(r.RunID, t)
 }
