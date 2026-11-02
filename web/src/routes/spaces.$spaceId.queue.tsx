@@ -1,0 +1,146 @@
+import { ActionIcon, Badge, Button, Card, Checkbox, Group, Modal, NumberInput, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core'
+import { IconArrowDown, IconArrowUp, IconGripVertical, IconHandStop, IconPlus, IconSettings } from '@tabler/icons-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { createFileRoute } from '@tanstack/react-router'
+import { useState, type KeyboardEvent } from 'react'
+import { api, unwrap, type QueuePolicy, type Task } from '@/api/client'
+import { keys, useMe, useNext, useQueue, useSpace } from '@/api/queries'
+import { ErrorAlert } from '@/components/ErrorAlert'
+import { PageHeader } from '@/components/PageHeader'
+import { TaskPriority, TaskStatus } from '@/features/queue/badges'
+import { dropOn, step } from '@/features/queue/order'
+import { TaskDrawer } from '@/features/queue/TaskDrawer'
+import { TaskModal } from '@/features/queue/TaskModal'
+import { SpaceNav } from '@/features/spaces/SpaceNav'
+import { atLeast, roleIn } from '@/lib/access'
+import { notifyError } from '@/lib/notify'
+
+export const Route = createFileRoute('/spaces/$spaceId/queue')({ component: QueuePage })
+
+function QueuePage() {
+  const { spaceId } = Route.useParams()
+  const qc = useQueryClient()
+  const space = useSpace(spaceId)
+  const queue = useQueue(spaceId)
+  const next = useNext(spaceId)
+  const me = useMe().data
+  const canWrite = atLeast(roleIn(me, spaceId), 'operator')
+  const [creating, setCreating] = useState(false)
+  const [open, setOpen] = useState<string | null>(null)
+  const [dragging, setDragging] = useState<Task | null>(null)
+  const [showDone, setShowDone] = useState(false)
+  const [policyOpen, setPolicyOpen] = useState(false)
+  const all = queue.data?.tasks ?? []
+  const tasks = showDone ? all : all.filter((t) => !['done', 'cancelled'].includes(t.status))
+  const selected = next.data?.selected?.id
+
+  const move = async (t: Task, body: { before_id?: string; after_id?: string; to?: 'top' | 'bottom' }) => {
+    try {
+      unwrap(await api.POST('/spaces/{space_id}/tasks/{task_id}/move', { params: { path: { space_id: spaceId, task_id: t.id } }, body }))
+      void qc.invalidateQueries({ queryKey: keys.queue(spaceId) })
+    } catch (e) {
+      notifyError(e, 'Could not move the task')
+    }
+  }
+  // Keyboard sorting (SM-UI-006): Alt+↑/↓ moves the focused task among its siblings.
+  const onKey = (e: KeyboardEvent, t: Task) => {
+    if (!canWrite || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) {
+      if (e.key === 'Enter') setOpen(t.id)
+      return
+    }
+    e.preventDefault()
+    const body = step(all, t, e.key === 'ArrowUp' ? -1 : 1)
+    if (body) void move(t, body)
+  }
+
+  return (
+    <>
+      <PageHeader title={space.data?.name ?? 'Space'} description="The execution queue: one order, set by priority on arrival and by operators after that."
+        actions={canWrite && (
+          <>
+            <Button variant="default" leftSection={<IconSettings size={14} />} onClick={() => setPolicyOpen(true)}>Policy</Button>
+            <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New task</Button>
+          </>
+        )} />
+      <SpaceNav spaceId={spaceId} />
+      <ErrorAlert error={queue.error} />
+      <Card mb="sm" p="sm">
+        <Group gap="xs">
+          <Text size="sm" fw={600}>Next eligible:</Text>
+          {next.data?.selected ? <Badge color="owlGreen">{next.data.selected.title}</Badge> : <Text size="sm" c="dimmed">nothing</Text>}
+          {(next.data?.skipped ?? []).slice(0, 3).map((s) => (
+            <Tooltip key={s.task_id} label={s.reason}><Badge variant="outline" color="gray">skipped: {s.title}</Badge></Tooltip>
+          ))}
+          <Text size="xs" c="dimmed" ml="auto">Limit: {queue.data?.policy.max_active ?? 1} running top-level task(s)</Text>
+        </Group>
+      </Card>
+      <Group justify="space-between" mb={6}>
+        <Text size="xs" c="dimmed">{canWrite ? 'Drag rows, or focus one and press Alt+↑/↓, to reorder. Enter opens a task.' : ''}</Text>
+        <Checkbox size="xs" label="Show done and cancelled" checked={showDone} onChange={(e) => setShowDone(e.currentTarget.checked)} />
+      </Group>
+      <Stack gap={4} role="list" aria-label="Queue">
+        {tasks.map((t) => (
+          <Card key={t.id} p="xs" role="listitem" tabIndex={0} aria-label={`${t.position}. ${t.title}, ${t.status}`}
+            draggable={canWrite} onDragStart={() => setDragging(t)} onDragEnd={() => setDragging(null)}
+            onDragOver={(e) => { if (dragging && dropOn(dragging, t)) e.preventDefault() }}
+            onDrop={(e) => { e.preventDefault(); const b = dragging && dropOn(dragging, t); if (b && dragging) void move(dragging, b) }}
+            onKeyDown={(e) => onKey(e, t)} onClick={() => setOpen(t.id)}
+            style={{ marginLeft: t.depth * 28, cursor: 'pointer', opacity: ['done', 'cancelled'].includes(t.status) ? 0.6 : 1,
+              borderColor: t.id === selected ? 'var(--mantine-color-owlGreen-6)' : undefined }}>
+            <Group gap="xs" wrap="nowrap">
+              {canWrite && <IconGripVertical size={14} style={{ cursor: 'grab', flexShrink: 0 }} aria-hidden />}
+              <Text size="xs" c="dimmed" w={24} ta="right">{t.position}</Text>
+              <TaskStatus status={t.status} />
+              <TaskPriority task={t} />
+              <Text size="sm" fw={t.status === 'running' ? 600 : 400} style={{ flex: 1 }} truncate>{t.title}</Text>
+              {t.manual && <Tooltip label="Placed by an operator: duplicate triggers never move it"><IconHandStop size={14} aria-label="Placed by an operator" /></Tooltip>}
+              {(t.waiting ?? []).length > 0 && <Tooltip label={t.waiting!.join('; ')} multiline w={320}><Badge variant="outline" color="owlYellow">waiting</Badge></Tooltip>}
+              {t.blockers.length > 0 && <Badge variant="light" color="owlYellow">{t.blockers.length} blocker{t.blockers.length > 1 ? 's' : ''}</Badge>}
+              {canWrite && (
+                <Group gap={0} onClick={(e) => e.stopPropagation()}>
+                  <ActionIcon aria-label={`Move ${t.title} up`} disabled={!step(all, t, -1)} onClick={() => { const b = step(all, t, -1); if (b) void move(t, b) }}><IconArrowUp size={14} /></ActionIcon>
+                  <ActionIcon aria-label={`Move ${t.title} down`} disabled={!step(all, t, 1)} onClick={() => { const b = step(all, t, 1); if (b) void move(t, b) }}><IconArrowDown size={14} /></ActionIcon>
+                </Group>
+              )}
+            </Group>
+          </Card>
+        ))}
+        {queue.isSuccess && tasks.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">The queue is empty. Tasks are created here or from inbox items.</Text>}
+      </Stack>
+      <TaskModal spaceId={spaceId} opened={creating} onClose={() => setCreating(false)} />
+      <TaskDrawer spaceId={spaceId} task={all.find((t) => t.id === open) ?? null} tasks={all} canWrite={canWrite} onClose={() => setOpen(null)} />
+      {queue.data && policyOpen && <PolicyModal spaceId={spaceId} policy={queue.data.policy} onClose={() => setPolicyOpen(false)} />}
+    </>
+  )
+}
+
+function PolicyModal({ spaceId, policy, onClose }: { spaceId: string; policy: QueuePolicy; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [p, setP] = useState(policy)
+  const save = async () => {
+    try {
+      unwrap(await api.PUT('/spaces/{space_id}/queue/policy', { params: { path: { space_id: spaceId } }, body: p }))
+      void qc.invalidateQueries({ queryKey: keys.queue(spaceId) })
+      onClose()
+    } catch (e) {
+      notifyError(e)
+    }
+  }
+  return (
+    <Modal opened onClose={onClose} title="Queue policy">
+      <Stack gap="sm">
+        <NumberInput label="Top-level tasks running at once" min={1} max={20} value={p.max_active} onChange={(v) => setP({ ...p, max_active: Number(v) || 1 })} />
+        <Stack gap={2}>
+          <Text size="sm" fw={500}>New incident tasks go</Text>
+          <SegmentedControl value={p.incident_insertion} onChange={(v) => setP({ ...p, incident_insertion: v as QueuePolicy['incident_insertion'] })}
+            data={[{ value: 'top', label: 'To the top' }, { value: 'priority', label: 'By priority' }]} />
+        </Stack>
+        <Checkbox label="A new incident preempts running ordinary tasks (they return to ready; this is not a failure)" checked={p.incident_preempts}
+          onChange={(e) => setP({ ...p, incident_preempts: e.currentTarget.checked })} />
+        <Checkbox label="Escalation may move a task to the top (otherwise it only raises priority)" checked={p.escalation_reorders}
+          onChange={(e) => setP({ ...p, escalation_reorders: e.currentTarget.checked })} />
+        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
+      </Stack>
+    </Modal>
+  )
+}

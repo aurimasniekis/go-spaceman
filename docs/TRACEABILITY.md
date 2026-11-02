@@ -90,16 +90,16 @@
 | SM-EVT-017 | M2-04 | partial | Catalog, template page with sample testing (preview API), subscription form from template variables, delivery history, quarantine with reprocess/discard, replay dialog | `make e2e` (real central + agent + hc 0.1.16 + devpulse NATS with the go-pulse SDK, Chromium, macOS, 2026-11-02): connection, subscription, published go-pulse-github event → inbox item | Resulting-inbox preview shows rendered title/body; a visual custom-definition editor is JSON for now. |
 | SM-EVT-018 | M2-03 | partial | HTTP API for connections, templates, preview and subscriptions (`TestEventsOverHTTP`) |  | Terraform provider in M5. |
 | SM-EVT-019 | | todo | | | |
-| SM-QUEUE-001 | | todo | | | |
-| SM-QUEUE-002 | | todo | | | |
-| SM-QUEUE-003 | | todo | | | |
-| SM-QUEUE-004 | | todo | | | |
-| SM-QUEUE-005 | | todo | | | |
-| SM-QUEUE-006 | | todo | | | |
-| SM-QUEUE-007 | | todo | | | |
-| SM-QUEUE-008 | | todo | | | |
-| SM-QUEUE-009 | | todo | | | |
-| SM-QUEUE-010 | | todo | | | |
+| SM-QUEUE-001 | M2-05 | implemented | `internal/queue` `TestOrderingAndIncidents` (priority insertion, operator moves, rank rebalancing over 80 moves) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): keyboard reorder (Alt+↑) |  |
+| SM-QUEUE-002 | M2-05 | implemented | `TestOrderingAndIncidents` (incident to top by policy, demoted incident stays down, duplicate dedup key never re-promotes, escalation reorders only with policy) |  |  |
+| SM-QUEUE-003 | M2-05 | implemented | Task fields: objective, acceptance, priority/order, dependencies, exclusions, status, assignments, workspace, parent, origin, result (`TestQueueOverHTTP`) |  | Workspaces/assignment to runs are filled by control (M2-06). |
+| SM-QUEUE-004 | M2-05 | implemented | `TestEligibility` (cycles and self-dependency rejected) |  |  |
+| SM-QUEUE-005 | M2-05 | implemented | `TestEligibility`, `TestQueueOverHTTP` (highest eligible selected; skip reasons; decisions recorded) | `make e2e` (real stack, Chromium, macOS, 2026-11-02) |  |
+| SM-QUEUE-006 | M2-05 | partial | `TestEligibility` (human-action blocker skips the task; resolving by reference re-enables it) |  | Human actions themselves arrive with M2-07. |
+| SM-QUEUE-007 | M2-05 | implemented | `TestEligibility` (default one running top-level task; configurable; subtasks run under a running parent) |  |  |
+| SM-QUEUE-008 | M2-05 | implemented | `TestStatesAndPreemption` (states, transitions, preemption counted not failed) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): start a task |  |
+| SM-QUEUE-009 | M2-05 | partial | `TestStatesAndPreemption` (policy: insertion, preemption; reordering never changes a running task) |  | Worker handling, capacity and resumption mechanics with control (M2-06). |
+| SM-QUEUE-010 | M2-05 | implemented | No automatic transition to done; `ResolveBlockersByRef` leaves task state unchanged (`TestEligibility`, `TestStatesAndPreemption`) |  |  |
 | SM-CTRL-001 | | todo | | | |
 | SM-CTRL-002 | | todo | | | |
 | SM-CTRL-003 | | todo | | | |
@@ -181,7 +181,7 @@
 | SM-UI-003 | | todo | | | |
 | SM-UI-004 | M1-09, M1-11 | partial | watch-only terminal stream API with `terminal:watch` and re-validation (`TestRecordingShippedReplayedAndStreamed`); UI terminal has `disableStdin` | `web/e2e/smoke.spec.ts` via `make e2e` (real central with the embedded UI + real spaceman-agent + hc 0.1.16 isolated core, stub harness, Chromium, macOS, 2026-11-02): live watch-only terminal shows harness output | Takeover (`terminal:takeover`) pending. Operator input goes only through `send-input`. |
 | SM-UI-005 | M2-02 | implemented | Task entry is the inbox "New item"; untrusted bodies rendered sanitized (`markdown.test.ts`), marked "untrusted content" | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02) |  |
-| SM-UI-006 | M1-11 | partial | change feed → query invalidation (`applyChange`); lease grants recorded as space changes (`TestFleetLifecycle`) | `web/e2e/smoke.spec.ts` via `make e2e` (real central with the embedded UI + real spaceman-agent + hc 0.1.16 isolated core, stub harness, Chromium, macOS, 2026-11-02): live updates (node connects, lease, run state) without reload | Visible focus ring, labelled controls, filled-control contrast per scheme. Keyboard queue sorting and an axe audit land with the queue UI (M2). |
+| SM-UI-006 | M1-11, M2-05 | partial | change feed → query invalidation (`applyChange`); lease grants recorded as space changes (`TestFleetLifecycle`); keyboard queue sorting (`order.test.ts`) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): live updates and Alt+↑ queue reorder | Visible focus ring, labelled controls, filled-control contrast per scheme. An axe audit is pending. |
 | SM-REC-001 | | todo | | | |
 | SM-REC-002 | M1-09 | implemented | `internal/recording` `TestWriteReadResume`; agent observe-attach recorder | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): recording contains harness output |  |
 | SM-REC-003 | M1-09, M1-11 | partial | `TestTornSegmentRecovers`, `TestAppendIsIdempotent`; replay/download/delete API; `TestRecordingShippedReplayedAndStreamed`; seek/render logic (`web/src/features/terminal/records.test.ts`) | `web/e2e/smoke.spec.ts` via `make e2e` (real central with the embedded UI + real spaceman-agent + hc 0.1.16 isolated core, stub harness, Chromium, macOS, 2026-11-02): replay of a stopped run | Replay with play/pause, 1-8x speed, seeking and download in the UI. Quotas/retention policy M4-02. |

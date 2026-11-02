@@ -23,6 +23,7 @@ export const keys = {
   templates: ['event-templates'] as const,
   template: (id: string) => ['event-template', id] as const,
   subscriptions: (space: string) => ['subscriptions', space] as const,
+  queue: (space: string) => ['queue', space] as const,
   subscription: (space: string, id: string) => ['subscription', space, id] as const,
   inboxItem: (space: string, id: string) => ['inbox-item', space, id] as const,
 }
@@ -161,4 +162,13 @@ export const useQuarantine = (space: string, id: string) =>
     queryKey: [...keys.subscription(space, id), 'quarantine'],
     queryFn: async () =>
       unwrap(await api.GET('/spaces/{space_id}/subscriptions/{subscription_id}/quarantine', { params: { path: { space_id: space, subscription_id: id } } })).items,
+  })
+
+export const useQueue = (space: string) =>
+  useQuery({ queryKey: keys.queue(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/tasks', { params: { path: { space_id: space } } })) })
+
+export const useNext = (space: string) =>
+  useQuery({
+    queryKey: [...keys.queue(space), 'next'],
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/queue/next', { params: { path: { space_id: space } } })),
   })

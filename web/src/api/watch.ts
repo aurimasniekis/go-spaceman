@@ -20,6 +20,7 @@ export function applyChange(qc: QueryClient, c: Change) {
   switch (c.resource_type) {
     case 'space':
       void qc.invalidateQueries({ queryKey: keys.spaces })
+      void qc.invalidateQueries({ queryKey: keys.queue(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.space(c.resource_id) })
       break
     case 'run':
@@ -43,6 +44,9 @@ export function applyChange(qc: QueryClient, c: Change) {
         void qc.invalidateQueries({ queryKey: keys.subscriptions(c.space_id) })
         void qc.invalidateQueries({ queryKey: keys.subscription(c.space_id, c.resource_id) })
       }
+      break
+    case 'task':
+      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.queue(c.space_id) })
       break
     case 'user':
       void qc.invalidateQueries({ queryKey: keys.users })

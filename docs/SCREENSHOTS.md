@@ -21,7 +21,8 @@
 | `auth-users` | Sign-in and access | Users and grants | current |
 | `auth-tokens` | Sign-in and access | API tokens | current |
 | `audit-log` | Sign-in and access | Audit log | current |
-| `queue-incident` | Inbox/queue/incidents (M2) | Execution queue with a demoted incident | todo |
+| `queue` | The execution queue | Queue with running, ready, demoted incident, blocked, dependent and backlog tasks | current |
+| `queue-task` | The execution queue | Task drawer: eligibility reasons, state, dependencies, blockers | current |
 | `inbox-list` | The inbox | Space inbox with status filter and counts | current |
 | `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
 | `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |

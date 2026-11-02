@@ -157,6 +157,24 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/inbox/{item_id}` | `get-inbox-item` | Get an inbox item with its attachments |
 | `POST` | `/spaces/{space_id}/inbox/{item_id}/status` | `set-inbox-status` | Change an inbox item's processing status |
 
+### queue
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/queue/decisions` | `queue-decisions` | Recorded selections |
+| `GET` | `/spaces/{space_id}/queue/next` | `queue-next` | The next eligible task and why higher tasks were skipped |
+| `PUT` | `/spaces/{space_id}/queue/policy` | `set-queue-policy` | Set the queue policy |
+| `GET` | `/spaces/{space_id}/tasks` | `list-tasks` | A space's queue in its effective order |
+| `POST` | `/spaces/{space_id}/tasks` | `create-task` | Add a task to the queue |
+| `GET` | `/spaces/{space_id}/tasks/{task_id}` | `get-task` | A task |
+| `PUT` | `/spaces/{space_id}/tasks/{task_id}` | `update-task` | Edit a task |
+| `POST` | `/spaces/{space_id}/tasks/{task_id}/blockers` | `add-task-blocker` | Block a task explicitly |
+| `DELETE` | `/spaces/{space_id}/tasks/{task_id}/blockers/{blocker_id}` | `resolve-task-blocker` | Remove a blocker |
+| `PUT` | `/spaces/{space_id}/tasks/{task_id}/dependencies` | `set-task-dependencies` | Replace a task's dependencies (cycles are rejected) |
+| `POST` | `/spaces/{space_id}/tasks/{task_id}/escalate` | `escalate-task` | Escalate a task |
+| `POST` | `/spaces/{space_id}/tasks/{task_id}/move` | `move-task` | Place a task in the queue |
+| `POST` | `/spaces/{space_id}/tasks/{task_id}/status` | `set-task-status` | Change a task's state |
+
 ### subscriptions
 
 | Method | Path | Operation | Summary |

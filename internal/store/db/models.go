@@ -314,6 +314,26 @@ type OneTimeToken struct {
 	CreatedBy string
 }
 
+type QueueDecision struct {
+	ID          int64
+	SpaceID     string
+	SelectedID  string
+	SkippedJson string
+	At          int64
+	By          string
+}
+
+type QueuePolicy struct {
+	SpaceID            string
+	MaxActive          int64
+	IncidentInsertion  string
+	IncidentPreempts   int64
+	EscalationReorders int64
+	Version            int64
+	UpdatedAt          int64
+	UpdatedBy          string
+}
+
 type RecoveryCode struct {
 	UserID    string
 	CodeHash  []byte
@@ -414,6 +434,53 @@ type Space struct {
 type StoreSpaceProbe struct {
 	ID   int64
 	Data []byte
+}
+
+type Task struct {
+	ID             string
+	SpaceID        string
+	ParentID       sql.NullString
+	Title          string
+	Objective      string
+	Acceptance     string
+	Kind           string
+	Priority       string
+	Rank           int64
+	ManualPosition int64
+	Status         string
+	StatusReason   string
+	ExclusionsJson string
+	AssigneeRole   string
+	AssigneeRun    string
+	Workspace      string
+	OriginKind     string
+	OriginID       string
+	DedupKey       string
+	Result         string
+	Preemptions    int64
+	CreatedAt      int64
+	CreatedBy      string
+	UpdatedAt      int64
+	StartedAt      sql.NullInt64
+	FinishedAt     sql.NullInt64
+	Version        int64
+}
+
+type TaskBlocker struct {
+	ID         string
+	TaskID     string
+	Kind       string
+	RefID      string
+	Note       string
+	CreatedAt  int64
+	CreatedBy  string
+	ResolvedAt sql.NullInt64
+	ResolvedBy string
+}
+
+type TaskDependency struct {
+	TaskID    string
+	DependsOn string
 }
 
 type User struct {

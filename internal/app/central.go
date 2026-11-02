@@ -33,6 +33,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/health"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/queue"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -57,6 +58,8 @@ type Central struct {
 	Inbox *inbox.Service
 	// Events manages Pulse connections, templates and subscriptions (SM-EVT-*).
 	Events *events.Service
+	// Queue is each space's execution queue (SM-QUEUE-*).
+	Queue *queue.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -111,6 +114,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Attachments = attachments.New(st, attachments.NewLocal(artifactDir), c.Audit, attachments.Options{MaxBytes: cfg.HTTP.MaxUploadBytes,
 		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock})
 	c.Inbox = inbox.New(st, c.Audit, c.Changes, c.Attachments)
+	c.Queue = queue.New(st, c.Audit, c.Changes)
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Events.SeedBuiltins(ctx); err != nil {
 		_ = st.Close()
@@ -161,7 +165,8 @@ func (c *Central) APIDeps() *api.Deps {
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
-			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events)},
+			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
+			api.RegisterQueue(c.Queue, c.Inbox)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -273,13 +278,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
-		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil)}}
+		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules} {
 		for k, v := range m {
 			out[k] = v
 		}

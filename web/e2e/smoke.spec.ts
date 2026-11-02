@@ -28,7 +28,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 test.describe.configure({ mode: 'serial' })
 
 test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
-  test.setTimeout(300_000)
+  test.setTimeout(480_000)
   const email = 'alex@example.com'
   // Generated per run (throwaway stack); saved with the TOTP secret in the stack directory for manual inspection.
   const password = `e2e-${randomBytes(18).toString('base64url')}`
@@ -182,6 +182,30 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('link', { name: 'open item' }).click()
   await expect(page.getByRole('heading', { name: 'example-org/tool#42 opened: Bug <script>' })).toBeVisible()
   await expect(page.locator('.sm-markdown script')).toHaveCount(0)
+
+  // Queue: the event becomes a task, a second task is added, the operator reorders with the keyboard and starts one.
+  await page.getByRole('button', { name: 'Create task' }).click()
+  await page.getByRole('button', { name: 'Add to queue' }).click()
+  await expect(page.getByText('Done', { exact: true }).first()).toBeVisible()
+  await page.getByRole('link', { name: 'Payments platform · Inbox' }).click()
+  await page.getByRole('tab', { name: 'Queue' }).click()
+  await page.getByRole('button', { name: 'New task' }).click()
+  await page.getByLabel('Title').fill('Upgrade the Go toolchain')
+  await page.getByRole('textbox', { name: 'Priority' }).click()
+  await page.getByRole('option', { name: 'high' }).click()
+  await page.getByRole('button', { name: 'Add to queue' }).click()
+  const rows = page.getByRole('listitem')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.first()).toContainText('Upgrade the Go toolchain')
+  await rows.nth(1).focus()
+  await page.keyboard.press('Alt+ArrowUp')
+  await expect(rows.first()).toContainText('example-org/tool#42')
+  await shot(page, 'queue')
+  await rows.first().click()
+  await page.getByRole('button', { name: 'Change state' }).click()
+  await page.getByRole('menuitem', { name: 'running', exact: true }).click()
+  await expect(page.getByRole('dialog').getByText('running', { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
 
   // Audit shows what happened.
   await page.getByRole('link', { name: 'Audit log' }).click()

@@ -28,6 +28,7 @@ import { Route as EventsTemplatesTemplateIdRouteImport } from './routes/events.t
 import { Route as SpacesSpaceIdIndexRouteImport } from './routes/spaces.$spaceId.index'
 import { Route as SpacesSpaceIdEventsRouteImport } from './routes/spaces.$spaceId.events'
 import { Route as SpacesSpaceIdInboxRouteImport } from './routes/spaces.$spaceId.inbox'
+import { Route as SpacesSpaceIdQueueRouteImport } from './routes/spaces.$spaceId.queue'
 import { Route as SpacesSpaceIdEventsIndexRouteImport } from './routes/spaces.$spaceId.events.index'
 import { Route as SpacesSpaceIdEventsSubscriptionIdRouteImport } from './routes/spaces.$spaceId.events.$subscriptionId'
 import { Route as SpacesSpaceIdInboxIndexRouteImport } from './routes/spaces.$spaceId.inbox.index'
@@ -130,6 +131,11 @@ const SpacesSpaceIdInboxRoute = SpacesSpaceIdInboxRouteImport.update({
   path: '/inbox',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdQueueRoute = SpacesSpaceIdQueueRouteImport.update({
+  id: '/queue',
+  path: '/queue',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdEventsIndexRoute =
   SpacesSpaceIdEventsIndexRouteImport.update({
     id: '/',
@@ -178,6 +184,7 @@ export interface FileRoutesByFullPath {
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
+  '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -199,6 +206,7 @@ export interface FileRoutesByTo {
   '/events': typeof EventsIndexRoute
   '/spaces': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -226,6 +234,7 @@ export interface FileRoutesById {
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
+  '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -254,6 +263,7 @@ export interface FileRouteTypes {
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/inbox'
+    | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -275,6 +285,7 @@ export interface FileRouteTypes {
     | '/events'
     | '/spaces'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -301,6 +312,7 @@ export interface FileRouteTypes {
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/inbox'
+    | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -459,6 +471,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdInboxRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/queue': {
+      id: '/spaces/$spaceId/queue'
+      path: '/queue'
+      fullPath: '/spaces/$spaceId/queue'
+      preLoaderRoute: typeof SpacesSpaceIdQueueRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/events/': {
       id: '/spaces/$spaceId/events/'
       path: '/'
@@ -540,6 +559,7 @@ const SpacesSpaceIdInboxRouteWithChildren =
 interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdEventsRoute: typeof SpacesSpaceIdEventsRouteWithChildren
   SpacesSpaceIdInboxRoute: typeof SpacesSpaceIdInboxRouteWithChildren
+  SpacesSpaceIdQueueRoute: typeof SpacesSpaceIdQueueRoute
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
 }
@@ -547,6 +567,7 @@ interface SpacesSpaceIdRouteChildren {
 const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdEventsRoute: SpacesSpaceIdEventsRouteWithChildren,
   SpacesSpaceIdInboxRoute: SpacesSpaceIdInboxRouteWithChildren,
+  SpacesSpaceIdQueueRoute: SpacesSpaceIdQueueRoute,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,
 }

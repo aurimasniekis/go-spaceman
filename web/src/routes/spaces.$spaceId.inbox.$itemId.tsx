@@ -10,6 +10,7 @@ import { formatBytes } from '@/components/composer/upload'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
 import { InboxStatusBadge, sourceLabel, UrgencyBadge } from '@/features/inbox/badges'
+import { TaskModal } from '@/features/queue/TaskModal'
 import { atLeast, roleIn } from '@/lib/access'
 import { datetime } from '@/lib/format'
 import { attachmentURL } from '@/lib/markdown'
@@ -46,6 +47,7 @@ function ItemPage() {
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
   const [dialog, setDialog] = useState<'reject' | 'defer' | null>(null)
+  const [tasking, setTasking] = useState(false)
 
   if (item.error) return <ErrorAlert error={item.error} />
   if (!item.data) return null
@@ -88,6 +90,7 @@ function ItemPage() {
               <Button variant="default" leftSection={<IconRotate size={14} />} onClick={() => void setStatus('new')}>Reopen</Button>
             ) : (
               <>
+                <Button variant="default" onClick={() => setTasking(true)}>Create task</Button>
                 <Button leftSection={<IconCheck size={14} />} onClick={() => void setStatus('done')}>Mark done</Button>
                 <Menu position="bottom-end">
                   <Menu.Target><Button variant="default" rightSection={<IconChevronDown size={12} />}>More</Button></Menu.Target>
@@ -122,6 +125,8 @@ function ItemPage() {
           <Code block className="mono">{JSON.stringify(it.trusted, null, 2)}</Code>
         </Stack>
       )}
+      {tasking && <TaskModal spaceId={spaceId} opened onClose={() => setTasking(false)} onCreated={() => void item.refetch()}
+        seed={{ title: it.title, objective: it.content_type === 'text/markdown' ? it.body : undefined, fromInboxItem: it.id }} />}
       <StatusDialog kind={dialog} onClose={() => setDialog(null)} onSubmit={(extra) => void setStatus(dialog === 'defer' ? 'deferred' : 'rejected', extra)} />
     </Stack>
   )

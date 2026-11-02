@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Pulse events: connections with encrypted credentials, a catalog of versioned event templates (built-in GitHub issue and
   pull request templates), space subscriptions with one durable consumer each, explicit cursors (start now, replay),
   delivery history, quarantine with reprocessing, and template testing with sample events.
+- Execution queue per space: one explicit order (priority on arrival, operators after), incident policy, dependencies with
+  cycle detection, explicit blockers, exclusive resources, an active-task limit, selection with recorded skip reasons, and
+  drag or keyboard reordering. Inbox items can become tasks.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

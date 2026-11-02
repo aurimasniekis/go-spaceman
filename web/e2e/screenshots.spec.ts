@@ -128,6 +128,20 @@ test('documentation screenshots', async ({ page, browser }) => {
   const weekend = await inbox({ urgency: 'high', attachment_ids: [img.id, log.id],
     body: `Settlement retries fail on weekends\n\nThe batch job gives up after **three** attempts while the bank's API is in maintenance.\n\n- [ ] Confirm the maintenance window\n- [ ] Make the retry budget time-based\n\n![The stopped run](${img.uri})\n\n[settlement-job.log](${log.uri})` })
 
+  // Queue: work in every state, an incident an operator moved down, a dependency and an explicit blocker.
+  type T = { id: string; version: number }
+  const task = (body: Record<string, unknown>) => api.call<T>('POST', `/spaces/${payments.id}/tasks`, { status: 'ready', ...body })
+  const sdk2 = await task({ title: 'Bump the card SDK to 7.2', objective: 'Upgrade and run the refund regression suite.', exclusions: ['repo:payments-api'] })
+  await api.call('POST', `/spaces/${payments.id}/tasks/${sdk2.id}/status`, { status: 'running' }, { 'If-Match': `"${sdk2.version}"` })
+  const budget = await task({ title: 'Make the settlement retry budget time-based', priority: 'high', from_inbox_item: weekend.id,
+    acceptance: '- [ ] Retries span the bank maintenance window\n- [ ] Alert when the budget is exhausted' })
+  const lag = await task({ title: 'Settlement lag above 10 minutes', kind: 'incident', priority: 'urgent', objective: 'Find why settlement batches queue up.' })
+  await api.call('POST', `/spaces/${payments.id}/tasks/${lag.id}/move`, { after_id: budget.id })
+  const exportTask = await task({ title: 'Refund export for finance', objective: 'Monthly CSV export of refunds.' })
+  await api.call('POST', `/spaces/${payments.id}/tasks/${exportTask.id}/blockers`, { kind: 'external', note: 'waiting for the finance team to confirm the columns' })
+  await task({ title: 'Load-test the new retry budget', depends_on: [budget.id], exclusions: ['env:staging'] })
+  await task({ title: 'Remove stale feature flags', priority: 'low', status: 'backlog' })
+
   // Events: a Pulse connection (devpulse), GitHub issue subscriptions and published go-pulse-github events (one for another
   // repository, filtered), and an alerts subscription with a schema that quarantines a malformed alert.
   const pulseDir = env('SM_PULSE_DIR')
@@ -247,6 +261,15 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.keyboard.type(' differs, the amount does not.')
     await page.locator('input[type=file]').setInputFiles([{ name: 'refunds-export.csv', mimeType: 'text/csv', buffer: Buffer.from('refund_id,amount\nrf_1,12.00\nrf_2,12.00\n') }])
     await expect(page.getByText('refunds-export.csv ·')).toBeVisible()
+  })
+  await capture(page, 'queue', async () => {
+    await page.goto(`/spaces/${payments.id}/queue`)
+    await expect(page.getByText('Refund export for finance').first()).toBeVisible()
+  })
+  await capture(page, 'queue-task', async () => {
+    await page.goto(`/spaces/${payments.id}/queue`)
+    await page.getByRole('listitem', { name: /Load-test the new retry budget/ }).click()
+    await expect(page.getByText('Not eligible now')).toBeVisible()
   })
   await capture(page, 'events-catalog', async () => {
     await page.goto('/events')

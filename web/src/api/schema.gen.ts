@@ -706,6 +706,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/queue/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recorded selections */
+        get: operations["queue-decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/queue/next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The next eligible task and why higher tasks were skipped */
+        get: operations["queue-next"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/queue/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set the queue policy */
+        put: operations["set-queue-policy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/runs": {
         parameters: {
             query?: never;
@@ -910,6 +961,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's queue in its effective order
+         * @description Ready tasks carry the reasons they are not eligible now (waiting).
+         */
+        get: operations["list-tasks"];
+        put?: never;
+        /**
+         * Add a task to the queue
+         * @description Priority and the queue policy decide where it is inserted.
+         */
+        post: operations["create-task"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A task */
+        get: operations["get-task"];
+        /** Edit a task */
+        put: operations["update-task"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}/blockers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Block a task explicitly
+         * @description Blocked tasks are skipped with the reason; other tasks continue.
+         */
+        post: operations["add-task-blocker"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}/blockers/{blocker_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a blocker */
+        delete: operations["resolve-task-blocker"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}/dependencies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace a task's dependencies (cycles are rejected) */
+        put: operations["set-task-dependencies"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}/escalate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Escalate a task
+         * @description Raises it to urgent; moves it to the top only when the queue policy allows escalation to reorder.
+         */
+        post: operations["escalate-task"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Place a task in the queue
+         * @description Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
+         */
+        post: operations["move-task"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change a task's state
+         * @description Starting needs the task to be eligible. running → ready is a preemption, not a failure.
+         */
+        post: operations["set-task-status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/info": {
         parameters: {
             query?: never;
@@ -1075,6 +1282,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        "Add-task-blockerRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Add-task-blockerRequest.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            kind: "human_action" | "external";
+            note?: string;
+            ref_id?: string;
+        };
         ApperrFieldError: {
             field: string;
             message: string;
@@ -1396,6 +1615,15 @@ export interface components {
             readonly $schema?: string;
             me: components["schemas"]["Me"];
             recovery_codes: string[];
+        };
+        "Escalate-taskRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Escalate-taskRequest.json
+             */
+            readonly $schema?: string;
+            reason: string;
         };
         EventsConnection: {
             /**
@@ -1986,6 +2214,18 @@ export interface components {
             session_id: string;
             user?: components["schemas"]["AuthUser"];
         };
+        "Move-taskRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Move-taskRequest.json
+             */
+            readonly $schema?: string;
+            after_id?: string;
+            before_id?: string;
+            /** @enum {string} */
+            to?: "top" | "bottom";
+        };
         PreviewInput: {
             /**
              * Format: uri
@@ -2073,6 +2313,142 @@ export interface components {
             readonly $schema?: string;
             held_subscriptions: string[];
             version: components["schemas"]["EventsTemplateVersion"];
+        };
+        "Queue-decisionsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Queue-decisionsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["QueueDecision"][];
+        };
+        QueueBlocker: {
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            /** @enum {string} */
+            kind: "human_action" | "external";
+            note?: string;
+            ref_id?: string;
+            /** Format: date-time */
+            resolved_at?: string;
+        };
+        QueueDecision: {
+            /** Format: date-time */
+            at: string;
+            by: string;
+            selected_id?: string;
+            skipped: components["schemas"]["QueueSkip"][];
+        };
+        QueueOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/QueueOut.json
+             */
+            readonly $schema?: string;
+            policy: components["schemas"]["QueuePolicy"];
+            tasks: components["schemas"]["QueueTask"][];
+        };
+        QueuePolicy: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/QueuePolicy.json
+             */
+            readonly $schema?: string;
+            /** @description Escalation may move a task to the top; otherwise it only raises priority */
+            escalation_reorders: boolean;
+            /**
+             * @description Where new incident tasks go
+             * @enum {string}
+             */
+            incident_insertion: "top" | "priority";
+            /** @description A new incident returns running ordinary top-level tasks to ready (preemption, not failure) */
+            incident_preempts: boolean;
+            /**
+             * Format: int64
+             * @description Top-level tasks that may run at once (default 1)
+             */
+            max_active: number;
+            /** Format: int64 */
+            version: number;
+        };
+        QueueSelection: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/QueueSelection.json
+             */
+            readonly $schema?: string;
+            selected?: components["schemas"]["QueueTask"];
+            skipped: components["schemas"]["QueueSkip"][];
+        };
+        QueueSkip: {
+            reason: string;
+            task_id: string;
+            title: string;
+        };
+        QueueTask: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/QueueTask.json
+             */
+            readonly $schema?: string;
+            /** @description Acceptance criteria (Markdown) */
+            acceptance: string;
+            assignee_role?: string;
+            assignee_run?: string;
+            blockers: components["schemas"]["QueueBlocker"][];
+            /** Format: date-time */
+            created_at: string;
+            dedup_key?: string;
+            depends_on: string[];
+            /**
+             * Format: int64
+             * @description 0 for top-level tasks
+             */
+            depth: number;
+            /** @description Resource keys this task holds exclusively while running */
+            exclusions: string[];
+            /** Format: date-time */
+            finished_at?: string;
+            id: string;
+            /** @enum {string} */
+            kind: "ordinary" | "incident";
+            /** @description Placed by an operator: duplicate triggers never move it */
+            manual: boolean;
+            /** @description Markdown */
+            objective: string;
+            origin_id?: string;
+            origin_kind?: string;
+            parent_id?: string;
+            /**
+             * Format: int64
+             * @description 1-based place in the effective order
+             */
+            position: number;
+            /** Format: int64 */
+            preemptions: number;
+            /** @enum {string} */
+            priority: "low" | "normal" | "high" | "urgent";
+            result?: string;
+            space_id: string;
+            /** Format: date-time */
+            started_at?: string;
+            /** @enum {string} */
+            status: "backlog" | "ready" | "running" | "blocked" | "review" | "done" | "failed" | "cancelled";
+            status_reason?: string;
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+            /** @description Why a ready task is not eligible now */
+            waiting?: string[];
+            workspace?: string;
         };
         "Reauth-passwordRequest": {
             /**
@@ -2247,6 +2623,27 @@ export interface components {
             /** @enum {string} */
             state: "active" | "paused" | "archived";
         };
+        "Set-task-dependenciesRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Set-task-dependenciesRequest.json
+             */
+            readonly $schema?: string;
+            depends_on: string[];
+        };
+        "Set-task-statusRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Set-task-statusRequest.json
+             */
+            readonly $schema?: string;
+            reason?: string;
+            result?: string;
+            /** @enum {string} */
+            status: "backlog" | "ready" | "running" | "blocked" | "review" | "done" | "failed" | "cancelled";
+        };
         "Set-user-grantsRequest": {
             /**
              * Format: uri
@@ -2328,6 +2725,30 @@ export interface components {
             otpauth_uri: string;
             secret: string;
         };
+        TaskBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TaskBody.json
+             */
+            readonly $schema?: string;
+            acceptance?: string;
+            assignee_role?: string;
+            depends_on?: string[];
+            exclusions?: string[];
+            /** @description Create the task from an inbox item: the item is marked done and linked to the task */
+            from_inbox_item?: string;
+            /** @enum {string} */
+            kind?: "ordinary" | "incident";
+            objective?: string;
+            parent_id?: string;
+            /** @enum {string} */
+            priority?: "low" | "normal" | "high" | "urgent";
+            /** @enum {string} */
+            status?: "backlog" | "ready";
+            title: string;
+            workspace?: string;
+        };
         TemplateDefinition: {
             body: string;
             correlation?: string;
@@ -2365,6 +2786,23 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AuthAPIToken"][];
+        };
+        "Update-taskRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Update-taskRequest.json
+             */
+            readonly $schema?: string;
+            acceptance: string;
+            assignee_role?: string;
+            assignee_run?: string;
+            exclusions: string[];
+            objective: string;
+            /** @enum {string} */
+            priority: "low" | "normal" | "high" | "urgent";
+            title: string;
+            workspace?: string;
         };
     };
     responses: never;
@@ -3925,6 +4363,106 @@ export interface operations {
             };
         };
     };
+    "queue-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Queue-decisionsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "queue-next": {
+        parameters: {
+            query?: {
+                /** @description Store the decision for inspection */
+                record?: boolean;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueSelection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-queue-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueuePolicy"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueuePolicy"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-runs": {
         parameters: {
             query?: {
@@ -4465,6 +5003,371 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventsQuarantineEntry"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-task": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-task": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Update-taskRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "add-task-blocker": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Add-task-blockerRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resolve-task-blocker": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                task_id: string;
+                blocker_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-task-dependencies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Set-task-dependenciesRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "escalate-task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Escalate-taskRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "move-task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Move-taskRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-task-status": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Set-task-statusRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
                 };
             };
             /** @description Error */
