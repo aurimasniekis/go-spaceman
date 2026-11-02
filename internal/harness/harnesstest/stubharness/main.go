@@ -2,7 +2,8 @@
 // model is contacted. It prints a banner and ticks. Like a real harness it starts the MCP servers named by
 // --mcp-config, and every prompt line "/call <tool> <json arguments>" becomes one tool call whose result is printed. A
 // call that needs a person's approval is retried every few seconds, the way an agent calls again after the approval
-// notice. Not part of any release.
+// notice. A line "/write <path> <text>" writes text (\n for new lines) to a file in its role memory
+// ($SPACEMAN_MEMORY_DIR). Not part of any release.
 package main
 
 import (
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,6 +37,7 @@ func main() {
 			prompt = args[i+1]
 		}
 	}
+	writes(prompt)
 	if mcpConfig != "" && strings.Contains(prompt, "/call ") {
 		calls(mcpConfig, prompt)
 	}
@@ -114,4 +117,22 @@ func call(ctx context.Context, cs *mcp.ClientSession, tool string, a map[string]
 		return
 	}
 	fmt.Fprintf(os.Stdout, "  gave up waiting for approval\r\n")
+}
+
+// writes runs the prompt's "/write" lines in the role memory folder.
+func writes(prompt string) {
+	dir := os.Getenv("SPACEMAN_MEMORY_DIR")
+	for _, line := range strings.Split(prompt, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "/write ")
+		if !ok || dir == "" {
+			continue
+		}
+		name, text, _ := strings.Cut(rest, " ")
+		p := filepath.Join(dir, filepath.Clean("/"+name))           //nolint:gosec // cleaned under the memory folder; a development stub
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err == nil { //nolint:gosec // see above
+			content := strings.ReplaceAll(text, `\n`, "\n")
+			err = os.WriteFile(p, []byte(content), 0o600) //nolint:gosec // see above
+			fmt.Fprintf(os.Stdout, "wrote memory %s (%v)\r\n", name, err)
+		}
+	}
 }

@@ -49,6 +49,8 @@
 | `approval-policies` | Approval policies | Operations that need a person's approval, with uses, validity and request expiry | current |
 | `approval-enforced` | Human actions | A pending enforced approval: bound operation, run, argument digest and redacted arguments | current |
 | `approval-executed` | Human actions | An approved enforced approval with its execution recorded separately | current |
+| `space-memory` | Space memory | Role memory collections with central's head and the node's sync state | current |
+| `memory-files` | Space memory | A role's acknowledged memory files, history and conflicts | current |
 | `mcp-servers` | MCP servers | Registered MCP servers with header names (never values), grants and limits | current |
 | `mcp-server-detail` | MCP servers | A server's connection check with its namespaced tools, and its grants to space roles | current |
 | `skill-detail` | Skills | A skill's files, published versions and draft editor | current |

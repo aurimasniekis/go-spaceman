@@ -1581,6 +1581,131 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's role memory collections, with central's and the node's view */
+        get: operations["list-memory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/memory/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One collection */
+        get: operations["get-memory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/memory/{role}/conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** History preserved instead of applied */
+        get: operations["list-memory-conflicts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/memory/{role}/conflicts/{conflict_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a conflict reconciled
+         * @description The preserved history stays; this records that a person or the role reconciled it.
+         */
+        post: operations["resolve-memory-conflict"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/memory/{role}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One file of the acknowledged history
+         * @description Memory is written by agents: untrusted content.
+         */
+        get: operations["get-memory-file"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/memory/{role}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Files of the acknowledged history */
+        get: operations["list-memory-files"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/memory/{role}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent acknowledged commits */
+        get: operations["memory-history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/messages": {
         parameters: {
             query?: never;
@@ -3727,6 +3852,16 @@ export interface components {
             slug: string;
             tools: string[];
         };
+        "Get-memory-fileResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Get-memory-fileResponse.json
+             */
+            readonly $schema?: string;
+            content: string;
+            path: string;
+        };
         HumanAction: {
             /**
              * Format: uri
@@ -4079,6 +4214,35 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["GatewayServer"][];
         };
+        "List-memory-conflictsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-memory-conflictsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["MemoryConflict"][];
+        };
+        "List-memory-filesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-memory-filesResponse.json
+             */
+            readonly $schema?: string;
+            items: string[];
+        };
+        "List-memoryResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-memoryResponse.json
+             */
+            readonly $schema?: string;
+            /** @description False when central cannot store memory (git missing) */
+            available: boolean;
+            items: components["schemas"]["MemoryCollection"][];
+        };
         "List-nodesResponse": {
             /**
              * Format: uri
@@ -4278,6 +4442,58 @@ export interface components {
             root: boolean;
             session_id: string;
             user?: components["schemas"]["AuthUser"];
+        };
+        "Memory-historyResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Memory-historyResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["MemoryCommit"][];
+        };
+        MemoryCollection: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/MemoryCollection.json
+             */
+            readonly $schema?: string;
+            /** @description Central's acknowledged head */
+            head?: string;
+            /** Format: date-time */
+            head_at?: string;
+            id: string;
+            /** @description The node's last reported view */
+            node?: components["schemas"]["ProtoMemoryCollectionStatus"];
+            /** Format: date-time */
+            node_at?: string;
+            /** Format: int64 */
+            open_conflicts: number;
+            role: string;
+            space_id: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        MemoryCommit: {
+            /** Format: date-time */
+            at: string;
+            author: string;
+            id: string;
+            subject: string;
+        };
+        MemoryConflict: {
+            commit?: string;
+            /** Format: date-time */
+            created_at: string;
+            detail?: string;
+            id: string;
+            ref?: string;
+            /** Format: date-time */
+            resolved_at?: string;
+            resolved_by?: string;
+            /** @enum {string} */
+            source: "central" | "node";
         };
         MessageList: {
             /**
@@ -4479,6 +4695,40 @@ export interface components {
             kind: string;
             path?: string;
             version?: string;
+        };
+        ProtoMemoryCollectionStatus: {
+            /** @description The head central last acknowledged */
+            acked?: string;
+            /**
+             * Format: int64
+             * @description Conflicts preserved on the node and not yet reconciled
+             */
+            conflicts: number;
+            /** @description The node's shared history */
+            head?: string;
+            /** Format: int64 */
+            instances: number;
+            /** Format: date-time */
+            last_ack_at?: string;
+            /** Format: date-time */
+            last_checkpoint_at?: string;
+            last_error?: string;
+            /**
+             * Format: int64
+             * @description Commits not yet acknowledged by central
+             */
+            local_commits: number;
+            /** @description A sync is due or in flight */
+            pending: boolean;
+            /** Format: int64 */
+            retries: number;
+            role: string;
+            space_id: string;
+            /**
+             * Format: int64
+             * @description Changed files not yet checkpointed, across instances
+             */
+            uncheckpointed: number;
         };
         ProtoRunnerInfo: {
             core_id: string;
@@ -8737,6 +8987,230 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-space-mcp-grantsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-memoryResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryCollection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-memory-conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-memory-conflictsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resolve-memory-conflict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                role: string;
+                conflict_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-memory-file": {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Get-memory-fileResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-memory-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-memory-filesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "memory-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory-historyResponse"];
                 };
             };
             /** @description Error */

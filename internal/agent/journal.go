@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"time"
@@ -203,4 +204,49 @@ func b2i(b bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// memRow is one collection's sync state.
+type memRow struct {
+	SpaceID, Role, Acked, LastError string
+	LastAckAt, LastCheckpoint       *time.Time
+	Retries, Conflicts              int
+}
+
+func (j *Journal) memory(ctx context.Context, spaceID, role string) (memRow, error) {
+	r := memRow{SpaceID: spaceID, Role: role}
+	var ack, cp sql.NullInt64
+	err := j.s.ReadDB().QueryRowContext(ctx, `SELECT acked, last_ack_at, last_checkpoint_at, retries, conflicts, last_error FROM memory_sync
+		WHERE space_id = ? AND role = ?`, spaceID, role).Scan(&r.Acked, &ack, &cp, &r.Retries, &r.Conflicts, &r.LastError)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, nil
+	}
+	if ack.Valid {
+		t := time.UnixMicro(ack.Int64).UTC()
+		r.LastAckAt = &t
+	}
+	if cp.Valid {
+		t := time.UnixMicro(cp.Int64).UTC()
+		r.LastCheckpoint = &t
+	}
+	return r, err
+}
+
+func nullTime(t *time.Time) sql.NullInt64 {
+	if t == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: t.UnixMicro(), Valid: true}
+}
+
+func (j *Journal) putMemory(ctx context.Context, r memRow) error {
+	return j.s.W().TxNamed(ctx, "journal.memory", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO memory_sync (space_id, role, acked, last_ack_at, last_checkpoint_at, retries, conflicts, last_error, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (space_id, role) DO UPDATE SET acked = excluded.acked, last_ack_at = excluded.last_ack_at,
+			last_checkpoint_at = excluded.last_checkpoint_at, retries = excluded.retries, conflicts = excluded.conflicts,
+			last_error = excluded.last_error, updated_at = excluded.updated_at`,
+			r.SpaceID, r.Role, r.Acked, nullTime(r.LastAckAt), nullTime(r.LastCheckpoint), r.Retries, r.Conflicts, r.LastError, tx.NowMicros())
+		return err
+	})
 }

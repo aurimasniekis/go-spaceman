@@ -49,6 +49,14 @@ type Hub struct {
 	Secrets SecretsResolver
 	// Tools runs agent tool calls (nil: agents only have the node's local tools).
 	Tools ToolDispatcher
+	// Memory stores role memory the node syncs (ADR-0025); nil refuses syncs.
+	Memory MemoryStore
+}
+
+// MemoryStore is central's role-memory storage as the hub sees it.
+type MemoryStore interface {
+	Apply(ctx context.Context, nodeID string, m proto.MemorySync) proto.MemoryAck
+	Report(ctx context.Context, nodeID string, st proto.MemoryStatus)
 }
 
 type session struct {
@@ -62,6 +70,8 @@ type session struct {
 	log    *slog.Logger
 	// tools bounds concurrent agent tool calls from this node.
 	tools chan struct{}
+	// memory serializes this node's memory syncs (git runs outside any transaction, one at a time per node).
+	memory chan struct{}
 }
 
 func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }
@@ -155,7 +165,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(proto.MaxMessage)
-	s := &session{nodeID: node.ID, credID: credID, conn: conn, out: make(chan []byte, 256), kick: make(chan struct{}, 1), done: make(chan struct{}), tools: make(chan struct{}, 8),
+	s := &session{nodeID: node.ID, credID: credID, conn: conn, out: make(chan []byte, 256), kick: make(chan struct{}, 1), done: make(chan struct{}), tools: make(chan struct{}, 8), memory: make(chan struct{}, 1),
 		log: obs.Component(h.svc.opts.Log, "fleet").With(slog.String(obs.FieldNodeID, node.ID))}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if err := h.run(context.WithoutCancel(ctx), s, ip); err != nil && !errors.Is(err, net.ErrClosed) {
@@ -353,6 +363,34 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 				Payload: mustJSON(proto.StopPayload{Mode: "kill", Reason: "fenced: stale lease generation or unknown run"})})
 		}
 		return err
+	case proto.TypeMemorySync:
+		var m proto.MemorySync
+		if err := env.Decode(&m); err != nil {
+			return err
+		}
+		go func() {
+			ack := proto.MemoryAck{SyncID: m.SyncID, SpaceID: m.SpaceID, Role: m.Role, Result: proto.MemoryError, Message: "central does not store memory"}
+			if h.Memory != nil {
+				select {
+				case s.memory <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				ack = h.Memory.Apply(ctx, s.nodeID, m)
+				<-s.memory
+			}
+			_ = s.send(proto.TypeMemoryAck, svc.now(), ack)
+		}()
+		return nil
+	case proto.TypeMemoryStatus:
+		var st proto.MemoryStatus
+		if err := env.Decode(&st); err != nil {
+			return err
+		}
+		if h.Memory != nil {
+			go h.Memory.Report(context.WithoutCancel(ctx), s.nodeID, st)
+		}
+		return nil
 	case proto.TypeToolCall:
 		var call proto.ToolCall
 		if err := env.Decode(&call); err != nil {

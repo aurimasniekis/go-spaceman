@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Roles and prompts: versioned prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates
   and space roles. Launches resolve them in a documented order with a permission-mode ceiling, and each run records its
   configuration in a manifest.
+- Role memory: each role's notes are Git history on the node, shared by its instances, checkpointed at idle points and
+  run ends, merged without overwriting (conflicts are preserved and reported) and preserved centrally by fast-forward
+  only. Spaces have a Memory section.
 - Enforced approvals: policies make built-in agent tools or gateway tools wait for a person's approval, bound to the
   exact arguments, the requesting run, an expiry and a number of uses; the decision and each execution are recorded
   separately, and the approver's authorization is checked again before execution.

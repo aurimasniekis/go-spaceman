@@ -37,6 +37,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/health"
@@ -80,6 +81,8 @@ type Central struct {
 	Gateway *gateway.Service
 	// Approvals gates operations that policies make need a person's approval (ADR-0024).
 	Approvals *approvals.Service
+	// Memory preserves role memory synced from nodes (ADR-0025).
+	Memory *memory.Service
 	// Catalog holds prompts, harness profiles, role templates and space roles (SM-PROMPT-*).
 	Catalog *catalog.Service
 	// Accounts holds harness credentials (SM-ACCT-*).
@@ -208,9 +211,16 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Gateway = gateway.New(st, c.Keyring, c.Audit, c.Changes, gateway.Options{Log: obs.Component(log, "gateway")})
 	c.Approvals = approvals.New(st, c.Audit, c.Changes, c.Human, obs.Component(log, "approvals"))
 	c.Approvals.StillAuthorized = c.approverStillAuthorized
+	gitBin, gitErr := memory.NewGit()
+	if gitErr != nil {
+		log.Warn("role memory cannot be stored centrally until git is installed", obs.Err(gitErr))
+		gitBin = nil
+	}
+	c.Memory = memory.New(st, c.Audit, c.Changes, st.Path("memory"), gitBin, obs.Component(log, "memory"))
+	c.Fleet.Hub().Memory = c.Memory
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue)}, Upstream: c.Gateway, Gate: c.Approvals})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Tools.Dispatch
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Catalog.SeedBuiltins(ctx); err != nil {
@@ -270,7 +280,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -415,13 +425,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules} {
 		for k, v := range m {
 			out[k] = v
 		}

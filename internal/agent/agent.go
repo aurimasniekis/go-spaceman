@@ -86,6 +86,8 @@ type Agent struct {
 	minor int
 	// toolCalls are the agent tool calls waiting for central's result, by call ID.
 	toolCalls map[string]chan proto.ToolResult
+	// mem keeps role memory (ADR-0025).
+	mem *memManager
 }
 
 // New prepares an agent; Run starts it.
@@ -102,8 +104,10 @@ func New(j *Journal, o Options) *Agent {
 	if o.HTTPClient == nil {
 		o.HTTPClient = http.DefaultClient
 	}
-	return &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
+	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
 		recorders: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1)}
+	a.mem = newMemManager(a)
+	return a
 }
 
 func (a *Agent) now() time.Time { return a.o.Clock.Now().UTC() }
@@ -122,6 +126,7 @@ func RunName(runID string) string     { return "r-" + strings.TrimPrefix(runID, 
 // Run connects to central and serves until ctx ends. It first reconciles the journal with the runner, so a restarted
 // agent adopts its programs instead of starting duplicates (SM-NODE-009).
 func (a *Agent) Run(ctx context.Context) error {
+	a.mem.base = context.WithoutCancel(ctx)
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err
@@ -284,6 +289,7 @@ func (a *Agent) session(ctx context.Context) error {
 			a.mu.Unlock()
 			go a.heartbeatLoop(hbCtx)
 			go a.catchUpRecordings(hbCtx)
+			go a.mem.resume(hbCtx)
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant
@@ -318,6 +324,11 @@ func (a *Agent) session(ctx context.Context) error {
 			var res proto.ToolResult
 			if err := env.Decode(&res); err == nil {
 				a.toolResult(res)
+			}
+		case proto.TypeMemoryAck:
+			var ack proto.MemoryAck
+			if err := env.Decode(&ack); err == nil {
+				go a.mem.acked(context.WithoutCancel(ctx), ack)
 			}
 		case proto.TypeError:
 			var e proto.Error

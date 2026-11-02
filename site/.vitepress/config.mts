@@ -73,6 +73,7 @@ export default withMermaid(
             { text: 'Messages', link: '/guide/messages' },
             { text: 'Control and workers', link: '/guide/control' },
             { text: 'Roles and prompts', link: '/guide/roles-and-prompts' },
+            { text: 'Role memory', link: '/guide/memory' },
             { text: 'Skills', link: '/guide/skills' },
             { text: 'MCP gateway', link: '/guide/mcp-gateway' },
             { text: 'Events and subscriptions', link: '/guide/events' },

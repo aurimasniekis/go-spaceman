@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
@@ -203,8 +204,20 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
 	}
+	// Role memory (ADR-0025): the instance's checkout, refreshed from the shared history at this safe boundary. A node
+	// without git runs without memory rather than not at all.
+	memDir, err := a.mem.prepare(ctx, c.SpaceID, p.Role, p.InstanceID)
+	if err != nil {
+		log.Warn("role memory unavailable for this run", obs.Err(err))
+		memDir = ""
+	} else if real, err := filepath.EvalSymlinks(memDir); err == nil {
+		memDir = real
+	}
+	if memDir != "" && !p.Resume {
+		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(memDir, p.Role))
+	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
-		WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p})
+		WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir})
 	if err != nil {
 		fail("build launch", err)
 		return
@@ -279,10 +292,18 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 			row.State = proto.RunLost
 		}
 	}
+	prev, _ := a.j.getRun(ctx, row.RunID)
 	_ = a.j.updateRun(ctx, row)
 	a.report(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
+	}
+	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
+	switch {
+	case ended(row.State) && !ended(prev.State):
+		go a.mem.flush(context.WithoutCancel(ctx), row, "run ended")
+	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
+		a.mem.kick(row)
 	}
 }
 

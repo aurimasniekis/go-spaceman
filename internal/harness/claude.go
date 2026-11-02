@@ -71,6 +71,9 @@ func (Claude) Build(c Context) (Launch, error) {
 		}
 		argv = append(argv, "--permission-mode", m)
 	}
+	if c.MemoryDir != "" {
+		argv = append(argv, "--add-dir", c.MemoryDir)
+	}
 	if p.SystemText != "" {
 		argv = append(argv, "--append-system-prompt", p.SystemText)
 	}

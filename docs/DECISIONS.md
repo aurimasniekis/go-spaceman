@@ -365,6 +365,34 @@
   - Shell commands and harness-native permission prompts are not covered.
   - An interrupted execution may or may not have taken effect; people decide whether to approve it again.
 
+### ADR-0025 — Role memory is Git history owned by the node and preserved centrally by fast-forward only
+- **Status:** Accepted, 2026-11-02.
+- **Context:** SM-MEM-001…006: memory keyed by space and role, shared by every instance, one bare repository per
+  collection with instance checkouts on the node, debounced checkpoints, bounded asynchronous sync, parent revisions for
+  concurrency, conflicts preserved and reported (never overwritten or force-pushed), central guaranteeing only
+  acknowledged history, and central edits following active ownership.
+- **Decision:**
+  - The node keeps `<data>/memory/<space>/<role>/shared.git` and `instances/<instance>` checkouts and runs the `git`
+    command line with hooks and fsmonitor disabled, no system or global config and repository paths instead of
+    remotes (agents can write their checkout's `.git`).
+  - Checkpoints happen 15 seconds after a run reports idle or done, and at once when a run ends. A checkpoint publishes
+    to the shared history by fast-forward or a clean merge. On a conflicting merge the shared version wins; the
+    instance's history is pushed to `refs/conflicts/<instance>-<time>` and its versions of the conflicting files are
+    committed under `conflicts/`, for the role to reconcile.
+  - Within 5 seconds of a publish (backoff up to 10 minutes on failure; again on reconnect) the node sends a Git bundle
+    from the last acknowledged head (`memory.sync`, node protocol minor 2, at most 2 MiB). Central fetches it into
+    the collection's bare repository and moves `main` only if the new head descends from central's acknowledged head
+    (compare-and-swap on the ref and the database). Otherwise it keeps the history under `refs/conflicts/node-<time>`
+    and answers `conflict`; a bundle on a base central lacks is answered `missing_base` and resent in full.
+  - Only the space's assigned node may sync a space's memory. Central offers read-only files and history; marking a
+    conflict reconciled is its only write.
+  - The node reports per-collection status (`memory.status`): uncheckpointed files, unsynced commits, pending sync,
+    last acknowledgement, conflicts, retries and the last error.
+- **Consequences:**
+  - Central needs `git` to store memory; without it, syncs are refused and the UI says so.
+  - Changes newer than the last acknowledgement exist only on the node.
+  - Rewritten history (e.g. after a restore) is preserved but not applied; reconciling it is a person's decision.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

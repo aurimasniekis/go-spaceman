@@ -173,7 +173,9 @@ test('documentation screenshots', async ({ page, browser }) => {
   const control = await api.call<Run>('POST', `/spaces/${payments.id}/runs`, { role: 'control',
     prompt: 'Coordinate the retry-budget change across the settlement services.\n/call tickets__ticket_comment {"id":"PAY-409","body":"Retry budget raised to 5 for weekend settlement."}' })
   const reviewer = await launch(payments.id, 'worker', 'reviewer', 'codex', 'Review the open pull requests and summarise the risky ones.')
-  const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.')
+  const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.\n' +
+    '/write decisions.md # Decisions\\n\\n- 2026-11-02: settlement retries use a budget of 5 per batch, not per item.\\n- 2026-11-02: never retry inside the bank window (01:00-03:00 UTC).\\n\n' +
+    '/write notes/settlement-client.md # Settlement client\\n\\nRetries live in `RetryBudget` (services/settlement/client/retry.go). The budget resets per batch.\\n')
   await launch(docs.id, 'control', 'control', 'claude-code', 'Keep the guides in step with the UI.')
   const running = async (space: string, id: string) => (await api.call<{ observed: string }>('GET', `/spaces/${space}/runs/${id}`)).observed
   for (const r of [control, reviewer, finished]) await expect.poll(() => running(payments.id, r.id), { timeout: 30_000 }).toBe('running')
@@ -465,6 +467,21 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByLabel('Show resolved, withdrawn and expired').check()
     await page.getByRole('listitem', { name: /Approve mcp\.tickets\.ticket_comment/ }).click()
     await expect(page.getByText('succeeded')).toBeVisible()
+  })
+  // The worker's memory was checkpointed when it stopped and synced to central.
+  await expect.poll(async () => {
+    const m = await api.call<{ items: { role: string; head?: string }[] }>('GET', `/spaces/${payments.id}/memory`)
+    return m.items.find((c) => c.role === 'implementor-backend')?.head ?? ''
+  }, { timeout: 30_000 }).not.toBe('')
+  await capture(page, 'space-memory', async () => {
+    await page.goto(`/spaces/${payments.id}/memory`)
+    await expect(page.getByText('in sync').first()).toBeVisible({ timeout: 20_000 })
+  })
+  await capture(page, 'memory-files', async () => {
+    await page.goto(`/spaces/${payments.id}/memory`)
+    await page.getByRole('cell', { name: 'implementor-backend' }).click()
+    await page.getByRole('button', { name: 'decisions.md' }).click()
+    await expect(page.getByText('never retry inside the bank window')).toBeVisible()
   })
   await capture(page, 'space-role-preview', async () => {
     await page.goto(`/spaces/${payments.id}`)

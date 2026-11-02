@@ -25,7 +25,7 @@ const (
 	// Major is the protocol major version; MinMinor..MaxMinor is the range this build accepts.
 	Major    = 1
 	MinMinor = 0
-	MaxMinor = 1 // 1: agent tool calls (tool.call / tool.result)
+	MaxMinor = 2 // 1: agent tool calls (tool.call / tool.result); 2: role memory sync (memory.*)
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -35,12 +35,14 @@ const (
 // Message types.
 const (
 	// node → central
-	TypeHello     = "hello"
-	TypeHeartbeat = "heartbeat"
-	TypeAck       = "ack"
-	TypeRunReport = "run.report"
-	TypeRecording = "recording.chunk"
-	TypeToolCall  = "tool.call" // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
+	TypeHello        = "hello"
+	TypeHeartbeat    = "heartbeat"
+	TypeAck          = "ack"
+	TypeRunReport    = "run.report"
+	TypeRecording    = "recording.chunk"
+	TypeToolCall     = "tool.call"     // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
+	TypeMemorySync   = "memory.sync"   // minor ≥ 2: new role-memory history, as a git bundle
+	TypeMemoryStatus = "memory.status" // minor ≥ 2: the node's view of its memory collections
 
 	// central → node
 	TypeWelcome      = "welcome"
@@ -50,6 +52,7 @@ const (
 	TypeReconcile    = "reconcile" // central's desired state for every run assigned to the node
 	TypeRecordingAck = "recording.ack"
 	TypeToolResult   = "tool.result" // minor ≥ 1
+	TypeMemoryAck    = "memory.ack"  // minor ≥ 2
 	TypeError        = "error"
 )
 
@@ -428,4 +431,61 @@ func Negotiate(nodeMin, nodeMax int) (int, error) {
 		return 0, fmt.Errorf("incompatible protocol: node speaks %d.%d-%d.%d, central %d.%d-%d.%d", Major, nodeMin, Major, nodeMax, Major, MinMinor, Major, MaxMinor)
 	}
 	return hi, nil
+}
+
+// MinorMemory is the first minor version that carries role-memory sync.
+const MinorMemory = 2
+
+// MemoryMaxBundle bounds one memory bundle (base64 inside a MaxMessage envelope).
+const MemoryMaxBundle = 2 << 20
+
+// MemorySync offers central new history of one role-memory collection (ADR-0025). Parent is the head central last
+// acknowledged ("" for none); the bundle holds the commits from Parent to Head.
+type MemorySync struct {
+	SyncID  string `json:"sync_id"`
+	SpaceID string `json:"space_id"`
+	Role    string `json:"role"`
+	Parent  string `json:"parent,omitempty"`
+	Head    string `json:"head"`
+	Bundle  []byte `json:"bundle"`
+}
+
+// Memory sync results.
+const (
+	MemoryOK          = "ok"           // central's head is now Head
+	MemoryConflict    = "conflict"     // Head does not descend from central's head; kept under refs/conflicts
+	MemoryMissingBase = "missing_base" // central lacks Parent: send the full history
+	MemoryError       = "error"
+)
+
+// MemoryAck answers a MemorySync. Head is central's head after the sync.
+type MemoryAck struct {
+	SyncID  string `json:"sync_id"`
+	SpaceID string `json:"space_id"`
+	Role    string `json:"role"`
+	Result  string `json:"result"`
+	Head    string `json:"head,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// MemoryStatus is the node's view of its collections (SM-MEM-004).
+type MemoryStatus struct {
+	Collections []MemoryCollectionStatus `json:"collections"`
+}
+
+// MemoryCollectionStatus is one collection as the node sees it.
+type MemoryCollectionStatus struct {
+	SpaceID        string     `json:"space_id"`
+	Role           string     `json:"role"`
+	Head           string     `json:"head,omitempty" doc:"The node's shared history"`
+	Acked          string     `json:"acked,omitempty" doc:"The head central last acknowledged"`
+	Instances      int        `json:"instances"`
+	Uncheckpointed int        `json:"uncheckpointed" doc:"Changed files not yet checkpointed, across instances"`
+	LocalCommits   int        `json:"local_commits" doc:"Commits not yet acknowledged by central"`
+	Pending        bool       `json:"pending" doc:"A sync is due or in flight"`
+	LastAckAt      *time.Time `json:"last_ack_at,omitempty"`
+	LastCheckpoint *time.Time `json:"last_checkpoint_at,omitempty"`
+	Conflicts      int        `json:"conflicts" doc:"Conflicts preserved on the node and not yet reconciled"`
+	Retries        int        `json:"retries"`
+	LastError      string     `json:"last_error,omitempty"`
 }

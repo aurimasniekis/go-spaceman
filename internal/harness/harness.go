@@ -57,6 +57,8 @@ type Context struct {
 	RunDir  string
 	Binary  string
 	Payload proto.LaunchPayload
+	// MemoryDir is the instance's checkout of its role memory ("" when memory is unavailable on the node).
+	MemoryDir string
 }
 
 // Launch is a built launch.
@@ -157,7 +159,7 @@ func secretEnv(secrets map[string]string, allowed ...string) map[string]string {
 
 // commonEnv is the non-secret environment every harness run gets.
 func commonEnv(c Context) map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		"SPACEMAN_RUN_ID":   c.RunID,
 		"SPACEMAN_SPACE_ID": c.SpaceID,
 		// Hallpass scopes access requests per agent session (Hallpass ADR-0061; not a security boundary).
@@ -165,6 +167,10 @@ func commonEnv(c Context) map[string]string {
 		"TERM":             "xterm-256color",
 		"COLORTERM":        "truecolor",
 	}
+	if c.MemoryDir != "" {
+		env["SPACEMAN_MEMORY_DIR"] = c.MemoryDir
+	}
+	return env
 }
 
 func bridgeArgs(c Context) []string {

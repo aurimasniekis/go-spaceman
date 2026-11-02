@@ -434,6 +434,30 @@ type McpServer struct {
 	Version         int64
 }
 
+type MemoryCollection struct {
+	ID             string
+	SpaceID        string
+	Role           string
+	Head           string
+	HeadAt         sql.NullInt64
+	NodeStatusJson string
+	StatusAt       sql.NullInt64
+	CreatedAt      int64
+	UpdatedAt      int64
+}
+
+type MemoryConflict struct {
+	ID           string
+	CollectionID string
+	Source       string
+	Ref          string
+	CommitID     string
+	Detail       string
+	CreatedAt    int64
+	ResolvedAt   sql.NullInt64
+	ResolvedBy   string
+}
+
 type Message struct {
 	ID             string
 	SpaceID        string

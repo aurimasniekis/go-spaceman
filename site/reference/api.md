@@ -225,6 +225,18 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/mcp-servers/{server_id}/grants/{grant_id}` | `revoke-mcp-grant` | Revoke a grant |
 | `GET` | `/spaces/{space_id}/mcp-servers` | `list-space-mcp-grants` | MCP servers granted in a space |
 
+### memory
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/memory` | `list-memory` | A space's role memory collections, with central's and the node's view |
+| `GET` | `/spaces/{space_id}/memory/{role}` | `get-memory` | One collection |
+| `GET` | `/spaces/{space_id}/memory/{role}/conflicts` | `list-memory-conflicts` | History preserved instead of applied |
+| `POST` | `/spaces/{space_id}/memory/{role}/conflicts/{conflict_id}/resolve` | `resolve-memory-conflict` | Mark a conflict reconciled |
+| `GET` | `/spaces/{space_id}/memory/{role}/file` | `get-memory-file` | One file of the acknowledged history |
+| `GET` | `/spaces/{space_id}/memory/{role}/files` | `list-memory-files` | Files of the acknowledged history |
+| `GET` | `/spaces/{space_id}/memory/{role}/history` | `memory-history` | Recent acknowledged commits |
+
 ### messages
 
 | Method | Path | Operation | Summary |

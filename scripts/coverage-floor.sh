@@ -20,6 +20,7 @@ PACKAGES=(
   internal/catalog
   internal/messages
   internal/gateway
+  internal/memory
 )
 
 fail=0

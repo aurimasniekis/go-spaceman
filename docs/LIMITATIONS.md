@@ -31,6 +31,16 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Role memory
+- **Checkpoints need an idle signal or a run end.** A harness that never reports idle (OSC 7501) is checkpointed only
+  when its run ends.
+- **Codex may not be able to write memory.** Codex runs get `$SPACEMAN_MEMORY_DIR`, but whether its sandbox lets it
+  write outside the workspace is unverified.
+- **Central needs git** to store memory, and syncs are limited to 2 MiB of new history at a time.
+- **Restored or relocated memory is not merged automatically.** History central did not acknowledge is preserved and
+  reported; relocation and restore handling arrive with M4.
+- **Flushes before relocation and backups** arrive with those features (M4).
+
 ## MCP gateway
 - **Streamable HTTP servers only.** Servers started as local processes (stdio) and the older SSE transport are not
   supported; run such a server behind a streamable HTTP adapter.
