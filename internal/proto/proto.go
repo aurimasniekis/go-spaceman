@@ -42,12 +42,13 @@ const (
 	TypeRecording = "recording.chunk"
 
 	// central → node
-	TypeWelcome     = "welcome"
-	TypeLeaseGrant  = "lease.grant"
-	TypeLeaseRevoke = "lease.revoke"
-	TypeCommand     = "command"
-	TypeReconcile   = "reconcile" // central's desired state for every run assigned to the node
-	TypeError       = "error"
+	TypeWelcome      = "welcome"
+	TypeLeaseGrant   = "lease.grant"
+	TypeLeaseRevoke  = "lease.revoke"
+	TypeCommand      = "command"
+	TypeReconcile    = "reconcile" // central's desired state for every run assigned to the node
+	TypeRecordingAck = "recording.ack"
+	TypeError        = "error"
 )
 
 // Envelope is one protocol message.
@@ -266,6 +267,20 @@ type DesiredRun struct {
 	SpaceID    string `json:"space_id"`
 	Generation int64  `json:"generation"`
 	Desired    string `json:"desired"` // running, stopped
+}
+
+// RecordingChunk ships recording records (internal/recording.Record JSON) of one run to central. Records carry their
+// node-assigned sequence numbers; central stores each sequence once, so re-shipping after a reconnect is harmless.
+type RecordingChunk struct {
+	RunID   string            `json:"run_id"`
+	SpaceID string            `json:"space_id"`
+	Records []json.RawMessage `json:"records"`
+}
+
+// RecordingAck confirms the highest stored sequence of a run's recording.
+type RecordingAck struct {
+	RunID string `json:"run_id"`
+	Seq   uint64 `json:"seq"`
 }
 
 // Error is a fatal protocol error; the receiver closes the connection.

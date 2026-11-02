@@ -299,6 +299,21 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 				Payload: mustJSON(proto.StopPayload{Mode: "kill", Reason: "fenced: stale lease generation or unknown run"})})
 		}
 		return err
+	case proto.TypeRecording:
+		var c proto.RecordingChunk
+		if err := env.Decode(&c); err != nil {
+			return err
+		}
+		r, err := svc.s.R().GetRun(ctx, c.RunID)
+		if err != nil || r.NodeID != s.nodeID || r.SpaceID != c.SpaceID {
+			return apperr.New(apperr.CodeForbidden, "recording for a run not assigned to this node")
+		}
+		if svc.opts.RecordingsDir == "" {
+			return nil
+		}
+		seq, err := svc.rec.apply(c)
+		_ = s.send(proto.TypeRecordingAck, svc.now(), proto.RecordingAck{RunID: c.RunID, Seq: seq})
+		return err
 	default:
 		return apperr.New(apperr.CodeInvalid, "unexpected message type %q", env.Type)
 	}

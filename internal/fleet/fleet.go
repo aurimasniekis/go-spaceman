@@ -33,6 +33,8 @@ type Options struct {
 	Clock             clock.Clock
 	Log               *slog.Logger
 	Metrics           *metrics.Metrics
+	// RecordingsDir stores central copies of node recordings (empty: <none>, recordings are not accepted).
+	RecordingsDir string
 }
 
 // Service manages nodes, spaces, leases and runs.
@@ -44,6 +46,7 @@ type Service struct {
 	changes *changefeed.Recorder
 	opts    Options
 	hub     *Hub
+	rec     *Recordings
 }
 
 // New builds the service and its hub.
@@ -68,8 +71,12 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	}
 	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o}
 	svc.hub = newHub(svc)
+	svc.rec = newRecordings(o.RecordingsDir, o.Clock.Now)
 	return svc
 }
+
+// Recordings returns central's recording store.
+func (svc *Service) Recordings() *Recordings { return svc.rec }
 
 // Hub returns the node connection hub.
 func (svc *Service) Hub() *Hub { return svc.hub }

@@ -3,6 +3,7 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -270,3 +271,122 @@ func TestDisconnectEnforcement(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// SM-REC-002/004, SM-UI-004: node recordings reach central, replay through the API and stream live to watch-only
+// viewers (with the terminal:watch permission).
+func TestRecordingShippedReplayedAndStreamed(t *testing.T) {
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "rec-test", Name: "Rec", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor-backend", Harness: hns.KindCodex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "running", func() bool { return e.run1(r.ID).Observed == "running" })
+	term := e.run.LiveByLabel("spaceman.run", r.ID)[0].ID
+	e.run.Output(term, "hello from the run\r\n")
+	stored := func(want string) bool {
+		res, err := e.c.Fleet.Recordings().Read(r.ID, 0)
+		if err != nil {
+			return false
+		}
+		var out strings.Builder
+		for _, rec := range res.Records {
+			out.Write(rec.Data)
+		}
+		return strings.Contains(out.String(), want) && res.Records[0].Kind == "open"
+	}
+	eventually(t, "recording shipped to central", func() bool { return stored("hello from the run") })
+
+	rootSecret, _, err := e.c.Auth.IssueRootToken(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) (*http.Response, error) {
+		req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/api/v1/spaces/"+sp.ID+"/runs/"+r.ID+path, nil)
+		req.Header.Set("Authorization", "Bearer "+rootSecret)
+		return http.DefaultClient.Do(req)
+	}
+	res, err := get("/recording")
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("replay: %v %v", res.StatusCode, err)
+	}
+	var page struct {
+		Records []struct {
+			Kind string `json:"k"`
+		} `json:"records"`
+	}
+	_ = json.NewDecoder(res.Body).Decode(&page)
+	res.Body.Close()
+	if len(page.Records) < 2 || page.Records[0].Kind != "open" {
+		t.Fatalf("replay page %+v", page)
+	}
+
+	// Live stream: catch-up, then a new chunk, then the run's end.
+	res, err = get("/terminal")
+	if err != nil || res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("terminal stream: %v %v", res, err)
+	}
+	defer res.Body.Close()
+	lines := make(chan string, 256)
+	go func() {
+		buf := make([]byte, 64<<10)
+		var acc strings.Builder
+		for {
+			n, err := res.Body.Read(buf)
+			acc.Write(buf[:n])
+			for {
+				s := acc.String()
+				i := strings.Index(s, "\n\n")
+				if i < 0 {
+					break
+				}
+				lines <- s[:i]
+				acc.Reset()
+				acc.WriteString(s[i+2:])
+			}
+			if err != nil {
+				close(lines)
+				return
+			}
+		}
+	}()
+	e.run.Output(term, "live line\r\n")
+	sawLive := false
+	deadline := time.After(10 * time.Second)
+	for !sawLive {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatal("stream ended early")
+			}
+			if strings.Contains(l, "event: record") && strings.Contains(l, `"d":"`+b64("live line\r\n")+`"`) {
+				sawLive = true
+			}
+		case <-deadline:
+			t.Fatal("live record not streamed")
+		}
+	}
+	e.run.Exit(term, 0, "exited")
+	deadline = time.After(10 * time.Second)
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok || strings.Contains(l, "event: end") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("stream did not end with the run")
+		}
+	}
+}
+
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }

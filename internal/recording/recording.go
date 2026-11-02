@@ -156,13 +156,20 @@ func (w *Writer) Seq() uint64 {
 
 // Add appends one record (assigning seq and time) and flushes when the buffer is large.
 func (w *Writer) Add(r Record) error {
+	_, err := w.AddRecord(r)
+	return err
+}
+
+// AddRecord is Add returning the stored record (with its sequence and time); ok is false when the record was dropped
+// (quota reached).
+func (w *Writer) AddRecord(r Record) (Record, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.err != nil {
-		return w.err
+		return Record{}, w.err
 	}
 	if w.stopped && r.Kind != KindClose {
-		return nil
+		return Record{}, nil
 	}
 	w.seq++
 	r.Seq = w.seq
@@ -171,14 +178,42 @@ func (w *Writer) Add(r Record) error {
 	}
 	line, err := json.Marshal(r)
 	if err != nil {
-		return err
+		return Record{}, err
 	}
 	w.buf.Write(line)
 	w.buf.WriteByte('\n')
 	if w.buf.Len() >= flushBytes {
-		return w.flushLocked()
+		return r, w.flushLocked()
 	}
-	return nil
+	return r, nil
+}
+
+// Append stores a record that already carries its sequence number (central's copy of a node recording). Records at
+// or below the last stored sequence are ignored, so re-shipping after a reconnect is idempotent; a jump in sequence is
+// kept as-is (readers count it as a gap).
+func (w *Writer) Append(r Record) (bool, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.err != nil {
+		return false, w.err
+	}
+	if r.Seq <= w.seq {
+		return false, nil
+	}
+	if w.stopped && r.Kind != KindClose {
+		return false, nil
+	}
+	w.seq = r.Seq
+	line, err := json.Marshal(r)
+	if err != nil {
+		return false, err
+	}
+	w.buf.Write(line)
+	w.buf.WriteByte('\n')
+	if w.buf.Len() >= flushBytes {
+		return true, w.flushLocked()
+	}
+	return true, nil
 }
 
 // Flush writes buffered records as one complete zstd frame and syncs it.

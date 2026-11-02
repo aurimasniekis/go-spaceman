@@ -179,13 +179,13 @@
 | SM-UI-001 | | todo | | | |
 | SM-UI-002 | | todo | | | |
 | SM-UI-003 | | todo | | | |
-| SM-UI-004 | | todo | | | |
+| SM-UI-004 | M1-09 | partial | watch-only terminal stream API with `terminal:watch` and re-validation (`TestRecordingShippedReplayedAndStreamed`) |  | Takeover (`terminal:takeover`) and UI pending. |
 | SM-UI-005 | | todo | | | |
 | SM-UI-006 | | todo | | | |
 | SM-REC-001 | | todo | | | |
 | SM-REC-002 | M1-09 | implemented | `internal/recording` `TestWriteReadResume`; agent observe-attach recorder | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): recording contains harness output |  |
-| SM-REC-003 | M1-09 | partial | `TestTornSegmentRecovers` |  | Upload/replay/download API pending. |
-| SM-REC-004 | M1-09 | partial | `TestQuotaTruncates`; recorder independent of viewers |  |  |
+| SM-REC-003 | M1-09 | partial | `TestTornSegmentRecovers`, `TestAppendIsIdempotent`; replay/download/delete API; `TestRecordingShippedReplayedAndStreamed` |  | Seeking/speed are UI (M1-11); quotas/retention policy M4-02. |
+| SM-REC-004 | M1-09 | implemented | `TestQuotaTruncates`; bounded viewer queues with gap + catch-up (`TestRecordingShippedReplayedAndStreamed`) |  |  |
 | SM-REC-005 | | todo | | | |
 | SM-LIMIT-001 | | todo | | | |
 | SM-LIMIT-002 | | todo | | | |

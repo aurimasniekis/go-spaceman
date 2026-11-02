@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -57,6 +59,8 @@ type Deps struct {
 	Extra []func(api huma.API, d *Deps)
 	// ExtraRules are the authorization rules of the Extra operations.
 	ExtraRules map[string]Rule
+	// Raw are plain HTTP routes (streams, downloads), authorized per space.
+	Raw []RawRoute
 	// Ready reports readiness for the public system info.
 	Ready func() bool
 }
@@ -89,7 +93,27 @@ func Config() huma.Config {
 		"session": {Type: "apiKey", In: "cookie", Name: SessionCookieName(true), Description: "Web UI session cookie (sm_session on plain-http development)"},
 	}
 	c.Security = []map[string][]string{{"bearer": {}}, {"session": {}}}
+	c.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", schemaNamer)
 	return c
+}
+
+// schemaNamer names schemas after their Go type, prefixed with the package for types outside this package
+// (audit.Record → AuditRecord, recording.Record → RecordingRecord), so equal type names never collide.
+func schemaNamer(t reflect.Type, hint string) string {
+	name := huma.DefaultSchemaNamer(t, hint)
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
+		t = t.Elem()
+	}
+	pkg := t.PkgPath()
+	if pkg == "" || strings.HasSuffix(pkg, "/internal/api") || t.Name() == "" {
+		return name
+	}
+	base := pkg[strings.LastIndex(pkg, "/")+1:]
+	prefix := strings.ToUpper(base[:1]) + base[1:]
+	if strings.HasPrefix(name, prefix) {
+		return name
+	}
+	return prefix + name
 }
 
 // Register builds the API on mux and returns it (also used by `spaceman openapi` with a zero Deps).
@@ -113,6 +137,9 @@ func (d *Deps) Handler() http.Handler {
 	mux := http.NewServeMux()
 	Register(mux, d)
 	mux.Handle("GET "+Prefix+"/watch", d.watchHandler())
+	for _, rt := range d.Raw {
+		mux.Handle(rt.Pattern, d.authorizeRaw(rt))
+	}
 	var h http.Handler = mux
 	h = d.authenticate(h)
 	h = d.limitBody(h)

@@ -90,7 +90,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(), Clock: o.Clock,
-		Log: log, Metrics: m})
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings")})
 	c.Health = health.New(health.Options{ExposeDetails: !cfg.IsProduction()})
 	c.Health.MustRegister(
 		health.StoreHealth("store", st.Health()),
@@ -118,6 +118,7 @@ func (c *Central) openKeyring(ctx context.Context, environ []string) error {
 func (c *Central) Close() error {
 	if c.Fleet != nil {
 		c.Fleet.Hub().CloseAll("central shutting down")
+		c.Fleet.Recordings().Close()
 	}
 	return c.Store.Close()
 }
@@ -133,7 +134,8 @@ func (c *Central) APIDeps() *api.Deps {
 	d := &api.Deps{Log: obs.Component(c.Log, "api"), Store: c.Store, Auth: c.Auth, Authz: c.Authz, Audit: c.Audit, Bus: c.Bus,
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(),
-		ExtraRules: api.FleetRules, Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet)}}
+		ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet)},
+		Raw: api.RecordingStreams(c.Fleet)}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
 }
@@ -234,5 +236,16 @@ func (c *Central) housekeeping(ctx context.Context) {
 
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
-	return &api.Deps{ExtraRules: api.FleetRules, Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil)}}
+	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil)}}
+}
+
+// rules merges the authorization rules of every feature's operations.
+func rules() map[string]api.Rule {
+	out := map[string]api.Rule{}
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules} {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
 }

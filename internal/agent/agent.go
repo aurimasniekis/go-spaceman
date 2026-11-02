@@ -79,6 +79,9 @@ type Agent struct {
 	// caps caches the capability inventory (harness detection runs binaries; never between dial and hello).
 	caps   proto.Capabilities
 	capsAt time.Time
+	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
+	acked     map[string]uint64
+	unshipped map[string]bool
 }
 
 // New prepares an agent; Run starts it.
@@ -274,6 +277,7 @@ func (a *Agent) session(ctx context.Context) error {
 			}
 			a.mu.Unlock()
 			go a.heartbeatLoop(hbCtx)
+			go a.catchUpRecordings(hbCtx)
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant
@@ -299,6 +303,11 @@ func (a *Agent) session(ctx context.Context) error {
 				return err
 			}
 			a.reconcileDesired(ctx, rec)
+		case proto.TypeRecordingAck:
+			var ack proto.RecordingAck
+			if err := env.Decode(&ack); err == nil {
+				a.recordingAck(ack)
+			}
 		case proto.TypeError:
 			var e proto.Error
 			_ = env.Decode(&e)

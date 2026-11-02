@@ -111,3 +111,21 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func TestAppendIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, seq := range []uint64{1, 2, 2, 1, 3, 7} {
+		if _, err := w.Append(Record{Seq: seq, Kind: KindOut, Data: []byte{byte('a' + seq)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(t, w.Close())
+	res, _ := Read(dir, 0)
+	if len(res.Records) != 4 || res.Gaps != 1 || res.Records[3].Seq != 7 {
+		t.Fatalf("append result %+v", res)
+	}
+}

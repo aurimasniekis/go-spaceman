@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"path/filepath"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
 )
@@ -45,17 +47,18 @@ func (a *Agent) record(ctx context.Context, row runRow) {
 			}
 			continue
 		}
+		var prelude []recording.Record
 		if first {
-			_ = w.Add(recording.Record{Kind: recording.KindOpen, Cols: p.Cols, Rows: p.Rows, RunID: row.RunID})
+			prelude = append(prelude, recording.Record{Kind: recording.KindOpen, Cols: p.Cols, Rows: p.Rows, RunID: row.RunID})
 			first = false
 		} else {
-			_ = w.Add(recording.Record{Kind: recording.KindGap, Why: "reattach"})
+			prelude = append(prelude, recording.Record{Kind: recording.KindGap, Why: "reattach"})
 			if p.Cols != cols || p.Rows != rows {
-				_ = w.Add(recording.Record{Kind: recording.KindSize, Cols: p.Cols, Rows: p.Rows})
+				prelude = append(prelude, recording.Record{Kind: recording.KindSize, Cols: p.Cols, Rows: p.Rows})
 			}
 		}
 		cols, rows = p.Cols, p.Rows
-		done := a.pump(ctx, st, w, flush)
+		done := a.pump(ctx, row, st, w, flush, prelude)
 		_ = st.Close()
 		if done {
 			return
@@ -63,8 +66,26 @@ func (a *Agent) record(ctx context.Context, row runRow) {
 	}
 }
 
-// pump copies one attachment into the recording; it returns true when the program ended.
-func (a *Agent) pump(ctx context.Context, st runner.Stream, w *recording.Writer, flush *time.Ticker) bool {
+// pump copies one attachment into the recording; it returns true when the program ended. Records are shipped to
+// central after every flush (at most once a second); shipping never blocks recording.
+func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recording.Writer, flush *time.Ticker, prelude []recording.Record) bool {
+	var batch []recording.Record
+	add := func(r recording.Record) {
+		if stored, err := w.AddRecord(r); err == nil && stored.Seq != 0 {
+			batch = append(batch, stored)
+		}
+	}
+	for _, r := range prelude {
+		add(r)
+	}
+	ship := func() {
+		_ = w.Flush()
+		if len(batch) > 0 {
+			a.ship(ctx, row.RunID, row.SpaceID, batch)
+			batch = nil
+		}
+	}
+	defer ship()
 	type chunk struct {
 		data   []byte
 		closed *runner.CloseInfo
@@ -92,22 +113,81 @@ func (a *Agent) pump(ctx context.Context, st runner.Stream, w *recording.Writer,
 		case <-ctx.Done():
 			return true
 		case <-flush.C:
-			_ = w.Flush()
+			ship()
 		case c, ok := <-ch:
 			if !ok {
 				return false
 			}
 			switch {
 			case c.closed != nil:
-				_ = w.Add(recording.Record{Kind: recording.KindClose, ExitCode: c.closed.ExitCode, Reason: c.closed.Reason})
-				_ = w.Flush()
+				add(recording.Record{Kind: recording.KindClose, ExitCode: c.closed.ExitCode, Reason: c.closed.Reason})
 				return true
 			case c.err != nil:
-				_ = w.Flush()
 				return false
 			default:
-				_ = w.Add(recording.Record{Kind: recording.KindOut, Data: c.data})
+				add(recording.Record{Kind: recording.KindOut, Data: c.data})
 			}
 		}
 	}
+}
+
+// ship sends records to central; when that fails the run is caught up from the local recording after reconnect.
+func (a *Agent) ship(ctx context.Context, runID, spaceID string, recs []recording.Record) {
+	raws := make([]json.RawMessage, 0, len(recs))
+	for _, r := range recs {
+		b, err := json.Marshal(r)
+		if err == nil {
+			raws = append(raws, b)
+		}
+	}
+	if err := a.send(ctx, proto.TypeRecording, proto.RecordingChunk{RunID: runID, SpaceID: spaceID, Records: raws}); err != nil {
+		a.markUnshipped(runID)
+	}
+}
+
+func (a *Agent) markUnshipped(runID string) {
+	a.mu.Lock()
+	if a.unshipped == nil {
+		a.unshipped = map[string]bool{}
+	}
+	a.unshipped[runID] = true
+	a.mu.Unlock()
+}
+
+// catchUpRecordings re-ships local recordings after the last acknowledged sequence (after connecting). Central stores
+// each sequence once, so overlap is harmless.
+func (a *Agent) catchUpRecordings(ctx context.Context) {
+	runs, err := a.j.runs(ctx, false)
+	if err != nil {
+		return
+	}
+	for _, r := range runs {
+		a.mu.Lock()
+		acked, known := a.acked[r.RunID]
+		dirty := a.unshipped[r.RunID]
+		delete(a.unshipped, r.RunID)
+		a.mu.Unlock()
+		if known && !dirty {
+			continue
+		}
+		res, err := recording.Read(a.RecordingDir(r.RunID), acked)
+		if err != nil || len(res.Records) == 0 {
+			continue
+		}
+		for start := 0; start < len(res.Records); start += 256 {
+			end := min(start+256, len(res.Records))
+			a.ship(ctx, r.RunID, r.SpaceID, res.Records[start:end])
+		}
+	}
+}
+
+func (a *Agent) recordingAck(ack proto.RecordingAck) {
+	a.mu.Lock()
+	if a.acked == nil {
+		a.acked = map[string]uint64{}
+	}
+	if ack.Seq > a.acked[ack.RunID] {
+		a.acked[ack.RunID] = ack.Seq
+	}
+	a.mu.Unlock()
 }
