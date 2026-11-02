@@ -179,8 +179,9 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 	if len(in.Reason) > 2000 || len(in.Result) > 100_000 {
 		return nil, apperr.New(apperr.CodeInvalid, "reason or result too long")
 	}
-	return svc.mutate(ctx, "queue.status", spaceID, id, version, func(tx *store.Tx, sn *snapshot, t *Task) error {
-		from := t.Status
+	from := ""
+	t, err := svc.mutate(ctx, "queue.status", spaceID, id, version, func(tx *store.Tx, sn *snapshot, t *Task) error {
+		from = t.Status
 		if !slices.Contains(transitions[from], in.Status) {
 			return apperr.New(apperr.CodePrecondition, "a %s task cannot become %s", from, in.Status)
 		}
@@ -208,6 +209,10 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 			Details: map[string]any{"space_id": spaceID, "from": from, "to": in.Status, "reason": in.Reason, "preempted": preempted == 1}})
 		return err
 	})
+	if err == nil && svc.OnStatus != nil {
+		svc.OnStatus(actor, t, from)
+	}
+	return t, err
 }
 
 func b2i(b bool) int64 {

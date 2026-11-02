@@ -100,6 +100,8 @@ type Service struct {
 	audit   *audit.Writer
 	changes *changefeed.Recorder
 	att     *attachments.Service
+	// OnCreated is called after a commit that added a new item (not a duplicate), e.g. to wake control.
+	OnCreated func(it *Item)
 }
 
 // New returns the service.
@@ -233,6 +235,9 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		return nil, false, err
 	}
 	it, err := svc.Get(ctx, spaceID, id)
+	if err == nil && created && svc.OnCreated != nil {
+		svc.OnCreated(it)
+	}
 	return it, created, err
 }
 

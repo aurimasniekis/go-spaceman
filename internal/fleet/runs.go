@@ -45,6 +45,7 @@ type Run struct {
 	Launch     LaunchSpec `json:"launch"`
 	Version    int64      `json:"version"`
 	CreatedAt  time.Time  `json:"created_at"`
+	CreatedBy  string     `json:"created_by" doc:"Who launched it: user:<id>, agent:<run id>, root or system:<component>"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
@@ -57,6 +58,7 @@ type LaunchSpec struct {
 	Model      string            `json:"model,omitempty"`
 	Settings   map[string]string `json:"settings,omitempty"`
 	Workspace  string            `json:"workspace,omitempty"`
+	Worktree   *proto.Worktree   `json:"worktree,omitempty"`
 	AccountRef string            `json:"account_ref,omitempty"`
 }
 
@@ -64,7 +66,7 @@ func runFromRow(r db.Run) *Run {
 	out := &Run{ID: r.ID, SpaceID: r.SpaceID, NodeID: r.NodeID, Generation: r.Generation, Kind: r.Kind, Role: r.Role, Harness: r.Harness,
 		InstanceID: r.InstanceID, SessionID: r.SessionID, Desired: r.Desired, Observed: r.Observed, TerminalID: r.TerminalID, PID: r.Pid,
 		EndReason: r.EndReason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind, Turn: r.Turn, Adopted: r.Adopted == 1, Version: r.Version,
-		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), StartedAt: microsPtr(r.StartedAt), EndedAt: microsPtr(r.EndedAt), ObservedAt: microsPtr(r.ObservedAt)}
+		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), CreatedBy: r.CreatedBy, StartedAt: microsPtr(r.StartedAt), EndedAt: microsPtr(r.EndedAt), ObservedAt: microsPtr(r.ObservedAt)}
 	if r.ExitCode.Valid {
 		v := r.ExitCode.Int64
 		out.ExitCode = &v
@@ -76,6 +78,7 @@ func runFromRow(r db.Run) *Run {
 var (
 	errRunNotFound = apperr.New(apperr.CodeNotFound, "run not found")
 	reRole         = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+	reBranch       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
 )
 
 // LaunchInput starts a run.
@@ -90,6 +93,7 @@ type LaunchInput struct {
 	Model      string            `json:"model,omitempty" maxLength:"128"`
 	Settings   map[string]string `json:"settings,omitempty"`
 	Workspace  string            `json:"workspace,omitempty" maxLength:"256"`
+	Worktree   *proto.Worktree   `json:"worktree,omitempty" doc:"Run in a git worktree of a repository inside the space folder"`
 	AccountRef string            `json:"account_ref,omitempty"`
 }
 
@@ -114,6 +118,20 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 	}
 	if strings.Contains(in.Workspace, "..") || strings.HasPrefix(in.Workspace, "/") {
 		v.Add("workspace", "must be a relative path inside the space")
+	}
+	if w := in.Worktree; w != nil {
+		if w.Repo == "" || strings.Contains(w.Repo, "..") || strings.HasPrefix(w.Repo, "/") {
+			v.Add("worktree.repo", "must be a relative path inside the space")
+		}
+		if !reBranch.MatchString(w.Branch) || strings.Contains(w.Branch, "..") || strings.HasSuffix(w.Branch, ".lock") {
+			v.Add("worktree.branch", "must be a plain branch name (letters, digits, / . _ -)")
+		}
+		if w.Base != "" && (!reBranch.MatchString(w.Base) || strings.Contains(w.Base, "..")) {
+			v.Add("worktree.base", "must be a branch, tag or commit name")
+		}
+		if in.Workspace != "" {
+			v.Add("workspace", "a worktree launch runs in its worktree; leave workspace empty")
+		}
 	}
 	if err := v.Err(); err != nil {
 		return nil, err
@@ -150,7 +168,8 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				return err
 			}
 		}
-		spec := LaunchSpec{Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace, AccountRef: in.AccountRef}
+		spec := LaunchSpec{Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace, Worktree: in.Worktree,
+			AccountRef: in.AccountRef}
 		specJSON, _ := json.Marshal(spec)
 		manifest, _ := json.Marshal(map[string]any{"harness": in.Harness, "role": in.Role, "kind": in.Kind, "lease_generation": lease.Generation,
 			"account_ref": in.AccountRef, "model": in.Model})
@@ -164,7 +183,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: in.SessionID,
 			Resume: in.SessionID != "", Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
-			AccountRef: in.AccountRef}
+			Worktree: in.Worktree, AccountRef: in.AccountRef}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
 		}
@@ -211,6 +230,29 @@ func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text s
 	return svc.queueCommandID(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdInput, "notice:"+ids.New(ids.Message), proto.InputPayload{Text: text})
 }
 
+// MarkEndedRunStopped sets an ended run's desired state to stopped, so it no longer holds the space's single control
+// slot (SM-INV-006) and is not treated as wanted.
+func (svc *Service) MarkEndedRunStopped(ctx context.Context, runID string) error {
+	return svc.s.W().TxNamed(ctx, "fleet.run_settle", func(tx *store.Tx) error {
+		r, err := tx.Q.GetRun(ctx, runID)
+		if err != nil {
+			return err
+		}
+		if !ended(r.Observed) || r.Desired == "stopped" {
+			return nil
+		}
+		if _, err := tx.Q.SetRunDesired(ctx, db.SetRunDesiredParams{Desired: "stopped", UpdatedAt: tx.NowMicros(), ID: runID}); err != nil {
+			return err
+		}
+		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
+	})
+}
+
+// CountRunsCreatedBy counts a space's runs of a kind created by an actor since a time (bounded recovery).
+func (svc *Service) CountRunsCreatedBy(ctx context.Context, spaceID, kind string, actor audit.Actor, since time.Time) (int64, error) {
+	return svc.s.R().CountRunsCreatedBy(ctx, db.CountRunsCreatedByParams{SpaceID: spaceID, Kind: kind, CreatedBy: actorRef(actor), CreatedAt: since.UnixMicro()})
+}
+
 // KickRun wakes the dispatch loop of the run's node.
 func (svc *Service) KickRun(ctx context.Context, runID string) {
 	if r, err := svc.s.R().GetRun(ctx, runID); err == nil {
@@ -221,7 +263,7 @@ func (svc *Service) KickRun(ctx context.Context, runID string) {
 // failUndispatched ends a run whose launch could not be sent (its account became unusable after the launch was
 // accepted): the launch command is cancelled and the run is failed with the reason, so it does not wait forever.
 func (svc *Service) failUndispatched(ctx context.Context, runID, reason string) error {
-	return svc.s.W().TxNamed(ctx, "fleet.run_undispatched", func(tx *store.Tx) error {
+	err := svc.s.W().TxNamed(ctx, "fleet.run_undispatched", func(tx *store.Tx) error {
 		r, err := tx.Q.GetRun(ctx, runID)
 		if err != nil {
 			return err
@@ -243,6 +285,10 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, reason string) 
 			Details: map[string]any{"space_id": r.SpaceID, "reason": reason}})
 		return err
 	})
+	if err == nil && svc.opts.OnRunEnded != nil {
+		svc.opts.OnRunEnded(runID)
+	}
+	return err
 }
 
 // StopRun sets a run's desired state to stopped and queues a stop command (interrupt politely, then kill after the
@@ -353,7 +399,7 @@ func (svc *Service) ListRuns(ctx context.Context, spaceID string, limit int) ([]
 // applyReport records a node's observation of a run. Reports for another node or an older lease generation are
 // fenced (SM-NODE-006); a run central wants stopped but the node reports running gets a new stop command.
 func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.RunReport) (fenced bool, err error) {
-	becameIdle := false
+	becameIdle, justEnded := false, false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:
 	default:
@@ -399,10 +445,14 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			}
 		}
 		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State)
+		justEnded = ended(rep.State) && !ended(r.Observed)
 		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
 		svc.opts.OnRunIdle(rep.RunID)
+	}
+	if err == nil && justEnded && svc.opts.OnRunEnded != nil {
+		svc.opts.OnRunEnded(rep.RunID)
 	}
 	if fenced {
 		svc.opts.Metrics.LeaseFenced()

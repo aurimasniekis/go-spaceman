@@ -109,6 +109,7 @@ function RunPage() {
         <Detail label="Instance" value={r.instance_id} mono />
         <Detail label="Session" value={r.session_id || '—'} mono />
         <Detail label="Lease generation" value={String(r.generation)} mono />
+        <Detail label="Launched by" value={r.created_by} mono />
         <Detail label="Created" value={datetime(r.created_at)} />
         <Detail label="Started" value={isSet(r.started_at) ? datetime(r.started_at) : '—'} />
         <Detail label="Ended" value={isSet(r.ended_at) ? `${datetime(r.ended_at)}${r.end_reason ? ` (${r.end_reason})` : ''}` : '—'} />

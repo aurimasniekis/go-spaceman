@@ -175,3 +175,6 @@ FROM run_credentials c JOIN runs r ON r.id = c.run_id WHERE c.mac = ?;
 
 -- name: RevokeRunCredentials :execrows
 UPDATE run_credentials SET revoked_at = ? WHERE run_id = ? AND revoked_at IS NULL;
+
+-- name: CountRunsCreatedBy :one
+SELECT count(*) FROM runs WHERE space_id = ? AND kind = ? AND created_by = ? AND created_at >= ?;

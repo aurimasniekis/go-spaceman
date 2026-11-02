@@ -1969,6 +1969,10 @@
           "workspace": {
             "maxLength": 256,
             "type": "string"
+          },
+          "worktree": {
+            "$ref": "#/components/schemas/ProtoWorktree",
+            "description": "Run in a git worktree of a repository inside the space folder"
           }
         },
         "required": [
@@ -2001,6 +2005,9 @@
           },
           "workspace": {
             "type": "string"
+          },
+          "worktree": {
+            "$ref": "#/components/schemas/ProtoWorktree"
           }
         },
         "type": "object"
@@ -2174,6 +2181,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "created_by": {
+            "description": "Who launched it: user:\u003cid\u003e, agent:\u003crun id\u003e, root or system:\u003ccomponent\u003e",
+            "type": "string"
+          },
           "desired": {
             "enum": [
               "running",
@@ -2297,7 +2308,8 @@
           "adopted",
           "launch",
           "version",
-          "created_at"
+          "created_at",
+          "created_by"
         ],
         "type": "object"
       },
@@ -3761,6 +3773,25 @@
         "required": [
           "version",
           "path"
+        ],
+        "type": "object"
+      },
+      "ProtoWorktree": {
+        "additionalProperties": false,
+        "properties": {
+          "base": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "branch"
         ],
         "type": "object"
       },

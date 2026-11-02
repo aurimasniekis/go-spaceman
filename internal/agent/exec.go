@@ -184,6 +184,14 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if p.Workspace != "" {
 		work = filepath.Join(space, filepath.Clean("/"+p.Workspace))
 	}
+	if p.Worktree != nil {
+		dir, err := prepareWorktree(ctx, space, *p.Worktree)
+		if err != nil {
+			fail("prepare worktree", err)
+			return
+		}
+		work = dir
+	}
 	rd := a.runDir(c.RunID)
 	for _, d := range []string{rd, work, filepath.Join(space, "instances", p.InstanceID)} {
 		if err := os.MkdirAll(d, 0o700); err != nil {

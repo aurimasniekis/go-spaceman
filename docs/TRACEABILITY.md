@@ -49,11 +49,11 @@
 | SM-SPACE-007 | | todo | | | |
 | SM-SPACE-008 | | todo | | | |
 | SM-REPO-001 | | todo | | | |
-| SM-REPO-002 | | todo | | | |
-| SM-REPO-003 | | todo | | | |
-| SM-REPO-004 | | todo | | | |
-| SM-REPO-005 | | todo | | | |
-| SM-REPO-006 | | todo | | | |
+| SM-REPO-002 | M2-06 | implemented | Per-writer git worktrees, reuse, refusal to share a checked-out branch (`internal/agent` `TestPrepareWorktree`, `TestControlLaunchesWorkersInWorktrees`) |  |  |
+| SM-REPO-003 | M2-06 | partial | Task workspace and run worktree recorded; branch per worker |  | Remote, dirty-state and unpushed-commit tracking pending. |
+| SM-REPO-004 | M2-06 | implemented | SpaceMan never merges or chooses branching policy; workers are told never to merge or push protected branches |  |  |
+| SM-REPO-005 | M2-06 | implemented | git runs with the node environment; no managed git credentials (`prepareWorktree`) |  |  |
+| SM-REPO-006 | M2-06 | implemented | Existing worktrees reused with uncommitted work; foreign folders never overwritten (`TestPrepareWorktree`) |  |  |
 | SM-ACCT-001 | M3-01 | implemented | `internal/accounts` `TestCreateIsWriteOnly` (sealed, validation, unique names); account kinds catalog extensible (`accounts.Kinds`) | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02) |  |
 | SM-ACCT-002 | M3-01 | partial | Kinds: Claude setup-token, Anthropic API key, OpenAI API key (`TestClaudeBuild`, `TestCodexBuild`) | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02): interactive run authenticated with the setup-token | Codex ChatGPT login (`auth.json`) open (K-9); no real Codex run yet. |
 | SM-ACCT-003 | M3-01 | implemented | `TestResolution` (named, default, only bound, disabled skipped, incompatible refused, clear errors); app tests refuse launches without accounts | `test/real` `TestRealClaudeRun` (real spaceman + spaceman-agent + hc 0.1.16 + Claude Code 2.1.316 Haiku, setup-token account, macOS, 2026-11-02) |  |
@@ -100,12 +100,12 @@
 | SM-QUEUE-008 | M2-05 | implemented | `TestStatesAndPreemption` (states, transitions, preemption counted not failed) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): start a task |  |
 | SM-QUEUE-009 | M2-05 | partial | `TestStatesAndPreemption` (policy: insertion, preemption; reordering never changes a running task) |  | Worker handling, capacity and resumption mechanics with control (M2-06). |
 | SM-QUEUE-010 | M2-05 | implemented | No automatic transition to done; `ResolveBlockersByRef` leaves task state unchanged (`TestEligibility`, `TestStatesAndPreemption`) |  |  |
-| SM-CTRL-001 | | todo | | | |
-| SM-CTRL-002 | | todo | | | |
-| SM-CTRL-003 | M2-06 | partial | Control-only tools refused for workers (`TestCatalogs`, `TestAgentToolsOverBridge`) |  | Worker launch tools arrive with M2-06 control. |
-| SM-CTRL-004 | | todo | | | |
+| SM-CTRL-001 | M2-06 | implemented | Control tools: inbox, queue, worker launch/stop, messages, human actions (`internal/app` `TestControlLaunchesWorkersInWorktrees`, `TestControlSupervisor`, `TestAgentToolsOverBridge`) |  | Cross-space requests arrive with M4-06. |
+| SM-CTRL-002 | M2-06 | implemented | Notifications to control for new inbox items, review/blocked/failed tasks and ended workers; idle wake through the notifier; bounded restart with session resume, then an urgent human action (`TestControlSupervisor`) |  |  |
+| SM-CTRL-003 | M2-06 | implemented | No worker launch tools for workers; no tool launches control; control cannot stop control (`TestControlLaunchesWorkersInWorktrees`, `TestCatalogs`) |  |  |
+| SM-CTRL-004 | M2-06 | partial | Operators pause, stop, reorder, cancel and launch (existing APIs); operator stops are never restarted (`TestControlSupervisor`) |  | Audited diagnostics exist as a run kind; reassignment UI pending. |
 | SM-CTRL-005 | | todo | | | |
-| SM-CTRL-006 | | todo | | | |
+| SM-CTRL-006 | M2-06 | partial | Task outcomes (queue), messages, human blockers tracked separately; memory errors arrive with M3-06 |  |  |
 | SM-COMM-001 | M2-06 | implemented | `TestSendFetchReply` (addressing, requests, replies resolve, correlation), `TestAcknowledge`, `internal/messages` `TestSendFetchReply`, `TestAcknowledge`, `TestNotifier`, `TestTools`; `internal/app` `TestMessagesDeliveredToIdleRuns` (real bridge, node agent, idle-gated input through the runner) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): operator request stored |  |
 | SM-COMM-002 | M2-06 | implemented | Acknowledgement only via `spaceman_message_ack` or an explicit operator action; recipient-only (`TestAcknowledge`, `TestTools`); notices carry no content (`TestNotifier`) |  |  |
 | SM-COMM-003 | M2-06 | partial | Delivery adapters: terminal notice via idle-gated safe input (refused while busy, throttled, retried), MCP fetch, next launch (role messages wait for a run) (`TestNotifier`, `TestMessagesDeliveredToIdleRuns`) |  | Native harness messaging and hooks are not used (not verified across standalone runs). |

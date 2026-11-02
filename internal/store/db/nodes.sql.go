@@ -53,6 +53,29 @@ func (q *Queries) CancelRunCommands(ctx context.Context, arg CancelRunCommandsPa
 	return result.RowsAffected()
 }
 
+const countRunsCreatedBy = `-- name: CountRunsCreatedBy :one
+SELECT count(*) FROM runs WHERE space_id = ? AND kind = ? AND created_by = ? AND created_at >= ?
+`
+
+type CountRunsCreatedByParams struct {
+	SpaceID   string
+	Kind      string
+	CreatedBy string
+	CreatedAt int64
+}
+
+func (q *Queries) CountRunsCreatedBy(ctx context.Context, arg CountRunsCreatedByParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRunsCreatedBy,
+		arg.SpaceID,
+		arg.Kind,
+		arg.CreatedBy,
+		arg.CreatedAt,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteSpace = `-- name: DeleteSpace :execrows
 DELETE FROM spaces WHERE id = ? AND state = 'archived'
 `

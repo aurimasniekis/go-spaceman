@@ -37,6 +37,12 @@
 - **No routing when the requester is gone.** A response for a run that ended waits as a stored notification; routing
   it to control or a successor arrives with M4-07 (SM-HUM-009).
 
+## Control and repositories
+- **No repository tracking yet.** SpaceMan records each worker's branch and worktree, but not remotes, dirty state or
+  unpushed commits (SM-REPO-003). Worktrees are never cleaned up automatically; remove them with git when done.
+- **Restart budget is per space and hour.** Three supervisor restarts per hour; the counter is durable (runs created
+  by the supervisor), not configurable yet.
+
 ## Messaging
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself.

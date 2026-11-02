@@ -41,6 +41,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Messages: durable messages and requests between agents, control and operators, with delivery states SpaceMan tracks.
   Idle agents get a one-line notice in their terminal; content is read through their tools. Human responses reach the
   agent that asked the same way. Each space has a Messages tab.
+- Control and workers: control starts and stops workers for eligible tasks through its tools, each writer in its own git
+  worktree (never reset or deleted). Control is notified of new inbox items, tasks awaiting review and ended workers,
+  and is restarted with its session resumed if it stops unexpectedly, at most three times an hour.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

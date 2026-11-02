@@ -125,6 +125,8 @@ type Service struct {
 	s       *store.Store
 	audit   *audit.Writer
 	changes *changefeed.Recorder
+	// OnStatus is called after a commit that changed a task's state, e.g. to wake control.
+	OnStatus func(actor audit.Actor, t *Task, from string)
 }
 
 // New returns the service.

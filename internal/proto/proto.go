@@ -200,6 +200,15 @@ const (
 	CmdPrepare   = "space.prepare"
 )
 
+// Worktree is a git worktree for one writer: Repo is a repository folder relative to the space folder, Branch the
+// branch to check out there (created from Base, default HEAD, when it does not exist). The node never resets,
+// deletes or force-updates anything (SM-REPO-006).
+type Worktree struct {
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+	Base   string `json:"base,omitempty"`
+}
+
 // Command is an instruction from central (SM-NODE-003). CommandID is stable; delivering the same command twice
 // is acknowledged "duplicate" and has no further effect (SM-NODE-004).
 type Command struct {
@@ -306,6 +315,8 @@ type LaunchPayload struct {
 	Model      string            `json:"model,omitempty"`
 	Settings   map[string]string `json:"settings,omitempty"`
 	Workspace  string            `json:"workspace,omitempty"` // relative to the space folder
+	// Worktree asks the node to run in a git worktree of a repository in the space folder (SM-REPO-002).
+	Worktree *Worktree `json:"worktree,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
 	AccountRef string `json:"account_ref,omitempty"`
 	// Secrets and RunToken are injected by central only into the message on the wire at dispatch time; they are

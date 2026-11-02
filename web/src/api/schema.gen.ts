@@ -2337,6 +2337,8 @@ export interface components {
             };
             system?: string;
             workspace?: string;
+            /** @description Run in a git worktree of a repository inside the space folder */
+            worktree?: components["schemas"]["ProtoWorktree"];
         };
         FleetLaunchSpec: {
             account_ref?: string;
@@ -2347,6 +2349,7 @@ export interface components {
             };
             system?: string;
             workspace?: string;
+            worktree?: components["schemas"]["ProtoWorktree"];
         };
         FleetLease: {
             /** Format: date-time */
@@ -2413,6 +2416,8 @@ export interface components {
             adopted: boolean;
             /** Format: date-time */
             created_at: string;
+            /** @description Who launched it: user:<id>, agent:<run id>, root or system:<component> */
+            created_by: string;
             /** @enum {string} */
             desired: "running" | "stopped";
             end_reason?: string;
@@ -2958,6 +2963,11 @@ export interface components {
         ProtoToolInfo: {
             path: string;
             version: string;
+        };
+        ProtoWorktree: {
+            base?: string;
+            branch: string;
+            repo: string;
         };
         "Publish-templateResponse": {
             /**

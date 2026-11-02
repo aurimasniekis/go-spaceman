@@ -30,6 +30,9 @@ come from the run's credential; tool arguments can never name another space.
 | `spaceman_message_reply` | Reply to a message (resolves a request) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_message_ack` | Acknowledge a message or human response | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_message_resolve` | Close a request you sent or received | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_runs_list` | Active runs with role, status and task | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_worker_launch` | Start a worker for a ready, eligible task (optionally in its own git worktree) | ✓ | | | |
+| `spaceman_worker_stop` | Stop a worker, KB, dreamer or diagnostic run | ✓ | | | |
 
 Rules that apply to every tool:
 

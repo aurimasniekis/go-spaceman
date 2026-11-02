@@ -27,6 +27,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
+	"github.com/aurimasniekis/go-spaceman/internal/control"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/events"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
@@ -67,6 +68,8 @@ type Central struct {
 	// Messages is durable communication between agents, control and operators (SM-COMM-*); Notifier delivers notices.
 	Messages *messages.Service
 	Notifier *messages.Notifier
+	// Supervisor wakes control on actionable events and restarts it within bounds (SM-CTRL-002).
+	Supervisor *control.Supervisor
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Accounts holds harness credentials (SM-ACCT-*).
@@ -117,6 +120,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(), Clock: o.Clock,
 		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), ResolveAccount: accounts.Resolve,
 		// The notifier is created below; these hooks only run once the server serves.
+		OnRunEnded: func(runID string) {
+			if c.Supervisor != nil {
+				c.Supervisor.OnRunEnded(runID)
+			}
+		},
 		OnRunIdle: func(string) {
 			if c.Notifier != nil {
 				c.Notifier.Kick()
@@ -155,8 +163,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Messages = messages.New(st, c.Audit, c.Changes)
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
+	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
+	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
+	c.Queue.OnStatus = c.Supervisor.OnTaskStatus
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages)}})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue)}})
 	c.Fleet.Hub().Tools = c.Tools.Dispatch
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Events.SeedBuiltins(ctx); err != nil {
@@ -268,6 +279,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.housekeeping(ctx)
 	go c.expireHumanActions(ctx)
 	go c.Notifier.Run(ctx)
+	c.Supervisor.Bind(ctx)
 	go events.NewManager(c.Events, c.Log).Run(ctx)
 	c.Health.MarkReady()
 	c.Log.Info("spaceman serving", slog.String("listen", c.Cfg.HTTP.Listen), slog.String("management", c.Cfg.HTTP.ManagementListen),

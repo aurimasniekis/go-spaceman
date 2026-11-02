@@ -26,14 +26,15 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
   const bound = useSpaceAccounts(space.id).data ?? []
 
   const form = useForm({
-    defaultValues: { harness: (available[0] ?? 'claude-code') as LaunchInput['harness'], kind: 'control' as LaunchInput['kind'], role: 'control', model: '', prompt: '', system: '', workspace: '', account: '' },
+    defaultValues: { harness: (available[0] ?? 'claude-code') as LaunchInput['harness'], kind: 'control' as LaunchInput['kind'], role: 'control', model: '', prompt: '', system: '', workspace: '', account: '', repo: '', branch: '' },
     onSubmit: async ({ value }) => {
       setError('')
       try {
         const run = unwrap(
           await api.POST('/spaces/{space_id}/runs', {
             params: { path: { space_id: space.id }, header: { 'Idempotency-Key': key } },
-            body: { ...value, account: undefined, account_ref: value.account || undefined, model: value.model || undefined, prompt: value.prompt || undefined, system: value.system || undefined, workspace: value.workspace || undefined },
+            body: { ...value, account: undefined, repo: undefined, branch: undefined, account_ref: value.account || undefined, model: value.model || undefined,
+              worktree: value.repo ? { repo: value.repo, branch: value.branch || `spaceman/${value.role}` } : undefined, prompt: value.prompt || undefined, system: value.system || undefined, workspace: value.workspace || undefined },
           }),
         )
         void qc.invalidateQueries({ queryKey: keys.runs(space.id) })
@@ -99,9 +100,26 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
           <form.Field name="system">
             {(f) => <Textarea label="Additional system prompt" description="Appended after the space's standing instructions" autosize minRows={2} maxRows={8} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
-          <form.Field name="workspace">
-            {(f) => <TextInput label="Workspace" description="Directory inside the space's workdir (empty: the workdir itself)" classNames={{ input: "mono" }} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-          </form.Field>
+<form.Subscribe selector={(st) => st.values.repo}>
+            {(repo) => (
+              <SimpleGrid cols={2}>
+                <form.Field name="repo">
+                  {(f) => <TextInput label="Git worktree of" description="A repository folder inside the space (optional)" placeholder="repos/payments-api" classNames={{ input: 'mono' }}
+                    value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+                </form.Field>
+                {repo ? (
+                  <form.Field name="branch">
+                    {(f) => <TextInput label="Branch" description="Created from HEAD when new" placeholder="spaceman/<role>" classNames={{ input: 'mono' }}
+                      value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+                  </form.Field>
+                ) : (
+                  <form.Field name="workspace">
+                    {(f) => <TextInput label="Workspace" description="Directory inside the space's workdir (empty: the workdir itself)" classNames={{ input: 'mono' }} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+                  </form.Field>
+                )}
+              </SimpleGrid>
+            )}
+          </form.Subscribe>
           {error && <Text c="red" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
