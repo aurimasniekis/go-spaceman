@@ -15,6 +15,16 @@
 - **No hard currency limits.** Usage data may be delayed or missing. Unknown usage is shown as unknown (SM-REC-005, SM-LIMIT-003).
 - **Single active central instance.** No high availability. Recovery is restore-from-backup (ADR-0001).
 
+## Event ingestion
+- **Pulse (JetStream) only.** Connections use the go-pulse SDK with `.creds`. Plain NATS Core subscriptions (non-durable) are
+  not implemented yet; direct GitHub webhooks are not implemented (SM-EVT-019).
+- **Grants are the Pulse operator's job.** Each subscription needs exactly the durable grant its page shows
+  (`durable:<subject>:<durable>`). A missing grant shows up as a timeout in the subscription's error, not as a clear
+  permission error (go-pulse v0.1.3 behaviour). The in-process test server does not model grants.
+- **No live go-pulse-github evidence yet.** The GitHub templates are tested against the event go-pulse-github builds for its
+  `issues_opened` fixture (derived from its code), not against a running pulse-github. There is no upstream pull request
+  fixture.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned

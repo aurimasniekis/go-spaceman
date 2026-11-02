@@ -644,6 +644,52 @@
         ],
         "type": "object"
       },
+      "ConnectionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ConnectionBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "ca_pem": {
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "creds": {
+            "description": "The .creds file content issued by Pulse (write-only)",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 63,
+            "type": "string"
+          },
+          "stream": {
+            "description": "Default EVENTS",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "url": {
+            "description": "nats://host:port or tls://host:port",
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "enabled"
+        ],
+        "type": "object"
+      },
       "Create-api-tokenRequest": {
         "additionalProperties": false,
         "properties": {
@@ -682,6 +728,41 @@
         "required": [
           "name",
           "grants"
+        ],
+        "type": "object"
+      },
+      "Create-event-templateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Create-event-templateRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/TemplateDefinition"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 63,
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "definition"
         ],
         "type": "object"
       },
@@ -819,6 +900,484 @@
         "required": [
           "recovery_codes",
           "me"
+        ],
+        "type": "object"
+      },
+      "EventsConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsConnection.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "client_id": {
+            "description": "The Pulse client the credentials belong to (from the JWT tag); consumers are \u003cclient_id\u003e_\u003cdurable\u003e",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "has_ca": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "pulse"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "url",
+          "client_id",
+          "has_ca",
+          "stream",
+          "enabled",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "EventsCursor": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "policy": {
+            "enum": [
+              "new",
+              "all",
+              "time",
+              "seq"
+            ],
+            "type": "string"
+          },
+          "replay": {
+            "description": "Events delivered again are recorded as replayed, not as retries",
+            "type": "boolean"
+          },
+          "seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "replay",
+          "generation"
+        ],
+        "type": "object"
+      },
+      "EventsDelivery": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "inbox_item_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "accepted",
+              "duplicate",
+              "filtered",
+              "quarantined",
+              "replayed"
+            ],
+            "type": "string"
+          },
+          "stream_seq": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "subject",
+          "type",
+          "stream_seq",
+          "outcome",
+          "at"
+        ],
+        "type": "object"
+      },
+      "EventsQuarantineEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsQuarantineEntry.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "payload": {
+            "description": "The raw payload (at most 1 MiB), untrusted",
+            "type": "string"
+          },
+          "resolved_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "resolved_by": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "reprocessed",
+              "discarded"
+            ],
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "subject",
+          "type",
+          "source",
+          "event_time",
+          "content_type",
+          "payload",
+          "error",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "EventsSubscription": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsSubscription.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "consumer": {
+            "description": "The JetStream consumer: \u003cclient_id\u003e_\u003cdurable\u003e",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/EventsCursor"
+          },
+          "cursor_pending": {
+            "description": "A cursor change waits to be applied by the ingestion manager",
+            "type": "boolean"
+          },
+          "custom": {
+            "$ref": "#/components/schemas/TemplateDefinition"
+          },
+          "durable": {
+            "description": "The durable name the Pulse operator must grant",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "follow": {
+            "description": "latest moves to newly published versions that keep the same subject",
+            "enum": [
+              "pinned",
+              "latest"
+            ],
+            "type": "string"
+          },
+          "grant": {
+            "description": "The Pulse grant this subscription needs (durable:\u003csubject\u003e:\u003cdurable\u003e)",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "last_event_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "quarantined": {
+            "description": "Open quarantine entries",
+            "format": "int64",
+            "type": "integer"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "state": {
+            "description": "Runtime state reported by the ingestion manager",
+            "enum": [
+              "running",
+              "stopped",
+              "error",
+              "disabled"
+            ],
+            "type": "string"
+          },
+          "subject": {
+            "description": "The effective Pulse filter",
+            "type": "string"
+          },
+          "template": {
+            "$ref": "#/components/schemas/EventsTemplateRef"
+          },
+          "vars": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "name",
+          "connection_id",
+          "follow",
+          "vars",
+          "subject",
+          "durable",
+          "consumer",
+          "grant",
+          "enabled",
+          "cursor",
+          "cursor_pending",
+          "quarantined",
+          "state",
+          "version",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "EventsTemplate": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsTemplate.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "builtin": {
+            "description": "Seeded from a verified upstream contract",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/EventsTemplateVersion"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "description",
+          "builtin",
+          "versions",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "EventsTemplateRef": {
+        "additionalProperties": false,
+        "properties": {
+          "template_id": {
+            "type": "string"
+          },
+          "template_slug": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "EventsTemplateVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsTemplateVersion.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/TemplateDefinition"
+          },
+          "id": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "published"
+            ],
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "template_id",
+          "version",
+          "status",
+          "definition",
+          "created_at"
         ],
         "type": "object"
       },
@@ -1657,6 +2216,54 @@
         ],
         "type": "object"
       },
+      "List-event-connectionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-event-connectionsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventsConnection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-event-templatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-event-templatesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventsTemplate"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-nodesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1672,6 +2279,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/FleetNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-quarantineResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-quarantineResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventsQuarantineEntry"
             },
             "type": "array"
           }
@@ -1744,6 +2375,54 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/FleetSpace"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-subscription-deliveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-subscription-deliveryResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventsDelivery"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-subscriptionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-subscriptionsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventsSubscription"
             },
             "type": "array"
           }
@@ -1857,6 +2536,91 @@
           "needs_enroll",
           "expires_at",
           "domains"
+        ],
+        "type": "object"
+      },
+      "PreviewInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/PreviewInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/TemplateDefinition"
+          },
+          "event": {
+            "$ref": "#/components/schemas/SampleEvent"
+          },
+          "vars": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "definition",
+          "event"
+        ],
+        "type": "object"
+      },
+      "PreviewOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/PreviewOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "correlation": {
+            "type": "string"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "accepted",
+              "filtered",
+              "quarantined"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "subject": {
+            "description": "The effective filter with these variables",
+            "type": "string"
+          },
+          "subject_match": {
+            "description": "Whether the sample's subject matches the filter",
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          },
+          "urgency": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "subject_match",
+          "outcome"
         ],
         "type": "object"
       },
@@ -2014,6 +2778,34 @@
         "required": [
           "version",
           "path"
+        ],
+        "type": "object"
+      },
+      "Publish-templateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Publish-templateResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "held_subscriptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "$ref": "#/components/schemas/EventsTemplateVersion"
+          }
+        },
+        "required": [
+          "version",
+          "held_subscriptions"
         ],
         "type": "object"
       },
@@ -2257,6 +3049,87 @@
         ],
         "type": "object"
       },
+      "Resolve-quarantineRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Resolve-quarantineRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "reprocess",
+              "discard"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "SampleEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {},
+          "id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "data"
+        ],
+        "type": "object"
+      },
+      "Save-template-draftRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Save-template-draftRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/TemplateDefinition"
+          },
+          "notes": {
+            "maxLength": 2000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "type": "object"
+      },
       "Send-inputRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2437,6 +3310,106 @@
         },
         "type": "object"
       },
+      "SubscriptionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SubscriptionBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "connection_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "custom": {
+            "$ref": "#/components/schemas/TemplateDefinition"
+          },
+          "follow": {
+            "enum": [
+              "pinned",
+              "latest"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "type": "string"
+          },
+          "start": {
+            "$ref": "#/components/schemas/EventsCursor",
+            "description": "Where the consumer starts; default new (no history)"
+          },
+          "template_version_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "vars": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "connection_id"
+        ],
+        "type": "object"
+      },
+      "SubscriptionPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SubscriptionPatch.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "custom": {
+            "$ref": "#/components/schemas/TemplateDefinition"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "follow": {
+            "enum": [
+              "pinned",
+              "latest"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "type": "string"
+          },
+          "start": {
+            "$ref": "#/components/schemas/EventsCursor",
+            "description": "Recreate the consumer at this position (required when the subject changes). Anything but new is a replay."
+          },
+          "template_version_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "vars": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
       "SystemInfo": {
         "additionalProperties": false,
         "properties": {
@@ -2496,6 +3469,127 @@
         "required": [
           "secret",
           "otpauth_uri"
+        ],
+        "type": "object"
+      },
+      "TemplateDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "correlation": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "filters": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateFilter"
+            },
+            "type": "array"
+          },
+          "input_schema": {},
+          "instructions": {
+            "description": "Rendered guidance for control, stored with the item",
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "urgency": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "variables": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateVariable"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "subject",
+          "variables",
+          "filters",
+          "title",
+          "body"
+        ],
+        "type": "object"
+      },
+      "TemplateFilter": {
+        "additionalProperties": false,
+        "properties": {
+          "op": {
+            "enum": [
+              "eq",
+              "ne",
+              "in",
+              "exists",
+              "prefix"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "description": "Dotted path into the event, e.g. data.repository.full_name",
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "op"
+        ],
+        "type": "object"
+      },
+      "TemplateVariable": {
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "example": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "type": "string"
+          },
+          "pattern": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -3417,6 +4511,419 @@
         "summary": "Revoke one of your sessions",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/event-connections": {
+      "get": {
+        "operationId": "list-event-connections",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-event-connectionsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List Pulse connections",
+        "tags": [
+          "events"
+        ]
+      },
+      "post": {
+        "operationId": "create-event-connection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsConnection"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a Pulse connection",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/event-connections/{connection_id}": {
+      "delete": {
+        "operationId": "delete-event-connection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete an unused Pulse connection",
+        "tags": [
+          "events"
+        ]
+      },
+      "put": {
+        "operationId": "update-event-connection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsConnection"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Update a Pulse connection",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/event-template-versions/{version_id}/publish": {
+      "post": {
+        "description": "Subscriptions following the template move to it only when it keeps their subject; the others are listed as held.",
+        "operationId": "publish-template",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Publish-templateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Publish a draft (it becomes immutable)",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/event-templates": {
+      "get": {
+        "operationId": "list-event-templates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-event-templatesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The event template catalog",
+        "tags": [
+          "events"
+        ]
+      },
+      "post": {
+        "operationId": "create-event-template",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Create-event-templateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsTemplate"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a template (as a draft)",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/event-templates/preview": {
+      "post": {
+        "description": "Nothing is stored or subscribed.",
+        "operationId": "preview-event-template",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewOut"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Test a definition against a sample event",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/event-templates/{template_id}": {
+      "get": {
+        "operationId": "get-event-template",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsTemplate"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A template with its versions",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/event-templates/{template_id}/draft": {
+      "put": {
+        "operationId": "save-template-draft",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Save-template-draftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsTemplateVersion"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Save the template's draft version",
+        "tags": [
+          "events"
         ]
       }
     },
@@ -4746,6 +6253,479 @@
         "summary": "Pause (hold, interrupt, emergency), resume, archive or restore a space",
         "tags": [
           "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/subscriptions": {
+      "get": {
+        "operationId": "list-subscriptions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-subscriptionsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's event subscriptions",
+        "tags": [
+          "subscriptions"
+        ]
+      },
+      "post": {
+        "description": "Validated and bound before activation. The response shows the Pulse grant the subscription needs.",
+        "operationId": "create-subscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsSubscription"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Subscribe a space to events",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/subscriptions/{subscription_id}": {
+      "delete": {
+        "operationId": "delete-subscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a subscription",
+        "tags": [
+          "subscriptions"
+        ]
+      },
+      "get": {
+        "operationId": "get-subscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsSubscription"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A subscription",
+        "tags": [
+          "subscriptions"
+        ]
+      },
+      "put": {
+        "description": "A changed subject requires start; any start other than new is an audited replay (needs replay:execute).",
+        "operationId": "update-subscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsSubscription"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Update a subscription",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/subscriptions/{subscription_id}/deliveries": {
+      "get": {
+        "operationId": "list-subscription-delivery",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 100,
+              "format": "int64",
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-subscription-deliveryResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Recent deliveries of a subscription",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/subscriptions/{subscription_id}/quarantine": {
+      "get": {
+        "operationId": "list-quarantine",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "open",
+                "reprocessed",
+                "discarded"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-quarantineResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Quarantined events of a subscription",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/subscriptions/{subscription_id}/quarantine/{entry_id}": {
+      "post": {
+        "operationId": "resolve-quarantine",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Resolve-quarantineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsQuarantineEntry"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reprocess or discard a quarantined event",
+        "tags": [
+          "subscriptions"
         ]
       }
     },

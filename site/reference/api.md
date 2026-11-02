@@ -133,6 +133,21 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/attachments` | `upload-attachment` | Upload an attachment |
 | `GET` | `/spaces/{space_id}/attachments/{attachment_id}` | `get-attachment` | Attachment metadata |
 
+### events
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/event-connections` | `list-event-connections` | List Pulse connections |
+| `POST` | `/event-connections` | `create-event-connection` | Add a Pulse connection |
+| `DELETE` | `/event-connections/{connection_id}` | `delete-event-connection` | Delete an unused Pulse connection |
+| `PUT` | `/event-connections/{connection_id}` | `update-event-connection` | Update a Pulse connection |
+| `POST` | `/event-template-versions/{version_id}/publish` | `publish-template` | Publish a draft (it becomes immutable) |
+| `GET` | `/event-templates` | `list-event-templates` | The event template catalog |
+| `POST` | `/event-templates` | `create-event-template` | Add a template (as a draft) |
+| `GET` | `/event-templates/{template_id}` | `get-event-template` | A template with its versions |
+| `PUT` | `/event-templates/{template_id}/draft` | `save-template-draft` | Save the template's draft version |
+| `POST` | `/event-templates/preview` | `preview-event-template` | Test a definition against a sample event |
+
 ### inbox
 
 | Method | Path | Operation | Summary |
@@ -141,4 +156,17 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/inbox` | `create-inbox-item` | Add an item to a space's inbox |
 | `GET` | `/spaces/{space_id}/inbox/{item_id}` | `get-inbox-item` | Get an inbox item with its attachments |
 | `POST` | `/spaces/{space_id}/inbox/{item_id}/status` | `set-inbox-status` | Change an inbox item's processing status |
+
+### subscriptions
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/subscriptions` | `list-subscriptions` | A space's event subscriptions |
+| `POST` | `/spaces/{space_id}/subscriptions` | `create-subscription` | Subscribe a space to events |
+| `DELETE` | `/spaces/{space_id}/subscriptions/{subscription_id}` | `delete-subscription` | Delete a subscription |
+| `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}` | `get-subscription` | A subscription |
+| `PUT` | `/spaces/{space_id}/subscriptions/{subscription_id}` | `update-subscription` | Update a subscription |
+| `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}/deliveries` | `list-subscription-delivery` | Recent deliveries of a subscription |
+| `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}/quarantine` | `list-quarantine` | Quarantined events of a subscription |
+| `POST` | `/spaces/{space_id}/subscriptions/{subscription_id}/quarantine/{entry_id}` | `resolve-quarantine` | Reprocess or discard a quarantined event |
 

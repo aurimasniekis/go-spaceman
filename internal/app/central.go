@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/events"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
@@ -54,6 +55,8 @@ type Central struct {
 	Attachments *attachments.Service
 	// Inbox holds each space's incoming items (SM-INBOX-*).
 	Inbox *inbox.Service
+	// Events manages Pulse connections, templates and subscriptions (SM-EVT-*).
+	Events *events.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -108,6 +111,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Attachments = attachments.New(st, attachments.NewLocal(artifactDir), c.Audit, attachments.Options{MaxBytes: cfg.HTTP.MaxUploadBytes,
 		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock})
 	c.Inbox = inbox.New(st, c.Audit, c.Changes, c.Attachments)
+	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
+	if err := c.Events.SeedBuiltins(ctx); err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("seed event templates: %w", err)
+	}
 	c.Health = health.New(health.Options{ExposeDetails: !cfg.IsProduction()})
 	c.Health.MustRegister(
 		health.StoreHealth("store", st.Health()),
@@ -153,7 +161,7 @@ func (c *Central) APIDeps() *api.Deps {
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
-			api.RegisterInbox(c.Inbox)},
+			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -210,6 +218,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	}
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
+	go events.NewManager(c.Events, c.Log).Run(ctx)
 	c.Health.MarkReady()
 	c.Log.Info("spaceman serving", slog.String("listen", c.Cfg.HTTP.Listen), slog.String("management", c.Cfg.HTTP.ManagementListen),
 		slog.String("public_url", c.Cfg.PublicURL))
@@ -241,6 +250,9 @@ func (c *Central) housekeeping(ctx context.Context) {
 		if err := c.Auth.PurgeExpired(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Warn("purge expired auth records", obs.Err(err))
 		}
+		if _, err := c.Events.PurgeDeliveries(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Warn("purge event deliveries", obs.Err(err))
+		}
 		if rows, blobs, err := c.Attachments.GC(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Warn("attachment garbage collection", obs.Err(err))
 		} else if rows+int64(blobs) > 0 {
@@ -261,13 +273,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
-		api.RegisterAttachments(nil), api.RegisterInbox(nil)}}
+		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules} {
 		for k, v := range m {
 			out[k] = v
 		}

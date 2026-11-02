@@ -71,24 +71,24 @@
 | SM-INBOX-002 | M2-02 | implemented | `TestCreateAndGet`, `TestDedup`, `TestListPagesAndCounts`: source identity, content type, body or payload reference, correlation and dedup keys, received time, trusted metadata, urgency, status, subscription provenance |  |  |
 | SM-INBOX-003 | M2-02 | partial | `TestStatus` (defer with time, reject with reason, done with association, optimistic version, audited) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02): mark done | Control-side actions (reply, create human actions, planner, tasks) through MCP arrive with M2-06/M2-07. |
 | SM-INBOX-004 | M2-02 | implemented | Trusted metadata is set only by the authenticated caller (`TestCreateAndGet`); bodies are rendered through the sanitizer (`web` `markdown.test.ts`) |  | Event authority from subscription configuration lands with M2-03/M2-04. |
-| SM-EVT-001 | | todo | | | |
+| SM-EVT-001 | M2-03 | partial | Spaces subscribe with a template version or a custom definition: `internal/events` (real go-pulse v0.1.3 SDK against an in-process NATS server in operator mode, `pulsetest`) `TestTemplatesAndConnections`, `TestQuarantineAndReprocess` |  | Catalog/subscription UI pending (M2-04 UI). |
 | SM-EVT-002 | M2-04 | partial | `internal/events/template` `TestGitHubIssueSeed` (issue seed renders the go-pulse-github issues_opened event; repository is a payload filter) |  | Shared central catalog and subscriptions (M2-04 storage/API/UI). PR template has no upstream fixture. |
-| SM-EVT-003 | | todo | | | |
-| SM-EVT-004 | | todo | | | |
-| SM-EVT-005 | | todo | | | |
-| SM-EVT-006 | | todo | | | |
-| SM-EVT-007 | | todo | | | |
-| SM-EVT-008 | | todo | | | |
+| SM-EVT-003 | M2-03 | implemented | Separate tables and APIs for connections, templates/versions and subscriptions; connection credentials sealed and write-only (`TestTemplatesAndConnections`, `TestEventsOverHTTP`) |  |  |
+| SM-EVT-004 | M2-04 | implemented | Stable template IDs/slugs, immutable published versions, drafts, typed variables, input schema, subject/filter rules, inbox mapping (`TestTemplatesAndConnections`, `internal/events/template`) |  |  |
+| SM-EVT-005 | M2-03 | implemented | Subscription: connection, template version or custom definition, variables, enabled state, effective subject, durable/grant, cursor (`TestIngestFanOutAndProvenance`, `TestEventsOverHTTP`) |  |  |
+| SM-EVT-006 | M2-04 | implemented | Bind/validate before activation; pinned or follow-latest, where a follower moves only when the subject stays (`TestTemplatesAndConnections`: v3 with a new subject is held) |  |  |
+| SM-EVT-007 | M2-03 | implemented | `internal/events` (real go-pulse v0.1.3 SDK against an in-process NATS server in operator mode, `pulsetest`) `TestCursorSemantics`: default start is new events only; a subject change without a cursor is refused; replay and start-now recreate the consumer (delete + create, ADR-0011) |  |  |
+| SM-EVT-008 | M2-03 | implemented | `TestIngestFanOutAndProvenance`: item keeps event ID, subject, type, subscription, template slug/version, rendered instructions, correlation; raw payload retained as an attachment |  |  |
 | SM-EVT-009 | M2-04 | implemented | `TestGitHubIssueSeed` (deterministic), `TestRenderFilters` (bounded, pure filters), `TestValidateDefinition` (no paths outside event/data/vars, no unknown filters) |  | Templates see only the event, payload and variables: no secrets. |
 | SM-EVT-010 | M2-04 | implemented | `TestBindRejectsWidening` (wildcards, extra tokens, placeholders, pattern violations), `TestValidateDefinition` (placeholders only as whole tokens; filter values only use variables) |  |  |
-| SM-EVT-011 | | todo | | | |
-| SM-EVT-012 | | todo | | | |
-| SM-EVT-013 | | todo | | | |
-| SM-EVT-014 | | todo | | | |
-| SM-EVT-015 | | todo | | | |
+| SM-EVT-011 | M2-03 | implemented | `internal/events` (real go-pulse v0.1.3 SDK against an in-process NATS server in operator mode, `pulsetest`): explicit-ack durable per subscription; ack only after the inbox commit or a recorded disposition (filtered/duplicate/quarantined); storage errors nak with SDK backoff |  | Plain NATS Core connections are not implemented (LIMITATIONS). |
+| SM-EVT-012 | M2-03 | implemented | `internal/events` (real go-pulse v0.1.3 SDK against an in-process NATS server in operator mode, `pulsetest`) `TestIngestFanOutAndProvenance`: two spaces, two durables, one item each; redelivery of the same event ID is a duplicate |  |  |
+| SM-EVT-013 | M2-03 | implemented | `internal/events` (real go-pulse v0.1.3 SDK against an in-process NATS server in operator mode, `pulsetest`) `TestQuarantineAndReprocess`: schema failure → bounded quarantine + Terminal (no redelivery), inspection, reprocess after a fix, discard |  | Quarantine UI pending. |
+| SM-EVT-014 | M2-03 | partial | `TestIngestFanOutAndProvenance`: the paused space receives its item |  | Wake/work deferral policy arrives with the queue and control (M2-05/06). |
+| SM-EVT-015 | M2-03 | implemented | `TestCursorSemantics` (replayed outcome distinct from duplicates and retries), audited cursor changes, `replay:execute` check (`TestEventsOverHTTP`) |  |  |
 | SM-EVT-016 | | todo | | | |
 | SM-EVT-017 | | todo | | | |
-| SM-EVT-018 | | todo | | | |
+| SM-EVT-018 | M2-03 | partial | HTTP API for connections, templates, preview and subscriptions (`TestEventsOverHTTP`) |  | Terraform provider in M5. |
 | SM-EVT-019 | | todo | | | |
 | SM-QUEUE-001 | | todo | | | |
 | SM-QUEUE-002 | | todo | | | |

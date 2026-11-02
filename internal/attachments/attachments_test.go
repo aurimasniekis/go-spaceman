@@ -3,6 +3,7 @@ package attachments
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
@@ -181,5 +183,20 @@ func TestCleanName(t *testing.T) {
 		if got := CleanName(in); got != want {
 			t.Errorf("CleanName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Retained event payloads (system uploads) are not audit events; people's uploads are.
+func TestSystemUploadsAreNotAudited(t *testing.T) {
+	f := newFx(t, Options{})
+	if _, err := f.svc.Upload(f.ctx, audit.Actor{Type: audit.ActorSystem, ID: "event-ingest"}, "spc_a", "event.json", strings.NewReader(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_a", "note.txt", strings.NewReader("hi")); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.s.R().ListAuditPage(f.ctx, db.ListAuditPageParams{Action: sql.NullString{String: "attachment.uploaded", Valid: true}, Lim: 10})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("audit rows %d (%v), want 1", len(rows), err)
 	}
 }

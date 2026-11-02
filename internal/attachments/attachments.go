@@ -139,6 +139,9 @@ func (svc *Service) Upload(ctx context.Context, actor audit.Actor, spaceID, name
 			Name: a.Name, UploadedBy: actor.ID, CreatedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
+		if actor.Type == audit.ActorSystem {
+			return nil // retained event payloads: the delivery history records them, the audit log stays about people
+		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "attachment.uploaded", Target: audit.Target{Type: "attachment", ID: a.ID},
 			Details: map[string]any{"space_id": spaceID, "name": a.Name, "size": size, "mime": mime}})
 		return err

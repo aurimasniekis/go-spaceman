@@ -70,6 +70,101 @@ type Change struct {
 	Version      int64
 }
 
+type EventConnection struct {
+	ID        string
+	Name      string
+	Kind      string
+	Url       string
+	CredsEnc  []byte
+	ClientID  string
+	CaPem     string
+	Stream    string
+	Enabled   int64
+	Version   int64
+	CreatedAt int64
+	CreatedBy string
+	UpdatedAt int64
+}
+
+type EventDelivery struct {
+	ID             int64
+	SubscriptionID string
+	EventID        string
+	Subject        string
+	Type           string
+	StreamSeq      int64
+	Outcome        string
+	InboxItemID    string
+	Detail         string
+	At             int64
+}
+
+type EventQuarantine struct {
+	ID             string
+	SubscriptionID string
+	EventID        string
+	Subject        string
+	Type           string
+	Source         string
+	EventTime      int64
+	ContentType    string
+	Payload        []byte
+	Error          string
+	Status         string
+	CreatedAt      int64
+	ResolvedAt     sql.NullInt64
+	ResolvedBy     string
+}
+
+type EventSubscription struct {
+	ID                string
+	SpaceID           string
+	Name              string
+	ConnectionID      string
+	TemplateID        sql.NullString
+	TemplateVersionID sql.NullString
+	Follow            string
+	CustomJson        sql.NullString
+	VarsJson          string
+	EffectiveSubject  string
+	Durable           string
+	Enabled           int64
+	CursorGeneration  int64
+	AppliedGeneration int64
+	StartPolicy       string
+	StartTime         sql.NullInt64
+	StartSeq          sql.NullInt64
+	Replay            int64
+	LastEventAt       sql.NullInt64
+	Version           int64
+	CreatedAt         int64
+	CreatedBy         string
+	UpdatedAt         int64
+}
+
+type EventTemplate struct {
+	ID          string
+	Slug        string
+	Name        string
+	Description string
+	Builtin     int64
+	CreatedAt   int64
+	CreatedBy   string
+	UpdatedAt   int64
+}
+
+type EventTemplateVersion struct {
+	ID             string
+	TemplateID     string
+	Version        int64
+	Status         string
+	DefinitionJson string
+	Notes          string
+	CreatedAt      int64
+	CreatedBy      string
+	PublishedAt    sql.NullInt64
+}
+
 type ExecutionLease struct {
 	SpaceID    string
 	NodeID     string

@@ -374,6 +374,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/event-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Pulse connections */
+        get: operations["list-event-connections"];
+        put?: never;
+        /** Add a Pulse connection */
+        post: operations["create-event-connection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/event-connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a Pulse connection */
+        put: operations["update-event-connection"];
+        post?: never;
+        /** Delete an unused Pulse connection */
+        delete: operations["delete-event-connection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/event-template-versions/{version_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish a draft (it becomes immutable)
+         * @description Subscriptions following the template move to it only when it keeps their subject; the others are listed as held.
+         */
+        post: operations["publish-template"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/event-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The event template catalog */
+        get: operations["list-event-templates"];
+        put?: never;
+        /** Add a template (as a draft) */
+        post: operations["create-event-template"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/event-templates/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a definition against a sample event
+         * @description Nothing is stored or subscribed.
+         */
+        post: operations["preview-event-template"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/event-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A template with its versions */
+        get: operations["get-event-template"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/event-templates/{template_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save the template's draft version */
+        put: operations["save-template-draft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -682,6 +810,100 @@ export interface paths {
          * @description hold admits no new work; interrupt also stops active runs politely; emergency kills them. Archiving needs no active runs.
          */
         post: operations["set-space-state"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's event subscriptions */
+        get: operations["list-subscriptions"];
+        put?: never;
+        /**
+         * Subscribe a space to events
+         * @description Validated and bound before activation. The response shows the Pulse grant the subscription needs.
+         */
+        post: operations["create-subscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/subscriptions/{subscription_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A subscription */
+        get: operations["get-subscription"];
+        /**
+         * Update a subscription
+         * @description A changed subject requires start; any start other than new is an audited replay (needs replay:execute).
+         */
+        put: operations["update-subscription"];
+        post?: never;
+        /** Delete a subscription */
+        delete: operations["delete-subscription"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/subscriptions/{subscription_id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent deliveries of a subscription */
+        get: operations["list-subscription-delivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/subscriptions/{subscription_id}/quarantine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Quarantined events of a subscription */
+        get: operations["list-quarantine"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/subscriptions/{subscription_id}/quarantine/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reprocess or discard a quarantined event */
+        post: operations["resolve-quarantine"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1079,6 +1301,23 @@ export interface components {
             /** @description TOTP code or recovery code */
             code: string;
         };
+        ConnectionBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ConnectionBody.json
+             */
+            readonly $schema?: string;
+            ca_pem?: string;
+            /** @description The .creds file content issued by Pulse (write-only) */
+            creds?: string;
+            enabled: boolean;
+            name: string;
+            /** @description Default EVENTS */
+            stream?: string;
+            /** @description nats://host:port or tls://host:port */
+            url: string;
+        };
         "Create-api-tokenRequest": {
             /**
              * Format: uri
@@ -1091,6 +1330,18 @@ export interface components {
             grants: components["schemas"]["AuthGrantInput"][];
             name: string;
             never_expires?: boolean;
+        };
+        "Create-event-templateRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Create-event-templateRequest.json
+             */
+            readonly $schema?: string;
+            definition: components["schemas"]["TemplateDefinition"];
+            description?: string;
+            name: string;
+            slug: string;
         };
         CreateInboxInput: {
             /**
@@ -1145,6 +1396,178 @@ export interface components {
             readonly $schema?: string;
             me: components["schemas"]["Me"];
             recovery_codes: string[];
+        };
+        EventsConnection: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsConnection.json
+             */
+            readonly $schema?: string;
+            /** @description The Pulse client the credentials belong to (from the JWT tag); consumers are <client_id>_<durable> */
+            client_id: string;
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            has_ca: boolean;
+            id: string;
+            /** @enum {string} */
+            kind: "pulse";
+            name: string;
+            stream: string;
+            /** Format: date-time */
+            updated_at: string;
+            url: string;
+            /** Format: int64 */
+            version: number;
+        };
+        EventsCursor: {
+            /** Format: int64 */
+            generation: number;
+            /** @enum {string} */
+            policy: "new" | "all" | "time" | "seq";
+            /** @description Events delivered again are recorded as replayed, not as retries */
+            replay: boolean;
+            /** Format: int64 */
+            seq?: number;
+            /** Format: date-time */
+            time?: string;
+        };
+        EventsDelivery: {
+            /** Format: date-time */
+            at: string;
+            detail?: string;
+            event_id: string;
+            /** Format: int64 */
+            id: number;
+            inbox_item_id?: string;
+            /** @enum {string} */
+            outcome: "accepted" | "duplicate" | "filtered" | "quarantined" | "replayed";
+            /** Format: int64 */
+            stream_seq: number;
+            subject: string;
+            type: string;
+        };
+        EventsQuarantineEntry: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsQuarantineEntry.json
+             */
+            readonly $schema?: string;
+            content_type: string;
+            /** Format: date-time */
+            created_at: string;
+            error: string;
+            event_id: string;
+            /** Format: date-time */
+            event_time: string;
+            id: string;
+            /** @description The raw payload (at most 1 MiB), untrusted */
+            payload: string;
+            /** Format: date-time */
+            resolved_at?: string;
+            resolved_by?: string;
+            source: string;
+            /** @enum {string} */
+            status: "open" | "reprocessed" | "discarded";
+            subject: string;
+            type: string;
+        };
+        EventsSubscription: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsSubscription.json
+             */
+            readonly $schema?: string;
+            connection_id: string;
+            /** @description The JetStream consumer: <client_id>_<durable> */
+            consumer: string;
+            /** Format: date-time */
+            created_at: string;
+            cursor: components["schemas"]["EventsCursor"];
+            /** @description A cursor change waits to be applied by the ingestion manager */
+            cursor_pending: boolean;
+            custom?: components["schemas"]["TemplateDefinition"];
+            /** @description The durable name the Pulse operator must grant */
+            durable: string;
+            enabled: boolean;
+            /**
+             * @description latest moves to newly published versions that keep the same subject
+             * @enum {string}
+             */
+            follow: "pinned" | "latest";
+            /** @description The Pulse grant this subscription needs (durable:<subject>:<durable>) */
+            grant: string;
+            id: string;
+            last_error?: string;
+            /** Format: date-time */
+            last_event_at?: string;
+            name: string;
+            /**
+             * Format: int64
+             * @description Open quarantine entries
+             */
+            quarantined: number;
+            space_id: string;
+            /**
+             * @description Runtime state reported by the ingestion manager
+             * @enum {string}
+             */
+            state: "running" | "stopped" | "error" | "disabled";
+            /** @description The effective Pulse filter */
+            subject: string;
+            template?: components["schemas"]["EventsTemplateRef"];
+            vars: {
+                [key: string]: string;
+            };
+            /** Format: int64 */
+            version: number;
+        };
+        EventsTemplate: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsTemplate.json
+             */
+            readonly $schema?: string;
+            /** @description Seeded from a verified upstream contract */
+            builtin: boolean;
+            /** Format: date-time */
+            created_at: string;
+            description: string;
+            id: string;
+            name: string;
+            slug: string;
+            versions: components["schemas"]["EventsTemplateVersion"][];
+        };
+        EventsTemplateRef: {
+            template_id?: string;
+            template_slug?: string;
+            /** Format: int64 */
+            version?: number;
+            version_id?: string;
+        };
+        EventsTemplateVersion: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsTemplateVersion.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            definition: components["schemas"]["TemplateDefinition"];
+            id: string;
+            notes?: string;
+            /** Format: date-time */
+            published_at?: string;
+            /** @enum {string} */
+            status: "draft" | "published";
+            template_id: string;
+            /** Format: int64 */
+            version: number;
         };
         FleetCreateNodeInput: {
             /**
@@ -1444,6 +1867,24 @@ export interface components {
             /** @description Shown once; hand it to the user out of band */
             token: string;
         };
+        "List-event-connectionsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-event-connectionsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["EventsConnection"][];
+        };
+        "List-event-templatesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-event-templatesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["EventsTemplate"][];
+        };
         "List-nodesResponse": {
             /**
              * Format: uri
@@ -1452,6 +1893,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["FleetNode"][];
+        };
+        "List-quarantineResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-quarantineResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["EventsQuarantineEntry"][];
         };
         "List-runsResponse": {
             /**
@@ -1479,6 +1929,24 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["FleetSpace"][];
+        };
+        "List-subscription-deliveryResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-subscription-deliveryResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["EventsDelivery"][];
+        };
+        "List-subscriptionsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-subscriptionsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["EventsSubscription"][];
         };
         "List-usersResponse": {
             /**
@@ -1517,6 +1985,39 @@ export interface components {
             root: boolean;
             session_id: string;
             user?: components["schemas"]["AuthUser"];
+        };
+        PreviewInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PreviewInput.json
+             */
+            readonly $schema?: string;
+            definition: components["schemas"]["TemplateDefinition"];
+            event: components["schemas"]["SampleEvent"];
+            vars?: {
+                [key: string]: string;
+            };
+        };
+        PreviewOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/PreviewOut.json
+             */
+            readonly $schema?: string;
+            body?: string;
+            correlation?: string;
+            instructions?: string;
+            /** @enum {string} */
+            outcome: "accepted" | "filtered" | "quarantined";
+            reason?: string;
+            /** @description The effective filter with these variables */
+            subject: string;
+            /** @description Whether the sample's subject matches the filter */
+            subject_match: boolean;
+            title?: string;
+            urgency?: string;
         };
         Problem: {
             /**
@@ -1562,6 +2063,16 @@ export interface components {
         ProtoToolInfo: {
             path: string;
             version: string;
+        };
+        "Publish-templateResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Publish-templateResponse.json
+             */
+            readonly $schema?: string;
+            held_subscriptions: string[];
+            version: components["schemas"]["EventsTemplateVersion"];
         };
         "Reauth-passwordRequest": {
             /**
@@ -1660,6 +2171,35 @@ export interface components {
             expires_at: string;
             token: string;
         };
+        "Resolve-quarantineRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Resolve-quarantineRequest.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            action: "reprocess" | "discard";
+        };
+        SampleEvent: {
+            data: unknown;
+            id?: string;
+            source?: string;
+            subject: string;
+            /** Format: date-time */
+            time?: string;
+            type?: string;
+        };
+        "Save-template-draftRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Save-template-draftRequest.json
+             */
+            readonly $schema?: string;
+            definition: components["schemas"]["TemplateDefinition"];
+            notes?: string;
+        };
         "Send-inputRequest": {
             /**
              * Format: uri
@@ -1727,6 +2267,44 @@ export interface components {
             mode?: "interrupt" | "kill";
             reason?: string;
         };
+        SubscriptionBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SubscriptionBody.json
+             */
+            readonly $schema?: string;
+            connection_id: string;
+            custom?: components["schemas"]["TemplateDefinition"];
+            /** @enum {string} */
+            follow?: "pinned" | "latest";
+            name: string;
+            /** @description Where the consumer starts; default new (no history) */
+            start?: components["schemas"]["EventsCursor"];
+            template_version_id?: string;
+            vars?: {
+                [key: string]: string;
+            };
+        };
+        SubscriptionPatch: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SubscriptionPatch.json
+             */
+            readonly $schema?: string;
+            custom?: components["schemas"]["TemplateDefinition"];
+            enabled: boolean;
+            /** @enum {string} */
+            follow?: "pinned" | "latest";
+            name?: string;
+            /** @description Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. */
+            start?: components["schemas"]["EventsCursor"];
+            template_version_id?: string;
+            vars?: {
+                [key: string]: string;
+            };
+        };
         SystemInfo: {
             /**
              * Format: uri
@@ -1749,6 +2327,35 @@ export interface components {
             readonly $schema?: string;
             otpauth_uri: string;
             secret: string;
+        };
+        TemplateDefinition: {
+            body: string;
+            correlation?: string;
+            filters: components["schemas"]["TemplateFilter"][];
+            input_schema?: unknown;
+            /** @description Rendered guidance for control, stored with the item */
+            instructions?: string;
+            subject: string;
+            title: string;
+            /** @enum {string} */
+            urgency?: "low" | "normal" | "high" | "urgent";
+            variables: components["schemas"]["TemplateVariable"][];
+        };
+        TemplateFilter: {
+            /** @enum {string} */
+            op: "eq" | "ne" | "in" | "exists" | "prefix";
+            /** @description Dotted path into the event, e.g. data.repository.full_name */
+            path: string;
+            value?: string;
+            values?: string[];
+        };
+        TemplateVariable: {
+            default?: string;
+            description?: string;
+            example?: string;
+            name: string;
+            pattern?: string;
+            required?: boolean;
         };
         TokenListBody: {
             /**
@@ -2437,6 +3044,327 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-event-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-event-connectionsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-event-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsConnection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-event-connection": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsConnection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-event-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "publish-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Publish-templateResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-event-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-event-templatesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-event-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Create-event-templateRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsTemplate"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "preview-event-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-event-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsTemplate"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "save-template-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Save-template-draftRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsTemplateVersion"];
+                };
             };
             /** @description Error */
             default: {
@@ -3262,6 +4190,281 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetSpace"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-subscriptionsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscriptionBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsSubscription"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsSubscription"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-subscription": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscriptionPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsSubscription"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-subscription-delivery": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-subscription-deliveryResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-quarantine": {
+        parameters: {
+            query?: {
+                status?: "open" | "reprocessed" | "discarded";
+            };
+            header?: never;
+            path: {
+                space_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-quarantineResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resolve-quarantine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                subscription_id: string;
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Resolve-quarantineRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsQuarantineEntry"];
                 };
             };
             /** @description Error */
