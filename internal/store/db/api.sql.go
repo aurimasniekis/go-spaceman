@@ -196,25 +196,25 @@ func (q *Queries) InsertIdempotency(ctx context.Context, arg InsertIdempotencyPa
 }
 
 const latestChangeSeq = `-- name: LatestChangeSeq :one
-SELECT coalesce(max(seq), 0) FROM changes
+SELECT CAST(coalesce(max(seq), 0) AS INTEGER) AS latest FROM changes
 `
 
-func (q *Queries) LatestChangeSeq(ctx context.Context) (interface{}, error) {
+func (q *Queries) LatestChangeSeq(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, latestChangeSeq)
-	var coalesce interface{}
-	err := row.Scan(&coalesce)
-	return coalesce, err
+	var latest int64
+	err := row.Scan(&latest)
+	return latest, err
 }
 
 const oldestChangeSeq = `-- name: OldestChangeSeq :one
-SELECT coalesce(min(seq), 0) FROM changes
+SELECT CAST(coalesce(min(seq), 0) AS INTEGER) AS oldest FROM changes
 `
 
-func (q *Queries) OldestChangeSeq(ctx context.Context) (interface{}, error) {
+func (q *Queries) OldestChangeSeq(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, oldestChangeSeq)
-	var coalesce interface{}
-	err := row.Scan(&coalesce)
-	return coalesce, err
+	var oldest int64
+	err := row.Scan(&oldest)
+	return oldest, err
 }
 
 const pruneChanges = `-- name: PruneChanges :execrows

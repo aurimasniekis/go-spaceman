@@ -225,11 +225,11 @@ func privileged(gs []authz.Grant) bool {
 
 // CreateInput creates a user.
 type CreateInput struct {
-	Email       string       `json:"email"`
+	Email       string       `json:"email,omitempty"`
 	DisplayName string       `json:"display_name"`
 	Grants      []GrantInput `json:"grants"`
 	Password    string       `json:"password,omitempty" doc:"Optional; otherwise invite or reset"`
-	MFARequired bool         `json:"mfa_required"`
+	MFARequired bool         `json:"mfa_required,omitempty"`
 }
 
 // Create adds a user. New users have only the grants explicitly given. The API layer enforces user:write in the global

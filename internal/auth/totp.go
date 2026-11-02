@@ -74,3 +74,6 @@ func TOTPURI(secret []byte, issuer, account string) string {
 
 // EncodeTOTPSecret renders a secret for manual entry.
 func EncodeTOTPSecret(secret []byte) string { return b32.EncodeToString(secret) }
+
+// DecodeTOTPSecret decodes the base32 secret shown at enrollment (authenticator apps and tests).
+func DecodeTOTPSecret(s string) ([]byte, error) { return b32.DecodeString(s) }

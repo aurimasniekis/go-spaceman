@@ -1,5 +1,6 @@
-// Package apperr defines domain errors with stable codes shared by services, the REST API (RFC 9457 problem codes)
-// and the SSH front end.
+// Package apperr defines domain errors with stable codes shared by services and the REST API (RFC 9457 problem codes).
+//
+// Derived from github.com/aurimasniekis/go-hallpass internal/apperr (Apache-2.0, same author).
 package apperr
 
 import (
@@ -23,6 +24,8 @@ const (
 	CodeReauth        Code = "reauth_required"
 	CodeMFARequired   Code = "mfa_required"
 	CodeUnauthorized  Code = "unauthorized"
+	// CodePreconditionRequired: an update without If-Match (optimistic concurrency is mandatory, SM-API-002).
+	CodePreconditionRequired Code = "precondition_required"
 )
 
 // FieldError describes one invalid input field.

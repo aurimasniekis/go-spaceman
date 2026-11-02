@@ -20,10 +20,10 @@ SELECT * FROM changes WHERE seq > sqlc.arg(after) ORDER BY seq LIMIT sqlc.arg(li
 SELECT * FROM changes WHERE seq > sqlc.arg(after) AND (space_id IS NULL OR space_id IN (sqlc.slice(spaces))) ORDER BY seq LIMIT sqlc.arg(lim);
 
 -- name: OldestChangeSeq :one
-SELECT coalesce(min(seq), 0) FROM changes;
+SELECT CAST(coalesce(min(seq), 0) AS INTEGER) AS oldest FROM changes;
 
 -- name: LatestChangeSeq :one
-SELECT coalesce(max(seq), 0) FROM changes;
+SELECT CAST(coalesce(max(seq), 0) AS INTEGER) AS latest FROM changes;
 
 -- name: PruneChanges :execrows
 DELETE FROM changes WHERE at < ?;

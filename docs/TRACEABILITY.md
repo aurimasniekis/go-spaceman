@@ -173,9 +173,9 @@
 | SM-AUTH-002 | | todo | | | |
 | SM-AUTH-003 | M1-04 | partial | `internal/authz` `TestSpaceScopedRoles`, `TestDomainsAndRoles` |  | Casbin RBAC-with-domains; API enforcement wiring pending (M1-03). |
 | SM-AUTH-004 | M1-04 | partial | `internal/authz` `TestSpaceScopedRoles` (terminal/takeover/secret/approval/node separation) |  |  |
-| SM-AUTH-005 | M1-04 | partial | `internal/auth` `TestRootTokenLifecycle`, `TestRootIsNotAUserAndLastAdminGuard` |  | CLI `admin bootstrap` + API pending. |
+| SM-AUTH-005 | M1-04 | implemented | `TestRootTokenLifecycle`, `TestAPIBootstrapLoginAndConventions` | `spaceman admin bootstrap` + `serve` smoke 2026-11-02: root token once, refused twice, first admin via API |  |
 | SM-AUTH-006 | M1-04 | partial | `internal/auth` `TestAPITokens*`, `internal/authz` `TestTokensBoundedByCreator` |  |  |
-| SM-AUTH-007 | | todo | | | |
+| SM-AUTH-007 | M1-03 | partial | — |  | Watch stream re-validates every `auth.stream_revalidate` (default 30 s); test with spaces (M1-08). |
 | SM-UI-001 | | todo | | | |
 | SM-UI-002 | | todo | | | |
 | SM-UI-003 | | todo | | | |
@@ -191,7 +191,7 @@
 | SM-LIMIT-002 | | todo | | | |
 | SM-LIMIT-003 | | todo | | | |
 | SM-OBS-001 | M1-02 | partial | `internal/obs` `TestLogger*`, `internal/obs/redact` tests |  | Logger + redaction done; HTTP/node log wiring pending. |
-| SM-OBS-002 | | todo | | | |
+| SM-OBS-002 | M1-03 | implemented | `internal/obs/health` + `internal/obs/metrics` suites | `spaceman serve` smoke: /readyz 200 and /metrics (24 families) on the separate management listener, 2026-11-02 (macOS) | Node health lands with M1-05. |
 | SM-OBS-003 | M1-02 | partial | `internal/audit` `TestAppendAndVerify*`, `TestCorrelation*` |  | Hash chain + verify done; durable read cursors and retention-gap signals pending (API). |
 | SM-OBS-004 | | todo | | | |
 | SM-OBS-005 | | todo | | | |
@@ -201,8 +201,8 @@
 | SM-STORE-004 | | todo | | | |
 | SM-STORE-005 | | todo | | | |
 | SM-STORE-006 | | todo | | | |
-| SM-API-001 | | todo | | | |
-| SM-API-002 | | todo | | | |
+| SM-API-001 | M1-03 | partial | `TestEveryOperationHasARule` |  | One huma API; agent/session tools separate (M1-07). |
+| SM-API-002 | M1-03 | partial | `internal/app` `TestAPIBootstrapLoginAndConventions` (problems, If-Match 428/409, Idempotency-Key replay/conflict), `TestEveryOperationHasARule` | manual smoke of `spaceman serve` 2026-11-02 (macOS) | Watch stream implemented; e2e watch test lands with spaces (M1-08). Long-running operations pending. |
 | SM-API-003 | | todo | | | |
 | SM-API-004 | | todo | | | |
 | SM-API-005 | | todo | | | |
