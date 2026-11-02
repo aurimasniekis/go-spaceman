@@ -55,7 +55,7 @@ export function TemplateCreateModal({ opened, onClose }: { opened: boolean; onCl
         <TextInput label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
         <JsonInput label="Definition" description="Placeholders are {{event.…}}, {{data.…}} and {{vars.…}} with filters default, truncate, json, upper, lower, oneline and code."
           autosize minRows={12} maxRows={24} classNames={{ input: 'mono' }} value={def} onChange={setDef} />
-        {error && <Text c="red" size="sm" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{error}</Text>}
+        {error && <Text c="owlRed" size="sm" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{error}</Text>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
           <Button loading={busy} onClick={() => void save()}>Create draft</Button>
@@ -91,7 +91,7 @@ export function DraftModal({ templateId, initial, opened, onClose }: { templateI
       <Stack gap="sm">
         <JsonInput label="Definition" autosize minRows={14} maxRows={28} classNames={{ input: 'mono' }} value={def} onChange={setDef} />
         <TextInput label="Notes" description="What changed" value={notes} onChange={(e) => setNotes(e.target.value)} />
-        {error && <Text c="red" size="sm" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{error}</Text>}
+        {error && <Text c="owlRed" size="sm" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{error}</Text>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
           <Button loading={busy} onClick={() => void save()}>Save draft</Button>

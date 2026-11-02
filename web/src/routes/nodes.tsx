@@ -101,7 +101,7 @@ function NodesPage() {
                         ) : (
                           <Menu.Item onClick={() => void setState(n, 'disabled')} disabled={n.state === 'revoked'}>Disable</Menu.Item>
                         )}
-                        <Menu.Item color="red" onClick={() => void setState(n, 'revoked')} disabled={n.state === 'revoked'}>Revoke credential</Menu.Item>
+                        <Menu.Item color="owlRed" onClick={() => void setState(n, 'revoked')} disabled={n.state === 'revoked'}>Revoke credential</Menu.Item>
                       </Menu.Dropdown>
                     </Menu>
                   </Table.Td>
@@ -154,7 +154,7 @@ function CreateNodeModal({ opened, onClose, onCreated }: { opened: boolean; onCl
           <form.Field name="description">
             {(f) => <TextInput label="Description" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Create and issue token</Button>}</form.Subscribe>

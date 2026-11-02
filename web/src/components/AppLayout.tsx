@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, AppShell, Badge, Button, Group, Menu, NavLink, ScrollArea, Stack, Text, Tooltip, UnstyledButton, useComputedColorScheme, useMantineColorScheme } from '@mantine/core'
+import { ActionIcon, Alert, AppShell, Badge, Button, Group, Menu, NavLink, ScrollArea, Stack, Text, Tooltip, UnstyledButton, useComputedColorScheme, useMantineColorScheme, VisuallyHidden } from '@mantine/core'
 import { useDisclosure, useLocalStorage } from '@mantine/hooks'
 import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLogout, IconMoon, IconSun, IconUserCircle } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -57,7 +57,7 @@ function UserMenu() {
   return (
     <Menu position="bottom-end" width={200}>
       <Menu.Target>
-        <UnstyledButton aria-label="Account menu">
+        <UnstyledButton aria-label={`${name}, account menu`}>
           <Group gap={6} wrap="nowrap">
             <IconUserCircle size={18} />
             <Text size="sm" visibleFrom="sm">{name}</Text>
@@ -129,8 +129,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     const active = n.to === '/' ? path === '/' : path === n.to || path.startsWith(`${n.to}/`)
                     const link = (
                       <NavLink key={n.to} component={Link} to={n.to} active={active} label={collapsed ? undefined : n.label}
-                        leftSection={<n.icon size={16} stroke={1.6} />} aria-label={n.pendingBadge && pending > 0 ? `${n.label} (${pending} pending)` : n.label} onClick={closeMobile}
-                        rightSection={n.pendingBadge && pending > 0 && !collapsed ? <Badge size="xs" color="owlYellow" circle={pending < 10}>{pending}</Badge> : undefined} />
+                        leftSection={<n.icon size={16} stroke={1.6} />} onClick={closeMobile}
+                        // Collapsed links show no text, so they are named; expanded ones are named by their visible text (axe).
+                        aria-label={collapsed ? (n.pendingBadge && pending > 0 ? `${n.label}, ${pending} pending` : n.label) : undefined}
+                        rightSection={n.pendingBadge && pending > 0 && !collapsed ? <Badge size="xs" color="owlYellow" circle={pending < 10}>{pending}<VisuallyHidden> pending</VisuallyHidden></Badge> : undefined} />
                     )
                     return collapsed ? <Tooltip key={n.to} label={n.label} position="right">{link}</Tooltip> : link
                   })}

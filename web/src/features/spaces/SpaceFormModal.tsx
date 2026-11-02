@@ -87,7 +87,7 @@ export function SpaceFormModal({ space, opened, onClose, onSaved }: { space?: Sp
           <form.Field name="standing_instructions">
             {(f) => <Textarea label="Standing instructions" description="Given to every agent in this space" autosize minRows={3} maxRows={12} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>{editing ? 'Save' : 'Create space'}</Button>}</form.Subscribe>

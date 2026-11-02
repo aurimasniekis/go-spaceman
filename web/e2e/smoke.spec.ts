@@ -139,7 +139,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // Inbox: an operator item written in the composer, with an attached image and file, rendered safely and marked done.
   await page.getByRole('link', { name: 'Payments platform' }).click()
-  await page.getByRole('tab', { name: /Inbox/ }).click()
+  await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: /Inbox/ }).click()
   await page.getByRole('button', { name: 'New item' }).click()
   const editor = page.getByRole('textbox', { name: 'Item text' })
   await editor.click()
@@ -184,7 +184,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   await page.getByRole('link', { name: 'Spaces' }).click()
   await page.getByRole('link', { name: 'Payments platform' }).click()
-  await page.getByRole('tab', { name: 'Events' }).click()
+  await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: 'Events' }).click()
   await page.getByRole('button', { name: 'Subscribe' }).click()
   await page.getByLabel('Name').fill('tool issues')
   await page.getByRole('textbox', { name: 'Connection' }).click()
@@ -209,7 +209,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('button', { name: 'Add to queue' }).click()
   await expect(page.getByText('Done', { exact: true }).first()).toBeVisible()
   await page.getByRole('link', { name: 'Payments platform · Inbox' }).click()
-  await page.getByRole('tab', { name: 'Queue' }).click()
+  await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: 'Queue' }).click()
   await page.getByRole('button', { name: 'New task' }).click()
   await page.getByLabel('Title').fill('Upgrade the Go toolchain')
   await page.getByRole('textbox', { name: 'Priority' }).click()
@@ -230,7 +230,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // Human actions: a blocking question on the task appears in the space tab and the global "Needs you" view (with the nav
   // badge), and is answered with its type-specific form; the task is unblocked.
-  await page.getByRole('tab', { name: /Human actions/ }).click()
+  await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: /Human actions/ }).click()
   await page.getByRole('button', { name: 'New action' }).click()
   const dlg = page.getByRole('dialog', { name: 'New human action' })
   await dlg.getByText('Question', { exact: true }).click()
@@ -246,9 +246,9 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await dlg.getByLabel('Block that task until someone responds').check()
   await dlg.getByRole('button', { name: 'Create' }).click()
   await expect(page.getByRole('listitem').filter({ hasText: 'Which region' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Needs you (1 pending)' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Needs you 1 pending' })).toBeVisible()
   await shot(page, 'human-space')
-  await page.getByRole('link', { name: 'Needs you (1 pending)' }).click()
+  await page.getByRole('link', { name: 'Needs you 1 pending' }).click()
   await expect(page.getByRole('heading', { name: 'Needs you' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ hasText: 'Payments platform' })).toBeVisible()
   await shot(page, 'human-global')
@@ -264,7 +264,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   // Messages: an operator request to control is stored durably until a control run can see it.
   await page.getByRole('link', { name: 'Spaces' }).click()
   await page.getByRole('link', { name: 'Payments platform' }).click()
-  await page.getByRole('tab', { name: /Messages/ }).click()
+  await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: /Messages/ }).click()
   await page.getByRole('button', { name: 'Send message' }).click()
   const compose = page.getByRole('dialog', { name: 'Send a message' })
   await compose.getByLabel('Subject').fill('Pause deploys until the bank window closes')

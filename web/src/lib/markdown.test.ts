@@ -35,3 +35,12 @@ describe('markdown', () => {
     expect(renderMarkdown('[docs](https://example.com)', 'spc_1')).toContain('rel="noopener noreferrer nofollow"')
   })
 })
+
+describe('task lists', () => {
+  it('names and disables task checkboxes', () => {
+    const html = renderMarkdown('- [ ] Confirm the window\n- [x] Draft the plan', 'spc_a')
+    expect(html).toContain('aria-label="Confirm the window"')
+    expect(html).toContain('aria-label="Draft the plan"')
+    expect(html.match(/disabled/g)?.length).toBe(2)
+  })
+})

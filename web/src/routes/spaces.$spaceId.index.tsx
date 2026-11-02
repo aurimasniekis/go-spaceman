@@ -67,7 +67,7 @@ function SpacePage() {
                 </Menu.Target>
                 <Menu.Dropdown>
                   {PAUSE_MODES.map((p) => (
-                    <Menu.Item key={p.mode} color={p.mode === 'emergency' ? 'red' : undefined} onClick={() => void setState('paused', p.mode)}>
+                    <Menu.Item key={p.mode} color={p.mode === 'emergency' ? 'owlRed' : undefined} onClick={() => void setState('paused', p.mode)}>
                       <Text size="sm">{p.label}</Text>
                       <Text size="xs" c="dimmed">{p.detail}</Text>
                     </Menu.Item>

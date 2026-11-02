@@ -86,7 +86,7 @@ export function SetupPage() {
           <form.Field name="confirm" validators={{ onChangeListenTo: ['password'], onBlur: ({ value, fieldApi }) => (value !== fieldApi.form.getFieldValue('password') ? 'Passwords do not match' : undefined) }}>
             {(f) => <PasswordInput label="Confirm password" autoComplete="new-password" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
           </form.Field>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <form.Subscribe selector={(s) => s.isSubmitting}>
             {(busy) => <Button type="submit" loading={busy}>Create administrator</Button>}
           </form.Subscribe>

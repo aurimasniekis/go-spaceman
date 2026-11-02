@@ -1,8 +1,10 @@
 /* Adapted from Porch site/.vitepress/theme/custom.css (Apache-2.0, same author). Night Owl / Light Owl palette (MIT, Sarah Drasner). */
 :root {
-  --vp-c-brand-1: #4876d6;
-  --vp-c-brand-2: #5a86e0;
+  /* Light Owl blue darkened one step (#3a63bd): links, active items and buttons stay above 4.5:1 (WCAG AA). */
+  --vp-c-brand-1: #3a63bd;
+  --vp-c-brand-2: #2f52a0;
   --vp-c-brand-3: #3a63bd;
+  --vp-code-lang-color: #5c6670;
   --vp-c-brand-soft: rgba(72, 118, 214, 0.12);
   --vp-c-bg: #fbfbfb;
   --vp-c-bg-alt: #f0f0f0;
@@ -25,6 +27,11 @@
   --vp-c-bg-soft: #0b2942;
   --vp-c-text-1: #d6deeb;
   --vp-c-divider: #1d3b53;
+  /* Night Owl accents are light: brand buttons take dark text. */
+  --vp-button-brand-text: #011627;
+  --vp-button-brand-hover-text: #011627;
+  --vp-button-brand-active-text: #011627;
+  --vp-code-lang-color: #8b9fae;
   --vp-home-hero-name-background: linear-gradient(120deg, #82aaff 20%, #c792ea);
   --sm-shot-border: #1d3b53;
 }
@@ -68,4 +75,23 @@ html:not(.dark) .sm-shot .sm-dark {
   max-width: 1152px;
   margin: 0 auto;
   padding: 0 24px 48px;
+}
+
+/* Mermaid's dark theme draws edge labels at 4.4:1; give them a darker background (WCAG AA). */
+.dark .mermaid .edgeLabel,
+.dark .mermaid .labelBkg {
+  background-color: #2b3a47 !important;
+}
+.dark .mermaid .edgeLabel p {
+  color: #e6edf3 !important;
+}
+
+/* Code blocks: GitHub Light's token colors are meant for white (on #f0f0f0 several fall under 4.5:1), and Night Owl's
+   comment color is #637777 (4.0:1); lift it to the dimmed text color in dark mode (WCAG AA). */
+:root:not(.dark) {
+  --vp-code-block-bg: #ffffff;
+}
+.dark .vp-code span[style*="#637777" i] {
+  --shiki-dark: #8b9fae !important;
+  color: #8b9fae !important;
 }

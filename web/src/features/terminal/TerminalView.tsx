@@ -105,7 +105,7 @@ function LiveTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   return (
     <Stack gap="xs">
       <StatusBadges sum={sum} live={state} />
-      {error && <Text c="red" size="sm">Terminal failed to load: {error}</Text>}
+      {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
       <Box ref={box} className="sm-terminal" style={{ overflow: 'auto', maxHeight: '70vh' }}>
         <div ref={ref} data-testid="terminal" aria-label="Run terminal (watch-only)" />
       </Box>
@@ -223,6 +223,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
       {records && records.length > 0 && (
         <Slider
           aria-label="Seek"
+          thumbLabel="Replay position"
           min={0}
           max={Math.max(1, total)}
           value={offsetMs(records, pos)}
@@ -235,7 +236,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
         />
       )}
       <StatusBadges sum={sum} />
-      {(error || loadError) && <Text c="red" size="sm">{error || loadError}</Text>}
+      {(error || loadError) && <Text c="owlRed" size="sm">{error || loadError}</Text>}
       {!records && !loadError && <Loader size="xs" />}
       {records?.length === 0 && <Text size="sm" c="dimmed">No recording is stored for this run yet.</Text>}
       <Box ref={box} className="sm-terminal" style={{ overflow: 'auto', maxHeight: '70vh' }}>

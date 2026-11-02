@@ -103,7 +103,7 @@ export function SubscriptionModal({ spaceId, opened, onClose }: { spaceId: strin
               <form.Field name="seq">{(f) => <TextInput label="Stream sequence" value={f.state.value} onChange={(e) => f.handleChange(e.target.value.replace(/\D/g, ''))} />}</form.Field>
             ) : null}
           </form.Subscribe>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Subscribe</Button>}</form.Subscribe>

@@ -131,6 +131,7 @@ site-dev:
 # Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, and API reference drift.
 site-check: site
 	cd site && pnpm check:mermaid
+	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
 	git diff --exit-code -- site/reference/api.md
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).

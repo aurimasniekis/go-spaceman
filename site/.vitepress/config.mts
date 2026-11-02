@@ -1,5 +1,6 @@
 // Adapted from Porch site/.vitepress/config.mts (Apache-2.0, same author).
 import { defineConfig } from 'vitepress';
+import { fileURLToPath, URL } from 'node:url';
 import { withMermaid } from 'vitepress-plugin-mermaid';
 
 const repo = 'https://github.com/aurimasniekis/go-spaceman';
@@ -41,6 +42,12 @@ export default withMermaid(
       },
     },
     mermaid: {},
+    // An accessible copy of the search button (theme/components/VPNavBarSearchButton.vue).
+    vite: {
+      resolve: {
+        alias: [{ find: /^.*\/VPNavBarSearchButton\.vue$/, replacement: fileURLToPath(new URL('./theme/components/VPNavBarSearchButton.vue', import.meta.url)) }],
+      },
+    },
     themeConfig: {
       logo: '/logo.svg',
       nav: [

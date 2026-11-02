@@ -4,7 +4,8 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   // The documentation capture runs only through scripts/screenshots.sh (it needs its own fresh stack).
-  testIgnore: process.env.SM_SCREENSHOTS_OUT ? [] : ['**/screenshots.spec.ts'],
+  // The site audit runs only through `make site-check` (it needs the built site).
+  testIgnore: [...(process.env.SM_SCREENSHOTS_OUT ? [] : ['**/screenshots.spec.ts']), ...(process.env.SM_SITE_DIST ? [] : ['**/site-a11y.spec.ts'])],
   timeout: 90_000,
   fullyParallel: false,
   workers: 1,

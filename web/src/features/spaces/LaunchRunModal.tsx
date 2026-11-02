@@ -120,7 +120,7 @@ export function LaunchRunModal({ space, node, opened, onClose }: { space: Space;
               </SimpleGrid>
             )}
           </form.Subscribe>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting] as const}>

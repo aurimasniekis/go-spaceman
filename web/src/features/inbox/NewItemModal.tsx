@@ -83,7 +83,7 @@ export function NewItemModal({ spaceId, opened, onClose, onCreated }: { spaceId:
               )
             }
           </form.Subscribe>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="space-between">
             <Text size="xs" c="dimmed">⌘/Ctrl + Enter to add</Text>
             <Group gap="xs">

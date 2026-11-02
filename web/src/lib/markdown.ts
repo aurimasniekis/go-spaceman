@@ -52,6 +52,11 @@ function hook() {
         node.setAttribute('loading', 'lazy')
       }
     }
+    // Task-list checkboxes are read-only and get their item's text as their name (axe label).
+    if (node.tagName === 'INPUT' && node.getAttribute('type') === 'checkbox') {
+      node.setAttribute('disabled', '')
+      node.setAttribute('aria-label', (node.parentElement?.textContent ?? '').trim().slice(0, 200) || 'Task item')
+    }
   })
 }
 

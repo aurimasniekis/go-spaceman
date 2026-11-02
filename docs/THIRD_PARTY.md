@@ -17,4 +17,6 @@ attribution needs specific mention.
 | nats-server v2.15.1, nats.go, nats jwt, nkeys | In-process NATS server for tests (`internal/events/pulsetest`), NATS client | Apache-2.0 | The server is linked only into test binaries and the `devpulse` development tool, never into `spaceman` or `spaceman-agent`. |
 | MCP Go SDK v1.8.0 (`github.com/modelcontextprotocol/go-sdk`) | The agent's stdio MCP server (`spaceman-agent mcp-bridge`) | Apache-2.0 and MIT (licence transition stated in its LICENSE) | Go module dependency. |
 | jsonschema-go v0.4.3 (`github.com/google/jsonschema-go`) | JSON Schemas of agent tool inputs | MIT | Go module dependency. |
+| @axe-core/playwright 4.14.0 | Accessibility audits of the UI and the site (tests only) | MPL-2.0 | npm dev dependency; not shipped. |
+| VitePress 1.6.4 `VPNavBarSearchButton.vue` | `site/.vitepress/theme/components/VPNavBarSearchButton.vue` (shortcut hints hidden from assistive technology) | MIT | Adapted copy; styles unchanged. |
 | santhosh-tekuri/jsonschema v6.0.3 | Event template input schemas (JSON Schema 2020-12) | Apache-2.0 | External references are disabled. |

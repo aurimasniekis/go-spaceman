@@ -53,7 +53,7 @@ export function ConnectionModal({ conn, opened, onClose }: { conn?: EventConnect
               {(f) => <Switch mt="lg" label="Enabled" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
             </form.Field>
           </Group>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>{conn ? 'Save' : 'Add connection'}</Button>}</form.Subscribe>

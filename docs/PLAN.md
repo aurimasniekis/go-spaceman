@@ -29,7 +29,7 @@
 | M1-09 | Recording: zstd segments, upload, live view, replay | SM-REC-001…004 | tested (simulated) + real; UI replay/live in M1-11 |
 | M1-10 | Restart/disconnect reconciliation tests (central, node, hc) | SM-NODE-005/007/009 | tested (simulated + real): agent/central restarts, crash between start and journal, exit while down, disconnect enforcement; stale-generation fencing test with relocation (M4) |
 | M1-11 | Web shell: Night Owl theme, bootstrap/sign-in, spaces, nodes, overview, terminal | SM-UI-001/002/004 | tested: vitest + browser journey (`make e2e`, real agent + isolated hc) |
-| M1-12 | Site skeleton, Mermaid, demo seed, Playwright screenshots, coverage inventory | SM-DOCS-001…005 | implemented: site with guides for implemented features, 12 real shots × 2 themes, CI site job, Pages workflow (not published); axe checks pending |
+| M1-12 | Site skeleton, Mermaid, demo seed, Playwright screenshots, coverage inventory | SM-DOCS-001…005 | implemented: site with guides for implemented features, 12 real shots × 2 themes, CI site job, Pages workflow (not published); axe audits added in M2-08 |
 
 ### M2 — Coordination core
 | WP | Scope | Requirements | Status |
@@ -41,7 +41,7 @@
 | M2-05 | Execution queue: ordering, dependencies, exclusions, eligibility, incidents, demotion | SM-QUEUE-* | implemented: service, API, UI with drag and keyboard sorting, guide, screenshots |
 | M2-06 | Control + workers + worktrees + durable messages + delivery adapters | SM-CTRL-*, SM-COMM-*, SM-REPO-* | implemented: agent tool gateway, durable messages and notices, control orchestration tools, per-worker git worktrees, control notifications and bounded recovery |
 | M2-07 | Human actions: default types, lifecycle, MCP, reply routing; per-space + global UI | SM-HUM-*, SM-HUI-* | implemented (MCP tools and notification delivery with M2-06): service, API, global and per-space UI, guide, screenshots |
-| M2-08 | Docs + screenshots for M2 | SM-DOCS | todo |
+| M2-08 | Docs + screenshots for M2 | SM-DOCS | implemented: guides for every M2 feature, all M2 screenshots current, axe audits of the UI and the site in both themes |
 
 ### M3 — Configuration, intelligence, memory
 | WP | Scope | Requirements | Status |
@@ -116,10 +116,12 @@
 | 2026-11-02 | M2-06 | Agent tool gateway: protocol minor 1 tool calls, central authentication per call, catalogs per run kind, inbox/task/attachment/human tools; one sealed token per run (ADR-0022); agent inbox items audited | `96926bd` | `internal/agenttools` tests (86.7%), `TestAgentToolsOverBridge` |
 | 2026-11-02 | M2-06 | Durable messages (stored/available/acknowledged/resolved, requests and replies, dedup), notifier delivering content-free notices through idle-gated input, human responses delivered the same way, messaging tools, operator Messages tab | `e8d05f9` | `internal/messages` tests (83.6%), `TestMessagesDeliveredToIdleRuns`, `make e2e` |
 | 2026-11-02 | M2-06 | Control: orchestration tools (worker launch/stop for eligible tasks, runs list), per-worker git worktrees on the node, notifications to control for actionable events, bounded control restart with session resume and an urgent human action beyond the budget | `cf6de6d` | `TestPrepareWorktree`, `TestControlLaunchesWorkersInWorktrees`, `TestControlSupervisor` |
-| 2026-11-02 | M2-06 | Real evidence: a real Claude Code session used a SpaceMan tool through the bridge; the token was found nowhere at rest | this commit (`test(real)`) | `TestRealClaudeUsesSpaceManTools` (opt-in, Haiku) |
+| 2026-11-02 | M2-06 | Real evidence: a real Claude Code session used a SpaceMan tool through the bridge; the token was found nowhere at rest | `3ee3ad8` | `TestRealClaudeUsesSpaceManTools` (opt-in, Haiku) |
+| 2026-11-02 | M2-08 | Accessibility: axe audits of every UI screenshot page and every site page in both themes, all violations fixed (contrast palette, named controls, nav semantics, task checkboxes, replay slider, search button), contrast unit tests | this commit (`fix(a11y)`) | `make screenshots`, `make site-check`, `theme/contrast.test.ts` |
 
 ## 4. Process deviations
 
 | ID | Date | Deviation | Reason | Follow-up |
 |---|---|---|---|---|
 | D-1 | 2026-11-02 | The root commit's message was written by hand following the `/cc` skill's bundled Conventional Commits spec. `/cc` did **not** produce it. | `/cc` runs `git log --oneline -10` during preprocessing, and that fails on a branch with no commits ("does not have any commits yet"), so the skill could not load. | Every later commit uses `/cc`. |
+| D-2 | 2026-11-02 | `914b461` (`fix(agent): honour the reconnect cap on the first retry`) was committed with a hand-written message; `/cc` was not invoked for it. | Oversight while splitting an unrelated fix out of the accessibility work. | Later commits use `/cc` again. |

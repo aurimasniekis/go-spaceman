@@ -195,7 +195,7 @@ export function Composer({ spaceId, initialMarkdown = '', placeholder = 'Write i
         ))}
         {uploading > 0 && <Group gap={4}><Loader size={12} /><Text size="xs" c="dimmed">Uploading…</Text></Group>}
       </Group>
-      {error && <Text size="xs" c="red" role="alert">{error}</Text>}
+      {error && <Text size="xs" c="owlRed" role="alert">{error}</Text>}
     </Stack>
   )
 }

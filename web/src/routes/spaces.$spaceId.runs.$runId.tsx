@@ -81,7 +81,7 @@ function RunPage() {
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item onClick={() => void stop('interrupt')}>Interrupt (keeps the session resumable)</Menu.Item>
-                <Menu.Item color="red" onClick={() => void stop('kill')}>Stop the program</Menu.Item>
+                <Menu.Item color="owlRed" onClick={() => void stop('kill')}>Stop the program</Menu.Item>
               </Menu.Dropdown>
             </Menu>
           )}

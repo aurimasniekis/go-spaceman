@@ -71,7 +71,7 @@ export function ReauthModal() {
               {(f) => <TextInput label="Authenticator code" inputMode="numeric" autoComplete="one-time-code" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
             </form.Field>
           )}
-          {error && <Text c="red" size="sm">{error}</Text>}
+          {error && <Text c="owlRed" size="sm">{error}</Text>}
           <form.Subscribe selector={(s) => s.isSubmitting}>
             {(busy) => <Button type="submit" loading={busy}>Continue</Button>}
           </form.Subscribe>

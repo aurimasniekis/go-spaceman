@@ -58,7 +58,7 @@ function AccountsPage() {
                     <Menu.Target><ActionIcon variant="subtle" aria-label={`Actions for ${a.name}`}><IconDots size={16} /></ActionIcon></Menu.Target>
                     <Menu.Dropdown>
                       <Menu.Item onClick={() => setEditing(a)}>Edit or rotate…</Menu.Item>
-                      <Menu.Item color="red" onClick={() => setDeleting(a)}>Delete…</Menu.Item>
+                      <Menu.Item color="owlRed" onClick={() => setDeleting(a)}>Delete…</Menu.Item>
                     </Menu.Dropdown>
                   </Menu>
                 </Table.Td>

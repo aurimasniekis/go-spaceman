@@ -97,7 +97,7 @@ function ItemPage() {
                   <Menu.Dropdown>
                     {it.status !== 'in_progress' && <Menu.Item onClick={() => void setStatus('in_progress')}>Mark in progress</Menu.Item>}
                     <Menu.Item leftSection={<IconClockPause size={14} />} onClick={() => setDialog('defer')}>Defer…</Menu.Item>
-                    <Menu.Item leftSection={<IconX size={14} />} color="red" onClick={() => setDialog('reject')}>Reject…</Menu.Item>
+                    <Menu.Item leftSection={<IconX size={14} />} color="owlRed" onClick={() => setDialog('reject')}>Reject…</Menu.Item>
                   </Menu.Dropdown>
                 </Menu>
               </>

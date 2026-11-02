@@ -136,7 +136,7 @@ function CreateTokenModal({ opened, onClose, onCreated }: { opened: boolean; onC
             </form.Field>
           </Group>
           <form.Field name="grants">{(f) => <GrantsEditor value={f.state.value} onChange={f.handleChange} />}</form.Field>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Create token</Button>}</form.Subscribe>

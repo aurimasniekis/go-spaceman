@@ -60,7 +60,7 @@ export function PreviewPanel({ def, slug, initialVars }: { def: Definition; slug
       <JsonInput label="Sample payload" description={sample ? 'Pre-filled with the go-pulse-github issues_opened event' : undefined}
         autosize minRows={6} maxRows={16} classNames={{ input: 'mono' }} value={data} onChange={setData} />
       <Group><Button leftSection={<IconFlask size={14} />} loading={busy} onClick={() => void run()}>Test</Button></Group>
-      {error && <Text size="sm" c="red" role="alert">{error}</Text>}
+      {error && <Text size="sm" c="owlRed" role="alert">{error}</Text>}
       {result && (
         <Card>
           <Stack gap="xs">

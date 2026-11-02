@@ -98,7 +98,7 @@ function ChangePassword() {
                 {(f) => <PasswordInput label="Confirm" autoComplete="new-password" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
               </form.Field>
             </SimpleGrid>
-            {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+            {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
             <Group><form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Change password</Button>}</form.Subscribe></Group>
           </Stack>
         </form>

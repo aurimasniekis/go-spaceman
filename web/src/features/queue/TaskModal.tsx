@@ -91,7 +91,7 @@ export function TaskModal({ spaceId, seed, opened, onClose, onCreated }: { space
           <form.Field name="exclusions">
             {(f) => <TagsInput label="Exclusive resources" description="Keys like env:staging or repo:api; tasks sharing one never run at the same time" value={f.state.value} onChange={f.handleChange} />}
           </form.Field>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Add to queue</Button>}</form.Subscribe>

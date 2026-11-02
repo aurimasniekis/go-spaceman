@@ -62,7 +62,7 @@ export function RecoverPage() {
             {(f) => <PasswordInput label="Recovery token" autoComplete="off" classNames={{ input: 'mono' }} value={f.state.value}
               onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
           </form.Field>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Recover</Button>}</form.Subscribe>
         </Stack>
       </form>

@@ -85,7 +85,7 @@ jobs:
       # and its result is recorded in docs/PLAN.md.
 
   site:
-    name: site (build, links, screenshots, Mermaid, API reference drift)
+    name: site (build, links, screenshots, Mermaid, accessibility, API reference drift)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,13 +98,18 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-          cache-dependency-path: site/pnpm-lock.yaml
+          cache-dependency-path: |
+            site/pnpm-lock.yaml
+            web/pnpm-lock.yaml
       - name: install
         working-directory: site
         run: pnpm install --frozen-lockfile
-      - name: chromium for the Mermaid check
+      - name: install the web tooling (Playwright and axe for the accessibility audit)
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: chromium for the Mermaid check and the accessibility audit
         run: npx --yes playwright@1.64.1 install --with-deps chromium
-      - name: build, Mermaid and API reference drift
+      - name: build, Mermaid, accessibility and API reference drift
         run: make site-check
 
   security:

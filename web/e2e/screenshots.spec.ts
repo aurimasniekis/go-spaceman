@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Browser, type Page } from '@playwright/test'
 
 import { Api, env, settle, startAgent } from './stack'
@@ -25,12 +26,25 @@ async function setTheme(page: Page, theme: (typeof THEMES)[number]) {
 }
 
 /** Captures `name` in both themes: `prepare` opens the page (and any dialog) after the theme is set. */
+// Accessibility (SM-UI-006, SM-DOCS-005): every captured page is audited with axe in both themes against WCAG 2.1 A/AA.
+// Violations are collected and reported together at the end, so one run lists everything to fix.
+const a11y: string[] = []
+
+async function audit(page: Page, name: string, theme: string) {
+  const res = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  for (const v of res.violations) {
+    const nodes = v.nodes.slice(0, 3).map((n) => `${n.target.join(' ')}${v.id === 'color-contrast' ? ` {${n.any[0]?.message ?? ''}}` : ''}`)
+    a11y.push(`${name} (${theme}): ${v.id} [${v.impact}] ${v.help}: ${nodes.join(' | ')}`)
+  }
+}
+
 async function capture(page: Page, name: string, prepare: () => Promise<void>) {
   for (const theme of THEMES) {
     await setTheme(page, theme)
     await prepare()
     await settle(page, 500)
     await page.screenshot({ path: join(out!, `${name}-${theme}.png`), animations: 'disabled' })
+    await audit(page, name, theme)
     await page.keyboard.press('Escape')
   }
 }
@@ -377,4 +391,7 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/audit')
     await expect(page.getByText('run.launched').first()).toBeVisible()
   })
+  mkdirSync(join(process.cwd(), 'test-results'), { recursive: true })
+  writeFileSync(join(process.cwd(), 'test-results', 'a11y-report.txt'), a11y.join('\n') + '\n')
+  expect(a11y, `accessibility violations:\n${a11y.join('\n')}`).toEqual([])
 })

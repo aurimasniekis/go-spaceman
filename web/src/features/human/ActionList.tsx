@@ -66,7 +66,7 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
       )}
       <Stack gap={4} role="list" aria-label="Human actions">
         {actions.map((a) => (
-          <Card key={a.id} p="xs" role="listitem" tabIndex={0} aria-label={`${a.type}: ${a.title}, ${a.status}`} style={{ cursor: 'pointer', opacity: isPending(a) ? 1 : 0.65 }}
+          <Card key={a.id} p="xs" role="listitem" tabIndex={0} aria-label={`${a.type}: ${a.title}, ${a.status}`} style={{ cursor: 'pointer' }}
             onClick={() => setOpen(a.id)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(a.id) }}>
             <Group gap="xs" wrap="nowrap">
               {isPending(a) && can(a) && (

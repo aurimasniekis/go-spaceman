@@ -116,7 +116,7 @@ export function LoginPage({ returnTo }: { returnTo?: string }) {
                 onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />
             )}
           </pw.Field>
-          {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <pw.Subscribe selector={(s) => s.isSubmitting}>
             {(busy) => <Button type="submit" loading={busy}>Sign in</Button>}
           </pw.Subscribe>
@@ -146,7 +146,7 @@ function CodeForm({ label, submit, error, onSubmit }: { label: string; submit: s
               onChange={(e) => f.handleChange(e.target.value)} error={f.state.meta.errors[0] ? String(f.state.meta.errors[0]) : undefined} />
           )}
         </form.Field>
-        {error && <Text c="red" size="sm" role="alert">{error}</Text>}
+        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
         <form.Subscribe selector={(s) => s.isSubmitting}>
           {(busy) => <Button type="submit" loading={busy}>{submit}</Button>}
         </form.Subscribe>
