@@ -53,6 +53,8 @@
 | `kb-detail` | Space knowledge | A KB's questions with answers, their basis and evidence | current |
 | `space-memory` | Space memory | Dreams and role memory collections with central's head and the node's sync state | current |
 | `dream-runs` | Space memory | A dream configuration's recent dreams with summaries and findings | current |
+| `run-usage` | Run | A run's token usage from its native transcript and the stored transcript | current |
+| `space-usage` | Space overview | Known usage totals with unknown runs counted separately | current |
 | `memory-files` | Space memory | A role's acknowledged memory files, history and conflicts | current |
 | `mcp-servers` | MCP servers | Registered MCP servers with header names (never values), grants and limits | current |
 | `mcp-server-detail` | MCP servers | A server's connection check with its namespaced tools, and its grants to space roles | current |

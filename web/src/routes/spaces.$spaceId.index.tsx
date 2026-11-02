@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { NodeState, RunState, SpaceState } from '@/components/StatusBadge'
 import { SpaceAccountsCard } from '@/features/accounts/SpaceAccountsCard'
 import { SpaceRolesCard } from '@/features/catalog/SpaceRolesCard'
+import { SpaceUsageCard } from '@/features/usage/UsageCards'
 import { LaunchRunModal } from '@/features/spaces/LaunchRunModal'
 import { SpaceFormModal } from '@/features/spaces/SpaceFormModal'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
@@ -115,6 +116,7 @@ function SpacePage() {
       </SimpleGrid>
       <SpaceAccountsCard spaceId={s.id} />
       <SpaceRolesCard spaceId={s.id} />
+      <SpaceUsageCard spaceId={s.id} />
 
       <Tabs defaultValue="runs" keepMounted={false}>
         <Tabs.List>

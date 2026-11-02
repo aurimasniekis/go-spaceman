@@ -339,3 +339,11 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}/quarantine` | `list-quarantine` | Quarantined events of a subscription |
 | `POST` | `/spaces/{space_id}/subscriptions/{subscription_id}/quarantine/{entry_id}` | `resolve-quarantine` | Reprocess or discard a quarantined event |
 
+### usage
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `DELETE` | `/spaces/{space_id}/runs/{run_id}/transcript` | `delete-transcript` | Delete a run's stored transcript |
+| `GET` | `/spaces/{space_id}/runs/{run_id}/usage` | `get-run-usage` | A run's usage |
+| `GET` | `/spaces/{space_id}/usage` | `get-space-usage` | A space's usage |
+

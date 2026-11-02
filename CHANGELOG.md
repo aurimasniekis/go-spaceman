@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Roles and prompts: versioned prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates
   and space roles. Launches resolve them in a documented order with a permission-mode ceiling, and each run records its
   configuration in a manifest.
+- Usage and transcripts: runs report token usage read from the harness's own records (Claude Code transcripts), with
+  the harness's cost estimate and its assumptions; unknown usage is shown as unknown. Ended runs upload their native
+  transcript, which can be downloaded or deleted.
 - Dreams: a dreamer agent consolidates role memory from new transcript segments on demand or on a schedule, within
   time and evidence budgets; it reports findings, and the evidence it read counts as done only after its memory
   changes are checkpointed. A built-in prompt describes the method.

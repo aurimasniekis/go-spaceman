@@ -2173,6 +2173,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/runs/{run_id}/transcript": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a run's stored transcript */
+        delete: operations["delete-transcript"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/runs/{run_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A run's usage
+         * @description Only what the harness recorded; unknown usage is reported as unknown, never zero.
+         */
+        get: operations["get-run-usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/state": {
         parameters: {
             query?: never;
@@ -2437,6 +2474,26 @@ export interface paths {
          * @description Starting needs the task to be eligible. running → ready is a preemption, not a failure.
          */
         post: operations["set-task-status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's usage
+         * @description Totals cover runs with known usage only; runs with unknown usage are counted separately.
+         */
+        get: operations["get-space-usage"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5189,6 +5246,14 @@ export interface components {
             os: string;
             runner: components["schemas"]["ProtoRunnerInfo"];
         };
+        ProtoCostEstimate: {
+            assumptions: string;
+            source: string;
+            /** @description Some usage had no known price */
+            unknown_models?: boolean;
+            /** Format: double */
+            usd: number;
+        };
         ProtoHarnessInfo: {
             available: boolean;
             capabilities: string[];
@@ -5230,6 +5295,19 @@ export interface components {
              * @description Changed files not yet checkpointed, across instances
              */
             uncheckpointed: number;
+        };
+        ProtoModelUsage: {
+            /** Format: int64 */
+            cache_read_tokens?: number;
+            /** Format: int64 */
+            cache_write_tokens?: number;
+            /** Format: int64 */
+            input_tokens?: number;
+            model: string;
+            /** Format: int64 */
+            output_tokens?: number;
+            /** Format: int64 */
+            requests: number;
         };
         ProtoRunnerInfo: {
             core_id: string;
@@ -5922,6 +6000,77 @@ export interface components {
             priority: "low" | "normal" | "high" | "urgent";
             title: string;
             workspace?: string;
+        };
+        Usage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Usage.json
+             */
+            readonly $schema?: string;
+            estimate?: components["schemas"]["ProtoCostEstimate"];
+            final: boolean;
+            harness?: string;
+            kind?: string;
+            /** @description Token counts are known */
+            known: boolean;
+            models: components["schemas"]["ProtoModelUsage"][];
+            note?: string;
+            role?: string;
+            /** Format: date-time */
+            run_created_at?: string;
+            run_id: string;
+            /** @description Where the numbers come from; unavailable means unknown */
+            source: string;
+            transcript?: components["schemas"]["UsageTranscript"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        UsageSummary: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/UsageSummary.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /** Format: int64 */
+            estimated_runs: number;
+            /**
+             * Format: double
+             * @description Sum of the harnesses' own estimates where they gave one
+             */
+            estimated_usd: number;
+            /**
+             * Format: int64
+             * @description Sum over runs with known usage only
+             */
+            input_tokens: number;
+            /** Format: int64 */
+            known_runs: number;
+            /** Format: int64 */
+            output_tokens: number;
+            runs: components["schemas"]["Usage"][];
+            /**
+             * Format: int64
+             * @description Runs whose usage is not known (no records, or a harness without verified records)
+             */
+            unknown_runs: number;
+        };
+        UsageTranscript: {
+            error?: string;
+            /** Format: int64 */
+            received: number;
+            sha256?: string;
+            /** Format: int64 */
+            size: number;
+            /** @enum {string} */
+            state: "receiving" | "stored" | "failed" | "deleted";
+            /** @description Only the start of a longer transcript was kept */
+            truncated: boolean;
         };
     };
     responses: never;
@@ -10848,6 +10997,68 @@ export interface operations {
             };
         };
     };
+    "delete-transcript": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-run-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Usage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "set-space-state": {
         parameters: {
             query?: never;
@@ -11514,6 +11725,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageSummary"];
                 };
             };
             /** @description Error */

@@ -31,6 +31,12 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Usage and transcripts
+- **Codex usage is unknown.** Its records are not verified, so Codex runs show unknown usage (never zero).
+- **Cost figures are the harness's own estimates** at list prices; SpaceMan has no price list and cannot enforce
+  spending limits from usage that arrives after the fact.
+- **Transcripts are uploaded after a run ends**, up to 64 MiB (longer ones keep their start).
+
 ## Dreams
 - **Token budgets are advisory.** The dreamer is told its token budget; SpaceMan enforces only the time budget (by
   stopping the run) and the evidence budget.

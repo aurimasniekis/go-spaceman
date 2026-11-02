@@ -25,7 +25,7 @@ const (
 	// Major is the protocol major version; MinMinor..MaxMinor is the range this build accepts.
 	Major    = 1
 	MinMinor = 0
-	MaxMinor = 2 // 1: agent tool calls (tool.call / tool.result); 2: role memory sync (memory.*), KB acceptance (kb.*)
+	MaxMinor = 2 // 1: agent tool calls (tool.call / tool.result); 2: memory sync, KB acceptance, dreams, usage and transcripts
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -40,21 +40,24 @@ const (
 	TypeAck          = "ack"
 	TypeRunReport    = "run.report"
 	TypeRecording    = "recording.chunk"
-	TypeToolCall     = "tool.call"     // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
-	TypeMemorySync   = "memory.sync"   // minor ≥ 2: new role-memory history, as a git bundle
-	TypeMemoryStatus = "memory.status" // minor ≥ 2: the node's view of its memory collections
-	TypeKBResult     = "kb.result"     // minor ≥ 2: the outcome of a kb.accept command
+	TypeToolCall     = "tool.call"        // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
+	TypeMemorySync   = "memory.sync"      // minor ≥ 2: new role-memory history, as a git bundle
+	TypeMemoryStatus = "memory.status"    // minor ≥ 2: the node's view of its memory collections
+	TypeKBResult     = "kb.result"        // minor ≥ 2: the outcome of a kb.accept command
+	TypeUsage        = "usage.report"     // minor ≥ 2: a run's usage, from its native transcript
+	TypeTranscript   = "transcript.chunk" // minor ≥ 2: part of a run's native transcript, after the run ended
 
 	// central → node
-	TypeWelcome      = "welcome"
-	TypeLeaseGrant   = "lease.grant"
-	TypeLeaseRevoke  = "lease.revoke"
-	TypeCommand      = "command"
-	TypeReconcile    = "reconcile" // central's desired state for every run assigned to the node
-	TypeRecordingAck = "recording.ack"
-	TypeToolResult   = "tool.result" // minor ≥ 1
-	TypeMemoryAck    = "memory.ack"  // minor ≥ 2
-	TypeError        = "error"
+	TypeWelcome       = "welcome"
+	TypeLeaseGrant    = "lease.grant"
+	TypeLeaseRevoke   = "lease.revoke"
+	TypeCommand       = "command"
+	TypeReconcile     = "reconcile" // central's desired state for every run assigned to the node
+	TypeRecordingAck  = "recording.ack"
+	TypeToolResult    = "tool.result"    // minor ≥ 1
+	TypeMemoryAck     = "memory.ack"     // minor ≥ 2
+	TypeTranscriptAck = "transcript.ack" // minor ≥ 2
+	TypeError         = "error"
 )
 
 // Envelope is one protocol message.
@@ -539,4 +542,71 @@ type DreamSpec struct {
 	ExcludeRoles    []string `json:"exclude_roles,omitempty"`
 	MaxFiles        int      `json:"max_files"`
 	MaxBytes        int64    `json:"max_bytes"`
+}
+
+// Usage sources.
+const (
+	UsageClaudeTranscript = "claude-transcript" // Claude Code's native session transcript (verified, spike S-7)
+	UsageUnavailable      = "unavailable"       // the harness keeps no usage SpaceMan can read
+)
+
+// ModelUsage is one model's token counts. A nil count is unknown, never zero.
+type ModelUsage struct {
+	Model      string `json:"model"`
+	Input      *int64 `json:"input_tokens,omitempty"`
+	Output     *int64 `json:"output_tokens,omitempty"`
+	CacheWrite *int64 `json:"cache_write_tokens,omitempty"`
+	CacheRead  *int64 `json:"cache_read_tokens,omitempty"`
+	Requests   int64  `json:"requests"`
+}
+
+// CostEstimate is a cost someone else estimated, with what it assumes.
+type CostEstimate struct {
+	USD           float64 `json:"usd"`
+	Source        string  `json:"source"`
+	Assumptions   string  `json:"assumptions"`
+	UnknownModels bool    `json:"unknown_models,omitempty" doc:"Some usage had no known price"`
+}
+
+// TranscriptRef locates a run's native transcript on the node.
+type TranscriptRef struct {
+	Path  string `json:"path"` // relative to the space's instances folder
+	Bytes int64  `json:"bytes"`
+}
+
+// UsageReport is a run's usage as far as its harness records it (SM-REC-005).
+type UsageReport struct {
+	RunID      string         `json:"run_id"`
+	Source     string         `json:"source"`
+	Models     []ModelUsage   `json:"models"`
+	Estimate   *CostEstimate  `json:"estimate,omitempty"`
+	Transcript *TranscriptRef `json:"transcript,omitempty"`
+	Final      bool           `json:"final" doc:"The run ended; nothing more will be added"`
+	Note       string         `json:"note,omitempty"`
+}
+
+// TranscriptMax bounds a stored transcript; TranscriptChunkMax one chunk.
+const (
+	TranscriptMax      = 64 << 20
+	TranscriptChunkMax = 1 << 20
+)
+
+// TranscriptChunk carries part of an ended run's native transcript. Offset is where Data starts; the last chunk has
+// Final set and the SHA-256 of the whole file.
+type TranscriptChunk struct {
+	RunID     string `json:"run_id"`
+	Offset    int64  `json:"offset"`
+	Data      []byte `json:"data"`
+	Final     bool   `json:"final"`
+	Size      int64  `json:"size"`
+	SHA256    string `json:"sha256,omitempty"`
+	Truncated bool   `json:"truncated,omitempty" doc:"The transcript was larger than TranscriptMax; only its start is stored"`
+}
+
+// TranscriptAck tells the node how much central has stored (Next is the offset to send next; Done when complete).
+type TranscriptAck struct {
+	RunID string `json:"run_id"`
+	Next  int64  `json:"next"`
+	Done  bool   `json:"done"`
+	Error string `json:"error,omitempty"`
 }

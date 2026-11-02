@@ -76,6 +76,7 @@ export default withMermaid(
             { text: 'Knowledge bases', link: '/guide/knowledge' },
             { text: 'Role memory', link: '/guide/memory' },
             { text: 'Dreams', link: '/guide/dreams' },
+            { text: 'Usage and transcripts', link: '/guide/usage' },
             { text: 'Skills', link: '/guide/skills' },
             { text: 'MCP gateway', link: '/guide/mcp-gateway' },
             { text: 'Events and subscriptions', link: '/guide/events' },

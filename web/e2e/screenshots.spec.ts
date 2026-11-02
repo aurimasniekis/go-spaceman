@@ -192,7 +192,7 @@ test('documentation screenshots', async ({ page, browser }) => {
       '/call spaceman_kb_ask {"kb":"payments","kind":"decision","question":"What retry budget did we decide for settlement, and where is it recorded?"}\n' +
       '/call tickets__ticket_comment {"id":"PAY-409","body":"Retry budget raised to 5 for weekend settlement."}' })
   const reviewer = await launch(payments.id, 'worker', 'reviewer', 'codex', 'Review the open pull requests and summarise the risky ones.')
-  const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.\n' +
+  const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.\n/transcript\n' +
     '/call spaceman_kb_ask {"kb":"payments","kind":"context","question":"Are there rules about when settlement may retry?"}\n' +
     '/write decisions.md # Decisions\\n\\n- 2026-11-02: settlement retries use a budget of 5 per batch, not per item.\\n- 2026-11-02: never retry inside the bank window (01:00-03:00 UTC).\\n\n' +
     '/write notes/settlement-client.md # Settlement client\\n\\nRetries live in `RetryBudget` (services/settlement/client/retry.go). The budget resets per batch.\\n')
@@ -547,6 +547,18 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
     await page.getByText('Configuration at launch').scrollIntoViewIfNeeded()
     await expect(page.getByText('Configuration at launch')).toBeVisible()
+  })
+  await expect.poll(async () => (await api.call<{ known: boolean; transcript?: { state: string } }>('GET', `/spaces/${payments.id}/runs/${finished.id}/usage`)).transcript?.state ?? '',
+    { timeout: 30_000 }).toBe('stored')
+  await capture(page, 'run-usage', async () => {
+    await page.goto(`/spaces/${payments.id}/runs/${finished.id}`)
+    await page.getByText('Native transcript').scrollIntoViewIfNeeded()
+    await expect(page.getByText('from the transcript')).toBeVisible()
+  })
+  await capture(page, 'space-usage', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByText('Runs with known usage', { exact: true }).scrollIntoViewIfNeeded()
+    await expect(page.getByText('Runs with known usage', { exact: true })).toBeVisible()
   })
   await capture(page, 'human-global', async () => {
     await page.goto('/human')

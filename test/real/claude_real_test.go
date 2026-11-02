@@ -208,4 +208,30 @@ func TestRealClaudeUsesGatewayTool(t *testing.T) {
 		t.Fatalf("stop: %d", st)
 	}
 	t.Logf("real Claude run %s called tickets__ticket_get through the gateway (%d upstream calls)", runID, calls.Load())
+
+	// SM-REC-005: after the run ends, its usage comes from Claude Code's own transcript and the transcript is stored.
+	var u struct {
+		Known  bool   `json:"known"`
+		Final  bool   `json:"final"`
+		Source string `json:"source"`
+		Models []struct {
+			Model  string `json:"model"`
+			Output *int64 `json:"output_tokens"`
+		} `json:"models"`
+		Estimate *struct {
+			USD float64 `json:"usd"`
+		} `json:"estimate"`
+		Transcript *struct {
+			State string `json:"state"`
+			Size  int64  `json:"size"`
+		} `json:"transcript"`
+	}
+	eventually(t, 60*time.Second, "usage and transcript stored", func() bool {
+		e.api("GET", "/spaces/"+spaceID+"/runs/"+runID+"/usage", nil, &u)
+		return u.Final && u.Transcript != nil && u.Transcript.State == "stored"
+	})
+	if !u.Known || u.Source != "claude-transcript" || len(u.Models) == 0 || u.Models[0].Output == nil || *u.Models[0].Output == 0 {
+		t.Fatalf("usage from the real transcript: %+v", u)
+	}
+	t.Logf("real usage: model %s, %d output tokens, estimate %+v, transcript %d bytes", u.Models[0].Model, *u.Models[0].Output, u.Estimate, u.Transcript.Size)
 }

@@ -454,6 +454,28 @@
   - Dream memory changes merge with other instances' like any checkpoint; conflicts are preserved (ADR-0025).
   - Copies of transcript segments live in the dream folder on the node; they are as sensitive as the transcripts.
 
+### ADR-0028 — Usage comes only from harness records; transcripts are stored apart from recordings
+- **Status:** Accepted, 2026-11-02.
+- **Context:** SM-REC-005 and §30: keep recordings, native transcripts and normalized metadata distinct; normalize only
+  available data; unknown usage is unknown, not zero; estimates keep their pricing assumptions; do not claim hard
+  currency limits when usage is delayed.
+- **Decision:**
+  - The node reads usage from the harness's own records: for Claude Code, its session transcript (spike S-7). Token
+    counts are summed per model with streamed records counted once (last record per `message.id`). Claude Code's own
+    `cost-state` estimate is kept as an estimate with its source and assumptions ("API list prices; subscription
+    accounts are not billed per token"). SpaceMan has no price table of its own.
+  - Codex's records are unverified, so its usage is reported with source `unavailable`; the API and UI show
+    "unknown" and space totals count such runs separately instead of adding zero.
+  - Usage is reported after idle periods (debounced 30 s) and finally when the run ends (`usage.report`); a final
+    report is never overwritten.
+  - After a run ends, the node uploads its native transcript (at most 64 MiB; longer ones keep their start, marked
+    truncated) in 1 MiB chunks, stop-and-wait, resumable from central's offset after reconnects (`transcript.chunk` /
+    `transcript.ack`); central verifies the SHA-256 before storing it under `transcripts/`. Transcripts are downloads
+    only, need recording permissions and can be deleted.
+- **Consequences:**
+  - Usage during a run is "so far"; budgets that need exact spend cannot be enforced from it.
+  - Transcripts contain whatever the session saw, including possible secrets.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

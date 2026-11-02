@@ -1,4 +1,5 @@
 import { Anchor, Badge, Breadcrumbs, Button, Card, Group, Menu, SegmentedControl, SimpleGrid, Stack, Text, TextInput, Tooltip } from '@mantine/core'
+import { RunUsageCard } from '@/features/usage/UsageCards'
 import { IconChevronDown, IconSend, IconPlayerStop } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
@@ -117,6 +118,7 @@ function RunPage() {
       </SimpleGrid>
       {r.error && <ErrorAlert error={new Error(r.error)} title="Run error" />}
       <ManifestCard manifest={r.manifest} />
+      <RunUsageCard spaceId={r.space_id} runId={r.id} />
     </Stack>
   )
 }

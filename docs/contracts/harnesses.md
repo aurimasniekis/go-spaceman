@@ -37,6 +37,12 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).
+- **Transcripts and usage (spike S-7, verified live 2026-11-02, `claude-haiku-5-5`, $0.0014 print-mode check; again in
+  an interactive run via `TestRealClaudeUsesGatewayTool`):** Claude Code writes its session to
+  `$CLAUDE_CONFIG_DIR/projects/<cwd with / and . as ->/<session id>.jsonl`. `assistant` records carry `message.id`,
+  `message.model` and `message.usage` (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
+  `cache_read_input_tokens`); records of one request repeat while it streams (same `message.id`). A `cost-state` record
+  carries `totalCostUSD`, `hasUnknownModelCost` and per-model `modelUsage`. Codex's equivalents are not verified.
 - **Status:** native OSC 7501 reporting (see herdr-core.md).
 - **Hidden flags:** `--channels`, `--dangerously-load-development-channels` (strings only, so **not** relied on until verified).
 - **Print mode:** `-p`, `--output-format stream-json`, `--max-budget-usd`. Used only by opt-in real tests, never for managed runs, which are interactive in hc.

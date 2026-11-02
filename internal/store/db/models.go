@@ -838,6 +838,31 @@ type RunCredential struct {
 	TokenEnc  []byte
 }
 
+type RunTranscript struct {
+	RunID     string
+	SpaceID   string
+	Size      int64
+	Received  int64
+	Sha256    string
+	Truncated int64
+	State     string
+	Error     string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
+type RunUsage struct {
+	RunID           string
+	SpaceID         string
+	Source          string
+	ModelsJson      string
+	EstimateJson    string
+	TranscriptBytes sql.NullInt64
+	Final           int64
+	Note            string
+	UpdatedAt       int64
+}
+
 type Setting struct {
 	Key       string
 	Value     string

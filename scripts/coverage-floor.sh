@@ -21,6 +21,7 @@ PACKAGES=(
   internal/messages
   internal/gateway
   internal/memory
+  internal/usage
 )
 
 fail=0

@@ -34,6 +34,7 @@ export function applyChange(qc: QueryClient, c: Change) {
       if (c.space_id) {
         void qc.invalidateQueries({ queryKey: keys.runs(c.space_id) })
         void qc.invalidateQueries({ queryKey: keys.run(c.space_id, c.resource_id) })
+        void qc.invalidateQueries({ queryKey: ['usage', c.space_id] })
       }
       break
     case 'node':

@@ -53,6 +53,14 @@ type Hub struct {
 	Memory MemoryStore
 	// KBResult receives the outcomes of kb.accept commands (ADR-0026).
 	KBResult func(ctx context.Context, nodeID string, res proto.KBResult)
+	// Usage stores runs' usage and transcripts (ADR-0028); nil drops them.
+	Usage UsageStore
+}
+
+// UsageStore is central's usage and transcript storage as the hub sees it.
+type UsageStore interface {
+	Report(ctx context.Context, nodeID string, rep proto.UsageReport)
+	Chunk(ctx context.Context, nodeID string, ch proto.TranscriptChunk) proto.TranscriptAck
 }
 
 // MemoryStore is central's role-memory storage as the hub sees it.
@@ -382,6 +390,28 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 				<-s.memory
 			}
 			_ = s.send(proto.TypeMemoryAck, svc.now(), ack)
+		}()
+		return nil
+	case proto.TypeUsage:
+		var rep proto.UsageReport
+		if err := env.Decode(&rep); err != nil {
+			return err
+		}
+		if h.Usage != nil {
+			go h.Usage.Report(context.WithoutCancel(ctx), s.nodeID, rep)
+		}
+		return nil
+	case proto.TypeTranscript:
+		var ch proto.TranscriptChunk
+		if err := env.Decode(&ch); err != nil {
+			return err
+		}
+		go func() {
+			ack := proto.TranscriptAck{RunID: ch.RunID, Error: "central does not store transcripts"}
+			if h.Usage != nil {
+				ack = h.Usage.Chunk(context.WithoutCancel(ctx), s.nodeID, ch)
+			}
+			_ = s.send(proto.TypeTranscriptAck, svc.now(), ack)
 		}()
 		return nil
 	case proto.TypeKBResult:

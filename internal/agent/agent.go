@@ -291,6 +291,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.catchUpRecordings(hbCtx)
 			go a.mem.resume(hbCtx)
 			go a.resendKBResults(hbCtx)
+			go a.resumeTranscripts(hbCtx)
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant
@@ -325,6 +326,11 @@ func (a *Agent) session(ctx context.Context) error {
 			var res proto.ToolResult
 			if err := env.Decode(&res); err == nil {
 				a.toolResult(res)
+			}
+		case proto.TypeTranscriptAck:
+			var ack proto.TranscriptAck
+			if err := env.Decode(&ack); err == nil {
+				go a.transcriptAck(context.WithoutCancel(ctx), ack)
 			}
 		case proto.TypeMemoryAck:
 			var ack proto.MemoryAck

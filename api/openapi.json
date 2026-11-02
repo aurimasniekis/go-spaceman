@@ -7093,6 +7093,31 @@
         ],
         "type": "object"
       },
+      "ProtoCostEstimate": {
+        "additionalProperties": false,
+        "properties": {
+          "assumptions": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "unknown_models": {
+            "description": "Some usage had no known price",
+            "type": "boolean"
+          },
+          "usd": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "usd",
+          "source",
+          "assumptions"
+        ],
+        "type": "object"
+      },
       "ProtoHarnessInfo": {
         "additionalProperties": false,
         "properties": {
@@ -7190,6 +7215,39 @@
           "pending",
           "conflicts",
           "retries"
+        ],
+        "type": "object"
+      },
+      "ProtoModelUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_read_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cache_write_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "input_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "requests": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model",
+          "requests"
         ],
         "type": "object"
       },
@@ -9160,6 +9218,181 @@
           "acceptance",
           "priority",
           "exclusions"
+        ],
+        "type": "object"
+      },
+      "Usage": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Usage.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/ProtoCostEstimate"
+          },
+          "final": {
+            "type": "boolean"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "known": {
+            "description": "Token counts are known",
+            "type": "boolean"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoModelUsage"
+            },
+            "type": "array"
+          },
+          "note": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "run_created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "source": {
+            "description": "Where the numbers come from; unavailable means unknown",
+            "type": "string"
+          },
+          "transcript": {
+            "$ref": "#/components/schemas/UsageTranscript"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "source",
+          "known",
+          "models",
+          "final",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "UsageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/UsageSummary.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "cache_read_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cache_write_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "estimated_runs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "estimated_usd": {
+            "description": "Sum of the harnesses' own estimates where they gave one",
+            "format": "double",
+            "type": "number"
+          },
+          "input_tokens": {
+            "description": "Sum over runs with known usage only",
+            "format": "int64",
+            "type": "integer"
+          },
+          "known_runs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/Usage"
+            },
+            "type": "array"
+          },
+          "unknown_runs": {
+            "description": "Runs whose usage is not known (no records, or a harness without verified records)",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs",
+          "known_runs",
+          "unknown_runs",
+          "input_tokens",
+          "output_tokens",
+          "cache_write_tokens",
+          "cache_read_tokens",
+          "estimated_usd",
+          "estimated_runs"
+        ],
+        "type": "object"
+      },
+      "UsageTranscript": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "received": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "receiving",
+              "stored",
+              "failed",
+              "deleted"
+            ],
+            "type": "string"
+          },
+          "truncated": {
+            "description": "Only the start of a longer transcript was kept",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state",
+          "size",
+          "received",
+          "truncated"
         ],
         "type": "object"
       }
@@ -16493,6 +16726,102 @@
         ]
       }
     },
+    "/spaces/{space_id}/runs/{run_id}/transcript": {
+      "delete": {
+        "operationId": "delete-transcript",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a run's stored transcript",
+        "tags": [
+          "usage"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/usage": {
+      "get": {
+        "description": "Only what the harness recorded; unknown usage is reported as unknown, never zero.",
+        "operationId": "get-run-usage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A run's usage",
+        "tags": [
+          "usage"
+        ]
+      }
+    },
     "/spaces/{space_id}/state": {
       "post": {
         "description": "hold admits no new work; interrupt also stops active runs politely; emergency kills them. Archiving needs no active runs.",
@@ -17695,6 +18024,49 @@
         "summary": "Change a task's state",
         "tags": [
           "queue"
+        ]
+      }
+    },
+    "/spaces/{space_id}/usage": {
+      "get": {
+        "description": "Totals cover runs with known usage only; runs with unknown usage are counted separately.",
+        "operationId": "get-space-usage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummary"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's usage",
+        "tags": [
+          "usage"
         ]
       }
     },

@@ -4,7 +4,8 @@
 // call that needs a person's approval is retried every few seconds, the way an agent calls again after the approval
 // notice. A line "/write <path> <text>" writes text (\n for new lines) to a file in its role memory
 // ($SPACEMAN_MEMORY_DIR). With "/kb-answer <text>" it acts as a KB support session: it reads its SpaceMan messages and
-// answers every KB request with the text, citing README.md. Not part of any release.
+// answers every KB request with the text, citing README.md. A "/transcript" line writes a small transcript in Claude
+// Code's format (fictional token counts, no cost) where Claude Code keeps it. Not part of any release.
 package main
 
 import (
@@ -39,6 +40,9 @@ func main() {
 		}
 	}
 	writes(prompt)
+	if strings.Contains(prompt, "/transcript") {
+		transcript(args, wd)
+	}
 	if mcpConfig != "" && (strings.Contains(prompt, "/call ") || strings.Contains(prompt, "/kb-answer ")) {
 		calls(mcpConfig, prompt)
 	}
@@ -171,4 +175,28 @@ func answerKB(ctx context.Context, cs *mcp.ClientSession, text string) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// transcript writes a Claude-Code-shaped session transcript with made-up usage for the dev stack's screenshots.
+func transcript(args []string, wd string) {
+	cfg := os.Getenv("CLAUDE_CONFIG_DIR")
+	session := ""
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--session-id" {
+			session = args[i+1]
+		}
+	}
+	if cfg == "" || session == "" {
+		return
+	}
+	dir := filepath.Join(cfg, "projects", strings.NewReplacer("/", "-", ".", "-").Replace(wd))
+	if err := os.MkdirAll(dir, 0o700); err != nil { //nolint:gosec // the stub's own config folder
+		return
+	}
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"(stub)"}}`,
+		`{"type":"assistant","message":{"id":"msg_stub_1","model":"claude-sonnet-5-5","usage":{"input_tokens":1840,"output_tokens":612,"cache_creation_input_tokens":9120,"cache_read_input_tokens":40210}}}`,
+		`{"type":"assistant","message":{"id":"msg_stub_2","model":"claude-sonnet-5-5","usage":{"input_tokens":920,"output_tokens":1374,"cache_creation_input_tokens":2048,"cache_read_input_tokens":51330}}}`,
+	}
+	_ = os.WriteFile(filepath.Join(dir, session+".jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600) //nolint:gosec // the stub's own config folder
 }
