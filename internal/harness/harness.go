@@ -101,7 +101,7 @@ func detect(ctx context.Context, kind, binary string, caps []string) proto.Harne
 		return info
 	}
 	info.Path = path
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, path, "--version").Output() //nolint:gosec // operator-configured binary
 	if err != nil {

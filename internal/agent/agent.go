@@ -76,6 +76,9 @@ type Agent struct {
 	wake   chan struct{}
 	// runTokens are the hashes of active runs' bridge tokens.
 	runTokens map[string][32]byte
+	// caps caches the capability inventory (harness detection runs binaries; never between dial and hello).
+	caps   proto.Capabilities
+	capsAt time.Time
 }
 
 // New prepares an agent; Run starts it.
@@ -207,6 +210,9 @@ func (a *Agent) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if a.capsAt.IsZero() || a.now().Sub(a.capsAt) > 5*time.Minute {
+		a.caps, a.capsAt = a.capabilities(ctx), a.now()
+	}
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	conn, resp, err := websocket.Dial(dctx, u, &websocket.DialOptions{HTTPClient: a.o.HTTPClient, Subprotocols: []string{proto.Subprotocol},
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + a.o.Credential}}})
@@ -223,8 +229,9 @@ func (a *Agent) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor, Capabilities: a.capabilities(ctx),
+	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor,
 		Capacity: a.o.Capacity, Runs: []proto.RunReport{}, Leases: a.leaseStates()}
+	hello.Capabilities = a.caps
 	for _, r := range runs {
 		hello.Runs = append(hello.Runs, r.report())
 	}

@@ -38,8 +38,8 @@
 | SM-NODE-005 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (runs `unknown` after disconnect) |  |  |
 | SM-NODE-006 | M1-05 | implemented | `fleet.applyReport` generation fencing; `internal/app` `TestFleetLifecycle` |  | Dedicated fencing test with a stale-generation report pending (M1-10). |
 | SM-NODE-007 | M1-05 | implemented | `TestDisconnectEnforcement` (run killed after lease+grace; launch refused centrally) |  | Real-hc variant pending (M1-10). |
-| SM-NODE-008 | M1-05 | partial | lease-guard command + parented runs (`agent.ensureGuard`) | `TestRealLeaseGuardParent` + spike S-2 | End-to-end with a SIGKILLed real agent pending (M1-10). |
-| SM-NODE-009 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (agent restart + central restart: no new Start) |  |  |
+| SM-NODE-008 | M1-05 | implemented | lease-guard command + parented runs (`agent.ensureGuard`) | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): SIGKILLed agent → guard ends run (`finished/killed`); `TestRealLeaseGuardParent` | Holds only while hc core/holder live (LIMITATIONS). |
+| SM-NODE-009 | M1-05 | implemented | `internal/app` `TestFleetLifecycle` (agent + central restart: no new Start) | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): agent restart adopts the same terminal |  |
 | SM-SPACE-001 | | todo | | | |
 | SM-SPACE-002 | M1-08 | partial | `internal/fleet` create/update/pause/resume/archive/restore/purge; `internal/app` `TestFleetLifecycle` |  | UI pending (M1-11). |
 | SM-SPACE-003 | M1-08 | implemented | `internal/app` `TestFleetLifecycle` (pause interrupt stops runs; launches refused while paused) |  |  |
@@ -57,7 +57,7 @@
 | SM-ACCT-001 | | todo | | | |
 | SM-ACCT-002 | | todo | | | |
 | SM-ACCT-003 | | todo | | | |
-| SM-ACCT-004 | M1-07 | partial | launch secrets dispatch-time only (`TestLaunchPayloadRedacted`), shim `agent.LaunchShim`, unrelated secrets dropped (`TestClaudeBuild`) | spike S-1 (hc persists env) | Accounts catalog M3-01. |
+| SM-ACCT-004 | M1-07 | partial | launch secrets dispatch-time only (`TestLaunchPayloadRedacted`), shim, unrelated secrets dropped (`TestClaudeBuild`) | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): secrets file unlinked by shim; run token absent from hc terminals.json | Accounts catalog M3-01. |
 | SM-ACCT-005 | | todo | | | |
 | SM-ACCT-006 | | todo | | | |
 | SM-HARN-001 | M1-07 | partial | `internal/harness` `TestClaudeBuild`, `TestCodexBuild` |  | Real Claude/Codex runs need an account credential (see PLAN §4 note). |
@@ -183,7 +183,7 @@
 | SM-UI-005 | | todo | | | |
 | SM-UI-006 | | todo | | | |
 | SM-REC-001 | | todo | | | |
-| SM-REC-002 | M1-09 | implemented | `internal/recording` `TestWriteReadResume`; agent observe-attach recorder |  |  |
+| SM-REC-002 | M1-09 | implemented | `internal/recording` `TestWriteReadResume`; agent observe-attach recorder | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): recording contains harness output |  |
 | SM-REC-003 | M1-09 | partial | `TestTornSegmentRecovers` |  | Upload/replay/download API pending. |
 | SM-REC-004 | M1-09 | partial | `TestQuotaTruncates`; recorder independent of viewers |  |  |
 | SM-REC-005 | | todo | | | |
