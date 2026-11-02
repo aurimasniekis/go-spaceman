@@ -72,15 +72,15 @@
 | SM-INBOX-003 | M2-02 | partial | `TestStatus` (defer with time, reject with reason, done with association, optimistic version, audited) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02): mark done | Control-side actions (reply, create human actions, planner, tasks) through MCP arrive with M2-06/M2-07. |
 | SM-INBOX-004 | M2-02 | implemented | Trusted metadata is set only by the authenticated caller (`TestCreateAndGet`); bodies are rendered through the sanitizer (`web` `markdown.test.ts`) |  | Event authority from subscription configuration lands with M2-03/M2-04. |
 | SM-EVT-001 | | todo | | | |
-| SM-EVT-002 | | todo | | | |
+| SM-EVT-002 | M2-04 | partial | `internal/events/template` `TestGitHubIssueSeed` (issue seed renders the go-pulse-github issues_opened event; repository is a payload filter) |  | Shared central catalog and subscriptions (M2-04 storage/API/UI). PR template has no upstream fixture. |
 | SM-EVT-003 | | todo | | | |
 | SM-EVT-004 | | todo | | | |
 | SM-EVT-005 | | todo | | | |
 | SM-EVT-006 | | todo | | | |
 | SM-EVT-007 | | todo | | | |
 | SM-EVT-008 | | todo | | | |
-| SM-EVT-009 | | todo | | | |
-| SM-EVT-010 | | todo | | | |
+| SM-EVT-009 | M2-04 | implemented | `TestGitHubIssueSeed` (deterministic), `TestRenderFilters` (bounded, pure filters), `TestValidateDefinition` (no paths outside event/data/vars, no unknown filters) |  | Templates see only the event, payload and variables: no secrets. |
+| SM-EVT-010 | M2-04 | implemented | `TestBindRejectsWidening` (wildcards, extra tokens, placeholders, pattern violations), `TestValidateDefinition` (placeholders only as whole tokens; filter values only use variables) |  |  |
 | SM-EVT-011 | | todo | | | |
 | SM-EVT-012 | | todo | | | |
 | SM-EVT-013 | | todo | | | |
