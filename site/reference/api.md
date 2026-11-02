@@ -35,6 +35,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `DELETE` | `/auth/identities` | `unlink-my-identity` | Unlink one of your sign-in identities |
+| `GET` | `/auth/identities` | `list-my-identities` | Your linked sign-in identities |
 | `POST` | `/auth/login` | `login` | Sign in with email and password |
 | `POST` | `/auth/logout` | `logout` | Sign out (revokes this session) |
 | `GET` | `/auth/me` | `get-me` | The signed-in principal |
@@ -42,8 +44,12 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/auth/mfa/enroll/confirm` | `confirm-enroll` | Confirm TOTP enrollment |
 | `POST` | `/auth/mfa/recovery-codes` | `regenerate-recovery-codes` | Replace your recovery codes |
 | `POST` | `/auth/mfa/verify` | `verify-mfa` | Complete sign-in with a TOTP or recovery code |
+| `GET` | `/auth/oidc/{provider}/start` | `start-oidc` | Start an OIDC sign-in, step-up, link or test login (browser redirect) |
+| `GET` | `/auth/oidc/callback` | `oidc-callback` | OIDC redirect URI (browser redirect) |
+| `GET` | `/auth/oidc/providers` | `list-sign-in-providers` | Enabled sign-in providers |
 | `POST` | `/auth/password` | `change-password` | Change your password |
 | `POST` | `/auth/reauth` | `reauth-password` | Re-authenticate (step-up) |
+| `POST` | `/auth/reauth/totp` | `reauth-totp` | Re-authenticate an SSO session with your SpaceMan TOTP code |
 | `POST` | `/auth/recover` | `recovery-login` | Sign in with a break-glass recovery token |
 | `POST` | `/auth/reset` | `reset-password` | Set a new password with a reset token |
 | `GET` | `/auth/sessions` | `list-sessions` | Your active sessions |
@@ -59,6 +65,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/users/{user_id}/disable` | `disable-user` | Disable a user (revokes sessions; tokens stop working) |
 | `POST` | `/users/{user_id}/enable` | `enable-user` | Enable a user |
 | `PUT` | `/users/{user_id}/grants` | `set-user-grants` | Replace a user's manual grants |
+| `DELETE` | `/users/{user_id}/identities` | `unlink-user-identity` | Unlink an identity from a user |
+| `GET` | `/users/{user_id}/identities` | `list-user-identities` | A user's linked sign-in identities |
+| `POST` | `/users/{user_id}/identities` | `link-user-identity` | Link an expected identity to a user |
+| `POST` | `/users/{user_id}/link-invite` | `issue-link-invite` | Issue a single-use SSO link invitation |
 | `POST` | `/users/{user_id}/reset-token` | `issue-reset` | Issue a one-time password reset token |
 
 ### tokens
@@ -315,6 +325,20 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}/roles/{name}` | `delete-space-role` | Remove a role from the space |
 | `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
 | `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
+
+### sign-in providers
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/oidc/providers` | `list-oidc-providers` | OIDC sign-in providers (never their client secrets) |
+| `POST` | `/oidc/providers` | `create-oidc-provider` | Add an OIDC provider |
+| `DELETE` | `/oidc/providers/{provider_id}` | `delete-oidc-provider` | Delete an OIDC provider |
+| `GET` | `/oidc/providers/{provider_id}` | `get-oidc-provider` | An OIDC provider (never its client secret) |
+| `PATCH` | `/oidc/providers/{provider_id}` | `update-oidc-provider` | Change an OIDC provider |
+| `GET` | `/oidc/providers/{provider_id}/mappings` | `list-oidc-mappings` | A provider's group mappings |
+| `POST` | `/oidc/providers/{provider_id}/mappings` | `add-oidc-mapping` | Map a groups-claim value to a role in a domain |
+| `DELETE` | `/oidc/providers/{provider_id}/mappings/{mapping_id}` | `delete-oidc-mapping` | Remove a group mapping |
+| `GET` | `/oidc/providers/{provider_id}/test-login` | `get-oidc-test-login` | Your latest test login's claim-mapping preview |
 
 ### skills
 

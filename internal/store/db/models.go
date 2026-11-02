@@ -688,6 +688,54 @@ type NodeEnrollment struct {
 	CreatedBy string
 }
 
+type OidcAuthState struct {
+	StateHash      []byte
+	ProviderID     string
+	Purpose        string
+	NonceHash      []byte
+	VerifierEnc    []byte
+	BindingHash    []byte
+	ReturnTo       string
+	UserID         sql.NullString
+	SessionDisplay sql.NullString
+	CreatedAt      int64
+	ExpiresAt      int64
+}
+
+type OidcGroupMapping struct {
+	ID         string
+	ProviderID string
+	GroupValue string
+	Role       string
+	Domain     string
+	SpaceID    sql.NullString
+	CreatedAt  int64
+}
+
+type OidcProvider struct {
+	ID                        string
+	Slug                      string
+	DisplayName               string
+	Issuer                    string
+	ClientID                  string
+	ClientSecretEnc           []byte
+	ScopesJson                string
+	GroupsClaim               string
+	Provisioning              string
+	JitJson                   string
+	AllowPrivateNetwork       int64
+	AllowCrossOriginEndpoints int64
+	CaBundlePem               string
+	StepupFallback            string
+	AcrValues                 string
+	Enabled                   int64
+	TestLoginOkAt             sql.NullInt64
+	TestLoginBy               sql.NullString
+	Version                   int64
+	CreatedAt                 int64
+	UpdatedAt                 int64
+}
+
 type OneTimeToken struct {
 	Hash      []byte
 	Kind      string
@@ -1021,6 +1069,16 @@ type User struct {
 	UpdatedAt      int64
 	DisabledAt     sql.NullInt64
 	LastLoginAt    sql.NullInt64
+}
+
+type UserIdentity struct {
+	Issuer      string
+	Subject     string
+	ProviderID  string
+	UserID      string
+	LinkedVia   string
+	CreatedAt   int64
+	LastLoginAt sql.NullInt64
 }
 
 type UserLocalCredential struct {

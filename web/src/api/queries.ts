@@ -48,6 +48,11 @@ export const keys = {
   mcpGrants: (id: string) => ['mcp-grants', id] as const,
   spaceMcp: (id: string) => ['space-mcp', id] as const,
   spaceHumanTypes: (space: string) => ['space-human-types', space] as const,
+  signInProviders: ['sign-in-providers'] as const,
+  oidcProviders: ['oidc-providers'] as const,
+  oidcMappings: (id: string) => ['oidc-mappings', id] as const,
+  myIdentities: ['identities', 'me'] as const,
+  userIdentities: (id: string) => ['identities', id] as const,
 }
 
 export interface AuditFilter {
@@ -255,3 +260,24 @@ export const useKB = (spaceId: string, id: string | null) =>
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/kbs/{kb_id}', { params: { path: { space_id: spaceId, kb_id: id! } } })) })
 export const useDreams = (spaceId: string) =>
   useQuery({ queryKey: keys.dreams(spaceId), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/dreams', { params: { path: { space_id: spaceId } } })).items })
+
+/** Enabled sign-in providers (public: the sign-in page shows one button each). */
+export const useSignInProviders = () =>
+  useQuery({ queryKey: keys.signInProviders, queryFn: async () => unwrap(await api.GET('/auth/oidc/providers')).items, staleTime: 30_000 })
+
+/** OIDC providers with the redirect URI to register at them (client secrets are never returned). */
+export const useOidcProviders = () => useQuery({ queryKey: keys.oidcProviders, queryFn: async () => unwrap(await api.GET('/oidc/providers')) })
+
+export const useOidcMappings = (id: string) =>
+  useQuery({
+    queryKey: keys.oidcMappings(id),
+    queryFn: async () => unwrap(await api.GET('/oidc/providers/{provider_id}/mappings', { params: { path: { provider_id: id } } })).items,
+  })
+
+export const useMyIdentities = () => useQuery({ queryKey: keys.myIdentities, queryFn: async () => unwrap(await api.GET('/auth/identities')).items })
+
+export const useUserIdentities = (id: string) =>
+  useQuery({
+    queryKey: keys.userIdentities(id),
+    queryFn: async () => unwrap(await api.GET('/users/{user_id}/identities', { params: { path: { user_id: id } } })).items,
+  })

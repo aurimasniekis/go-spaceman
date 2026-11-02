@@ -174,3 +174,27 @@ func TestPermissionsCatalog(t *testing.T) {
 		t.Error("ValidDomain")
 	}
 }
+
+// An SSO subject ("user:<id>#sso") holds its own grants and its user's; the user subject never gains the SSO ones
+// (ADR-0029, Hallpass SR-26).
+func TestSSOSubject(t *testing.T) {
+	e := engine(t, grant("user:u", RoleViewer, Global), db.RoleGrant{Subject: "user:u" + SSOSuffix, Role: string(RoleOperator), Domain: spaceA, Source: "sso"},
+		db.RoleGrant{Subject: "token:t" + SSOSuffix, Role: string(RoleAdmin), Domain: Global, Source: "sso"})
+	sso := "user:u" + SSOSuffix
+	if !e.Allowed(sso, spaceA, QueueWrite) || !e.Allowed(sso, spaceB, SpaceRead) || e.Allowed(sso, spaceB, QueueWrite) {
+		t.Error("SSO subject grants")
+	}
+	if e.Allowed("user:u", spaceA, QueueWrite) {
+		t.Error("user subject gained an SSO grant")
+	}
+	if got := e.Domains(sso); !slices.Equal(got, []string{Global, spaceA}) {
+		t.Errorf("Domains = %v", got)
+	}
+	if got := e.RolesIn(sso, spaceA); !slices.Equal(got, []Role{RoleOperator, RoleViewer}) {
+		t.Errorf("RolesIn = %v", got)
+	}
+	// Only user subjects expand: a token subject with the suffix is just an (unused) subject of its own.
+	if e.Allowed("token:t", Global, NodeWrite) || len(expand("token:t"+SSOSuffix)) != 1 {
+		t.Error("non-user SSO suffix expanded")
+	}
+}

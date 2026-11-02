@@ -56,7 +56,9 @@ type Principal struct {
 func (p *Principal) MFASatisfied() bool { return !p.Limited }
 
 // Subjects returns the authorization subjects that must all permit a request: the user for sessions; the token and
-// its user for API tokens (a token can never exceed its creator); the root token alone for root.
+// its user for API tokens (a token can never exceed its creator); the root token alone for root. An SSO session acts
+// as the user's SSO subject, which holds the user's grants plus the grants the identity provider's group mappings gave
+// it: SSO-sourced grants apply only to SSO sessions, never to password sessions or API tokens (Hallpass SR-26).
 func (p *Principal) Subjects() []string {
 	switch {
 	case p == nil:
@@ -67,6 +69,8 @@ func (p *Principal) Subjects() []string {
 		return nil
 	case p.TokenID != "":
 		return []string{TokenSubject(p.TokenID), UserSubject(p.User.ID)}
+	case p.Method == MethodOIDC:
+		return []string{SSOSubject(p.User.ID)}
 	default:
 		return []string{UserSubject(p.User.ID)}
 	}

@@ -8,20 +8,26 @@ import { keys, useMe, useSessions } from '@/api/queries'
 import { ErrorAlert, errorMessage } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { SecretModal } from '@/components/SecretModal'
+import { Identities } from '@/features/auth/Identities'
 import { hasGlobal } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
 import { fieldError } from '@/lib/form'
 import { notifyError, notifyOk } from '@/lib/notify'
 
-export const Route = createFileRoute('/account')({ component: AccountPage })
+export const Route = createFileRoute('/account')({
+  validateSearch: (s: Record<string, unknown>): { sso_error?: string } => (typeof s.sso_error === 'string' ? { sso_error: s.sso_error } : {}),
+  component: AccountPage,
+})
 
 function AccountPage() {
   const me = useMe().data
+  const { sso_error } = Route.useSearch()
   return (
     <>
       <PageHeader title="Account" description={me?.user ? `${me.user.display_name}${me.user.email ? ` · ${me.user.email}` : ''}` : 'Signed in with the root token'} />
       <Stack gap="lg">
         {me?.user && <Sessions />}
+        {me?.user && <Identities ssoError={sso_error} />}
         {me?.user?.has_password && <ChangePassword />}
         {me?.user?.mfa_enrolled && <RecoveryCodes />}
         {hasGlobal(me, 'admin') && <RootToken />}

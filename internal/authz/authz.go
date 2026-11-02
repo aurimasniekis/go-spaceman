@@ -1,6 +1,8 @@
 // Package authz is SpaceMan's authorization engine (SM-AUTH-003/004, ADR-0004): Casbin RBAC with domains.
 //
 // A request is (subject, domain, object, action). Subjects are "user:<usr_…>", "token:<atk_…>" and "root:<rtk_…>".
+// "user:<usr_…>#sso" holds the grants an identity provider's group mappings gave the user; it is the subject of SSO
+// sessions only and also holds every grant of "user:<usr_…>" (Hallpass SR-26, ADR-0029).
 // Domains are space IDs, or "*" for global administration. Grants g(subject, role, domain) are rows of the role_grants
 // table; a grant in domain "*" applies to every space and to global objects. Role permissions (p rows) are defined in
 // code (policy.go) so they are versioned with the binary and reviewed like code.
@@ -92,7 +94,19 @@ func (en *Engine) Reload(ctx context.Context) error {
 	return en.e.LoadPolicy()
 }
 
-// Allowed reports whether subject may perform perm in domain. Every error is a denial.
+// SSOSuffix marks the subject that holds a user's SSO-sourced grants: "user:<id>#sso".
+const SSOSuffix = "#sso"
+
+// expand returns the Casbin subjects behind subject: an SSO subject stands for its own grants and its user's.
+func expand(subject string) []string {
+	if base, ok := strings.CutSuffix(subject, SSOSuffix); ok && strings.HasPrefix(base, "user:") {
+		return []string{base, subject}
+	}
+	return []string{subject}
+}
+
+// Allowed reports whether subject may perform perm in domain. Every error is a denial. An SSO subject is allowed what
+// its user's grants or its SSO-sourced grants allow.
 func (en *Engine) Allowed(subject, domain string, perm Permission) bool {
 	if subject == "" || domain == "" || !perm.valid() {
 		return false
@@ -100,8 +114,12 @@ func (en *Engine) Allowed(subject, domain string, perm Permission) bool {
 	if perm.GlobalOnly && domain != Global {
 		return false
 	}
-	ok, err := en.e.Enforce(subject, domain, perm.Object, perm.Action)
-	return err == nil && ok
+	for _, s := range expand(subject) {
+		if ok, err := en.e.Enforce(s, domain, perm.Object, perm.Action); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // AllowedAll reports whether every subject may perform perm in domain. Tokens are authorized as both the token and
@@ -122,11 +140,7 @@ func (en *Engine) AllowedAll(subjects []string, domain string, perm Permission) 
 // and other cross-space views filter by this list (SM-HUI-003).
 func (en *Engine) Domains(subject string) []string {
 	var out []string
-	rows, err := en.e.GetFilteredGroupingPolicy(0, subject)
-	if err != nil {
-		return nil
-	}
-	for _, r := range rows {
+	for _, r := range en.grouping(subject) {
 		if len(r) >= 3 && !slices.Contains(out, r[2]) {
 			out = append(out, r[2])
 		}
@@ -148,16 +162,25 @@ func (en *Engine) Domains(subject string) []string {
 // RolesIn returns subject's roles effective in domain (grants in the domain plus global grants).
 func (en *Engine) RolesIn(subject, domain string) []Role {
 	var out []Role
-	rows, err := en.e.GetFilteredGroupingPolicy(0, subject)
-	if err != nil {
-		return nil
-	}
-	for _, r := range rows {
+	for _, r := range en.grouping(subject) {
 		if len(r) >= 3 && (r[2] == domain || r[2] == Global) && !slices.Contains(out, Role(r[1])) {
 			out = append(out, Role(r[1]))
 		}
 	}
 	slices.Sort(out)
+	return out
+}
+
+// grouping returns the grant rows of subject (and of its user, for an SSO subject).
+func (en *Engine) grouping(subject string) [][]string {
+	var out [][]string
+	for _, s := range expand(subject) {
+		rows, err := en.e.GetFilteredGroupingPolicy(0, s)
+		if err != nil {
+			return nil
+		}
+		out = append(out, rows...)
+	}
 	return out
 }
 

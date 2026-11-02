@@ -245,6 +245,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your linked sign-in identities */
+        get: operations["list-my-identities"];
+        put?: never;
+        post?: never;
+        /**
+         * Unlink one of your sign-in identities
+         * @description Refused when it is your only way to sign in. Your SSO-mapped grants are dropped and every session of yours ends.
+         */
+        delete: operations["unlink-my-identity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -367,6 +388,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * OIDC redirect URI (browser redirect)
+         * @description Completes the flow the state names: sets the session cookie after a sign-in or step-up and redirects into the UI. The ID token is validated (signature, issuer, audience, nonce, times); access and refresh tokens are discarded.
+         */
+        get: operations["oidc-callback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/oidc/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Enabled sign-in providers
+         * @description Slug and display name only; the sign-in page offers one button per provider.
+         */
+        get: operations["list-sign-in-providers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/oidc/{provider}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Start an OIDC sign-in, step-up, link or test login (browser redirect)
+         * @description Redirects to the provider with a single-use state, a nonce and a PKCE S256 challenge, and sets a binding cookie. Errors redirect to the sign-in page (or the account page) with `sso_error=<code>`.
+         */
+        get: operations["start-oidc"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/password": {
         parameters: {
             query?: never;
@@ -395,6 +476,26 @@ export interface paths {
         put?: never;
         /** Re-authenticate (step-up) */
         post: operations["reauth-password"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/reauth/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-authenticate an SSO session with your SpaceMan TOTP code
+         * @description Only for SSO sessions whose provider cannot prove a fresh login and allows the local TOTP fallback.
+         */
+        post: operations["reauth-totp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -899,6 +1000,113 @@ export interface paths {
         put?: never;
         /** Enable, disable or revoke a node (disable and revoke close its connection) */
         post: operations["set-node-state"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oidc/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OIDC sign-in providers (never their client secrets) */
+        get: operations["list-oidc-providers"];
+        put?: never;
+        /**
+         * Add an OIDC provider
+         * @description The client secret is sealed and can never be read back. Discovery runs at the first sign-in.
+         */
+        post: operations["create-oidc-provider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oidc/providers/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An OIDC provider (never its client secret) */
+        get: operations["get-oidc-provider"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an OIDC provider
+         * @description Its mappings and linked identities go too; linked users lose their SSO-mapped grants.
+         */
+        delete: operations["delete-oidc-provider"];
+        options?: never;
+        head?: never;
+        /**
+         * Change an OIDC provider
+         * @description Omitted fields stay unchanged. Changing the issuer or client ID clears the test-login evidence.
+         */
+        patch: operations["update-oidc-provider"];
+        trace?: never;
+    };
+    "/oidc/providers/{provider_id}/mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A provider's group mappings */
+        get: operations["list-oidc-mappings"];
+        put?: never;
+        /**
+         * Map a groups-claim value to a role in a domain
+         * @description Applied at every SSO sign-in: the user's SSO grants are replaced by the grants of the groups they hold now. SSO grants apply only to SSO sessions.
+         */
+        post: operations["add-oidc-mapping"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oidc/providers/{provider_id}/mappings/{mapping_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a group mapping
+         * @description Users lose the grant at their next SSO sign-in.
+         */
+        delete: operations["delete-oidc-mapping"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oidc/providers/{provider_id}/test-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your latest test login's claim-mapping preview
+         * @description Start a test login with `/auth/oidc/{slug}/start?purpose=test`; the preview is kept in memory for 10 minutes and no session is created.
+         */
+        get: operations["get-oidc-test-login"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2644,6 +2852,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{user_id}/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A user's linked sign-in identities */
+        get: operations["list-user-identities"];
+        put?: never;
+        /**
+         * Link an expected identity to a user
+         * @description The subject is the provider's stable `sub` (with Porch, the `u_…` user ID; never an email).
+         */
+        post: operations["link-user-identity"];
+        /**
+         * Unlink an identity from a user
+         * @description The user's SSO-mapped grants are dropped and every session of theirs ends.
+         */
+        delete: operations["unlink-user-identity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{user_id}/link-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a single-use SSO link invitation
+         * @description Hand the URL to the user out of band: it links the identity they sign in with at the provider to this user (72 hours).
+         */
+        post: operations["issue-link-invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{user_id}/reset-token": {
         parameters: {
             query?: never;
@@ -3061,6 +3314,7 @@ export interface components {
             mfa_enrolled: boolean;
             mfa_required: boolean;
             provisioned_via: string;
+            sso_grants: components["schemas"]["AuthzGrant"][];
             /** Format: int64 */
             version: number;
         };
@@ -4211,6 +4465,25 @@ export interface components {
             content: string;
             path: string;
         };
+        HttpCookie: {
+            Domain: string;
+            /** Format: date-time */
+            Expires: string;
+            HttpOnly: boolean;
+            /** Format: int64 */
+            MaxAge: number;
+            Name: string;
+            Partitioned: boolean;
+            Path: string;
+            Quoted: boolean;
+            Raw: string;
+            RawExpires: string;
+            /** Format: int64 */
+            SameSite: number;
+            Secure: boolean;
+            Unparsed: string[];
+            Value: string;
+        };
         HumanAction: {
             /**
              * Format: uri
@@ -4401,6 +4674,15 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        IdentityList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/IdentityList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["OidcIdentity"][];
+        };
         InboxItem: {
             /**
              * Format: uri
@@ -4460,6 +4742,15 @@ export interface components {
             };
             items: components["schemas"]["InboxItem"][];
             next_cursor?: string;
+        };
+        "Issue-link-inviteRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Issue-link-inviteRequest.json
+             */
+            readonly $schema?: string;
+            provider_id: string;
         };
         "Issue-resetResponse": {
             /**
@@ -4663,6 +4954,30 @@ export interface components {
             pending_proposals: number;
             /** Format: int64 */
             sessions: number;
+        };
+        "Link-user-identityRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Link-user-identityRequest.json
+             */
+            readonly $schema?: string;
+            provider_id: string;
+            subject: string;
+        };
+        LinkInvite: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LinkInvite.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description Shown once */
+            token: string;
+            /** @description Open this path in the browser to sign in at the provider and link the identity */
+            url: string;
         };
         "List-account-kindsResponse": {
             /**
@@ -4982,6 +5297,15 @@ export interface components {
             /** @description Streamable HTTP endpoint; https unless private networks are allowed */
             url: string;
         };
+        MappingList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/MappingList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["OidcMapping"][];
+        };
         Me: {
             /**
              * Format: uri
@@ -4997,6 +5321,7 @@ export interface components {
             limited: boolean;
             method: string;
             needs_enroll: boolean;
+            provider?: string;
             root: boolean;
             session_id: string;
             user?: components["schemas"]["AuthUser"];
@@ -5128,6 +5453,156 @@ export interface components {
             before_id?: string;
             /** @enum {string} */
             to?: "top" | "bottom";
+        };
+        OidcClaims: {
+            acr?: string;
+            amr?: string[];
+            /** Format: int64 */
+            auth_time?: number;
+            email?: string;
+            email_verified: boolean;
+            groups?: string[];
+            hd?: string;
+            iss: string;
+            name?: string;
+            sub: string;
+            tid?: string;
+        };
+        OidcIdentity: {
+            /** Format: date-time */
+            created_at: string;
+            issuer: string;
+            /** Format: date-time */
+            last_login_at?: string;
+            /** @enum {string} */
+            linked_via: "admin" | "self_link" | "jit";
+            provider_id: string;
+            provider_name: string;
+            provider_slug: string;
+            subject: string;
+            user_id: string;
+        };
+        OidcJITRules: {
+            /** @description Require a verified email in one of these domains */
+            email_domains: string[];
+            /** @description Require at least one of these values in the groups claim */
+            groups: string[];
+            /** @description Allowed hd claim values (Google Workspace) */
+            hosted_domains: string[];
+            /** @description Allowed tid claim values (Microsoft Entra ID) */
+            tenants: string[];
+        };
+        OidcMapping: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OidcMapping.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description A space ID, or "*" for every space and global administration */
+            domain: string;
+            group_value: string;
+            id: string;
+            provider_id: string;
+            /** @enum {string} */
+            role: "viewer" | "operator" | "admin";
+        };
+        OidcMappingInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OidcMappingInput.json
+             */
+            readonly $schema?: string;
+            /** @description A space ID, or "*" for every space and global administration */
+            domain: string;
+            group_value: string;
+            /** @enum {string} */
+            role: "viewer" | "operator" | "admin";
+        };
+        OidcProvider: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OidcProvider.json
+             */
+            readonly $schema?: string;
+            acr_values: string[];
+            allow_cross_origin_endpoints: boolean;
+            allow_private_network: boolean;
+            ca_bundle_pem: string;
+            client_id: string;
+            /** Format: date-time */
+            created_at: string;
+            display_name: string;
+            enabled: boolean;
+            /** @description Claim holding the user's groups; a dotted path walks nested objects (Porch: porch.groups) */
+            groups_claim: string;
+            has_client_secret: boolean;
+            id: string;
+            issuer: string;
+            jit: components["schemas"]["OidcJITRules"];
+            /** @enum {string} */
+            provisioning: "preprovisioned" | "jit";
+            scopes: string[];
+            slug: string;
+            /** @enum {string} */
+            stepup_fallback: "none" | "local_totp";
+            test_login_by?: string;
+            /** Format: date-time */
+            test_login_ok_at?: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        OidcProviderInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OidcProviderInput.json
+             */
+            readonly $schema?: string;
+            acr_values?: string[];
+            allow_cross_origin_endpoints?: boolean;
+            allow_private_network?: boolean;
+            ca_bundle_pem?: string;
+            client_id?: string;
+            /** @description Write-only. Omit to keep the stored secret; an empty string removes it */
+            client_secret?: string;
+            display_name?: string;
+            enabled?: boolean;
+            groups_claim?: string;
+            issuer?: string;
+            jit?: components["schemas"]["OidcJITRules"];
+            /** @enum {string} */
+            provisioning?: "preprovisioned" | "jit";
+            scopes?: string[];
+            slug?: string;
+            /** @enum {string} */
+            stepup_fallback?: "none" | "local_totp";
+        };
+        OidcPublicProvider: {
+            display_name: string;
+            slug: string;
+        };
+        OidcTestResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OidcTestResult.json
+             */
+            readonly $schema?: string;
+            claims: components["schemas"]["OidcClaims"];
+            linked_user_id?: string;
+            /** @description Grants of the linked user that every session has */
+            manual_grants: components["schemas"]["AuthzGrant"][];
+            /** @description Grants the mappings give this identity (applied to SSO sessions only) */
+            mapped_grants: components["schemas"]["AuthzGrant"][];
+            provision_reason?: string;
+            would_provision: boolean;
         };
         PendingHumanActions: {
             /**
@@ -5323,6 +5798,17 @@ export interface components {
             base?: string;
             branch: string;
             repo: string;
+        };
+        ProviderList: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ProviderList.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["OidcProvider"][];
+            /** @description Register exactly this redirect URI with every provider */
+            redirect_uri: string;
         };
         "Publish-templateResponse": {
             /**
@@ -5799,6 +6285,15 @@ export interface components {
              */
             readonly $schema?: string;
             grants: components["schemas"]["AuthGrantInput"][];
+        };
+        SignInProviders: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SignInProviders.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["OidcPublicProvider"][];
         };
         SpaceAccounts: {
             /**
@@ -6633,6 +7128,65 @@ export interface operations {
             };
         };
     };
+    "list-my-identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "unlink-my-identity": {
+        parameters: {
+            query: {
+                issuer: string;
+                subject: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -6856,6 +7410,109 @@ export interface operations {
             };
         };
     };
+    "oidc-callback": {
+        parameters: {
+            query?: {
+                state?: string;
+                code?: string;
+                error?: string;
+                iss?: string;
+            };
+            header?: {
+                "User-Agent"?: string;
+            };
+            path?: never;
+            cookie?: {
+                "__Host-sm_oidc"?: components["schemas"]["HttpCookie"];
+                sm_oidc?: components["schemas"]["HttpCookie"];
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description See Other */
+            303: {
+                headers: {
+                    Location?: string;
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-sign-in-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInProviders"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "start-oidc": {
+        parameters: {
+            query?: {
+                purpose?: "login" | "stepup" | "link" | "test";
+                return_to?: string;
+                link_token?: string;
+            };
+            header?: never;
+            path: {
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Found */
+            302: {
+                headers: {
+                    Location?: string;
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "change-password": {
         parameters: {
             query?: never;
@@ -6899,6 +7556,42 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["Reauth-passwordRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reauth-totp": {
+        parameters: {
+            query?: never;
+            header?: {
+                "User-Agent"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodeInBody"];
             };
         };
         responses: {
@@ -8075,6 +8768,299 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetNode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-oidc-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-oidc-provider": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcProviderInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcProvider"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-oidc-provider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcProvider"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-oidc-provider": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-oidc-provider": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcProviderInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcProvider"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-oidc-mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "add-oidc-mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcMappingInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcMapping"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-oidc-mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+                mapping_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-oidc-test-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcTestResult"];
                 };
             };
             /** @description Error */
@@ -12089,6 +13075,137 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthUser"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-user-identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "link-user-identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Link-user-identityRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "unlink-user-identity": {
+        parameters: {
+            query: {
+                issuer: string;
+                subject: string;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "issue-link-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Issue-link-inviteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkInvite"];
                 };
             };
             /** @description Error */

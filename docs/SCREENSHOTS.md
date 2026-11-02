@@ -23,6 +23,9 @@
 | `auth-users` | Sign-in and access | Users and grants | current |
 | `auth-tokens` | Sign-in and access | API tokens | current |
 | `audit-log` | Sign-in and access | Audit log | current |
+| `sign-in-sso` | Single sign-on | Sign-in page with a provider button above the password form | current |
+| `sign-in-providers` | Single sign-on | Sign-in providers: redirect URI, providers, group mappings to grants | current |
+| `sign-in-provider-form` | Single sign-on | Provider form with the write-only client secret and the porch.groups claim | current |
 | `queue` | The execution queue | Queue with running, ready, demoted incident, blocked, dependent and backlog tasks | current |
 | `queue-task` | The execution queue | Task drawer: eligibility reasons, state, dependencies, blockers | current |
 | `inbox-list` | The inbox | Space inbox with status filter and counts | current |

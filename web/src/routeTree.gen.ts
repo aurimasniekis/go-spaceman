@@ -24,6 +24,7 @@ import { Route as RecoverRouteImport } from './routes/recover'
 import { Route as ResetRouteImport } from './routes/reset'
 import { Route as RolesRouteImport } from './routes/roles'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as SignInProvidersRouteImport } from './routes/sign-in-providers'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as SpacesRouteImport } from './routes/spaces'
 import { Route as TokensRouteImport } from './routes/tokens'
@@ -121,6 +122,11 @@ const RolesRoute = RolesRouteImport.update({
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignInProvidersRoute = SignInProvidersRouteImport.update({
+  id: '/sign-in-providers',
+  path: '/sign-in-providers',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SkillsRoute = SkillsRouteImport.update({
@@ -259,6 +265,7 @@ export interface FileRoutesByFullPath {
   '/reset': typeof ResetRoute
   '/roles': typeof RolesRoute
   '/setup': typeof SetupRoute
+  '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
   '/tokens': typeof TokensRoute
@@ -298,6 +305,7 @@ export interface FileRoutesByTo {
   '/reset': typeof ResetRoute
   '/roles': typeof RolesRoute
   '/setup': typeof SetupRoute
+  '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -335,6 +343,7 @@ export interface FileRoutesById {
   '/reset': typeof ResetRoute
   '/roles': typeof RolesRoute
   '/setup': typeof SetupRoute
+  '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
   '/tokens': typeof TokensRoute
@@ -377,6 +386,7 @@ export interface FileRouteTypes {
     | '/reset'
     | '/roles'
     | '/setup'
+    | '/sign-in-providers'
     | '/skills'
     | '/spaces'
     | '/tokens'
@@ -416,6 +426,7 @@ export interface FileRouteTypes {
     | '/reset'
     | '/roles'
     | '/setup'
+    | '/sign-in-providers'
     | '/skills'
     | '/tokens'
     | '/users'
@@ -452,6 +463,7 @@ export interface FileRouteTypes {
     | '/reset'
     | '/roles'
     | '/setup'
+    | '/sign-in-providers'
     | '/skills'
     | '/spaces'
     | '/tokens'
@@ -493,6 +505,7 @@ export interface RootRouteChildren {
   ResetRoute: typeof ResetRoute
   RolesRoute: typeof RolesRoute
   SetupRoute: typeof SetupRoute
+  SignInProvidersRoute: typeof SignInProvidersRoute
   SkillsRoute: typeof SkillsRoute
   SpacesRoute: typeof SpacesRouteWithChildren
   TokensRoute: typeof TokensRoute
@@ -606,6 +619,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-in-providers': {
+      id: '/sign-in-providers'
+      path: '/sign-in-providers'
+      fullPath: '/sign-in-providers'
+      preLoaderRoute: typeof SignInProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/skills': {
@@ -869,6 +889,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetRoute: ResetRoute,
   RolesRoute: RolesRoute,
   SetupRoute: SetupRoute,
+  SignInProvidersRoute: SignInProvidersRoute,
   SkillsRoute: SkillsRoute,
   SpacesRoute: SpacesRouteWithChildren,
   TokensRoute: TokensRoute,

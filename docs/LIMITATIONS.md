@@ -107,6 +107,20 @@
 - **Schema forms cover common fields.** Strings (with formats and enums), numbers, booleans and string lists render as
   fields; nested objects and other arrays use the JSON editor.
 
+## Sign-in (OIDC)
+- **No real Porch evidence yet.** OIDC sign-in, group mappings, linking and step-up are tested against an in-process
+  provider that follows the Porch contract (`porch.groups`, RFC 9207 `iss`, PKCE S256), not against a running Porch
+  (SM-AUTH-002).
+- **Password sign-in cannot be turned off.** Hallpass's SSO-only enforcement and "sign in with this provider
+  directly" setting are not ported (ADR-0029).
+- **No provider sign-out.** Signing out ends the SpaceMan session only; RP-initiated logout at the provider is not
+  implemented.
+- **SSO grants change at sign-in.** A group removed at the provider takes effect at the user's next SSO sign-in, not
+  in sessions that are already open (deleting the provider or unlinking applies at once).
+- **Step-up leaves the page.** Re-authenticating an SSO session goes to the provider and back; the action that asked
+  for it has to be repeated.
+- **Test-login previews are in memory** for ten minutes and are lost when central restarts.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned

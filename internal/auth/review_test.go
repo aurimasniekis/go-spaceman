@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -275,6 +276,45 @@ func TestReviewSR07RecoveryRedeem(t *testing.T) {
 	}
 	if n := f.auditCount("breakglass.login.failed"); n != 5 {
 		t.Fatalf("failed redemptions audited: %d", n)
+	}
+}
+
+// SR-26 (DECISIONS K-11): SSO-sourced grants do not apply to password sessions or API tokens, only to SSO sessions.
+func TestReviewSR26SSOGrantsOnlyForSSOSessions(t *testing.T) {
+	f := newFx(t)
+	admin := f.bootstrap()
+	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
+	op, err := f.svc.Create(f.ctx, actor, CreateInput{Email: "v@example.com", DisplayName: "V", Grants: grants(RoleViewer), Password: strongPW})
+	must(t, err)
+	var changed bool
+	must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+		var err error
+		changed, err = f.svc.SyncSSOGrantsTx(f.ctx, tx, op.ID, []SSOGrant{{Role: RoleApprover, Domain: authz.Global, GroupValue: "approvers"},
+			{Role: "bogus", Domain: authz.Global}, {Role: RoleViewer, Domain: "spc_bad"}}, audit.System)
+		return err
+	}))
+	if !changed {
+		t.Fatal("SSO grants reported unchanged")
+	}
+	_, pw := f.session(op.ID, MethodPassword, SessionMeta{})
+	if f.allowed(pw, authz.Global, authz.ApprovalDecide) || !f.allowed(pw, authz.Global, authz.SpaceRead) {
+		t.Fatalf("password session subjects %v", pw.Subjects())
+	}
+	_, sso := f.session(op.ID, MethodOIDC, SessionMeta{Provider: "corp"})
+	if !f.allowed(sso, authz.Global, authz.ApprovalDecide) || !f.allowed(sso, authz.Global, authz.SpaceRead) {
+		t.Fatalf("SSO session subjects %v", sso.Subjects())
+	}
+	if len(sso.User.SSOGrants) != 1 || sso.User.SSOGrants[0].SourceRef != "approvers" || len(sso.User.Grants) != 1 {
+		t.Fatalf("grants %+v / %+v", sso.User.Grants, sso.User.SSOGrants)
+	}
+	// An API token is bounded by the user's own grants, never the SSO ones.
+	if _, _, err := f.svc.CreateAPIToken(f.ctx, sso, "t", grants(RoleApprover), 24*time.Hour, false); err == nil {
+		t.Fatal("token created with an SSO-only grant")
+	}
+	// Dropping them (provider deleted, identity unlinked) takes effect at once.
+	must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error { return f.svc.DropSSOGrantsTx(f.ctx, tx, op.ID) }))
+	if f.allowed(sso, authz.Global, authz.ApprovalDecide) {
+		t.Fatal("dropped SSO grant still effective")
 	}
 }
 

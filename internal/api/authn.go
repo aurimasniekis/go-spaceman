@@ -12,14 +12,16 @@ import (
 
 // Me describes the signed-in principal: identity, grants, MFA state and the CSRF token for state-changing requests.
 type Me struct {
-	User        *auth.User `json:"user,omitempty"`
-	Root        bool       `json:"root"`
-	Method      string     `json:"method"`
-	SessionID   string     `json:"session_id"`
-	CSRFToken   string     `json:"csrf_token,omitempty"`
-	Limited     bool       `json:"limited" doc:"MFA verification or enrollment is still required"`
-	NeedsEnroll bool       `json:"needs_enroll"`
-	ExpiresAt   time.Time  `json:"expires_at"`
+	User   *auth.User `json:"user,omitempty"`
+	Root   bool       `json:"root"`
+	Method string     `json:"method"`
+	// Provider is the sign-in provider slug of an SSO session (step-up goes through it).
+	Provider    string    `json:"provider,omitempty"`
+	SessionID   string    `json:"session_id"`
+	CSRFToken   string    `json:"csrf_token,omitempty"`
+	Limited     bool      `json:"limited" doc:"MFA verification or enrollment is still required"`
+	NeedsEnroll bool      `json:"needs_enroll"`
+	ExpiresAt   time.Time `json:"expires_at"`
 	// Domains are the spaces (or "*") in which the principal holds any grant.
 	Domains []string `json:"domains"`
 }
@@ -30,7 +32,7 @@ type sessionOut struct {
 }
 
 func (d *Deps) me(p *auth.Principal) Me {
-	m := Me{User: p.User, Root: p.IsRoot(), Method: p.Method, SessionID: p.SessionID, CSRFToken: p.CSRFToken, Limited: p.Limited,
+	m := Me{User: p.User, Root: p.IsRoot(), Method: p.Method, Provider: p.Provider, SessionID: p.SessionID, CSRFToken: p.CSRFToken, Limited: p.Limited,
 		NeedsEnroll: p.NeedsEnroll, ExpiresAt: p.ExpiresAt, Domains: []string{}}
 	if d.Authz != nil {
 		for _, s := range p.Subjects() {

@@ -21,3 +21,8 @@ attribution needs specific mention.
 | VitePress 1.6.4 `VPNavBarSearchButton.vue` | `site/.vitepress/theme/components/VPNavBarSearchButton.vue` (shortcut hints hidden from assistive technology) | MIT | Adapted copy; styles unchanged. |
 | go-hallpass HallPass skill (`integrations/skills/hallpass` at `79a3c09`) | `internal/skills/seed/hallpass`, the built-in `hallpass` skill | Apache-2.0 | Same author. Copied unchanged; refreshed only by hand. |
 | santhosh-tekuri/jsonschema v6.0.3 | Event template input schemas (JSON Schema 2020-12) | Apache-2.0 | External references are disabled. |
+| go-oidc v3.21.0 (`github.com/coreos/go-oidc/v3`) | OIDC discovery and ID-token verification (`internal/oidc`) | Apache-2.0 | Go module dependency (the version Hallpass uses). |
+| go-jose v4.1.4 (`github.com/go-jose/go-jose/v4`) | JWKS parsing and JWS signature checks for ID tokens; signing in the test IdP | Apache-2.0 | Go module dependency. |
+| golang.org/x/oauth2 v0.37.0 | Authorization Code flow with PKCE (S256) | BSD-3-Clause | Go module dependency (previously indirect). |
+| golang.org/x/net v0.61.0 (`publicsuffix`) | Registrable-domain check of a provider's endpoints | BSD-3-Clause | Go module dependency; embeds a snapshot of Mozilla's Public Suffix List (MPL-2.0 data). |
+| go-hallpass OIDC (`internal/oidc` and `internal/oidc/oidctest` at `bdd8329`) | `internal/oidc` (provider, flow, admin, remote, test IdP, tests) | Apache-2.0 | Same author. Adapted (users, grants), not vendored (ADR-0029). |

@@ -10,6 +10,7 @@ import { ErrorAlert, errorMessage } from '@/components/ErrorAlert'
 import { GrantsEditor } from '@/components/GrantsEditor'
 import { PageHeader } from '@/components/PageHeader'
 import { SecretModal } from '@/components/SecretModal'
+import { UserIdentitiesModal } from '@/features/oidc/UserIdentitiesModal'
 import { hasGlobal } from '@/lib/access'
 import { ago, isSet } from '@/lib/format'
 import { fieldError, required } from '@/lib/form'
@@ -25,6 +26,7 @@ function UsersPage() {
   const admin = hasGlobal(me, 'admin')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
+  const [identities, setIdentities] = useState<User | null>(null)
   const [reset, setReset] = useState<{ user: string; token: string } | null>(null)
   const spaceName = (d: string) => (d === '*' ? 'all spaces' : (spaces.data?.find((s) => s.id === d)?.name ?? d))
 
@@ -73,7 +75,8 @@ function UsersPage() {
                 <Table.Td>
                   <Group gap={4}>
                     {u.grants.map((g) => <Badge key={`${g.role}@${g.domain}@${g.source}`} variant={g.domain === '*' ? 'filled' : 'light'} color={g.role === 'admin' ? 'owlPurple' : g.role === 'operator' ? 'owlBlue' : 'gray'}>{g.role} · {spaceName(g.domain)}</Badge>)}
-                    {u.grants.length === 0 && <Text size="xs" c="dimmed">none</Text>}
+                    {(u.sso_grants ?? []).map((g) => <Badge key={`sso:${g.role}@${g.domain}`} variant="outline" color={g.role === 'admin' ? 'owlPurple' : g.role === 'operator' ? 'owlBlue' : 'gray'} title={`From the identity provider group ${g.source_ref ?? ''}; SSO sessions only`}>{g.role} · {spaceName(g.domain)} · SSO</Badge>)}
+                    {u.grants.length === 0 && (u.sso_grants ?? []).length === 0 && <Text size="xs" c="dimmed">none</Text>}
                   </Group>
                 </Table.Td>
                 <Table.Td>{u.mfa_enrolled ? <Badge color="owlGreen">enrolled</Badge> : u.mfa_required ? <Badge color="owlYellow">required</Badge> : <Text size="xs" c="dimmed">off</Text>}</Table.Td>
@@ -84,6 +87,7 @@ function UsersPage() {
                       <Menu.Target><Button variant="subtle" size="compact-xs" aria-label={`Actions for ${u.display_name}`}><IconDots size={14} /></Button></Menu.Target>
                       <Menu.Dropdown>
                         <Menu.Item onClick={() => setEditing(u)}>Edit grants</Menu.Item>
+                        <Menu.Item onClick={() => setIdentities(u)}>Sign-in identities…</Menu.Item>
                         <Menu.Item onClick={() => void issueReset(u)}>Password reset token</Menu.Item>
                         <Menu.Item color={u.enabled ? 'owlRed' : undefined} onClick={() => void toggle(u)} disabled={u.id === me?.user?.id}>{u.enabled ? 'Disable' : 'Enable'}</Menu.Item>
                       </Menu.Dropdown>
@@ -97,6 +101,7 @@ function UsersPage() {
       </Card>
       <CreateUserModal opened={creating} onClose={() => setCreating(false)} />
       {editing && <EditGrantsModal user={editing} onClose={() => setEditing(null)} />}
+      {identities && <UserIdentitiesModal user={identities} onClose={() => setIdentities(null)} />}
       <SecretModal title={`Password reset token for ${reset?.user ?? ''}`} secret={reset?.token ?? null} onClose={() => setReset(null)}>
         <Text size="sm">Give it to the user over a trusted channel. They open <b>{window.location.origin}/reset</b>, paste it and choose a new password. It works once.</Text>
       </SecretModal>
@@ -128,7 +133,7 @@ function EditGrantsModal({ user, onClose }: { user: User; onClose: () => void })
     <Modal opened onClose={onClose} title={`Grants for ${user.display_name}`} size="lg">
       <Stack gap="sm">
         <GrantsEditor value={grants} onChange={setGrants} />
-        {user.grants.some((g) => g.source !== 'manual') && <Text size="xs" c="dimmed">Grants from single sign-on are managed by the identity provider and are not shown here.</Text>}
+        {(user.sso_grants ?? []).length > 0 && <Text size="xs" c="dimmed">Grants from single sign-on come from the identity provider's group mappings, apply only to SSO sessions and are not edited here.</Text>}
         {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>

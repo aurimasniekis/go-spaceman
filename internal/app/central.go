@@ -44,6 +44,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/health"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/oidc"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -98,6 +99,8 @@ type Central struct {
 	Accounts *accounts.Service
 	// Human holds requests for people: questions, approvals, to-dos and messages (SM-HUM-*).
 	Human *human.Service
+	// OIDC is sign-in through OpenID Connect providers such as Porch (ADR-0029).
+	OIDC *oidc.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -138,6 +141,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		PasswordMinBytes: cfg.Auth.PasswordMinLength, SessionIdle: cfg.Auth.SessionIdle.D(), SessionAbsolute: cfg.Auth.SessionAbsolute.D(),
 		ReauthWindow: cfg.Auth.ReauthWindow.D(), RequireTOTP: cfg.Auth.RequireTOTP, Clock: o.Clock, Metrics: m,
 	})
+	c.OIDC = oidc.New(st, c.Keyring, c.Audit, c.Auth, oidc.Options{PublicURL: cfg.PublicURL, DevMode: !cfg.IsProduction(), Clock: o.Clock,
+		Logger: log, Metrics: m})
 	c.Catalog = catalog.New(st, c.Audit, c.Changes, catalog.Options{MaxPermissionMode: cfg.Harness.MaxPermissionMode})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(), Clock: o.Clock,
@@ -306,7 +311,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -429,6 +434,9 @@ func (c *Central) housekeeping(ctx context.Context) {
 		if err := c.Auth.PurgeExpired(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Warn("purge expired auth records", obs.Err(err))
 		}
+		if _, err := c.OIDC.PurgeStates(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Warn("purge expired sign-in states", obs.Err(err))
+		}
 		if _, err := c.Events.PurgeDeliveries(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Warn("purge event deliveries", obs.Err(err))
 		}
@@ -453,13 +461,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules} {
 		for k, v := range m {
 			out[k] = v
 		}
@@ -488,6 +496,10 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 			return false
 		}
 		subjects = []string{auth.UserSubject(by.ID)}
+		if strings.HasPrefix(by.Via, "sso:") {
+			// Decided in an SSO session: its SSO-mapped grants count, as they did for the decision.
+			subjects = []string{auth.SSOSubject(by.ID)}
+		}
 		if tok, ok := strings.CutPrefix(by.Via, "api_token:"); ok {
 			t, err := c.Store.R().GetAPIToken(ctx, tok)
 			if err != nil || t.RevokedAt.Valid {

@@ -11,7 +11,8 @@ it offline.
 
 ## Signing in
 
-Local accounts sign in with email and password. Accounts that hold an operator or admin grant must use an
+People sign in with a provider such as Porch ([Single sign-on](/guide/sign-in)) or with a local password. Local
+accounts sign in with email and password. Accounts that hold an operator or admin grant must use an
 authenticator app (TOTP), and with `auth.require_totp` (the default) every local account must. On first sign-in the user
 scans a QR code, confirms a code, saves ten single-use recovery codes and then signs in with a fresh code.
 

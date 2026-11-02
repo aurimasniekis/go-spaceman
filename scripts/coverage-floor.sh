@@ -10,6 +10,7 @@ PACKAGES=(
   internal/audit
   internal/auth
   internal/authz
+  internal/oidc
   internal/proto
   internal/approvals
   internal/events/template

@@ -91,12 +91,15 @@ type User struct {
 	Enabled        bool          `json:"enabled"`
 	ProvisionedVia string        `json:"provisioned_via"`
 	Grants         []authz.Grant `json:"grants"`
-	HasPassword    bool          `json:"has_password"`
-	MFAEnrolled    bool          `json:"mfa_enrolled"`
-	MFARequired    bool          `json:"mfa_required"`
-	Version        int64         `json:"version"`
-	CreatedAt      time.Time     `json:"created_at"`
-	LastLoginAt    *time.Time    `json:"last_login_at,omitempty"`
+	// SSOGrants come from identity provider group mappings, are replaced at every SSO sign-in and apply only to SSO
+	// sessions.
+	SSOGrants   []authz.Grant `json:"sso_grants"`
+	HasPassword bool          `json:"has_password"`
+	MFAEnrolled bool          `json:"mfa_enrolled"`
+	MFARequired bool          `json:"mfa_required"`
+	Version     int64         `json:"version"`
+	CreatedAt   time.Time     `json:"created_at"`
+	LastLoginAt *time.Time    `json:"last_login_at,omitempty"`
 }
 
 // Subject is the user's authorization subject.
@@ -207,6 +210,11 @@ func (svc *Service) hydrate(ctx context.Context, q *db.Queries, r db.User) (*Use
 		return nil, err
 	}
 	u.Grants = grantsFromRows(rows)
+	sso, err := q.ListRoleGrantsBySubject(ctx, SSOSubject(r.ID))
+	if err != nil {
+		return nil, err
+	}
+	u.SSOGrants = grantsFromRows(sso)
 	if _, err := q.GetLocalCredential(ctx, r.ID); err == nil {
 		u.HasPassword = true
 	}

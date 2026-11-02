@@ -476,6 +476,56 @@
   - Usage during a run is "so far"; budgets that need exact spend cannot be enforced from it.
   - Transcripts contain whatever the session saw, including possible secrets.
 
+### ADR-0029 — OIDC sign-in ported from Hallpass; SSO grants apply only to SSO sessions (security-relevant change)
+- **Status:** Accepted, 2026-11-02.
+- **Context:** SM-AUTH-001 asks for Hallpass's actual OIDC implementation; SM-AUTH-002 for Porch per its contract
+  (`docs/contracts/porch.md`: discovery, PKCE S256 only, `porch.groups` via a dotted `groups_claim`, `porch.roles`
+  always empty, stable `sub`). K-11 asked that SSO-sourced grants apply only to SSO sessions (Hallpass SR-26).
+  Adding a second way to sign in and a second source of grants widens the authentication surface, so this is recorded
+  as a **security-relevant change**.
+- **Decision:**
+  - `internal/oidc` is ported from go-hallpass `internal/oidc` at `bdd8329` (provider, flow, admin, remote, the
+    in-process test IdP and the tests), with operators → users and `operator_identities` → `user_identities`
+    (migration 0021). Unchanged from Hallpass: single-use 10-minute state bound to the browser by a cookie
+    (`__Host-sm_oidc`), nonce, PKCE S256 always, ID tokens RS256/ES256/EdDSA only with iss/aud/azp/exp/iat/nbf/nonce
+    checks and ≤ 60 s skew, a cached JWKS with rate-limited refetch on unknown key IDs, identity by `(iss, sub)` and never
+    by email, no email merge for JIT users, JIT only with at least one matching rule (groups, verified email domain,
+    `tid`, `hd`), access and refresh tokens discarded, upstream step-up with `prompt=login`, `max_age=0`, `auth_time` and
+    optional `acr_values` (local TOTP fallback only where the provider allows it), self-link with recent
+    authentication, admin link by subject, single-use link invitations (`link_code`, 72 h), test login with an
+    in-memory preview, sanitized `return_to` (SR-24), audited denials.
+  - Provider HTTP (discovery, JWKS, token): its own client with TLS verification always on (a CA bundle only adds
+    trust), no environment proxy, no redirects, and a dial-time refusal of loopback, private, link-local, CGNAT,
+    unspecified and multicast addresses unless the provider's `allow_private_network` is set; endpoints must be https
+    (http on localhost only in development mode) on the issuer's registrable domain unless
+    `allow_cross_origin_endpoints` is set. Client secrets are sealed with the keyring's credential purpose
+    (AAD `oidc_provider:<id>`) and write-only in the API.
+  - **Grants instead of Hallpass roles and groups.** A group mapping maps a claim value to a SpaceMan role in a domain:
+    `*` or a space that exists (the mapping goes with the space). Mappings are re-applied at every SSO sign-in.
+    The resulting grants are `role_grants` rows of the subject `user:<id>#sso` (source `sso`). Casbin treats that
+    subject as holding its own grants plus the user's (`authz.SSOSuffix`); only SSO sessions act as it
+    (`Principal.Subjects`). Password sessions, break-glass sessions and API tokens never get SSO grants, and tokens
+    stay bounded by the user's own grants (K-11, SR-26). An approval decided in an SSO session is rechecked against the
+    SSO subject (`audit.Actor.Via = "sso:<slug>"`).
+  - SSO grants never count toward the last-administrator guard. Hallpass instead keeps an SSO administrator role when
+    sync would remove the last administrator; SpaceMan does not need that, because a user with a manual global admin
+    grant must always remain. Deleting a provider or unlinking an identity drops the user's SSO grants; unlinking also
+    ends the user's sessions. A user cannot unlink their last way to sign in (a SpaceMan addition).
+  - The authorization response's `iss` parameter (RFC 9207, which Porch sends) must equal the issuer when present
+    (a SpaceMan addition against mix-up; Hallpass ignores the parameter).
+  - The browser routes are API operations (`/api/v1/auth/oidc/{provider}/start`, `/api/v1/auth/oidc/callback`); the
+    redirect URI is `<public_url>/api/v1/auth/oidc/callback`. Errors redirect to `/login` or `/account` with a stable
+    `sso_error` code, never internals. Provider administration needs `user:write` in `*` with a recent step-up; the test
+    login needs `user:write` through Casbin and a full (not MFA-pending) session.
+- **Not ported (yet):** Hallpass's SSO-only enforcement (`local_login_disabled` switch and its SR-06 lockout guards),
+  the "direct provider" sign-in setting and RP-initiated logout (`end_session_endpoint`). There is no switch that turns
+  password sign-in off, so the guards have nothing to protect yet.
+- **Consequences:**
+  - A person's access can differ between their password session and their SSO session; the Users page shows SSO grants
+    separately.
+  - Porch behaviour is verified only against the in-process provider that mimics its contract; real Porch evidence is
+    still missing (TRACEABILITY SM-AUTH-002).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -489,5 +539,5 @@
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | ~~llm-knowledge-base-template layout and licence; Piebald dream prompts licence.~~ **Resolved 2026-11-02:** KB template in `docs/contracts/kb-template.md`. Piebald-AI/claude-code-system-prompts is MIT, but its files are extracted Claude Code prompts whose text the repository licence may not cover; SpaceMan's dream prompt is written from the brief's principles and copies none of it (ADR-0027). | — | done |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |
-| K-11 | Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26). SpaceMan grants have no SSO source yet (OIDC lands in M4-01). | SM-AUTH-002 | When OIDC lands, store SSO grants under the subject `user:<id>#sso`, add that subject only for SSO sessions, and port the SR-26 test. |
+| K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |

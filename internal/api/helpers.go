@@ -32,6 +32,9 @@ func Actor(ctx context.Context) audit.Actor {
 		return audit.Actor{Type: audit.ActorRoot, ID: p.RootTokenID}
 	case p.TokenID != "":
 		return audit.Actor{Type: audit.ActorUser, ID: p.User.ID, Via: "api_token:" + p.TokenID}
+	case p.Method == auth.MethodOIDC:
+		// SSO sessions act with the user's SSO-mapped grants too; later rechecks (approvers) need to know (ADR-0029).
+		return audit.Actor{Type: audit.ActorUser, ID: p.User.ID, Via: "sso:" + p.Provider}
 	default:
 		return audit.Actor{Type: audit.ActorUser, ID: p.User.ID}
 	}

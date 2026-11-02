@@ -1,14 +1,16 @@
-import { Alert, Anchor, Button, Code, CopyButton, Group, PasswordInput, SimpleGrid, Stack, Text, TextInput } from '@mantine/core'
+import { Alert, Anchor, Button, Code, CopyButton, Divider, Group, PasswordInput, SimpleGrid, Stack, Text, TextInput } from '@mantine/core'
+import { IconLogin2 } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { api, unwrap, type Me } from '@/api/client'
-import { keys, useMe, useSystem } from '@/api/queries'
+import { keys, useMe, useSignInProviders, useSystem } from '@/api/queries'
 import { safeReturnTo, setSession } from '@/api/session'
 import { errorMessage } from '@/components/ErrorAlert'
 import { QRCode } from '@/components/QRCode'
 import { fieldError, required } from '@/lib/form'
+import { ssoErrorMessage, ssoStartUrl } from '@/lib/sso'
 import { AuthLayout } from './AuthLayout'
 
 type Step = 'password' | 'enroll' | 'codes' | 'verify'
@@ -20,13 +22,15 @@ function stepFor(me: Me | null | undefined): Step | 'done' {
 }
 
 /**
- * Sign-in (SM-AUTH-001/002): password, then TOTP. Accounts that must use MFA and have none enroll here; enrollment
- * never completes a sign-in by itself, so a fresh code is asked for afterwards (Hallpass SR-03).
+ * Sign-in (SM-AUTH-001/002): a button per enabled OIDC provider (Porch or any other), or password then TOTP. Accounts
+ * that must use MFA and have none enroll here; enrollment never completes a sign-in by itself, so a fresh code is asked
+ * for afterwards (Hallpass SR-03).
  */
-export function LoginPage({ returnTo }: { returnTo?: string }) {
+export function LoginPage({ returnTo, ssoError }: { returnTo?: string; ssoError?: string }) {
   const qc = useQueryClient()
   const me = useMe()
   const system = useSystem()
+  const providers = useSignInProviders().data ?? []
   const [step, setStep] = useState<Step>('password')
   const [recovery, setRecovery] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -96,6 +100,17 @@ export function LoginPage({ returnTo }: { returnTo?: string }) {
 
   return (
     <AuthLayout title="Sign in">
+      {ssoError && <Alert color="owlRed" title="Single sign-on failed" role="alert">{ssoErrorMessage(ssoError)}</Alert>}
+      {providers.length > 0 && (
+        <Stack gap="xs">
+          {providers.map((p) => (
+            <Button key={p.slug} variant="default" leftSection={<IconLogin2 size={16} />} component="a" href={ssoStartUrl(p.slug, 'login', safeReturnTo(returnTo))}>
+              Sign in with {p.display_name}
+            </Button>
+          ))}
+          <Divider label="or with your password" labelPosition="center" />
+        </Stack>
+      )}
       {system.data?.local_login_disabled && <Alert color="owlYellow">Password sign-in is disabled on this server.</Alert>}
       <form
         onSubmit={(e) => {

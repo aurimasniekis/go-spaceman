@@ -612,6 +612,41 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/users')
     await expect(page.getByText('Sam Rivera')).toBeVisible()
   })
+  // Sign-in providers (ADR-0029): a Porch provider (fictional issuer; discovery runs only at sign-in, so nothing is
+  // contacted here) with group mappings, a disabled second provider, and Sam's linked Porch identity. Created with the
+  // root token: provider changes otherwise need a fresh step-up.
+  type Prov = { id: string }
+  const porch = await asRoot.call<Prov>('POST', '/oidc/providers', { display_name: 'Porch', slug: 'porch', issuer: 'https://id.example.com',
+    client_id: 'spaceman-acme', client_secret: `stub-${password()}`, scopes: ['openid', 'profile', 'email', 'groups'], groups_claim: 'porch.groups',
+    provisioning: 'jit', jit: { groups: ['spaceman-users'], email_domains: [], tenants: [], hosted_domains: [] }, enabled: true })
+  await asRoot.call('POST', '/oidc/providers', { display_name: 'Corporate Entra ID', slug: 'entra', issuer: 'https://login.example.net/tenant-a/v2.0',
+    client_id: 'b1e0-spaceman', scopes: ['openid', 'profile', 'email'], groups_claim: 'groups', enabled: false })
+  for (const [group_value, role, domain] of [['spaceman-admins', 'admin', '*'], ['spaceman-viewers', 'viewer', '*'], ['payments-oncall', 'operator', payments.id],
+    ['docs-writers', 'operator', docs.id]] as const) {
+    await asRoot.call('POST', `/oidc/providers/${porch.id}/mappings`, { group_value, role, domain })
+  }
+  const sam = (await api.call<{ items: { id: string; email?: string }[] }>('GET', '/users')).items.find((u) => u.email === 'sam@example.com')!
+  await asRoot.call('POST', `/users/${sam.id}/identities`, { provider_id: porch.id, subject: 'u_01jcz8k4m2v7p3q9r5s6t8w0xa' })
+  await capture(page, 'sign-in-providers', async () => {
+    await page.goto('/sign-in-providers')
+    await expect(page.getByText('payments-oncall')).toBeVisible()
+  })
+  await capture(page, 'sign-in-provider-form', async () => {
+    await page.goto('/sign-in-providers')
+    await page.getByRole('button', { name: 'Actions for Porch' }).click()
+    await page.getByRole('menuitem', { name: 'Edit…' }).click()
+    await expect(page.getByText('A secret is stored. Leave empty to keep it.')).toBeVisible()
+  })
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    const anon = await ctx.newPage()
+    await anon.goto('/login')
+    await capture(anon, 'sign-in-sso', async () => {
+      await anon.goto('/login')
+      await expect(anon.getByRole('link', { name: 'Sign in with Porch' })).toBeVisible()
+    })
+    await ctx.close()
+  }
   await capture(page, 'auth-tokens', async () => {
     await page.goto('/tokens')
     await expect(page.getByText('terraform-ci').first()).toBeVisible()

@@ -73,6 +73,11 @@ export async function problemCode(res: Response): Promise<string> {
   }
 }
 
+/** Asks for a re-authentication now (before a browser redirect that needs a recent sign-in, such as linking). */
+export function requestReauth(code: ReauthCode = 'reauth_required'): Promise<boolean> {
+  return prompt(code)
+}
+
 function prompt(code: ReauthCode): Promise<boolean> {
   if (!reauthHandler) return Promise.resolve(false)
   inflight ??= reauthHandler(code).finally(() => {

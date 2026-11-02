@@ -75,6 +75,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   assigned through role templates and space roles and written into each Claude Code run's config folder.
 - Custom human-action types: administrators define request and response schemas, outcomes and form hints; spaces enable
   them; people answer through generated forms (or JSON) and agents discover them through their tools.
+- Single sign-on: OpenID Connect providers such as Porch, with PKCE (S256), validated ID tokens, sealed write-only
+  client secrets and refused private-network providers unless allowed. Group mappings (including Porch's
+  `porch.groups`) grant a role in every space or one space, re-applied at every sign-in and only to SSO sessions.
+  Pre-provisioned or just-in-time users, identity linking from the Account page, by an administrator or with a link
+  invitation, step-up at the provider (or with the SpaceMan TOTP code where allowed), test logins, and a Sign-in
+  providers page.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
