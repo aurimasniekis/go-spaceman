@@ -1,5 +1,5 @@
 import { Alert, Button, Checkbox, Group, Radio, Stack, Text, Textarea } from '@mantine/core'
-import { IconCheck, IconInfoCircle, IconX } from '@tabler/icons-react'
+import { IconCheck, IconInfoCircle, IconShieldCheck, IconX } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -8,6 +8,7 @@ import { keys } from '@/api/queries'
 import { errorMessage } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
 import type { ApprovalReq, MessageReq, QuestionReq, TodoReq } from './badges'
+import { useActionApproval } from './EnforcedApproval'
 import { SchemaForm } from './SchemaForm'
 
 type Outcome = string
@@ -21,6 +22,7 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
   const qc = useQueryClient()
   const [error, setError] = useState('')
   const [data, setData] = useState<Record<string, unknown>>({})
+  const enforced = useActionApproval(action)
   const req = (action.request ?? {}) as QuestionReq & ApprovalReq & TodoReq & MessageReq
   const options = req.options ?? []
   const freeText = options.length === 0 || !!req.allow_text
@@ -75,10 +77,15 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
 
         {action.type === 'approval' && (
           <>
-            <Alert color="owlYellow" variant="light" icon={<IconInfoCircle size={16} />} title="Advisory decision">
-              This records your decision and notifies the requester. SpaceMan does not yet enforce it on the operation itself; enforced,
-              digest-bound approvals arrive with the approval gateway.
-            </Alert>
+            {enforced.data ? (
+              <Alert color="owlBlue" variant="light" icon={<IconShieldCheck size={16} />} title="Enforced approval">
+                SpaceMan runs this operation only after approval: for this run, with exactly the arguments shown below, at most {enforced.data.uses_allowed} time(s).
+              </Alert>
+            ) : enforced.isSuccess && (
+              <Alert color="owlYellow" variant="light" icon={<IconInfoCircle size={16} />} title="Advisory decision">
+                This records your decision and notifies the requester. No policy gates this request, so SpaceMan does not enforce it on any operation.
+              </Alert>
+            )}
             {req.action && <Text size="sm"><b>Requested:</b> {req.action}</Text>}
             {req.details && <MarkdownView source={req.details} spaceId={action.space_id} />}
             <form.Field name="note">

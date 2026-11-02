@@ -51,8 +51,12 @@
   copy; publish the new content as a new version by hand.
 
 ## Human actions
-- **Approvals are advisory.** An approval decision is recorded, audited and sent to the requester, but SpaceMan does not
-  yet enforce it on the operation; digest-bound enforcement arrives with the approval gateway (SM-APPR, M3).
+- **Approvals are advisory unless a policy gates the operation.** Enforcement covers only operations SpaceMan performs:
+  built-in agent tools and gateway tools. Shell commands and a harness's own permission prompts are not intercepted.
+- **Agents call again after approval.** A gated call returns at once with a request; the agent must repeat the call
+  with the same arguments after the notice. An approval belongs to the run that asked, so a relaunched run asks again.
+- **Interrupted executions are not retried.** If central stops while an approved operation runs, its outcome is
+  unknown; it is marked interrupted and needs a new approval to run again.
 - **No routing when the requester is gone.** A response for a run that ended waits as a stored notification; routing
   it to control or a successor arrives with M4-07 (SM-HUM-009).
 

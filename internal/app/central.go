@@ -20,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
 	"github.com/aurimasniekis/go-spaceman/internal/api"
+	"github.com/aurimasniekis/go-spaceman/internal/approvals"
 	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
@@ -77,6 +78,8 @@ type Central struct {
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
 	Gateway *gateway.Service
+	// Approvals gates operations that policies make need a person's approval (ADR-0024).
+	Approvals *approvals.Service
 	// Catalog holds prompts, harness profiles, role templates and space roles (SM-PROMPT-*).
 	Catalog *catalog.Service
 	// Accounts holds harness credentials (SM-ACCT-*).
@@ -203,8 +206,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Queue.OnStatus = c.Supervisor.OnTaskStatus
 	c.Gateway = gateway.New(st, c.Keyring, c.Audit, c.Changes, gateway.Options{Log: obs.Component(log, "gateway")})
+	c.Approvals = approvals.New(st, c.Audit, c.Changes, c.Human, obs.Component(log, "approvals"))
+	c.Approvals.StillAuthorized = c.approverStillAuthorized
+	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue)}, Upstream: c.Gateway})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Tools.Dispatch
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
 	if err := c.Catalog.SeedBuiltins(ctx); err != nil {
@@ -264,7 +270,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -319,6 +325,12 @@ func (c *Central) Serve(ctx context.Context) error {
 		mgmt = &http.Server{Addr: c.Cfg.HTTP.ManagementListen, Handler: c.ManagementHandler(), ReadHeaderTimeout: 10 * time.Second}
 		go func() { errc <- fmt.Errorf("management %s: %w", c.Cfg.HTTP.ManagementListen, mgmt.ListenAndServe()) }()
 	}
+	// Executions that were running when central stopped have an unknown outcome; they are marked, never retried.
+	if n, err := c.Approvals.Recover(ctx); err != nil {
+		return fmt.Errorf("recover approval executions: %w", err)
+	} else if n > 0 {
+		c.Log.Warn("approved executions interrupted by a restart", slog.Int("count", n))
+	}
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
 	go c.expireHumanActions(ctx)
@@ -356,6 +368,11 @@ func (c *Central) expireHumanActions(ctx context.Context) {
 			c.Log.Warn("expire human actions", obs.Err(err))
 		} else if n > 0 {
 			c.Log.Info("expired human actions", slog.Int("count", n))
+		}
+		if n, err := c.Approvals.Expire(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Warn("expire approvals", obs.Err(err))
+		} else if n > 0 {
+			c.Log.Info("expired approvals", slog.Int("count", n))
 		}
 		select {
 		case <-ctx.Done():
@@ -398,16 +415,50 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules} {
 		for k, v := range m {
 			out[k] = v
 		}
 	}
 	return out
+}
+
+// approverStillAuthorized rechecks, before an approved operation runs, that the person who approved it may still
+// decide approvals in the space: the user is active, the API token they used (if any) is not revoked, the root token
+// is current, and the policy still grants approval:decide (SM-APPR-003).
+func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, spaceID string) bool {
+	if c.Authz == nil {
+		return false
+	}
+	var subjects []string
+	switch by.Type {
+	case audit.ActorRoot:
+		rt, err := c.Store.R().GetActiveRootToken(ctx)
+		if err != nil || rt.ID != by.ID {
+			return false
+		}
+		subjects = []string{auth.RootSubject(by.ID)}
+	case audit.ActorUser:
+		u, err := c.Store.R().GetUser(ctx, by.ID)
+		if err != nil || u.DisabledAt.Valid {
+			return false
+		}
+		subjects = []string{auth.UserSubject(by.ID)}
+		if tok, ok := strings.CutPrefix(by.Via, "api_token:"); ok {
+			t, err := c.Store.R().GetAPIToken(ctx, tok)
+			if err != nil || t.RevokedAt.Valid {
+				return false
+			}
+			subjects = append([]string{auth.TokenSubject(tok)}, subjects...)
+		}
+	default:
+		return false
+	}
+	return c.Authz.AllowedAll(subjects, spaceID, authz.ApprovalDecide)
 }

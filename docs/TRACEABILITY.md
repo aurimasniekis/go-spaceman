@@ -127,12 +127,12 @@
 | SM-HTYPE-004 | M3-04 | implemented | Requests and responses validated server-side; agents discover types with `spaceman_human_types` (`TestCustomActions`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
 | SM-HTYPE-005 | M3-04 | implemented | Actions record their type version; a breaking new version does not affect outstanding actions (`TestCustomActions`) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
 | SM-HTYPE-006 | M3-04 | implemented | Custom outcomes are records only; responses never pass through approval permissions or grants (`TestCustomActions`, UI note) | `make screenshots` (real stack, Chromium, macOS, 2026-11-02): custom type created, enabled, requested and rendered as a form | |
-| SM-APPR-001 | | todo | | | |
-| SM-APPR-002 | | todo | | | |
-| SM-APPR-003 | | todo | | | |
-| SM-APPR-004 | | todo | | | |
-| SM-APPR-005 | | todo | | | |
-| SM-APPR-006 | | todo | | | |
+| SM-APPR-001 | M3-05 | implemented | Advisory vs enforced: `ForAction` finds an approval only for policy-created actions (`TestApproveExecuteOnce`); the UI says which kind is being decided | `make screenshots` (real stack, 2026-11-02): `approval-enforced` | |
+| SM-APPR-002 | M3-05 | implemented | Binding of operation, resource, space, requesting run, canonical-argument digest, expiry and uses (`TestDigest`, `TestApproveExecuteOnce`, `TestDecisionsAndRechecks`); `TestGatedGatewayCall` (changed arguments refused) | `make screenshots` (real stack, stub agent through the bridge): a gated gateway call ran once after approval | |
+| SM-APPR-003 | M3-05 | implemented | approval:decide at response (API rule); approver rechecked before execution (`TestDecisionsAndRechecks`; `TestGatedGatewayCall`: a disabled approver's approval is revoked unused); single use under concurrency (`TestConcurrentUseRunsOnce`); replay refused (`TestApproveExecuteOnce`, `TestGatedGatewayCall`) | | |
+| SM-APPR-004 | M3-05 | implemented | Decision states and execution records kept apart; failed and interrupted executions (`TestDecisionsAndRechecks`, `TestRecoverInterrupted`) | `make screenshots`: `approval-executed` shows the decision and the execution separately | |
+| SM-APPR-005 | M3-05 | implemented | Secret-looking argument fields redacted in previews (`TestDigest`, `TestApproveExecuteOnce`); arguments never audited (`TestGatewayCalls`); the guide and limitations state what is not intercepted | | Native harness approval prompts are not integrated (capability-dependent; terminal/takeover). |
+| SM-APPR-006 | M3-05 | partial | The approvals guide states that SpaceMan approvals never stand in for HallPass approvals | | No HallPass request linking exists yet. |
 | SM-HUI-001 | M2-07 | partial | `TestHumanActionsOverHTTP` (global view with counts per readable space) | `make e2e` (real stack, Chromium, macOS, 2026-11-02): Needs you page, nav badge | Assigned-to-me, due/overdue filters and search arrive later. |
 | SM-HUI-002 | M2-07, M3-04 | implemented | `RespondForm`: distinct Send answer / Approve / Deny / Mark completed / Acknowledge; custom types render schema-driven forms with one action per outcome; comments separate | `make e2e`, `make screenshots` (2026-11-02) | |
 | SM-HUI-003 | M2-07 | implemented | Blocking badge and task link in the drawer; unreadable spaces never listed or counted (`TestHumanActionsOverHTTP`) |  |  |

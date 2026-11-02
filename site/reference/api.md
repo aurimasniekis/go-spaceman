@@ -139,6 +139,18 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/accounts` | `list-space-accounts` | Accounts the space's runs may use |
 | `PUT` | `/spaces/{space_id}/accounts` | `set-space-accounts` | Set the accounts the space's runs may use |
 
+### approvals
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/approval-policies` | `list-approval-policies` | Operations that need a person's approval |
+| `POST` | `/approval-policies` | `create-approval-policy` | Make an operation need approval |
+| `DELETE` | `/approval-policies/{policy_id}` | `delete-approval-policy` | Remove a policy |
+| `GET` | `/spaces/{space_id}/approvals` | `list-approvals` | A space's enforced approvals with their executions |
+| `GET` | `/spaces/{space_id}/approvals/{approval_id}` | `get-approval` | An enforced approval |
+| `POST` | `/spaces/{space_id}/approvals/{approval_id}/revoke` | `revoke-approval` | Revoke an approval before (further) execution |
+| `GET` | `/spaces/{space_id}/human-actions/{action_id}/approval` | `get-action-approval` | The enforced approval behind a human action |
+
 ### attachments
 
 | Method | Path | Operation | Summary |

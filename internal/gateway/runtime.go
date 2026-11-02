@@ -349,15 +349,28 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 		return nil, apperr.New(apperr.CodeForbidden, "this run is not granted %s", name)
 	}
 	srv := g.server
+	var finish func(error)
+	if svc.Gate != nil {
+		// Approval policies (ADR-0024) bind the server by ID: a server recreated under the same slug needs new approvals.
+		if finish, err = svc.Gate.Gate(ctx, p, "mcp."+slug+"."+tool, "mcp_server:"+srv.ID, args); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(srv.CallTimeoutMs)*time.Millisecond)
 	defer cancel()
 	release, err := svc.rt.slot(ctx, srv)
 	if err != nil {
+		if finish != nil {
+			finish(err)
+		}
 		return nil, err
 	}
 	defer release()
 	start := time.Now()
 	out, err := svc.call(ctx, p, srv, tool, args)
+	if finish != nil {
+		finish(err)
+	}
 	outcome, result := "success", "ok"
 	if err != nil {
 		outcome, result = "failure", string(apperr.CodeOf(err))

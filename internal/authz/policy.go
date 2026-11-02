@@ -74,6 +74,9 @@ var (
 	HumanRespond   = perm("human_action", "respond") // answer, complete, acknowledge, comment, assign
 	ApprovalDecide = perm("approval", "decide")      // approve or deny permission requests
 
+	ApprovalPolicyRead  = perm("approval_policy", "read")
+	ApprovalPolicyWrite = global("approval_policy", "write") // which operations need approval
+
 	AttachmentRead  = perm("attachment", "read")
 	AttachmentWrite = perm("attachment", "write")
 
@@ -119,7 +122,7 @@ var (
 var rolePermissions = map[Role][]Permission{
 	RoleViewer: {
 		SpaceRead, RunRead, InboxRead, QueueRead, MessageRead, HumanRead, AttachmentRead, SubscriptionRead, KBRead,
-		MemoryRead, SpaceConfigRead, TemplateRead, HumanTypeRead, PromptRead, MCPRead, SkillRead, NodeRead,
+		MemoryRead, SpaceConfigRead, TemplateRead, HumanTypeRead, PromptRead, MCPRead, SkillRead, NodeRead, ApprovalPolicyRead,
 	},
 	RoleOperator: {
 		SpaceWrite, RunControl, TerminalWatch, RecordingRead, InboxWrite, QueueWrite, MessageWrite, HumanRespond, ApprovalDecide,

@@ -199,6 +199,9 @@ func (s *Store) closeNow() {
 // W returns the single writer.
 func (s *Store) W() *Writer { return s.writer }
 
+// Now returns the store clock's current time (the time write transactions see).
+func (s *Store) Now() time.Time { return s.clock.Now().UTC() }
+
 // R returns typed queries over the read-only pool.
 func (s *Store) R() *db.Queries { return s.reader }
 

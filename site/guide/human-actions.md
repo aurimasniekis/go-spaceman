@@ -24,10 +24,11 @@ discussion: they never count as a response, and they can be added after an actio
 
 <Shot name="human-form-default" alt="Approval drawer with an advisory-decision notice, the requested deployment, a note field and Deny and Approve buttons" caption="An approval request" />
 
-::: warning Approvals are advisory in this version
-Approving or denying records the decision, notifies the requester and appears in the audit log. SpaceMan does not yet
-enforce the decision on the operation itself. Enforced approvals, bound to the exact operation that was approved, arrive
-with the approval gateway.
+::: warning Advisory unless a policy gates the operation
+Approving or denying records the decision, notifies the requester and appears in the audit log. On its own, that
+enforces nothing. When an approval policy gates an operation SpaceMan controls, the request is an
+[enforced approval](./approvals): the operation runs only after approval, and only as approved. The drawer says which
+kind you are deciding.
 :::
 
 ## Custom types

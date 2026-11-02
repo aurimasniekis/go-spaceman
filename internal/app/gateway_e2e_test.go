@@ -8,15 +8,20 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/aurimasniekis/go-spaceman/internal/agent"
+	"github.com/aurimasniekis/go-spaceman/internal/approvals"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
@@ -139,4 +144,117 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// SM-APPR-001…004, ADR-0024 end to end: a policy gates a gateway tool. The agent's first call returns at once with an
+// approval request; the upstream is not called. After a person approves, the same call runs exactly once; changed
+// arguments need a new approval. Approval and execution are recorded separately.
+func TestGatedGatewayCall(t *testing.T) {
+	var calls atomic.Int32
+	up := mcp.NewServer(&mcp.Implementation{Name: "deploys", Version: "1.0"}, nil)
+	type in struct {
+		Service string `json:"service"`
+	}
+	mcp.AddTool(up, &mcp.Tool{Name: "deploy"}, func(_ context.Context, _ *mcp.CallToolRequest, a in) (*mcp.CallToolResult, any, error) {
+		calls.Add(1)
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "deployed " + a.Service}}}, nil, nil
+	})
+	srv := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return up }, nil))
+	t.Cleanup(srv.Close)
+
+	e := newFleetEnv(t)
+	e.enroll()
+	e.startAgent()
+	ctx := context.Background()
+	admin := audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "gated", Name: "Gated", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	s, err := e.c.Gateway.Create(ctx, admin, gateway.Input{Slug: "deploys", Name: "Deploys", URL: srv.URL, AllowPrivate: true, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Gateway.AddGrant(ctx, admin, s.ID, sp.ID, "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Approvals.CreatePolicy(ctx, admin, approvals.PolicyInput{SpaceID: sp.ID, Operation: "mcp.deploys.deploy"}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "lease granted", func() bool { x, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return x.Lease != nil && x.Lease.Valid })
+	ctrl, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: hns.KindClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "run running", func() bool { return e.run1(ctrl.ID).Observed == "running" })
+	tok := e.runToken(ctrl.ID)
+
+	res := e.bridgeCall(ctrl.ID, tok, "deploys__deploy", map[string]any{"service": "settlement"})
+	if res.OK || res.Code != "precondition_failed" || !strings.Contains(res.Error, "needs a person's approval") || calls.Load() != 0 {
+		t.Fatalf("ungated call: %+v (upstream calls %d)", res, calls.Load())
+	}
+	l, err := e.c.Approvals.List(ctx, sp.ID, 10)
+	if err != nil || len(l) != 1 || l[0].State != approvals.Pending {
+		t.Fatalf("approvals: %+v %v", l, err)
+	}
+	// An operator of the space approves (the API checks approval:decide; this exercises the service the API calls).
+	ops, err := e.c.Auth.Create(ctx, admin, auth.CreateInput{Email: "ops@example.test", DisplayName: "Ops", Grants: []auth.GrantInput{{Role: authz.RoleOperator, Domain: sp.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opsActor := audit.Actor{Type: audit.ActorUser, ID: ops.ID}
+	approve := func(actionID string) {
+		t.Helper()
+		act, err := e.c.Human.Get(ctx, sp.ID, actionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.c.Human.Respond(ctx, opsActor, sp.ID, act.ID, act.Version, human.RespondInput{Outcome: "approved"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	approve(l[0].HumanActionID)
+
+	if r := e.bridgeCall(ctrl.ID, tok, "deploys__deploy", map[string]any{"service": "ledger"}); r.OK || calls.Load() != 0 {
+		t.Fatalf("changed arguments ran: %+v", r)
+	}
+	res = e.bridgeCall(ctrl.ID, tok, "deploys__deploy", map[string]any{"service": "settlement"})
+	if !res.OK || calls.Load() != 1 || !strings.Contains(string(res.Result), "deployed settlement") {
+		t.Fatalf("approved call: %+v (upstream calls %d)", res, calls.Load())
+	}
+	if r := e.bridgeCall(ctrl.ID, tok, "deploys__deploy", map[string]any{"service": "settlement"}); r.OK || calls.Load() != 1 {
+		t.Fatalf("replayed: %+v", r)
+	}
+	a, err := e.c.Approvals.Get(ctx, sp.ID, l[0].ID)
+	if err != nil || a.State != approvals.Approved || a.UsesLeft != 0 || len(a.Executions) != 1 || a.Executions[0].State != approvals.Succeeded {
+		t.Fatalf("approval record: %+v %v", a, err)
+	}
+
+	// Authorization is checked again at execution: an approval by a user who was disabled since is revoked unused.
+	l, _ = e.c.Approvals.List(ctx, sp.ID, 10)
+	var next *approvals.Approval
+	for _, x := range l {
+		if x.State == approvals.Pending && strings.Contains(x.ArgsPreview, "settlement") {
+			next = x
+		}
+	}
+	if next == nil {
+		t.Fatalf("no new request after the replay: %+v", l)
+	}
+	approve(next.HumanActionID)
+	if _, err := e.c.Auth.Create(ctx, admin, auth.CreateInput{Email: "admin@example.test", DisplayName: "Admin", Grants: []auth.GrantInput{{Role: authz.RoleAdmin, Domain: "*"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Auth.SetEnabled(ctx, admin, ops.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.bridgeCall(ctrl.ID, tok, "deploys__deploy", map[string]any{"service": "settlement"}); r.OK || calls.Load() != 1 {
+		t.Fatalf("ran on a disabled approver's approval: %+v", r)
+	}
+	if a, _ := e.c.Approvals.Get(ctx, sp.ID, next.ID); a.State != approvals.Revoked {
+		t.Fatalf("approval of a disabled user: %+v", a)
+	}
 }

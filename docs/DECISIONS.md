@@ -339,6 +339,32 @@
   - Results are passed to the agent as the upstream sent them and are untrusted content (prompt injection risk).
   - Configured approvals for gateway calls arrive with the approval gateway (M3-05).
 
+### ADR-0024 — Enforced approvals gate SpaceMan's own operations without waiting (security-relevant)
+- **Status:** Accepted, 2026-11-02.
+- **Context:** SM-APPR-001…005 distinguish advisory approvals from enforced ones, which bind the exact operation,
+  resource, arguments, requester, expiry and uses, recheck authorization, prevent replay and keep approval state apart
+  from execution state. Agents must not hold MCP calls open waiting for people.
+- **Decision:**
+  - Enforcement covers operations SpaceMan performs: built-in agent tools (`spaceman.<tool>`) and gateway tools
+    (`mcp.<server>.<tool>`). Policies (global administration) name operations exactly or by a `.*` prefix, per space or
+    for every space. The tools needed to ask and talk to people can never be gated.
+  - A gated call without a matching approval returns at once with an approval request: an `approvals` row and a human
+    action of type `approval` (created with a dedup key, so a crash between the two is repaired on the next call). The
+    agent is notified of the decision and calls again.
+  - An approval matches only the same operation, resource (MCP servers by ID), space, requesting **run** and digest:
+    SHA-256 over the operation, resource and canonical JSON arguments (sorted keys, numbers kept exactly).
+  - Deciding needs `approval:decide` (API). Before every execution the approver is checked again (user active, API
+    token unrevoked or root token current, policy still granting `approval:decide`); otherwise the approval is revoked.
+  - One use is taken and the execution recorded in a single write transaction with a conditional decrement, so
+    concurrent calls cannot overrun the uses. Executions (`executing`, `succeeded`, `failed`, `interrupted`) are
+    separate from the decision (`pending`, `approved`, `denied`, `expired`, `revoked`). Executions found running at
+    start-up are marked interrupted and never retried.
+  - Previews redact secret-looking fields; the digest covers the real values; arguments are never logged or audited.
+- **Consequences:**
+  - A relaunched run needs new approvals for the same operation.
+  - Shell commands and harness-native permission prompts are not covered.
+  - An interrupted execution may or may not have taken effect; people decide whether to approve it again.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

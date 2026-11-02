@@ -3,8 +3,9 @@
 // from outcome; finalization is atomic and optimistic; originals are kept and corrections are explicit follow-ups. A
 // response creates a durable notification for the requester, and blockers affect only the related task.
 //
-// In this version approvals record a decision; enforcement of approved operations (digest binding) arrives with the
-// approval gateway (SM-APPR, M3). Until then an approval is advisory and the UI says so.
+// An approval action on its own records a decision (advisory). When an approval policy gates an operation, the
+// approvals package creates the action and turns its decision into an enforced, digest-bound approval (ADR-0024),
+// through OnFinalized.
 package human
 
 import (
@@ -172,6 +173,8 @@ type Service struct {
 	clock   clock.Clock
 	// OnNotify is called after a commit that stored a notification for an agent requester (wakes the notifier).
 	OnNotify func()
+	// OnFinalized is called inside the transaction that finalizes an action (enforced approvals record the decision).
+	OnFinalized func(ctx context.Context, tx *store.Tx, r db.HumanAction, status, outcome string, actor audit.Actor) error
 }
 
 func (svc *Service) notified() {

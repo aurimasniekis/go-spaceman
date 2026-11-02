@@ -10,6 +10,7 @@ import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { HumanStatusBadge, isPending, PriorityBadge, requesterLabel, TypeBadge, type Resp } from './badges'
+import { EnforcedApprovalCard, useActionApproval } from './EnforcedApproval'
 import { RespondForm } from './RespondForm'
 import { DataView } from './SchemaForm'
 
@@ -20,6 +21,7 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
   const full = useQuery({ queryKey: ['human-action', listed.space_id, listed.id, listed.version],
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-actions/{action_id}', { params: { path: { space_id: listed.space_id, action_id: listed.id } } })) })
   const action = full.data && full.data.version >= listed.version ? full.data : listed
+  const enforced = useActionApproval(action)
   const me = useMe().data
   const role = roleIn(me, action.space_id)
   const canRespond = atLeast(role, 'operator')
@@ -113,6 +115,7 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
           <Text size="xs" c="dimmed" mt="xs">Responses are final. To correct one, create a follow-up.</Text>
         </Card>
       )}
+      {enforced.data && <EnforcedApprovalCard approval={enforced.data} />}
       {(action.notifications ?? []).length > 0 && (
         <Text size="xs" c="dimmed">Requester notified: {action.notifications!.map((n) => `${n.kind} (${n.state})`).join(', ')}</Text>
       )}

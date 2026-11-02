@@ -22,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
+	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -110,6 +111,10 @@ type Service struct {
 	audit   *audit.Writer
 	changes *changefeed.Recorder
 	rt      *runtime
+	// Gate enforces approval policies on gateway tools (ADR-0024); nil gates nothing.
+	Gate interface {
+		Gate(ctx context.Context, p *fleet.RunPrincipal, op, resource string, args json.RawMessage) (func(error), error)
+	}
 }
 
 // Options tune the gateway runtime.

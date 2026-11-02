@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A throwaway local SpaceMan stack for UI development, end-to-end tests and screenshots: central (with the embedded UI),
 # a node agent configuration that uses its own herdr-core core (never the default one) and a stub harness that prints a
-# few lines and ticks, a Pulse-shaped NATS server (devpulse) to publish sample events into, and a fake ticket-tracker MCP
+# few lines, makes the tool calls its prompt asks for, and ticks, a Pulse-shaped NATS server (devpulse) to publish sample events into, and a fake ticket-tracker MCP
 # server (devmcp, bearer token "dev-mcp-token") for the gateway. Nothing here talks to a real model or a real Pulse
 # deployment.
 #
@@ -32,7 +32,7 @@ up() {
     echo "dev-stack: the UI build failed" >&2
     exit 1
   fi
-  if ! (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent && go build -o "$dir/bin/" ./internal/events/pulsetest/devpulse ./internal/gateway/gatewaytest/devmcp); then
+  if ! (cd "$root" && go build -tags embedui -o "$dir/bin/" ./cmd/spaceman ./cmd/spaceman-agent && go build -o "$dir/bin/" ./internal/events/pulsetest/devpulse ./internal/gateway/gatewaytest/devmcp ./internal/harness/harnesstest/stubharness); then
     rm -rf "$dir"
     echo "dev-stack: the Go build failed" >&2
     exit 1
@@ -58,22 +58,15 @@ YAML
   "${clean_env[@]}" "$dir/bin/spaceman" -c "$dir/central.yaml" serve >"$dir/central.log" 2>&1 &
   echo $! >"$dir/central.pid"
 
-  # Stub harness: answers --version, prints a banner, then ticks until stopped.
-  cat >"$dir/stub-harness.sh" <<'SH'
-#!/bin/sh
-if [ "$1" = --version ]; then echo '0.0.0 (stub)'; exit 0; fi
-printf '\033[1;35mstub harness\033[0m started in %s\r\n' "$(pwd)"
-printf 'args: %s\r\n' "$*"
-i=0; while true; do printf '\033[36mtick\033[0m %d\r\n' "$i"; i=$((i+1)); sleep 1; done
-SH
-  chmod 700 "$dir/stub-harness.sh"
+  # The stub harness (internal/harness/harnesstest/stubharness) answers --version, prints a banner, runs "/call" lines of its
+  # prompt as MCP tool calls through the SpaceMan bridge, then ticks until stopped.
   local session; session="smd$(printf %s "${dir##*/smdev-}" | tr "[:upper:]" "[:lower:]")"
   cat >"$dir/agent.yaml" <<YAML
 mode: development
 data_dir: $dir/agent
 central: {url: $url, credential_file: $dir/agent/node.credential, reconnect_max: 2s}
 runner: {session: $session, socket: $dir/hc.sock}
-harness: {claude_binary: $dir/stub-harness.sh, codex_binary: $dir/stub-harness.sh}
+harness: {claude_binary: $dir/bin/stubharness, codex_binary: $dir/bin/stubharness}
 log: {level: info, format: text}
 YAML
   cat >"$dir/env" <<ENV

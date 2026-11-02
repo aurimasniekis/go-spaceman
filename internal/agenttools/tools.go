@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 
@@ -57,6 +58,13 @@ type Deps struct {
 	Extra []func(r *Registry)
 	// Upstream serves external MCP servers' tools through the gateway (ADR-0023); nil serves none.
 	Upstream Upstream
+	// Gate enforces approval policies on built-in tools (ADR-0024); nil gates nothing.
+	Gate Gate
+}
+
+// Gate is the approval gate: finish is non-nil when the call may run and must be told the call's outcome.
+type Gate interface {
+	Gate(ctx context.Context, p *fleet.RunPrincipal, op, resource string, args json.RawMessage) (finish func(error), err error)
 }
 
 // Upstream is the MCP gateway as the registry sees it.
@@ -140,7 +148,17 @@ func (r *Registry) Dispatch(ctx context.Context, p *fleet.RunPrincipal, name str
 	if !slices.Contains(t.kinds, p.Kind) {
 		return nil, apperr.New(apperr.CodeForbidden, "%s runs may not use %s", p.Kind, name)
 	}
+	var finish func(error)
+	if r.d.Gate != nil {
+		var err error
+		if finish, err = r.d.Gate.Gate(ctx, p, "spaceman."+strings.TrimPrefix(name, "spaceman_"), "spaceman", args); err != nil {
+			return nil, err
+		}
+	}
 	out, err := t.run(ctx, p, args)
+	if finish != nil {
+		finish(err)
+	}
 	if err != nil {
 		return nil, err
 	}

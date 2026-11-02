@@ -53,6 +53,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Roles and prompts: versioned prompts (drafts, publish, extend, fork, diff, rollback), harness profiles, role templates
   and space roles. Launches resolve them in a documented order with a permission-mode ceiling, and each run records its
   configuration in a manifest.
+- Enforced approvals: policies make built-in agent tools or gateway tools wait for a person's approval, bound to the
+  exact arguments, the requesting run, an expiry and a number of uses; the decision and each execution are recorded
+  separately, and the approver's authorization is checked again before execution.
 - MCP gateway: administrators register external MCP servers with sealed headers and grant them to space roles. Runs
   see their tools as `<server>__<tool>`, each run with its own upstream session; calls are rechecked, bounded, audited
   and dialed only to addresses the egress policy allows.

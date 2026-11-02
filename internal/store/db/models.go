@@ -40,6 +40,53 @@ type ApiToken struct {
 	RevokedBy     sql.NullString
 }
 
+type Approval struct {
+	ID               string
+	SpaceID          string
+	PolicyID         string
+	Operation        string
+	Resource         string
+	ArgsDigest       string
+	ArgsPreview      string
+	RequesterRun     string
+	RequesterRole    string
+	HumanActionID    string
+	State            string
+	StateReason      string
+	UsesAllowed      int64
+	UsesLeft         int64
+	ValidSeconds     int64
+	DecidedBy        string
+	DecidedByType    string
+	DecidedVia       string
+	DecidedAt        sql.NullInt64
+	ValidUntil       sql.NullInt64
+	RequestExpiresAt int64
+	CreatedAt        int64
+	UpdatedAt        int64
+}
+
+type ApprovalExecution struct {
+	ID         string
+	ApprovalID string
+	State      string
+	Error      string
+	StartedAt  int64
+	FinishedAt sql.NullInt64
+}
+
+type ApprovalPolicy struct {
+	ID                string
+	SpaceID           string
+	Operation         string
+	Uses              int64
+	ValidSeconds      int64
+	RequestTtlSeconds int64
+	Note              string
+	CreatedAt         int64
+	CreatedBy         string
+}
+
 type Attachment struct {
 	ID         string
 	SpaceID    string

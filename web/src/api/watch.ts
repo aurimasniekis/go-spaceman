@@ -65,6 +65,12 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'profile':
       void qc.invalidateQueries({ queryKey: keys.profiles })
       break
+    case 'approval':
+      void qc.invalidateQueries({ queryKey: ['approval'] })
+      break
+    case 'approval_policy':
+      void qc.invalidateQueries({ queryKey: keys.approvalPolicies })
+      break
     case 'mcp_server':
       void qc.invalidateQueries({ queryKey: keys.mcpServers })
       void qc.invalidateQueries({ queryKey: ['mcp-grants'] })

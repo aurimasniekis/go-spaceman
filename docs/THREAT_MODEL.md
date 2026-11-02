@@ -31,7 +31,7 @@ flowchart LR
 | T-03 | Event text injects instructions or authority | Raw payload stored apart from trusted rendered instructions, authority only from source config and policy | SM-INBOX-004, SM-EVT-008 |
 | T-04 | Template variables broaden a NATS subscription | Typed variables, a token regex that forbids `*`/`>`, filter validated against the granted subject | SM-EVT-010 |
 | T-05 | Secrets leak through logs, manifests, API reads or hc state | Write-only secrets, redaction, launcher shim (no secrets in hc env) | SM-ACCT-005, ADR-0009 |
-| T-06 | An approval is replayed or applied to changed arguments | Argument digest binding, single-use and limited uses, recheck at execution | SM-APPR-002/003 |
+| T-06 | An approval is replayed or applied to changed arguments | Argument digest binding, single-use and limited uses, recheck at execution | SM-APPR-002/003, ADR-0024 |
 | T-07 | A custom schema field such as "approved" is treated as a grant | Enforcement uses only approval records SpaceMan created for gated operations | SM-HTYPE-006 |
 | T-08 | Cross-space data leaks through the global human page or KB | Casbin domain filtering in queries, explicit cross-space requests | SM-HUI-003, SM-XSPACE-003 |
 | T-09 | An uploaded attachment executes in the operator's browser (SVG/HTML XSS) | Download disposition, raster-only inline allowlist, nosniff, sandbox CSP, Markdown-only bodies with sanitizing render | SM-ATT-004, ADR-0013 |

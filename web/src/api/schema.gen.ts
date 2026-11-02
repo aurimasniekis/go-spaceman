@@ -170,6 +170,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/approval-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operations that need a person's approval */
+        get: operations["list-approval-policies"];
+        put?: never;
+        /**
+         * Make an operation need approval
+         * @description Operations are spaceman.<tool> (built-in agent tools) or mcp.<server>.<tool> (gateway tools); a prefix ending in .* covers several.
+         */
+        post: operations["create-approval-policy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approval-policies/{policy_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a policy
+         * @description Approvals it already produced stay usable until they expire or are revoked.
+         */
+        delete: operations["delete-approval-policy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -1161,6 +1202,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's enforced approvals with their executions */
+        get: operations["list-approvals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/approvals/{approval_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An enforced approval */
+        get: operations["get-approval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/approvals/{approval_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke an approval before (further) execution */
+        post: operations["revoke-approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/attachments": {
         parameters: {
             query?: never;
@@ -1231,6 +1323,26 @@ export interface paths {
         };
         /** A human action with its comments and notifications */
         get: operations["get-human-action"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-actions/{action_id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The enforced approval behind a human action
+         * @description Not found means the approval is advisory: a recorded decision that gates nothing.
+         */
+        get: operations["get-action-approval"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2311,6 +2423,111 @@ export interface components {
         ApperrFieldError: {
             field: string;
             message: string;
+        };
+        ApprovalsApproval: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ApprovalsApproval.json
+             */
+            readonly $schema?: string;
+            /** @description SHA-256 of the operation, resource and canonical arguments */
+            args_digest: string;
+            /** @description The arguments with secret-looking fields redacted */
+            args_preview: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string;
+            decided_by?: string;
+            executions: components["schemas"]["ApprovalsExecution"][];
+            human_action_id: string;
+            id: string;
+            operation: string;
+            policy_id: string;
+            /** Format: date-time */
+            request_expires_at: string;
+            requester_role: string;
+            requester_run: string;
+            resource: string;
+            space_id: string;
+            /** @enum {string} */
+            state: "pending" | "approved" | "denied" | "expired" | "revoked";
+            state_reason?: string;
+            /** Format: int64 */
+            uses_allowed: number;
+            /** Format: int64 */
+            uses_left: number;
+            /** Format: date-time */
+            valid_until?: string;
+        };
+        ApprovalsExecution: {
+            error?: string;
+            /** Format: date-time */
+            finished_at?: string;
+            id: string;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            state: "executing" | "succeeded" | "failed" | "interrupted";
+        };
+        ApprovalsPolicy: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ApprovalsPolicy.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            note?: string;
+            /** @description spaceman.<tool>, mcp.<server>.<tool>, or a prefix ending in .* */
+            operation: string;
+            /**
+             * Format: int64
+             * @description How long a request waits for a decision
+             */
+            request_ttl_seconds: number;
+            /** @description Empty: every space */
+            space_id: string;
+            /**
+             * Format: int64
+             * @description How many executions one approval allows
+             */
+            uses: number;
+            /**
+             * Format: int64
+             * @description How long an approval can be used after the decision
+             */
+            valid_seconds: number;
+        };
+        ApprovalsPolicyInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ApprovalsPolicyInput.json
+             */
+            readonly $schema?: string;
+            note?: string;
+            operation: string;
+            /**
+             * Format: int64
+             * @description 300-2592000; default 86400
+             */
+            request_ttl_seconds?: number;
+            /** @description Empty: every space */
+            space_id?: string;
+            /**
+             * Format: int64
+             * @description 1-100; default 1
+             */
+            uses?: number;
+            /**
+             * Format: int64
+             * @description 60-604800; default 3600
+             */
+            valid_seconds?: number;
         };
         "Assign-human-actionRequest": {
             /**
@@ -3781,6 +3998,24 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["AccountsKind"][];
         };
+        "List-approval-policiesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-approval-policiesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["ApprovalsPolicy"][];
+        };
+        "List-approvalsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-approvalsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["ApprovalsApproval"][];
+        };
         "List-event-connectionsResponse": {
             /**
              * Format: uri
@@ -4544,6 +4779,15 @@ export interface components {
             note?: string;
             /** @description answered, approved, denied, completed, acknowledged, or a custom type's outcome */
             outcome: string;
+        };
+        "Revoke-approvalRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Revoke-approvalRequest.json
+             */
+            readonly $schema?: string;
+            reason?: string;
         };
         RoleOption: {
             id: string;
@@ -5312,6 +5556,97 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AuthAPIToken"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-approval-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-approval-policiesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-approval-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalsPolicyInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalsPolicy"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-approval-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {
@@ -7604,6 +7939,105 @@ export interface operations {
             };
         };
     };
+    "list-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-approvalsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalsApproval"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "revoke-approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Revoke-approvalRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalsApproval"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "upload-attachment": {
         parameters: {
             query?: never;
@@ -7771,6 +8205,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-action-approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalsApproval"];
                 };
             };
             /** @description Error */

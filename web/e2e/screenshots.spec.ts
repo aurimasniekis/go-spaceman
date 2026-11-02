@@ -162,11 +162,16 @@ test('documentation screenshots', async ({ page, browser }) => {
     description: 'The payments team tracker (development fake).', headers: { Authorization: 'Bearer dev-mcp-token' } })
   await api.call('POST', `/mcp-servers/${tickets.id}/grants`, { space_id: payments.id, role: 'control' })
   await api.call('POST', `/mcp-servers/${tickets.id}/grants`, { space_id: payments.id, role: 'reviewer', tools: ['ticket_get', 'ticket_search'] })
+  // Commenting on tickets needs a person's approval in payments; control asks for one comment at launch (the stub harness
+  // makes the call through the bridge and calls again once it is approved).
+  await api.call('POST', '/approval-policies', { space_id: payments.id, operation: 'mcp.tickets.ticket_comment', uses: 1, valid_seconds: 3600,
+    note: 'Comments are visible to the finance team.' })
 
   type Run = { id: string }
   const launch = (space: string, kind: string, role: string, harness: string, prompt: string) =>
     api.call<Run>('POST', `/spaces/${space}/runs`, { kind, role, harness, prompt })
-  const control = await api.call<Run>('POST', `/spaces/${payments.id}/runs`, { role: 'control', prompt: 'Coordinate the retry-budget change across the settlement services.' })
+  const control = await api.call<Run>('POST', `/spaces/${payments.id}/runs`, { role: 'control',
+    prompt: 'Coordinate the retry-budget change across the settlement services.\n/call tickets__ticket_comment {"id":"PAY-409","body":"Retry budget raised to 5 for weekend settlement."}' })
   const reviewer = await launch(payments.id, 'worker', 'reviewer', 'codex', 'Review the open pull requests and summarise the risky ones.')
   const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.')
   await launch(docs.id, 'control', 'control', 'claude-code', 'Keep the guides in step with the UI.')
@@ -437,6 +442,29 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByText('Ticket tracker').click()
     await page.getByRole('button', { name: 'Check connection' }).click()
     await expect(page.getByText('tickets__ticket_search')).toBeVisible()
+  })
+  type Apv = { id: string; state: string; human_action_id: string; executions: { state: string }[] }
+  const approvalsOf = async () => (await api.call<{ items: Apv[] }>('GET', `/spaces/${payments.id}/approvals`)).items
+  await expect.poll(async () => (await approvalsOf()).length, { timeout: 30_000 }).toBe(1)
+  const apv = (await approvalsOf())[0]
+  await capture(page, 'approval-policies', async () => {
+    await page.goto('/approval-policies')
+    await expect(page.getByText('mcp.tickets.ticket_comment')).toBeVisible()
+  })
+  await capture(page, 'approval-enforced', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByRole('listitem', { name: /Approve mcp\.tickets\.ticket_comment/ }).click()
+    await expect(page.getByText('Enforced approval').first()).toBeVisible()
+    await expect(page.getByText('Not executed.')).toBeVisible()
+  })
+  const pendingAct = await api.call<{ id: string; version: number }>('GET', `/spaces/${payments.id}/human-actions/${apv.human_action_id}`)
+  await api.call('POST', `/spaces/${payments.id}/human-actions/${pendingAct.id}/respond`, { outcome: 'approved' }, { 'If-Match': `"${pendingAct.version}"` })
+  await expect.poll(async () => (await approvalsOf())[0].executions.map((x) => x.state).join(','), { timeout: 30_000 }).toBe('succeeded')
+  await capture(page, 'approval-executed', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByLabel('Show resolved, withdrawn and expired').check()
+    await page.getByRole('listitem', { name: /Approve mcp\.tickets\.ticket_comment/ }).click()
+    await expect(page.getByText('succeeded')).toBeVisible()
   })
   await capture(page, 'space-role-preview', async () => {
     await page.goto(`/spaces/${payments.id}`)

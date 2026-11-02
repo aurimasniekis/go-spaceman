@@ -150,6 +150,11 @@ func (svc *Service) finalize(ctx context.Context, tx *store.Tx, actor audit.Acto
 			return err
 		}
 	}
+	if svc.OnFinalized != nil {
+		if err := svc.OnFinalized(ctx, tx, r, status, outcome, actor); err != nil {
+			return err
+		}
+	}
 	if err := svc.changes.Record(ctx, tx, r.SpaceID, "human_action", r.ID, "updated", r.Version+1); err != nil {
 		return err
 	}
