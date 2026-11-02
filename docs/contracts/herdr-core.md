@@ -76,3 +76,38 @@ The file mode was **0644** inside a 0700 directory. The persisted record also ha
     - It relies on the hc core and holder being alive. If hc itself dies, programs are lost anyway (`holder_lost`).
     - Ending a terminal's program does not prove the program's own descendants (processes it spawned outside hc) stopped (SM-SEC-001).
     - Every SpaceMan-launched terminal passes `parent` or `no_parent` explicitly, so it never inherits the caller's terminal as parent by accident.
+
+### S-3 (K-1): framed protocol — **decoded from real `hc attach` traffic**
+Method: `hc attach` (hc 0.1.16) was run under a PTY through a logging Unix-socket proxy against the isolated core, and an independent client was then written from the decoded layout.
+- **Handshake.** The client sends the newline-delimited JSON `{"jsonrpc":"2.0","id":0,"method":"hello","params":{"framed":true}}`. The server replies with one JSON line.
+  From then on both directions use frames.
+- **Frame layout.**
+
+  | Field | Encoding |
+  |---|---|
+  | channel | u32 little-endian |
+  | kind | u8 |
+  | length | u32 little-endian |
+  | payload | `length` bytes |
+
+  Channel `0` carries JSON-RPC requests and responses (kind 0). `terminal.attach` returns `{channel:N, terminal:{…}}`, and the stream then flows on
+  channel N.
+- **Kinds observed on an attach channel.**
+
+  | Kind | Name | Direction | Payload |
+  |---|---|---|---|
+  | `0` | DATA | server→client | terminal output bytes |
+  | `0` | DATA | client→server | keystrokes; ignored in `observe` mode |
+  | `1` | CREDIT | client→server | u32 LE count of bytes consumed |
+  | `2` | CLOSE | server→client | JSON `{"exit_code":3,"finished_ms":…,"reason":"exited","signal":null}` |
+  | `3` | RESIZE | client→server | u16 LE cols, u16 LE rows |
+
+  - CREDIT is flow control: the real client returns the size of each DATA frame it consumed.
+  - FOCUS and FACTS were not observed, so their numbers are unknown and SpaceMan does not send them.
+- **First paint.** The first DATA frame is a screen repaint: a reset of terminal modes, then the visible screen.
+- **`observe:true`.** Input is not delivered (verified), and the terminal keeps its size: 200×120 stayed 200×120 with an observer at 40×10.
+  An interactive (non-observe) attach **resizes the terminal** to its cols and rows (80×24 verified).
+- **No sequence numbers.** The stream carries no byte offsets. After a reattach, the new first paint follows a gap that SpaceMan records
+  explicitly.
+- **Default size.** Terminals start at **200×120**, because `terminal.run` takes no size parameters.
+→ ADR-0010 accepted: the recorder attaches with `observe:true` and writes DATA, CLOSE and `size` events (from `events.subscribe`) to zstd segments.

@@ -119,7 +119,8 @@
   - **If hc does not persist env.** Env may be passed directly, though the shim stays for uniformity.
 
 ### ADR-0010 — Recording from the node via hc attach (observe) into zstd segments
-- **Status:** proposed; depends on decoding the framed protocol (open item K-1)
+- **Status:** accepted (2026-11-02). K-1 was decoded from real traffic (spike S-3 in `docs/contracts/herdr-core.md`). The PTY-tee fallback
+  is not needed.
 - **Decision:**
   - **Capture.** The node opens a framed hc connection, calls `terminal.attach{observe:true}` and writes each DATA frame plus resize and
     lifecycle events as JSONL records `{seq, t_us, kind, data_b64|cols,rows|state}`.
@@ -251,7 +252,7 @@
 
 | ID | Item | Blocks | Plan |
 |---|---|---|---|
-| K-1 | hc framed protocol byte layout (DATA/RESIZE/CREDIT/CLOSE frames) is undocumented in `hc schema`. | ADR-0010, live terminal | Spike: proxy `hc attach` through a recording socket proxy against an isolated core; document; fallback PTY tee. |
+| K-1 | ~~hc framed protocol byte layout.~~ **Resolved 2026-11-02:** `ch u32 LE · kind u8 · len u32 LE`; DATA=0, CREDIT=1, CLOSE=2, RESIZE=3 (spike S-3). | — | done |
 | K-2 | ~~Whether hc persists `env`.~~ **Resolved 2026-11-02:** yes, plaintext `restart_env` → ADR-0009 shim required. | — | done |
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
