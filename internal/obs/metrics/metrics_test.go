@@ -26,6 +26,7 @@ func exercise(m *Metrics) {
 	m.SetOutboxBacklog(2, 1)
 	m.EventPublish(EventPublished)
 	m.SetEventBacklog(3, 0)
+	m.SetEventLag(2 * time.Second)
 	m.JobRun("store.wal_checkpoint", nil)
 	m.BackupRun("succeeded", time.Second)
 	m.SetBackupLastSuccess(time.Now())
@@ -88,6 +89,7 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_events_publish_total":                  "counter:outcome",
 		"spaceman_events_pending":                        "gauge:",
 		"spaceman_events_dead":                           "gauge:",
+		"spaceman_events_lag_seconds":                    "gauge:",
 		"spaceman_job_runs_total":                        "counter:job,result",
 		"spaceman_backup_runs_total":                     "counter:result",
 		"spaceman_backup_last_success_timestamp_seconds": "gauge:",

@@ -31,6 +31,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -184,6 +185,9 @@ type Service struct {
 
 	kick chan struct{}
 	mu   sync.Mutex // serializes step
+
+	// Outbox records accepted-proposal events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
+	Outbox *outbox.Outbox
 	// base is the context of Run; hooks without a caller context use it.
 	base context.Context
 }

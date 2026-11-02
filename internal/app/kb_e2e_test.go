@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/catalog"
+	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/kb"
@@ -37,6 +39,9 @@ func TestKBSupportSessions(t *testing.T) {
 		t.Skip("git not installed")
 	}
 	e := newFleetEnv(t)
+	e.cfg.Events.Outbound = config.OutboundConfig{Enabled: true, URL: "nats://127.0.0.1:4222", CredsFile: "/nonexistent/pulse.creds", Source: "spaceman",
+		Retention: config.Duration(time.Hour)}
+	e.restartCentral() // outbound events are recorded (no relay runs here)
 	e.enroll()
 	e.startAgent()
 	ctx := context.Background()
@@ -202,6 +207,12 @@ func TestKBSupportSessions(t *testing.T) {
 	})
 	if gitIn(t, repo, "rev-parse", "main") != c1 {
 		t.Fatal("main did not move to the accepted commit")
+	}
+	// SM-OBS-004: the acceptance is recorded for publication in the transaction that records it.
+	var payload, corr string
+	if err := e.c.Store.ReadDB().QueryRowContext(ctx, `SELECT payload_json, correlation_id FROM event_outbox WHERE type = 'spaceman.kb.proposal_accepted.v1'`).
+		Scan(&payload, &corr); err != nil || corr != prop.ID || !strings.Contains(payload, `"merged_commit":"`+c1+`"`) {
+		t.Fatalf("accepted event %q %q %v", payload, corr, err)
 	}
 
 	// A conflicting proposal is refused and nothing moves.

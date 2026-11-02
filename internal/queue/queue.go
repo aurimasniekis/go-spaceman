@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -127,6 +128,8 @@ type Service struct {
 	changes *changefeed.Recorder
 	// OnStatus is called after a commit that changed a task's state, e.g. to wake control.
 	OnStatus func(actor audit.Actor, t *Task, from string)
+	// Outbox records task events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
+	Outbox *outbox.Outbox
 }
 
 // New returns the service.
@@ -455,10 +458,19 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 					if err := svc.changes.Record(ctx, tx, spaceID, "task", t.ID, "updated", t.Version+1); err != nil {
 						return err
 					}
+					if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: Running, To: Ready,
+						Preempted: true}, Correlation: t.ID, Causation: id}); err != nil {
+						return err
+					}
 				}
 			}
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "task", id, "created", 1); err != nil {
+			return err
+		}
+		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.TaskCreated{Task: outbox.Task{SpaceID: spaceID, TaskID: id,
+			ParentID: in.ParentID, Kind: in.Kind, Priority: in.Priority, AssigneeRole: outbox.CleanID(in.AssigneeRole), OriginKind: outbox.CleanID(in.OriginKind),
+			OriginID: outbox.CleanID(in.OriginID)}, Status: in.Status}, Correlation: id, Causation: in.OriginID}); err != nil {
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.created", Target: audit.Target{Type: "task", ID: id},
@@ -470,6 +482,12 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 	}
 	t, err := svc.Get(ctx, spaceID, id)
 	return t, created, err
+}
+
+// eventTask is the published metadata of a task (never its title, objective, acceptance, reason or result).
+func eventTask(t *Task) outbox.Task {
+	return outbox.Task{SpaceID: t.SpaceID, TaskID: t.ID, ParentID: t.ParentID, Kind: t.Kind, Priority: t.Priority, AssigneeRole: outbox.CleanID(t.AssigneeRole),
+		OriginKind: outbox.CleanID(t.OriginKind), OriginID: outbox.CleanID(t.OriginID)}
 }
 
 // Get returns a task of a space with its dependencies, open blockers and eligibility.

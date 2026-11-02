@@ -20,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -92,6 +93,8 @@ type CreateInput struct {
 	DedupKey, Subscription, Urgency   string
 	Trusted                           map[string]any
 	AttachmentIDs                     []string
+	// CausationID is what caused the item (the inbound Pulse event ID); it is published as the item event's causation.
+	CausationID string
 }
 
 // Service manages inboxes.
@@ -102,6 +105,8 @@ type Service struct {
 	att     *attachments.Service
 	// OnCreated is called after a commit that added a new item (not a duplicate), e.g. to wake control.
 	OnCreated func(it *Item)
+	// Outbox records item events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
+	Outbox *outbox.Outbox
 }
 
 // New returns the service.
@@ -222,6 +227,15 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "inbox_item", id, "created", 1); err != nil {
+			return err
+		}
+		corr := outbox.CleanID(in.CorrelationID)
+		if corr == "" {
+			corr = id
+		}
+		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.InboxItemCreated{SpaceID: spaceID, ItemID: id, SourceKind: in.SourceKind,
+			SourceID: outbox.CleanID(in.SourceID), SubscriptionID: outbox.CleanID(in.Subscription), Urgency: in.Urgency}, Correlation: corr,
+			Causation: in.CausationID}); err != nil {
 			return err
 		}
 		// Event ingestion (the system actor) is recorded per delivery instead; people, tokens and agents are audited.

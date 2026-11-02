@@ -31,6 +31,7 @@ nodes:
   heartbeat_interval: 10s
   lease_ttl: 45s
   disconnect_grace: 2m
+# events: {outbound: {...}}                   # optional: publish SpaceMan's own events to Pulse (guide/publishing-events)
 ```
 
 Then create the key-encryption key, issue the root token and start the server:

@@ -23,6 +23,7 @@ PACKAGES=(
   internal/gateway
   internal/memory
   internal/usage
+  internal/outbox
 )
 
 fail=0

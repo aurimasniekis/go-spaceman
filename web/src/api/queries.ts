@@ -20,6 +20,7 @@ export const keys = {
   rootToken: ['root-token'] as const,
   inbox: (space: string) => ['inbox', space] as const,
   connections: ['event-connections'] as const,
+  outbound: ['outbound-events'] as const,
   templates: ['event-templates'] as const,
   template: (id: string) => ['event-template', id] as const,
   subscriptions: (space: string) => ['subscriptions', space] as const,
@@ -155,6 +156,10 @@ export const useInboxItem = (space: string, id: string) =>
 
 export const useConnections = () =>
   useQuery({ queryKey: keys.connections, queryFn: async () => unwrap(await api.GET('/event-connections')).items })
+
+/** Outbound publication status (global admins only; the caller gates it with `enabled`). */
+export const useOutbound = (enabled: boolean) =>
+  useQuery({ queryKey: keys.outbound, queryFn: async () => unwrap(await api.GET('/system/outbound-events')), enabled, refetchInterval: 15_000 })
 
 export const useTemplates = () => useQuery({ queryKey: keys.templates, queryFn: async () => unwrap(await api.GET('/event-templates')).items })
 

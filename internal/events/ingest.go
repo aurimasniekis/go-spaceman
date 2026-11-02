@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -78,7 +79,7 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 		trusted["template"] = "custom"
 	}
 	in := inbox.CreateInput{SourceKind: "event", SourceID: r.ID, SourceLabel: r.Name, Title: res.Title, ContentType: inbox.Markdown, Body: res.Body,
-		CorrelationID: res.Correlation, DedupKey: r.ID + ":" + e.ID, Subscription: r.ID, Urgency: res.Urgency, Trusted: trusted}
+		CorrelationID: res.Correlation, DedupKey: r.ID + ":" + e.ID, Subscription: r.ID, Urgency: res.Urgency, Trusted: trusted, CausationID: e.ID}
 	// The raw payload is retained as an attachment of the item (SM-INBOX-002, SM-EVT-008).
 	if len(e.Data) > 0 && svc.att != nil {
 		name := "event-" + e.ID + ".json"
@@ -101,6 +102,25 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 		outcome = OutcomeReplayed
 	}
 	return svc.deliver(ctx, r, e, seq, outcome, it.ID, "")
+}
+
+// OwnOriginDetail is the delivery detail of an event this installation published itself (loop guard, SM-EVT-016).
+const OwnOriginDetail = "published by this SpaceMan (spaceman-origin); not re-ingested"
+
+// ownEvent reports whether e carries this installation's spaceman-origin header.
+func (svc *Service) ownEvent(e pulse.Event) bool {
+	return svc.o.Origin != "" && e.Extra.Get(outbox.HeaderOrigin) == svc.o.Origin
+}
+
+// skipOwn acknowledges one of SpaceMan's own events, recorded as filtered.
+func (svc *Service) skipOwn(ctx context.Context, subID string, e template.Event, seq uint64) error {
+	r, err := svc.s.R().GetEventSubscription(ctx, subID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return svc.deliver(ctx, r, e, seq, OutcomeFiltered, "", OwnOriginDetail)
 }
 
 func (svc *Service) deliver(ctx context.Context, r db.EventSubscription, e template.Event, seq uint64, outcome, itemID, detail string) error {
@@ -365,6 +385,9 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		m.svc.setState(subID, "running", err.Error())
 	}))
 	sub, err := c.client.Subscribe(sctx, s.EffectiveSubject, func(hctx context.Context, e pulse.Event) error {
+		if m.svc.ownEvent(e) {
+			return m.svc.skipOwn(hctx, subID, fromPulse(e), e.Sequence)
+		}
 		replay := !boundary.IsZero() && e.StreamTime.Before(boundary)
 		return m.svc.Process(hctx, subID, fromPulse(e), e.Sequence, replay)
 	}, opts...)

@@ -43,3 +43,44 @@ func Terminal(err error) error
 - Deduplicate on `Nats-Msg-Id` with a DB unique key. The JetStream window is only 2 min.
 - Correlation and causation are SpaceMan extension headers, never claimed as Pulse contract.
 - For plain NATS Core (no JetStream), use `c.Conn()` with subscribe grants. Ingestion is labeled **non-durable**.
+
+## What SpaceMan publishes (ADR-0015, ADR-0030)
+SpaceMan's outbound side (`internal/outbox`, config `events.outbound`, off by default) uses only the SDK calls above:
+`pulse.Connect(url, WithCredsFile, WithSource(source), WithName("spaceman-publisher"), WithCAFile?)` and
+`Client.Publish(ctx, subject, type, json.RawMessage(payload), WithID(id), WithTime(created), WithHeader(…))`.
+The Pulse client needs a `publish:evt.spaceman.>` grant and nothing else.
+
+- **Subjects:** `evt.spaceman.<area>.<entity>.<action>` (5 tokens, each `^[a-z][a-z0-9_]*$`).
+- **Types (`ce-type`):** `spaceman.<area>.<entity>_<action>.v<n>` (Porch convention, `docs/contracts/porch.md`).
+- **`Nats-Msg-Id`:** the outbox row ID, `evt_` + 26 lowercase Crockford base32 characters (a UUIDv7, ADR-0002), the same
+  on every retry. Pulse does not validate the ID; Pulse's own `NewID` would be a ULID.
+- **`ce-source`:** `events.outbound.source` (default `spaceman`). **`ce-time`:** when the event was recorded (the commit
+  of the change), not when it was published. **`content-type`:** `application/json`.
+
+| Subject | Type |
+|---|---|
+| `evt.spaceman.fleet.run.launched` | `spaceman.fleet.run_launched.v1` |
+| `evt.spaceman.fleet.run.started` | `spaceman.fleet.run_started.v1` |
+| `evt.spaceman.fleet.run.ended` | `spaceman.fleet.run_ended.v1` |
+| `evt.spaceman.queue.task.created` | `spaceman.queue.task_created.v1` |
+| `evt.spaceman.queue.task.status_changed` | `spaceman.queue.task_status_changed.v1` |
+| `evt.spaceman.inbox.item.created` | `spaceman.inbox.item_created.v1` |
+| `evt.spaceman.human.action.created` / `.resolved` / `.cancelled` / `.expired` | `spaceman.human.action_created.v1` / `_resolved` / `_cancelled` / `_expired` |
+| `evt.spaceman.approvals.approval.decided` | `spaceman.approvals.approval_decided.v1` |
+| `evt.spaceman.approvals.approval.executed` | `spaceman.approvals.approval_executed.v1` |
+| `evt.spaceman.memory.collection.synced` | `spaceman.memory.collection_synced.v1` |
+| `evt.spaceman.kb.proposal.accepted` | `spaceman.kb.proposal_accepted.v1` |
+
+Payload fields are listed in `site/guide/publishing-events.md` (identifiers and states only).
+
+**SpaceMan extension headers (not part of the Pulse contract; Pulse passes extra headers through and decodes them as
+`Event.Extra`):**
+
+| Header | Value |
+|---|---|
+| `spaceman-correlation-id` | The work the event belongs to (run, task, human action correlation, approval, collection, proposal, inbox item correlation). Omitted when unknown. |
+| `spaceman-causation-id` | What caused it, when known: an inbound Pulse event ID, a task origin, a deciding human action, a run, a node sync or command ID, or the API request ID (`req_…`). |
+| `spaceman-origin` | The publishing installation's `source`. SpaceMan's inbound side drops (records as `filtered`) events carrying its own origin. |
+
+Header values are identifier-like (`^[A-Za-z0-9][A-Za-z0-9._:/#@+=-]{0,127}$`); other values are not sent.
+Delivery is at least once: deduplicate on `Nats-Msg-Id` (JetStream only does it for 2 minutes).

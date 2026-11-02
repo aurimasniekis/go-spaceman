@@ -21,6 +21,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -49,6 +50,8 @@ type Options struct {
 	// OnCommandAck is called inside the transaction that records a node's command acknowledgement (with the command's
 	// kind and the node's reason).
 	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error
+	// Outbox records run lifecycle events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
+	Outbox *outbox.Outbox
 }
 
 // Service manages nodes, spaces, leases and runs.

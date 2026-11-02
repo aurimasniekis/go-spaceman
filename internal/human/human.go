@@ -24,6 +24,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/schemautil"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -175,6 +176,29 @@ type Service struct {
 	OnNotify func()
 	// OnFinalized is called inside the transaction that finalizes an action (enforced approvals record the decision).
 	OnFinalized func(ctx context.Context, tx *store.Tx, r db.HumanAction, status, outcome string, actor audit.Actor) error
+	// Outbox records lifecycle events (safe metadata only) for publication to Pulse (SM-OBS-004, SM-HUI-007). Nil:
+	// nothing is published.
+	Outbox *outbox.Outbox
+}
+
+// event records the lifecycle event of r entering status with outcome: identifiers, type, status, outcome and
+// priority only, never the title, body, request, response, comments or reasons.
+func (svc *Service) event(ctx context.Context, tx *store.Tx, r db.HumanAction, status, outcome, causation string) error {
+	p := outbox.HumanEvent(outbox.HumanAction{SpaceID: r.SpaceID, ActionID: r.ID, Type: r.Type, TypeSlug: outbox.CleanID(r.TypeSlug),
+		TypeVersion: r.TypeVersion, Status: status, Outcome: outbox.CleanID(outcome), Priority: r.Priority, RequesterKind: r.RequesterKind,
+		TaskID: r.TaskID, BlocksTask: r.BlocksTask == 1, FollowUpOf: r.FollowUpOf})
+	if p == nil {
+		return nil
+	}
+	corr := outbox.CleanID(r.CorrelationID)
+	if corr == "" {
+		corr = r.TaskID
+	}
+	if corr == "" {
+		corr = r.ID
+	}
+	_, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: p, Correlation: corr, Causation: causation})
+	return err
 }
 
 func (svc *Service) notified() {
@@ -425,6 +449,15 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		}
 		created = true
 		if err := svc.changes.Record(ctx, tx, spaceID, "human_action", id, "created", 1); err != nil {
+			return err
+		}
+		cause := in.InboxItemID
+		if cause == "" {
+			cause = in.Requester.Run
+		}
+		if err := svc.event(ctx, tx, db.HumanAction{ID: id, SpaceID: spaceID, Type: in.Type, TypeVersion: typeVersion, TypeSlug: in.TypeSlug,
+			RequesterKind: in.Requester.Kind, TaskID: in.TaskID, CorrelationID: in.CorrelationID, BlocksTask: b2i(in.BlocksTask), Priority: in.Priority,
+			FollowUpOf: in.FollowUpOf}, Open, "", cause); err != nil {
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "human_action.created", Target: audit.Target{Type: "human_action", ID: id},

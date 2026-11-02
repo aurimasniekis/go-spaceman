@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
@@ -222,5 +223,40 @@ func TestStatesAndPreemption(t *testing.T) {
 	}
 	if _, err := f.svc.Update(f.ctx, op, "spc_a", work.ID, up.Version, UpdateInput{Title: "x", Exclusions: []string{"has space"}}); apperr.CodeOf(err) != apperr.CodeInvalid {
 		t.Fatalf("bad exclusion: %v", err)
+	}
+}
+
+// SM-OBS-004: task creation and every status change, including an incident's preemption, are recorded in the same
+// transaction for publication, with the task as correlation and without its title, objective or result.
+func TestTaskEventsRecorded(t *testing.T) {
+	f := newFx(t)
+	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true})
+	_, err := f.svc.SetPolicy(f.ctx, op, "spc_a", Policy{MaxActive: 1, IncidentInsertion: "top", IncidentPreempts: true})
+	must(t, err)
+	a := f.add(CreateInput{Title: "TITLE-SECRET", Objective: "OBJECTIVE-SECRET", OriginKind: "inbox", OriginID: "inb_1"})
+	_, err = f.svc.SetStatus(f.ctx, op, "spc_a", a.ID, a.Version, StatusInput{Status: Running, Result: "RESULT-SECRET"})
+	must(t, err)
+	inc := f.add(CreateInput{Title: "incident", Kind: "incident"})
+	rows, err := f.s.ReadDB().QueryContext(f.ctx, `SELECT type, correlation_id, causation_id, payload_json FROM event_outbox ORDER BY created_at, id`)
+	must(t, err)
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var typ, corr, cause, payload string
+		must(t, rows.Scan(&typ, &corr, &cause, &payload))
+		if strings.Contains(payload, "SECRET") || strings.Contains(payload, "title") {
+			t.Errorf("%s payload %s", typ, payload)
+		}
+		got = append(got, typ+"|"+corr+"|"+cause)
+	}
+	must(t, rows.Err())
+	want := []string{
+		"spaceman.queue.task_created.v1|" + a.ID + "|inb_1",
+		"spaceman.queue.task_status_changed.v1|" + a.ID + "|",
+		"spaceman.queue.task_status_changed.v1|" + a.ID + "|" + inc.ID, // preempted by the incident
+		"spaceman.queue.task_created.v1|" + inc.ID + "|",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("events\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

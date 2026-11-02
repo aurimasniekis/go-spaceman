@@ -43,6 +43,12 @@ up() {
   "${clean_env[@]}" "$dir/bin/devmcp" -port "${SM_DEV_MCP_PORT:-38431}" -token dev-mcp-token -url-file "$dir/mcp-url" >"$dir/devmcp.log" 2>&1 &
   echo $! >"$dir/devmcp.pid"
   local url="http://127.0.0.1:$port"
+  # Central publishes its own events to devpulse (SM-OBS-004), so the creds must exist before it starts.
+  for _ in $(seq 1 100); do
+    [[ -s "$dir/pulse/url" && -s "$dir/pulse/spaceman.creds" ]] && break
+    sleep 0.1
+  done
+  [[ -s "$dir/pulse/url" ]] || { echo "devpulse did not start (see $dir/devpulse.log)" >&2; exit 1; }
   cat >"$dir/central.yaml" <<YAML
 mode: development
 data_dir: $dir/central
@@ -51,6 +57,7 @@ kek: {file: $dir/kek}
 http: {listen: "127.0.0.1:$port", management_listen: "127.0.0.1:$mport"}
 nodes: {heartbeat_interval: 2s, lease_ttl: 10s, disconnect_grace: 10s}
 log: {level: info, format: text}
+events: {outbound: {enabled: true, url: "$(cat "$dir/pulse/url")", creds_file: $dir/pulse/spaceman.creds, source: spaceman-dev}}
 YAML
   "${clean_env[@]}" "$dir/bin/spaceman" keys init-kek --out "$dir/kek" >/dev/null
   "${clean_env[@]}" "$dir/bin/spaceman" -c "$dir/central.yaml" admin bootstrap | grep -o 'spaceman_rt_[A-Za-z0-9_-]*' >"$dir/root-token"

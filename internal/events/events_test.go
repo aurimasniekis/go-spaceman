@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
@@ -311,5 +312,38 @@ func TestTemplatesAndConnections(t *testing.T) {
 	}
 	if err := f.svc.DeleteConnection(f.ctx, admin, f.conn.ID); apperr.CodeOf(err) != apperr.CodePrecondition {
 		t.Fatalf("deleted a connection in use: %v", err)
+	}
+}
+
+// SM-EVT-016, SM-OBS-005: an event SpaceMan published itself (its spaceman-origin header) is acknowledged and recorded
+// as filtered, never re-ingested; other events still become items, and the item's outbound event names the inbound
+// event as its causation.
+func TestOwnEventsAreNotReingested(t *testing.T) {
+	f := newFx(t)
+	f.svc.o.Origin = "spaceman-test"
+	ob := outbox.New(f.s, outbox.Options{Enabled: true, Source: "spaceman-test"})
+	f.inbox.Outbox = ob
+	s := f.subscribe("spc_a", "issues", Cursor{})
+	_, err := f.pub.Publish(f.ctx, issueSubject, issueType, issuePayload(t, ""), pulse.WithHeader(outbox.HeaderOrigin, "spaceman-test"))
+	must(t, err)
+	eventually(t, "own event filtered", func() bool { return f.outcomes("spc_a", s.ID)[OutcomeFiltered] == 1 })
+	d, err := f.svc.Deliveries(f.ctx, "spc_a", s.ID, 10)
+	must(t, err)
+	if d[0].Detail != OwnOriginDetail || len(f.items("spc_a")) != 0 {
+		t.Fatalf("delivery %+v items %d", d[0], len(f.items("spc_a")))
+	}
+	// Another installation's origin is ingested normally.
+	_, err = f.pub.Publish(f.ctx, issueSubject, issueType, issuePayload(t, ""), pulse.WithHeader(outbox.HeaderOrigin, "spaceman-other"), pulse.WithID("evt-other-1"))
+	must(t, err)
+	eventually(t, "item", func() bool { return len(f.items("spc_a")) == 1 })
+	st, err := ob.Status(f.ctx)
+	must(t, err)
+	if st.Pending != 1 {
+		t.Fatalf("outbox %+v", st)
+	}
+	var causation, typ string
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT causation_id, type FROM event_outbox`).Scan(&causation, &typ))
+	if causation != "evt-other-1" || typ != "spaceman.inbox.item_created.v1" {
+		t.Fatalf("outbox row %q %q", causation, typ)
 	}
 }

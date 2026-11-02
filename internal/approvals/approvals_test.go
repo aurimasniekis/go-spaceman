@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
@@ -368,5 +369,44 @@ func TestRecoverInterrupted(t *testing.T) {
 	must(t, err)
 	if len(l) != 1 {
 		t.Fatalf("list: %d", len(l))
+	}
+}
+
+// SM-OBS-004: the decision and each execution of an enforced approval are recorded for publication with the approval
+// as correlation, and never its arguments, preview or resource.
+func TestApprovalEventsRecorded(t *testing.T) {
+	f := newFx(t)
+	ob := outbox.New(f.s, outbox.Options{Enabled: true, Clock: f.clk})
+	f.svc.Outbox, f.human.Outbox = ob, ob
+	f.policy("spaceman.task_create", 1)
+	args := `{"title":"ARG-SECRET","token":"s3cret"}`
+	a := f.gateRequired(run1, "spaceman.task_create", args)
+	f.decide(a, "approved", "")
+	finish, err := f.svc.Gate(f.ctx, run1, "spaceman.task_create", "spaceman", json.RawMessage(args))
+	if err != nil || finish == nil {
+		t.Fatalf("approved call refused: %v", err)
+	}
+	finish(nil)
+	rows, err := f.s.ReadDB().QueryContext(f.ctx, `SELECT type, correlation_id, causation_id, payload_json FROM event_outbox WHERE type LIKE 'spaceman.approvals.%' ORDER BY id`)
+	must(t, err)
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var typ, corr, cause, payload string
+		must(t, rows.Scan(&typ, &corr, &cause, &payload))
+		if corr != a.ID || strings.Contains(payload, "SECRET") || strings.Contains(payload, "s3cret") || strings.Contains(payload, a.ArgsDigest) {
+			t.Fatalf("%s %s %s", typ, corr, payload)
+		}
+		got = append(got, typ+"|"+cause)
+		if typ == "spaceman.approvals.approval_decided.v1" && !strings.Contains(payload, `"state":"approved"`) {
+			t.Fatalf("decided %s", payload)
+		}
+		if typ == "spaceman.approvals.approval_executed.v1" && !strings.Contains(payload, `"result":"succeeded"`) {
+			t.Fatalf("executed %s", payload)
+		}
+	}
+	must(t, rows.Err())
+	if strings.Join(got, ",") != "spaceman.approvals.approval_decided.v1|"+a.HumanActionID+",spaceman.approvals.approval_executed.v1|run_1" {
+		t.Fatalf("events %v", got)
 	}
 }

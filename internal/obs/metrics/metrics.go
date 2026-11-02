@@ -54,6 +54,7 @@ type Metrics struct {
 	eventsPublished *prometheus.CounterVec
 	eventsPending   prometheus.Gauge
 	eventsDead      prometheus.Gauge
+	eventsLag       prometheus.Gauge
 	jobRuns         *prometheus.CounterVec
 	backupRuns      *prometheus.CounterVec
 	backupLastOK    prometheus.Gauge
@@ -108,6 +109,7 @@ func New() *Metrics {
 	m.eventsPublished = f.counterVec("events_publish_total", "Pulse event publish attempts by outcome.", "outcome")
 	m.eventsPending = f.gauge("events_pending", "Pulse events waiting to be published.")
 	m.eventsDead = f.gauge("events_dead", "Pulse events dead-lettered after exhausting retries.")
+	m.eventsLag = f.gauge("events_lag_seconds", "Age of the oldest Pulse event waiting to be published; 0 when none.")
 	m.jobRuns = f.counterVec("job_runs_total", "Background job runs by job name and result.", "job", "result")
 	m.backupRuns = f.counterVec("backup_runs_total", "Backup runs by result.", "result")
 	m.backupLastOK = f.gauge("backup_last_success_timestamp_seconds", "Start time of the last successful backup (Unix seconds); 0 if none.")
@@ -261,6 +263,14 @@ func (m *Metrics) SetEventBacklog(pending, dead int64) {
 	}
 	m.eventsPending.Set(float64(pending))
 	m.eventsDead.Set(float64(dead))
+}
+
+// SetEventLag sets the age of the oldest unpublished Pulse event (publication lag).
+func (m *Metrics) SetEventLag(d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.eventsLag.Set(d.Seconds())
 }
 
 // JobRun counts a background job run (job is the code-defined job name, bounded).

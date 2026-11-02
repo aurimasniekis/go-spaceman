@@ -25,6 +25,17 @@
   `issues_opened` fixture (derived from its code), not against a running pulse-github. There is no upstream pull request
   fixture.
 
+## Event publication
+- **Off by default; nothing is back-filled.** Events of a period with `events.outbound.enabled: false` are never
+  published, and rows left pending when publication is turned off are dropped after the retention (ADR-0030).
+- **At least once, no global order.** Consumers must deduplicate on `Nats-Msg-Id`; JetStream deduplicates retries only
+  within its 2-minute window. Events of different subjects can arrive in any order (SM-OBS-004).
+- **Loop guard is per installation.** An installation drops only events carrying its own `spaceman-origin`. Automation
+  depth across installations (an event creating an item, a task and another event) is not bounded yet (SM-EVT-016).
+- **No interrupted-execution event.** Approval executions marked interrupted by a central restart are not published.
+- **No real Pulse evidence yet.** Publication is tested against the in-process Pulse-shaped NATS server (real JetStream,
+  real go-pulse SDK), not against a running `pulsed`. Grants (`publish:evt.spaceman.>`) are not modelled by that server.
+
 ## Accounts
 - **No Codex ChatGPT login.** Codex runs use an OpenAI API key; ChatGPT-plan logins (`auth.json`) are not supported yet (K-9).
 - **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence.

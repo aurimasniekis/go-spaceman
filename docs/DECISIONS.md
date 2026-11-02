@@ -526,6 +526,68 @@
   - Porch behaviour is verified only against the in-process provider that mimics its contract; real Porch evidence is
     still missing (TRACEABILITY SM-AUTH-002).
 
+### ADR-0030 — Outbound events: the outbox, its catalog and the loop guard (security-relevant change)
+- **Status:** Accepted, 2026-11-03. Implements ADR-0015 (M4-03).
+- **Context:** SM-OBS-004 asks for outbound publication through a transactional outbox using the verified Pulse contract
+  (`docs/contracts/pulse.md`, go-pulse v0.1.3 `9aba53b`): stable IDs, versioned payloads, correlation and causation,
+  at-least-once delivery, retry and backoff, lag and failure visibility, and safe metadata only for human actions.
+  SM-OBS-005 keeps inbound subscriptions apart from publication and forbids publishing inside a write transaction.
+  SM-EVT-016 asks that origin and causation prevent feedback loops. Publishing sends metadata about spaces, runs, tasks
+  and people's requests to another system, a new egress channel, so this is recorded as a **security-relevant change**.
+  It is off by default.
+- **Decision:**
+  - **Port.** `internal/outbox` is adapted from go-hallpass `internal/events` (its `event_outbox` recorder and relay,
+    migration 0030, `queries/events.sql`) and the wake pattern of its `internal/outbox`, at `bdd8329` (Apache-2.0, same
+    author). Migration `0022_outbox` adds `event_outbox` with `space_id`, `correlation_id` and `causation_id`.
+  - **Enqueue in the change's transaction.** Services call `Outbox.Enqueue(ctx, tx, Event)` inside the write transaction
+    that makes the change (runs, tasks, inbox items, human actions, approvals, memory, KB). It only inserts a row and
+    registers `tx.AfterCommit(Kick)`; nothing touches the network inside the transaction (the `txscope` analyzer
+    allows it because it takes the `*store.Tx`). A rolled-back change leaves no event.
+  - **Relay.** One goroutine (`Outbox.Run`) dials Pulse with `pulse.Connect(url, WithCredsFile, WithSource, WithCAFile)`
+    (retrying every 30 s while that fails), then publishes due rows with `Publish(subject, type, payload, WithID(row id),
+    WithTime(created), WithHeader(…))` and marks a row published only after the JetStream acknowledgement. It sleeps on
+    the kick channel and one timer set to the earliest retry (an hour when nothing is pending): no polling. A gauge
+    refresh runs every 30 s.
+  - **Retries.** A failed publish backs off `2^(n-1) s × (0.5 + jitter)`, capped at 5 min; one failure ends the round.
+    After 50 attempts or 24 h the row is dead-lettered (logged at error level, counted, shown). Every attempt uses the
+    same ID, so JetStream drops a duplicate inside its 2-minute window and consumers deduplicate on `Nats-Msg-Id`
+    beyond it. Delivery is **at least once**.
+  - **IDs, names, versions.** The event ID is the outbox row ID (`evt_<26 base32>`, ADR-0002), not a ULID; Pulse does
+    not validate IDs. Subjects are `evt.spaceman.<area>.<entity>.<action>` and types
+    `spaceman.<area>.<entity>_<action>.v<n>` (Porch, `docs/contracts/porch.md`). Payloads are Go structs in the package's
+    catalog; only that package can define one, so nothing outside the catalog is published. A non-additive payload
+    change gets a new type version.
+  - **Safe metadata.** Payloads carry identifiers, kinds, states, outcomes, priorities and commit IDs. Never titles,
+    bodies, objectives, results, reasons, requests, responses, comments, prompts, approval arguments or resources, error
+    messages or terminal output. Free-form identifiers (origin IDs, correlation IDs from templates) are published only
+    when they match `^[A-Za-z0-9][A-Za-z0-9._:/#@+=-]{0,127}$`.
+  - **Correlation and causation (SpaceMan extension headers).** `spaceman-correlation-id` names the work an event
+    belongs to (the run, task, human action's correlation or task, approval, memory collection, KB proposal, or an inbox
+    item's correlation). `spaceman-causation-id` names what caused it when SpaceMan knows it: the inbound Pulse event of
+    an inbox item, a task's origin, the human action that decided an approval, the run that used it, the node's memory
+    sync, the node command of a KB acceptance, or else the API request (`req_…`). Pulse defines neither.
+  - **Loop guard.** Every event carries `spaceman-origin: <source>`. While publication is enabled, the inbound side
+    acknowledges an event whose `spaceman-origin` equals the installation's own source and records it as `filtered`
+    ("published by this SpaceMan"), so SpaceMan never turns its own events into inbox items. Each installation needs its
+    own `source`.
+  - **Configuration.** `events.outbound` (`enabled` false by default, `url` nats:// or tls://, tls:// required in
+    production except loopback, absolute `creds_file`, optional `ca_file`, `source` default `spaceman`, `retention`
+    default 7 days). While disabled nothing is enqueued; rows left pending from an enabled period are dropped after the
+    retention. Published and dead-lettered rows are deleted after the retention by the hourly housekeeping.
+  - **Visibility.** Prometheus `spaceman_events_publish_total{outcome}`, `spaceman_events_pending`,
+    `spaceman_events_dead` and `spaceman_events_lag_seconds` (age of the oldest pending event); `GET
+    /api/v1/system/outbound-events` (`system:read`, global admins) and the Events page's Publishing tab show the
+    connection, pending, retrying and dead counts, lag, attempts since start, the last error and recent failures.
+- **Alternatives:** publishing every audit record (as Hallpass does) would leak audit details such as reasons and
+  arguments into the bus; a poll ticker (Hallpass, Porch) wakes the process every few seconds for nothing; publishing
+  from `AfterCommit` directly would lose events on a crash.
+- **Consequences:**
+  - Consumers must deduplicate on `Nats-Msg-Id`; ordering between subjects is not guaranteed.
+  - Events of a period with publication off are never published. Automation depth across installations (event →
+    item → task → event) is not bounded yet; only an installation's own events are dropped.
+  - Verified against the in-process Pulse-shaped NATS server (real nats-server JetStream and the real SDK); no evidence
+    against a running `pulsed` yet.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

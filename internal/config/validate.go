@@ -100,8 +100,39 @@ func (c *Config) Validate() error {
 	default:
 		v.add("artifacts.backend must be \"local\" or \"s3\", got %q", c.Artifacts.Backend)
 	}
+	v.outbound(c.Events.Outbound, prod)
 	v.durationRange("shutdown.timeout", c.Shutdown.Timeout, time.Second, 10*time.Minute)
 	return v.err()
+}
+
+// reSource bounds events.outbound.source: it is sent as ce-source and as a header value.
+var reSource = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+func (v *validator) outbound(o OutboundConfig, prod bool) {
+	if !reSource.MatchString(o.Source) {
+		v.add("events.outbound.source must match %s, got %q", reSource, o.Source)
+	}
+	v.durationRange("events.outbound.retention", o.Retention, time.Hour, 90*24*time.Hour)
+	if !o.Enabled {
+		return
+	}
+	u, err := url.Parse(o.URL)
+	switch {
+	case o.URL == "":
+		v.add("events.outbound.url is required when events.outbound.enabled is true")
+	case err != nil || u.Host == "" || (u.Scheme != "nats" && u.Scheme != "tls"):
+		v.add("events.outbound.url must be nats://host:port or tls://host:port, got %q", o.URL)
+	case u.User != nil:
+		v.add("events.outbound.url must not contain credentials; use events.outbound.creds_file")
+	case prod && u.Scheme != "tls" && !isLoopback(u.Hostname()):
+		v.add("events.outbound.url must use tls:// in production")
+	}
+	if !filepath.IsAbs(o.CredsFile) {
+		v.add("events.outbound.creds_file must be an absolute path when events.outbound.enabled is true")
+	}
+	if o.CAFile != "" && !filepath.IsAbs(o.CAFile) {
+		v.add("events.outbound.ca_file must be an absolute path")
+	}
 }
 
 // hcSessionRe mirrors herdr-core session naming (lowercase token).

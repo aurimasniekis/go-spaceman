@@ -61,7 +61,7 @@
 |---|---|---|---|
 | M4-01 | OIDC/Porch, linking, recovery codes, step-up, stream revocation | SM-AUTH-001/002/007 | in progress: OIDC sign-in (Porch contract), group mappings, JIT, linking, SSO step-up and the Sign-in providers page implemented and tested (simulated, in-process IdP); real Porch evidence missing; stream revocation (SM-AUTH-007) pending |
 | M4-02 | Quotas, limits, schedules, replay | SM-LIMIT-*, SM-EVT-015 | todo |
-| M4-03 | Outbox → Pulse publication | SM-OBS-004/005 | todo |
+| M4-03 | Outbox → Pulse publication | SM-OBS-004/005 | tested (simulated): transactional outbox, relay with backoff/dead-letter/retention, event catalog for runs, tasks, inbox, human actions, approvals, memory, KB; correlation/causation/origin headers; loop guard; status API, Publishing tab, metrics (ADR-0030); real `pulsed` evidence missing |
 | M4-04 | Backups + restore | SM-STORE-* | todo |
 | M4-05 | Relocation (clean + dirty refusal + unavailable source) | SM-SPACE-005…008 | todo |
 | M4-06 | Cross-space requests | SM-XSPACE-* | todo |
@@ -128,6 +128,7 @@
 | 2026-11-02 | M3-08 | Dreamer: dream configurations (memories, transcripts, budgets, interval) and a one-timer scheduler; node dream workspace (memory checkouts, bounded new transcript segments, DREAM.md) with pending evidence positions; `spaceman_dream_report` then `dream.commit` (checkpoint, then advance); built-in dream prompt; Dreams card (ADR-0027) | `32fa49e` | `TestDreamConsolidates`, `make screenshots` |
 | 2026-11-02 | M3-09 | Usage and transcripts: node reads Claude Code transcript usage (spike S-7), reports so-far and final usage; Codex unknown; harness estimates with assumptions; transcripts uploaded after runs end (chunked, resumable, verified); usage cards; M3 complete (ADR-0028) | `428f451` | `TestClaudeUsage`, `internal/usage` tests, `TestUsageAndTranscript`, `test/real` `TestRealClaudeUsesGatewayTool`, `make screenshots` |
 | 2026-11-02 | M4-01 | OIDC sign-in ported from Hallpass `bdd8329`: providers with sealed write-only secrets, PKCE S256, ID-token validation, private-network refusal, group mappings to grants in `*` or a space (SSO subject `user:<id>#sso`, SSO sessions only, K-11 resolved), JIT and pre-provisioned users, linking (self, admin, invitation), step-up at the provider with TOTP fallback, test login; Sign-in providers page, sign-in buttons, account identities, guide and screenshots (ADR-0029) | `19a7d10` | `internal/oidc` tests, `TestReviewSR26SSOGrantsOnlyForSSOSessions`, `TestOIDCSignInOverHTTP`, `make screenshots`; no real Porch |
+| 2026-11-03 | M4-03 | Outbox → Pulse: `event_outbox` (0022) ported from Hallpass `bdd8329`, enqueue in the change's transaction with a kick after commit, one relay with a retry timer (no polling), backoff, dead-letter, retention; catalog of 14 metadata-only events; SpaceMan correlation/causation/origin headers; inbound origin loop guard; `events.outbound` config; status API, Publishing tab, lag metric; dev stack publishes to devpulse (ADR-0030) | this commit (`feat(events)`) | `internal/outbox` 92.8%, `TestPublishToPulse` (in-process server, real SDK), `TestOutboundEventsOverHTTP`; gates in the commit report |
 
 ### Open issues
 - **Intermittent e2e launch stall.** `make e2e` occasionally waits past 20 s for a launched run to show `running`

@@ -2,7 +2,7 @@ SpaceMan
 Copyright 2026 Aurimas Niekis
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
-Portions of internal/{audit,auth,buildinfo,clock,config,ids,keyring,obs,oidc,store} and tools/analyzers/txscope are
+Portions of internal/{audit,auth,buildinfo,clock,config,ids,keyring,obs,oidc,outbox,store} and tools/analyzers/txscope are
 derived from go-hallpass (https://github.com/aurimasniekis/go-hallpass), Copyright 2026 Aurimas Niekis, Apache-2.0.
 
 Third-party components and their licences are listed in docs/THIRD_PARTY.md.

@@ -34,6 +34,7 @@ func Default() *Config {
 		},
 		Artifacts: ArtifactsConfig{Backend: "local", SpaceQuotaBytes: 1 << 30},
 		Harness:   HarnessPolicy{MaxPermissionMode: "auto"},
+		Events:    EventsConfig{Outbound: OutboundConfig{Source: "spaceman", Retention: Duration(7 * 24 * time.Hour)}},
 		Shutdown:  ShutdownConfig{Timeout: Duration(30 * time.Second)},
 	}
 }

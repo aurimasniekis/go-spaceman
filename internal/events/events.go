@@ -25,6 +25,10 @@ type Options struct {
 	Clock clock.Clock
 	// DeliveryRetention bounds the delivery history.
 	DeliveryRetention time.Duration
+	// Origin is this installation's outbound source while it publishes its own events (SM-EVT-016): an inbound event
+	// whose spaceman-origin header equals it is acknowledged and recorded as filtered, never turned into an item, so
+	// SpaceMan does not re-ingest what it published. Empty: no check.
+	Origin string
 }
 
 // Service manages connections, templates and subscriptions, and processes delivered events.

@@ -29,7 +29,10 @@ type harness struct {
 	clk *clock.Fake
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { t.Helper(); return newHarnessWith(t, nil) }
+
+// newHarnessWith is newHarness with the configuration adjusted by mod before validation.
+func newHarnessWith(t *testing.T, mod func(*config.Config)) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
@@ -47,6 +50,9 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, clk: clk}
 	h.srv = httptest.NewUnstartedServer(nil)
 	cfg.PublicURL = "http://" + h.srv.Listener.Addr().String()
+	if mod != nil {
+		mod(cfg)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}

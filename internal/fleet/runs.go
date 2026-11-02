@@ -16,6 +16,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -210,8 +211,12 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		if err := svc.record(ctx, tx, spaceID, "run", runID, "created", 1); err != nil {
 			return err
 		}
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "run.launched", Target: audit.Target{Type: "run", ID: runID},
-			Details: map[string]any{"space_id": spaceID, "kind": in.Kind, "role": in.Role, "harness": in.Harness, "generation": lease.Generation}})
+		if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "run.launched", Target: audit.Target{Type: "run", ID: runID},
+			Details: map[string]any{"space_id": spaceID, "kind": in.Kind, "role": in.Role, "harness": in.Harness, "generation": lease.Generation}}); err != nil {
+			return err
+		}
+		_, err = svc.opts.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.RunLaunched{Run: outbox.Run{SpaceID: spaceID, RunID: runID, NodeID: sp.NodeID,
+			Kind: in.Kind, Role: in.Role, Harness: in.Harness, InstanceID: in.InstanceID, Generation: lease.Generation}}, Correlation: runID})
 		return err
 	})
 	if err != nil {
@@ -320,6 +325,11 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, reason string) 
 		}
 		if err := svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1); err != nil {
 			return err
+		}
+		if !ended(r.Observed) {
+			if err := svc.runEvent(ctx, tx, r, outbox.RunEnded{Run: outboxRun(r), State: proto.RunFailed, EndReason: "account_unavailable"}); err != nil {
+				return err
+			}
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "run.launch_failed", Target: audit.Target{Type: "run", ID: r.ID},
 			Details: map[string]any{"space_id": r.SpaceID, "reason": reason}})
@@ -486,6 +496,21 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 		}
 		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State)
 		justEnded = ended(rep.State) && !ended(r.Observed)
+		if !r.StartedAt.Valid && (rep.State == proto.RunRunning || (justEnded && rep.State == proto.RunExited)) {
+			if err := svc.runEvent(ctx, tx, r, outbox.RunStarted{Run: outboxRun(r), Adopted: rep.Adopted}); err != nil {
+				return err
+			}
+		}
+		if justEnded {
+			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
+			if rep.ExitCode != nil {
+				c := int64(*rep.ExitCode)
+				ev.ExitCode = &c
+			}
+			if err := svc.runEvent(ctx, tx, r, ev); err != nil {
+				return err
+			}
+		}
 		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
@@ -498,6 +523,17 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 		svc.opts.Metrics.LeaseFenced()
 	}
 	return fenced, err
+}
+
+func outboxRun(r db.Run) outbox.Run {
+	return outbox.Run{SpaceID: r.SpaceID, RunID: r.ID, NodeID: r.NodeID, Kind: r.Kind, Role: r.Role, Harness: r.Harness, InstanceID: r.InstanceID,
+		Generation: r.Generation}
+}
+
+// runEvent records a run lifecycle event in the run's transaction; the run is the correlation.
+func (svc *Service) runEvent(ctx context.Context, tx *store.Tx, r db.Run, p outbox.Payload) error {
+	_, err := svc.opts.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: p, Correlation: r.ID})
+	return err
 }
 
 func ended(s string) bool { return s == proto.RunExited || s == proto.RunFailed || s == proto.RunLost }

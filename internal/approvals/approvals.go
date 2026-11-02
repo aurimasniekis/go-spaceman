@@ -30,6 +30,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -115,6 +116,16 @@ type Service struct {
 	// StillAuthorized reports whether the person who approved may still decide approvals in the space; checked before
 	// every execution (SM-APPR-003). Nil allows.
 	StillAuthorized func(ctx context.Context, by audit.Actor, spaceID string) bool
+	// Outbox records decision and execution events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
+	Outbox *outbox.Outbox
+}
+
+// decided records the decision event of an approval (never its arguments, preview or resource); the approval is the
+// correlation and the human action that decided it the causation.
+func (svc *Service) decided(ctx context.Context, tx *store.Tx, a db.Approval, state string, by audit.Actor) error {
+	_, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.ApprovalDecided{SpaceID: a.SpaceID, ApprovalID: a.ID, HumanActionID: a.HumanActionID,
+		Operation: outbox.CleanID(a.Operation), State: state, RequesterRun: a.RequesterRun, DeciderType: by.Type}, Correlation: a.ID, Causation: a.HumanActionID})
+	return err
 }
 
 // New returns the service and registers it to hear about decisions on its human actions.
@@ -462,6 +473,10 @@ func (svc *Service) finish(ctx context.Context, a db.Approval, execID string, ca
 		if err := svc.changes.Record(ctx, tx, a.SpaceID, "approval", a.ID, "updated", 0); err != nil {
 			return err
 		}
+		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.ApprovalExecuted{SpaceID: a.SpaceID, ApprovalID: a.ID, ExecutionID: execID,
+			Operation: outbox.CleanID(a.Operation), Result: state, ErrorCode: outbox.CleanID(msg)}, Correlation: a.ID, Causation: a.RequesterRun}); err != nil {
+			return err
+		}
 		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorSystem, ID: "approvals"}, Action: "approval.execution_" + state,
 			Target: audit.Target{Type: "approval", ID: a.ID}, Details: map[string]any{"space_id": a.SpaceID, "execution": execID, "error": msg}})
 		return err
@@ -559,6 +574,9 @@ func (svc *Service) onFinalized(ctx context.Context, tx *store.Tx, r db.HumanAct
 	if err := svc.changes.Record(ctx, tx, a.SpaceID, "approval", a.ID, "updated", 0); err != nil {
 		return err
 	}
+	if err := svc.decided(ctx, tx, a, state, actor); err != nil {
+		return err
+	}
 	_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "approval." + state, Target: audit.Target{Type: "approval", ID: a.ID},
 		Details: map[string]any{"space_id": a.SpaceID, "operation": a.Operation, "digest": a.ArgsDigest, "human_action_id": r.ID}})
 	return err
@@ -600,6 +618,9 @@ func (svc *Service) Revoke(ctx context.Context, actor audit.Actor, spaceID, id, 
 			return apperr.New(apperr.CodeConflict, "the approval changed concurrently")
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "approval", id, "updated", 0); err != nil {
+			return err
+		}
+		if err := svc.decided(ctx, tx, a, Revoked, actor); err != nil {
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "approval.revoked", Target: audit.Target{Type: "approval", ID: id},

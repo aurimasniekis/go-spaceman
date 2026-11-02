@@ -158,6 +158,9 @@ func (svc *Service) finalize(ctx context.Context, tx *store.Tx, actor audit.Acto
 	if err := svc.changes.Record(ctx, tx, r.SpaceID, "human_action", r.ID, "updated", r.Version+1); err != nil {
 		return err
 	}
+	if err := svc.event(ctx, tx, r, status, outcome, ""); err != nil {
+		return err
+	}
 	_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "human_action." + status, Target: audit.Target{Type: "human_action", ID: r.ID},
 		Details: map[string]any{"space_id": r.SpaceID, "type": r.Type, "outcome": outcome, "reason": reason, "task_id": r.TaskID}})
 	return err

@@ -114,3 +114,45 @@ func TestEnvKeysCoverEveryField(t *testing.T) {
 		t.Error("missing agent runner socket key")
 	}
 }
+
+// SM-OBS-004: outbound publication is off by default; enabling it needs a Pulse URL (tls:// in production) and an
+// absolute creds file, and the source is a bounded token.
+func TestOutboundEvents(t *testing.T) {
+	cfg := Default()
+	cfg.PublicURL = "https://spaceman.example.com"
+	if cfg.Events.Outbound.Enabled || cfg.Events.Outbound.Source != "spaceman" || cfg.Validate() != nil {
+		t.Fatalf("defaults %+v %v", cfg.Events.Outbound, cfg.Validate())
+	}
+	cfg.Events.Outbound.Enabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "events.outbound.url is required") || !strings.Contains(err.Error(), "creds_file") {
+		t.Fatalf("enabled without url: %v", err)
+	}
+	cfg.Events.Outbound.URL, cfg.Events.Outbound.CredsFile = "nats://pulse.example.com:4222", "/etc/spaceman/pulse.creds"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "tls://") {
+		t.Fatalf("plain nats in production: %v", err)
+	}
+	for _, bad := range []string{"https://pulse.example.com", "tls://user:pw@pulse.example.com:4222", "::"} {
+		cfg.Events.Outbound.URL = bad
+		if cfg.Validate() == nil {
+			t.Errorf("accepted url %q", bad)
+		}
+	}
+	cfg.Events.Outbound.URL, cfg.Events.Outbound.CAFile = "tls://pulse.example.com:4222", "ca.pem"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "ca_file") {
+		t.Fatalf("relative ca: %v", err)
+	}
+	cfg.Events.Outbound.CAFile = "/etc/spaceman/pulse-ca.pem"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Events.Outbound.Source = "Space Man\r\n"
+	cfg.Events.Outbound.Retention = Duration(time.Minute)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "source") || !strings.Contains(err.Error(), "retention") {
+		t.Fatalf("source/retention: %v", err)
+	}
+	c2, err := Load(writeFile(t, "public_url: https://x.example.com\n"), []string{"SPACEMAN_EVENTS_OUTBOUND_ENABLED=true",
+		"SPACEMAN_EVENTS_OUTBOUND_URL=nats://127.0.0.1:4222", "SPACEMAN_EVENTS_OUTBOUND_CREDS_FILE=/run/pulse.creds", "SPACEMAN_EVENTS_OUTBOUND_SOURCE=spaceman-lab"})
+	if err != nil || !c2.Events.Outbound.Enabled || c2.Events.Outbound.Source != "spaceman-lab" {
+		t.Fatalf("env: %+v %v", c2, err)
+	}
+}

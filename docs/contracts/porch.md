@@ -18,3 +18,8 @@
 - Generic OIDC client (`coreos/go-oidc/v3`). Users are identified by `(issuer, sub)`.
 - `groups_claim: porch.groups` (a dotted path), mapped explicitly to SpaceMan roles and space scopes on every login.
 - Porch's `authz/check` API is not used: it needs `usr_` IDs and session/automation tokens, not OIDC access tokens.
+
+## Event naming (used by SpaceMan's outbound events, ADR-0015)
+- Porch's `docs/VERSIONING.md` and `internal/outbox/outbox.go` at v0.3.0 (`9014040`): type `porch.<area>.<entity>_<action>.v1`, subject
+  `evt.porch.<area>.<entity>.<action>`, name segments `^[a-z][a-z0-9_]*$`. Its relay (ADR-0043) publishes with `Nats-Msg-Id` = the
+  outbox ID and `ce-time` = enqueue time. SpaceMan uses the same shape with `spaceman` in place of `porch`.

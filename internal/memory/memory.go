@@ -23,6 +23,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -75,6 +76,9 @@ type Service struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
+
+	// Outbox records sync events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
+	Outbox *outbox.Outbox
 }
 
 // New returns the service; repositories live under dir.
@@ -211,6 +215,10 @@ func (svc *Service) Apply(ctx context.Context, nodeID string, m proto.MemorySync
 			return errors.New("the collection head changed concurrently")
 		}
 		if err := svc.changes.Record(ctx, tx, col.SpaceID, "memory", col.ID, "updated", 0); err != nil {
+			return err
+		}
+		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.MemorySynced{SpaceID: col.SpaceID, CollectionID: col.ID, Role: col.Role,
+			NodeID: nodeID, FromCommit: col.Head, ToCommit: m.Head}, Correlation: col.ID, Causation: m.SyncID}); err != nil {
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorNode, ID: nodeID}, Action: "memory.synced",

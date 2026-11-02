@@ -10,6 +10,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -210,6 +211,12 @@ func (svc *Service) OnResult(ctx context.Context, nodeID string, res proto.KBRes
 		}
 		if err := svc.changes.Record(ctx, tx, p.SpaceID, "kb", p.KbID, "updated", 0); err != nil {
 			return err
+		}
+		if state == "accepted" {
+			if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.KBProposalAccepted{SpaceID: p.SpaceID, KBID: p.KbID, ProposalID: p.ID,
+				SessionID: p.SessionID, Commit: p.CommitID, MergedCommit: merged}, Correlation: p.ID, Causation: p.CommandID}); err != nil {
+				return err
+			}
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorNode, ID: nodeID}, Action: "kb.proposal_" + state,
 			Target: audit.Target{Type: "kb", ID: p.KbID}, Details: map[string]any{"space_id": p.SpaceID, "proposal": p.ID, "merged": merged}})

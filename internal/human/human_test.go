@@ -3,6 +3,7 @@ package human
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -341,4 +343,55 @@ func TestRequesterLimit(t *testing.T) {
 	code(t, err, apperr.CodeRateLimited)
 	_, _, err = f.svc.Create(f.ctx, op, "spc_a", CreateInput{Type: TypeTodo, Title: "x", Requester: Requester{Kind: "operator", ID: "usr_op"}})
 	must(t, err)
+}
+
+// SM-OBS-004, SM-HUI-007: the lifecycle of a human action (created, resolved, cancelled, expired) is published with safe
+// metadata only. The title, body, request, response, note and reasons never reach the outbox.
+func TestLifecycleEventsCarrySafeMetadataOnly(t *testing.T) {
+	f := newFx(t)
+	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true, Clock: f.clk})
+	secret := []string{"TITLE-SECRET", "BODY-SECRET", "REQUEST-SECRET", "ANSWER-SECRET", "NOTE-SECRET", "REASON-SECRET"}
+	q := f.create(CreateInput{Type: TypeQuestion, Title: "Q TITLE-SECRET", Body: "BODY-SECRET", CorrelationID: "corr-1",
+		Request: json.RawMessage(`{"options":["REQUEST-SECRET"],"allow_text":true}`)})
+	_, err := f.svc.Respond(f.ctx, op, "spc_a", q.ID, q.Version, RespondInput{Outcome: "answered", Response: Response{Answer: "ANSWER-SECRET", Note: "NOTE-SECRET"}})
+	must(t, err)
+	c := f.create(CreateInput{Type: TypeApproval, Title: "TITLE-SECRET", Request: json.RawMessage(`{"action":"REQUEST-SECRET"}`)})
+	_, err = f.svc.Cancel(f.ctx, op, "spc_a", c.ID, c.Version, "REASON-SECRET")
+	must(t, err)
+	exp := f.clk.Now().Add(time.Hour)
+	f.create(CreateInput{Type: TypeTodo, Title: "TITLE-SECRET", Body: "BODY-SECRET", ExpiresAt: &exp})
+	f.clk.Advance(2 * time.Hour)
+	if n, err := f.svc.Expire(f.ctx); err != nil || n != 1 {
+		t.Fatalf("expired %d %v", n, err)
+	}
+	rows, err := f.s.ReadDB().QueryContext(f.ctx, `SELECT type, correlation_id, causation_id, payload_json FROM event_outbox ORDER BY id`)
+	must(t, err)
+	defer rows.Close()
+	var types []string
+	for rows.Next() {
+		var typ, corr, cause, payload string
+		must(t, rows.Scan(&typ, &corr, &cause, &payload))
+		types = append(types, typ)
+		for _, s := range secret {
+			if strings.Contains(payload+corr+cause, s) {
+				t.Errorf("%s leaks %s: %s", typ, s, payload)
+			}
+		}
+		var m map[string]any
+		must(t, json.Unmarshal([]byte(payload), &m))
+		for _, k := range []string{"title", "body", "request", "response", "note", "reason", "status_reason", "comments"} {
+			if _, ok := m[k]; ok {
+				t.Errorf("%s has %q", typ, k)
+			}
+		}
+		if typ == "spaceman.human.action_resolved.v1" && (m["outcome"] != "answered" || corr != "corr-1") {
+			t.Errorf("resolved %v corr %q", m, corr)
+		}
+	}
+	must(t, rows.Err())
+	want := []string{"spaceman.human.action_created.v1", "spaceman.human.action_resolved.v1", "spaceman.human.action_created.v1",
+		"spaceman.human.action_cancelled.v1", "spaceman.human.action_created.v1", "spaceman.human.action_expired.v1"}
+	if strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Fatalf("events %v", types)
+	}
 }

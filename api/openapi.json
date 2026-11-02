@@ -7465,6 +7465,148 @@
         ],
         "type": "object"
       },
+      "OutboxFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "dead_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "attempts",
+          "last_error",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "OutboxStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/OutboxStatus.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "connected": {
+            "description": "The relay holds a Pulse connection",
+            "type": "boolean"
+          },
+          "dead": {
+            "description": "Events dead-lettered after the retry limit",
+            "format": "int64",
+            "type": "integer"
+          },
+          "enabled": {
+            "description": "Whether outbound publication is on (events.outbound.enabled); while off nothing is recorded",
+            "type": "boolean"
+          },
+          "failed_since_start": {
+            "description": "Failed publish attempts since central started",
+            "format": "int64",
+            "type": "integer"
+          },
+          "lag_seconds": {
+            "description": "Age of the oldest pending event; 0 when none",
+            "format": "double",
+            "type": "number"
+          },
+          "last_error": {
+            "description": "The last connection or publish error",
+            "type": "string"
+          },
+          "last_error_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "oldest_pending_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "pending": {
+            "description": "Events waiting to be published",
+            "format": "int64",
+            "type": "integer"
+          },
+          "published": {
+            "description": "Published events still retained",
+            "format": "int64",
+            "type": "integer"
+          },
+          "published_since_start": {
+            "description": "Publish acknowledgements since central started",
+            "format": "int64",
+            "type": "integer"
+          },
+          "recent_failures": {
+            "description": "Up to 10 unpublished events with an error, newest first",
+            "items": {
+              "$ref": "#/components/schemas/OutboxFailure"
+            },
+            "type": "array"
+          },
+          "retention_hours": {
+            "description": "How long published and dead-lettered events are kept",
+            "format": "int64",
+            "type": "integer"
+          },
+          "retrying": {
+            "description": "Pending events that failed at least once",
+            "format": "int64",
+            "type": "integer"
+          },
+          "source": {
+            "description": "ce-source and spaceman-origin of published events",
+            "type": "string"
+          },
+          "url": {
+            "description": "The Pulse URL (never credentials)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "source",
+          "connected",
+          "pending",
+          "retrying",
+          "dead",
+          "published",
+          "lag_seconds",
+          "published_since_start",
+          "failed_since_start",
+          "recent_failures",
+          "retention_hours"
+        ],
+        "type": "object"
+      },
       "PendingHumanActions": {
         "additionalProperties": false,
         "properties": {
@@ -19617,6 +19759,38 @@
         },
         "security": [],
         "summary": "Public system status",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/system/outbound-events": {
+      "get": {
+        "description": "Whether SpaceMan publishes its own events to Pulse, the relay's connection, pending, retrying and dead-lettered events, the publication lag (age of the oldest pending event) and recent failures.",
+        "operationId": "get-outbound-events",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboxStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Outbound event publication status",
         "tags": [
           "system"
         ]

@@ -78,4 +78,7 @@ the new consumer starts.
 A subscription that **follows** its template moves to newly published versions only when they keep the same subject;
 otherwise it stays on its version, because a new subject needs a new Pulse grant.
 
+SpaceMan can also publish its own events to Pulse; see [Publishing SpaceMan events](/guide/publishing-events). An
+installation never re-ingests what it published itself.
+
 See [known limitations](/reference/limitations) for what is not covered yet.

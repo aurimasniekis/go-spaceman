@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -247,5 +248,33 @@ func TestStatusTool(t *testing.T) {
 	out, err = r.Dispatch(f.ctx, p, "spaceman_memory_status", nil)
 	if err != nil || !strings.Contains(string(out), h) || !strings.Contains(string(out), `"open_conflicts":[]`) {
 		t.Fatalf("after sync: %s %v", out, err)
+	}
+}
+
+// SM-OBS-004: each fast-forward of central's copy is recorded for publication (commits only, never file content), with
+// the node's sync as causation; a repeat of the same head records nothing.
+func TestSyncEventsRecorded(t *testing.T) {
+	f := newFx(t)
+	f.svc.Outbox = outbox.New(f.svc.s, outbox.Options{Enabled: true})
+	h1 := f.commit("README.md", "CONTENT-SECRET\n")
+	f.sync("", h1)
+	h2 := f.commit("b.md", "more\n")
+	f.sync(h1, h2)
+	f.sync(h1, h2)
+	rows, err := f.svc.s.ReadDB().QueryContext(f.ctx, `SELECT causation_id, payload_json FROM event_outbox ORDER BY id`)
+	must(t, err)
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var cause, payload string
+		must(t, rows.Scan(&cause, &payload))
+		if strings.Contains(payload, "SECRET") || !strings.Contains(payload, `"role":"implementor-backend"`) {
+			t.Fatalf("payload %s", payload)
+		}
+		got = append(got, cause)
+	}
+	must(t, rows.Err())
+	if strings.Join(got, ",") != "msy_"+h1[:8]+",msy_"+h2[:8] {
+		t.Fatalf("events %v", got)
 	}
 }

@@ -2725,6 +2725,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/outbound-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Outbound event publication status
+         * @description Whether SpaceMan publishes its own events to Pulse, the relay's connection, pending, retrying and dead-lettered events, the publication lag (age of the oldest pending event) and recent failures.
+         */
+        get: operations["get-outbound-events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tokens": {
         parameters: {
             query?: never;
@@ -5603,6 +5623,83 @@ export interface components {
             mapped_grants: components["schemas"]["AuthzGrant"][];
             provision_reason?: string;
             would_provision: boolean;
+        };
+        OutboxFailure: {
+            /** Format: int64 */
+            attempts: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            dead_at?: string;
+            id: string;
+            last_error: string;
+            type: string;
+        };
+        OutboxStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OutboxStatus.json
+             */
+            readonly $schema?: string;
+            /** @description The relay holds a Pulse connection */
+            connected: boolean;
+            /**
+             * Format: int64
+             * @description Events dead-lettered after the retry limit
+             */
+            dead: number;
+            /** @description Whether outbound publication is on (events.outbound.enabled); while off nothing is recorded */
+            enabled: boolean;
+            /**
+             * Format: int64
+             * @description Failed publish attempts since central started
+             */
+            failed_since_start: number;
+            /**
+             * Format: double
+             * @description Age of the oldest pending event; 0 when none
+             */
+            lag_seconds: number;
+            /** @description The last connection or publish error */
+            last_error?: string;
+            /** Format: date-time */
+            last_error_at?: string;
+            /** Format: date-time */
+            last_published_at?: string;
+            /** Format: date-time */
+            oldest_pending_at?: string;
+            /**
+             * Format: int64
+             * @description Events waiting to be published
+             */
+            pending: number;
+            /**
+             * Format: int64
+             * @description Published events still retained
+             */
+            published: number;
+            /**
+             * Format: int64
+             * @description Publish acknowledgements since central started
+             */
+            published_since_start: number;
+            /** @description Up to 10 unpublished events with an error, newest first */
+            recent_failures: components["schemas"]["OutboxFailure"][];
+            /**
+             * Format: int64
+             * @description How long published and dead-lettered events are kept
+             */
+            retention_hours: number;
+            /**
+             * Format: int64
+             * @description Pending events that failed at least once
+             */
+            retrying: number;
+            /** @description ce-source and spaceman-origin of published events */
+            source: string;
+            /** @description The Pulse URL (never credentials) */
+            url?: string;
         };
         PendingHumanActions: {
             /**
@@ -12771,6 +12868,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemInfo"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-outbound-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxStatus"];
                 };
             };
             /** @description Error */

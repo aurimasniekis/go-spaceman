@@ -81,6 +81,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Pre-provisioned or just-in-time users, identity linking from the Account page, by an administrator or with a link
   invitation, step-up at the provider (or with the SpaceMan TOTP code where allowed), test logins, and a Sign-in
   providers page.
+- Publishing SpaceMan's own events to Pulse (off by default, `events.outbound`): run, task, inbox item, human action,
+  approval, memory and knowledge-base lifecycle events with versioned, metadata-only payloads, written in the same
+  transaction as the change and relayed after commit with stable IDs, retries with backoff, dead-lettering, retention,
+  correlation, causation and origin headers. SpaceMan never re-ingests its own events. Publication status (connection,
+  backlog, lag, failures) on the Events page for administrators, in the API and as Prometheus metrics.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

@@ -65,7 +65,30 @@ type Config struct {
 	Nodes     NodesConfig     `yaml:"nodes"`
 	Artifacts ArtifactsConfig `yaml:"artifacts"`
 	Harness   HarnessPolicy   `yaml:"harness"`
+	Events    EventsConfig    `yaml:"events"`
 	Shutdown  ShutdownConfig  `yaml:"shutdown"`
+}
+
+// EventsConfig configures SpaceMan's own outbound events. Inbound Pulse connections and subscriptions are managed
+// through the API, not here (SM-OBS-005).
+type EventsConfig struct {
+	Outbound OutboundConfig `yaml:"outbound"`
+}
+
+// OutboundConfig configures publication of SpaceMan's events to Pulse through the transactional outbox
+// (SM-OBS-004, ADR-0030). It is off by default; while off, no events are recorded.
+type OutboundConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// URL is the Pulse NATS URL: tls://host:port (required in production) or nats://host:port.
+	URL string `yaml:"url"`
+	// CredsFile is the Pulse client .creds file (user JWT and nkey seed) with a publish:evt.spaceman.> grant.
+	CredsFile string `yaml:"creds_file"`
+	// CAFile is an optional extra CA bundle (PEM) for tls:// URLs.
+	CAFile string `yaml:"ca_file"`
+	// Source is ce-source and the spaceman-origin header (default "spaceman"); give each installation its own.
+	Source string `yaml:"source"`
+	// Retention is how long published and dead-lettered events are kept (default 168h).
+	Retention Duration `yaml:"retention"`
 }
 
 // HarnessPolicy holds policy ceilings applied to every launch, whatever layer set the value (SM-PROMPT-003).

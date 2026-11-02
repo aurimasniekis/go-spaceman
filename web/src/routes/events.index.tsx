@@ -8,6 +8,7 @@ import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { ConnectionModal } from '@/features/events/ConnectionModal'
+import { OutboundPanel } from '@/features/events/OutboundPanel'
 import { TemplateCreateModal } from '@/features/events/TemplateEditor'
 import { hasGlobal } from '@/lib/access'
 import { datetime } from '@/lib/format'
@@ -23,11 +24,12 @@ function EventsPage() {
   const [creating, setCreating] = useState(false)
   return (
     <>
-      <PageHeader title="Events" description="Pulse connections and the catalog of templates spaces subscribe with." />
+      <PageHeader title="Events" description="Pulse connections, the catalog of templates spaces subscribe with, and SpaceMan's own published events." />
       <Tabs defaultValue="templates">
         <Tabs.List>
           <Tabs.Tab value="templates">Templates</Tabs.Tab>
           <Tabs.Tab value="connections">Connections</Tabs.Tab>
+          {admin && <Tabs.Tab value="publishing">Publishing</Tabs.Tab>}
         </Tabs.List>
         <Tabs.Panel value="templates" pt="sm">
           <Group justify="space-between" mb="sm">
@@ -87,6 +89,11 @@ function EventsPage() {
             </Table>
           </Card>
         </Tabs.Panel>
+        {admin && (
+          <Tabs.Panel value="publishing" pt="sm">
+            <OutboundPanel enabled={admin} />
+          </Tabs.Panel>
+        )}
       </Tabs>
       {editing && <ConnectionModal conn={editing === 'new' ? undefined : editing} opened onClose={() => setEditing(null)} />}
       <TemplateCreateModal opened={creating} onClose={() => setCreating(false)} />

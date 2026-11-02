@@ -39,6 +39,7 @@
 | `human-types` | Human action types | Type catalog with schema editors and a live request form preview | current |
 | `kb-sessions` | KB/support (M3) | KB support sessions | todo |
 | `events-catalog` | Events and subscriptions | Template catalog | current |
+| `events-publishing` | Publishing SpaceMan events | Outbound publication status: connection, pending, retrying, dead-lettered, lag, recent failures (global admins) | current |
 | `event-template` | Events and subscriptions | Template definition with a sample test | current |
 | `events-subscribe` | Events and subscriptions | Subscription form with template variables | current |
 | `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history | current |

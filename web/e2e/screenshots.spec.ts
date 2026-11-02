@@ -578,6 +578,11 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/events')
     await expect(page.getByText('GitHub pull requests')).toBeVisible()
   })
+  await capture(page, 'events-publishing', async () => {
+    await page.goto('/events')
+    await page.getByRole('tab', { name: 'Publishing' }).click()
+    await expect(page.getByText('publishing', { exact: true })).toBeVisible({ timeout: 30_000 })
+  })
   await capture(page, 'event-template', async () => {
     await page.goto('/events')
     await page.getByRole('link', { name: 'GitHub issues' }).click()
