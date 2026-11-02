@@ -133,3 +133,12 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/attachments` | `upload-attachment` | Upload an attachment |
 | `GET` | `/spaces/{space_id}/attachments/{attachment_id}` | `get-attachment` | Attachment metadata |
 
+### inbox
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/inbox` | `list-inbox` | List a space's inbox |
+| `POST` | `/spaces/{space_id}/inbox` | `create-inbox-item` | Add an item to a space's inbox |
+| `GET` | `/spaces/{space_id}/inbox/{item_id}` | `get-inbox-item` | Get an inbox item with its attachments |
+| `POST` | `/spaces/{space_id}/inbox/{item_id}/status` | `set-inbox-status` | Change an inbox item's processing status |
+

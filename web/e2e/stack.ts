@@ -61,6 +61,16 @@ export class Api {
     return out
   }
 
+  /** Uploads one file to a space and returns the attachment (multipart, as the UI does). */
+  async upload(spaceId: string, name: string, mimeType: string, buffer: Buffer): Promise<{ id: string; uri: string; url: string }> {
+    const h: Record<string, string> = { Origin: this.origin }
+    if (this.bearer) h.Authorization = `Bearer ${this.bearer}`
+    else h['X-CSRF-Token'] = this.csrf
+    const res = await this.req.fetch(`/api/v1/spaces/${spaceId}/attachments`, { method: 'POST', headers: h, multipart: { file: { name, mimeType, buffer } } })
+    if (!res.ok()) throw new Error(`upload ${name}: ${res.status()} ${await res.text()}`)
+    return (await res.json()) as { id: string; uri: string; url: string }
+  }
+
   /**
    * Signs in a user whose account requires TOTP: password, enrollment (first time), and verification with a code from
    * a later step. Returns the TOTP secret.

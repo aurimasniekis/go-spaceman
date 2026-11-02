@@ -101,6 +101,32 @@ test('documentation screenshots', async ({ page, browser }) => {
   await api.call('POST', `/spaces/${payments.id}/runs/${finished.id}/stop`, { mode: 'kill', reason: 'finished the change' })
   await expect.poll(() => running(payments.id, finished.id), { timeout: 30_000 }).toMatch(/exited|failed/)
 
+  // Inbox: operator requests (one with a real screenshot of the stopped run and its log), an alert as JSON, and items in
+  // every state.
+  await page.goto(`/spaces/${payments.id}/runs/${finished.id}?view=replay`)
+  await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
+  await setTheme(page, 'dark')
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
+  await settle(page, 800)
+  const terminalShot = await page.locator('.sm-terminal').screenshot()
+  const img = await api.upload(payments.id, 'settlement-run.png', 'image/png', terminalShot)
+  const log = await api.upload(payments.id, 'settlement-job.log', 'text/plain',
+    Buffer.from('2026-11-01T02:14:07Z attempt 1 failed: upstream timeout\n2026-11-01T02:19:07Z attempt 2 failed: upstream timeout\n2026-11-01T02:24:07Z attempt 3 failed: giving up\n'))
+  type Item = { id: string; version: number }
+  const inbox = (body: Record<string, unknown>) => api.call<Item>('POST', `/spaces/${payments.id}/inbox`, body)
+  const setStatus = (it: Item, body: Record<string, unknown>) => api.call<Item>('POST', `/spaces/${payments.id}/inbox/${it.id}/status`, body, { 'If-Match': `"${it.version}"` })
+  const done = await inbox({ body: 'Add the retry budget to the settlement client\n\nUse the budget from the payments RFC: at most **3** attempts per batch.' })
+  await setStatus(done, { status: 'done', linked_kind: 'run', linked_id: finished.id })
+  const deferred = await inbox({ body: 'Rotate the staging webhook secret', urgency: 'low' })
+  await setStatus(deferred, { status: 'deferred', reason: 'after the release freeze', defer_until: new Date(Date.now() + 5 * 86_400_000).toISOString() })
+  const sdk = await inbox({ body: 'Bump the card SDK to 7.2\n\nThe changelog mentions a fix for duplicate refunds.' })
+  await setStatus(sdk, { status: 'in_progress' })
+  await inbox({ title: 'Settlement lag alert', content_type: 'application/json', urgency: 'urgent',
+    body: JSON.stringify({ alert: 'settlement_lag', environment: 'production', lag_seconds: 840, threshold_seconds: 300 }) })
+  const weekend = await inbox({ urgency: 'high', attachment_ids: [img.id, log.id],
+    body: `Settlement retries fail on weekends\n\nThe batch job gives up after **three** attempts while the bank's API is in maintenance.\n\n- [ ] Confirm the maintenance window\n- [ ] Make the retry budget time-based\n\n![The stopped run](${img.uri})\n\n[settlement-job.log](${log.uri})` })
+
   // People and tokens.
   const samPw = password()
   await api.call('POST', '/users', { display_name: 'Sam Rivera', email: 'sam@example.com', password: samPw, mfa_required: true, grants: [{ role: 'operator', domain: payments.id }] })
@@ -143,6 +169,33 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'terminal-replay', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${finished.id}?view=replay`)
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
+  })
+  await capture(page, 'inbox-list', async () => {
+    await page.goto(`/spaces/${payments.id}/inbox`)
+    await page.getByRole('radiogroup', { name: 'Filter by status' }).getByText('All', { exact: true }).click()
+    await expect(page.getByText('Settlement lag alert')).toBeVisible()
+  })
+  await capture(page, 'inbox-item', async () => {
+    await page.goto(`/spaces/${payments.id}/inbox/${weekend.id}`)
+    await expect(page.locator('.sm-markdown img')).toBeVisible()
+    await page.waitForTimeout(500)
+  })
+  await capture(page, 'inbox-composer', async () => {
+    await page.goto(`/spaces/${payments.id}/inbox`)
+    await page.getByRole('button', { name: 'New item' }).click()
+    await page.getByRole('textbox', { name: 'Urgency' }).click()
+    await page.getByRole('option', { name: 'High' }).click()
+    const editor = page.getByRole('textbox', { name: 'Item text' })
+    await editor.click()
+    await page.keyboard.type('Refunds are posted twice for split payments')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('Seen by two merchants since Tuesday. The ')
+    await page.keyboard.press('ControlOrMeta+e')
+    await page.keyboard.type('refund_id')
+    await page.keyboard.press('ControlOrMeta+e')
+    await page.keyboard.type(' differs, the amount does not.')
+    await page.locator('input[type=file]').setInputFiles([{ name: 'refunds-export.csv', mimeType: 'text/csv', buffer: Buffer.from('refund_id,amount\nrf_1,12.00\nrf_2,12.00\n') }])
+    await expect(page.getByText('refunds-export.csv ·')).toBeVisible()
   })
   await capture(page, 'setup-node-enroll', async () => {
     await page.goto('/nodes')

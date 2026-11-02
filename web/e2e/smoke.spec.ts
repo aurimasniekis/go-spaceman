@@ -21,6 +21,9 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: join(shots, `${name}.png`), fullPage: false, animations: 'disabled' })
 }
 
+// A 1×1 PNG.
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+
 test.describe.configure({ mode: 'serial' })
 
 test('first run: setup, sign-in, node, space, live run, replay', async ({ page }) => {
@@ -111,6 +114,35 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
   await page.waitForTimeout(500)
   await shot(page, 'run-replay')
+
+  // Inbox: an operator item written in the composer, with an attached image and file, rendered safely and marked done.
+  await page.getByRole('link', { name: 'Payments platform' }).click()
+  await page.getByRole('tab', { name: /Inbox/ }).click()
+  await page.getByRole('button', { name: 'New item' }).click()
+  const editor = page.getByRole('textbox', { name: 'Item text' })
+  await editor.click()
+  await page.keyboard.type('Settlement retries fail on weekends')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('The batch job gives up after ')
+  await page.keyboard.press('ControlOrMeta+b')
+  await page.keyboard.type('three')
+  await page.keyboard.press('ControlOrMeta+b')
+  await page.keyboard.type(' attempts.')
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'retries.png', mimeType: 'image/png', buffer: PNG },
+    { name: 'job.log', mimeType: 'text/plain', buffer: Buffer.from('2026-11-01 attempt 3 failed: timeout\n') },
+  ])
+  await expect(page.getByText('job.log ·')).toBeVisible()
+  await expect(editor.locator('img')).toBeVisible()
+  await shot(page, 'inbox-composer')
+  await page.getByRole('button', { name: 'Add to inbox' }).click()
+  await expect(page.getByRole('heading', { name: 'Settlement retries fail on weekends' })).toBeVisible()
+  await expect(page.locator('.sm-markdown strong')).toHaveText('three')
+  await expect(page.locator('.sm-markdown img')).toBeVisible()
+  await expect(page.getByText('Attachments')).toBeVisible()
+  await shot(page, 'inbox-item')
+  await page.getByRole('button', { name: 'Mark done' }).click()
+  await expect(page.getByText('Done', { exact: true }).first()).toBeVisible()
 
   // Audit shows what happened.
   await page.getByRole('link', { name: 'Audit log' }).click()

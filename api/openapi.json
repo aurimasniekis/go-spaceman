@@ -83,6 +83,53 @@
         ],
         "type": "object"
       },
+      "AttachmentsAttachment": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "inline": {
+            "type": "boolean"
+          },
+          "mime": {
+            "description": "Media type sniffed from the content (never the uploader's claim)",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "uploaded_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "name",
+          "size",
+          "mime",
+          "sha256",
+          "uploaded_by",
+          "created_at",
+          "inline"
+        ],
+        "type": "object"
+      },
       "AuditPage": {
         "additionalProperties": false,
         "properties": {
@@ -635,6 +682,63 @@
         "required": [
           "name",
           "grants"
+        ],
+        "type": "object"
+      },
+      "CreateInboxInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/CreateInboxInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "attachment_ids": {
+            "description": "Attachments uploaded to this space",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "body": {
+            "description": "Markdown (reference attachments as spaceman://attachment/\u003cid\u003e) or JSON",
+            "maxLength": 200000,
+            "type": "string"
+          },
+          "content_type": {
+            "description": "Default text/markdown",
+            "enum": [
+              "text/markdown",
+              "application/json"
+            ],
+            "type": "string"
+          },
+          "correlation_id": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "title": {
+            "description": "Defaults to the first line of the body",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "urgency": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
         ],
         "type": "object"
       },
@@ -1349,6 +1453,183 @@
         ],
         "type": "object"
       },
+      "InboxItem": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/InboxItem.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentsAttachment"
+            },
+            "type": "array"
+          },
+          "body": {
+            "description": "Untrusted content: Markdown (with spaceman://attachment/\u003cid\u003e references) or JSON",
+            "type": "string"
+          },
+          "content_type": {
+            "enum": [
+              "text/markdown",
+              "application/json"
+            ],
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "dedup_key": {
+            "type": "string"
+          },
+          "defer_until": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "linked_id": {
+            "type": "string"
+          },
+          "linked_kind": {
+            "description": "Existing work this item was associated with (task, human_action, …)",
+            "type": "string"
+          },
+          "payload_ref": {
+            "description": "A retained reference to a large payload",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "source_id": {
+            "description": "The authenticated source: a user, run, subscription or space ID",
+            "type": "string"
+          },
+          "source_kind": {
+            "enum": [
+              "operator",
+              "worker",
+              "human_response",
+              "dreamer",
+              "kb",
+              "cross_space",
+              "event",
+              "webhook"
+            ],
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "in_progress",
+              "deferred",
+              "rejected",
+              "done"
+            ],
+            "type": "string"
+          },
+          "status_reason": {
+            "type": "string"
+          },
+          "subscription_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "trusted": {
+            "additionalProperties": {},
+            "description": "Metadata set by the authenticated source, never taken from the body",
+            "type": "object"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "urgency": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "source_kind",
+          "title",
+          "content_type",
+          "body",
+          "trusted",
+          "urgency",
+          "status",
+          "received_at",
+          "updated_at",
+          "created_by",
+          "version"
+        ],
+        "type": "object"
+      },
+      "InboxPage": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/InboxPage.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "counts": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InboxItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "counts"
+        ],
+        "type": "object"
+      },
       "Issue-resetResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1999,6 +2280,50 @@
         },
         "required": [
           "text"
+        ],
+        "type": "object"
+      },
+      "Set-inbox-statusRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Set-inbox-statusRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "defer_until": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "linked_id": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "linked_kind": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "in_progress",
+              "deferred",
+              "rejected",
+              "done"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
         ],
         "type": "object"
       },
@@ -3673,6 +3998,288 @@
         "summary": "Attachment metadata",
         "tags": [
           "attachments"
+        ]
+      }
+    },
+    "/spaces/{space_id}/inbox": {
+      "get": {
+        "description": "Newest first. Bodies are untrusted content.",
+        "operationId": "list-inbox",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "enum": [
+                "new",
+                "in_progress",
+                "deferred",
+                "rejected",
+                "done"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxPage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List a space's inbox",
+        "tags": [
+          "inbox"
+        ]
+      },
+      "post": {
+        "description": "The item comes from the signed-in operator. It is not a task: control decides what it becomes.",
+        "operationId": "create-inbox-item",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateInboxInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxItem"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add an item to a space's inbox",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/spaces/{space_id}/inbox/{item_id}": {
+      "get": {
+        "operationId": "get-inbox-item",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxItem"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get an inbox item with its attachments",
+        "tags": [
+          "inbox"
+        ]
+      }
+    },
+    "/spaces/{space_id}/inbox/{item_id}/status": {
+      "post": {
+        "description": "Defer (until a time), reject, mark done or associate with existing work.",
+        "operationId": "set-inbox-status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Set-inbox-statusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxItem"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change an inbox item's processing status",
+        "tags": [
+          "inbox"
         ]
       }
     },

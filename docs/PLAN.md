@@ -34,8 +34,8 @@
 ### M2 — Coordination core
 | WP | Scope | Requirements | Status |
 |---|---|---|---|
-| M2-01 | Attachments + TipTap composer | SM-ATT-* | todo |
-| M2-02 | Inbox (operator text/JSON/attachments, sources, statuses) | SM-INBOX-* | todo |
+| M2-01 | Attachments + TipTap composer | SM-ATT-* | implemented: storage, API, composer, sanitizing renderer; MCP access with M2-06 |
+| M2-02 | Inbox (operator text/JSON/attachments, sources, statuses) | SM-INBOX-* | implemented: service, API, UI, live updates; other producers with their WPs |
 | M2-03 | Pulse ingestion: connections, durable consumers, dedup, quarantine, fan-out, metrics | SM-EVT-011…016 | todo |
 | M2-04 | Event templates + subscriptions + GitHub presets + UI preview/testing | SM-EVT-001…010, 017 | todo |
 | M2-05 | Execution queue: ordering, dependencies, exclusions, eligibility, incidents, demotion | SM-QUEUE-* | todo |
@@ -103,7 +103,9 @@
 | 2026-11-02 | M1-11 | Web UI (Mantine 8 + Night Owl, TanStack Router/Query/Form, ghostty-web live/replay terminal), UI CSP (ADR-0020), lease grants in the change feed, dev stack + browser journey | `9b02552`, `c32e0d9` | `make check`, `make web-check`, `make e2e` (Chromium, real agent + hc 0.1.16 isolated core, stub harness): pass; screenshots reviewed, not committed (M1-12) |
 | 2026-11-02 | M1-10 | Restart reconciliation: crash between program start and journal (adoption), exit while the agent is down, central + agent restart; real central restart and real disconnect enforcement | `dc22aaa` | `TestRestartReconciliation` 5× `-race`; `-tags real` `TestRealNodeEndToEnd`, `TestRealDisconnectEnforcement` pass (hc 0.1.16 isolated core) |
 | 2026-11-02 | M1-04 | Reset and recovery tokens were not redeemable (services without HTTP/UI): `/auth/reset`, `/auth/recover`, recovery-code regeneration, break-glass alert; `/reset` and `/recover` pages | `8ea777a` | `TestAPIRecoveryAndReset`; `make e2e` covers a password reset |
-| 2026-11-02 | M1-12 | VitePress site (Porch setup) with guides for implemented features, generated API reference, README, real screenshots (`scripts/screenshots.sh`), screenshot/Mermaid checks, CI site job, Pages workflow | this commit (`docs(site)`) | `make site-check` (build with dead-link check, 7 Mermaid diagrams, API drift); screenshots reviewed |
+| 2026-11-02 | M1-12 | VitePress site (Porch setup) with guides for implemented features, generated API reference, README, real screenshots (`scripts/screenshots.sh`), screenshot/Mermaid checks, CI site job, Pages workflow | `9ebab24` | `make site-check` (build with dead-link check, 7 Mermaid diagrams, API drift); screenshots reviewed |
+| 2026-11-02 | M2-01 | Attachments: content-addressed local store, sniffed types, quota and size limits, references, GC, multipart upload, safe serving | `8135106` | `internal/attachments` tests, `TestAttachmentsOverHTTP` |
+| 2026-11-02 | M2-01/02 | Inbox service, API and UI; TipTap composer with paste/drop/attach; sanitizing Markdown renderer; inbox screenshots and guide | this commit (`feat(inbox)`) | `internal/inbox` tests, `TestInboxOverHTTP`, `markdown.test.ts`; `make e2e` (composer → item → done); screenshots reviewed |
 
 ## 4. Process deviations
 

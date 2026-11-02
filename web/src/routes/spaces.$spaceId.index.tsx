@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { NodeState, RunState, SpaceState } from '@/components/StatusBadge'
 import { LaunchRunModal } from '@/features/spaces/LaunchRunModal'
 import { SpaceFormModal } from '@/features/spaces/SpaceFormModal'
+import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
@@ -83,6 +84,7 @@ function SpacePage() {
         }
       />
 
+      <SpaceNav spaceId={spaceId} />
       <SimpleGrid cols={{ base: 1, sm: 3 }} mb="md">
         <Card>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Node</Text>

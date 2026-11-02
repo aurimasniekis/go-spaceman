@@ -517,6 +517,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a space's inbox
+         * @description Newest first. Bodies are untrusted content.
+         */
+        get: operations["list-inbox"];
+        put?: never;
+        /**
+         * Add an item to a space's inbox
+         * @description The item comes from the signed-in operator. It is not a task: control decides what it becomes.
+         */
+        post: operations["create-inbox-item"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/inbox/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an inbox item with its attachments */
+        get: operations["get-inbox-item"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/inbox/{item_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change an inbox item's processing status
+         * @description Defer (until a time), reject, mark done or associate with existing work.
+         */
+        post: operations["set-inbox-status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/runs": {
         parameters: {
             query?: never;
@@ -820,6 +881,20 @@ export interface components {
             /** @description Content URL (same origin); Markdown bodies reference the attachment as spaceman://attachment/<id> */
             url: string;
         };
+        AttachmentsAttachment: {
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            inline: boolean;
+            /** @description Media type sniffed from the content (never the uploader's claim) */
+            mime: string;
+            name: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            space_id: string;
+            uploaded_by: string;
+        };
         AuditPage: {
             /**
              * Format: uri
@@ -1016,6 +1091,28 @@ export interface components {
             grants: components["schemas"]["AuthGrantInput"][];
             name: string;
             never_expires?: boolean;
+        };
+        CreateInboxInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CreateInboxInput.json
+             */
+            readonly $schema?: string;
+            /** @description Attachments uploaded to this space */
+            attachment_ids?: string[];
+            /** @description Markdown (reference attachments as spaceman://attachment/<id>) or JSON */
+            body: string;
+            /**
+             * @description Default text/markdown
+             * @enum {string}
+             */
+            content_type?: "text/markdown" | "application/json";
+            correlation_id?: string;
+            /** @description Defaults to the first line of the body */
+            title?: string;
+            /** @enum {string} */
+            urgency?: "low" | "normal" | "high" | "urgent";
         };
         CreatedRootToken: {
             /**
@@ -1275,6 +1372,66 @@ export interface components {
             name: string;
             standing_instructions: string;
         };
+        InboxItem: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/InboxItem.json
+             */
+            readonly $schema?: string;
+            attachments?: components["schemas"]["AttachmentsAttachment"][];
+            /** @description Untrusted content: Markdown (with spaceman://attachment/<id> references) or JSON */
+            body: string;
+            /** @enum {string} */
+            content_type: "text/markdown" | "application/json";
+            correlation_id?: string;
+            created_by: string;
+            dedup_key?: string;
+            /** Format: date-time */
+            defer_until?: string;
+            id: string;
+            linked_id?: string;
+            /** @description Existing work this item was associated with (task, human_action, …) */
+            linked_kind?: string;
+            /** @description A retained reference to a large payload */
+            payload_ref?: string;
+            /** Format: date-time */
+            received_at: string;
+            /** @description The authenticated source: a user, run, subscription or space ID */
+            source_id?: string;
+            /** @enum {string} */
+            source_kind: "operator" | "worker" | "human_response" | "dreamer" | "kb" | "cross_space" | "event" | "webhook";
+            source_label?: string;
+            space_id: string;
+            /** @enum {string} */
+            status: "new" | "in_progress" | "deferred" | "rejected" | "done";
+            status_reason?: string;
+            subscription_id?: string;
+            title: string;
+            /** @description Metadata set by the authenticated source, never taken from the body */
+            trusted: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            updated_at: string;
+            /** @enum {string} */
+            urgency: "low" | "normal" | "high" | "urgent";
+            /** Format: int64 */
+            version: number;
+        };
+        InboxPage: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/InboxPage.json
+             */
+            readonly $schema?: string;
+            counts: {
+                [key: string]: number;
+            };
+            items: components["schemas"]["InboxItem"][];
+            next_cursor?: string;
+        };
         "Issue-resetResponse": {
             /**
              * Format: uri
@@ -1512,6 +1669,21 @@ export interface components {
             readonly $schema?: string;
             force?: boolean;
             text: string;
+        };
+        "Set-inbox-statusRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Set-inbox-statusRequest.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            defer_until?: string;
+            linked_id?: string;
+            linked_kind?: string;
+            reason?: string;
+            /** @enum {string} */
+            status: "new" | "in_progress" | "deferred" | "rejected" | "done";
         };
         "Set-node-stateRequest": {
             /**
@@ -2665,6 +2837,153 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-inbox": {
+        parameters: {
+            query?: {
+                status?: "new" | "in_progress" | "deferred" | "rejected" | "done";
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxPage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-inbox-item": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateInboxInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-inbox-item": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-inbox-status": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Set-inbox-statusRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxItem"];
                 };
             };
             /** @description Error */

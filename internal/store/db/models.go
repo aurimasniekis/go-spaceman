@@ -91,6 +91,32 @@ type IdempotencyKey struct {
 	ExpiresAt   int64
 }
 
+type InboxItem struct {
+	ID             string
+	SpaceID        string
+	SourceKind     string
+	SourceID       string
+	SourceLabel    string
+	Title          string
+	ContentType    string
+	Body           string
+	PayloadRef     string
+	CorrelationID  string
+	DedupKey       string
+	TrustedJson    string
+	SubscriptionID string
+	Urgency        string
+	Status         string
+	StatusReason   string
+	DeferUntil     sql.NullInt64
+	LinkedKind     string
+	LinkedID       string
+	ReceivedAt     int64
+	CreatedBy      string
+	UpdatedAt      int64
+	Version        int64
+}
+
 type KeyringKey struct {
 	ID        string
 	Purpose   string

@@ -67,10 +67,10 @@
 | SM-RUN-001 | M1-06 | partial | `internal/runner/hc` `TestClientFramingAttachCreditResizeClose`, `TestClientCreditsAndInput`, `TestEventDecoding` | `hc_real_test.go` (`-tags real`, hc 0.1.16, macOS, 2026-11-02): launch, observe attach, close info, events, remove | Interrupt/send exercised with harnesses (M1-07). |
 | SM-RUN-002 | M1-06 | implemented | status comes only from hc `status`/`turn` fields (`runner.Status`) | OSC 7501 status verified live for Claude Code (contracts/herdr-core.md) |  |
 | SM-RUN-003 | | todo | | | |
-| SM-INBOX-001 | | todo | | | |
-| SM-INBOX-002 | | todo | | | |
-| SM-INBOX-003 | | todo | | | |
-| SM-INBOX-004 | | todo | | | |
+| SM-INBOX-001 | M2-02 | partial | `internal/inbox` `TestCreateAndGet`, `TestValidation`; `TestInboxOverHTTP` (operator text and JSON) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02): operator item written in the composer | Source kinds for workers, human responses, dreamer, KB, cross-space and events exist in the schema; their producers arrive with M2-03…M3. |
+| SM-INBOX-002 | M2-02 | implemented | `TestCreateAndGet`, `TestDedup`, `TestListPagesAndCounts`: source identity, content type, body or payload reference, correlation and dedup keys, received time, trusted metadata, urgency, status, subscription provenance |  |  |
+| SM-INBOX-003 | M2-02 | partial | `TestStatus` (defer with time, reject with reason, done with association, optimistic version, audited) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02): mark done | Control-side actions (reply, create human actions, planner, tasks) through MCP arrive with M2-06/M2-07. |
+| SM-INBOX-004 | M2-02 | implemented | Trusted metadata is set only by the authenticated caller (`TestCreateAndGet`); bodies are rendered through the sanitizer (`web` `markdown.test.ts`) |  | Event authority from subscription configuration lands with M2-03/M2-04. |
 | SM-EVT-001 | | todo | | | |
 | SM-EVT-002 | | todo | | | |
 | SM-EVT-003 | | todo | | | |
@@ -180,7 +180,7 @@
 | SM-UI-002 | M1-11 | partial | typecheck against the generated OpenAPI types (`make api-check`) | `web/e2e/smoke.spec.ts` via `make e2e` (real central with the embedded UI + real spaceman-agent + hc 0.1.16 isolated core, stub harness, Chromium, macOS, 2026-11-02): setup, sign-in + TOTP enrollment, nodes, spaces, space overview, run terminal, audit | Implemented areas: bootstrap/sign-in, spaces/nodes, space overview, runs, users, tokens, audit, account. Inbox, queue, human actions, agents/roles, prompts, MCP, KB, settings land with their milestones. |
 | SM-UI-003 | | todo | | | |
 | SM-UI-004 | M1-09, M1-11 | partial | watch-only terminal stream API with `terminal:watch` and re-validation (`TestRecordingShippedReplayedAndStreamed`); UI terminal has `disableStdin` | `web/e2e/smoke.spec.ts` via `make e2e` (real central with the embedded UI + real spaceman-agent + hc 0.1.16 isolated core, stub harness, Chromium, macOS, 2026-11-02): live watch-only terminal shows harness output | Takeover (`terminal:takeover`) pending. Operator input goes only through `send-input`. |
-| SM-UI-005 | | todo | | | |
+| SM-UI-005 | M2-02 | implemented | Task entry is the inbox "New item"; untrusted bodies rendered sanitized (`markdown.test.ts`), marked "untrusted content" | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02) |  |
 | SM-UI-006 | M1-11 | partial | change feed → query invalidation (`applyChange`); lease grants recorded as space changes (`TestFleetLifecycle`) | `web/e2e/smoke.spec.ts` via `make e2e` (real central with the embedded UI + real spaceman-agent + hc 0.1.16 isolated core, stub harness, Chromium, macOS, 2026-11-02): live updates (node connects, lease, run state) without reload | Visible focus ring, labelled controls, filled-control contrast per scheme. Keyboard queue sorting and an axe audit land with the queue UI (M2). |
 | SM-REC-001 | | todo | | | |
 | SM-REC-002 | M1-09 | implemented | `internal/recording` `TestWriteReadResume`; agent observe-attach recorder | `test/real` `TestRealNodeEndToEnd` (real spaceman + spaceman-agent + hc 0.1.16, stub harness, macOS, 2026-11-02): recording contains harness output |  |
@@ -215,13 +215,13 @@
 | SM-PKG-002 | | todo | | | |
 | SM-PKG-003 | | todo | | | |
 | SM-SEC-001 | | todo | | | |
-| SM-ATT-001 | | todo | | | |
+| SM-ATT-001 | M2-02 | partial | Inbox items: Markdown body + attachment references (`TestCreateAndGet`, `TestInboxOverHTTP`) |  | Tasks, human actions, comments and messages arrive with their features. |
 | SM-ATT-002 | M2-01 | partial | `internal/attachments` `TestUploadSniffDedupAndScope`, `TestLimits` (size limit, per-space quota, sniffed type, sha256, uploader, space); `TestAttachmentsOverHTTP` (multipart, idempotent) |  | Paste/drop UI with the composer (M2-01 UI). |
-| SM-ATT-003 | | todo | | | |
+| SM-ATT-003 | M2-01 | implemented | `web/src/components/composer` (TipTap 3.32.0 MIT: StarterKit, Markdown, Image, task lists, tables, file handler) serializes to Markdown; `lib/markdown.ts` renders via marked + DOMPurify (`markdown.test.ts`: scripts, handlers, styles, remote images removed) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02): bold text, inline image and file link round-trip through the composer to the rendered item |  |
 | SM-ATT-004 | M2-01 | implemented | `TestAttachmentsOverHTTP`: raster images inline, SVG/HTML downloaded as `application/octet-stream`, `nosniff`, `sandbox` CSP, space-scoped authorization (viewer read, no upload; other space 404) |  |  |
-| SM-ATT-005 | | todo | | | |
+| SM-ATT-005 | M2-01 | partial | Bodies carry `spaceman://attachment/<id>` (`referenceAttachments`, `TestCreateAndGet`) |  | MCP `attachments.get` and materialization into the run folder arrive with the MCP tools (M2-06). |
 | SM-ATT-006 | M2-01 | partial | `TestReferencesAndGC` (unreferenced uploads and orphaned content collected); attachment rows cascade with space purge |  | Backup, retention and export with M4. |
-| SM-ATT-007 | | todo | | | |
+| SM-ATT-007 | M1-11, M2-02 | partial | All UI forms use TanStack Form (sign-in, setup, spaces, runs, nodes, users, tokens, inbox) | `make e2e` (real central + agent + hc 0.1.16, Chromium, macOS, 2026-11-02) | Schema-driven human-action forms arrive with M2-07/M3. |
 | SM-VER-001 | | todo | | | |
 | SM-VER-002 | | todo | | | |
 | SM-VER-003 | | todo | | | |

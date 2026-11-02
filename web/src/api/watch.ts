@@ -32,6 +32,12 @@ export function applyChange(qc: QueryClient, c: Change) {
       void qc.invalidateQueries({ queryKey: keys.nodes })
       void qc.invalidateQueries({ queryKey: keys.node(c.resource_id) })
       break
+    case 'inbox_item':
+      if (c.space_id) {
+        void qc.invalidateQueries({ queryKey: keys.inbox(c.space_id) })
+        void qc.invalidateQueries({ queryKey: keys.inboxItem(c.space_id, c.resource_id) })
+      }
+      break
     case 'user':
       void qc.invalidateQueries({ queryKey: keys.users })
       break

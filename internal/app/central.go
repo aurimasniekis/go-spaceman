@@ -27,6 +27,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/health"
@@ -51,6 +52,8 @@ type Central struct {
 	Fleet   *fleet.Service
 	// Attachments stores uploaded files (SM-ATT-*).
 	Attachments *attachments.Service
+	// Inbox holds each space's incoming items (SM-INBOX-*).
+	Inbox *inbox.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -104,6 +107,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Attachments = attachments.New(st, attachments.NewLocal(artifactDir), c.Audit, attachments.Options{MaxBytes: cfg.HTTP.MaxUploadBytes,
 		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock})
+	c.Inbox = inbox.New(st, c.Audit, c.Changes, c.Attachments)
 	c.Health = health.New(health.Options{ExposeDetails: !cfg.IsProduction()})
 	c.Health.MustRegister(
 		health.StoreHealth("store", st.Health()),
@@ -148,8 +152,9 @@ func (c *Central) APIDeps() *api.Deps {
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
-		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments)},
-		Raw:   append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
+		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
+			api.RegisterInbox(c.Inbox)},
+		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
 }
@@ -256,13 +261,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
-		api.RegisterAttachments(nil)}}
+		api.RegisterAttachments(nil), api.RegisterInbox(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules} {
 		for k, v := range m {
 			out[k] = v
 		}

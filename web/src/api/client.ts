@@ -21,6 +21,8 @@ export type Run = Schemas['FleetRun']
 export type LaunchInput = Schemas['FleetLaunchInput']
 export type RecordingRecord = Schemas['RecordingRecord']
 export type AuditRecord = Schemas['AuditRecord']
+export type InboxItem = Schemas['InboxItem']
+export type Attachment = Schemas['AttachmentsAttachment']
 
 /** Problem details (RFC 9457) with SpaceMan's stable `code`. */
 export interface Problem {

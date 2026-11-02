@@ -22,7 +22,9 @@
 | `auth-tokens` | Sign-in and access | API tokens | current |
 | `audit-log` | Sign-in and access | Audit log | current |
 | `queue-incident` | Inbox/queue/incidents (M2) | Execution queue with a demoted incident | todo |
-| `inbox-composer` | Inbox (M2) | TipTap composer with attachment | todo |
+| `inbox-list` | The inbox | Space inbox with status filter and counts | current |
+| `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
+| `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |
 | `human-global` | Global human handling (M2) | Global human actions page | todo |
 | `human-space` | Human actions (M2) | Per-space human queue | todo |
 | `human-form-default` | Human actions (M2) | Question / approval form | todo |

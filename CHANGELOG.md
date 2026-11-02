@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Terminal recording into zstd segments, shipped to central, with a live watch-only stream, replay and download.
 - Web UI (Mantine, Night Owl and Light Owl themes): setup, sign-in, overview, spaces, runs with live and replayed
   terminals, nodes, users, API tokens, audit log and account pages.
+- Attachments: files uploaded to a space with sniffed types, size and quota limits, safe serving and garbage collection.
+- Inbox per space: operator items in Markdown or JSON with attachments, urgency, statuses (in progress, deferred, rejected,
+  done), deduplication by source key, and a TipTap editor that accepts pasted, dropped or attached images and files.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

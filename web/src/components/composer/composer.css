@@ -1,0 +1,95 @@
+.sm-composer {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-body);
+}
+
+.sm-composer:focus-within {
+  border-color: var(--mantine-primary-color-filled);
+}
+
+.sm-composer-toolbar {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.sm-composer-content {
+  padding: 8px 12px;
+  outline: none;
+  min-height: inherit;
+  font-size: var(--mantine-font-size-md);
+}
+
+.sm-composer-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--mantine-color-dimmed);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.sm-composer-content img,
+.sm-markdown img {
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: 4px;
+  border: 1px solid var(--mantine-color-default-border);
+}
+
+.sm-composer-content img.ProseMirror-selectednode {
+  outline: 2px solid var(--mantine-primary-color-filled);
+}
+
+.sm-composer-content ul[data-type='taskList'],
+.sm-markdown ul:has(> li > input[type='checkbox']) {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.sm-composer-content ul[data-type='taskList'] li {
+  display: flex;
+  gap: 6px;
+}
+
+.sm-composer-content table,
+.sm-markdown table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.sm-composer-content th,
+.sm-composer-content td,
+.sm-markdown th,
+.sm-markdown td {
+  border: 1px solid var(--mantine-color-default-border);
+  padding: 4px 8px;
+  min-width: 60px;
+}
+
+.sm-composer-content pre,
+.sm-markdown pre {
+  background: var(--sm-surface);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: var(--sm-mono);
+  font-size: var(--mantine-font-size-sm);
+  overflow-x: auto;
+}
+
+.sm-composer-content code,
+.sm-markdown code {
+  font-family: var(--sm-mono);
+  font-size: 0.92em;
+}
+
+.sm-composer-content blockquote,
+.sm-markdown blockquote {
+  border-left: 3px solid var(--mantine-color-default-border);
+  margin: 6px 0;
+  padding-left: 10px;
+  color: var(--mantine-color-dimmed);
+}
+
+.sm-composer-content a,
+.sm-markdown a {
+  color: var(--mantine-primary-color-filled);
+}

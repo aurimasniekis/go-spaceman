@@ -58,6 +58,7 @@ export default withMermaid(
             { text: 'Concepts', link: '/guide/concepts' },
             { text: 'Try it locally', link: '/guide/try-locally' },
             { text: 'First node and space', link: '/guide/first-space' },
+            { text: 'The inbox', link: '/guide/inbox' },
             { text: 'Project status', link: '/guide/status' },
           ],
         },

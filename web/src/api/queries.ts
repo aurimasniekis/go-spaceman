@@ -1,4 +1,4 @@
-import { keepPreviousData, queryOptions, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, queryOptions, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api, unwrap } from './client'
 import { setSession } from './session'
 
@@ -18,6 +18,8 @@ export const keys = {
   sessions: ['sessions'] as const,
   audit: (f: AuditFilter) => ['audit', f] as const,
   rootToken: ['root-token'] as const,
+  inbox: (space: string) => ['inbox', space] as const,
+  inboxItem: (space: string, id: string) => ['inbox-item', space, id] as const,
 }
 
 export interface AuditFilter {
@@ -99,4 +101,21 @@ export const useAudit = (f: AuditFilter) =>
         }),
       ),
     placeholderData: keepPreviousData,
+  })
+
+export type InboxStatus = 'new' | 'in_progress' | 'deferred' | 'rejected' | 'done'
+
+export const useInbox = (space: string, status: InboxStatus | '') =>
+  useInfiniteQuery({
+    queryKey: [...keys.inbox(space), status],
+    initialPageParam: '',
+    queryFn: async ({ pageParam }) =>
+      unwrap(await api.GET('/spaces/{space_id}/inbox', { params: { path: { space_id: space }, query: { status: status || undefined, cursor: pageParam || undefined, limit: 50 } } })),
+    getNextPageParam: (last) => last.next_cursor || undefined,
+  })
+
+export const useInboxItem = (space: string, id: string) =>
+  useQuery({
+    queryKey: keys.inboxItem(space, id),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/inbox/{item_id}', { params: { path: { space_id: space, item_id: id } } })),
   })

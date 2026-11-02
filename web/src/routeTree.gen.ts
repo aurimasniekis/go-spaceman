@@ -23,6 +23,9 @@ import { Route as UsersRouteImport } from './routes/users'
 import { Route as SpacesIndexRouteImport } from './routes/spaces.index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces.$spaceId'
 import { Route as SpacesSpaceIdIndexRouteImport } from './routes/spaces.$spaceId.index'
+import { Route as SpacesSpaceIdInboxRouteImport } from './routes/spaces.$spaceId.inbox'
+import { Route as SpacesSpaceIdInboxIndexRouteImport } from './routes/spaces.$spaceId.inbox.index'
+import { Route as SpacesSpaceIdInboxItemIdRouteImport } from './routes/spaces.$spaceId.inbox.$itemId'
 import { Route as SpacesSpaceIdRunsRunIdRouteImport } from './routes/spaces.$spaceId.runs.$runId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -95,6 +98,22 @@ const SpacesSpaceIdIndexRoute = SpacesSpaceIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdInboxRoute = SpacesSpaceIdInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
+const SpacesSpaceIdInboxIndexRoute = SpacesSpaceIdInboxIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SpacesSpaceIdInboxRoute,
+} as any)
+const SpacesSpaceIdInboxItemIdRoute =
+  SpacesSpaceIdInboxItemIdRouteImport.update({
+    id: '/$itemId',
+    path: '/$itemId',
+    getParentRoute: () => SpacesSpaceIdInboxRoute,
+  } as any)
 const SpacesSpaceIdRunsRunIdRoute = SpacesSpaceIdRunsRunIdRouteImport.update({
   id: '/runs/$runId',
   path: '/runs/$runId',
@@ -115,8 +134,11 @@ export interface FileRoutesByFullPath {
   '/users': typeof UsersRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
   '/spaces/': typeof SpacesIndexRoute
+  '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
+  '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
   '/spaces/$spaceId/runs/$runId': typeof SpacesSpaceIdRunsRunIdRoute
+  '/spaces/$spaceId/inbox/': typeof SpacesSpaceIdInboxIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -131,7 +153,9 @@ export interface FileRoutesByTo {
   '/users': typeof UsersRoute
   '/spaces': typeof SpacesIndexRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdIndexRoute
+  '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
   '/spaces/$spaceId/runs/$runId': typeof SpacesSpaceIdRunsRunIdRoute
+  '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -148,8 +172,11 @@ export interface FileRoutesById {
   '/users': typeof UsersRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRouteWithChildren
   '/spaces/': typeof SpacesIndexRoute
+  '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
+  '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
   '/spaces/$spaceId/runs/$runId': typeof SpacesSpaceIdRunsRunIdRoute
+  '/spaces/$spaceId/inbox/': typeof SpacesSpaceIdInboxIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -167,8 +194,11 @@ export interface FileRouteTypes {
     | '/users'
     | '/spaces/$spaceId'
     | '/spaces/'
+    | '/spaces/$spaceId/inbox'
     | '/spaces/$spaceId/'
+    | '/spaces/$spaceId/inbox/$itemId'
     | '/spaces/$spaceId/runs/$runId'
+    | '/spaces/$spaceId/inbox/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -183,7 +213,9 @@ export interface FileRouteTypes {
     | '/users'
     | '/spaces'
     | '/spaces/$spaceId'
+    | '/spaces/$spaceId/inbox/$itemId'
     | '/spaces/$spaceId/runs/$runId'
+    | '/spaces/$spaceId/inbox'
   id:
     | '__root__'
     | '/'
@@ -199,8 +231,11 @@ export interface FileRouteTypes {
     | '/users'
     | '/spaces/$spaceId'
     | '/spaces/'
+    | '/spaces/$spaceId/inbox'
     | '/spaces/$spaceId/'
+    | '/spaces/$spaceId/inbox/$itemId'
     | '/spaces/$spaceId/runs/$runId'
+    | '/spaces/$spaceId/inbox/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -317,6 +352,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdIndexRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/inbox': {
+      id: '/spaces/$spaceId/inbox'
+      path: '/inbox'
+      fullPath: '/spaces/$spaceId/inbox'
+      preLoaderRoute: typeof SpacesSpaceIdInboxRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
+    '/spaces/$spaceId/inbox/': {
+      id: '/spaces/$spaceId/inbox/'
+      path: '/'
+      fullPath: '/spaces/$spaceId/inbox/'
+      preLoaderRoute: typeof SpacesSpaceIdInboxIndexRouteImport
+      parentRoute: typeof SpacesSpaceIdInboxRoute
+    }
+    '/spaces/$spaceId/inbox/$itemId': {
+      id: '/spaces/$spaceId/inbox/$itemId'
+      path: '/$itemId'
+      fullPath: '/spaces/$spaceId/inbox/$itemId'
+      preLoaderRoute: typeof SpacesSpaceIdInboxItemIdRouteImport
+      parentRoute: typeof SpacesSpaceIdInboxRoute
+    }
     '/spaces/$spaceId/runs/$runId': {
       id: '/spaces/$spaceId/runs/$runId'
       path: '/runs/$runId'
@@ -327,12 +383,27 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface SpacesSpaceIdInboxRouteChildren {
+  SpacesSpaceIdInboxItemIdRoute: typeof SpacesSpaceIdInboxItemIdRoute
+  SpacesSpaceIdInboxIndexRoute: typeof SpacesSpaceIdInboxIndexRoute
+}
+
+const SpacesSpaceIdInboxRouteChildren: SpacesSpaceIdInboxRouteChildren = {
+  SpacesSpaceIdInboxItemIdRoute: SpacesSpaceIdInboxItemIdRoute,
+  SpacesSpaceIdInboxIndexRoute: SpacesSpaceIdInboxIndexRoute,
+}
+
+const SpacesSpaceIdInboxRouteWithChildren =
+  SpacesSpaceIdInboxRoute._addFileChildren(SpacesSpaceIdInboxRouteChildren)
+
 interface SpacesSpaceIdRouteChildren {
+  SpacesSpaceIdInboxRoute: typeof SpacesSpaceIdInboxRouteWithChildren
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
 }
 
 const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
+  SpacesSpaceIdInboxRoute: SpacesSpaceIdInboxRouteWithChildren,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,
 }
