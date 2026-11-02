@@ -191,6 +191,10 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	// Harnesses key per-directory state by the real path (macOS: /tmp is /private/tmp).
+	if real, err := filepath.EvalSymlinks(work); err == nil {
+		work = real
+	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
 		WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p})
 	if err != nil {
@@ -200,6 +204,12 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	for path, content := range built.Files {
 		if err := os.WriteFile(path, content, 0o600); err != nil {
 			fail("write harness files", err)
+			return
+		}
+	}
+	for path, patch := range built.MergeJSON {
+		if err := MergeJSONFile(path, patch); err != nil {
+			fail("write harness state", err)
 			return
 		}
 	}

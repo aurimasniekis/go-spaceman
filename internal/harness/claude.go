@@ -80,9 +80,17 @@ func (Claude) Build(c Context) (Launch, error) {
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
 	return Launch{
-		Argv:      argv,
-		Env:       env,
-		Files:     map[string][]byte{mcpPath: mcp},
+		Argv:  argv,
+		Env:   env,
+		Files: map[string][]byte{mcpPath: mcp},
+		// A fresh CLAUDE_CONFIG_DIR stops at the first-run theme picker and then at the folder-trust prompt, which would
+		// leave an unattended run waiting forever. SpaceMan provisions the run's working directory, so it marks first-run
+		// as done and trusts exactly that directory, nothing else (ADR-0021, verified with Claude Code 2.1.316).
+		MergeJSON: map[string]map[string]any{filepath.Join(cfg, ".claude.json"): {
+			"hasCompletedOnboarding": true,
+			"theme":                  "dark",
+			"projects":               map[string]any{c.WorkDir: map[string]any{"hasTrustDialogAccepted": true}},
+		}},
 		SecretEnv: secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
 		SessionID: session,
 	}, nil

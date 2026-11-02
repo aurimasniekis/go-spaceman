@@ -47,6 +47,13 @@ func TestClaudeBuild(t *testing.T) {
 	if err := json.Unmarshal(l.Files["/data/runs/run_1/mcp.json"], &mcp); err != nil || mcp["mcpServers"]["spaceman"]["command"] != "/opt/spaceman/spaceman-agent" {
 		t.Fatalf("mcp config %s", l.Files["/data/runs/run_1/mcp.json"])
 	}
+	// First-run state is seeded and exactly the run's working directory is trusted (ADR-0021).
+	seed := l.MergeJSON["/data/spaces/spc_a/instances/ins_1/claude/.claude.json"]
+	projects, _ := seed["projects"].(map[string]any)
+	if len(l.MergeJSON) != 1 || seed["hasCompletedOnboarding"] != true || len(projects) != 1 ||
+		projects["/data/spaces/spc_a/work"].(map[string]any)["hasTrustDialogAccepted"] != true {
+		t.Fatalf("claude state %v", l.MergeJSON)
+	}
 	// Resume uses the given session.
 	l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{SessionID: "0b5e3c1e-1111-4222-8333-444455556666", Resume: true}))
 	if err != nil || !slices.Contains(l.Argv, "--resume") || slices.Contains(l.Argv, "--session-id") {

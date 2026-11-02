@@ -272,6 +272,25 @@
   - The terminal is watch-only (`disableStdin`): keystrokes in the page are never sent to the run. Operator input goes through the separate,
     permission-checked `send-input` operation.
 
+### ADR-0021 — Claude first-run state and folder trust are seeded for the run's directory only
+- **Status:** accepted (2026-11-02). **Security-relevant**: SpaceMan answers Claude Code's folder-trust prompt.
+- **Context:**
+  - Each space and instance has its own `CLAUDE_CONFIG_DIR` (ADR-0008). A fresh one stops at the first-run theme picker and
+    then at "Is this a project you trust?" (spike S-5). An unattended run would wait forever.
+  - The run's working directory is created and owned by SpaceMan inside the space folder; operators chose to run an agent
+    there when they launched the run.
+- **Decision:**
+  - Before a launch, the node agent merges into `$CLAUDE_CONFIG_DIR/.claude.json`: `hasCompletedOnboarding: true`, a
+    theme, and `hasTrustDialogAccepted: true` for exactly the run's working directory (symlinks resolved). Nothing else in
+    the file is changed, and no other directory is trusted.
+  - The launcher shim removes inherited Claude Code and Codex session markers and node-level provider credentials
+    (`ANTHROPIC_*`, `CLAUDE_CODE_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`) before applying the run's
+    own secrets, so a run uses only its SpaceMan account (SM-ACCT-004).
+- **Consequences:**
+  - Trusting the directory lets Claude Code read project settings and hooks committed in that repository. That is the
+    same trust an operator gives by launching an agent there; the permission mode still governs tool use.
+  - Keys are taken from observed 2.1.316 behaviour, not a documented API; a harness upgrade is re-verified by the real suite.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -286,4 +305,4 @@
 | K-8 | llm-knowledge-base-template layout and licence; Piebald dream prompts licence. | KB, dreamer | Fetch and record; attribute or paraphrase per licence. |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |
 | K-11 | Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26). SpaceMan grants have no SSO source yet (OIDC lands in M4-01). | SM-AUTH-002 | When OIDC lands, store SSO grants under the subject `user:<id>#sso`, add that subject only for SSO sessions, and port the SR-26 test. |
-| K-10 | Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode. | SM-ACCT-002 | Verify in a real opt-in run. |
+| K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |

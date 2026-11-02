@@ -64,6 +64,9 @@ type Launch struct {
 	Env  map[string]string // non-secret
 	// Files are written (0600) before the launch; keys are absolute paths.
 	Files map[string][]byte
+	// MergeJSON patches JSON object files the harness itself also writes (keys are absolute paths): objects are merged
+	// recursively and other values are set, everything else in the file is kept. A missing file is created (0600).
+	MergeJSON map[string]map[string]any
 	// SecretEnv is passed to the launcher shim only.
 	SecretEnv map[string]string
 	// SessionID is the conversation ID when the harness lets SpaceMan choose it.
