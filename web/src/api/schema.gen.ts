@@ -927,6 +927,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The skill catalog */
+        get: operations["list-skills"];
+        put?: never;
+        /**
+         * Add a skill (with a first draft)
+         * @description Files are text; SKILL.md needs frontmatter naming the skill. Skills give guidance, never permission, and nothing in them runs at install time.
+         */
+        post: operations["create-skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/skills/{skill_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A skill with its versions and files */
+        get: operations["get-skill"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/skills/{skill_id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Create or update the skill's draft
+         * @description Without If-Match a new draft is started; with it, the draft at that version is updated.
+         */
+        put: operations["save-skill-draft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/skills/{skill_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish the draft as the next immutable version */
+        post: operations["publish-skill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces": {
         parameters: {
             query?: never;
@@ -2449,6 +2524,15 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        CatalogResolvedSkill: {
+            /** Format: int64 */
+            number: number;
+            origin: string;
+            pinned: boolean;
+            sha256: string;
+            slug: string;
+            version_id: string;
+        };
         CatalogRoleTemplate: {
             /**
              * Format: uri
@@ -2471,9 +2555,55 @@ export interface components {
             settings: {
                 [key: string]: string;
             };
+            skills: components["schemas"]["CatalogSkillRef"][];
             slug: string;
             /** Format: date-time */
             updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        CatalogSkill: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/CatalogSkill.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            description?: string;
+            id: string;
+            /** Format: int64 */
+            latest: number;
+            name: string;
+            slug: string;
+            /** @enum {string} */
+            source: "custom" | "builtin";
+            /** @description Where a built-in skill comes from */
+            source_ref?: string;
+            versions?: components["schemas"]["CatalogSkillVersion"][];
+        };
+        CatalogSkillRef: {
+            /** @description A published version ID; empty follows the latest */
+            pin?: string;
+            skill_id: string;
+        };
+        CatalogSkillVersion: {
+            /** @description Relative path → text; SKILL.md is required */
+            files: {
+                [key: string]: string;
+            };
+            id: string;
+            notes?: string;
+            /** Format: int64 */
+            number: number;
+            /** Format: date-time */
+            published_at?: string;
+            published_by?: string;
+            sha256: string;
+            skill_id: string;
+            /** @enum {string} */
+            state: "draft" | "published";
             /** Format: int64 */
             version: number;
         };
@@ -2496,6 +2626,8 @@ export interface components {
             settings: {
                 [key: string]: string;
             };
+            /** @description Added to the template's skills; a pin here wins */
+            skills: components["schemas"]["CatalogSkillRef"][];
             space_id: string;
             template_id: string;
             /** Format: date-time */
@@ -2609,6 +2741,20 @@ export interface components {
             description?: string;
             /** @enum {string} */
             kind: "role" | "dream" | "kb" | "event" | "general";
+            name: string;
+            slug: string;
+        };
+        "Create-skillRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Create-skillRequest.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            files: {
+                [key: string]: string;
+            };
             name: string;
             slug: string;
         };
@@ -3527,6 +3673,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["AuthSessionInfo"][];
         };
+        "List-skillsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-skillsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["CatalogSkill"][];
+        };
         "List-space-human-typesResponse": {
             /**
              * Format: uri
@@ -3718,6 +3873,7 @@ export interface components {
             settings: {
                 [key: string]: string;
             };
+            skills: components["schemas"]["CatalogResolvedSkill"][];
             system_text: string;
         };
         PreviewInput: {
@@ -4126,6 +4282,7 @@ export interface components {
             readonly $schema?: string;
             profiles: components["schemas"]["RoleOption"][];
             prompts: components["schemas"]["RoleOption"][];
+            skills: components["schemas"]["RoleOption"][];
             templates: components["schemas"]["RoleOption"][];
         };
         "Rollback-promptRequest": {
@@ -4156,6 +4313,18 @@ export interface components {
             body: string;
             /** @description A published version of another prompt to build on */
             extends?: string;
+            notes?: string;
+        };
+        "Save-skill-draftRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Save-skill-draftRequest.json
+             */
+            readonly $schema?: string;
+            files: {
+                [key: string]: string;
+            };
             notes?: string;
         };
         "Save-template-draftRequest": {
@@ -4294,6 +4463,8 @@ export interface components {
             settings?: {
                 [key: string]: string;
             };
+            /** @description Added to the template's skills; a pin here wins */
+            skills?: components["schemas"]["CatalogSkillRef"][];
             template_id: string;
         };
         "Stop-runRequest": {
@@ -4432,6 +4603,7 @@ export interface components {
             settings?: {
                 [key: string]: string;
             };
+            skills?: components["schemas"]["CatalogSkillRef"][];
             slug?: string;
         };
         TemplateVariable: {
@@ -6450,6 +6622,171 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CatalogRoleTemplate"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-skillsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Create-skillRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSkill"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSkill"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "save-skill-draft": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Save-skill-draftRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSkill"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "publish-skill": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSkill"];
                 };
             };
             /** @description Error */

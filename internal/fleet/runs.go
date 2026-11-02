@@ -99,7 +99,9 @@ type LaunchInput struct {
 	Settings   map[string]string `json:"settings,omitempty"`
 	Workspace  string            `json:"workspace,omitempty" maxLength:"256"`
 	Worktree   *proto.Worktree   `json:"worktree,omitempty" doc:"Run in a git worktree of a repository inside the space folder"`
-	AccountRef string            `json:"account_ref,omitempty"`
+	// Skills are filled by resolution from the space role (not part of the API).
+	Skills     []proto.Skill `json:"-"`
+	AccountRef string        `json:"account_ref,omitempty"`
 }
 
 // LaunchRun creates a run pinned to the space's node and current lease generation and queues the launch command.
@@ -199,7 +201,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: in.SessionID,
 			Resume: in.SessionID != "", Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
-			Worktree: in.Worktree, AccountRef: in.AccountRef}
+			Worktree: in.Worktree, Skills: in.Skills, AccountRef: in.AccountRef}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
 		}

@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Code, Drawer, Group, Modal, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
+import { Badge, Button, Card, Code, Drawer, Group, Modal, MultiSelect, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -76,6 +76,9 @@ function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
         </Table.Tbody>
       </Table>
       {p.prompt && <Text size="sm">Prompt <b>{p.prompt.slug}</b> v{p.prompt.number} ({p.prompt.pinned ? 'pinned' : 'follows the latest'})</Text>}
+      {p.skills.length > 0 && (
+        <Text size="sm">Skills: {p.skills.map((sk) => `${sk.slug} v${sk.number}${sk.pinned ? ' (pinned)' : ''}`).join(', ')}</Text>
+      )}
       <Text size="sm" fw={600}>System text</Text>
       <Code block className="mono" tabIndex={0} aria-label="System text" style={{ whiteSpace: 'pre-wrap' }}>{p.system_text}</Code>
     </Stack>
@@ -86,14 +89,14 @@ function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRo
   const qc = useQueryClient()
   const options = useRoleOptions(spaceId)
   const [v, setV] = useState({ name: role?.name ?? '', template_id: role?.template_id ?? '', profile_id: role?.profile_id ?? '', prompt_id: role?.prompt_id ?? '',
-    prompt_pin: role?.prompt_pin ?? '', model: role?.model ?? '', instructions: role?.instructions ?? '', settings: role?.settings ?? {} })
+    prompt_pin: role?.prompt_pin ?? '', model: role?.model ?? '', instructions: role?.instructions ?? '', settings: role?.settings ?? {}, skills: role?.skills ?? [] })
   const [error, setError] = useState('')
   const versions = options.data?.prompts.find((p) => p.id === v.prompt_id)?.versions ?? []
   const save = async () => {
     try {
       unwrap(await api.PUT('/spaces/{space_id}/roles/{name}', { params: { path: { space_id: spaceId, name: v.name } },
         body: { template_id: v.template_id, profile_id: v.profile_id, prompt_id: v.prompt_id, prompt_pin: v.prompt_pin, model: v.model, settings: v.settings,
-          instructions: v.instructions } }))
+          instructions: v.instructions, skills: v.skills } }))
       void qc.invalidateQueries({ queryKey: keys.spaceRoles(spaceId) })
       onClose()
     } catch (e) {
@@ -130,6 +133,9 @@ function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRo
           <Select label="Version" allowDeselect={false} disabled={!v.prompt_id} value={v.prompt_pin || 'follow'} onChange={(x) => setV({ ...v, prompt_pin: x === 'follow' || !x ? '' : x })}
             data={[{ value: 'follow', label: 'Follow the latest' }, ...versions.map((x) => ({ value: x.id, label: `Pin v${x.number}` }))]} />
         </Group>
+        <MultiSelect label="Extra skills" description="Added to the template's skills" searchable value={v.skills.map((x) => x.skill_id)}
+          onChange={(ids) => setV({ ...v, skills: ids.map((id) => v.skills.find((x) => x.skill_id === id) ?? { skill_id: id }) })}
+          data={(options.data?.skills ?? []).filter((x) => (x.versions ?? []).length > 0).map((x) => ({ value: x.id, label: x.name }))} />
         <SettingsEditor value={v.settings} onChange={(settings) => setV({ ...v, settings })} />
         <Textarea label="Instructions for this role in this space" description="Appended after the role's prompt" autosize minRows={2} value={v.instructions}
           onChange={(e) => setV({ ...v, instructions: e.target.value })} />

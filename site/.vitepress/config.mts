@@ -72,6 +72,7 @@ export default withMermaid(
             { text: 'Messages', link: '/guide/messages' },
             { text: 'Control and workers', link: '/guide/control' },
             { text: 'Roles and prompts', link: '/guide/roles-and-prompts' },
+            { text: 'Skills', link: '/guide/skills' },
             { text: 'Events and subscriptions', link: '/guide/events' },
             { text: 'Project status', link: '/guide/status' },
           ],

@@ -55,8 +55,9 @@ UPDATE harness_profiles SET name = ?, model = ?, settings_json = ?, description 
 WHERE id = ? AND version = ?;
 
 -- name: InsertRoleTemplate :exec
-INSERT INTO role_templates (id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO role_templates (id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, skills_json, created_at,
+  created_by, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetRoleTemplate :one
 SELECT * FROM role_templates WHERE id = ?;
@@ -69,15 +70,17 @@ SELECT * FROM role_templates ORDER BY slug;
 
 -- name: UpdateRoleTemplate :execrows
 UPDATE role_templates SET name = ?, description = ?, profile_id = ?, prompt_id = ?, prompt_pin = ?, memory_conventions = ?, settings_json = ?,
-  revision = revision + 1, version = version + 1, updated_at = ?
+  skills_json = ?, revision = revision + 1, version = version + 1, updated_at = ?
 WHERE id = ? AND version = ?;
 
 -- name: UpsertSpaceRole :exec
-INSERT INTO space_roles (space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, created_at, created_by, updated_at)
+INSERT INTO space_roles (space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, skills_json, created_at,
+  created_by, updated_at)
 VALUES (sqlc.arg(space_id), sqlc.arg(name), sqlc.arg(template_id), sqlc.arg(profile_id), sqlc.arg(prompt_id), sqlc.arg(prompt_pin), sqlc.arg(model),
-  sqlc.arg(settings_json), sqlc.arg(instructions), sqlc.arg(now), sqlc.arg(by), sqlc.arg(now))
+  sqlc.arg(settings_json), sqlc.arg(instructions), sqlc.arg(skills_json), sqlc.arg(now), sqlc.arg(by), sqlc.arg(now))
 ON CONFLICT (space_id, name) DO UPDATE SET template_id = excluded.template_id, profile_id = excluded.profile_id, prompt_id = excluded.prompt_id,
   prompt_pin = excluded.prompt_pin, model = excluded.model, settings_json = excluded.settings_json, instructions = excluded.instructions,
+  skills_json = excluded.skills_json,
   revision = space_roles.revision + 1, version = space_roles.version + 1, updated_at = excluded.updated_at;
 
 -- name: GetSpaceRole :one

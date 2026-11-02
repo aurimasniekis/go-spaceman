@@ -221,6 +221,14 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	if built.SkillsRoot != "" {
+		if err := syncSkills(built.SkillsRoot, p.Skills); err != nil {
+			fail("write skills", err)
+			return
+		}
+	} else if len(p.Skills) > 0 {
+		log.Warn("this harness's skill loading is not verified; skills were not materialized", slog.Int("skills", len(p.Skills)))
+	}
 	a.rememberRunToken(c.RunID, p.RunToken)
 	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
 		fail("write secret file", err)

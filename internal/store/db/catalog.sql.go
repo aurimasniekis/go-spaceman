@@ -158,7 +158,7 @@ func (q *Queries) GetPromptVersion(ctx context.Context, id string) (PromptVersio
 }
 
 const getRoleTemplate = `-- name: GetRoleTemplate :one
-SELECT id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, revision, created_at, created_by, updated_at, version FROM role_templates WHERE id = ?
+SELECT id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, revision, created_at, created_by, updated_at, version, skills_json FROM role_templates WHERE id = ?
 `
 
 func (q *Queries) GetRoleTemplate(ctx context.Context, id string) (RoleTemplate, error) {
@@ -180,12 +180,13 @@ func (q *Queries) GetRoleTemplate(ctx context.Context, id string) (RoleTemplate,
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.SkillsJson,
 	)
 	return i, err
 }
 
 const getRoleTemplateBySlug = `-- name: GetRoleTemplateBySlug :one
-SELECT id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, revision, created_at, created_by, updated_at, version FROM role_templates WHERE slug = ?
+SELECT id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, revision, created_at, created_by, updated_at, version, skills_json FROM role_templates WHERE slug = ?
 `
 
 func (q *Queries) GetRoleTemplateBySlug(ctx context.Context, slug string) (RoleTemplate, error) {
@@ -207,12 +208,13 @@ func (q *Queries) GetRoleTemplateBySlug(ctx context.Context, slug string) (RoleT
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.SkillsJson,
 	)
 	return i, err
 }
 
 const getSpaceRole = `-- name: GetSpaceRole :one
-SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version FROM space_roles WHERE space_id = ? AND name = ?
+SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version, skills_json FROM space_roles WHERE space_id = ? AND name = ?
 `
 
 type GetSpaceRoleParams struct {
@@ -238,6 +240,7 @@ func (q *Queries) GetSpaceRole(ctx context.Context, arg GetSpaceRoleParams) (Spa
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.SkillsJson,
 	)
 	return i, err
 }
@@ -338,8 +341,9 @@ func (q *Queries) InsertPromptVersion(ctx context.Context, arg InsertPromptVersi
 }
 
 const insertRoleTemplate = `-- name: InsertRoleTemplate :exec
-INSERT INTO role_templates (id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO role_templates (id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, skills_json, created_at,
+  created_by, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertRoleTemplateParams struct {
@@ -353,6 +357,7 @@ type InsertRoleTemplateParams struct {
 	PromptPin         string
 	MemoryConventions string
 	SettingsJson      string
+	SkillsJson        string
 	CreatedAt         int64
 	CreatedBy         string
 	UpdatedAt         int64
@@ -370,6 +375,7 @@ func (q *Queries) InsertRoleTemplate(ctx context.Context, arg InsertRoleTemplate
 		arg.PromptPin,
 		arg.MemoryConventions,
 		arg.SettingsJson,
+		arg.SkillsJson,
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
@@ -522,7 +528,7 @@ func (q *Queries) ListPrompts(ctx context.Context) ([]Prompt, error) {
 }
 
 const listRoleTemplates = `-- name: ListRoleTemplates :many
-SELECT id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, revision, created_at, created_by, updated_at, version FROM role_templates ORDER BY slug
+SELECT id, slug, name, kind, description, profile_id, prompt_id, prompt_pin, memory_conventions, settings_json, revision, created_at, created_by, updated_at, version, skills_json FROM role_templates ORDER BY slug
 `
 
 func (q *Queries) ListRoleTemplates(ctx context.Context) ([]RoleTemplate, error) {
@@ -550,6 +556,7 @@ func (q *Queries) ListRoleTemplates(ctx context.Context) ([]RoleTemplate, error)
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.SkillsJson,
 		); err != nil {
 			return nil, err
 		}
@@ -565,7 +572,7 @@ func (q *Queries) ListRoleTemplates(ctx context.Context) ([]RoleTemplate, error)
 }
 
 const listSpaceRoles = `-- name: ListSpaceRoles :many
-SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version FROM space_roles WHERE space_id = ? ORDER BY name
+SELECT space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, revision, created_at, created_by, updated_at, version, skills_json FROM space_roles WHERE space_id = ? ORDER BY name
 `
 
 func (q *Queries) ListSpaceRoles(ctx context.Context, spaceID string) ([]SpaceRole, error) {
@@ -592,6 +599,7 @@ func (q *Queries) ListSpaceRoles(ctx context.Context, spaceID string) ([]SpaceRo
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.SkillsJson,
 		); err != nil {
 			return nil, err
 		}
@@ -721,7 +729,7 @@ func (q *Queries) UpdatePromptDraft(ctx context.Context, arg UpdatePromptDraftPa
 
 const updateRoleTemplate = `-- name: UpdateRoleTemplate :execrows
 UPDATE role_templates SET name = ?, description = ?, profile_id = ?, prompt_id = ?, prompt_pin = ?, memory_conventions = ?, settings_json = ?,
-  revision = revision + 1, version = version + 1, updated_at = ?
+  skills_json = ?, revision = revision + 1, version = version + 1, updated_at = ?
 WHERE id = ? AND version = ?
 `
 
@@ -733,6 +741,7 @@ type UpdateRoleTemplateParams struct {
 	PromptPin         string
 	MemoryConventions string
 	SettingsJson      string
+	SkillsJson        string
 	UpdatedAt         int64
 	ID                string
 	Version           int64
@@ -747,6 +756,7 @@ func (q *Queries) UpdateRoleTemplate(ctx context.Context, arg UpdateRoleTemplate
 		arg.PromptPin,
 		arg.MemoryConventions,
 		arg.SettingsJson,
+		arg.SkillsJson,
 		arg.UpdatedAt,
 		arg.ID,
 		arg.Version,
@@ -758,11 +768,13 @@ func (q *Queries) UpdateRoleTemplate(ctx context.Context, arg UpdateRoleTemplate
 }
 
 const upsertSpaceRole = `-- name: UpsertSpaceRole :exec
-INSERT INTO space_roles (space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, created_at, created_by, updated_at)
+INSERT INTO space_roles (space_id, name, template_id, profile_id, prompt_id, prompt_pin, model, settings_json, instructions, skills_json, created_at,
+  created_by, updated_at)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-  ?8, ?9, ?10, ?11, ?10)
+  ?8, ?9, ?10, ?11, ?12, ?11)
 ON CONFLICT (space_id, name) DO UPDATE SET template_id = excluded.template_id, profile_id = excluded.profile_id, prompt_id = excluded.prompt_id,
   prompt_pin = excluded.prompt_pin, model = excluded.model, settings_json = excluded.settings_json, instructions = excluded.instructions,
+  skills_json = excluded.skills_json,
   revision = space_roles.revision + 1, version = space_roles.version + 1, updated_at = excluded.updated_at
 `
 
@@ -776,6 +788,7 @@ type UpsertSpaceRoleParams struct {
 	Model        string
 	SettingsJson string
 	Instructions string
+	SkillsJson   string
 	Now          int64
 	By           string
 }
@@ -791,6 +804,7 @@ func (q *Queries) UpsertSpaceRole(ctx context.Context, arg UpsertSpaceRoleParams
 		arg.Model,
 		arg.SettingsJson,
 		arg.Instructions,
+		arg.SkillsJson,
 		arg.Now,
 		arg.By,
 	)

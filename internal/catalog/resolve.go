@@ -60,7 +60,9 @@ type Resolved struct {
 	SystemText string
 	Effective  map[string]Field
 	Prompt     *PromptRef
-	Manifest   map[string]any
+	// Skills are the skill versions the run gets (files included; the manifest records versions and hashes).
+	Skills   []ResolvedSkill
+	Manifest map[string]any
 }
 
 // permissionRank orders Claude Code permission modes by how much they allow without asking.
@@ -156,6 +158,12 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 		}
 		if tpl.MemoryConventions != "" {
 			sections = append(sections, "## Memory conventions\n\n"+tpl.MemoryConventions)
+		}
+		var skipped []string
+		r.Skills, skipped = resolveSkills(ctx, q, parseSkillRefs(tpl.SkillsJson), parseSkillRefs(role.SkillsJson))
+		manifest["skills"] = r.Skills
+		if len(skipped) > 0 {
+			manifest["skills_unavailable"] = skipped
 		}
 	}
 	// The launch layer: harness only when no profile chose one; model and settings override.

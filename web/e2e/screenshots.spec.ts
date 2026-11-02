@@ -143,8 +143,15 @@ test('documentation screenshots', async ({ page, browser }) => {
   const sonnet = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'claude-default', name: 'Claude Code (default model)', harness: 'claude-code', model: '',
     settings: { permission_mode: 'acceptEdits' }, description: 'Interactive Claude Code; edits accepted, commands asked.' })
   const codexProf = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'codex-default', name: 'Codex (default model)', harness: 'codex', model: '', settings: {} })
+  // Skills: the built-in HallPass skill and a custom runbook, both given to control.
+  type Sk = { id: string; slug: string; versions: { state: string; version: number }[] }
+  const hallpass = (await api.call<{ items: Sk[] }>('GET', '/skills')).items.find((x) => x.slug === 'hallpass')!
+  const runbook = await api.call<Sk>('POST', '/skills', { slug: 'refunds-runbook', name: 'Refunds runbook', description: 'How to investigate a stuck refund.',
+    files: { 'SKILL.md': '---\nname: refunds-runbook\ndescription: Use when a refund is stuck in pending or a customer reports a missing refund.\n---\n\n# Refunds runbook\n\n1. Find the refund in the settlement log by its idempotency key.\n2. Check the bank window before retrying; never retry inside it.\n3. Record what you found in memory/refunds.md.\n',
+      'references/queries.md': '# Useful queries\n\n- Pending refunds older than a day: `select id from refunds where state = \'pending\' and created_at < now() - interval \'1 day\'`\n' } })
+  await api.call('POST', `/skills/${runbook.id}/publish`, undefined, { 'If-Match': `"${runbook.versions.find((v) => v.state === 'draft')!.version}"` })
   const tControl = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'control', name: 'Control', kind: 'control', profile_id: sonnet.id, prompt_id: ctl.id,
-    memory_conventions: 'Keep decisions in memory/decisions.md with absolute dates.', settings: {} })
+    memory_conventions: 'Keep decisions in memory/decisions.md with absolute dates.', settings: {}, skills: [{ skill_id: hallpass.id }, { skill_id: runbook.id }] })
   const tReviewer = await api.call<{ id: string }>('PUT', '/role-templates/new', { slug: 'reviewer', name: 'Reviewer', kind: 'worker', profile_id: codexProf.id, prompt_id: rev.id, settings: {} })
   await api.call('PUT', `/spaces/${payments.id}/roles/control`, { template_id: tControl.id, instructions: 'Settlement services live in services/settlement.', settings: {} })
   await api.call('PUT', `/spaces/${payments.id}/roles/reviewer`, { template_id: tReviewer.id, settings: {} })
@@ -404,6 +411,15 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'roles', async () => {
     await page.goto('/roles')
     await expect(page.getByRole('cell', { name: /Reviewer/ }).first()).toBeVisible()
+  })
+  await capture(page, 'skills', async () => {
+    await page.goto('/skills')
+    await expect(page.getByText('Refunds runbook')).toBeVisible()
+  })
+  await capture(page, 'skill-detail', async () => {
+    await page.goto('/skills')
+    await page.getByText('HallPass gateway').click()
+    await expect(page.getByRole('tab', { name: 'references/commands.md' })).toBeVisible()
   })
   await capture(page, 'space-role-preview', async () => {
     await page.goto(`/spaces/${payments.id}`)

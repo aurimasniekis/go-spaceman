@@ -39,6 +39,7 @@ export const keys = {
   spaceRoles: (space: string) => ['space-roles', space] as const,
   roleOptions: (space: string) => ['role-options', space] as const,
   humanTypes: ['human-types'] as const,
+  skills: ['skills'] as const,
   spaceHumanTypes: (space: string) => ['space-human-types', space] as const,
 }
 
@@ -230,3 +231,5 @@ export const useRoleOptions = (space: string, enabled = true) =>
 export const useHumanTypes = (enabled = true) => useQuery({ queryKey: keys.humanTypes, enabled, queryFn: async () => unwrap(await api.GET('/human-types')).items })
 export const useSpaceHumanTypes = (space: string) =>
   useQuery({ queryKey: keys.spaceHumanTypes(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-types', { params: { path: { space_id: space } } })).items })
+
+export const useSkills = () => useQuery({ queryKey: keys.skills, queryFn: async () => unwrap(await api.GET('/skills')).items })

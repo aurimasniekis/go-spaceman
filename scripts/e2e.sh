@@ -8,7 +8,17 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 command -v hc >/dev/null || { echo "e2e needs herdr-core (hc) on PATH" >&2; exit 2; }
 dir=$("$root/scripts/dev-stack.sh" up | tail -1)
-trap '"$root/scripts/dev-stack.sh" down "$dir"' EXIT
+# On failure the stack's logs are kept in web/test-results/stack-logs (git-ignored) before the stack is removed.
+keep_logs() {
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    mkdir -p "$root/web/test-results/stack-logs"
+    cp "$dir"/*.log "$root/web/test-results/stack-logs/" 2>/dev/null || true
+    echo "stack logs kept in web/test-results/stack-logs" >&2
+  fi
+  "$root/scripts/dev-stack.sh" down "$dir"
+}
+trap keep_logs EXIT
 # shellcheck disable=SC1091
 source "$dir/env"
 cd "$root/web"

@@ -31,6 +31,8 @@ Claude Code's permission mode. A **role template** says what a role is: its run 
 
 Editing a profile or template creates a new **revision**; it applies to launches from then on.
 
+Templates can also give a role [skills](./skills): guidance files the harness loads.
+
 ## Space roles
 
 A space configures the roles it uses from these templates on its **Overview**. A space role can override the profile,

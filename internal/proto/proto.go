@@ -200,6 +200,14 @@ const (
 	CmdPrepare   = "space.prepare"
 )
 
+// Skill is one skill version's files (guidance only; never executed by SpaceMan).
+type Skill struct {
+	Name    string            `json:"name"`
+	Version int64             `json:"version"`
+	SHA256  string            `json:"sha256"`
+	Files   map[string]string `json:"files"`
+}
+
 // Worktree is a git worktree for one writer: Repo is a repository folder relative to the space folder, Branch the
 // branch to check out there (created from Base, default HEAD, when it does not exist). The node never resets,
 // deletes or force-updates anything (SM-REPO-006).
@@ -317,6 +325,8 @@ type LaunchPayload struct {
 	Workspace  string            `json:"workspace,omitempty"` // relative to the space folder
 	// Worktree asks the node to run in a git worktree of a repository in the space folder (SM-REPO-002).
 	Worktree *Worktree `json:"worktree,omitempty"`
+	// Skills are materialized into the harness's own skills folder when the harness supports it (SM-MCP-004).
+	Skills []Skill `json:"skills,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
 	AccountRef string `json:"account_ref,omitempty"`
 	// Secrets and RunToken are injected by central only into the message on the wire at dispatch time; they are

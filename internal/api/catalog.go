@@ -31,6 +31,11 @@ var CatalogRules = map[string]Rule{
 	"save-space-role":       InSpace(authz.SpaceConfigWrite),
 	"delete-space-role":     InSpace(authz.SpaceConfigWrite),
 	"preview-space-role":    InSpace(authz.SpaceConfigRead),
+	"list-skills":           Global(authz.SkillRead),
+	"get-skill":             Global(authz.SkillRead),
+	"create-skill":          Global(authz.SkillWrite),
+	"save-skill-draft":      Global(authz.SkillWrite),
+	"publish-skill":         Global(authz.SkillWrite),
 }
 
 // ProfileInput creates or edits a harness profile (slug and harness are fixed after creation).
@@ -45,26 +50,28 @@ type ProfileInput struct {
 
 // TemplateInput creates or edits a role template (slug and kind are fixed after creation).
 type TemplateInput struct {
-	Slug              string            `json:"slug,omitempty" maxLength:"63"`
-	Name              string            `json:"name" maxLength:"120"`
-	Kind              string            `json:"kind,omitempty" enum:"control,worker,kb,dreamer,diagnostic"`
-	Description       string            `json:"description,omitempty" maxLength:"2000"`
-	ProfileID         string            `json:"profile_id,omitempty" maxLength:"64"`
-	PromptID          string            `json:"prompt_id,omitempty" maxLength:"64"`
-	PromptPin         string            `json:"prompt_pin,omitempty" maxLength:"64" doc:"A published version ID; empty follows the latest"`
-	MemoryConventions string            `json:"memory_conventions,omitempty" maxLength:"20000"`
-	Settings          map[string]string `json:"settings,omitempty"`
+	Slug              string             `json:"slug,omitempty" maxLength:"63"`
+	Name              string             `json:"name" maxLength:"120"`
+	Kind              string             `json:"kind,omitempty" enum:"control,worker,kb,dreamer,diagnostic"`
+	Description       string             `json:"description,omitempty" maxLength:"2000"`
+	ProfileID         string             `json:"profile_id,omitempty" maxLength:"64"`
+	PromptID          string             `json:"prompt_id,omitempty" maxLength:"64"`
+	PromptPin         string             `json:"prompt_pin,omitempty" maxLength:"64" doc:"A published version ID; empty follows the latest"`
+	MemoryConventions string             `json:"memory_conventions,omitempty" maxLength:"20000"`
+	Settings          map[string]string  `json:"settings,omitempty"`
+	Skills            []catalog.SkillRef `json:"skills,omitempty" maxItems:"20"`
 }
 
 // SpaceRoleInput configures a role in a space; empty fields use the template's values.
 type SpaceRoleInput struct {
-	TemplateID   string            `json:"template_id" maxLength:"64"`
-	ProfileID    string            `json:"profile_id,omitempty" maxLength:"64"`
-	PromptID     string            `json:"prompt_id,omitempty" maxLength:"64"`
-	PromptPin    string            `json:"prompt_pin,omitempty" maxLength:"64"`
-	Model        string            `json:"model,omitempty" maxLength:"128"`
-	Settings     map[string]string `json:"settings,omitempty"`
-	Instructions string            `json:"instructions,omitempty" maxLength:"50000"`
+	TemplateID   string             `json:"template_id" maxLength:"64"`
+	ProfileID    string             `json:"profile_id,omitempty" maxLength:"64"`
+	PromptID     string             `json:"prompt_id,omitempty" maxLength:"64"`
+	PromptPin    string             `json:"prompt_pin,omitempty" maxLength:"64"`
+	Model        string             `json:"model,omitempty" maxLength:"128"`
+	Settings     map[string]string  `json:"settings,omitempty"`
+	Instructions string             `json:"instructions,omitempty" maxLength:"50000"`
+	Skills       []catalog.SkillRef `json:"skills,omitempty" maxItems:"20" doc:"Added to the template's skills; a pin here wins"`
 }
 
 // PromptPath identifies a prompt (ID or slug).
@@ -77,6 +84,7 @@ type RoleOptions struct {
 	Templates []RoleOption `json:"templates"`
 	Profiles  []RoleOption `json:"profiles"`
 	Prompts   []RoleOption `json:"prompts"`
+	Skills    []RoleOption `json:"skills"`
 }
 
 // RoleOption is one choice.
@@ -103,6 +111,7 @@ type Preview struct {
 	SystemText string                   `json:"system_text"`
 	Effective  map[string]catalog.Field `json:"effective"`
 	Prompt     *catalog.PromptRef       `json:"prompt,omitempty"`
+	Skills     []catalog.ResolvedSkill  `json:"skills"`
 }
 
 // RegisterCatalog registers the catalog operations.
@@ -253,6 +262,92 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				return out, nil
 			})
 
+		stags := []string{"skills"}
+		huma.Register(api, huma.Operation{OperationID: "list-skills", Method: http.MethodGet, Path: "/skills", Summary: "The skill catalog", Tags: stags},
+			func(ctx context.Context, _ *struct{}) (*struct {
+				Body struct {
+					Items []*catalog.Skill `json:"items"`
+				}
+			}, error) {
+				l, err := svc.ListSkills(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "skills.list", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []*catalog.Skill `json:"items"`
+					}
+				}{}
+				out.Body.Items = l
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-skill", Method: http.MethodGet, Path: "/skills/{skill_id}", Summary: "A skill with its versions and files", Tags: stags},
+			func(ctx context.Context, in *struct {
+				SkillID string `path:"skill_id" maxLength:"64"`
+			}) (*struct{ Body *catalog.Skill }, error) {
+				sk, err := svc.GetSkill(ctx, in.SkillID)
+				if err != nil {
+					return nil, d.fail(ctx, "skills.get", err)
+				}
+				return &struct{ Body *catalog.Skill }{Body: sk}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "create-skill", Method: http.MethodPost, Path: "/skills", Summary: "Add a skill (with a first draft)",
+			Description: "Files are text; SKILL.md needs frontmatter naming the skill. Skills give guidance, never permission, and nothing in them runs at install time.",
+			Tags:        stags, DefaultStatus: http.StatusCreated},
+			func(ctx context.Context, in *struct {
+				Body struct {
+					Slug        string            `json:"slug" maxLength:"63"`
+					Name        string            `json:"name" maxLength:"120"`
+					Description string            `json:"description,omitempty" maxLength:"2000"`
+					Files       map[string]string `json:"files"`
+				}
+			}) (*struct{ Body *catalog.Skill }, error) {
+				sk, err := svc.CreateSkill(ctx, Actor(ctx), in.Body.Slug, in.Body.Name, in.Body.Description, in.Body.Files)
+				if err != nil {
+					return nil, d.fail(ctx, "skills.create", err)
+				}
+				return &struct{ Body *catalog.Skill }{Body: sk}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "save-skill-draft", Method: http.MethodPut, Path: "/skills/{skill_id}/draft",
+			Summary: "Create or update the skill's draft", Description: "Without If-Match a new draft is started; with it, the draft at that version is updated.", Tags: stags},
+			func(ctx context.Context, in *struct {
+				SkillID string `path:"skill_id" maxLength:"64"`
+				IfMatch
+				Body struct {
+					Files map[string]string `json:"files"`
+					Notes string            `json:"notes,omitempty" maxLength:"2000"`
+				}
+			}) (*struct{ Body *catalog.Skill }, error) {
+				v := int64(0)
+				if in.IfMatch.IfMatch != "" {
+					var err error
+					if v, err = in.Version(); err != nil {
+						return nil, d.fail(ctx, "skills.draft", err)
+					}
+				}
+				sk, err := svc.SaveSkillDraft(ctx, Actor(ctx), in.SkillID, v, in.Body.Files, in.Body.Notes)
+				if err != nil {
+					return nil, d.fail(ctx, "skills.draft", err)
+				}
+				return &struct{ Body *catalog.Skill }{Body: sk}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "publish-skill", Method: http.MethodPost, Path: "/skills/{skill_id}/publish",
+			Summary: "Publish the draft as the next immutable version", Tags: stags},
+			func(ctx context.Context, in *struct {
+				SkillID string `path:"skill_id" maxLength:"64"`
+				IfMatch
+			}) (*struct{ Body *catalog.Skill }, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "skills.publish", err)
+				}
+				sk, err := svc.PublishSkill(ctx, Actor(ctx), in.SkillID, v)
+				if err != nil {
+					return nil, d.fail(ctx, "skills.publish", err)
+				}
+				return &struct{ Body *catalog.Skill }{Body: sk}, nil
+			})
+
 		tags = []string{"roles"}
 		huma.Register(api, huma.Operation{OperationID: "list-harness-profiles", Method: http.MethodGet, Path: "/harness-profiles", Summary: "Harness profiles", Tags: tags},
 			func(ctx context.Context, _ *struct{}) (*struct {
@@ -332,7 +427,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 				b := in.Body
 				t, err := svc.SaveTemplate(ctx, Actor(ctx), id, v, catalog.RoleTemplate{Slug: b.Slug, Name: b.Name, Kind: b.Kind, Description: b.Description,
-					ProfileID: b.ProfileID, PromptID: b.PromptID, PromptPin: b.PromptPin, MemoryConventions: b.MemoryConventions, Settings: b.Settings})
+					ProfileID: b.ProfileID, PromptID: b.PromptID, PromptPin: b.PromptPin, MemoryConventions: b.MemoryConventions, Settings: b.Settings, Skills: b.Skills})
 				if err != nil {
 					return nil, d.fail(ctx, "templates.save", err)
 				}
@@ -341,7 +436,20 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 		huma.Register(api, huma.Operation{OperationID: "list-role-options", Method: http.MethodGet, Path: "/spaces/{space_id}/role-options",
 			Summary: "Templates, profiles and prompts a space role can use (names only)", Tags: tags},
 			func(ctx context.Context, in *SpacePath) (*struct{ Body RoleOptions }, error) {
-				out := RoleOptions{Templates: []RoleOption{}, Profiles: []RoleOption{}, Prompts: []RoleOption{}}
+				out := RoleOptions{Templates: []RoleOption{}, Profiles: []RoleOption{}, Prompts: []RoleOption{}, Skills: []RoleOption{}}
+				sks, err := svc.ListSkills(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.options", err)
+				}
+				for _, sk := range sks {
+					o := RoleOption{ID: sk.ID, Slug: sk.Slug, Name: sk.Name, Kind: sk.Source}
+					for _, v := range sk.Versions {
+						if v.State == "published" {
+							o.Versions = append(o.Versions, PromptVersionN{ID: v.ID, Number: v.Number})
+						}
+					}
+					out.Skills = append(out.Skills, o)
+				}
 				ts, err := svc.ListTemplates(ctx)
 				if err != nil {
 					return nil, d.fail(ctx, "roles.options", err)
@@ -402,7 +510,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 			}) (*struct{ Body *catalog.SpaceRole }, error) {
 				b := in.Body
 				r, err := svc.SaveSpaceRole(ctx, Actor(ctx), in.SpaceID, catalog.SpaceRole{Name: in.Name, TemplateID: b.TemplateID, ProfileID: b.ProfileID,
-					PromptID: b.PromptID, PromptPin: b.PromptPin, Model: b.Model, Settings: b.Settings, Instructions: b.Instructions})
+					PromptID: b.PromptID, PromptPin: b.PromptPin, Model: b.Model, Settings: b.Settings, Instructions: b.Instructions, Skills: b.Skills})
 				if err != nil {
 					return nil, d.fail(ctx, "roles.save", err)
 				}
@@ -434,7 +542,7 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 					return nil, d.fail(ctx, "roles.preview", err)
 				}
 				return &struct{ Body Preview }{Body: Preview{Kind: r.Kind, Harness: r.Harness, Model: r.Model, Settings: r.Settings, SystemText: r.SystemText,
-					Effective: r.Effective, Prompt: r.Prompt}}, nil
+					Effective: r.Effective, Prompt: r.Prompt, Skills: append([]catalog.ResolvedSkill{}, r.Skills...)}}, nil
 			})
 	}
 }

@@ -25,7 +25,7 @@ func (Claude) Kind() string { return KindClaude }
 
 // Detect implements Harness.
 func (Claude) Detect(ctx context.Context, binary string) proto.HarnessInfo {
-	return detect(ctx, KindClaude, binary, []string{CapFixedSessionID, CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapSystemPrompt, CapTranscripts})
+	return detect(ctx, KindClaude, binary, []string{CapFixedSessionID, CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapSystemPrompt, CapTranscripts, CapSkills})
 }
 
 var claudePermissionModes = map[string]bool{"default": true, "acceptEdits": true, "plan": true, "auto": true, "dontAsk": true, "bypassPermissions": true}
@@ -91,7 +91,9 @@ func (Claude) Build(c Context) (Launch, error) {
 			"theme":                  "dark",
 			"projects":               map[string]any{c.WorkDir: map[string]any{"hasTrustDialogAccepted": true}},
 		}},
-		SecretEnv: secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
-		SessionID: session,
+		// Verified: Claude Code loads $CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md (spike S-6).
+		SkillsRoot: filepath.Join(cfg, "skills"),
+		SecretEnv:  secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
+		SessionID:  session,
 	}, nil
 }

@@ -255,6 +255,16 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
 | `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
 
+### skills
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/skills` | `list-skills` | The skill catalog |
+| `POST` | `/skills` | `create-skill` | Add a skill (with a first draft) |
+| `GET` | `/skills/{skill_id}` | `get-skill` | A skill with its versions and files |
+| `PUT` | `/skills/{skill_id}/draft` | `save-skill-draft` | Create or update the skill's draft |
+| `POST` | `/skills/{skill_id}/publish` | `publish-skill` | Publish the draft as the next immutable version |
+
 ### subscriptions
 
 | Method | Path | Operation | Summary |

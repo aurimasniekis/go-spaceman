@@ -38,6 +38,7 @@ const (
 	CapNativeTeam     = "messaging.native_team"    // native team messaging (not across standalone runs)
 	CapTranscripts    = "transcripts.jsonl"
 	CapSystemPrompt   = "prompt.append_system"
+	CapSkills         = "skills.files" // loads <config>/skills/<name>/SKILL.md (verified for Claude Code 2.1.316)
 )
 
 // Context is everything a harness needs to build one launch.
@@ -67,6 +68,9 @@ type Launch struct {
 	// MergeJSON patches JSON object files the harness itself also writes (keys are absolute paths): objects are merged
 	// recursively and other values are set, everything else in the file is kept. A missing file is created (0600).
 	MergeJSON map[string]map[string]any
+	// SkillsRoot is where the harness loads per-user skills from (<root>/<name>/SKILL.md); empty when the harness's skill
+	// loading is not verified, and then skills are not materialized.
+	SkillsRoot string
 	// SecretEnv is passed to the launcher shim only.
 	SecretEnv map[string]string
 	// SessionID is the conversation ID when the harness lets SpaceMan choose it.

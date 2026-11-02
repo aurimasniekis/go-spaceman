@@ -40,6 +40,7 @@ type RoleTemplate struct {
 	PromptPin         string            `json:"prompt_pin,omitempty" doc:"A published version ID; empty follows the latest version"`
 	MemoryConventions string            `json:"memory_conventions,omitempty"`
 	Settings          map[string]string `json:"settings"`
+	Skills            []SkillRef        `json:"skills"`
 	Revision          int64             `json:"revision"`
 	UpdatedAt         time.Time         `json:"updated_at"`
 	Version           int64             `json:"version"`
@@ -56,6 +57,7 @@ type SpaceRole struct {
 	Model        string            `json:"model,omitempty"`
 	Settings     map[string]string `json:"settings"`
 	Instructions string            `json:"instructions,omitempty" doc:"Space-specific text appended after the role's prompt"`
+	Skills       []SkillRef        `json:"skills" doc:"Added to the template's skills; a pin here wins"`
 	Revision     int64             `json:"revision"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 	Version      int64             `json:"version"`
@@ -97,13 +99,13 @@ func profileOut(r db.HarnessProfile) *Profile {
 
 func templateOut(r db.RoleTemplate) *RoleTemplate {
 	return &RoleTemplate{ID: r.ID, Slug: r.Slug, Name: r.Name, Kind: r.Kind, Description: r.Description, ProfileID: r.ProfileID, PromptID: r.PromptID,
-		PromptPin: r.PromptPin, MemoryConventions: r.MemoryConventions, Settings: parseSettings(r.SettingsJson), Revision: r.Revision,
+		PromptPin: r.PromptPin, MemoryConventions: r.MemoryConventions, Settings: parseSettings(r.SettingsJson), Skills: parseSkillRefs(r.SkillsJson), Revision: r.Revision,
 		UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
 }
 
 func spaceRoleOut(r db.SpaceRole) *SpaceRole {
 	return &SpaceRole{SpaceID: r.SpaceID, Name: r.Name, TemplateID: r.TemplateID, ProfileID: r.ProfileID, PromptID: r.PromptID, PromptPin: r.PromptPin, Model: r.Model,
-		Settings: parseSettings(r.SettingsJson), Instructions: r.Instructions, Revision: r.Revision, UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
+		Settings: parseSettings(r.SettingsJson), Instructions: r.Instructions, Skills: parseSkillRefs(r.SkillsJson), Revision: r.Revision, UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
 }
 
 // SaveProfile creates (id empty) or updates a profile; an update bumps its revision.
@@ -202,6 +204,7 @@ func (svc *Service) SaveTemplate(ctx context.Context, actor audit.Actor, id stri
 		v.Add("name", "is required; description at most 2000 and memory conventions 20000 characters")
 	}
 	sj := settingsJSON(v, in.Settings)
+	kj := svc.skillRefsJSON(ctx, v, in.Skills)
 	svc.checkRefs(ctx, svc.s.R(), v, in.ProfileID, in.PromptID, in.PromptPin)
 	if err := v.Err(); err != nil {
 		return nil, err
@@ -210,7 +213,7 @@ func (svc *Service) SaveTemplate(ctx context.Context, actor audit.Actor, id stri
 		if id == "" {
 			id = ids.New(ids.RoleTemplate)
 			if err := tx.Q.InsertRoleTemplate(ctx, db.InsertRoleTemplateParams{ID: id, Slug: in.Slug, Name: in.Name, Kind: in.Kind, Description: in.Description,
-				ProfileID: in.ProfileID, PromptID: in.PromptID, PromptPin: in.PromptPin, MemoryConventions: in.MemoryConventions, SettingsJson: sj,
+				ProfileID: in.ProfileID, PromptID: in.PromptID, PromptPin: in.PromptPin, MemoryConventions: in.MemoryConventions, SettingsJson: sj, SkillsJson: kj,
 				CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()}); err != nil {
 				if store.IsConstraint(err) {
 					return apperr.New(apperr.CodeAlreadyExists, "a role template %q exists", in.Slug)
@@ -220,7 +223,7 @@ func (svc *Service) SaveTemplate(ctx context.Context, actor audit.Actor, id stri
 			return svc.log(ctx, tx, actor, "role_template.created", "role_template", id, map[string]any{"slug": in.Slug, "kind": in.Kind})
 		}
 		n, err := tx.Q.UpdateRoleTemplate(ctx, db.UpdateRoleTemplateParams{Name: in.Name, Description: in.Description, ProfileID: in.ProfileID, PromptID: in.PromptID,
-			PromptPin: in.PromptPin, MemoryConventions: in.MemoryConventions, SettingsJson: sj, UpdatedAt: tx.NowMicros(), ID: id, Version: version})
+			PromptPin: in.PromptPin, MemoryConventions: in.MemoryConventions, SettingsJson: sj, SkillsJson: kj, UpdatedAt: tx.NowMicros(), ID: id, Version: version})
 		if err != nil {
 			return err
 		}
@@ -265,6 +268,7 @@ func (svc *Service) SaveSpaceRole(ctx context.Context, actor audit.Actor, spaceI
 		v.Add("instructions", "at most 50000 characters")
 	}
 	sj := settingsJSON(v, in.Settings)
+	kj := svc.skillRefsJSON(ctx, v, in.Skills)
 	svc.checkRefs(ctx, svc.s.R(), v, in.ProfileID, in.PromptID, in.PromptPin)
 	if in.PromptPin != "" && in.PromptID == "" {
 		v.Add("prompt_pin", "needs prompt_id")
@@ -277,7 +281,8 @@ func (svc *Service) SaveSpaceRole(ctx context.Context, actor audit.Actor, spaceI
 			return apperr.New(apperr.CodeNotFound, "space not found")
 		}
 		if err := tx.Q.UpsertSpaceRole(ctx, db.UpsertSpaceRoleParams{SpaceID: spaceID, Name: in.Name, TemplateID: in.TemplateID, ProfileID: in.ProfileID,
-			PromptID: in.PromptID, PromptPin: in.PromptPin, Model: in.Model, SettingsJson: sj, Instructions: in.Instructions, Now: tx.NowMicros(), By: actor.ID}); err != nil {
+			PromptID: in.PromptID, PromptPin: in.PromptPin, Model: in.Model, SettingsJson: sj, Instructions: in.Instructions, SkillsJson: kj, Now: tx.NowMicros(),
+			By: actor.ID}); err != nil {
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "space", spaceID, "updated", 0); err != nil {

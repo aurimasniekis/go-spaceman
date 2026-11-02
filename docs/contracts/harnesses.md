@@ -34,6 +34,9 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
     (`--mcp-config` + `--strict-mcp-config`, stdio `spaceman-agent mcp-bridge`) without a permission prompt
     (`TestRealClaudeUsesSpaceManTools`). Searching the whole test directory afterwards found the setup-token nowhere
     in clear (central database, agent folders, hc state, logs, the instance's Claude config).
+- **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
+  loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
+  SpaceMan writes assigned skills there (SM-MCP-004).
 - **Status:** native OSC 7501 reporting (see herdr-core.md).
 - **Hidden flags:** `--channels`, `--dangerously-load-development-channels` (strings only, so **not** relied on until verified).
 - **Print mode:** `-p`, `--output-format stream-json`, `--max-budget-usd`. Used only by opt-in real tests, never for managed runs, which are interactive in hc.

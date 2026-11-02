@@ -45,6 +45,8 @@
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
 | `prompt-detail` | Prompts | A prompt's draft editor (with extends) and published versions | current |
 | `roles` | Roles and profiles | Role templates with prompt binding and profile | current |
+| `skills` | Skills | Skill catalog with the built-in HallPass skill and a custom skill | current |
+| `skill-detail` | Skills | A skill's files, published versions and draft editor | current |
 | `space-role-preview` | Roles and profiles | A space role's effective configuration with origins and system text | current |
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
 | `ops-backups` | Backups/operations (M4) | Operations page | todo |

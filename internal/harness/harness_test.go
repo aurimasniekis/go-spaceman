@@ -47,6 +47,9 @@ func TestClaudeBuild(t *testing.T) {
 	if err := json.Unmarshal(l.Files["/data/runs/run_1/mcp.json"], &mcp); err != nil || mcp["mcpServers"]["spaceman"]["command"] != "/opt/spaceman/spaceman-agent" {
 		t.Fatalf("mcp config %s", l.Files["/data/runs/run_1/mcp.json"])
 	}
+	if l.SkillsRoot != "/data/spaces/spc_a/instances/ins_1/claude/skills" {
+		t.Fatalf("skills root %q", l.SkillsRoot)
+	}
 	// First-run state is seeded and exactly the run's working directory is trusted (ADR-0021).
 	seed := l.MergeJSON["/data/spaces/spc_a/instances/ins_1/claude/.claude.json"]
 	projects, _ := seed["projects"].(map[string]any)

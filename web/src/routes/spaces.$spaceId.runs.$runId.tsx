@@ -130,6 +130,8 @@ type Manifest = {
   dependencies?: Record<string, string | number>
   policy?: { version: number; max_permission_mode: string }
   account_ref?: string
+  skills?: { slug: string; number: number; pinned: boolean; sha256: string; origin: string }[] | null
+  skills_unavailable?: string[]
 }
 
 /** The non-secret configuration the run started with (SM-PROMPT-004); later catalog changes do not alter it. */
@@ -155,6 +157,12 @@ function ManifestCard({ manifest }: { manifest: unknown }) {
           </Group>
         ))}
       </SimpleGrid>
+      {(m.skills?.length ?? 0) > 0 && (
+        <Text size="xs" mt="xs">Skills: {m.skills!.map((sk) => `${sk.slug} v${sk.number}${sk.pinned ? ' (pinned)' : ''}`).join(' · ')}</Text>
+      )}
+      {(m.skills_unavailable?.length ?? 0) > 0 && (
+        <Text size="xs" c="owlYellow" mt={2}>Not installed (no published version): {m.skills_unavailable!.join(', ')}</Text>
+      )}
       {m.dependencies && (
         <Text size="xs" c="dimmed" mt="xs">Versions: {Object.entries(m.dependencies).filter(([, v]) => v !== '' && v !== undefined).map(([k, v]) => `${k} ${v}`).join(' · ')}</Text>
       )}

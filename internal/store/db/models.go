@@ -549,6 +549,7 @@ type RoleTemplate struct {
 	CreatedBy         string
 	UpdatedAt         int64
 	Version           int64
+	SkillsJson        string
 }
 
 type RootToken struct {
@@ -612,6 +613,34 @@ type Setting struct {
 	UpdatedBy sql.NullString
 }
 
+type Skill struct {
+	ID          string
+	Slug        string
+	Name        string
+	Description string
+	Source      string
+	SourceRef   string
+	CreatedAt   int64
+	CreatedBy   string
+	UpdatedAt   int64
+	Version     int64
+}
+
+type SkillVersion struct {
+	ID          string
+	SkillID     string
+	Number      int64
+	State       string
+	FilesJson   string
+	Notes       string
+	CreatedAt   int64
+	CreatedBy   string
+	PublishedAt sql.NullInt64
+	PublishedBy string
+	UpdatedAt   int64
+	Version     int64
+}
+
 type Space struct {
 	ID                   string
 	Slug                 string
@@ -667,6 +696,7 @@ type SpaceRole struct {
 	CreatedBy    string
 	UpdatedAt    int64
 	Version      int64
+	SkillsJson   string
 }
 
 type StoreSpaceProbe struct {

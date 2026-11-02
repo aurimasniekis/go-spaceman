@@ -39,6 +39,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/health"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
@@ -134,6 +135,10 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				return nil, err
 			}
 			in.Kind, in.Harness, in.Model, in.Settings, in.SystemText = r.Kind, r.Harness, r.Model, r.Settings, r.SystemText
+			in.Skills = nil
+			for _, sk := range r.Skills {
+				in.Skills = append(in.Skills, proto.Skill{Name: sk.Slug, Version: sk.Number, SHA256: sk.SHA256, Files: sk.Files})
+			}
 			return r.Manifest, nil
 		},
 		// The notifier is created below; these hooks only run once the server serves.
@@ -187,6 +192,10 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue)}})
 	c.Fleet.Hub().Tools = c.Tools.Dispatch
 	c.Events = events.New(st, c.Keyring, c.Audit, c.Changes, c.Inbox, c.Attachments, events.Options{Clock: o.Clock})
+	if err := c.Catalog.SeedBuiltins(ctx); err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("seed skills: %w", err)
+	}
 	if err := c.Events.SeedBuiltins(ctx); err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("seed event templates: %w", err)

@@ -31,6 +31,14 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Skills
+- **Codex runs get no skills.** Codex's skill loading has not been verified, so the node logs a warning and starts the
+  run without them. Claude Code runs get them in `$CLAUDE_CONFIG_DIR/skills`.
+- **Skills follow their latest version.** The UI assigns skills following the latest published version; pinning a
+  version is available only through the API.
+- **Built-in skills are seeded once.** A newer SpaceMan with an updated HallPass skill does not change the catalog
+  copy; publish the new content as a new version by hand.
+
 ## Human actions
 - **Approvals are advisory.** An approval decision is recorded, audited and sent to the requester, but SpaceMan does not
   yet enforce it on the operation; digest-bound enforcement arrives with the approval gateway (SM-APPR, M3).

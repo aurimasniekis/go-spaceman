@@ -1,10 +1,10 @@
-import { Badge, Button, Card, Group, Modal, Select, Stack, Table, Tabs, Text, Textarea, TextInput } from '@mantine/core'
+import { Badge, Button, Card, Group, Modal, MultiSelect, Select, Stack, Table, Tabs, Text, Textarea, TextInput } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type Profile, type RoleTemplate } from '@/api/client'
-import { keys, useMe, useProfiles, usePrompt, usePrompts, useRoleTemplates } from '@/api/queries'
+import { keys, useMe, useProfiles, usePrompt, usePrompts, useRoleTemplates, useSkills } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { SettingsEditor } from '@/features/catalog/SettingsEditor'
@@ -118,7 +118,8 @@ function TemplateModal({ t, onClose }: { t?: RoleTemplate; onClose: () => void }
   const prompts = usePrompts()
   const profiles = useProfiles()
   const [v, setV] = useState({ slug: t?.slug ?? '', name: t?.name ?? '', kind: t?.kind ?? 'worker', description: t?.description ?? '', profile_id: t?.profile_id ?? '',
-    prompt_id: t?.prompt_id ?? '', prompt_pin: t?.prompt_pin ?? '', memory_conventions: t?.memory_conventions ?? '', settings: t?.settings ?? {} })
+    prompt_id: t?.prompt_id ?? '', prompt_pin: t?.prompt_pin ?? '', memory_conventions: t?.memory_conventions ?? '', settings: t?.settings ?? {}, skills: t?.skills ?? [] })
+  const skills = useSkills()
   const prompt = usePrompt(v.prompt_id || '_none')
   const [error, setError] = useState('')
   const save = async () => {
@@ -150,6 +151,9 @@ function TemplateModal({ t, onClose }: { t?: RoleTemplate; onClose: () => void }
           <Select label="Version" allowDeselect={false} disabled={!v.prompt_id} value={v.prompt_pin || 'follow'} onChange={(x) => setV({ ...v, prompt_pin: x === 'follow' || !x ? '' : x })}
             data={[{ value: 'follow', label: 'Follow the latest' }, ...(prompt.data?.versions ?? []).filter((x) => x.state === 'published').map((x) => ({ value: x.id, label: `Pin v${x.number}` }))]} />
         </Group>
+        <MultiSelect label="Skills" description="Each follows its latest published version" searchable value={v.skills.map((x) => x.skill_id)}
+          onChange={(ids) => setV({ ...v, skills: ids.map((id) => v.skills.find((x) => x.skill_id === id) ?? { skill_id: id }) })}
+          data={(skills.data ?? []).filter((x) => x.latest > 0).map((x) => ({ value: x.id, label: x.name }))} />
         <Textarea label="Memory conventions" description="Where and how this role keeps memory" autosize minRows={2} value={v.memory_conventions}
           onChange={(e) => setV({ ...v, memory_conventions: e.target.value })} />
         <SettingsEditor value={v.settings} onChange={(settings) => setV({ ...v, settings })} />
