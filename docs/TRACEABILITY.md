@@ -34,11 +34,11 @@
 | SM-NODE-001 | | todo | | | |
 | SM-NODE-002 | | todo | | | |
 | SM-NODE-003 | | todo | | | |
-| SM-NODE-004 | | todo | | | |
+| SM-NODE-004 | M1-06 | partial | — | `TestRealLaunchAdoptObserveClose`: duplicate name → ErrNameTaken, label lookup adopts the same identity | Journal-before-launch in the node agent (M1-05). |
 | SM-NODE-005 | | todo | | | |
 | SM-NODE-006 | | todo | | | |
 | SM-NODE-007 | | todo | | | |
-| SM-NODE-008 | | todo | | | |
+| SM-NODE-008 | M1-06 | partial | — | `TestRealLeaseGuardParent` + spike S-2: guard program end kills run terminals | lease-guard command + node integration pending (M1-05/10). |
 | SM-NODE-009 | | todo | | | |
 | SM-SPACE-001 | | todo | | | |
 | SM-SPACE-002 | | todo | | | |
@@ -64,8 +64,8 @@
 | SM-HARN-002 | | todo | | | |
 | SM-HARN-003 | | todo | | | |
 | SM-HARN-004 | | todo | | | |
-| SM-RUN-001 | | todo | | | |
-| SM-RUN-002 | | todo | | | |
+| SM-RUN-001 | M1-06 | partial | `internal/runner/hc` `TestClientFramingAttachCreditResizeClose`, `TestClientCreditsAndInput`, `TestEventDecoding` | `hc_real_test.go` (`-tags real`, hc 0.1.16, macOS, 2026-11-02): launch, observe attach, close info, events, remove | Interrupt/send exercised with harnesses (M1-07). |
+| SM-RUN-002 | M1-06 | implemented | status comes only from hc `status`/`turn` fields (`runner.Status`) | OSC 7501 status verified live for Claude Code (contracts/herdr-core.md) |  |
 | SM-RUN-003 | | todo | | | |
 | SM-INBOX-001 | | todo | | | |
 | SM-INBOX-002 | | todo | | | |

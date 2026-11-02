@@ -103,7 +103,7 @@ test-fault:
 # Opt-in real-dependency suite: an isolated herdr-core core, and (with SPACEMAN_REAL=1) budget-bounded Claude Code and
 # Codex runs using the local logins. Never touches the default hc core. See docs/TEST_STRATEGY.md.
 test-real:
-	$(GO) test -tags real -count=1 -timeout 30m -v ./test/real/
+	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE $(GO) test -tags real -count=1 -timeout 30m ./...
 
 # Pulse/NATS integration against an embedded nats-server and the real go-pulse SDK.
 test-pulse:

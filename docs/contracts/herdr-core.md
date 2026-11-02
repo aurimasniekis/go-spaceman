@@ -111,3 +111,12 @@ Method: `hc attach` (hc 0.1.16) was run under a PTY through a logging Unix-socke
   explicitly.
 - **Default size.** Terminals start at **200×120**, because `terminal.run` takes no size parameters.
 → ADR-0010 accepted: the recorder attaches with `observe:true` and writes DATA, CLOSE and `size` events (from `events.subscribe`) to zstd segments.
+
+### S-4: details found by the real suite (`internal/runner/hc/hc_real_test.go`, 2026-11-02)
+- `terminal.run` with `"labels": null` fails with `invalid_params: invalid type: null, expected a map`. Omit `labels` when there are none.
+- `signal` (on the Terminal object and in CLOSE) is a **number**, e.g. SIGHUP = 1.
+- **Framed event lines.** Each event is one newline-terminated JSON-RPC notification on the subscription channel:
+  `{"jsonrpc":"2.0","method":"event","params":{"type":"finished","seq":37,"terminal":"t11","data":{…}}}`.
+  For `created`, `data` is the full Terminal. For `finished`, it is `{exit_code, finished_ms, reason, signal}`. A `foreground` event type also exists.
+  The `missed` event shape has **not** been observed: SpaceMan treats `type:"missed"` as a missed signal and re-snapshots, and that
+  path is unverified.
