@@ -32,7 +32,7 @@ func Default() *Config {
 			EnrollmentTTL:     Duration(24 * time.Hour),
 			CommandTimeout:    Duration(30 * time.Second),
 		},
-		Artifacts: ArtifactsConfig{Backend: "local"},
+		Artifacts: ArtifactsConfig{Backend: "local", SpaceQuotaBytes: 1 << 30},
 		Shutdown:  ShutdownConfig{Timeout: Duration(30 * time.Second)},
 	}
 }

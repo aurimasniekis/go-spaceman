@@ -53,6 +53,8 @@ type Deps struct {
 	// TrustedProxies may set X-Forwarded-For; other peers' headers are ignored.
 	TrustedProxies []netip.Prefix
 	MaxBodyBytes   int64
+	// MaxUploadBytes bounds attachment uploads (http.max_upload_bytes).
+	MaxUploadBytes int64
 	// StreamRevalidate bounds how long an open watch stream outlives a revoked session or token (SM-AUTH-007).
 	StreamRevalidate time.Duration
 	// Extra registers additional operation groups (nodes, spaces, runs…) supplied by other packages.

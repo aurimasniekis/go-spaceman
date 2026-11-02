@@ -131,9 +131,17 @@ func (d *Deps) limitBody(next http.Handler) http.Handler {
 	if limit <= 0 {
 		limit = 1 << 20
 	}
+	upload := d.MaxUploadBytes
+	if upload <= 0 {
+		upload = 25 << 20
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil && !strings.HasSuffix(r.URL.Path, "/attachments") {
-			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		if r.Body != nil {
+			l := limit
+			if strings.HasSuffix(r.URL.Path, "/attachments") {
+				l = upload + 64<<10 // the file plus multipart framing; the service enforces the exact file limit
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, l)
 		}
 		next.ServeHTTP(w, r)
 	})

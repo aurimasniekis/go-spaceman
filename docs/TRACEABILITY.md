@@ -216,11 +216,11 @@
 | SM-PKG-003 | | todo | | | |
 | SM-SEC-001 | | todo | | | |
 | SM-ATT-001 | | todo | | | |
-| SM-ATT-002 | | todo | | | |
+| SM-ATT-002 | M2-01 | partial | `internal/attachments` `TestUploadSniffDedupAndScope`, `TestLimits` (size limit, per-space quota, sniffed type, sha256, uploader, space); `TestAttachmentsOverHTTP` (multipart, idempotent) |  | Paste/drop UI with the composer (M2-01 UI). |
 | SM-ATT-003 | | todo | | | |
-| SM-ATT-004 | | todo | | | |
+| SM-ATT-004 | M2-01 | implemented | `TestAttachmentsOverHTTP`: raster images inline, SVG/HTML downloaded as `application/octet-stream`, `nosniff`, `sandbox` CSP, space-scoped authorization (viewer read, no upload; other space 404) |  |  |
 | SM-ATT-005 | | todo | | | |
-| SM-ATT-006 | | todo | | | |
+| SM-ATT-006 | M2-01 | partial | `TestReferencesAndGC` (unreferenced uploads and orphaned content collected); attachment rows cascade with space purge |  | Backup, retention and export with M4. |
 | SM-ATT-007 | | todo | | | |
 | SM-VER-001 | | todo | | | |
 | SM-VER-002 | | todo | | | |

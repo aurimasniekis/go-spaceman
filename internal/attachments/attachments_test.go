@@ -1,0 +1,185 @@
+package attachments
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
+)
+
+var actor = audit.Actor{Type: audit.ActorUser, ID: "usr_t"}
+
+// A 1×1 PNG.
+var png = []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+
+type fx struct {
+	ctx  context.Context
+	s    *store.Store
+	svc  *Service
+	clk  *clock.Fake
+	blob string
+}
+
+func newFx(t *testing.T, o Options) *fx {
+	t.Helper()
+	clk := clock.NewFake(time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC))
+	s := storetest.Open(t, storetest.WithClock(clk))
+	kr := keyringtest.Load(t, s)
+	dir := t.TempDir()
+	o.Clock = clk
+	f := &fx{ctx: context.Background(), s: s, svc: New(s, NewLocal(dir), audit.NewWriter(kr), o), clk: clk, blob: dir}
+	err := s.W().TxNamed(f.ctx, "test.seed", func(tx *store.Tx) error {
+		for _, q := range []string{
+			`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`,
+			`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`,
+			`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_b', 'bbb', 'B', 'nod_1', 'active', 'b', 0, 't', 0)`,
+		} {
+			if _, err := tx.SQL.ExecContext(f.ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func code(err error) string {
+	var ae *apperr.Error
+	if !errors.As(err, &ae) {
+		return ""
+	}
+	return string(ae.Code)
+}
+
+// SM-ATT-002/004: content is sniffed (the name never decides the type), names are cleaned, identical content is
+// stored once, only raster images are inline, and an attachment is invisible from another space.
+func TestUploadSniffDedupAndScope(t *testing.T) {
+	f := newFx(t, Options{})
+	img, err := f.svc.Upload(f.ctx, actor, "spc_a", "../../evil\x00.svg", bytes.NewReader(png))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.MIME != "image/png" || !img.Inline || img.Name != "evil.svg" || img.Size != int64(len(png)) {
+		t.Fatalf("image %+v", img)
+	}
+	svg, err := f.svc.Upload(f.ctx, actor, "spc_a", "pic.png", strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svg.Inline || strings.HasPrefix(svg.MIME, "image/") {
+		t.Fatalf("SVG must never be inline: %+v", svg)
+	}
+	again, err := f.svc.Upload(f.ctx, actor, "spc_a", "copy.png", bytes.NewReader(png))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID == img.ID || again.SHA256 != img.SHA256 {
+		t.Fatalf("dedup %+v vs %+v", again, img)
+	}
+	if sums, _ := f.svc.blobs.List(f.ctx); len(sums) != 2 {
+		t.Fatalf("stored contents %v, want 2", sums)
+	}
+	if _, err := f.svc.Get(f.ctx, "spc_b", img.ID); code(err) != "not_found" {
+		t.Fatalf("cross-space read: %v", err)
+	}
+	a, rc, err := f.svc.Open(f.ctx, "spc_a", img.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if !bytes.Equal(b, png) || a.ID != img.ID {
+		t.Fatal("content mismatch")
+	}
+}
+
+// SM-ATT-002: per-upload size limit and per-space quota.
+func TestLimits(t *testing.T) {
+	f := newFx(t, Options{MaxBytes: 100, QuotaBytes: 150})
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_a", "big", bytes.NewReader(make([]byte, 101))); code(err) != "validation_failed" {
+		t.Fatalf("oversize upload: %v", err)
+	}
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_a", "one", bytes.NewReader(bytes.Repeat([]byte("a"), 100))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_a", "two", bytes.NewReader(bytes.Repeat([]byte("b"), 60))); code(err) != "precondition_failed" {
+		t.Fatalf("quota: %v", err)
+	}
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_b", "other space", bytes.NewReader(bytes.Repeat([]byte("b"), 60))); err != nil {
+		t.Fatalf("quota is per space: %v", err)
+	}
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_missing", "x", strings.NewReader("x")); code(err) != "not_found" {
+		t.Fatalf("missing space: %v", err)
+	}
+}
+
+// SM-ATT-001/006: references bind attachments to items of the same space; unreferenced uploads and their content are
+// collected after the grace period, referenced ones are kept.
+func TestReferencesAndGC(t *testing.T) {
+	f := newFx(t, Options{})
+	kept, _ := f.svc.Upload(f.ctx, actor, "spc_a", "kept.txt", strings.NewReader("kept"))
+	dropped, _ := f.svc.Upload(f.ctx, actor, "spc_a", "dropped.txt", strings.NewReader("dropped"))
+	other, _ := f.svc.Upload(f.ctx, actor, "spc_b", "other.txt", strings.NewReader("other"))
+	err := f.s.W().TxNamed(f.ctx, "test.ref", func(tx *store.Tx) error {
+		return Reference(f.ctx, tx, "spc_a", "inbox_item", "inb_1", []string{kept.ID, other.ID})
+	})
+	if code(err) != "validation_failed" {
+		t.Fatalf("referencing another space's attachment: %v", err)
+	}
+	if err := f.s.W().TxNamed(f.ctx, "test.ref", func(tx *store.Tx) error {
+		return Reference(f.ctx, tx, "spc_a", "inbox_item", "inb_1", []string{kept.ID})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := f.svc.ListByOwner(f.ctx, "inbox_item", "inb_1"); len(l) != 1 || l[0].ID != kept.ID {
+		t.Fatalf("owner list %+v", l)
+	}
+	// Within the grace period nothing goes.
+	if rows, _, err := f.svc.GC(f.ctx); err != nil || rows != 0 {
+		t.Fatalf("early gc removed %d (%v)", rows, err)
+	}
+	f.clk.Advance(UnreferencedGrace + time.Minute)
+	// Content written in the last hour is protected from a concurrent upload race; age it.
+	old := time.Now().Add(-2 * time.Hour)
+	_ = filepath.WalkDir(f.blob, func(p string, d os.DirEntry, _ error) error {
+		if d != nil && !d.IsDir() {
+			_ = os.Chtimes(p, old, old)
+		}
+		return nil
+	})
+	rows, blobs, err := f.svc.GC(f.ctx)
+	if err != nil || rows != 2 || blobs != 2 {
+		t.Fatalf("gc removed rows=%d blobs=%d (%v), want 2 and 2 (dropped, other)", rows, blobs, err)
+	}
+	if _, err := f.svc.Get(f.ctx, "spc_a", dropped.ID); code(err) != "not_found" {
+		t.Fatal("unreferenced upload survived")
+	}
+	if _, rc, err := f.svc.Open(f.ctx, "spc_a", kept.ID); err != nil {
+		t.Fatalf("referenced attachment lost: %v", err)
+	} else {
+		_ = rc.Close()
+	}
+}
+
+func TestCleanName(t *testing.T) {
+	for in, want := range map[string]string{"a/b/c.txt": "c.txt", `C:\x\y.doc`: "y.doc", "": "file", "..": "file", "  \"q\".md ": "q.md", "tab\there": "tabhere"} {
+		if got := CleanName(in); got != want {
+			t.Errorf("CleanName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -17,6 +17,72 @@
         ],
         "type": "object"
       },
+      "AttachmentOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AttachmentOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "inline": {
+            "type": "boolean"
+          },
+          "mime": {
+            "description": "Media type sniffed from the content (never the uploader's claim)",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "uploaded_by": {
+            "type": "string"
+          },
+          "uri": {
+            "description": "The spaceman://attachment/\u003cid\u003e reference to put in Markdown bodies",
+            "type": "string"
+          },
+          "url": {
+            "description": "Content URL (same origin); Markdown bodies reference the attachment as spaceman://attachment/\u003cid\u003e",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "uri",
+          "id",
+          "space_id",
+          "name",
+          "size",
+          "mime",
+          "sha256",
+          "uploaded_by",
+          "created_at",
+          "inline"
+        ],
+        "type": "object"
+      },
       "AuditPage": {
         "additionalProperties": false,
         "properties": {
@@ -3479,6 +3545,134 @@
         "summary": "Edit a space's profile",
         "tags": [
           "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/attachments": {
+      "post": {
+        "description": "A multipart form with one `file` field. The media type is sniffed from the content. Reference the returned `uri` (or `id`) from the item that uses it; unreferenced uploads are removed after 24 hours.",
+        "operationId": "upload-attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "encoding": {
+                "file": {
+                  "contentType": "application/octet-stream"
+                }
+              },
+              "schema": {
+                "properties": {
+                  "file": {
+                    "contentEncoding": "binary",
+                    "contentMediaType": "application/octet-stream",
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentOut"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Upload an attachment",
+        "tags": [
+          "attachments"
+        ]
+      }
+    },
+    "/spaces/{space_id}/attachments/{attachment_id}": {
+      "get": {
+        "operationId": "get-attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentOut"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Attachment metadata",
+        "tags": [
+          "attachments"
         ]
       }
     },

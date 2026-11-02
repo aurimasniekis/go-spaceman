@@ -118,6 +118,8 @@ type ArtifactsConfig struct {
 	Backend  string   `yaml:"backend"`
 	LocalDir string   `yaml:"local_dir"`
 	S3       S3Config `yaml:"s3"`
+	// SpaceQuotaBytes bounds the attachments stored per space (SM-ATT-002).
+	SpaceQuotaBytes int64 `yaml:"space_quota_bytes"`
 }
 
 // S3Config configures an S3-compatible bucket. Secrets come from files, never inline values.

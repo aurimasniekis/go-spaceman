@@ -126,3 +126,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}/runs/{run_id}/recording` | `delete-recording` | Delete central's copy of a run's recording |
 | `GET` | `/spaces/{space_id}/runs/{run_id}/recording` | `get-recording` | Replay a run's terminal recording |
 
+### attachments
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `POST` | `/spaces/{space_id}/attachments` | `upload-attachment` | Upload an attachment |
+| `GET` | `/spaces/{space_id}/attachments/{attachment_id}` | `get-attachment` | Attachment metadata |
+

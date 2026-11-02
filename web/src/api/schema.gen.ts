@@ -480,6 +480,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload an attachment
+         * @description A multipart form with one `file` field. The media type is sniffed from the content. Reference the returned `uri` (or `id`) from the item that uses it; unreferenced uploads are removed after 24 hours.
+         */
+        post: operations["upload-attachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Attachment metadata */
+        get: operations["get-attachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/runs": {
         parameters: {
             query?: never;
@@ -758,6 +795,30 @@ export interface components {
         ApperrFieldError: {
             field: string;
             message: string;
+        };
+        AttachmentOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AttachmentOut.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            inline: boolean;
+            /** @description Media type sniffed from the content (never the uploader's claim) */
+            mime: string;
+            name: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            space_id: string;
+            uploaded_by: string;
+            /** @description The spaceman://attachment/<id> reference to put in Markdown bodies */
+            uri: string;
+            /** @description Content URL (same origin); Markdown bodies reference the attachment as spaceman://attachment/<id> */
+            url: string;
         };
         AuditPage: {
             /**
@@ -2532,6 +2593,79 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "upload-attachment": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-attachment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentOut"];
+                };
             };
             /** @description Error */
             default: {

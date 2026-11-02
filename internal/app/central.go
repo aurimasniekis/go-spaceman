@@ -18,6 +18,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
+	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
@@ -48,6 +49,8 @@ type Central struct {
 	Metrics *metrics.Metrics
 	Health  *health.Checker
 	Fleet   *fleet.Service
+	// Attachments stores uploaded files (SM-ATT-*).
+	Attachments *attachments.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -91,6 +94,16 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(), Clock: o.Clock,
 		Log: log, Metrics: m, RecordingsDir: st.Path("recordings")})
+	if cfg.Artifacts.Backend != "local" {
+		_ = st.Close()
+		return nil, fmt.Errorf("artifacts.backend %q is not implemented yet; use \"local\"", cfg.Artifacts.Backend)
+	}
+	artifactDir := cfg.Artifacts.LocalDir
+	if artifactDir == "" {
+		artifactDir = st.Path("artifacts")
+	}
+	c.Attachments = attachments.New(st, attachments.NewLocal(artifactDir), c.Audit, attachments.Options{MaxBytes: cfg.HTTP.MaxUploadBytes,
+		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock})
 	c.Health = health.New(health.Options{ExposeDetails: !cfg.IsProduction()})
 	c.Health.MustRegister(
 		health.StoreHealth("store", st.Health()),
@@ -133,9 +146,10 @@ func (c *Central) APIDeps() *api.Deps {
 	}
 	d := &api.Deps{Log: obs.Component(c.Log, "api"), Store: c.Store, Auth: c.Auth, Authz: c.Authz, Audit: c.Audit, Bus: c.Bus,
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
-		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(),
-		ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet)},
-		Raw: api.RecordingStreams(c.Fleet)}
+		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
+		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
+		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments)},
+		Raw:   append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
 }
@@ -222,6 +236,11 @@ func (c *Central) housekeeping(ctx context.Context) {
 		if err := c.Auth.PurgeExpired(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Warn("purge expired auth records", obs.Err(err))
 		}
+		if rows, blobs, err := c.Attachments.GC(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Warn("attachment garbage collection", obs.Err(err))
+		} else if rows+int64(blobs) > 0 {
+			c.Log.Info("attachment garbage collection", slog.Int64("uploads", rows), slog.Int("contents", blobs))
+		}
 		_ = c.Store.W().TxNamed(ctx, "api.idempotency_purge", func(tx *store.Tx) error {
 			_, err := tx.Q.PurgeIdempotency(ctx, tx.NowMicros())
 			return err
@@ -236,13 +255,14 @@ func (c *Central) housekeeping(ctx context.Context) {
 
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
-	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil)}}
+	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
+		api.RegisterAttachments(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules} {
 		for k, v := range m {
 			out[k] = v
 		}

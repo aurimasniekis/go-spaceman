@@ -173,6 +173,10 @@
   - **Bodies.** Item bodies are Markdown. The TipTap composer serializes to Markdown. The server never accepts HTML bodies.
   - **Serving.** Downloads are authorized against the owning space with `Content-Disposition: attachment`. Only png, jpeg, gif and webp
     images are allowed inline. Responses carry `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`.
+  - **Implementation notes (M2-01).** Content is written before the database transaction (no I/O inside it). Garbage collection
+    removes unreferenced rows after 24 h, then content no row points to, skipping content touched in the last hour so a
+    concurrent upload of the same bytes is never lost. Only the local backend exists; central refuses `artifacts.backend: s3`
+    until it is implemented (M4). Per-space quota: `artifacts.space_quota_bytes` (1 GiB); per-upload limit: `http.max_upload_bytes`.
 
 ### ADR-0014 — Memory sync via git bundles over the node protocol
 - **Status:** accepted
@@ -278,7 +282,7 @@
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
 | K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). | — | done |
 | K-6 | Official Go MCP SDK version and streamable/stdio APIs. | MCP gateway | Inspect module source. |
-| K-7 | TipTap open-source extension set and Markdown serializer. | SM-ATT-003 | Inspect packages and licenses; exclude Pro extensions. |
+| K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | llm-knowledge-base-template layout and licence; Piebald dream prompts licence. | KB, dreamer | Fetch and record; attribute or paraphrase per licence. |
 | K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |
 | K-11 | Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26). SpaceMan grants have no SSO source yet (OIDC lands in M4-01). | SM-AUTH-002 | When OIDC lands, store SSO grants under the subject `user:<id>#sso`, add that subject only for SSO sessions, and port the SR-26 test. |

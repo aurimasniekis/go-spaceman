@@ -24,6 +24,24 @@ type ApiToken struct {
 	RevokedBy     sql.NullString
 }
 
+type Attachment struct {
+	ID         string
+	SpaceID    string
+	Sha256     string
+	Size       int64
+	Mime       string
+	Name       string
+	UploadedBy string
+	CreatedAt  int64
+}
+
+type AttachmentRef struct {
+	AttachmentID string
+	OwnerKind    string
+	OwnerID      string
+	CreatedAt    int64
+}
+
 type AuditEvent struct {
 	ID            string
 	Seq           int64
