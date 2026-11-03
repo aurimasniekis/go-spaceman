@@ -1,12 +1,12 @@
-import { Anchor, Badge, Breadcrumbs, Button, Card, Code, CopyButton, Group, Menu, Modal, SegmentedControl, SimpleGrid, Stack, Switch, Table, Tabs, Text, TextInput, Title, Tooltip } from '@mantine/core'
+import { Anchor, Badge, Breadcrumbs, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
 import { IconChevronDown, IconCopy, IconTrash } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { api, check, ifMatch, unwrap, type Cursor, type Subscription } from '@/api/client'
-import { keys, useDeliveries, useMe, useQuarantine, useSpace, useSubscription } from '@/api/queries'
+import { api, check, ifMatch, unwrap, type Cursor, type Delivery, type Subscription } from '@/api/client'
+import { keys, useDeliveries, useMe, useQuarantine, useReplays, useSpace, useSubscription } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
-import { ErrorAlert } from '@/components/ErrorAlert'
+import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { OutcomeBadge, SubscriptionState } from '@/features/events/badges'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
@@ -34,6 +34,7 @@ function SubscriptionPage() {
   const sub = useSubscription(spaceId, subscriptionId)
   const deliveries = useDeliveries(spaceId, subscriptionId)
   const quarantine = useQuarantine(spaceId, subscriptionId)
+  const replays = useReplays(spaceId, subscriptionId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
   const [cursorOpen, setCursorOpen] = useState(false)
@@ -115,24 +116,26 @@ function SubscriptionPage() {
         <Tabs.List>
           <Tabs.Tab value="deliveries">Deliveries</Tabs.Tab>
           <Tabs.Tab value="quarantine">Quarantine {s.quarantined > 0 && <Badge ml={4} size="xs" color="owlRed">{s.quarantined}</Badge>}</Tabs.Tab>
+          <Tabs.Tab value="replays">Replays {(replays.data ?? []).length > 0 && <Badge ml={4} size="xs" color="gray">{(replays.data ?? []).length}</Badge>}</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="deliveries" pt="sm">
           <Card p={0}>
             <Table>
-              <Table.Thead><Table.Tr><Table.Th>Time</Table.Th><Table.Th>Event</Table.Th><Table.Th>Type</Table.Th><Table.Th>Outcome</Table.Th><Table.Th>Item / detail</Table.Th></Table.Tr></Table.Thead>
+              <Table.Thead><Table.Tr><Table.Th>Time</Table.Th><Table.Th>Event</Table.Th><Table.Th>Type</Table.Th><Table.Th>Origin</Table.Th><Table.Th>Outcome</Table.Th><Table.Th>Item / detail</Table.Th></Table.Tr></Table.Thead>
               <Table.Tbody>
                 {(deliveries.data ?? []).map((d) => (
                   <Table.Tr key={d.id}>
                     <Table.Td><Text size="xs">{datetime(d.at)}</Text></Table.Td>
                     <Table.Td><Text size="xs" className="mono">{d.event_id}</Text>{d.stream_seq > 0 && <Text size="xs" c="dimmed">seq {d.stream_seq}</Text>}</Table.Td>
                     <Table.Td><Text size="xs" className="mono">{d.type}</Text></Table.Td>
+                    <Table.Td><OriginBadge d={d} /></Table.Td>
                     <Table.Td><OutcomeBadge outcome={d.outcome} /></Table.Td>
                     <Table.Td>
                       {d.inbox_item_id ? <AnchorLink to="/spaces/$spaceId/inbox/$itemId" params={{ spaceId, itemId: d.inbox_item_id }} size="xs">open item</AnchorLink> : <Text size="xs" c="dimmed">{d.detail}</Text>}
                     </Table.Td>
                   </Table.Tr>
                 ))}
-                {deliveries.isSuccess && deliveries.data.length === 0 && <Table.Tr><Table.Td colSpan={5}><Text size="sm" c="dimmed" ta="center" p="md">No events delivered yet.</Text></Table.Td></Table.Tr>}
+                {deliveries.isSuccess && deliveries.data.length === 0 && <Table.Tr><Table.Td colSpan={6}><Text size="sm" c="dimmed" ta="center" p="md">No events delivered yet.</Text></Table.Td></Table.Tr>}
               </Table.Tbody>
             </Table>
           </Card>
@@ -159,27 +162,89 @@ function SubscriptionPage() {
             {quarantine.isSuccess && quarantine.data.length === 0 && <Text size="sm" c="dimmed">Nothing in quarantine.</Text>}
           </Stack>
         </Tabs.Panel>
+        <Tabs.Panel value="replays" pt="sm">
+          <Text size="xs" c="dimmed" mb="xs">Every replay is an explicit, audited operation with a reason. Deliveries it causes show the origin Replay; the stream's own retries show Retry.</Text>
+          <Card p={0}>
+            <Table>
+              <Table.Thead><Table.Tr><Table.Th>Requested</Table.Th><Table.Th>From</Table.Th><Table.Th>Reason</Table.Th><Table.Th>Items</Table.Th><Table.Th>State</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>
+                {(replays.data ?? []).map((r) => (
+                  <Table.Tr key={r.id}>
+                    <Table.Td><Text size="xs">{datetime(r.requested_at)}</Text><Text size="xs" c="dimmed">{r.requested_by}</Text></Table.Td>
+                    <Table.Td><Text size="xs">{r.policy === 'all' ? 'everything retained' : r.policy === 'time' ? `from ${datetime(r.time)}` : `from sequence ${r.seq}`}</Text><Text size="xs" c="dimmed" className="mono">{r.id}</Text></Table.Td>
+                    <Table.Td maw={320}><Text size="xs">{r.reason}</Text></Table.Td>
+                    <Table.Td><Text size="xs">{r.fresh_items ? 'fresh items' : 'deduplicated'}</Text></Table.Td>
+                    <Table.Td>
+                      {r.superseded ? <Badge size="sm" color="gray" variant="light">superseded</Badge>
+                        : r.applied ? <Tooltip label={`Events stored before ${datetime(r.boundary)} are delivered as replayed`}><Badge size="sm" color="owlGreen" variant="light">applied</Badge></Tooltip>
+                          : <Badge size="sm" color="owlYellow" variant="light">waiting</Badge>}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+                {replays.isSuccess && replays.data.length === 0 && <Table.Tr><Table.Td colSpan={5}><Text size="sm" c="dimmed" ta="center" p="md">Never replayed.</Text></Table.Td></Table.Tr>}
+              </Table.Tbody>
+            </Table>
+          </Card>
+        </Tabs.Panel>
       </Tabs>
-      <ReplayModal sub={s} opened={cursorOpen} onClose={() => setCursorOpen(false)} onSubmit={(start) => void update({ enabled: s.enabled, start }, 'Replay requested')} />
+      {cursorOpen && <ReplayModal spaceId={spaceId} sub={s} onClose={() => setCursorOpen(false)} onDone={() => {
+        void qc.invalidateQueries({ queryKey: keys.subscription(spaceId, subscriptionId) })
+        void qc.invalidateQueries({ queryKey: keys.subscriptions(spaceId) })
+      }} />}
     </Stack>
   )
 }
 
-function ReplayModal({ sub, opened, onClose, onSubmit }: { sub: Subscription; opened: boolean; onClose: () => void; onSubmit: (c: Cursor) => void }) {
+/** Why a delivery happened: first delivery, the stream retrying, an operator's replay, or a reprocessed quarantine entry. */
+function OriginBadge({ d }: { d: Delivery }) {
+  switch (d.origin) {
+    case 'redelivery':
+      return <Tooltip label="The stream delivered it again on its own (a retry)"><Badge size="sm" variant="light" color="owlYellow">Retry · attempt {d.attempt}</Badge></Tooltip>
+    case 'replay':
+      return <Tooltip label={`Replay ${d.replay_id ?? ''}`}><Badge size="sm" variant="light" color="owlPurple">Replay</Badge></Tooltip>
+    case 'reprocess':
+      return <Badge size="sm" variant="light" color="owlBlue">Reprocess</Badge>
+    default:
+      return <Badge size="sm" variant="light" color="gray">Live</Badge>
+  }
+}
+
+function ReplayModal({ spaceId, sub, onClose, onDone }: { spaceId: string; sub: Subscription; onClose: () => void; onDone: () => void }) {
   const [policy, setPolicy] = useState<'all' | 'time' | 'seq'>('time')
   const [time, setTime] = useState('')
   const [seq, setSeq] = useState('')
-  const ready = policy === 'all' || (policy === 'time' && time) || (policy === 'seq' && seq)
+  const [reason, setReason] = useState('')
+  const [fresh, setFresh] = useState(false)
+  const [error, setError] = useState('')
+  const ready = reason.trim() !== '' && (policy === 'all' || (policy === 'time' && time) || (policy === 'seq' && seq))
+  const submit = async () => {
+    setError('')
+    try {
+      unwrap(await api.POST('/spaces/{space_id}/subscriptions/{subscription_id}/replay', {
+        params: { path: { space_id: spaceId, subscription_id: sub.id }, header: { 'If-Match': ifMatch(sub.version) } },
+        body: { policy, time: policy === 'time' ? new Date(time).toISOString() : undefined, seq: policy === 'seq' ? Number(seq) : undefined, reason: reason.trim(), fresh_items: fresh },
+      }))
+      notifyOk('Replay requested')
+      onDone()
+      onClose()
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }
   return (
-    <Modal opened={opened} onClose={onClose} title={`Replay ${sub.name}`}>
+    <Modal opened onClose={onClose} title={`Replay ${sub.name}`} size="lg">
       <Stack gap="sm">
-        <Text size="sm">The consumer is recreated at the chosen position and events are delivered again. Items that already exist are recorded as duplicates, never created twice. The replay is audited.</Text>
+        <Text size="sm">The consumer is recreated at the chosen position and the events are delivered again, marked as a replay (never as retries). The replay is audited with your reason.</Text>
         <SegmentedControl value={policy} onChange={(v) => setPolicy(v as typeof policy)} data={[{ value: 'time', label: 'From a time' }, { value: 'seq', label: 'From a sequence' }, { value: 'all', label: 'Everything retained' }]} />
         {policy === 'time' && <TextInput type="datetime-local" label="From" value={time} onChange={(e) => setTime(e.target.value)} />}
         {policy === 'seq' && <TextInput label="Stream sequence" value={seq} onChange={(e) => setSeq(e.target.value.replace(/\D/g, ''))} />}
+        <Textarea label="Reason" description="Recorded in the audit log and the replay history" required autosize minRows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+        <Checkbox label="Create fresh items" checked={fresh} onChange={(e) => setFresh(e.currentTarget.checked)}
+          description="By default an event that already produced an inbox item is recorded as a duplicate and creates nothing. With fresh items, each replayed event creates one new item (once per replay)." />
+        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
         <Group justify="flex-end">
           <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button disabled={!ready} onClick={() => onSubmit({ policy, time: policy === 'time' ? new Date(time).toISOString() : undefined, seq: policy === 'seq' ? Number(seq) : undefined, replay: true, generation: 0 })}>Replay</Button>
+          <Button disabled={!ready} onClick={() => void submit()}>Replay</Button>
         </Group>
       </Stack>
     </Modal>

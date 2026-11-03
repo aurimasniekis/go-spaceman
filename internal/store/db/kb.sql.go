@@ -62,6 +62,17 @@ func (q *Queries) CountActiveKBSessions(ctx context.Context, kbID string) (int64
 	return count, err
 }
 
+const countActiveKBSessionsInSpace = `-- name: CountActiveKBSessionsInSpace :one
+SELECT COUNT(*) FROM kb_sessions WHERE space_id = ? AND state = 'active'
+`
+
+func (q *Queries) CountActiveKBSessionsInSpace(ctx context.Context, spaceID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveKBSessionsInSpace, spaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countKBRequests = `-- name: CountKBRequests :one
 SELECT
   COALESCE(SUM(CASE WHEN state IN ('queued', 'dispatched') THEN 1 ELSE 0 END), 0) AS open,
@@ -267,7 +278,7 @@ func (q *Queries) GetKBRequest(ctx context.Context, id string) (KbRequest, error
 }
 
 const getKBSession = `-- name: GetKBSession :one
-SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at FROM kb_sessions WHERE id = ?
+SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at, depth FROM kb_sessions WHERE id = ?
 `
 
 func (q *Queries) GetKBSession(ctx context.Context, id string) (KbSession, error) {
@@ -291,12 +302,13 @@ func (q *Queries) GetKBSession(ctx context.Context, id string) (KbSession, error
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Depth,
 	)
 	return i, err
 }
 
 const getKBSessionByRequester = `-- name: GetKBSessionByRequester :one
-SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at FROM kb_sessions WHERE kb_id = ? AND requester_key = ?
+SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at, depth FROM kb_sessions WHERE kb_id = ? AND requester_key = ?
 `
 
 type GetKBSessionByRequesterParams struct {
@@ -325,12 +337,13 @@ func (q *Queries) GetKBSessionByRequester(ctx context.Context, arg GetKBSessionB
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Depth,
 	)
 	return i, err
 }
 
 const getKBSessionByRun = `-- name: GetKBSessionByRun :one
-SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at FROM kb_sessions WHERE run_id = ? AND run_id != ''
+SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at, depth FROM kb_sessions WHERE run_id = ? AND run_id != ''
 `
 
 func (q *Queries) GetKBSessionByRun(ctx context.Context, runID string) (KbSession, error) {
@@ -354,6 +367,7 @@ func (q *Queries) GetKBSessionByRun(ctx context.Context, runID string) (KbSessio
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Depth,
 	)
 	return i, err
 }
@@ -491,8 +505,8 @@ func (q *Queries) InsertKBRequest(ctx context.Context, arg InsertKBRequestParams
 }
 
 const insertKBSession = `-- name: InsertKBSession :exec
-INSERT INTO kb_sessions (id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, branch, state, last_active_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)
+INSERT INTO kb_sessions (id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, branch, state, last_active_at, created_at, updated_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?)
 `
 
 type InsertKBSessionParams struct {
@@ -507,6 +521,7 @@ type InsertKBSessionParams struct {
 	LastActiveAt   int64
 	CreatedAt      int64
 	UpdatedAt      int64
+	Depth          int64
 }
 
 func (q *Queries) InsertKBSession(ctx context.Context, arg InsertKBSessionParams) error {
@@ -522,6 +537,7 @@ func (q *Queries) InsertKBSession(ctx context.Context, arg InsertKBSessionParams
 		arg.LastActiveAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.Depth,
 	)
 	return err
 }
@@ -675,7 +691,7 @@ func (q *Queries) ListKBRequests(ctx context.Context, arg ListKBRequestsParams) 
 }
 
 const listKBSessions = `-- name: ListKBSessions :many
-SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at FROM kb_sessions WHERE kb_id = ? ORDER BY last_active_at DESC
+SELECT id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, harness_session, branch, run_id, state, failures, last_error, answered, last_active_at, created_at, updated_at, depth FROM kb_sessions WHERE kb_id = ? ORDER BY last_active_at DESC
 `
 
 func (q *Queries) ListKBSessions(ctx context.Context, kbID string) ([]KbSession, error) {
@@ -705,6 +721,7 @@ func (q *Queries) ListKBSessions(ctx context.Context, kbID string) ([]KbSession,
 			&i.LastActiveAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Depth,
 		); err != nil {
 			return nil, err
 		}

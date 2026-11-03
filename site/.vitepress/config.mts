@@ -80,6 +80,8 @@ export default withMermaid(
             { text: 'Skills', link: '/guide/skills' },
             { text: 'MCP gateway', link: '/guide/mcp-gateway' },
             { text: 'Events and subscriptions', link: '/guide/events' },
+            { text: 'Schedules', link: '/guide/schedules' },
+            { text: 'Limits and budgets', link: '/guide/limits' },
             { text: 'Publishing SpaceMan events', link: '/guide/publishing-events' },
             { text: 'Single sign-on', link: '/guide/sign-in' },
             { text: 'Project status', link: '/guide/status' },

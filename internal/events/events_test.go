@@ -176,7 +176,7 @@ func TestIngestFanOutAndProvenance(t *testing.T) {
 	}
 	// A redelivered event (same Nats-Msg-Id after the JetStream dedup window) is a duplicate, not a second item.
 	e := template.Event{ID: it.Trusted["event_id"].(string), Subject: issueSubject, Type: issueType, Data: issuePayload(t, "")}
-	must(t, f.svc.Process(f.ctx, a.ID, e, 1, false))
+	must(t, f.svc.Process(f.ctx, a.ID, e, 1, Origin{}))
 	if len(f.items("spc_a")) != 1 || f.outcomes("spc_a", a.ID)[OutcomeDuplicate] != 1 {
 		t.Fatalf("redelivery: %d items, %v", len(f.items("spc_a")), f.outcomes("spc_a", a.ID))
 	}

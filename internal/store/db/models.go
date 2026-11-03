@@ -141,6 +141,18 @@ type Backup struct {
 	DeletedAt   sql.NullInt64
 }
 
+type BudgetNotice struct {
+	ID         string
+	SpaceID    string
+	Scope      string
+	RunID      string
+	Budget     string
+	Level      string
+	Used       int64
+	LimitValue int64
+	At         int64
+}
+
 type Change struct {
 	Seq          int64
 	At           int64
@@ -220,6 +232,9 @@ type EventDelivery struct {
 	InboxItemID    string
 	Detail         string
 	At             int64
+	Origin         string
+	Attempt        int64
+	ReplayID       string
 }
 
 type EventOutbox struct {
@@ -585,6 +600,7 @@ type KbSession struct {
 	LastActiveAt   int64
 	CreatedAt      int64
 	UpdatedAt      int64
+	Depth          int64
 }
 
 type KeyringKey struct {
@@ -958,6 +974,14 @@ type RunCredential struct {
 	TokenEnc  []byte
 }
 
+type RunToolCall struct {
+	RunID     string
+	SpaceID   string
+	Calls     int64
+	Refused   int64
+	UpdatedAt int64
+}
+
 type RunTranscript struct {
 	RunID     string
 	SpaceID   string
@@ -981,6 +1005,18 @@ type RunUsage struct {
 	Final           int64
 	Note            string
 	UpdatedAt       int64
+}
+
+type ScheduleOccurrence struct {
+	ScheduleID   string
+	OccurrenceAt int64
+	SpaceID      string
+	Outcome      string
+	Late         int64
+	TargetKind   string
+	TargetID     string
+	Detail       string
+	At           int64
 }
 
 type Setting struct {
@@ -1058,6 +1094,17 @@ type SpaceHumanType struct {
 	CreatedBy            string
 }
 
+type SpaceLimit struct {
+	SpaceID    string
+	ValuesJson string
+	OnLower    string
+	CreatedAt  int64
+	CreatedBy  string
+	UpdatedAt  int64
+	UpdatedBy  string
+	Version    int64
+}
+
 type SpaceRole struct {
 	SpaceID      string
 	Name         string
@@ -1076,9 +1123,53 @@ type SpaceRole struct {
 	SkillsJson   string
 }
 
+type SpaceSchedule struct {
+	ID              string
+	SpaceID         string
+	Name            string
+	Description     string
+	Enabled         int64
+	Kind            string
+	Cron            string
+	IntervalSeconds int64
+	AnchorAt        int64
+	Timezone        string
+	Missed          string
+	CatchUpMax      int64
+	SkipIfOpen      int64
+	Target          string
+	Title           string
+	Body            string
+	Priority        string
+	AssigneeRole    string
+	NextAt          sql.NullInt64
+	LastAt          sql.NullInt64
+	LastOutcome     string
+	LastTargetID    string
+	CreatedAt       int64
+	CreatedBy       string
+	UpdatedAt       int64
+	Version         int64
+}
+
 type StoreSpaceProbe struct {
 	ID   int64
 	Data []byte
+}
+
+type SubscriptionReplay struct {
+	ID             string
+	SubscriptionID string
+	SpaceID        string
+	Generation     int64
+	Policy         string
+	StartTime      sql.NullInt64
+	StartSeq       sql.NullInt64
+	FreshItems     int64
+	Reason         string
+	RequestedBy    string
+	RequestedAt    int64
+	BoundaryAt     sql.NullInt64
 }
 
 type Task struct {
@@ -1121,6 +1212,13 @@ type TaskBlocker struct {
 	CreatedBy  string
 	ResolvedAt sql.NullInt64
 	ResolvedBy string
+}
+
+type TaskDeadlineNotice struct {
+	TaskID    string
+	StartedAt int64
+	SpaceID   string
+	At        int64
 }
 
 type TaskDependency struct {

@@ -188,8 +188,18 @@ type Service struct {
 
 	// Outbox records accepted-proposal events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
 	Outbox *outbox.Outbox
+	// SpaceLimits returns a space's effective KB limits (the limits model, ADR-0036): active support sessions across
+	// its knowledge bases, and how deep support may nest. Nil: 8 sessions, depth 1.
+	SpaceLimits func(ctx context.Context, q *db.Queries, spaceID string) (maxSessions, depth int64)
 	// base is the context of Run; hooks without a caller context use it.
 	base context.Context
+}
+
+func (svc *Service) spaceLimits(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {
+	if svc.SpaceLimits == nil {
+		return 8, 1
+	}
+	return svc.SpaceLimits(ctx, q, spaceID)
 }
 
 // New returns the service.
@@ -536,6 +546,19 @@ func (svc *Service) Ask(ctx context.Context, p *fleet.RunPrincipal, in AskInput)
 	if p.Kind == "kb" && p.Role == k.SpaceRole {
 		return nil, apperr.New(apperr.CodeInvalid, "a KB session cannot ask its own knowledge base")
 	}
+	// Support never starts support without bound (SM-LIMIT-002): a request from a KB session is one level deeper than
+	// the session itself, and the space's support depth caps it (default 1: KB sessions cannot ask knowledge bases).
+	depth := int64(1)
+	if p.Kind == "kb" {
+		depth = 2
+		if own, err := svc.s.R().GetKBSessionByRun(ctx, p.RunID); err == nil {
+			depth = own.Depth + 1
+		}
+	}
+	if _, maxDepth := svc.spaceLimits(ctx, svc.s.R(), p.SpaceID); depth > maxDepth {
+		return nil, apperr.New(apperr.CodeForbidden, "support sessions cannot start further support sessions here (support depth %d, this request would be %d); "+
+			"answer from your own knowledge base or say it does not know", maxDepth, depth)
+	}
 	reqID := ids.New("kbq")
 	err = svc.s.W().TxNamed(ctx, "kb.ask", func(tx *store.Tx) error {
 		now := tx.NowMicros()
@@ -551,7 +574,7 @@ func (svc *Service) Ask(ctx context.Context, p *fleet.RunPrincipal, in AskInput)
 			sess = db.KbSession{ID: sid}
 			if err := tx.Q.InsertKBSession(ctx, db.InsertKBSessionParams{ID: sid, KbID: k.ID, SpaceID: k.SpaceID, RequesterKey: p.InstanceID,
 				RequesterRole: p.Role, RequesterLabel: p.Role + " (" + p.Kind + ")", InstanceID: ids.New(ids.Instance), Branch: "kb/" + k.Slug + "/" + sid,
-				LastActiveAt: now, CreatedAt: now, UpdatedAt: now}); err != nil {
+				LastActiveAt: now, CreatedAt: now, UpdatedAt: now, Depth: depth}); err != nil {
 				return err
 			}
 		} else if err != nil {

@@ -57,6 +57,9 @@ export const keys = {
   oidcProviders: ['oidc-providers'] as const,
   oidcMappings: (id: string) => ['oidc-mappings', id] as const,
   myIdentities: ['identities', 'me'] as const,
+  limits: (space: string) => ['limits', space] as const,
+  schedules: (space: string) => ['schedules', space] as const,
+  schedule: (space: string, id: string) => ['schedules', space, id] as const,
   userIdentities: (id: string) => ['identities', id] as const,
 }
 
@@ -199,6 +202,33 @@ export const useDeliveries = (space: string, id: string) =>
     queryFn: async () =>
       unwrap(await api.GET('/spaces/{space_id}/subscriptions/{subscription_id}/deliveries', { params: { path: { space_id: space, subscription_id: id }, query: { limit: 200 } } })).items,
     refetchInterval: 10_000,
+  })
+
+export const useReplays = (space: string, id: string) =>
+  useQuery({
+    queryKey: [...keys.subscription(space, id), 'replays'],
+    queryFn: async () =>
+      unwrap(await api.GET('/spaces/{space_id}/subscriptions/{subscription_id}/replays', { params: { path: { space_id: space, subscription_id: id } } })).items ?? [],
+  })
+
+/** A space's effective limits with their sources and its budget state (SM-LIMIT-001). */
+export const useLimits = (space: string) =>
+  useQuery({
+    queryKey: keys.limits(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/limits', { params: { path: { space_id: space } } })),
+  })
+
+export const useSchedules = (space: string) =>
+  useQuery({
+    queryKey: keys.schedules(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/schedules', { params: { path: { space_id: space } } })).items ?? [],
+  })
+
+export const useSchedule = (space: string, id: string | null) =>
+  useQuery({
+    queryKey: keys.schedule(space, id ?? ''),
+    enabled: !!id,
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/schedules/{schedule_id}', { params: { path: { space_id: space, schedule_id: id! } } })),
   })
 
 export const useQuarantine = (space: string, id: string) =>

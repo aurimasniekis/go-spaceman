@@ -23,6 +23,11 @@ export type RecordingRecord = Schemas['RecordingRecord']
 export type AuditRecord = Schemas['AuditRecord']
 export type InboxItem = Schemas['InboxItem']
 export type Attachment = Schemas['AttachmentsAttachment']
+export type Limits = Schemas['LimitsEffective']
+export type Limit = Schemas['LimitsLimit']
+export type Schedule = Schemas['Schedule']
+export type ScheduleInput = Schemas['ScheduleInput']
+export type Replay = Schemas['EventsReplay']
 
 /** Problem details (RFC 9457) with SpaceMan's stable `code`. */
 export interface Problem {

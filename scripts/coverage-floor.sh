@@ -26,6 +26,8 @@ PACKAGES=(
   internal/outbox
   internal/backup
   internal/s3client
+  internal/limits
+  internal/schedule
 )
 
 fail=0

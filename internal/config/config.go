@@ -67,7 +67,48 @@ type Config struct {
 	Harness   HarnessPolicy   `yaml:"harness"`
 	Events    EventsConfig    `yaml:"events"`
 	Backups   BackupsConfig   `yaml:"backups"`
+	Limits    LimitsConfig    `yaml:"limits"`
 	Shutdown  ShutdownConfig  `yaml:"shutdown"`
+}
+
+// LimitsConfig holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Spaces override them
+// through the API or UI; the effective value of each limit, and where it comes from, is shown per space. The attachment
+// storage quota stays artifacts.space_quota_bytes. 0 means "no limit" where the field says so.
+type LimitsConfig struct {
+	// MaxConcurrentRuns bounds the worker and diagnostic runs of one space that may be active at once (1-256, default 8).
+	// Control, KB support and dreamer runs have their own pools and never count against it.
+	MaxConcurrentRuns int64 `yaml:"max_concurrent_runs"`
+	// MaxTopLevelTasks is the default queue limit of top-level tasks running at once (1-20, default 1); a space's queue
+	// policy overrides it.
+	MaxTopLevelTasks int64 `yaml:"max_top_level_tasks"`
+	// MaxKBSessions bounds the active KB support sessions of one space across all its knowledge bases (1-64, default 8),
+	// on top of each knowledge base's own max_sessions.
+	MaxKBSessions int64 `yaml:"max_kb_sessions"`
+	// SupportDepth is how deep support may nest (1-3, default 1): at 1 a KB support session cannot ask a knowledge base,
+	// so support never starts more support.
+	SupportDepth int64 `yaml:"support_depth"`
+	// MaxHumanPending bounds the open human actions of one space (1-5000, default 500).
+	MaxHumanPending int64 `yaml:"max_human_pending"`
+	// MaxHumanPendingPerRun bounds the open human actions one agent run may have asked (1-500, default 25).
+	MaxHumanPendingPerRun int64 `yaml:"max_human_pending_per_run"`
+	// MaxToolCallsPerRun bounds the SpaceMan and gateway tool calls of one run (0: no limit; default 5000).
+	MaxToolCallsPerRun int64 `yaml:"max_tool_calls_per_run"`
+	// IngestPerMinute bounds the events one subscription ingests per minute (1-60000, default 600); the rest waits in
+	// the stream.
+	IngestPerMinute int64 `yaml:"ingest_per_minute"`
+	// TaskDeadlineMinutes is how long a top-level task may run before control and the operators are told (0: no
+	// deadline; at most 43200). A passed deadline never stops the task.
+	TaskDeadlineMinutes int64 `yaml:"task_deadline_minutes"`
+	// BudgetTokens24h is a space's token budget over the last 24 hours (input plus output tokens of runs started in that
+	// window; 0: none). Usage is reported late, so this warns and stops new runs; it is not a hard limit.
+	BudgetTokens24h int64 `yaml:"budget_tokens_24h"`
+	// BudgetCostCents24h is a space's estimated-cost budget over the last 24 hours in US cents (0: none). Estimates come
+	// from the harnesses and arrive late: never a hard currency limit.
+	BudgetCostCents24h int64 `yaml:"budget_cost_cents_24h"`
+	// BudgetTokensPerRun warns when one run's reported tokens pass it (0: none). Runs are never stopped for it.
+	BudgetTokensPerRun int64 `yaml:"budget_tokens_per_run"`
+	// BudgetWarnPercent is when a budget warning is sent (1-100, default 80).
+	BudgetWarnPercent int64 `yaml:"budget_warn_percent"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual

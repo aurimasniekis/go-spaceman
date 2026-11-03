@@ -85,8 +85,24 @@ UPDATE event_subscriptions SET last_event_at = ? WHERE id = ?;
 DELETE FROM event_subscriptions WHERE id = ?;
 
 -- name: InsertEventDelivery :exec
-INSERT INTO event_deliveries (subscription_id, event_id, subject, type, stream_seq, outcome, inbox_item_id, detail, at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO event_deliveries (subscription_id, event_id, subject, type, stream_seq, outcome, inbox_item_id, detail, at, origin, attempt, replay_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: CountEventDeliveriesOf :one
+SELECT COUNT(*) FROM event_deliveries WHERE subscription_id = ? AND event_id = ?;
+
+-- name: InsertSubscriptionReplay :exec
+INSERT INTO subscription_replays (id, subscription_id, space_id, generation, policy, start_time, start_seq, fresh_items, reason, requested_by, requested_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetSubscriptionReplayByGeneration :one
+SELECT * FROM subscription_replays WHERE subscription_id = ? AND generation = ?;
+
+-- name: SetSubscriptionReplayBoundary :exec
+UPDATE subscription_replays SET boundary_at = ? WHERE subscription_id = ? AND generation = ? AND boundary_at IS NULL;
+
+-- name: ListSubscriptionReplays :many
+SELECT * FROM subscription_replays WHERE subscription_id = ? ORDER BY requested_at DESC LIMIT ?;
 
 -- name: ListEventDeliveries :many
 SELECT * FROM event_deliveries WHERE subscription_id = ? ORDER BY id DESC LIMIT ?;
@@ -110,3 +126,8 @@ UPDATE event_quarantine SET status = sqlc.arg(status), resolved_at = sqlc.arg(no
 
 -- name: CountOpenQuarantine :one
 SELECT count(*) FROM event_quarantine WHERE subscription_id = ? AND status = 'open';
+
+-- name: SetSubscriptionCursor :execrows
+UPDATE event_subscriptions SET cursor_generation = sqlc.arg(cursor_generation), start_policy = sqlc.arg(start_policy), start_time = sqlc.arg(start_time),
+  start_seq = sqlc.arg(start_seq), replay = 1, version = version + 1, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);

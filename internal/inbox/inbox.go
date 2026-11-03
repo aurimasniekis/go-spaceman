@@ -51,7 +51,7 @@ const (
 )
 
 var (
-	sourceKinds = map[string]bool{"operator": true, "worker": true, "human_response": true, "dreamer": true, "kb": true, "cross_space": true, "event": true, "webhook": true}
+	sourceKinds = map[string]bool{"operator": true, "worker": true, "human_response": true, "dreamer": true, "kb": true, "cross_space": true, "event": true, "webhook": true, "schedule": true}
 	urgencies   = map[string]bool{"low": true, "normal": true, "high": true, "urgent": true}
 	statuses    = map[string]bool{StatusNew: true, StatusInProgress: true, StatusDeferred: true, StatusRejected: true, StatusDone: true}
 )
@@ -60,7 +60,7 @@ var (
 type Item struct {
 	ID            string         `json:"id"`
 	SpaceID       string         `json:"space_id"`
-	SourceKind    string         `json:"source_kind" enum:"operator,worker,human_response,dreamer,kb,cross_space,event,webhook"`
+	SourceKind    string         `json:"source_kind" enum:"operator,worker,human_response,dreamer,kb,cross_space,event,webhook,schedule"`
 	SourceID      string         `json:"source_id,omitempty" doc:"The authenticated source: a user, run, subscription or space ID"`
 	SourceLabel   string         `json:"source_label,omitempty"`
 	Title         string         `json:"title"`

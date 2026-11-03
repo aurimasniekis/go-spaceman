@@ -6,7 +6,7 @@ const statusColor: Record<InboxItem['status'], string> = { new: 'owlBlue', in_pr
 export const statusLabel: Record<InboxItem['status'], string> = { new: 'New', in_progress: 'In progress', deferred: 'Deferred', rejected: 'Rejected', done: 'Done' }
 export const sourceLabel: Record<InboxItem['source_kind'], string> = {
   operator: 'Operator', worker: 'Worker', human_response: 'Human response', dreamer: 'Dreamer', kb: 'Knowledge base',
-  cross_space: 'Another space', event: 'Event', webhook: 'Webhook',
+  cross_space: 'Another space', event: 'Event', webhook: 'Webhook', schedule: 'Schedule',
 }
 
 export function UrgencyBadge({ urgency }: { urgency: InboxItem['urgency'] }) {
@@ -16,4 +16,15 @@ export function UrgencyBadge({ urgency }: { urgency: InboxItem['urgency'] }) {
 
 export function InboxStatusBadge({ status }: { status: InboxItem['status'] }) {
   return <Badge color={statusColor[status]} variant="light">{statusLabel[status]}</Badge>
+}
+
+/** Where an item came from beyond its source: a replay (never a retry) or a schedule occurrence, from trusted metadata. */
+export function ProvenanceBadges({ item }: { item: InboxItem }) {
+  const t = (item.trusted ?? {}) as Record<string, unknown>
+  return (
+    <>
+      {typeof t.replay_id === 'string' && t.replay_id !== '' && <Badge color="owlPurple" variant="light" title={`Replay ${t.replay_id}`}>Replayed</Badge>}
+      {item.source_kind === 'schedule' && t.late === true && <Badge color="owlYellow" variant="outline">late occurrence</Badge>}
+    </>
+  )
 }

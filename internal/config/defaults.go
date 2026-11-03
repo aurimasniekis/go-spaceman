@@ -36,7 +36,9 @@ func Default() *Config {
 		Harness:   HarnessPolicy{MaxPermissionMode: "auto"},
 		Events:    EventsConfig{Outbound: OutboundConfig{Source: "spaceman", Retention: Duration(7 * 24 * time.Hour)}},
 		Backups:   BackupsConfig{Interval: Duration(24 * time.Hour), KeepLast: 7, Target: "local"},
-		Shutdown:  ShutdownConfig{Timeout: Duration(30 * time.Second)},
+		Limits: LimitsConfig{MaxConcurrentRuns: 8, MaxTopLevelTasks: 1, MaxKBSessions: 8, SupportDepth: 1, MaxHumanPending: 500,
+			MaxHumanPendingPerRun: 25, MaxToolCallsPerRun: 5000, IngestPerMinute: 600, BudgetWarnPercent: 80},
+		Shutdown: ShutdownConfig{Timeout: Duration(30 * time.Second)},
 	}
 }
 

@@ -45,7 +45,20 @@
 ## Usage and transcripts
 - **Codex usage is unknown.** Its records are not verified, so Codex runs show unknown usage (never zero).
 - **Cost figures are the harness's own estimates** at list prices; SpaceMan has no price list and cannot enforce
-  spending limits from usage that arrives after the fact.
+  spending limits from usage that arrives after the fact. Budgets (ADR-0036) warn and stop new runs once reported usage
+  passes them; runs already started can go past a budget, and runs with unknown usage are not counted.
+
+## Limits and schedules
+- **Budgets are windows over runs started in the last 24 hours**, not calendar days or billing periods.
+- **Node capacity bounds worker and diagnostic runs only.** Control, KB support and dreamer runs have their own pools,
+  so a node can run more processes than its capacity setting.
+- **Throttled event ingestion can cause JetStream redeliveries**: events prefetched by the SDK may pass their
+  acknowledgement timeout while waiting; they are deduplicated and recorded as redeliveries, never lost.
+- **Delivery attempts are counted from SpaceMan's delivery history** (the Pulse SDK does not expose JetStream's
+  delivery count), so history removed by retention restarts the count.
+- **Schedules resolve to the minute** (cron) or second (interval), handle at most 10,000 missed occurrences per gap
+  individually (beyond that the gap is summarized), and there is no "run now" action yet.
+- **No Terraform resources for limits and schedules yet** (ADR-0035 phase 2).
 - **Transcripts are uploaded after a run ends**, up to 64 MiB (longer ones keep their start).
 
 ## Dreams

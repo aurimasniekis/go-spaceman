@@ -9,7 +9,7 @@ import { AnchorLink } from '@/components/AnchorLink'
 import { formatBytes } from '@/components/composer/upload'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
-import { InboxStatusBadge, sourceLabel, UrgencyBadge } from '@/features/inbox/badges'
+import { InboxStatusBadge, ProvenanceBadges, sourceLabel, UrgencyBadge } from '@/features/inbox/badges'
 import { TaskModal } from '@/features/queue/TaskModal'
 import { atLeast, roleIn } from '@/lib/access'
 import { datetime } from '@/lib/format'
@@ -76,9 +76,10 @@ function ItemPage() {
       </Breadcrumbs>
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Stack gap={4}>
-          <Group gap="xs"><Title order={3}>{it.title}</Title><UrgencyBadge urgency={it.urgency} /><InboxStatusBadge status={it.status} /></Group>
+          <Group gap="xs"><Title order={3}>{it.title}</Title><UrgencyBadge urgency={it.urgency} /><InboxStatusBadge status={it.status} /><ProvenanceBadges item={it} /></Group>
           <Text size="sm" c="dimmed">
             {sourceLabel[it.source_kind]}{it.source_label ? ` · ${it.source_label}` : ''} · received {datetime(it.received_at)}
+            {it.source_kind === 'schedule' && typeof it.trusted?.occurrence === 'string' ? ` · occurrence ${datetime(it.trusted.occurrence)}` : ''}
             {it.status === 'deferred' && it.defer_until ? ` · deferred until ${datetime(it.defer_until)}` : ''}
           </Text>
           {it.status_reason && <Text size="sm">Reason: {it.status_reason}</Text>}

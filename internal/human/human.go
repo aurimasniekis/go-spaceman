@@ -45,10 +45,12 @@ const (
 	Expired    = "expired"
 )
 
-// Limits (SM-HUM-011).
+// Limits (SM-HUM-011): the defaults of the pending limits; spaces override them through the limits model (ADR-0036)
+// within MaxPendingCeiling.
 const (
 	MaxPendingPerSpace     = 500
 	MaxPendingPerRequester = 25
+	MaxPendingCeiling      = 5000
 	gap                    = 1024
 )
 
@@ -202,6 +204,23 @@ type Service struct {
 	// Outbox records lifecycle events (safe metadata only) for publication to Pulse (SM-OBS-004, SM-HUI-007). Nil:
 	// nothing is published.
 	Outbox *outbox.Outbox
+	// PendingLimits returns a space's effective pending limits (per space, per requesting run) inside the creating
+	// transaction (the limits model, ADR-0036). Nil: MaxPendingPerSpace and MaxPendingPerRequester.
+	PendingLimits func(ctx context.Context, q *db.Queries, spaceID string) (perSpace, perRun int64)
+}
+
+func (svc *Service) pendingLimits(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {
+	if svc.PendingLimits == nil {
+		return MaxPendingPerSpace, MaxPendingPerRequester
+	}
+	a, b := svc.PendingLimits(ctx, q, spaceID)
+	if a <= 0 || a > MaxPendingCeiling {
+		a = MaxPendingPerSpace
+	}
+	if b <= 0 || b > MaxPendingCeiling {
+		b = MaxPendingPerRequester
+	}
+	return a, b
 }
 
 // meta is the safe metadata of an action for outbound events: identifiers, type, status, outcome and priority only,
@@ -442,9 +461,10 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		if err != nil {
 			return err
 		}
+		perSpace, _ := svc.pendingLimits(ctx, tx.Q, spaceID)
 		for _, p := range pend {
-			if p.SpaceID == spaceID && p.N >= MaxPendingPerSpace {
-				return apperr.New(apperr.CodeRateLimited, "this space has %d pending human actions; resolve some first", p.N)
+			if p.SpaceID == spaceID && p.N >= perSpace {
+				return apperr.New(apperr.CodeRateLimited, "this space has %d pending human actions (limit %d); resolve some first", p.N, perSpace)
 			}
 		}
 		pol, err := policyFor(ctx, tx.Q, spaceID, in.Type)
@@ -555,8 +575,8 @@ func (svc *Service) limit(ctx context.Context, tx *store.Tx, spaceID string, in 
 		if err != nil {
 			return err
 		}
-		if n >= MaxPendingPerRequester {
-			return apperr.New(apperr.CodeRateLimited, "this run has %d pending human actions (limit %d)%s", n, MaxPendingPerRequester, wait)
+		if _, perRun := svc.pendingLimits(ctx, tx.Q, spaceID); n >= perRun {
+			return apperr.New(apperr.CodeRateLimited, "this run has %d pending human actions (limit %d)%s", n, perRun, wait)
 		}
 		n, err = tx.Q.CountHumanActionsByRunSince(ctx, db.CountHumanActionsByRunSinceParams{RequesterRun: in.Requester.Run, Type: in.Type, CreatedAt: since})
 		if err != nil {

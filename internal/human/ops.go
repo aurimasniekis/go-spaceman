@@ -262,7 +262,7 @@ func (svc *Service) Move(ctx context.Context, actor audit.Actor, spaceID, id, be
 		if _, err := load(ctx, tx, spaceID, id, 0); err != nil {
 			return err
 		}
-		rows, err := tx.Q.ListHumanActions(ctx, db.ListHumanActionsParams{SpaceID: spaceID, Limit: MaxPendingPerSpace + 1})
+		rows, err := tx.Q.ListHumanActions(ctx, db.ListHumanActionsParams{SpaceID: spaceID, Limit: MaxPendingCeiling + 1})
 		if err != nil {
 			return err
 		}
@@ -320,7 +320,7 @@ func (f ListFilter) limit() int {
 
 // List returns a space's actions: pending first in rank order, then the most recent final ones.
 func (svc *Service) List(ctx context.Context, spaceID string, f ListFilter) ([]*Action, error) {
-	rows, err := svc.s.R().ListHumanActions(ctx, db.ListHumanActionsParams{SpaceID: spaceID, Limit: int64(f.limit()) + MaxPendingPerSpace})
+	rows, err := svc.s.R().ListHumanActions(ctx, db.ListHumanActionsParams{SpaceID: spaceID, Limit: int64(f.limit()) + MaxPendingCeiling})
 	if err != nil {
 		return nil, err
 	}

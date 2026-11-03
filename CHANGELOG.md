@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 - `auth.stream_revalidate` accepts at most 60 s (was 5 min).
+- Launches can now be refused with `rate_limited`: a space runs at most `limits.max_concurrent_runs` worker and diagnostic
+  runs (default 8), and the node's reported `capacity` is enforced. Control, KB support and dreamer runs have their own pools.
+- KB support sessions can no longer ask knowledge bases (support depth 1 by default), so support never starts more support.
+- Event deliveries record their origin (live, redelivery, replay, reprocess) and attempt; replays are recorded in a replay
+  history and items they create are marked.
 
 ### Fixed
 - Live updates: a browser whose change-feed position is ahead of the server (after a restore from backup) now gets a gap
@@ -26,6 +31,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   button, links and code colors.
 
 ### Added
+- Limits and budgets (SM-LIMIT-001/002, ADR-0036): one limits model with installation defaults (`limits:`), per-space
+  overrides and a single effective read with sources (API and the space's **Limits** page). Concurrency, tool calls per
+  run, event ingestion per subscription, KB support sessions, pending human actions, storage, task deadlines and
+  usage-based token and cost budgets. Lowering a limit never stops running work unless the space chooses `on_lower: stop`.
+  Budgets warn and stop new runs; they are not a hard currency limit, because usage is reported late.
+- Schedules (SM-LIMIT-003): inbox items or tasks at cron or interval occurrences in an IANA time zone, with skip, run-once
+  or bounded catch-up for missed runs and per-occurrence deduplication, driven by the single deadline timer (the space's
+  **Schedules** page and API).
+- Explicit replay of a subscription with a reason (`POST …/subscriptions/{id}/replay`), its history, and an option to
+  create fresh items (SM-EVT-015).
 - `spaceman` central: SQLite storage with migrations, keyring, hash-chained audit log, metrics and health endpoints, and the
   administrative HTTP API (OpenAPI 3.1, RFC 9457 problems, `If-Match`, idempotency keys, cursor pagination, live change feed).
 - Access control: root-token bootstrap, Argon2id passwords, mandatory TOTP for privileged accounts, recovery codes,

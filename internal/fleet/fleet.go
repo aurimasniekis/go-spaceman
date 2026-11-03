@@ -56,6 +56,15 @@ type Options struct {
 	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error
 	// Outbox records run lifecycle events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
 	Outbox *outbox.Outbox
+	// Admit decides inside the launch transaction whether a launch may start (limits and budgets, SM-LIMIT-001); an
+	// error refuses it. Nil: every launch the space and lease allow starts.
+	Admit func(ctx context.Context, tx *store.Tx, a Admission) error
+}
+
+// Admission is a launch about to be admitted.
+type Admission struct {
+	SpaceID, NodeID, Kind, Role string
+	Actor                       audit.Actor
 }
 
 // Service manages nodes, spaces, leases and runs.

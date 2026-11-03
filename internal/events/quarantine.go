@@ -21,6 +21,9 @@ type Delivery struct {
 	Type        string    `json:"type"`
 	StreamSeq   int64     `json:"stream_seq"`
 	Outcome     string    `json:"outcome" enum:"accepted,duplicate,filtered,quarantined,replayed"`
+	Origin      string    `json:"origin" enum:"live,redelivery,replay,reprocess" doc:"Why it was handled: first delivery, a retry by the stream, an operator's replay, or a reprocessed quarantine entry"`
+	Attempt     int64     `json:"attempt" doc:"How many times this subscription has handled this event, this one included"`
+	ReplayID    string    `json:"replay_id,omitempty" doc:"The replay that re-delivered it"`
 	InboxItemID string    `json:"inbox_item_id,omitempty"`
 	Detail      string    `json:"detail,omitempty"`
 	At          time.Time `json:"at"`
@@ -66,7 +69,7 @@ func (svc *Service) Deliveries(ctx context.Context, spaceID, subID string, limit
 	out := make([]*Delivery, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, &Delivery{ID: r.ID, EventID: r.EventID, Subject: r.Subject, Type: r.Type, StreamSeq: r.StreamSeq, Outcome: r.Outcome,
-			InboxItemID: r.InboxItemID, Detail: r.Detail, At: fromMicros(r.At)})
+			Origin: r.Origin, Attempt: r.Attempt, ReplayID: r.ReplayID, InboxItemID: r.InboxItemID, Detail: r.Detail, At: fromMicros(r.At)})
 	}
 	return out, nil
 }
@@ -116,7 +119,7 @@ func (svc *Service) ResolveQuarantine(ctx context.Context, actor audit.Actor, sp
 	status := "discarded"
 	if reprocess {
 		perr := svc.Process(ctx, r.ID, template.Event{ID: q.EventID, Subject: q.Subject, Type: q.Type, Source: q.Source, ContentType: q.ContentType,
-			Time: fromMicros(q.EventTime), Data: q.Payload}, 0, false)
+			Time: fromMicros(q.EventTime), Data: q.Payload}, 0, Origin{Kind: OriginReprocess})
 		var qe *QuarantinedError
 		if errors.As(perr, &qe) {
 			return svc.quarantineEntry(ctx, entryID) // failed again: still open, with the new error

@@ -2,11 +2,13 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,7 +55,6 @@ func (c *Config) Validate() error {
 	}
 	v.positive64("http.max_body_bytes", c.HTTP.MaxBodyBytes)
 	v.positive64("http.max_upload_bytes", c.HTTP.MaxUploadBytes)
-	v.positive64("artifacts.space_quota_bytes", c.Artifacts.SpaceQuotaBytes)
 	v.logConfig(c.Log)
 
 	v.durationRange("auth.session_idle", c.Auth.SessionIdle, time.Minute, 24*time.Hour)
@@ -102,6 +103,7 @@ func (c *Config) Validate() error {
 	}
 	v.outbound(c.Events.Outbound, prod)
 	v.backups(c.Backups, prod)
+	v.limits(c)
 	v.durationRange("shutdown.timeout", c.Shutdown.Timeout, time.Second, 10*time.Minute)
 	return v.err()
 }
@@ -165,6 +167,50 @@ func (v *validator) backups(b BackupsConfig, prod bool) {
 		}
 	default:
 		v.add("backups.target must be \"local\" or \"s3\", got %q", b.Target)
+	}
+}
+
+// LimitRanges are the bounds of every limit in the limits model, keyed by its limits.* key: installation defaults and
+// space overrides are both checked against them (ADR-0036). 0 is allowed only where the lower bound is 0 ("no limit").
+var LimitRanges = map[string][2]int64{
+	"max_concurrent_runs":       {1, 256},
+	"max_top_level_tasks":       {1, 20},
+	"max_kb_sessions":           {1, 64},
+	"support_depth":             {1, 3},
+	"max_human_pending":         {1, 5000},
+	"max_human_pending_per_run": {1, 500},
+	"max_tool_calls_per_run":    {0, 1_000_000},
+	"ingest_per_minute":         {1, 60_000},
+	"task_deadline_minutes":     {0, 43_200},
+	"storage_quota_bytes":       {1 << 20, 1 << 40},
+	"budget_tokens_24h":         {0, 1 << 40},
+	"budget_cost_cents_24h":     {0, 100_000_000},
+	"budget_tokens_per_run":     {0, 1 << 40},
+	"budget_warn_percent":       {1, 100},
+}
+
+// LimitValues returns the installation default of every limit, keyed like LimitRanges.
+func (c *Config) LimitValues() map[string]int64 {
+	l := c.Limits
+	return map[string]int64{"max_concurrent_runs": l.MaxConcurrentRuns, "max_top_level_tasks": l.MaxTopLevelTasks,
+		"max_kb_sessions": l.MaxKBSessions, "support_depth": l.SupportDepth, "max_human_pending": l.MaxHumanPending,
+		"max_human_pending_per_run": l.MaxHumanPendingPerRun, "max_tool_calls_per_run": l.MaxToolCallsPerRun,
+		"ingest_per_minute": l.IngestPerMinute, "task_deadline_minutes": l.TaskDeadlineMinutes,
+		"storage_quota_bytes": c.Artifacts.SpaceQuotaBytes, "budget_tokens_24h": l.BudgetTokens24h,
+		"budget_cost_cents_24h": l.BudgetCostCents24h, "budget_tokens_per_run": l.BudgetTokensPerRun, "budget_warn_percent": l.BudgetWarnPercent}
+}
+
+func (v *validator) limits(c *Config) {
+	vals := c.LimitValues()
+	for _, k := range slices.Sorted(maps.Keys(vals)) {
+		n, r := vals[k], LimitRanges[k]
+		name := "limits." + k
+		if k == "storage_quota_bytes" {
+			name = "artifacts.space_quota_bytes"
+		}
+		if n < r[0] || n > r[1] {
+			v.add("%s must be within %d..%d, got %d", name, r[0], r[1], n)
+		}
 	}
 }
 

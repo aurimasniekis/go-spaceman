@@ -41,6 +41,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/kb"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/messages"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -50,7 +51,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
+	"github.com/aurimasniekis/go-spaceman/internal/schedule"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
 )
 
@@ -110,6 +113,10 @@ type Central struct {
 	Backups *backup.Service
 	// Restored is the restore applied at this start, or nil (SM-STORE-006).
 	Restored *backup.RestoreState
+	// Limits is the limits model: installation defaults, space overrides, admission and budgets (ADR-0036).
+	Limits *limits.Service
+	// Schedules create inbox items and tasks at cron or interval occurrences (SM-LIMIT-003, ADR-0036).
+	Schedules *schedule.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -149,6 +156,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return nil, err
 	}
 	c.Changes = changefeed.New(c.Bus)
+	c.Limits = limits.New(st, c.Audit, c.Changes, cfg.LimitValues(), o.Clock, obs.Component(log, "limits"))
 	// The first start after a restore pauses every space and renews execution authority before anything else runs.
 	if c.Restored, err = backup.ApplyPendingRestore(ctx, st, c.Audit, c.Changes); err != nil {
 		_ = st.Close()
@@ -233,7 +241,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return c.Notifier.OnCommandAck(ctx, tx, commandID, result)
 		},
-		Outbox: c.Outbox})
+		Outbox: c.Outbox, Admit: c.Limits.Admit})
 	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
 	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
 		if run.Launch.AccountRef == "" {
@@ -254,20 +262,33 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		artifactDir = st.Path("artifacts")
 	}
 	c.Attachments = attachments.New(st, attachments.NewLocal(artifactDir), c.Audit, attachments.Options{MaxBytes: cfg.HTTP.MaxUploadBytes,
-		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock})
+		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock, QuotaFor: func(ctx context.Context, q *db.Queries, spaceID string) int64 {
+			return c.Limits.Value(ctx, q, spaceID, limits.StorageQuota)
+		}})
 	c.Inbox = inbox.New(st, c.Audit, c.Changes, c.Attachments)
 	c.Inbox.Outbox = c.Outbox
 	c.Queue = queue.New(st, c.Audit, c.Changes)
 	c.Queue.Outbox = c.Outbox
+	c.Queue.DefaultMaxActive = int(cfg.Limits.MaxTopLevelTasks)
 	c.Human = human.New(st, c.Audit, c.Changes, o.Clock)
 	c.Human.Outbox = c.Outbox
+	c.Human.PendingLimits = func(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {
+		v, err := c.Limits.For(ctx, q, spaceID)
+		if err != nil {
+			return 0, 0 // the built-in defaults apply
+		}
+		return v.Get(limits.HumanPending), v.Get(limits.HumanPendingPerRun)
+	}
 	c.Human.Log = obs.Component(log, "human")
 	c.Messages = messages.New(st, c.Audit, c.Changes)
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
-	c.Queue.OnStatus = c.Supervisor.OnTaskStatus
+	c.Queue.OnStatus = func(actor audit.Actor, t *queue.Task, from string) {
+		c.Supervisor.OnTaskStatus(actor, t, from)
+		c.Human.Kick() // a task that starts or stops running moves the earliest task deadline (ADR-0036)
+	}
 	c.Gateway = gateway.New(st, c.Keyring, c.Audit, c.Changes, gateway.Options{Log: obs.Component(log, "gateway")})
 	c.Approvals = approvals.New(st, c.Audit, c.Changes, c.Human, obs.Component(log, "approvals"))
 	c.Approvals.StillAuthorized = c.approverStillAuthorized
@@ -282,6 +303,13 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet.Hub().Memory = c.Memory
 	c.KB = kb.New(st, c.Audit, c.Changes, c.Fleet, c.Messages, o.Clock, obs.Component(log, "kb"))
 	c.KB.Outbox = c.Outbox
+	c.KB.SpaceLimits = func(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {
+		v, err := c.Limits.For(ctx, q, spaceID)
+		if err != nil {
+			return cfg.Limits.MaxKBSessions, cfg.Limits.SupportDepth
+		}
+		return v.Get(limits.KBSessions), v.Get(limits.SupportDepth)
+	}
 	c.Fleet.Hub().KBResult = c.KB.OnResult
 	c.Dreams = dream.New(st, c.Audit, c.Changes, c.Fleet, o.Clock, obs.Component(log, "dreamer"))
 	c.Usage = usage.New(st, c.Audit, c.Changes, st.Path("transcripts"), obs.Component(log, "usage"))
@@ -294,12 +322,32 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
 		Sources: backup.DefaultSources(st.Dir(), artifactDir, gitBin), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
 		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup")})
-	c.Fleet.Hub().Usage = c.Usage
+	c.Fleet.Hub().Usage = usageWithBudgets{Service: c.Usage, limits: c.Limits}
+	c.Schedules = schedule.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, o.Clock, obs.Component(log, "schedule"))
+	c.Schedules.Kick = c.Human.Kick
+	c.Limits.OnChange = c.Human.Kick
+	c.Limits.Stop = func(ctx context.Context, actor audit.Actor, runID, reason string) error {
+		_, err := c.Fleet.StopRun(ctx, actor, runID, "interrupt", reason)
+		return err
+	}
+	c.Limits.Notify = func(ctx context.Context, spaceID, subject, body, key string, toControl bool) error {
+		from := messages.From{Kind: "system", ID: "limits", Label: "Limits"}
+		_, _, err := c.Messages.Send(ctx, audit.Actor{Type: audit.ActorSystem, ID: "limits"}, spaceID, from,
+			messages.SendInput{To: "operators", Kind: "notification", Subject: subject, Body: body, DedupKey: key})
+		if err != nil || !toControl {
+			return err
+		}
+		_, _, err = c.Messages.Send(ctx, audit.Actor{Type: audit.ActorSystem, ID: "limits"}, spaceID, from,
+			messages.SendInput{To: "control", Kind: "notification", Subject: subject, Body: body, DedupKey: key + ":control"})
+		return err
+	}
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
 		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), dream.Tools(c.Dreams)}, Upstream: c.Gateway, Gate: c.Approvals})
-	c.Fleet.Hub().Tools = c.Tools.Dispatch
-	evOpts := events.Options{Clock: o.Clock}
+	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
+	evOpts := events.Options{Clock: o.Clock, RateFor: func(ctx context.Context, spaceID string) int64 {
+		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
+	}}
 	if ob.Enabled {
 		evOpts.Origin = ob.Source // never re-ingest our own events (SM-EVT-016)
 	}
@@ -364,7 +412,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -436,7 +484,10 @@ func (c *Central) Serve(ctx context.Context) error {
 	}
 	// One timer for the earliest human-action deadline (expiry, reminder, escalation, notification hold) and approval
 	// expiry, woken by changes; its first round routes responses stranded while central was down (SM-HUM-009/011).
-	go c.Human.Run(ctx, human.Deadline{Name: "approvals", Next: c.Approvals.NextExpiry, Due: c.Approvals.Expire})
+	// Schedules and task deadlines share the timer (SM-LIMIT-003): nothing polls per schedule, task or space.
+	go c.Human.Run(ctx, human.Deadline{Name: "approvals", Next: c.Approvals.NextExpiry, Due: c.Approvals.Expire},
+		human.Deadline{Name: "schedules", Next: c.Schedules.Next, Due: c.Schedules.Due},
+		human.Deadline{Name: "task_deadlines", Next: c.Limits.NextDeadline, Due: c.Limits.Deadlines})
 	go c.Notifier.Run(ctx)
 	go c.KB.Run(ctx)
 	go c.Dreams.Run(ctx)
@@ -508,13 +559,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules} {
 		for k, v := range m {
 			out[k] = v
 		}
@@ -558,4 +609,16 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		return false
 	}
 	return c.Authz.AllowedAll(subjects, spaceID, authz.ApprovalDecide)
+}
+
+// usageWithBudgets stores usage, then checks the run's budgets: a warning is sent once when a budget passes its
+// warning share or its limit (budgets never stop a run).
+type usageWithBudgets struct {
+	*usage.Service
+	limits *limits.Service
+}
+
+func (u usageWithBudgets) Report(ctx context.Context, nodeID string, rep proto.UsageReport) {
+	u.Service.Report(ctx, nodeID, rep)
+	u.limits.OnUsage(ctx, rep.RunID)
 }

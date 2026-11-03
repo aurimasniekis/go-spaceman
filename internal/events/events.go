@@ -6,6 +6,7 @@
 package events
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 	"time"
@@ -29,6 +30,9 @@ type Options struct {
 	// whose spaceman-origin header equals it is acknowledged and recorded as filtered, never turned into an item, so
 	// SpaceMan does not re-ingest what it published. Empty: no check.
 	Origin string
+	// RateFor returns the ingestion rate (events per minute and subscription) of a space (the limits model,
+	// ADR-0036). Nil or 0: no rate limit.
+	RateFor func(ctx context.Context, spaceID string) int64
 }
 
 // Service manages connections, templates and subscriptions, and processes delivered events.

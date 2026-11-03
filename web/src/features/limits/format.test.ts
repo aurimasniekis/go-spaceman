@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest'
+import { duration, every, limitValue, scheduleWhen, usd } from './format'
+
+describe('limit values', () => {
+  it('formats by unit', () => {
+    expect(limitValue(0, 'count', true)).toBe('No limit')
+    expect(limitValue(0, 'count')).toBe('0')
+    expect(limitValue(1 << 30, 'bytes')).toBe('1.0 GiB')
+    expect(limitValue(12550, 'usd_cents')).toBe('$125.50')
+    expect(limitValue(600, 'per_minute')).toBe('600 / min')
+    expect(limitValue(90, 'minutes')).toBe('1h 30m')
+    expect(limitValue(80, 'percent')).toBe('80 %')
+    expect(limitValue(1500000, 'tokens')).toBe('1,500,000 tokens')
+    expect(usd(5)).toBe('$0.05')
+    expect(duration(0)).toBe('—')
+  })
+  it('describes schedules', () => {
+    expect(every(3600)).toBe('every 1 h')
+    expect(every(172800)).toBe('every 2 d')
+    expect(every(120)).toBe('every 2 min')
+    expect(every(90)).toBe('every 90 s')
+    expect(scheduleWhen({ kind: 'cron', cron: '0 9 * * 1', timezone: 'Europe/Vilnius' })).toBe('0 9 * * 1 (Europe/Vilnius)')
+    expect(scheduleWhen({ kind: 'interval', interval_seconds: 3600, timezone: 'UTC' })).toBe('every 1 h')
+  })
+})

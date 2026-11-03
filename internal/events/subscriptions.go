@@ -40,6 +40,7 @@ type Subscription struct {
 	Grant        string               `json:"grant" doc:"The Pulse grant this subscription needs (durable:<subject>:<durable>)"`
 	Enabled      bool                 `json:"enabled"`
 	Cursor       Cursor               `json:"cursor"`
+	LastReplay   *Replay              `json:"last_replay,omitempty" doc:"The most recent explicit replay"`
 	Pending      bool                 `json:"cursor_pending" doc:"A cursor change waits to be applied by the ingestion manager"`
 	LastEventAt  *time.Time           `json:"last_event_at,omitempty"`
 	Quarantined  int64                `json:"quarantined" doc:"Open quarantine entries"`
@@ -302,6 +303,14 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		if in.Start != nil {
 			details["cursor"] = policy
 			details["replay"] = replay == 1
+			if replay == 1 {
+				// A cursor change that re-delivers events is a replay like any other: it is in the replay history.
+				rid, err := recordReplay(ctx, tx, actor, cur, gen, *in.Start, "cursor changed with the subscription", false)
+				if err != nil {
+					return err
+				}
+				details["replay_id"] = rid
+			}
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_subscription.updated", Target: audit.Target{Type: "event_subscription", ID: id},
 			Details: details})
@@ -373,6 +382,9 @@ func (svc *Service) subFromRow(ctx context.Context, r db.EventSubscription) (*Su
 		return nil, err
 	}
 	s.State, s.LastError = svc.runtimeState(r.ID, s.Enabled)
+	if rows, err := svc.s.R().ListSubscriptionReplays(ctx, db.ListSubscriptionReplaysParams{SubscriptionID: r.ID, Limit: 1}); err == nil && len(rows) == 1 {
+		s.LastReplay = replayFromRow(rows[0], r.CursorGeneration)
+	}
 	return s, nil
 }
 

@@ -47,5 +47,14 @@ backups:
 #     url: tls://pulse.example.com:4222
 #     creds_file: /etc/spaceman/pulse.creds   # 0400, owned by the spaceman user
 
+# Installation defaults of the limits model (site/guide/limits.md); spaces override them on their Limits page.
+# limits:
+#   max_concurrent_runs: 8            # worker and diagnostic runs per space
+#   max_tool_calls_per_run: 5000      # 0: no limit
+#   ingest_per_minute: 600            # events per subscription
+#   task_deadline_minutes: 0          # 0: no deadline (a passed deadline notifies, never stops)
+#   budget_tokens_24h: 0              # usage-based; warns and stops new runs, never a hard limit
+#   budget_warn_percent: 80
+
 shutdown:
   timeout: 30s                        # keep below TimeoutStopSec in spaceman.service (45 s)

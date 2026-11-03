@@ -947,6 +947,89 @@
   - When relocation lands, `node_id` changes become in-place updates; the plan-time refusal is the only part to replace.
   - No central API changes were needed. The provider is not published to a registry.
 
+### ADR-0036 — One limits model, space schedules on the shared deadline timer, and replays recorded apart from retries
+- **Status:** Accepted, 2026-11-03 (M4-02).
+- **Context:** SM-LIMIT-001…003 and SM-EVT-015. Limits existed as scattered constants and per-feature settings: the
+  queue's active limit (queue policy, default 1), each knowledge base's `max_sessions`, human pending limits (500 per
+  space, 25 per run, constants), human rate limits (human-action policies, ADR-0032), the attachment quota
+  (`artifacts.space_quota_bytes`), MCP gateway limits per server, the 512 MiB recording quota on the node and dream
+  budgets per dream configuration. The node agent's `capacity` was reported in its hello and never enforced, and nothing
+  bounded a space's concurrent runs, tool calls per run, ingestion per subscription, task run time or spending. A KB
+  support session could ask another knowledge base, whose session could ask back (unbounded support recursion). Replays
+  were cursor changes inside a subscription update; the replay boundary lived in memory (lost on restart), duplicates
+  during a replay were indistinguishable from stream retries, and no schedule mechanism existed for spaces.
+- **Decision:**
+  - **One model, one owner per limit.** `internal/limits` defines every limit (key, unit, bounds, zero-means-none,
+    enforcement point, what lowering does). Installation defaults come from the new `limits:` configuration section
+    (bounds in `config.LimitRanges`, checked at load), the storage quota stays `artifacts.space_quota_bytes`. A space's
+    overrides are one versioned row (`space_limits`, migration 0025), replaced as a whole by `PUT /spaces/{id}/limits`
+    (If-Match once stored, audited `space_limits.updated` with from/to per changed key). `GET /spaces/{id}/limits` is the
+    single effective read: value, default, override, source (`installation`, `space`, `queue_policy`) and the related
+    limits owned elsewhere (node capacity, per-KB sessions, per-type human rates, per-server MCP limits, the recording
+    quota, dream budgets). The top-level task limit stays in the queue policy (its default now comes from
+    `limits.max_top_level_tasks`); subsystems are not rewritten, their existing knobs read the effective value.
+  - **Enforcement points.** Run launch (inside the launch transaction, through a new `fleet.Options.Admit` hook):
+    worker and diagnostic runs against the space's `max_concurrent_runs` (default 8) and the node's reported capacity
+    (now enforced; 0 or unknown means unbounded); budgets for every kind. Human-action creation: pending limits.
+    KB scheduler: `max_kb_sessions` per space on top of each KB's `max_sessions`. KB ask tool: `support_depth`.
+    Agent tool gateway: `max_tool_calls_per_run`, counted durably per run (`run_tool_calls`; the catalog listing is not a
+    call). Event ingestion manager: `ingest_per_minute` per subscription with a token bucket; an event waits at most 10 s
+    and is otherwise left in the stream (negative acknowledgement), so nothing is dropped. Attachment upload: the space's
+    storage quota. Deadline timer: `task_deadline_minutes`.
+  - **Pools and recursion (SM-LIMIT-002).** Control (one per space), KB support (per-KB and per-space pools) and dreamer
+    runs never count against the worker concurrency limit or node capacity, and workers never count against the support
+    pools, so neither side can starve the other. Support depth defaults to 1: a KB session cannot ask a knowledge base at
+    all (`kb_sessions.depth` records each session's depth; a deeper request is refused with `forbidden`), and it never
+    started workers (ADR-0026).
+  - **Lowering never kills work.** Every limit only refuses new work beyond it. The one policy that stops work is a
+    space's explicit `on_lower: stop` for the concurrency limit: lowering it stops (interrupt, then kill after the grace)
+    the newest worker and diagnostic runs beyond the new value, audited as stop requests. The default is `drain`.
+    A passed task deadline is reported once (audit `task.deadline_passed`, a notification to the operators and to
+    control) and never stops, fails or moves the task.
+  - **Budgets are usage-based, never a currency guarantee.** `budget_tokens_24h`, `budget_cost_cents_24h` (sum of the
+    harnesses' own estimates) and `budget_tokens_per_run`, all off by default. The 24-hour window is rolling over runs
+    started in it; unknown usage is counted as unknown, never zero. At `budget_warn_percent` (default 80) operators get
+    one notification per budget and window (`budget_notices`); past a space budget, new runs of every kind are refused
+    until reported usage is below it or the budget is raised; running runs are never stopped and the per-run budget only
+    warns. API, UI and docs say that usage is reported late, so this is not a hard limit (SM-LIMIT-003, SM-REC-005).
+  - **Schedules.** `internal/schedule` (`space_schedules`, `schedule_occurrences`): a schedule creates an inbox item
+    (new source kind `schedule`; `inbox_items` is rebuilt in 0025 to allow it, data-preserving) or a ready task (origin
+    `schedule`) at cron or interval occurrences. Cron expressions are five-field or descriptors, parsed with
+    `github.com/robfig/cron/v3` v3.0.1 (MIT, widely used, parser only; `@every` and `TZ=` prefixes refused) in an IANA
+    time zone (`time/tzdata` embedded, so containers need no zone database); intervals are anchor + n × interval
+    (60 s to 366 days). Each occurrence is recorded once (primary key schedule + time) and its key
+    `schedule:<id>:<unix>` is the deduplication key of the item or task, so a crash between creating and recording never
+    duplicates. An occurrence handled more than a minute late was missed: `skip` records missed occurrences (one summary
+    row), `run_once` runs the latest once, `catch_up` runs up to `catch_up_max` (1-100) of the latest, oldest first;
+    late items say so. `skip_if_open` (default on) skips an occurrence while what the previous one created is open.
+    Archived spaces are not scheduled. One timer drives everything: schedules and task deadlines are jobs of central's
+    single deadline timer (ADR-0032), woken after commits; nothing polls per schedule or space, and agents are never
+    woken to wait for a schedule.
+  - **Replay (SM-EVT-015).** `POST /spaces/{id}/subscriptions/{sub}/replay` (replay:execute, If-Match, a required
+    reason, a position `all|time|seq`, optional `fresh_items`) is the explicit operation; it bumps the cursor generation,
+    records a `subscription_replays` row and audits `event_subscription.replayed` with the reason. A cursor change
+    through an update that re-delivers history is recorded the same way. The ingestion manager persists the replay
+    boundary when it recreates the consumer, so events stored before it count as replayed across restarts. Every
+    delivery records its origin (`live`, `redelivery` — the stream retrying after a nak, an acknowledgement timeout, a
+    restart or a restore —, `replay`, `reprocess`), its attempt (deliveries of that event so far) and the replay ID;
+    replayed items carry `delivery_origin` and `replay_id` in their trusted metadata. Inbox deduplication holds during a
+    replay (an event that made an item is recorded as a duplicate replay); `fresh_items` adds the replay ID to the key,
+    so each replay may create one new item per event.
+- **Alternatives:** a generic key-value limits table per subsystem (no single effective read, sources unclear); moving the
+  queue policy's limit into the new model (two write paths, or an API break for an existing object); counting KB and
+  control runs against the worker limit with reserved slots (couples the pools, starvation still possible under a low
+  limit); stopping runs on budget exhaustion (claims a precision usage reports do not have); a per-schedule goroutine or
+  ticker (polling, SM-ARCH-004); writing a cron parser (error-prone; robfig's parser is small and stable); recording
+  redeliveries as a new outcome value (would need another table rebuild and mixes "what happened" with "why").
+- **Consequences:**
+  - New launches can now be refused with `rate_limited` for concurrency, node capacity or budgets; KB sessions can no
+    longer ask knowledge bases unless a space raises `support_depth`.
+  - Each agent tool call is one more small write transaction (the per-run counter).
+  - Throttled ingestion may make JetStream redeliver prefetched events after its acknowledgement timeout; they are
+    deduplicated and recorded as redeliveries.
+  - Terraform phase 2 (ADR-0035) can manage `space_limits` and schedules through these endpoints; not done here.
+  - Merging note: migration 0025 rebuilds `inbox_items`; later migrations that rebuild it must keep `schedule`.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

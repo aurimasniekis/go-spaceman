@@ -265,6 +265,14 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/kbs/{kb_id}` | `get-kb` | A knowledge base with its sessions, requests and proposals |
 | `PUT` | `/spaces/{space_id}/kbs/{kb_id}` | `update-kb` | Edit a knowledge base |
 
+### limits
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/limits/definitions` | `list-limit-definitions` | Every limit: unit, bounds, installation default source, enforcement point and what lowering it does |
+| `GET` | `/spaces/{space_id}/limits` | `get-space-limits` | A space's effective limits, each with its value and source, and its budget state |
+| `PUT` | `/spaces/{space_id}/limits` | `set-space-limits` | Replace a space's limit overrides |
+
 ### mcp
 
 | Method | Path | Operation | Summary |
@@ -349,6 +357,17 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
 | `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
 
+### schedules
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/schedules` | `list-schedules` | A space's schedules |
+| `POST` | `/spaces/{space_id}/schedules` | `create-schedule` | Create a schedule |
+| `DELETE` | `/spaces/{space_id}/schedules/{schedule_id}` | `delete-schedule` | Delete a schedule (what it created stays) |
+| `GET` | `/spaces/{space_id}/schedules/{schedule_id}` | `get-schedule` | A schedule with its recent occurrences |
+| `PUT` | `/spaces/{space_id}/schedules/{schedule_id}` | `update-schedule` | Replace a schedule |
+| `POST` | `/spaces/{space_id}/schedules/preview` | `preview-schedule` | Validate a schedule's timing and list its next occurrences |
+
 ### sign-in providers
 
 | Method | Path | Operation | Summary |
@@ -385,6 +404,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}/deliveries` | `list-subscription-delivery` | Recent deliveries of a subscription |
 | `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}/quarantine` | `list-quarantine` | Quarantined events of a subscription |
 | `POST` | `/spaces/{space_id}/subscriptions/{subscription_id}/quarantine/{entry_id}` | `resolve-quarantine` | Reprocess or discard a quarantined event |
+| `POST` | `/spaces/{space_id}/subscriptions/{subscription_id}/replay` | `replay-subscription` | Replay a subscription from a position |
+| `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}/replays` | `list-subscription-replays` | A subscription's replay history, newest first |
 
 ### usage
 

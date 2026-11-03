@@ -180,6 +180,11 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			return err
 		}
 		nodeID = sp.NodeID
+		if svc.opts.Admit != nil {
+			if err := svc.opts.Admit(ctx, tx, Admission{SpaceID: spaceID, NodeID: sp.NodeID, Kind: in.Kind, Role: in.Role, Actor: actor}); err != nil {
+				return err
+			}
+		}
 		if svc.opts.ResolveAccount != nil {
 			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.AccountRef); err != nil {
 				return err

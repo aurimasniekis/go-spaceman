@@ -35,6 +35,8 @@ var EventRules = map[string]Rule{
 	"delete-subscription":        InSpace(authz.SubscriptionWrite),
 	"list-subscription-delivery": InSpace(authz.SubscriptionRead),
 	"list-quarantine":            InSpace(authz.SubscriptionRead),
+	"replay-subscription":        InSpace(authz.ReplayExecute),
+	"list-subscription-replays":  InSpace(authz.SubscriptionRead),
 	"resolve-quarantine":         InSpace(authz.SubscriptionWrite),
 }
 
@@ -411,6 +413,45 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 				out := &struct {
 					Body struct {
 						Items []*events.Delivery `json:"items"`
+					}
+				}{}
+				out.Body.Items = l
+				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "replay-subscription", Method: http.MethodPost, Path: "/spaces/{space_id}/subscriptions/{subscription_id}/replay",
+			Summary: "Replay a subscription from a position",
+			Description: "An explicit, audited replay (needs replay:execute): the consumer is recreated at the position and events stored before that moment are " +
+				"delivered with origin replay, never as retries. Inbox deduplication still applies unless fresh_items is set.",
+			Tags: subTags, DefaultStatus: http.StatusAccepted},
+			func(ctx context.Context, in *struct {
+				SubscriptionPath
+				IfMatch
+				Body events.ReplayInput
+			}) (*struct{ Body *events.Replay }, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "events.replay", err)
+				}
+				r, err := svc.Replay(ctx, Actor(ctx), in.SpaceID, in.SubscriptionID, v, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "events.replay", err)
+				}
+				return &struct{ Body *events.Replay }{Body: r}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-subscription-replays", Method: http.MethodGet,
+			Path: "/spaces/{space_id}/subscriptions/{subscription_id}/replays", Summary: "A subscription's replay history, newest first", Tags: subTags},
+			func(ctx context.Context, in *SubscriptionPath) (*struct {
+				Body struct {
+					Items []*events.Replay `json:"items"`
+				}
+			}, error) {
+				l, err := svc.Replays(ctx, in.SpaceID, in.SubscriptionID, 50)
+				if err != nil {
+					return nil, d.fail(ctx, "events.replays", err)
+				}
+				out := &struct {
+					Body struct {
+						Items []*events.Replay `json:"items"`
 					}
 				}{}
 				out.Body.Items = l

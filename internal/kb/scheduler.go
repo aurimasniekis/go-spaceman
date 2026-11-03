@@ -117,6 +117,13 @@ func (svc *Service) Step(ctx context.Context) time.Duration {
 		if n, _ := svc.s.R().CountActiveKBSessions(ctx, k.ID); n >= k.MaxSessions {
 			continue // queued until a session sleeps or ends; the requester sees "queued"
 		}
+		// The space's support pool across its knowledge bases (limits model). Lowering it never stops active sessions:
+		// they finish and sleep, and queued requests start when the space is below it.
+		if spaceMax, _ := svc.spaceLimits(ctx, svc.s.R(), k.SpaceID); spaceMax > 0 {
+			if n, _ := svc.s.R().CountActiveKBSessionsInSpace(ctx, k.SpaceID); n >= spaceMax {
+				continue
+			}
+		}
 		for _, r := range reqs {
 			if r.State == "dispatched" {
 				// Its session ended before answering: offer it again, a bounded number of times.

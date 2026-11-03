@@ -3222,6 +3222,11 @@
             "format": "date-time",
             "type": "string"
           },
+          "attempt": {
+            "description": "How many times this subscription has handled this event, this one included",
+            "format": "int64",
+            "type": "integer"
+          },
           "detail": {
             "type": "string"
           },
@@ -3235,6 +3240,16 @@
           "inbox_item_id": {
             "type": "string"
           },
+          "origin": {
+            "description": "Why it was handled: first delivery, a retry by the stream, an operator's replay, or a reprocessed quarantine entry",
+            "enum": [
+              "live",
+              "redelivery",
+              "replay",
+              "reprocess"
+            ],
+            "type": "string"
+          },
           "outcome": {
             "enum": [
               "accepted",
@@ -3243,6 +3258,10 @@
               "quarantined",
               "replayed"
             ],
+            "type": "string"
+          },
+          "replay_id": {
+            "description": "The replay that re-delivered it",
             "type": "string"
           },
           "stream_seq": {
@@ -3263,6 +3282,8 @@
           "type",
           "stream_seq",
           "outcome",
+          "origin",
+          "attempt",
           "at"
         ],
         "type": "object"
@@ -3343,6 +3364,131 @@
         ],
         "type": "object"
       },
+      "EventsReplay": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsReplay.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "applied": {
+            "description": "The ingestion manager recreated the consumer",
+            "type": "boolean"
+          },
+          "boundary": {
+            "description": "When the consumer was recreated: events stored before it are delivered as replayed",
+            "format": "date-time",
+            "type": "string"
+          },
+          "fresh_items": {
+            "description": "Events that already produced an inbox item produce a new one (once per replay)",
+            "type": "boolean"
+          },
+          "generation": {
+            "description": "The cursor generation the replay created",
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "policy": {
+            "enum": [
+              "all",
+              "time",
+              "seq"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "requested_by": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "superseded": {
+            "description": "A later cursor change replaced it",
+            "type": "boolean"
+          },
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "generation",
+          "policy",
+          "fresh_items",
+          "reason",
+          "requested_by",
+          "requested_at",
+          "applied",
+          "superseded"
+        ],
+        "type": "object"
+      },
+      "EventsReplayInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/EventsReplayInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "fresh_items": {
+            "description": "Create new inbox items even for events that already produced one (default: deduplicated as before)",
+            "type": "boolean"
+          },
+          "policy": {
+            "description": "all: everything the stream still holds; time: from a time; seq: from a stream sequence",
+            "enum": [
+              "all",
+              "time",
+              "seq"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why; recorded in the audit log and the replay history",
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "reason"
+        ],
+        "type": "object"
+      },
       "EventsSubscription": {
         "additionalProperties": false,
         "properties": {
@@ -3404,6 +3550,10 @@
           "last_event_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "last_replay": {
+            "$ref": "#/components/schemas/EventsReplay",
+            "description": "The most recent explicit replay"
           },
           "name": {
             "type": "string"
@@ -5644,7 +5794,8 @@
               "kb",
               "cross_space",
               "event",
-              "webhook"
+              "webhook",
+              "schedule"
             ],
             "type": "string"
           },
@@ -6348,6 +6499,394 @@
         ],
         "type": "object"
       },
+      "LimitsBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_cents": {
+            "description": "Sum of the harnesses' own cost estimates, in US cents",
+            "format": "int64",
+            "type": "integer"
+          },
+          "cost_limit_cents": {
+            "description": "0: no cost budget",
+            "format": "int64",
+            "type": "integer"
+          },
+          "estimated_runs": {
+            "description": "Runs with a cost estimate",
+            "format": "int64",
+            "type": "integer"
+          },
+          "note": {
+            "type": "string"
+          },
+          "over": {
+            "description": "Budgets at or past the warning share",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "runs": {
+            "description": "Runs started in the window",
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "none",
+              "ok",
+              "warning",
+              "exceeded"
+            ],
+            "type": "string"
+          },
+          "tokens": {
+            "description": "Reported input and output tokens of runs started in the window (known usage only)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "tokens_limit": {
+            "description": "0: no token budget",
+            "format": "int64",
+            "type": "integer"
+          },
+          "unknown_runs": {
+            "description": "Runs in the window whose usage is not known (not counted)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "warn_percent": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "window_hours": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_hours",
+          "tokens",
+          "tokens_limit",
+          "cost_cents",
+          "cost_limit_cents",
+          "runs",
+          "unknown_runs",
+          "estimated_runs",
+          "warn_percent",
+          "state",
+          "over",
+          "note"
+        ],
+        "type": "object"
+      },
+      "LimitsDef": {
+        "additionalProperties": false,
+        "properties": {
+          "config_key": {
+            "description": "The installation default in the configuration file",
+            "type": "string"
+          },
+          "edit_at": {
+            "description": "Where the space value is edited when it is not overridable here",
+            "enum": [
+              "",
+              "queue_policy"
+            ],
+            "type": "string"
+          },
+          "enforced": {
+            "description": "Where SpaceMan enforces it",
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "min": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "on_lower": {
+            "description": "What happens to running work when it is lowered",
+            "type": "string"
+          },
+          "overridable": {
+            "description": "Spaces override it here; otherwise where it is set per space is named in edit_at",
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "What one limit value bounds",
+            "type": "string"
+          },
+          "unit": {
+            "enum": [
+              "count",
+              "bytes",
+              "per_minute",
+              "minutes",
+              "tokens",
+              "usd_cents",
+              "percent",
+              "depth"
+            ],
+            "type": "string"
+          },
+          "zero_means_none": {
+            "description": "0 means no limit",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "unit",
+          "scope",
+          "min",
+          "max",
+          "zero_means_none",
+          "config_key",
+          "enforced",
+          "on_lower",
+          "overridable"
+        ],
+        "type": "object"
+      },
+      "LimitsEffective": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/LimitsEffective.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/LimitsBudget"
+          },
+          "limits": {
+            "items": {
+              "$ref": "#/components/schemas/LimitsLimit"
+            },
+            "type": "array"
+          },
+          "on_lower": {
+            "description": "What lowering the concurrent-runs limit does to running runs",
+            "enum": [
+              "drain",
+              "stop"
+            ],
+            "type": "string"
+          },
+          "related": {
+            "description": "Limits set elsewhere (per knowledge base, per action type, per MCP server, per node)",
+            "items": {
+              "$ref": "#/components/schemas/LimitsRelated"
+            },
+            "type": "array"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "description": "Version of the space's overrides (0: none stored)",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "space_id",
+          "limits",
+          "on_lower",
+          "related",
+          "budget",
+          "version"
+        ],
+        "type": "object"
+      },
+      "LimitsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/LimitsInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "on_lower": {
+            "description": "What lowering the concurrent-runs limit does to running runs (default drain)",
+            "enum": [
+              "drain",
+              "stop"
+            ],
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "Overrides by limit key; a key left out inherits the installation default",
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "type": "object"
+      },
+      "LimitsLimit": {
+        "additionalProperties": false,
+        "properties": {
+          "config_key": {
+            "description": "The installation default in the configuration file",
+            "type": "string"
+          },
+          "default": {
+            "description": "The installation default",
+            "format": "int64",
+            "type": "integer"
+          },
+          "edit_at": {
+            "description": "Where the space value is edited when it is not overridable here",
+            "enum": [
+              "",
+              "queue_policy"
+            ],
+            "type": "string"
+          },
+          "enforced": {
+            "description": "Where SpaceMan enforces it",
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "max": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "min": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "on_lower": {
+            "description": "What happens to running work when it is lowered",
+            "type": "string"
+          },
+          "overridable": {
+            "description": "Spaces override it here; otherwise where it is set per space is named in edit_at",
+            "type": "boolean"
+          },
+          "override": {
+            "description": "The space's own value, when it sets one",
+            "format": "int64",
+            "type": "integer"
+          },
+          "scope": {
+            "description": "What one limit value bounds",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "installation",
+              "space",
+              "queue_policy"
+            ],
+            "type": "string"
+          },
+          "unit": {
+            "enum": [
+              "count",
+              "bytes",
+              "per_minute",
+              "minutes",
+              "tokens",
+              "usd_cents",
+              "percent",
+              "depth"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "zero_means_none": {
+            "description": "0 means no limit",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "value",
+          "default",
+          "source",
+          "key",
+          "label",
+          "unit",
+          "scope",
+          "min",
+          "max",
+          "zero_means_none",
+          "config_key",
+          "enforced",
+          "on_lower",
+          "overridable"
+        ],
+        "type": "object"
+      },
+      "LimitsRelated": {
+        "additionalProperties": false,
+        "properties": {
+          "edit_at": {
+            "description": "Where it is configured",
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "value",
+          "source",
+          "edit_at"
+        ],
+        "type": "object"
+      },
       "Link-user-identityRequest": {
         "additionalProperties": false,
         "properties": {
@@ -6648,6 +7187,30 @@
         ],
         "type": "object"
       },
+      "List-limit-definitionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-limit-definitionsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LimitsDef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-mcp-grantsResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6893,6 +7456,30 @@
         ],
         "type": "object"
       },
+      "List-schedulesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-schedulesResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Schedule"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-sessionsResponse": {
         "additionalProperties": false,
         "properties": {
@@ -7052,6 +7639,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/EventsDelivery"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-subscription-replaysResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-subscription-replaysResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventsReplay"
             },
             "type": "array"
           }
@@ -8405,6 +9016,31 @@
           "system_text",
           "effective",
           "skills"
+        ],
+        "type": "object"
+      },
+      "Preview-scheduleResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Preview-scheduleResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "occurrences": {
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "occurrences"
         ],
         "type": "object"
       },
@@ -9936,6 +10572,485 @@
         },
         "required": [
           "definition"
+        ],
+        "type": "object"
+      },
+      "Schedule": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Schedule.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "anchor": {
+            "description": "Interval occurrences are anchor + n × interval",
+            "format": "date-time",
+            "type": "string"
+          },
+          "assignee_role": {
+            "description": "Tasks only",
+            "type": "string"
+          },
+          "body": {
+            "description": "Markdown: the inbox item body or the task objective",
+            "type": "string"
+          },
+          "catch_up_max": {
+            "description": "How many missed occurrences catch_up runs at most",
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "cron": {
+            "description": "Five-field cron expression or @hourly/@daily/@weekly/@monthly/@yearly, in the time zone",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "interval_seconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "cron",
+              "interval"
+            ],
+            "type": "string"
+          },
+          "last_at": {
+            "description": "The last occurrence handled",
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_outcome": {
+            "type": "string"
+          },
+          "last_target_id": {
+            "type": "string"
+          },
+          "missed": {
+            "description": "What happens to occurrences missed while central was stopped or the space archived",
+            "enum": [
+              "skip",
+              "run_once",
+              "catch_up"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Inbox urgency or task priority",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "skip_if_open": {
+            "description": "Skip an occurrence while what the previous one created is still open",
+            "type": "boolean"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "target": {
+            "enum": [
+              "inbox",
+              "task"
+            ],
+            "type": "string"
+          },
+          "timezone": {
+            "description": "IANA time zone of the cron expression",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "upcoming": {
+            "description": "The next occurrences",
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "name",
+          "enabled",
+          "kind",
+          "anchor",
+          "timezone",
+          "missed",
+          "catch_up_max",
+          "skip_if_open",
+          "target",
+          "title",
+          "priority",
+          "upcoming",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ScheduleDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ScheduleDetail.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "anchor": {
+            "description": "Interval occurrences are anchor + n × interval",
+            "format": "date-time",
+            "type": "string"
+          },
+          "assignee_role": {
+            "description": "Tasks only",
+            "type": "string"
+          },
+          "body": {
+            "description": "Markdown: the inbox item body or the task objective",
+            "type": "string"
+          },
+          "catch_up_max": {
+            "description": "How many missed occurrences catch_up runs at most",
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "cron": {
+            "description": "Five-field cron expression or @hourly/@daily/@weekly/@monthly/@yearly, in the time zone",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "interval_seconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "cron",
+              "interval"
+            ],
+            "type": "string"
+          },
+          "last_at": {
+            "description": "The last occurrence handled",
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_outcome": {
+            "type": "string"
+          },
+          "last_target_id": {
+            "type": "string"
+          },
+          "missed": {
+            "description": "What happens to occurrences missed while central was stopped or the space archived",
+            "enum": [
+              "skip",
+              "run_once",
+              "catch_up"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "occurrences": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleOccurrence"
+            },
+            "type": "array"
+          },
+          "priority": {
+            "description": "Inbox urgency or task priority",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "skip_if_open": {
+            "description": "Skip an occurrence while what the previous one created is still open",
+            "type": "boolean"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "target": {
+            "enum": [
+              "inbox",
+              "task"
+            ],
+            "type": "string"
+          },
+          "timezone": {
+            "description": "IANA time zone of the cron expression",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "upcoming": {
+            "description": "The next occurrences",
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "occurrences",
+          "id",
+          "space_id",
+          "name",
+          "enabled",
+          "kind",
+          "anchor",
+          "timezone",
+          "missed",
+          "catch_up_max",
+          "skip_if_open",
+          "target",
+          "title",
+          "priority",
+          "upcoming",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ScheduleInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ScheduleInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "anchor": {
+            "description": "Interval start (default: now)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "assignee_role": {
+            "maxLength": 48,
+            "type": "string"
+          },
+          "body": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "catch_up_max": {
+            "description": "1-100; default 3",
+            "format": "int64",
+            "type": "integer"
+          },
+          "cron": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "interval_seconds": {
+            "description": "60 s to 366 days",
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "cron",
+              "interval"
+            ],
+            "type": "string"
+          },
+          "missed": {
+            "description": "Default skip",
+            "enum": [
+              "skip",
+              "run_once",
+              "catch_up"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "skip_if_open": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "target": {
+            "enum": [
+              "inbox",
+              "task"
+            ],
+            "type": "string"
+          },
+          "timezone": {
+            "description": "IANA time zone (default UTC)",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "target",
+          "title"
+        ],
+        "type": "object"
+      },
+      "ScheduleOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "description": "The scheduled time",
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "handled_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "late": {
+            "description": "Handled after its time (central was stopped, say)",
+            "type": "boolean"
+          },
+          "outcome": {
+            "enum": [
+              "created",
+              "duplicate",
+              "skipped",
+              "missed",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_kind": {
+            "enum": [
+              "",
+              "inbox_item",
+              "task"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "outcome",
+          "late",
+          "handled_at"
         ],
         "type": "object"
       },
@@ -13600,6 +14715,37 @@
         "summary": "Publish the draft as the next immutable version",
         "tags": [
           "human-action-types"
+        ]
+      }
+    },
+    "/limits/definitions": {
+      "get": {
+        "operationId": "list-limit-definitions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-limit-definitionsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Every limit: unit, bounds, installation default source, enforcement point and what lowering it does",
+        "tags": [
+          "limits"
         ]
       }
     },
@@ -18005,6 +19151,123 @@
         ]
       }
     },
+    "/spaces/{space_id}/limits": {
+      "get": {
+        "description": "Budgets are usage-based: usage arrives late or not at all, so they warn and stop new runs but are never a hard currency limit.",
+        "operationId": "get-space-limits",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitsEffective"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's effective limits, each with its value and source, and its budget state",
+        "tags": [
+          "limits"
+        ]
+      },
+      "put": {
+        "description": "Keys left out inherit the installation default. If-Match is required once overrides are stored. Lowering a limit never stops running work, except the concurrent-runs limit with on_lower=stop, which stops the newest runs beyond it.",
+        "operationId": "set-space-limits",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LimitsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitsEffective"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace a space's limit overrides",
+        "tags": [
+          "limits"
+        ]
+      }
+    },
     "/spaces/{space_id}/mcp-servers": {
       "get": {
         "operationId": "list-space-mcp-grants",
@@ -19631,6 +20894,334 @@
         ]
       }
     },
+    "/spaces/{space_id}/schedules": {
+      "get": {
+        "operationId": "list-schedules",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-schedulesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's schedules",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "post": {
+        "description": "It creates an inbox item or a task at each occurrence; the first occurrence is the first one after now.",
+        "operationId": "create-schedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a schedule",
+        "tags": [
+          "schedules"
+        ]
+      }
+    },
+    "/spaces/{space_id}/schedules/preview": {
+      "post": {
+        "operationId": "preview-schedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preview-scheduleResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Validate a schedule's timing and list its next occurrences",
+        "tags": [
+          "schedules"
+        ]
+      }
+    },
+    "/spaces/{space_id}/schedules/{schedule_id}": {
+      "delete": {
+        "operationId": "delete-schedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a schedule (what it created stays)",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "get": {
+        "operationId": "get-schedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleDetail"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A schedule with its recent occurrences",
+        "tags": [
+          "schedules"
+        ]
+      },
+      "put": {
+        "description": "A changed timing restarts it from now; occurrences before the change are not treated as missed.",
+        "operationId": "update-schedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace a schedule",
+        "tags": [
+          "schedules"
+        ]
+      }
+    },
     "/spaces/{space_id}/state": {
       "post": {
         "description": "hold admits no new work; interrupt also stops active runs politely; emergency kills them. Archiving needs no active runs.",
@@ -20168,6 +21759,128 @@
           }
         },
         "summary": "Reprocess or discard a quarantined event",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/subscriptions/{subscription_id}/replay": {
+      "post": {
+        "description": "An explicit, audited replay (needs replay:execute): the consumer is recreated at the position and events stored before that moment are delivered with origin replay, never as retries. Inbox deduplication still applies unless fresh_items is set.",
+        "operationId": "replay-subscription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventsReplayInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsReplay"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replay a subscription from a position",
+        "tags": [
+          "subscriptions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/subscriptions/{subscription_id}/replays": {
+      "get": {
+        "operationId": "list-subscription-replays",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-subscription-replaysResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A subscription's replay history, newest first",
         "tags": [
           "subscriptions"
         ]

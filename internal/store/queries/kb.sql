@@ -24,8 +24,8 @@ SELECT * FROM kb_repos WHERE space_id = ? ORDER BY slug;
 SELECT * FROM kb_repos WHERE enabled = 1 ORDER BY space_id, slug;
 
 -- name: InsertKBSession :exec
-INSERT INTO kb_sessions (id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, branch, state, last_active_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?);
+INSERT INTO kb_sessions (id, kb_id, space_id, requester_key, requester_role, requester_label, instance_id, branch, state, last_active_at, created_at, updated_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?);
 
 -- name: GetKBSession :one
 SELECT * FROM kb_sessions WHERE id = ?;
@@ -41,6 +41,9 @@ SELECT * FROM kb_sessions WHERE kb_id = ? ORDER BY last_active_at DESC;
 
 -- name: CountActiveKBSessions :one
 SELECT COUNT(*) FROM kb_sessions WHERE kb_id = ? AND state = 'active';
+
+-- name: CountActiveKBSessionsInSpace :one
+SELECT COUNT(*) FROM kb_sessions WHERE space_id = ? AND state = 'active';
 
 -- name: SetKBSessionRun :exec
 UPDATE kb_sessions SET run_id = ?, state = ?, harness_session = ?, last_active_at = ?, updated_at = ? WHERE id = ?;

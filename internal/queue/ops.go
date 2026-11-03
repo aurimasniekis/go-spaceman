@@ -20,7 +20,7 @@ import (
 // mutate runs fn on a fresh snapshot inside a write transaction, checking the task's version when version > 0.
 func (svc *Service) mutate(ctx context.Context, name, spaceID, id string, version int64, fn func(tx *store.Tx, sn *snapshot, t *Task) error) (*Task, error) {
 	err := svc.s.W().TxNamed(ctx, name, func(tx *store.Tx) error {
-		sn, err := load(ctx, tx.Q, spaceID)
+		sn, err := svc.load(ctx, tx.Q, spaceID)
 		if err != nil {
 			return err
 		}
@@ -350,7 +350,7 @@ func ResolveBlockersByRef(ctx context.Context, tx *store.Tx, kind, refID, by str
 // Next selects the highest-ordered eligible ready task and lists why higher tasks were skipped (SM-QUEUE-005). With
 // record set, the decision is stored for inspection.
 func (svc *Service) Next(ctx context.Context, actor audit.Actor, spaceID string, record bool) (*Selection, error) {
-	sn, err := load(ctx, svc.s.R(), spaceID)
+	sn, err := svc.load(ctx, svc.s.R(), spaceID)
 	if err != nil {
 		return nil, err
 	}

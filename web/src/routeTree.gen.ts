@@ -41,9 +41,11 @@ import { Route as SpacesSpaceIdEventsRouteImport } from './routes/spaces.$spaceI
 import { Route as SpacesSpaceIdHumanRouteImport } from './routes/spaces.$spaceId.human'
 import { Route as SpacesSpaceIdInboxRouteImport } from './routes/spaces.$spaceId.inbox'
 import { Route as SpacesSpaceIdKnowledgeRouteImport } from './routes/spaces.$spaceId.knowledge'
+import { Route as SpacesSpaceIdLimitsRouteImport } from './routes/spaces.$spaceId.limits'
 import { Route as SpacesSpaceIdMemoryRouteImport } from './routes/spaces.$spaceId.memory'
 import { Route as SpacesSpaceIdMessagesRouteImport } from './routes/spaces.$spaceId.messages'
 import { Route as SpacesSpaceIdQueueRouteImport } from './routes/spaces.$spaceId.queue'
+import { Route as SpacesSpaceIdSchedulesRouteImport } from './routes/spaces.$spaceId.schedules'
 import { Route as SpacesSpaceIdEventsIndexRouteImport } from './routes/spaces.$spaceId.events.index'
 import { Route as SpacesSpaceIdEventsSubscriptionIdRouteImport } from './routes/spaces.$spaceId.events.$subscriptionId'
 import { Route as SpacesSpaceIdInboxIndexRouteImport } from './routes/spaces.$spaceId.inbox.index'
@@ -211,6 +213,11 @@ const SpacesSpaceIdKnowledgeRoute = SpacesSpaceIdKnowledgeRouteImport.update({
   path: '/knowledge',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdLimitsRoute = SpacesSpaceIdLimitsRouteImport.update({
+  id: '/limits',
+  path: '/limits',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdMemoryRoute = SpacesSpaceIdMemoryRouteImport.update({
   id: '/memory',
   path: '/memory',
@@ -224,6 +231,11 @@ const SpacesSpaceIdMessagesRoute = SpacesSpaceIdMessagesRouteImport.update({
 const SpacesSpaceIdQueueRoute = SpacesSpaceIdQueueRouteImport.update({
   id: '/queue',
   path: '/queue',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
+const SpacesSpaceIdSchedulesRoute = SpacesSpaceIdSchedulesRouteImport.update({
+  id: '/schedules',
+  path: '/schedules',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
 const SpacesSpaceIdEventsIndexRoute =
@@ -287,9 +299,11 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
   '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
+  '/spaces/$spaceId/limits': typeof SpacesSpaceIdLimitsRoute
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
+  '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -324,9 +338,11 @@ export interface FileRoutesByTo {
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
+  '/spaces/$spaceId/limits': typeof SpacesSpaceIdLimitsRoute
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
+  '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -367,9 +383,11 @@ export interface FileRoutesById {
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
   '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
+  '/spaces/$spaceId/limits': typeof SpacesSpaceIdLimitsRoute
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
+  '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -411,9 +429,11 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
     | '/spaces/$spaceId/knowledge'
+    | '/spaces/$spaceId/limits'
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
+    | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -448,9 +468,11 @@ export interface FileRouteTypes {
     | '/events/templates/$templateId'
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/knowledge'
+    | '/spaces/$spaceId/limits'
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
+    | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -490,9 +512,11 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
     | '/spaces/$spaceId/knowledge'
+    | '/spaces/$spaceId/limits'
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
+    | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -753,6 +777,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdKnowledgeRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/limits': {
+      id: '/spaces/$spaceId/limits'
+      path: '/limits'
+      fullPath: '/spaces/$spaceId/limits'
+      preLoaderRoute: typeof SpacesSpaceIdLimitsRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/memory': {
       id: '/spaces/$spaceId/memory'
       path: '/memory'
@@ -772,6 +803,13 @@ declare module '@tanstack/react-router' {
       path: '/queue'
       fullPath: '/spaces/$spaceId/queue'
       preLoaderRoute: typeof SpacesSpaceIdQueueRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
+    '/spaces/$spaceId/schedules': {
+      id: '/spaces/$spaceId/schedules'
+      path: '/schedules'
+      fullPath: '/spaces/$spaceId/schedules'
+      preLoaderRoute: typeof SpacesSpaceIdSchedulesRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
     '/spaces/$spaceId/events/': {
@@ -857,9 +895,11 @@ interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdHumanRoute: typeof SpacesSpaceIdHumanRoute
   SpacesSpaceIdInboxRoute: typeof SpacesSpaceIdInboxRouteWithChildren
   SpacesSpaceIdKnowledgeRoute: typeof SpacesSpaceIdKnowledgeRoute
+  SpacesSpaceIdLimitsRoute: typeof SpacesSpaceIdLimitsRoute
   SpacesSpaceIdMemoryRoute: typeof SpacesSpaceIdMemoryRoute
   SpacesSpaceIdMessagesRoute: typeof SpacesSpaceIdMessagesRoute
   SpacesSpaceIdQueueRoute: typeof SpacesSpaceIdQueueRoute
+  SpacesSpaceIdSchedulesRoute: typeof SpacesSpaceIdSchedulesRoute
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
 }
@@ -869,9 +909,11 @@ const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdHumanRoute: SpacesSpaceIdHumanRoute,
   SpacesSpaceIdInboxRoute: SpacesSpaceIdInboxRouteWithChildren,
   SpacesSpaceIdKnowledgeRoute: SpacesSpaceIdKnowledgeRoute,
+  SpacesSpaceIdLimitsRoute: SpacesSpaceIdLimitsRoute,
   SpacesSpaceIdMemoryRoute: SpacesSpaceIdMemoryRoute,
   SpacesSpaceIdMessagesRoute: SpacesSpaceIdMessagesRoute,
   SpacesSpaceIdQueueRoute: SpacesSpaceIdQueueRoute,
+  SpacesSpaceIdSchedulesRoute: SpacesSpaceIdSchedulesRoute,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,
 }

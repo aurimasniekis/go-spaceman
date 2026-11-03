@@ -358,7 +358,7 @@ test('documentation screenshots', async ({ page, browser }) => {
   })
   await capture(page, 'space-overview', async () => {
     await page.goto(`/spaces/${payments.id}`)
-    await expect(page.getByText('reviewer')).toBeVisible()
+    await expect(page.getByRole('cell', { name: 'reviewer (worker)' })).toBeVisible()
   })
   await capture(page, 'space-create', async () => {
     await page.goto('/spaces')
@@ -640,6 +640,35 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/events/${alerts.id}`)
     await page.getByRole('tab', { name: /Quarantine/ }).click()
     await expect(page.getByRole('button', { name: 'Reprocess' })).toBeVisible()
+  })
+  // Replay (SM-EVT-015): an explicit replay of the issues subscription; its deliveries show origin replay beside the live ones.
+  type Sub = { version: number }
+  const cur = await api.call<Sub>('GET', `/spaces/${payments.id}/subscriptions/${issues.id}`)
+  await api.call('POST', `/spaces/${payments.id}/subscriptions/${issues.id}/replay`, { policy: 'all', reason: 'Template v2 adds labels; re-check the backlog' },
+    { 'If-Match': `"${cur.version}"` })
+  await expect.poll(async () => (await api.call<{ items: { origin: string }[] }>('GET', `/spaces/${payments.id}/subscriptions/${issues.id}/deliveries`)).items
+    .filter((d) => d.origin === 'replay').length, { timeout: 30_000 }).toBeGreaterThan(0)
+  await capture(page, 'event-replay', async () => {
+    await page.goto(`/spaces/${payments.id}/events/${issues.id}`)
+    await expect(page.getByText('Replay', { exact: true }).first()).toBeVisible()
+  })
+
+  // Limits (SM-LIMIT-001): overrides with a token budget; Schedules (SM-LIMIT-003): a weekday review in Vilnius time and
+  // an hourly task.
+  await api.call('PUT', `/spaces/${payments.id}/limits`, { values: { max_concurrent_runs: 4, max_tool_calls_per_run: 2000, budget_tokens_24h: 5_000_000,
+    budget_cost_cents_24h: 5000, task_deadline_minutes: 240 }, on_lower: 'drain' })
+  await capture(page, 'space-limits', async () => {
+    await page.goto(`/spaces/${payments.id}/limits`)
+    await expect(page.getByText('Not a hard currency limit', { exact: true })).toBeVisible()
+  })
+  await api.call('POST', `/spaces/${payments.id}/schedules`, { name: 'weekday review', description: 'Morning look at the queue and open incidents', kind: 'cron',
+    cron: '0 9 * * 1-5', timezone: 'Europe/Vilnius', missed: 'run_once', target: 'inbox', title: 'Morning review',
+    body: 'Review the queue, open incidents and anything waiting for people.' })
+  await api.call('POST', `/spaces/${payments.id}/schedules`, { name: 'reconcile ledgers', kind: 'interval', interval_seconds: 3600, missed: 'catch_up', catch_up_max: 3,
+    target: 'task', title: 'Reconcile settlement ledgers', priority: 'high', assignee_role: 'implementor-backend' })
+  await capture(page, 'space-schedules', async () => {
+    await page.goto(`/spaces/${payments.id}/schedules`)
+    await expect(page.getByText('reconcile ledgers')).toBeVisible()
   })
   await capture(page, 'setup-node-enroll', async () => {
     await page.goto('/nodes')

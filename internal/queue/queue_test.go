@@ -260,3 +260,31 @@ func TestTaskEventsRecorded(t *testing.T) {
 		t.Fatalf("events\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// SM-LIMIT-001/002: the installation's top-level task limit applies to spaces without a queue policy; lowering the
+// limit never returns running tasks to ready, it only stops further selection until the space is below it.
+func TestTopLevelLimitDefaultAndLowering(t *testing.T) {
+	f := newFx(t)
+	f.svc.DefaultMaxActive = 2
+	if _, p, _ := f.svc.List(f.ctx, "spc_a"); p.MaxActive != 2 {
+		t.Fatalf("default policy %+v", p)
+	}
+	a, b, c := f.add(CreateInput{Title: "a"}), f.add(CreateInput{Title: "b"}), f.add(CreateInput{Title: "c"})
+	for _, x := range []*Task{a, b} {
+		_, err := f.svc.SetStatus(f.ctx, op, "spc_a", x.ID, f.get(x.ID).Version, StatusInput{Status: Running})
+		must(t, err)
+	}
+	if _, err := f.svc.SetStatus(f.ctx, op, "spc_a", c.ID, f.get(c.ID).Version, StatusInput{Status: Running}); err == nil {
+		t.Fatal("a third top-level task started beyond the limit")
+	}
+	_, err := f.svc.SetPolicy(f.ctx, op, "spc_a", Policy{MaxActive: 1, IncidentInsertion: "top"})
+	must(t, err)
+	if f.get(a.ID).Status != Running || f.get(b.ID).Status != Running {
+		t.Fatal("lowering the limit stopped a running task")
+	}
+	sel, err := f.svc.Next(f.ctx, op, "spc_a", false)
+	must(t, err)
+	if sel.Selected != nil || len(sel.Skipped) != 1 || !strings.Contains(sel.Skipped[0].Reason, "limit 1") {
+		t.Fatalf("selection after lowering %+v", sel)
+	}
+}

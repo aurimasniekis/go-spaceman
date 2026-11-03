@@ -87,4 +87,24 @@ func TestEventsOverHTTP(t *testing.T) {
 	expect(t, viewer.do("GET", "/spaces/"+sp.ID+"/subscriptions", nil), 200)
 	expect(t, viewer.do("PUT", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID, map[string]any{"enabled": true, "start": map[string]any{"policy": "all"}}, "If-Match", `"1"`), 403)
 	expect(t, viewer.do("POST", "/event-connections", map[string]any{"name": "x", "url": nats.URL, "creds": creds, "enabled": true}), 403)
+
+	// SM-EVT-015: the explicit replay operation needs replay:execute, If-Match and a reason; it is listed in the history.
+	replay := map[string]any{"policy": "all", "reason": "rebuild the inbox after a template fix"}
+	expect(t, viewer.do("POST", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID+"/replay", replay, "If-Match", `"1"`), 403)
+	expect(t, root.do("POST", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID+"/replay", replay), 428)
+	expect(t, root.do("POST", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID+"/replay", map[string]any{"policy": "all"}, "If-Match", `"1"`), 422)
+	expect(t, root.do("POST", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID+"/replay", map[string]any{"policy": "new", "reason": "x"}, "If-Match", `"1"`), 422)
+	r = root.do("POST", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID+"/replay", replay, "If-Match", `"1"`)
+	expect(t, r, 202)
+	var rp events.Replay
+	r.json(t, &rp)
+	if rp.Policy != "all" || rp.Generation != 2 || rp.Reason != replay["reason"] {
+		t.Fatalf("replay %+v", rp)
+	}
+	expect(t, root.do("POST", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID+"/replay", replay, "If-Match", `"1"`), 409)
+	var hist struct{ Items []events.Replay }
+	viewer.do("GET", "/spaces/"+sp.ID+"/subscriptions/"+sub.ID+"/replays", nil).json(t, &hist)
+	if len(hist.Items) != 1 || hist.Items[0].ID != rp.ID {
+		t.Fatalf("history %+v", hist)
+	}
 }

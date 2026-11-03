@@ -130,6 +130,9 @@ type Service struct {
 	OnStatus func(actor audit.Actor, t *Task, from string)
 	// Outbox records task events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
 	Outbox *outbox.Outbox
+	// DefaultMaxActive is the top-level task limit of spaces without a queue policy (limits.max_top_level_tasks,
+	// ADR-0036); 0 means 1.
+	DefaultMaxActive int
 }
 
 // New returns the service.
@@ -166,14 +169,22 @@ type snapshot struct {
 	policy Policy
 }
 
-func defaultPolicy() Policy { return Policy{MaxActive: 1, IncidentInsertion: "top"} }
+// defaultPolicy applies to a space without a stored queue policy: the installation's top-level task limit
+// (limits.max_top_level_tasks) and incidents at the top.
+func (svc *Service) defaultPolicy() Policy {
+	n := svc.DefaultMaxActive
+	if n < 1 || n > 20 {
+		n = 1
+	}
+	return Policy{MaxActive: n, IncidentInsertion: "top"}
+}
 
-func load(ctx context.Context, q *db.Queries, spaceID string) (*snapshot, error) {
+func (svc *Service) load(ctx context.Context, q *db.Queries, spaceID string) (*snapshot, error) {
 	rows, err := q.ListTasks(ctx, spaceID)
 	if err != nil {
 		return nil, err
 	}
-	sn := &snapshot{rows: rows, byID: map[string]*Task{}, deps: map[string][]string{}, policy: defaultPolicy()}
+	sn := &snapshot{rows: rows, byID: map[string]*Task{}, deps: map[string][]string{}, policy: svc.defaultPolicy()}
 	children := map[string][]*Task{}
 	for _, r := range rows {
 		t := fromRow(r)
@@ -418,7 +429,7 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 				return err
 			}
 		}
-		sn, err := load(ctx, tx.Q, spaceID)
+		sn, err := svc.load(ctx, tx.Q, spaceID)
 		if err != nil {
 			return err
 		}
@@ -492,7 +503,7 @@ func eventTask(t *Task) outbox.Task {
 
 // Get returns a task of a space with its dependencies, open blockers and eligibility.
 func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Task, error) {
-	sn, err := load(ctx, svc.s.R(), spaceID)
+	sn, err := svc.load(ctx, svc.s.R(), spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +516,7 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Task, error) 
 
 // List returns a space's queue in its effective order, with eligibility notes on ready tasks, and the policy.
 func (svc *Service) List(ctx context.Context, spaceID string) ([]*Task, Policy, error) {
-	sn, err := load(ctx, svc.s.R(), spaceID)
+	sn, err := svc.load(ctx, svc.s.R(), spaceID)
 	if err != nil {
 		return nil, Policy{}, err
 	}

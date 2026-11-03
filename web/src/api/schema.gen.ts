@@ -877,6 +877,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/limits/definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every limit: unit, bounds, installation default source, enforcement point and what lowering it does */
+        get: operations["list-limit-definitions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mcp-servers": {
         parameters: {
             query?: never;
@@ -2033,6 +2050,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's effective limits, each with its value and source, and its budget state
+         * @description Budgets are usage-based: usage arrives late or not at all, so they warn and stop new runs but are never a hard currency limit.
+         */
+        get: operations["get-space-limits"];
+        /**
+         * Replace a space's limit overrides
+         * @description Keys left out inherit the installation default. If-Match is required once overrides are stored. Lowering a limit never stops running work, except the concurrent-runs limit with on_lower=stop, which stops the newest runs beyond it.
+         */
+        put: operations["set-space-limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/mcp-servers": {
         parameters: {
             query?: never;
@@ -2517,6 +2558,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's schedules */
+        get: operations["list-schedules"];
+        put?: never;
+        /**
+         * Create a schedule
+         * @description It creates an inbox item or a task at each occurrence; the first occurrence is the first one after now.
+         */
+        post: operations["create-schedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/schedules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate a schedule's timing and list its next occurrences */
+        post: operations["preview-schedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A schedule with its recent occurrences */
+        get: operations["get-schedule"];
+        /**
+         * Replace a schedule
+         * @description A changed timing restarts it from now; occurrences before the change are not treated as missed.
+         */
+        put: operations["update-schedule"];
+        post?: never;
+        /** Delete a schedule (what it created stays) */
+        delete: operations["delete-schedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/state": {
         parameters: {
             query?: never;
@@ -2625,6 +2726,43 @@ export interface paths {
         put?: never;
         /** Reprocess or discard a quarantined event */
         post: operations["resolve-quarantine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/subscriptions/{subscription_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replay a subscription from a position
+         * @description An explicit, audited replay (needs replay:execute): the consumer is recreated at the position and events stored before that moment are delivered with origin replay, never as retries. Inbox deduplication still applies unless fresh_items is set.
+         */
+        post: operations["replay-subscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/subscriptions/{subscription_id}/replays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A subscription's replay history, newest first */
+        get: operations["list-subscription-replays"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4312,13 +4450,25 @@ export interface components {
         EventsDelivery: {
             /** Format: date-time */
             at: string;
+            /**
+             * Format: int64
+             * @description How many times this subscription has handled this event, this one included
+             */
+            attempt: number;
             detail?: string;
             event_id: string;
             /** Format: int64 */
             id: number;
             inbox_item_id?: string;
+            /**
+             * @description Why it was handled: first delivery, a retry by the stream, an operator's replay, or a reprocessed quarantine entry
+             * @enum {string}
+             */
+            origin: "live" | "redelivery" | "replay" | "reprocess";
             /** @enum {string} */
             outcome: "accepted" | "duplicate" | "filtered" | "quarantined" | "replayed";
+            /** @description The replay that re-delivered it */
+            replay_id?: string;
             /** Format: int64 */
             stream_seq: number;
             subject: string;
@@ -4350,6 +4500,62 @@ export interface components {
             subject: string;
             type: string;
         };
+        EventsReplay: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsReplay.json
+             */
+            readonly $schema?: string;
+            /** @description The ingestion manager recreated the consumer */
+            applied: boolean;
+            /**
+             * Format: date-time
+             * @description When the consumer was recreated: events stored before it are delivered as replayed
+             */
+            boundary?: string;
+            /** @description Events that already produced an inbox item produce a new one (once per replay) */
+            fresh_items: boolean;
+            /**
+             * Format: int64
+             * @description The cursor generation the replay created
+             */
+            generation: number;
+            id: string;
+            /** @enum {string} */
+            policy: "all" | "time" | "seq";
+            reason: string;
+            /** Format: date-time */
+            requested_at: string;
+            requested_by: string;
+            /** Format: int64 */
+            seq?: number;
+            /** @description A later cursor change replaced it */
+            superseded: boolean;
+            /** Format: date-time */
+            time?: string;
+        };
+        EventsReplayInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/EventsReplayInput.json
+             */
+            readonly $schema?: string;
+            /** @description Create new inbox items even for events that already produced one (default: deduplicated as before) */
+            fresh_items?: boolean;
+            /**
+             * @description all: everything the stream still holds; time: from a time; seq: from a stream sequence
+             * @enum {string}
+             */
+            policy: "all" | "time" | "seq";
+            /** @description Why; recorded in the audit log and the replay history */
+            reason: string;
+            /** Format: int64 */
+            seq?: number;
+            /** Format: date-time */
+            time?: string;
+        };
         EventsSubscription: {
             /**
              * Format: uri
@@ -4380,6 +4586,8 @@ export interface components {
             last_error?: string;
             /** Format: date-time */
             last_event_at?: string;
+            /** @description The most recent explicit replay */
+            last_replay?: components["schemas"]["EventsReplay"];
             name: string;
             /**
              * Format: int64
@@ -5219,7 +5427,7 @@ export interface components {
             /** @description The authenticated source: a user, run, subscription or space ID */
             source_id?: string;
             /** @enum {string} */
-            source_kind: "operator" | "worker" | "human_response" | "dreamer" | "kb" | "cross_space" | "event" | "webhook";
+            source_kind: "operator" | "worker" | "human_response" | "dreamer" | "kb" | "cross_space" | "event" | "webhook" | "schedule";
             source_label?: string;
             space_id: string;
             /** @enum {string} */
@@ -5463,6 +5671,171 @@ export interface components {
             /** Format: int64 */
             sessions: number;
         };
+        LimitsBudget: {
+            /**
+             * Format: int64
+             * @description Sum of the harnesses' own cost estimates, in US cents
+             */
+            cost_cents: number;
+            /**
+             * Format: int64
+             * @description 0: no cost budget
+             */
+            cost_limit_cents: number;
+            /**
+             * Format: int64
+             * @description Runs with a cost estimate
+             */
+            estimated_runs: number;
+            note: string;
+            /** @description Budgets at or past the warning share */
+            over: string[];
+            /**
+             * Format: int64
+             * @description Runs started in the window
+             */
+            runs: number;
+            /** @enum {string} */
+            state: "none" | "ok" | "warning" | "exceeded";
+            /**
+             * Format: int64
+             * @description Reported input and output tokens of runs started in the window (known usage only)
+             */
+            tokens: number;
+            /**
+             * Format: int64
+             * @description 0: no token budget
+             */
+            tokens_limit: number;
+            /**
+             * Format: int64
+             * @description Runs in the window whose usage is not known (not counted)
+             */
+            unknown_runs: number;
+            /** Format: int64 */
+            warn_percent: number;
+            /** Format: int64 */
+            window_hours: number;
+        };
+        LimitsDef: {
+            /** @description The installation default in the configuration file */
+            config_key: string;
+            /**
+             * @description Where the space value is edited when it is not overridable here
+             * @enum {string}
+             */
+            edit_at?: "" | "queue_policy";
+            /** @description Where SpaceMan enforces it */
+            enforced: string;
+            key: string;
+            label: string;
+            /** Format: int64 */
+            max: number;
+            /** Format: int64 */
+            min: number;
+            /** @description What happens to running work when it is lowered */
+            on_lower: string;
+            /** @description Spaces override it here; otherwise where it is set per space is named in edit_at */
+            overridable: boolean;
+            /** @description What one limit value bounds */
+            scope: string;
+            /** @enum {string} */
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "tokens" | "usd_cents" | "percent" | "depth";
+            /** @description 0 means no limit */
+            zero_means_none: boolean;
+        };
+        LimitsEffective: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LimitsEffective.json
+             */
+            readonly $schema?: string;
+            budget: components["schemas"]["LimitsBudget"];
+            limits: components["schemas"]["LimitsLimit"][];
+            /**
+             * @description What lowering the concurrent-runs limit does to running runs
+             * @enum {string}
+             */
+            on_lower: "drain" | "stop";
+            /** @description Limits set elsewhere (per knowledge base, per action type, per MCP server, per node) */
+            related: components["schemas"]["LimitsRelated"][];
+            space_id: string;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /**
+             * Format: int64
+             * @description Version of the space's overrides (0: none stored)
+             */
+            version: number;
+        };
+        LimitsInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LimitsInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description What lowering the concurrent-runs limit does to running runs (default drain)
+             * @enum {string}
+             */
+            on_lower?: "drain" | "stop";
+            /** @description Overrides by limit key; a key left out inherits the installation default */
+            values: {
+                [key: string]: number;
+            };
+        };
+        LimitsLimit: {
+            /** @description The installation default in the configuration file */
+            config_key: string;
+            /**
+             * Format: int64
+             * @description The installation default
+             */
+            default: number;
+            /**
+             * @description Where the space value is edited when it is not overridable here
+             * @enum {string}
+             */
+            edit_at?: "" | "queue_policy";
+            /** @description Where SpaceMan enforces it */
+            enforced: string;
+            key: string;
+            label: string;
+            /** Format: int64 */
+            max: number;
+            /** Format: int64 */
+            min: number;
+            /** @description What happens to running work when it is lowered */
+            on_lower: string;
+            /** @description Spaces override it here; otherwise where it is set per space is named in edit_at */
+            overridable: boolean;
+            /**
+             * Format: int64
+             * @description The space's own value, when it sets one
+             */
+            override?: number;
+            /** @description What one limit value bounds */
+            scope: string;
+            /** @enum {string} */
+            source: "installation" | "space" | "queue_policy";
+            /** @enum {string} */
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "tokens" | "usd_cents" | "percent" | "depth";
+            /** Format: int64 */
+            value: number;
+            /** @description 0 means no limit */
+            zero_means_none: boolean;
+        };
+        LimitsRelated: {
+            /** @description Where it is configured */
+            edit_at: string;
+            key: string;
+            label: string;
+            source: string;
+            value: string;
+        };
         "Link-user-identityRequest": {
             /**
              * Format: uri
@@ -5577,6 +5950,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["KbKB"][];
         };
+        "List-limit-definitionsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-limit-definitionsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["LimitsDef"][];
+        };
         "List-mcp-grantsResponse": {
             /**
              * Format: uri
@@ -5669,6 +6051,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["FleetRun"][];
         };
+        "List-schedulesResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-schedulesResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["Schedule"][];
+        };
         "List-sessionsResponse": {
             /**
              * Format: uri
@@ -5731,6 +6122,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["EventsDelivery"][];
+        };
+        "List-subscription-replaysResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-subscription-replaysResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["EventsReplay"][];
         };
         "List-subscriptionsResponse": {
             /**
@@ -6223,6 +6623,15 @@ export interface components {
             };
             skills: components["schemas"]["CatalogResolvedSkill"][];
             system_text: string;
+        };
+        "Preview-scheduleResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Preview-scheduleResponse.json
+             */
+            readonly $schema?: string;
+            occurrences: string[];
         };
         PreviewInput: {
             /**
@@ -6790,6 +7199,206 @@ export interface components {
             readonly $schema?: string;
             definition: components["schemas"]["TemplateDefinition"];
             notes?: string;
+        };
+        Schedule: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Schedule.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description Interval occurrences are anchor + n × interval
+             */
+            anchor: string;
+            /** @description Tasks only */
+            assignee_role?: string;
+            /** @description Markdown: the inbox item body or the task objective */
+            body?: string;
+            /**
+             * Format: int64
+             * @description How many missed occurrences catch_up runs at most
+             */
+            catch_up_max: number;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** @description Five-field cron expression or @hourly/@daily/@weekly/@monthly/@yearly, in the time zone */
+            cron?: string;
+            description?: string;
+            enabled: boolean;
+            id: string;
+            /** Format: int64 */
+            interval_seconds?: number;
+            /** @enum {string} */
+            kind: "cron" | "interval";
+            /**
+             * Format: date-time
+             * @description The last occurrence handled
+             */
+            last_at?: string;
+            last_outcome?: string;
+            last_target_id?: string;
+            /**
+             * @description What happens to occurrences missed while central was stopped or the space archived
+             * @enum {string}
+             */
+            missed: "skip" | "run_once" | "catch_up";
+            name: string;
+            /** Format: date-time */
+            next_at?: string;
+            /**
+             * @description Inbox urgency or task priority
+             * @enum {string}
+             */
+            priority: "low" | "normal" | "high" | "urgent";
+            /** @description Skip an occurrence while what the previous one created is still open */
+            skip_if_open: boolean;
+            space_id: string;
+            /** @enum {string} */
+            target: "inbox" | "task";
+            /** @description IANA time zone of the cron expression */
+            timezone: string;
+            title: string;
+            /** @description The next occurrences */
+            upcoming: string[];
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        ScheduleDetail: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ScheduleDetail.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description Interval occurrences are anchor + n × interval
+             */
+            anchor: string;
+            /** @description Tasks only */
+            assignee_role?: string;
+            /** @description Markdown: the inbox item body or the task objective */
+            body?: string;
+            /**
+             * Format: int64
+             * @description How many missed occurrences catch_up runs at most
+             */
+            catch_up_max: number;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** @description Five-field cron expression or @hourly/@daily/@weekly/@monthly/@yearly, in the time zone */
+            cron?: string;
+            description?: string;
+            enabled: boolean;
+            id: string;
+            /** Format: int64 */
+            interval_seconds?: number;
+            /** @enum {string} */
+            kind: "cron" | "interval";
+            /**
+             * Format: date-time
+             * @description The last occurrence handled
+             */
+            last_at?: string;
+            last_outcome?: string;
+            last_target_id?: string;
+            /**
+             * @description What happens to occurrences missed while central was stopped or the space archived
+             * @enum {string}
+             */
+            missed: "skip" | "run_once" | "catch_up";
+            name: string;
+            /** Format: date-time */
+            next_at?: string;
+            occurrences: components["schemas"]["ScheduleOccurrence"][];
+            /**
+             * @description Inbox urgency or task priority
+             * @enum {string}
+             */
+            priority: "low" | "normal" | "high" | "urgent";
+            /** @description Skip an occurrence while what the previous one created is still open */
+            skip_if_open: boolean;
+            space_id: string;
+            /** @enum {string} */
+            target: "inbox" | "task";
+            /** @description IANA time zone of the cron expression */
+            timezone: string;
+            title: string;
+            /** @description The next occurrences */
+            upcoming: string[];
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        ScheduleInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ScheduleInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description Interval start (default: now)
+             */
+            anchor?: string;
+            assignee_role?: string;
+            body?: string;
+            /**
+             * Format: int64
+             * @description 1-100; default 3
+             */
+            catch_up_max?: number;
+            cron?: string;
+            description?: string;
+            /** @description Default true */
+            enabled?: boolean;
+            /**
+             * Format: int64
+             * @description 60 s to 366 days
+             */
+            interval_seconds?: number;
+            /** @enum {string} */
+            kind: "cron" | "interval";
+            /**
+             * @description Default skip
+             * @enum {string}
+             */
+            missed?: "skip" | "run_once" | "catch_up";
+            name: string;
+            /** @enum {string} */
+            priority?: "low" | "normal" | "high" | "urgent";
+            /** @description Default true */
+            skip_if_open?: boolean;
+            /** @enum {string} */
+            target: "inbox" | "task";
+            /** @description IANA time zone (default UTC) */
+            timezone?: string;
+            title: string;
+        };
+        ScheduleOccurrence: {
+            /**
+             * Format: date-time
+             * @description The scheduled time
+             */
+            at: string;
+            detail?: string;
+            /** Format: date-time */
+            handled_at: string;
+            /** @description Handled after its time (central was stopped, say) */
+            late: boolean;
+            /** @enum {string} */
+            outcome: "created" | "duplicate" | "skipped" | "missed" | "failed";
+            target_id?: string;
+            /** @enum {string} */
+            target_kind?: "" | "inbox_item" | "task";
         };
         "Send-inputRequest": {
             /**
@@ -9016,6 +9625,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HumanType"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-limit-definitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-limit-definitionsResponse"];
                 };
             };
             /** @description Error */
@@ -11863,6 +12501,77 @@ export interface operations {
             };
         };
     };
+    "get-space-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitsEffective"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-space-limits": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LimitsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitsEffective"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-space-mcp-grants": {
         parameters: {
             query?: never;
@@ -12886,6 +13595,211 @@ export interface operations {
             };
         };
     };
+    "list-schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-schedulesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "preview-schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preview-scheduleResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleDetail"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-schedule": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "set-space-state": {
         parameters: {
             query?: never;
@@ -13187,6 +14101,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventsQuarantineEntry"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "replay-subscription": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventsReplayInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsReplay"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-subscription-replays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-subscription-replaysResponse"];
                 };
             };
             /** @description Error */

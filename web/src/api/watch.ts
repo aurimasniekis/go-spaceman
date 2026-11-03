@@ -117,6 +117,12 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'restore':
       void qc.invalidateQueries({ queryKey: keys.restore })
       break
+    case 'space_limits':
+      void qc.invalidateQueries({ queryKey: keys.limits(c.resource_id) })
+      break
+    case 'schedule':
+      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.schedules(c.space_id) })
+      break
     default:
       break
   }

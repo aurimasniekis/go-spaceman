@@ -69,11 +69,31 @@ The subscription page shows the exact **Pulse grant** it needs; the Pulse operat
 
 ## Cursor: continue, start now, replay
 
-Editing a subscription never replays anything by itself. **Cursor → Start now** skips whatever is pending; **Replay**
-delivers events again from a time, a stream sequence or everything Pulse still keeps. Replays are audited, need the
-replay permission and appear as **replayed** in the delivery history; events that already produced an item are recorded
-as duplicates, never created twice. Changing a subscription's subject (for example another account) always asks where
-the new consumer starts.
+Editing a subscription never replays anything by itself. **Cursor → Start now** skips whatever is pending. Changing a
+subscription's subject (for example another account) always asks where the new consumer starts.
+
+**Cursor → Replay…** delivers events again from a time, a stream sequence or everything Pulse still keeps. A replay is an
+explicit operation: it needs the replay permission and a **reason**, and it is recorded in the audit log and in the
+subscription's **Replays** history (who, why, from where, and when it took effect). A cursor change that re-delivers
+history through an edit is recorded the same way.
+
+Replays are never confused with retries. Every delivery records its **origin**:
+
+| Origin | Meaning |
+|---|---|
+| live | the first delivery of the event to this subscription |
+| redelivery | the stream delivering it again on its own (after a failed acknowledgement, a timeout, a restart or a restore): a retry, with its attempt number |
+| replay | delivered again because someone replayed the subscription; it names the replay |
+| reprocess | a quarantined event someone reprocessed |
+
+Items created by a replay are marked **replayed** and name the replay. By default deduplication holds during a replay:
+an event that already produced an item is recorded as a duplicate and creates nothing. Tick **Create fresh items** to make
+one new item per replayed event instead (once per replay), for example after fixing a template.
+
+<Shot name="event-replay" alt="A subscription after an explicit replay: deliveries with live and replay origins in the Origin column, and the Replays tab" caption="Replays and retries, told apart" />
+
+Each subscription ingests at most its space's **event ingestion rate** (600 events per minute by default, see
+[Limits](/guide/limits)); events beyond it wait in Pulse's durable stream and are never dropped.
 
 A subscription that **follows** its template moves to newly published versions only when they keep the same subject;
 otherwise it stays on its version, because a new subject needs a new Pulse grant.

@@ -47,7 +47,10 @@ type Attachment struct {
 type Options struct {
 	MaxBytes   int64 // per upload
 	QuotaBytes int64 // per space
-	Clock      clock.Clock
+	// QuotaFor returns a space's effective quota inside the upload transaction (the limits model, ADR-0036); nil or a
+	// non-positive result uses QuotaBytes.
+	QuotaFor func(ctx context.Context, q *db.Queries, spaceID string) int64
+	Clock    clock.Clock
 }
 
 // Service manages attachments.
@@ -131,8 +134,14 @@ func (svc *Service) Upload(ctx context.Context, actor audit.Actor, spaceID, name
 		if err != nil {
 			return err
 		}
-		if used+size > svc.o.QuotaBytes {
-			return apperr.New(apperr.CodePrecondition, "the space's attachment quota (%d bytes) is full", svc.o.QuotaBytes)
+		quota := svc.o.QuotaBytes
+		if svc.o.QuotaFor != nil {
+			if n := svc.o.QuotaFor(ctx, tx.Q, spaceID); n > 0 {
+				quota = n
+			}
+		}
+		if used+size > quota {
+			return apperr.New(apperr.CodePrecondition, "the space's attachment quota (%d bytes) is full", quota)
 		}
 		a.CreatedAt = tx.Now
 		if err := tx.Q.InsertAttachment(ctx, db.InsertAttachmentParams{ID: a.ID, SpaceID: spaceID, Sha256: sum, Size: size, Mime: mime,

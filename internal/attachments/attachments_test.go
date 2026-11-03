@@ -130,6 +130,28 @@ func TestLimits(t *testing.T) {
 	}
 }
 
+// SM-LIMIT-001: a space's effective storage quota (the limits model) replaces the installation quota; lowering it keeps
+// what is stored and refuses new uploads.
+func TestQuotaFromLimits(t *testing.T) {
+	quota := int64(300)
+	f := newFx(t, Options{MaxBytes: 1000, QuotaBytes: 150, QuotaFor: func(_ context.Context, _ *db.Queries, spaceID string) int64 {
+		if spaceID == "spc_a" {
+			return quota
+		}
+		return 0 // no override: the installation quota
+	}})
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_a", "one", bytes.NewReader(bytes.Repeat([]byte("a"), 250))); err != nil {
+		t.Fatalf("within the space quota: %v", err)
+	}
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_b", "big", bytes.NewReader(bytes.Repeat([]byte("b"), 200))); code(err) != "precondition_failed" {
+		t.Fatalf("installation quota: %v", err)
+	}
+	quota = 100
+	if _, err := f.svc.Upload(f.ctx, actor, "spc_a", "two", strings.NewReader("x")); code(err) != "precondition_failed" {
+		t.Fatalf("lowered quota: %v", err)
+	}
+}
+
 // SM-ATT-001/006: references bind attachments to items of the same space; unreferenced uploads and their content are
 // collected after the grace period, referenced ones are kept.
 func TestReferencesAndGC(t *testing.T) {

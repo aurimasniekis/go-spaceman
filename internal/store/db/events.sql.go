@@ -10,6 +10,22 @@ import (
 	"database/sql"
 )
 
+const countEventDeliveriesOf = `-- name: CountEventDeliveriesOf :one
+SELECT COUNT(*) FROM event_deliveries WHERE subscription_id = ? AND event_id = ?
+`
+
+type CountEventDeliveriesOfParams struct {
+	SubscriptionID string
+	EventID        string
+}
+
+func (q *Queries) CountEventDeliveriesOf(ctx context.Context, arg CountEventDeliveriesOfParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countEventDeliveriesOf, arg.SubscriptionID, arg.EventID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOpenQuarantine = `-- name: CountOpenQuarantine :one
 SELECT count(*) FROM event_quarantine WHERE subscription_id = ? AND status = 'open'
 `
@@ -192,6 +208,35 @@ func (q *Queries) GetQuarantine(ctx context.Context, id string) (EventQuarantine
 	return i, err
 }
 
+const getSubscriptionReplayByGeneration = `-- name: GetSubscriptionReplayByGeneration :one
+SELECT id, subscription_id, space_id, generation, policy, start_time, start_seq, fresh_items, reason, requested_by, requested_at, boundary_at FROM subscription_replays WHERE subscription_id = ? AND generation = ?
+`
+
+type GetSubscriptionReplayByGenerationParams struct {
+	SubscriptionID string
+	Generation     int64
+}
+
+func (q *Queries) GetSubscriptionReplayByGeneration(ctx context.Context, arg GetSubscriptionReplayByGenerationParams) (SubscriptionReplay, error) {
+	row := q.db.QueryRowContext(ctx, getSubscriptionReplayByGeneration, arg.SubscriptionID, arg.Generation)
+	var i SubscriptionReplay
+	err := row.Scan(
+		&i.ID,
+		&i.SubscriptionID,
+		&i.SpaceID,
+		&i.Generation,
+		&i.Policy,
+		&i.StartTime,
+		&i.StartSeq,
+		&i.FreshItems,
+		&i.Reason,
+		&i.RequestedBy,
+		&i.RequestedAt,
+		&i.BoundaryAt,
+	)
+	return i, err
+}
+
 const insertEventConnection = `-- name: InsertEventConnection :exec
 INSERT INTO event_connections (id, name, kind, url, creds_enc, client_id, ca_pem, stream, enabled, created_at, created_by, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -231,8 +276,8 @@ func (q *Queries) InsertEventConnection(ctx context.Context, arg InsertEventConn
 }
 
 const insertEventDelivery = `-- name: InsertEventDelivery :exec
-INSERT INTO event_deliveries (subscription_id, event_id, subject, type, stream_seq, outcome, inbox_item_id, detail, at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO event_deliveries (subscription_id, event_id, subject, type, stream_seq, outcome, inbox_item_id, detail, at, origin, attempt, replay_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEventDeliveryParams struct {
@@ -245,6 +290,9 @@ type InsertEventDeliveryParams struct {
 	InboxItemID    string
 	Detail         string
 	At             int64
+	Origin         string
+	Attempt        int64
+	ReplayID       string
 }
 
 func (q *Queries) InsertEventDelivery(ctx context.Context, arg InsertEventDeliveryParams) error {
@@ -258,6 +306,9 @@ func (q *Queries) InsertEventDelivery(ctx context.Context, arg InsertEventDelive
 		arg.InboxItemID,
 		arg.Detail,
 		arg.At,
+		arg.Origin,
+		arg.Attempt,
+		arg.ReplayID,
 	)
 	return err
 }
@@ -414,6 +465,42 @@ func (q *Queries) InsertQuarantine(ctx context.Context, arg InsertQuarantinePara
 	return result.RowsAffected()
 }
 
+const insertSubscriptionReplay = `-- name: InsertSubscriptionReplay :exec
+INSERT INTO subscription_replays (id, subscription_id, space_id, generation, policy, start_time, start_seq, fresh_items, reason, requested_by, requested_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertSubscriptionReplayParams struct {
+	ID             string
+	SubscriptionID string
+	SpaceID        string
+	Generation     int64
+	Policy         string
+	StartTime      sql.NullInt64
+	StartSeq       sql.NullInt64
+	FreshItems     int64
+	Reason         string
+	RequestedBy    string
+	RequestedAt    int64
+}
+
+func (q *Queries) InsertSubscriptionReplay(ctx context.Context, arg InsertSubscriptionReplayParams) error {
+	_, err := q.db.ExecContext(ctx, insertSubscriptionReplay,
+		arg.ID,
+		arg.SubscriptionID,
+		arg.SpaceID,
+		arg.Generation,
+		arg.Policy,
+		arg.StartTime,
+		arg.StartSeq,
+		arg.FreshItems,
+		arg.Reason,
+		arg.RequestedBy,
+		arg.RequestedAt,
+	)
+	return err
+}
+
 const latestPublishedTemplateVersion = `-- name: LatestPublishedTemplateVersion :one
 SELECT id, template_id, version, status, definition_json, notes, created_at, created_by, published_at FROM event_template_versions WHERE template_id = ? AND status = 'published' ORDER BY version DESC LIMIT 1
 `
@@ -477,7 +564,7 @@ func (q *Queries) ListEventConnections(ctx context.Context) ([]EventConnection, 
 }
 
 const listEventDeliveries = `-- name: ListEventDeliveries :many
-SELECT id, subscription_id, event_id, subject, type, stream_seq, outcome, inbox_item_id, detail, at FROM event_deliveries WHERE subscription_id = ? ORDER BY id DESC LIMIT ?
+SELECT id, subscription_id, event_id, subject, type, stream_seq, outcome, inbox_item_id, detail, at, origin, attempt, replay_id FROM event_deliveries WHERE subscription_id = ? ORDER BY id DESC LIMIT ?
 `
 
 type ListEventDeliveriesParams struct {
@@ -505,6 +592,9 @@ func (q *Queries) ListEventDeliveries(ctx context.Context, arg ListEventDeliveri
 			&i.InboxItemID,
 			&i.Detail,
 			&i.At,
+			&i.Origin,
+			&i.Attempt,
+			&i.ReplayID,
 		); err != nil {
 			return nil, err
 		}
@@ -793,6 +883,51 @@ func (q *Queries) ListQuarantine(ctx context.Context, arg ListQuarantineParams) 
 	return items, nil
 }
 
+const listSubscriptionReplays = `-- name: ListSubscriptionReplays :many
+SELECT id, subscription_id, space_id, generation, policy, start_time, start_seq, fresh_items, reason, requested_by, requested_at, boundary_at FROM subscription_replays WHERE subscription_id = ? ORDER BY requested_at DESC LIMIT ?
+`
+
+type ListSubscriptionReplaysParams struct {
+	SubscriptionID string
+	Limit          int64
+}
+
+func (q *Queries) ListSubscriptionReplays(ctx context.Context, arg ListSubscriptionReplaysParams) ([]SubscriptionReplay, error) {
+	rows, err := q.db.QueryContext(ctx, listSubscriptionReplays, arg.SubscriptionID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SubscriptionReplay{}
+	for rows.Next() {
+		var i SubscriptionReplay
+		if err := rows.Scan(
+			&i.ID,
+			&i.SubscriptionID,
+			&i.SpaceID,
+			&i.Generation,
+			&i.Policy,
+			&i.StartTime,
+			&i.StartSeq,
+			&i.FreshItems,
+			&i.Reason,
+			&i.RequestedBy,
+			&i.RequestedAt,
+			&i.BoundaryAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markSubscriptionApplied = `-- name: MarkSubscriptionApplied :exec
 UPDATE event_subscriptions SET applied_generation = ? WHERE id = ?
 `
@@ -869,6 +1004,53 @@ func (q *Queries) ResolveQuarantine(ctx context.Context, arg ResolveQuarantinePa
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setSubscriptionCursor = `-- name: SetSubscriptionCursor :execrows
+UPDATE event_subscriptions SET cursor_generation = ?1, start_policy = ?2, start_time = ?3,
+  start_seq = ?4, replay = 1, version = version + 1, updated_at = ?5
+WHERE id = ?6 AND version = ?7
+`
+
+type SetSubscriptionCursorParams struct {
+	CursorGeneration int64
+	StartPolicy      string
+	StartTime        sql.NullInt64
+	StartSeq         sql.NullInt64
+	Now              int64
+	ID               string
+	Version          int64
+}
+
+func (q *Queries) SetSubscriptionCursor(ctx context.Context, arg SetSubscriptionCursorParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSubscriptionCursor,
+		arg.CursorGeneration,
+		arg.StartPolicy,
+		arg.StartTime,
+		arg.StartSeq,
+		arg.Now,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setSubscriptionReplayBoundary = `-- name: SetSubscriptionReplayBoundary :exec
+UPDATE subscription_replays SET boundary_at = ? WHERE subscription_id = ? AND generation = ? AND boundary_at IS NULL
+`
+
+type SetSubscriptionReplayBoundaryParams struct {
+	BoundaryAt     sql.NullInt64
+	SubscriptionID string
+	Generation     int64
+}
+
+func (q *Queries) SetSubscriptionReplayBoundary(ctx context.Context, arg SetSubscriptionReplayBoundaryParams) error {
+	_, err := q.db.ExecContext(ctx, setSubscriptionReplayBoundary, arg.BoundaryAt, arg.SubscriptionID, arg.Generation)
+	return err
 }
 
 const touchSubscription = `-- name: TouchSubscription :exec

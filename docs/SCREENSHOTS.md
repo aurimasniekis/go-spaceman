@@ -44,8 +44,11 @@
 | `events-publishing` | Publishing SpaceMan events | Outbound publication status: connection, pending, retrying, dead-lettered, lag, recent failures (global admins) | current |
 | `event-template` | Events and subscriptions | Template definition with a sample test | current |
 | `events-subscribe` | Events and subscriptions | Subscription form with template variables | current |
-| `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history | current |
+| `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history with origins | current |
 | `events-quarantine` | Events and subscriptions | Quarantined event with reprocess/discard | current |
+| `event-replay` | Events and subscriptions | After an explicit replay: deliveries with live and replay origins | current |
+| `space-limits` | Limits and budgets | A space's effective limits with sources, the budget card and its usage-reporting note | current |
+| `space-schedules` | Schedules | A space's schedules: a weekday cron in Europe/Vilnius and an hourly task schedule | current |
 | `memory-sync` | Memory/dreams (M3) | Memory collection sync state | todo |
 | `prompts-diff` | Prompts | Line diff between two published versions of a prompt | current |
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
