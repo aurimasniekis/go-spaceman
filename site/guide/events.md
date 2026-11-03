@@ -112,7 +112,7 @@ is the source sending it again.
 ## While the space is paused
 
 Each subscription says what it does while its space is paused (**While the space is paused** in the subscribe dialog
-and on the subscription page; `while_paused` in the API and `--while-paused` in the CLI):
+and on the subscription page; `while_paused` in the API and Terraform, `--while-paused` in the CLI):
 
 | Choice | `while_paused` | What happens while the space is paused |
 |---|---|---|

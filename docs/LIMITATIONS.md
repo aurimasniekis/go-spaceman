@@ -44,8 +44,7 @@
   task and run notices) still reach a control run that runs under **Hold** at once. A `stop` subscription's durable
   events wait only as long as the Pulse stream keeps them; core NATS messages published while it is stopped are lost.
   Deferred notices are sent for items still `new` at the resume, oldest first, at most 10,000 per resume; the rest go
-  out at the next resume or central start. The Terraform provider does not manage `while_paused` yet; its updates
-  leave the stored value as it is (SM-EVT-014).
+  out at the next resume or central start (SM-EVT-014).
 - **Definitions are edited as JSON.** A custom definition (in the subscribe dialog) and a template draft are written as
   JSON text, checked as you type and by the server, with a sample-event preview; there is no field-by-field visual
   editor (SM-EVT-017).
@@ -176,8 +175,7 @@
 - **Response items carry no response.** With a policy's `response_inbox` (`routed` or `always`, ADR-0049) a response
   also becomes a `human_response` inbox item, but the item holds only metadata and a pointer to the action: the
   response stays readable only by the runs it concerns. Only answers make items (not withdrawals, expiries or
-  clarification requests). The default is `off`; the Terraform provider does not manage `response_inbox` yet, so a
-  provider-managed policy is written back as `off` (SM-INBOX-001).
+  clarification requests). The default is `off` (SM-INBOX-001).
 - **Search is a substring match.** The search matches every word of the query as a substring of the title or the
   Markdown text, case-insensitively, over at most the space's 5,000 pending and its most recent final actions (the
   global list: the 5,000 oldest pending); there is no full-text index, ranking, stemming or search of comments and

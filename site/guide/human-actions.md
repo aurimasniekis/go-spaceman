@@ -172,7 +172,7 @@ to control, which decides.
 ### Responses in the inbox
 
 A policy can also make responses **inbox items** of the space (**Responses in the inbox** in the policy dialog,
-`response_inbox` in the API, `--response-inbox` in the CLI), so control triages them like any other input: reply,
+`response_inbox` in the API and Terraform, `--response-inbox` in the CLI), so control triages them like any other input: reply,
 create or update a task, defer the item or mark it done.
 
 | Choice | `response_inbox` | When an item is added |

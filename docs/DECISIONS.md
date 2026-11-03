@@ -1912,8 +1912,8 @@
     than the limit need a higher limit or a reprocess.
   - With `response_inbox` set, control sees an inbox item and, for responses routed to control, its notification;
     operators see items for undeliverable responses in the inbox.
-  - The Terraform provider (separate repository, ADR-0047) does not manage `while_paused` (its updates keep it) or
-    `response_inbox` (its writes store `off`) yet.
+  - The Terraform provider (separate repository, ADR-0047) manages both: `while_paused` on
+    `spaceman_event_subscription` and `response_inbox` on `spaceman_human_action_policy` (provider `e52e68c`).
   - Evidence is simulated: the in-process Pulse-shaped server with the real go-pulse SDK, including two centrals in
     one test; no real pulsed and no real harness ran these paths.
 
