@@ -412,6 +412,8 @@ type ListFilter struct {
 	// Sort is one of the Sort* orders; empty keeps the listing's default order.
 	Sort  string
 	Limit int
+	// Visible narrows the listing to actions the caller may see (type permissions, SM-HUI-008); nil keeps all.
+	Visible func(a *Action) bool
 }
 
 // Filter and sort values.
@@ -456,6 +458,9 @@ func (f ListFilter) Validate() error {
 func (f ListFilter) keep(r db.HumanAction, now int64) bool {
 	if (f.Pending && !pending(r.Status)) || (f.Type != "" && r.Type != f.Type) || (f.Status != "" && r.Status != f.Status) ||
 		(f.Priority != "" && r.Priority != f.Priority) {
+		return false
+	}
+	if f.Visible != nil && !f.Visible(&Action{SpaceID: r.SpaceID, Type: r.Type, TypeSlug: r.TypeSlug}) {
 		return false
 	}
 	switch {
@@ -570,6 +575,21 @@ func (svc *Service) ListPending(ctx context.Context, allowed func(spaceID string
 		}
 	}
 	sortActions(out, f.Sort)
+	return out, nil
+}
+
+// PendingCountsVisible returns the number of pending actions per space that visible keeps (type permissions).
+func (svc *Service) PendingCountsVisible(ctx context.Context, visible func(a *Action) bool) (map[string]int64, error) {
+	rows, err := svc.s.R().CountPendingHumanByType(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int64{}
+	for _, r := range rows {
+		if visible == nil || visible(&Action{SpaceID: r.SpaceID, Type: r.Type, TypeSlug: r.TypeSlug}) {
+			out[r.SpaceID] += r.N
+		}
+	}
 	return out, nil
 }
 

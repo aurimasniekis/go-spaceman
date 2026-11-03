@@ -50,15 +50,31 @@ func (a *App) taskExtra() []*cobra.Command {
 			return nil
 		}})
 	depends.Flags().BoolVar(&none, "none", false, "remove every dependency")
+	var trustNobody bool
 	policy := a.cmd(opts{use: "set-policy", short: "Set the queue policy (only the flags given change)", op: "set-queue-policy", scoped: true,
-		long: "Reads the queue's policy and its version just before the change, so a concurrent edit is a conflict (exit code 3).",
+		long: "Reads the queue's policy and its version just before the change, so a concurrent edit is a conflict (exit code 3). " +
+			"Incident triggers are operator, control, subscription:<id> and template:<id or slug>; an incident from any other source is " +
+			"proposed to operators or refused (--incident-untrusted).",
+		example: "spaceman task set-policy --space payments --incident-preempts --incident-trigger operator --incident-trigger template:pagerduty " +
+			"--incident-workers pause --incident-resume auto",
 		form: func(f *form) {
 			f.integer("max-active", "max_active", "top-level tasks that may run at once").
 				str("incident-insertion", "incident_insertion", "where new incident tasks go: top or priority").
 				boolean("incident-preempts", "incident_preempts", "a new incident returns running ordinary tasks to ready").
-				boolean("escalation-reorders", "escalation_reorders", "escalation may move a task to the top")
+				boolean("escalation-reorders", "escalation_reorders", "escalation may move a task to the top").
+				list("incident-trigger", "incident_triggers", "source trusted to raise incidents (repeatable; replaces the list)").
+				str("incident-untrusted", "incident_untrusted", "an incident from an untrusted source: propose or refuse").
+				str("incident-workers", "incident_workers", "a preempted task's workers: finish, pause or interrupt").
+				integer("incident-capacity", "incident_capacity", "extra top-level slots only incidents may use").
+				str("incident-resume", "incident_resume", "when the incident ends: manual or auto")
 		},
 		prepare: func(ctx context.Context, _ *cobra.Command, c *call, body map[string]any) error {
+			if trustNobody {
+				if _, ok := body["incident_triggers"]; ok {
+					return usageErrorf("give --incident-trigger or --trust-nobody, not both")
+				}
+				body["incident_triggers"] = []any{}
+			}
 			res, err := a.do(ctx, call{op: "list-tasks", params: c.params})
 			if err != nil {
 				return err
@@ -68,7 +84,8 @@ func (a *App) taskExtra() []*cobra.Command {
 				return err
 			}
 			cur, _ := obj["policy"].(map[string]any)
-			for _, k := range []string{"max_active", "incident_insertion", "incident_preempts", "escalation_reorders", "version"} {
+			for _, k := range []string{"max_active", "incident_insertion", "incident_preempts", "escalation_reorders", "incident_triggers", "incident_untrusted",
+				"incident_workers", "incident_capacity", "incident_resume", "version"} {
 				if _, ok := body[k]; !ok || k == "version" {
 					if v, ok := cur[k]; ok {
 						body[k] = v
@@ -77,6 +94,7 @@ func (a *App) taskExtra() []*cobra.Command {
 			}
 			return nil
 		}})
+	policy.Flags().BoolVar(&trustNobody, "trust-nobody", false, "trust no source to raise incidents (every incident becomes a proposal or is refused)")
 	policy.Annotations[annOps] = "list-tasks," + policy.Annotations[annOps]
 	return []*cobra.Command{
 		a.cmd(opts{use: "block", short: "Block a task explicitly (other tasks continue)", op: "add-task-blocker", scoped: true, args: pos("task"),
@@ -87,6 +105,12 @@ func (a *App) taskExtra() []*cobra.Command {
 		a.cmd(opts{use: "unblock", short: "Remove a blocker from a task", op: "resolve-task-blocker", scoped: true, args: pos("task", "blocker")}),
 		a.cmd(opts{use: "escalate", short: "Escalate a task to urgent (to the top when the queue policy allows)", op: "escalate-task", scoped: true,
 			args: pos("task"), form: func(f *form) { f.str("reason", "reason", "reason (required)") }}),
+		a.cmd(opts{use: "incident", short: "Confirm or dismiss an incident proposal (an untrusted source asked for an incident)", op: "decide-incident",
+			get: "get-task", scoped: true, args: pos("task"), bodyArgs: []string{"decision"},
+			long:    "DECISION is confirm (the task becomes an incident raised by you; the policy's insertion and preemption apply now) or dismiss.",
+			example: "spaceman task incident --space payments tsk_01… confirm"}),
+		a.cmd(opts{use: "resume", short: "Resume a task an incident preempted (runs again with its workers, or waits for a new worker)", op: "resume-task",
+			scoped: true, args: pos("task")}),
 		depends,
 		a.cmd(opts{use: "decisions", short: "Recorded queue selections: what was started and what was skipped, and why", op: "queue-decisions", scoped: true,
 			view: view{items: "items", cols: decisionCols, empty: "No decisions recorded."}}),

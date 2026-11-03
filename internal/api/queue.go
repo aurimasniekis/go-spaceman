@@ -28,6 +28,9 @@ var QueueRules = map[string]Rule{
 	"add-task-blocker":      InSpace(authz.QueueWrite),
 	"resolve-task-blocker":  InSpace(authz.QueueWrite),
 	"set-queue-policy":      InSpace(authz.SpaceConfigWrite),
+	// Confirming an incident proposal and resuming preempted work are operator decisions (SM-QUEUE-009, ADR-0050).
+	"decide-incident": InSpace(authz.QueueWrite),
+	"resume-task":     InSpace(authz.QueueWrite),
 }
 
 // TaskPath identifies a task.
@@ -57,6 +60,12 @@ type TaskBody struct {
 type QueueOut struct {
 	Tasks  []*queue.Task `json:"tasks"`
 	Policy queue.Policy  `json:"policy"`
+}
+
+// ResumeOut is a resumed task and what happened.
+type ResumeOut struct {
+	Task    *queue.Task `json:"task"`
+	Outcome string      `json:"outcome" doc:"resumed, relaunch (no live worker), waiting: <reason> (still preempted) or superseded"`
 }
 
 type taskOut struct {
@@ -135,7 +144,7 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 				t, _, err := Idempotent(ctx, d, "create-task", in.IdempotencyKey, map[string]any{"space": in.SpaceID, "body": in.Body}, false, func() (*queue.Task, error) {
 					ci := queue.CreateInput{Title: in.Body.Title, Objective: in.Body.Objective, Acceptance: in.Body.Acceptance, Kind: in.Body.Kind, Priority: in.Body.Priority,
 						Status: in.Body.Status, ParentID: in.Body.ParentID, Exclusions: in.Body.Exclusions, AssigneeRole: in.Body.AssigneeRole, Workspace: in.Body.Workspace,
-						DependsOn: in.Body.DependsOn, AttachmentIDs: in.Body.AttachmentIDs}
+						DependsOn: in.Body.DependsOn, AttachmentIDs: in.Body.AttachmentIDs, Triggers: []string{queue.TriggerOperator}}
 					var item *inbox.Item
 					if in.Body.FromInboxItem != "" {
 						it, err := ib.Get(ctx, in.SpaceID, in.Body.FromInboxItem)
@@ -286,6 +295,44 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 					return nil, d.fail(ctx, "queue.unblock", err)
 				}
 				return taskResult(t), nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "decide-incident", Method: http.MethodPost, Path: "/spaces/{space_id}/tasks/{task_id}/incident",
+			Summary: "Confirm or dismiss an incident proposal",
+			Description: "A source the queue policy does not trust asked for this task to be an incident. Confirming makes it an incident raised by you " +
+				"(the policy's insertion and preemption apply now); dismissing keeps it an ordinary task.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				TaskPath
+				IfMatch
+				Body struct {
+					Decision string `json:"decision" enum:"confirm,dismiss"`
+				}
+			}) (*taskOut, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "queue.incident", err)
+				}
+				t, err := svc.DecideIncident(ctx, Actor(ctx), in.SpaceID, in.TaskID, v, in.Body.Decision == "confirm")
+				if err != nil {
+					return nil, d.fail(ctx, "queue.incident", err)
+				}
+				return taskResult(t), nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "resume-task", Method: http.MethodPost, Path: "/spaces/{space_id}/tasks/{task_id}/resume",
+			Summary: "Resume a task an incident preempted",
+			Description: "A ready, eligible task with live workers runs again and its paused workers are told to continue; a task whose workers are " +
+				"gone stays ready for control to launch a new one. The outcome says which.", Tags: tags},
+			func(ctx context.Context, in *TaskPath) (*struct {
+				ETag string `header:"ETag"`
+				Body ResumeOut
+			}, error) {
+				t, outcome, err := svc.Resume(ctx, Actor(ctx), in.SpaceID, in.TaskID)
+				if err != nil {
+					return nil, d.fail(ctx, "queue.resume", err)
+				}
+				return &struct {
+					ETag string `header:"ETag"`
+					Body ResumeOut
+				}{ETag: ETag(t.Version), Body: ResumeOut{Task: t, Outcome: outcome}}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "set-queue-policy", Method: http.MethodPut, Path: "/spaces/{space_id}/queue/policy", Summary: "Set the queue policy",
 			Tags: tags},

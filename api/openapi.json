@@ -1287,6 +1287,39 @@
         ],
         "type": "object"
       },
+      "AuthProfileInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AuthProfileInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "display_name": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "email": {
+            "description": "Lower-cased and unique; empty removes it (refused for a user with a password: it is their sign-in name)",
+            "maxLength": 254,
+            "type": "string"
+          },
+          "mfa_required": {
+            "description": "Require MFA for this user. Clearing it never lifts what policy forces (require_totp, operator or admin grants on a password account)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email",
+          "display_name",
+          "mfa_required"
+        ],
+        "type": "object"
+      },
       "AuthRootToken": {
         "additionalProperties": false,
         "properties": {
@@ -1420,6 +1453,11 @@
             "type": "boolean"
           },
           "mfa_required": {
+            "description": "Whether the user must use MFA: set by an administrator (mfa_required_set) or forced by policy",
+            "type": "boolean"
+          },
+          "mfa_required_set": {
+            "description": "Whether an administrator requires MFA for this user",
             "type": "boolean"
           },
           "provisioned_via": {
@@ -1446,6 +1484,7 @@
           "has_password",
           "mfa_enrolled",
           "mfa_required",
+          "mfa_required_set",
           "version",
           "created_at"
         ],
@@ -3114,6 +3153,31 @@
         "required": [
           "token",
           "secret"
+        ],
+        "type": "object"
+      },
+      "Decide-incidentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Decide-incidentRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "confirm",
+              "dismiss"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
         ],
         "type": "object"
       },
@@ -6678,6 +6742,176 @@
           "slug",
           "name",
           "versions"
+        ],
+        "type": "object"
+      },
+      "HumanTypePermission": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanTypePermission.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "action_type": {
+            "description": "question, approval, todo, message, or a custom type's ID",
+            "type": "string"
+          },
+          "agent_roles": {
+            "description": "Space roles whose agents may ask when agents is roles",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "agents": {
+            "description": "Which agents may ask with this type: any (default), only agent_roles, or none",
+            "enum": [
+              "any",
+              "roles",
+              "none"
+            ],
+            "type": "string"
+          },
+          "create_role": {
+            "description": "Weakest role that may ask people with this type (default operator)",
+            "enum": [
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "respond_role": {
+            "description": "Weakest role that may respond, assign, comment, clarify, move or cancel (default operator)",
+            "enum": [
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "stored": {
+            "description": "false: no permission is stored and the defaults apply",
+            "type": "boolean"
+          },
+          "type_slug": {
+            "description": "A custom type's slug",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "view_role": {
+            "description": "Weakest role that sees actions of this type (default viewer)",
+            "enum": [
+              "viewer",
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "space_id",
+          "action_type",
+          "view_role",
+          "create_role",
+          "respond_role",
+          "agents",
+          "agent_roles",
+          "stored",
+          "version"
+        ],
+        "type": "object"
+      },
+      "HumanTypePermissionInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanTypePermissionInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "agent_roles": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "agents": {
+            "enum": [
+              "any",
+              "roles",
+              "none"
+            ],
+            "type": "string"
+          },
+          "create_role": {
+            "enum": [
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "respond_role": {
+            "enum": [
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "view_role": {
+            "enum": [
+              "viewer",
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "HumanTypePermissions": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanTypePermissions.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "description": "Stored permissions; types without one use the defaults (viewers see, operators create and respond, any agent asks)",
+            "items": {
+              "$ref": "#/components/schemas/HumanTypePermission"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -11599,6 +11833,13 @@
             "description": "Escalation may move a task to the top; otherwise it only raises priority",
             "type": "boolean"
           },
+          "incident_capacity": {
+            "description": "Extra top-level slots only incident tasks may use (default 0)",
+            "format": "int64",
+            "maximum": 20,
+            "minimum": 0,
+            "type": "integer"
+          },
           "incident_insertion": {
             "description": "Where new incident tasks go",
             "enum": [
@@ -11610,6 +11851,39 @@
           "incident_preempts": {
             "description": "A new incident returns running ordinary top-level tasks to ready (preemption, not failure)",
             "type": "boolean"
+          },
+          "incident_resume": {
+            "description": "When the incident ends: manual (control or an operator resumes preempted tasks, default) or auto (eligible preempted tasks with live workers run again; paused workers are told to continue)",
+            "enum": [
+              "manual",
+              "auto"
+            ],
+            "type": "string"
+          },
+          "incident_triggers": {
+            "description": "Sources trusted to raise incidents: operator, control, subscription:\u003cid\u003e, template:\u003cid or slug\u003e. Omitted: operator and control; empty: nobody",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "incident_untrusted": {
+            "description": "An incident from an untrusted source: propose (an ordinary task an operator may confirm as an incident, default) or refuse",
+            "enum": [
+              "propose",
+              "refuse"
+            ],
+            "type": "string"
+          },
+          "incident_workers": {
+            "description": "What happens to a preempted task's worker runs: finish (keep running and told to wrap up, default), pause (current turn interrupted, the run stays idle until resumed) or interrupt (stopped, session resumable)",
+            "enum": [
+              "finish",
+              "pause",
+              "interrupt"
+            ],
+            "type": "string"
           },
           "max_active": {
             "description": "Top-level tasks that may run at once (default 1)",
@@ -11629,6 +11903,54 @@
           "incident_preempts",
           "escalation_reorders",
           "version"
+        ],
+        "type": "object"
+      },
+      "QueuePreemption": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "preempted",
+              "finish",
+              "pause",
+              "interrupt"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "incident_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "resumed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "resumed_by": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "incident_id",
+          "task_id",
+          "action",
+          "created_at"
         ],
         "type": "object"
       },
@@ -11745,6 +12067,14 @@
           "id": {
             "type": "string"
           },
+          "incident_proposed_by": {
+            "description": "An untrusted source asked for this task to be an incident; an operator confirms or dismisses it",
+            "type": "string"
+          },
+          "incident_trigger": {
+            "description": "The trusted source that raised this incident",
+            "type": "string"
+          },
           "kind": {
             "enum": [
               "ordinary",
@@ -11773,6 +12103,16 @@
             "description": "1-based place in the effective order",
             "format": "int64",
             "type": "integer"
+          },
+          "preempted_by": {
+            "description": "The incident that preempted this task; cleared when it resumes",
+            "type": "string"
+          },
+          "preemption_log": {
+            "items": {
+              "$ref": "#/components/schemas/QueuePreemption"
+            },
+            "type": "array"
           },
           "preemptions": {
             "format": "int64",
@@ -12673,6 +13013,32 @@
         "required": [
           "restored",
           "still_paused"
+        ],
+        "type": "object"
+      },
+      "ResumeOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ResumeOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "outcome": {
+            "description": "resumed, relaunch (no live worker), waiting: \u003creason\u003e (still preempted) or superseded",
+            "type": "string"
+          },
+          "task": {
+            "$ref": "#/components/schemas/QueueTask"
+          }
+        },
+        "required": [
+          "task",
+          "outcome"
         ],
         "type": "object"
       },
@@ -22252,6 +22618,230 @@
         ]
       }
     },
+    "/spaces/{space_id}/human-type-permissions": {
+      "get": {
+        "operationId": "list-human-type-permissions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTypePermissions"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Who may see, create and respond to each human-action type in the space",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
+    "/spaces/{space_id}/human-type-permissions/{action_type}": {
+      "delete": {
+        "operationId": "delete-human-type-permission",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "question, approval, todo, message, or a custom type's ID or slug",
+            "in": "path",
+            "name": "action_type",
+            "required": true,
+            "schema": {
+              "description": "question, approval, todo, message, or a custom type's ID or slug",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove a type's permission (the defaults apply again)",
+        "tags": [
+          "human-action-types"
+        ]
+      },
+      "get": {
+        "operationId": "get-human-type-permission",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "question, approval, todo, message, or a custom type's ID or slug",
+            "in": "path",
+            "name": "action_type",
+            "required": true,
+            "schema": {
+              "description": "question, approval, todo, message, or a custom type's ID or slug",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTypePermission"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The permission in force for a type (stored: false means the defaults)",
+        "tags": [
+          "human-action-types"
+        ]
+      },
+      "put": {
+        "description": "Without If-Match the permission is created and an existing one is refused; with If-Match it is updated at that version. Permissions narrow the roles' own permissions and are audited.",
+        "operationId": "set-human-type-permission",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "question, approval, todo, message, or a custom type's ID or slug",
+            "in": "path",
+            "name": "action_type",
+            "required": true,
+            "schema": {
+              "description": "question, approval, todo, message, or a custom type's ID or slug",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTypePermissionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTypePermission"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set who may see, create and respond to a type in the space",
+        "tags": [
+          "human-action-types"
+        ]
+      }
+    },
     "/spaces/{space_id}/human-types": {
       "get": {
         "operationId": "list-space-human-types",
@@ -27239,6 +27829,84 @@
         ]
       }
     },
+    "/spaces/{space_id}/tasks/{task_id}/incident": {
+      "post": {
+        "description": "A source the queue policy does not trust asked for this task to be an incident. Confirming makes it an incident raised by you (the policy's insertion and preemption apply now); dismissing keeps it an ordinary task.",
+        "operationId": "decide-incident",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Decide-incidentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueTask"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Confirm or dismiss an incident proposal",
+        "tags": [
+          "queue"
+        ]
+      }
+    },
     "/spaces/{space_id}/tasks/{task_id}/move": {
       "post": {
         "description": "Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.",
@@ -27303,6 +27971,65 @@
           }
         },
         "summary": "Place a task in the queue",
+        "tags": [
+          "queue"
+        ]
+      }
+    },
+    "/spaces/{space_id}/tasks/{task_id}/resume": {
+      "post": {
+        "description": "A ready, eligible task with live workers runs again and its paused workers are told to continue; a task whose workers are gone stays ready for control to launch a new one. The outcome says which.",
+        "operationId": "resume-task",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeOut"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resume a task an incident preempted",
         "tags": [
           "queue"
         ]
@@ -28896,6 +29623,75 @@
           }
         },
         "summary": "Issue a single-use SSO link invitation",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{user_id}/profile": {
+      "put": {
+        "description": "Replaces all three. Email is never an SSO key, so a change never links, unlinks or merges an identity; an address in use is refused, a user with a password keeps one, and changing it ends that user's sessions. Clearing mfa_required never lifts MFA that policy forces (require_totp, operator or admin grants on a password account).",
+        "operationId": "update-user",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "pattern": "^usr_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthProfileInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change a user's email, display name and MFA requirement",
         "tags": [
           "users"
         ]

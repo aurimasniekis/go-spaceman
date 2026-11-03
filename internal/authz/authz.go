@@ -171,6 +171,20 @@ func (en *Engine) RolesIn(subject, domain string) []Role {
 	return out
 }
 
+// HoldsRole reports whether every subject holds role r or a stronger one in domain (a grant there or in "*"). Type
+// permissions name minimum roles (SM-HUI-008); like AllowedAll, a token is limited by both itself and its user.
+func (en *Engine) HoldsRole(subjects []string, domain string, r Role) bool {
+	if len(subjects) == 0 || domain == "" || !r.Valid() {
+		return false
+	}
+	for _, s := range subjects {
+		if s == "" || !slices.ContainsFunc(en.RolesIn(s, domain), func(have Role) bool { return have.atLeast(r) }) {
+			return false
+		}
+	}
+	return true
+}
+
 // grouping returns the grant rows of subject (and of its user, for an SSO subject).
 func (en *Engine) grouping(subject string) [][]string {
 	var out [][]string

@@ -58,7 +58,46 @@ They are stored as the space's attachments, listed in the task's drawer, and giv
 ## Policy
 
 **Policy** sets how many top-level tasks may run at once, where new incident tasks go (top or by priority), whether a
-new incident preempts running ordinary tasks, and whether escalation may reorder.
+new incident preempts running ordinary tasks, whether escalation may reorder, and the incident rules below.
+
+## Incidents
+
+An incident is a task of kind `incident`. The queue policy decides who may raise one and what happens to the work it
+interrupts.
+
+- **Trusted triggers.** By default operators (the UI, the API, the CLI) and control may raise incidents. The policy can
+  also trust an event subscription (`subscription:<id>`) or an event template (`template:<id or slug>`): when control
+  creates an incident from an inbox item, the trigger is the item's source, not control. Workers, schedules, other
+  spaces and other inbox sources can never be trusted. Remove `control` to make control relay only trusted sources.
+- **Untrusted requests** are **proposed** (default) or **refused**. A proposal is added as an ordinary task, by
+  priority, without preempting anything, and shows a *Proposed incident* badge; an operator confirms it (it becomes an
+  incident raised by that operator, and insertion and preemption apply then) or dismisses it.
+- **Preemption** returns running ordinary top-level tasks to ready. Their workers (the runs assigned to the task and
+  its subtasks) **finish** (default: they keep going and are told to wrap up; their review report is still accepted),
+  are **paused** (their current turn is interrupted; the run stays, idle, with its session) or are **interrupted**
+  (stopped, with a resumable session). Every preempted task keeps a preemption log in its drawer, and control is told.
+- **Incident capacity** gives incidents extra top-level slots, so an incident can run beside ordinary work without
+  preempting it.
+<Shot name="queue-policy" alt="Queue policy dialog with incident triggers, untrusted-source handling, worker handling, incident capacity and resumption" caption="The incident fields of the queue policy" />
+
+- **Resumption.** When the incident is done, failed or cancelled, **manual** resumption (default) tells control which
+  tasks wait; **auto** resumes them in queue order: an eligible task with a live worker runs again and paused workers
+  are told to continue; a task whose workers were stopped stays ready for control to launch a new one. **Resume** in
+  the task drawer (or `spaceman task resume`, or control's `spaceman_task_resume`) resumes one task by hand.
+
+<Shot name="queue-preempted" alt="Drawer of a preempted task with a Resume button and its preemption log" caption="A task an incident preempted" />
+
+From the command line:
+
+```sh
+spaceman task set-policy --space payments --incident-preempts --incident-trigger operator \
+  --incident-trigger template:pagerduty-alert --incident-workers pause --incident-resume auto
+spaceman task incident --space payments TASK confirm   # or dismiss
+spaceman task resume --space payments TASK
+```
+
+Every decision is audited: `task.incident_proposed`, `task.incident_refused`, `task.incident_decided`,
+`task.preempted` (with each worker and what was done to it) and `task.resumed`.
 
 ## From the inbox
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 )
@@ -27,7 +28,7 @@ var FleetRules = map[string]Rule{
 
 	"list-runs":  InSpace(authz.RunRead),
 	"get-run":    InSpace(authz.RunRead),
-	"launch-run": InSpace(authz.RunControl),
+	"launch-run": InSpace(authz.RunControl), // and run:diagnose for a diagnostic launch (checked once the kind is resolved)
 	"stop-run":   InSpace(authz.RunControl),
 	"send-input": InSpace(authz.RunControl),
 
@@ -261,7 +262,20 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				Body fleet.LaunchInput
 			}) (*struct{ Body *fleet.Run }, error) {
 				r, _, err := Idempotent(ctx, d, "launch-run:"+in.SpaceID, in.IdempotencyKey, in.Body, false, func() (*fleet.Run, error) {
-					return f.LaunchRun(ctx, Actor(ctx), in.SpaceID, in.Body)
+					li := in.Body
+					// launch-run needs run:control; a diagnostic launch (the kind may come from the space role) also needs
+					// run:diagnose (SM-CTRL-004, ADR-0050).
+					li.AuthorizeKind = func(kind string) error {
+						if kind != "diagnostic" {
+							return nil
+						}
+						p := PrincipalFrom(ctx)
+						if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.RunDiag) {
+							return apperr.New(apperr.CodeForbidden, "diagnostic launches need run:diagnose")
+						}
+						return nil
+					}
+					return f.LaunchRun(ctx, Actor(ctx), in.SpaceID, li)
 				})
 				if err != nil {
 					return nil, d.fail(ctx, "runs.launch", err)

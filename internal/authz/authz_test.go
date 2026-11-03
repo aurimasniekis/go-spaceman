@@ -198,3 +198,49 @@ func TestSSOSubject(t *testing.T) {
 		t.Error("non-user SSO suffix expanded")
 	}
 }
+
+// SM-CTRL-004: diagnostic launches need run:diagnose on top of run:control. Operators and admins keep both (the GOAL
+// lets operators launch audited diagnostics); viewers have neither. Type permissions (SM-HUI-008) are admin-only.
+func TestDiagnoseAndTypePermissionRoles(t *testing.T) {
+	e := engine(t, grant("user:v", RoleViewer, spaceA), grant("user:o", RoleOperator, spaceA), grant("user:a", RoleAdmin, spaceA))
+	for _, c := range []struct {
+		sub  string
+		p    Permission
+		want bool
+	}{
+		{"user:v", RunDiag, false}, {"user:v", RunControl, false},
+		{"user:o", RunDiag, true}, {"user:o", RunControl, true},
+		{"user:a", RunDiag, true},
+		{"user:o", HumanTypePermissionWrite, false}, {"user:a", HumanTypePermissionWrite, true},
+	} {
+		if got := e.Allowed(c.sub, spaceA, c.p); got != c.want {
+			t.Errorf("Allowed(%s, %s) = %v, want %v", c.sub, c.p, got, c.want)
+		}
+	}
+}
+
+// HoldsRole: every subject needs the role or a stronger one in the domain or globally (a token never exceeds its user).
+func TestHoldsRole(t *testing.T) {
+	e := engine(t, grant("user:o", RoleOperator, spaceA), grant("user:g", RoleAdmin, Global), grant("token:t", RoleViewer, spaceA),
+		grant("user:v", RoleViewer, spaceA))
+	for _, c := range []struct {
+		subs []string
+		dom  string
+		r    Role
+		want bool
+	}{
+		{[]string{"user:o"}, spaceA, RoleViewer, true},
+		{[]string{"user:o"}, spaceA, RoleOperator, true},
+		{[]string{"user:o"}, spaceA, RoleAdmin, false},
+		{[]string{"user:o"}, spaceB, RoleViewer, false},
+		{[]string{"user:g"}, spaceB, RoleAdmin, true},
+		{[]string{"token:t", "user:o"}, spaceA, RoleOperator, false}, // the token is only a viewer
+		{[]string{"user:v"}, spaceA, RoleOperator, false},
+		{nil, spaceA, RoleViewer, false},
+		{[]string{"user:o"}, spaceA, "bogus", false},
+	} {
+		if got := e.HoldsRole(c.subs, c.dom, c.r); got != c.want {
+			t.Errorf("HoldsRole(%v, %s, %s) = %v, want %v", c.subs, c.dom, c.r, got, c.want)
+		}
+	}
+}

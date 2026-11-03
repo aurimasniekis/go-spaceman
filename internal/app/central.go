@@ -302,6 +302,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
+	c.Queue.Workers = c.Fleet
+	c.Queue.Notify = c.Supervisor.Notify
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Queue.OnStatus = func(actor audit.Actor, t *queue.Task, from string) {
 		c.Supervisor.OnTaskStatus(actor, t, from)
@@ -665,7 +667,7 @@ func SpecDeps() *api.Deps {
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.RetentionRules, api.AttentionRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.RetentionRules, api.AttentionRules} {
 		for k, v := range m {
 			out[k] = v
 		}

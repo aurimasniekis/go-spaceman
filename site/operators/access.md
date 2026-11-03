@@ -37,13 +37,31 @@ Grants assign a role in one space, or in every space (`*`, global). Stronger rol
 | Role | Can |
 |---|---|
 | **viewer** | Read spaces, runs, configuration and catalogs. Global viewers also see nodes. |
-| **operator** | Everything a viewer can, plus launch and stop runs, pause and edit spaces, watch terminals and read recordings. |
-| **admin** | Everything, including terminal takeover, recording deletion and secrets. In `*`: nodes, users, tokens, audit, system settings and creating spaces. |
+| **operator** | Everything a viewer can, plus launch and stop runs (including diagnostic runs, `run:diagnose`), pause and edit spaces, watch terminals and read recordings. |
+| **admin** | Everything, including terminal takeover, recording deletion, secrets and [human-action type permissions](../guide/human-actions#type-permissions). In `*`: nodes, users, tokens, audit, system settings and creating spaces. |
 
 Authorization uses [Casbin](https://casbin.org) with roles per domain. A space you cannot read looks exactly like one
 that does not exist.
 
 <Shot name="auth-users" alt="Users page with an admin, a space operator and a global viewer" caption="Users and their grants" />
+
+## Editing a user
+
+**Edit** on the **Users** page (or `spaceman user update`) changes a user's email, display name and whether MFA is
+required. It needs a global administrator, a recent re-authentication, and the user's current version, so a concurrent
+change is refused. Rules:
+
+- An email belongs to one user. Changing it never links, unlinks or merges an SSO identity: SpaceMan matches sign-in
+  identities by issuer and subject, never by email.
+- A user with a password keeps an email, because it is their sign-in name; changing it ends that user's sessions (API
+  tokens keep working).
+- **MFA required** is the administrator's setting. Clearing it never lifts MFA that policy forces: `auth.require_totp`
+  (on in production) and operator or admin grants on a password account. The user record shows both the setting and
+  whether MFA is required in effect.
+
+Every edit is audited (`user.profile_updated`, with the old and new email).
+
+<Shot name="auth-user-profile" alt="Edit profile dialog with email, display name and an MFA required switch" caption="Editing a user" />
 
 ## API tokens
 

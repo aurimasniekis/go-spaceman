@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Button, Card, Checkbox, Group, Modal, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Badge, Button, Card, Checkbox, Divider, Group, Modal, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core'
 import { IconArrowDown, IconArrowUp, IconGripVertical, IconHandStop, IconPlus, IconSettings } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -128,8 +128,16 @@ function QueuePage() {
 
 function PolicyModal({ spaceId, policy, onClose }: { spaceId: string; policy: QueuePolicy; onClose: () => void }) {
   const qc = useQueryClient()
+  // The incident fields are optional in the API (an omitted one takes its default); the form always sends them.
   const form = useAppForm({
-    defaultValues: policy,
+    defaultValues: {
+      ...policy,
+      incident_triggers: policy.incident_triggers ?? ['control', 'operator'],
+      incident_untrusted: policy.incident_untrusted ?? 'propose',
+      incident_workers: policy.incident_workers ?? 'finish',
+      incident_capacity: policy.incident_capacity ?? 0,
+      incident_resume: policy.incident_resume ?? 'manual',
+    },
     onSubmit: async ({ value }) => {
       try {
         unwrap(await api.PUT('/spaces/{space_id}/queue/policy', { params: { path: { space_id: spaceId } }, body: value }))
@@ -141,7 +149,7 @@ function PolicyModal({ spaceId, policy, onClose }: { spaceId: string; policy: Qu
     },
   })
   return (
-    <Modal opened onClose={onClose} title="Queue policy">
+    <Modal opened onClose={onClose} title="Queue policy" size="lg">
       <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
         <form.AppForm>
           <Stack gap="sm">
@@ -161,6 +169,42 @@ function PolicyModal({ spaceId, policy, onClose }: { spaceId: string; policy: Qu
             <form.AppField name="escalation_reorders">
               {(f) => <f.CheckboxField label="Escalation may move a task to the top (otherwise it only raises priority)" />}
             </form.AppField>
+            <Divider label="Incidents" labelPosition="left" />
+            <form.AppField name="incident_triggers">
+              {(f) => <f.TagsField label="Trusted incident triggers" clearable
+                description="Who may raise incidents: operator, control, subscription:<id>, template:<id or slug>. Empty: nobody." />}
+            </form.AppField>
+            <form.Field name="incident_untrusted">
+              {(f) => (
+                <Stack gap={2}>
+                  <Text size="sm" fw={500} id="incident-untrusted-label">An incident from any other source</Text>
+                  <SegmentedControl aria-labelledby="incident-untrusted-label" value={f.state.value} onChange={(v) => f.handleChange(v as 'propose' | 'refuse')}
+                    data={[{ value: 'propose', label: 'Becomes a proposal' }, { value: 'refuse', label: 'Is refused' }]} />
+                </Stack>
+              )}
+            </form.Field>
+            <form.Field name="incident_workers">
+              {(f) => (
+                <Stack gap={2}>
+                  <Text size="sm" fw={500} id="incident-workers-label">Workers of a preempted task</Text>
+                  <SegmentedControl aria-labelledby="incident-workers-label" value={f.state.value} onChange={(v) => f.handleChange(v as 'finish' | 'pause' | 'interrupt')}
+                    data={[{ value: 'finish', label: 'Finish' }, { value: 'pause', label: 'Pause' }, { value: 'interrupt', label: 'Stop' }]} />
+                  <Text size="xs" c="dimmed">Finish: they keep running and are told to wrap up. Pause: their turn is interrupted and they wait. Stop: they end, with a resumable session.</Text>
+                </Stack>
+              )}
+            </form.Field>
+            <form.AppField name="incident_capacity">
+              {(f) => <f.NumberField label="Extra top-level slots for incidents" description="Incidents may run beside this many more tasks without preempting" min={0} max={20} fallback={0} />}
+            </form.AppField>
+            <form.Field name="incident_resume">
+              {(f) => (
+                <Stack gap={2}>
+                  <Text size="sm" fw={500} id="incident-resume-label">When the incident ends</Text>
+                  <SegmentedControl aria-labelledby="incident-resume-label" value={f.state.value} onChange={(v) => f.handleChange(v as 'manual' | 'auto')}
+                    data={[{ value: 'manual', label: 'Resume manually' }, { value: 'auto', label: 'Resume automatically' }]} />
+                </Stack>
+              )}
+            </form.Field>
             <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><form.SubmitButton>Save</form.SubmitButton></Group>
           </Stack>
         </form.AppForm>

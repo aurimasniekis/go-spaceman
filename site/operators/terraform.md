@@ -56,7 +56,7 @@ redirect with the token.
 | Roles and prompts | `spaceman_harness_profile`, `spaceman_role_template`, `spaceman_prompt`, `spaceman_skill` |
 | MCP gateway | `spaceman_mcp_server`, `spaceman_mcp_grant`, `spaceman_approval_policy` |
 | Events | `spaceman_event_connection`, `spaceman_event_template`, `spaceman_event_subscription` |
-| Human actions | `spaceman_human_action_type`, `spaceman_space_human_action_type`, `spaceman_human_action_policy` |
+| Human actions | `spaceman_human_action_type`, `spaceman_space_human_action_type`, `spaceman_human_action_policy`, `spaceman_human_action_type_permission` |
 | Knowledge and memory | `spaceman_knowledge_base`, `spaceman_dream` |
 | Limits and schedules | `spaceman_space_limits`, `spaceman_space_queue_policy`, `spaceman_schedule` |
 | Cross-space | `spaceman_space_xspace_settings`, `spaceman_xspace_peer` |
@@ -181,9 +181,28 @@ resource "spaceman_user_identity" "ada_porch" {
 }
 ```
 
+Email, display name and `mfa_required` (the administrator's MFA setting; `mfa_enforced` shows whether MFA is required in
+effect, including what policy forces) change in place. Changing a password user's email ends that user's sessions.
+
 The user then signs in through the provider, or sets a password with a reset token an administrator issues in the UI.
 Grants from OIDC group mappings are separate and are not part of `spaceman_user_grants`. SpaceMan ends a user's sessions
 when their grants change and always keeps one enabled global administrator.
+
+## Human-action type permissions
+
+```hcl
+resource "spaceman_human_action_type_permission" "approvals" {
+  space_id     = spaceman_space.payments.id
+  action_type  = "approval" # or spaceman_human_action_type.deploy_window.id
+  view_role    = "operator"
+  respond_role = "admin"
+  agents       = "roles"
+  agent_roles  = ["deployer"]
+}
+```
+
+Creating one where a permission is already stored fails: import it (`<space_id>/<action_type>`). Destroying it restores
+the defaults. See [Type permissions](/guide/human-actions#type-permissions).
 
 ## Moving a space
 

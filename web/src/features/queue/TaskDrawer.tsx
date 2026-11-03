@@ -1,5 +1,5 @@
-import { ActionIcon, Badge, Button, Divider, Drawer, Group, Menu, Stack, TagsInput, Text, Title, Tooltip } from '@mantine/core'
-import { IconArrowBigUpLines, IconChevronDown, IconX } from '@tabler/icons-react'
+import { ActionIcon, Alert, Badge, Button, Divider, Drawer, Group, Menu, Stack, Table, TagsInput, Text, Title, Tooltip } from '@mantine/core'
+import { IconArrowBigUpLines, IconChevronDown, IconPlayerPlay, IconX } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ifMatch, unwrap, type Task } from '@/api/client'
 import { keys } from '@/api/queries'
@@ -11,6 +11,8 @@ import { datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { TaskPriority, TaskStatus, transitions } from './badges'
 import { ReassignForm } from './ReassignForm'
+
+const actionLabel: Record<string, string> = { finish: 'let finish', pause: 'paused', interrupt: 'stopped', preempted: 'preempted' }
 
 /** A task's details and the operator's controls: state, dependencies, blockers, escalation. */
 export function TaskDrawer({ spaceId, task, tasks, canWrite, onClose }: { spaceId: string; task: Task | null; tasks: Task[]; canWrite: boolean; onClose: () => void }) {
@@ -40,6 +42,17 @@ export function TaskDrawer({ spaceId, task, tasks, canWrite, onClose }: { spaceI
   const t = task
   const path = { space_id: spaceId, task_id: t.id }
   const titleOf = (id: string) => tasks.find((x) => x.id === id)?.title ?? id
+  const decide = (decision: 'confirm' | 'dismiss') => call(() => api.POST('/spaces/{space_id}/tasks/{task_id}/incident', {
+    params: { path, header: { 'If-Match': ifMatch(t.version) } }, body: { decision } }).then(unwrap), decision === 'confirm' ? 'Confirmed as an incident' : 'Proposal dismissed')
+  const resume = async () => {
+    try {
+      const r = unwrap(await api.POST('/spaces/{space_id}/tasks/{task_id}/resume', { params: { path } }))
+      refresh()
+      notifyOk(`Resume: ${r.outcome}`)
+    } catch (e) {
+      notifyError(e, 'Could not resume the task')
+    }
+  }
   return (
     <Drawer opened onClose={onClose} position="right" size="lg" title={<Group gap="xs"><TaskStatus status={t.status} /><TaskPriority task={t} /></Group>}>
       <Stack gap="md">
@@ -51,6 +64,50 @@ export function TaskDrawer({ spaceId, task, tasks, canWrite, onClose }: { spaceI
           )}
           {t.status_reason && <Text size="sm">Reason: {t.status_reason}</Text>}
         </Stack>
+        {t.incident_proposed_by && (
+          <Alert color="owlRed" variant="light" title="Incident proposal">
+            <Stack gap="xs">
+              <Text size="sm">
+                <span className="mono">{t.incident_proposed_by}</span> asked for this to be an incident, but the queue policy does not trust that source.
+                It is an ordinary task until an operator confirms it; confirming applies the incident insertion and preemption now.
+              </Text>
+              {canWrite && (
+                <Group gap="xs">
+                  <Button color="owlRed" size="xs" onClick={() => void decide('confirm')}>Confirm incident</Button>
+                  <Button variant="default" size="xs" onClick={() => void decide('dismiss')}>Dismiss</Button>
+                </Group>
+              )}
+            </Stack>
+          </Alert>
+        )}
+        {t.kind === 'incident' && t.incident_trigger && <Text size="xs" c="dimmed">Incident raised by <span className="mono">{t.incident_trigger}</span></Text>}
+        {t.preempted_by && (
+          <Alert color="owlYellow" variant="light" title="Preempted by an incident">
+            <Stack gap="xs">
+              <Text size="sm">Incident <span className="mono">{titleOf(t.preempted_by)}</span> returned this task to ready. This is not a failure. When it resumes, its live workers continue;
+                if none are left, control launches a new one.</Text>
+              {canWrite && <Group><Button size="xs" variant="default" leftSection={<IconPlayerPlay size={14} />} onClick={() => void resume()}>Resume</Button></Group>}
+            </Stack>
+          </Alert>
+        )}
+        {(t.preemption_log ?? []).length > 0 && (
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Preemptions</Text>
+            <Table aria-label="Preemption log" fz="xs" verticalSpacing={2}>
+              <Table.Thead><Table.Tr><Table.Th>When</Table.Th><Table.Th>Incident</Table.Th><Table.Th>What</Table.Th><Table.Th>Outcome</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>
+                {t.preemption_log!.map((p) => (
+                  <Table.Tr key={p.id}>
+                    <Table.Td>{datetime(p.created_at)}</Table.Td>
+                    <Table.Td>{titleOf(p.incident_id)}</Table.Td>
+                    <Table.Td>{p.run_id ? <>worker <span className="mono">{p.run_id.slice(-8)}</span>: {actionLabel[p.action]}</> : 'task returned to ready'}</Table.Td>
+                    <Table.Td>{p.resumed_at ? p.outcome : 'open'}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Stack>
+        )}
         {(t.waiting ?? []).length > 0 && (
           <Stack gap={2}>
             <Text size="xs" fw={600} c="owlYellow">Not eligible now</Text>
@@ -62,7 +119,7 @@ export function TaskDrawer({ spaceId, task, tasks, canWrite, onClose }: { spaceI
             <Menu position="bottom-start">
               <Menu.Target><Button rightSection={<IconChevronDown size={12} />}>Change state</Button></Menu.Target>
               <Menu.Dropdown>
-                {transitions[t.status].map((s) => (
+                {[...transitions[t.status], ...(t.status === 'ready' && t.preempted_by ? (['review'] as const) : [])].map((s) => (
                   <Menu.Item key={s} onClick={() => void call(() => api.POST('/spaces/{space_id}/tasks/{task_id}/status', {
                     params: { path, header: { 'If-Match': ifMatch(t.version) } }, body: { status: s, reason: reason() || undefined },
                   }).then(unwrap), `Now ${s}`)}>

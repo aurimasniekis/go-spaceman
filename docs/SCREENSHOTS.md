@@ -24,6 +24,7 @@
 | `terminal-takeover` | Terminals and recordings | Live terminal taken over by the signed-in admin, with the takeover banner | current |
 | `terminal-replay` | Site landing, Terminals and recordings | Replay with seek and speed | current |
 | `auth-users` | Sign-in and access | Users and grants | current |
+| `auth-user-profile` | Sign-in and access | Editing a user's email, display name and MFA requirement | current |
 | `auth-tokens` | Sign-in and access | API tokens | current |
 | `account-notifications` | Human actions | Notification preferences on the Account page | current |
 | `audit-log` | Sign-in and access | Audit log | current |
@@ -33,6 +34,8 @@
 | `queue` | The execution queue | Queue with running, ready, demoted incident, blocked, dependent and backlog tasks | current |
 | `queue-task` | The execution queue | Task drawer: eligibility reasons, state, dependencies, blockers | current |
 | `queue-reassign` | The execution queue | Task drawer's Assignee form: role and run chosen | current |
+| `queue-policy` | The execution queue | Queue policy dialog with the incident fields (trusted triggers, untrusted, workers, capacity, resumption) | current |
+| `queue-preempted` | The execution queue | Drawer of a preempted task with Resume and its preemption log | current |
 | `inbox-list` | The inbox | Space inbox with status filter and counts | current |
 | `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
 | `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |
@@ -42,6 +45,7 @@
 | `human-clarify` | Human actions | A pending question with a clarification request to its requester | current |
 | `human-form-default` | Human actions | Approval drawer with the advisory notice and distinct Approve/Deny | current |
 | `human-policies` | Human actions | A space's policies in force per type with their source (space override, built-in) | current |
+| `human-permissions` | Human actions | A space's type permissions: see, ask and respond roles and agent roles per type | current |
 | `human-rerouted` | Human actions | An answered question whose requester run had ended, routed to control with its provenance | current |
 | `messages` | Agent messaging | A space's messages with delivery states and a request's detail | current |
 | `human-form-custom` | Human action types | A custom type's request and schema-driven response form with its outcomes | current |

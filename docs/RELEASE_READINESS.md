@@ -9,7 +9,7 @@
 
 | Question | Answer |
 |---|---|
-| Is every requirement implemented? | 206 of 219 requirements are `implemented`, 12 are `partial` with a stated gap, 1 is `n/a` ([TRACEABILITY.md](TRACEABILITY.md)). None is left `todo`. |
+| Is every requirement implemented? | 210 of 219 requirements are `implemented`, 8 are `partial` with a stated gap, 1 is `n/a` ([TRACEABILITY.md](TRACEABILITY.md)). None is left `todo`. |
 | Is it tested? | Yes. Every gate below passes on the final tree, including the race-enabled suite, the fault-injection suite, the browser journey in three engines, the Terraform acceptance tests and the scripted 30-step demonstration. |
 | Is it verified against real dependencies? | Partly. herdr-core, Claude Code, Porch, Pulse with go-pulse-github, an S3-compatible store (MinIO), Linux with systemd (in a container), container images and three browsers have real evidence. Codex, AWS S3, a physical Linux host, amd64 under systemd and real Google or GitHub accounts do not. |
 | Is it ready for production? | **No claim is made.** It is ready for evaluation by a trusted team on macOS or Linux, with the limitations below. Before a production release: run it on a physical Linux host, verify Codex, run the release workflow, publish the site, and close the open security findings. |
@@ -123,8 +123,7 @@ The full list is [LIMITATIONS.md](LIMITATIONS.md). The ones an evaluator should 
   can bypass MCP mediation, and privileged nodes can read runtime secrets ([THREAT_MODEL.md](THREAT_MODEL.md)).
 - **Single central, no HA.** Recovery is restore from backup, which comes up paused.
 - **Codex is unverified** for real, and skills are materialized for Claude Code only.
-- **12 partial requirements**, each with its gap in [TRACEABILITY.md](TRACEABILITY.md). Examples: diagnostic launches
-  do not use their own permission; skills reach Claude Code only; artifacts have no S3 backend;
+- **8 partial requirements**, each with its gap in [TRACEABILITY.md](TRACEABILITY.md). Examples: skills reach Claude Code only; artifacts have no S3 backend;
   artifacts are stored on central's local disk only (S3 is a backup target, not an artifact backend).
 - **Open security findings**: the review fixed all 4 medium and 7 of 14 low findings; 6 low and 5 informational
   findings are open with follow-ups and 3 are accepted with a rationale ([SECURITY_REVIEW.md](SECURITY_REVIEW.md)). There
@@ -163,7 +162,7 @@ real model output.
 
 [TRACEABILITY.md](TRACEABILITY.md): 219 requirements, each with its work package, status, named tests, real evidence and
 notes; `make traceability` checks that every requirement is listed and that the SM-SEC-001 boundaries are documented.
-Status: 206 implemented, 12 partial, 1 n/a. The brief's §40 verification topics are mapped to tests in
+Status: 210 implemented, 8 partial, 1 n/a. The brief's §40 verification topics are mapped to tests in
 [TEST_STRATEGY.md](TEST_STRATEGY.md); the §41 demonstration is [DEMO.md](DEMO.md).
 
 ## 12. Before a production release

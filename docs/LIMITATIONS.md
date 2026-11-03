@@ -185,6 +185,11 @@
   period. Open actions and finished ones that open work still refers to are kept (ADR-0045, SM-HUI-007).
 - **Exports are plaintext and whole-space.** A space export holds every human action with its response; there is no
   per-type, per-period or per-requester export, and the archive is not encrypted (ADR-0045).
+- **Type permissions are role minimums per space.** A type's permission names the weakest built-in role that sees,
+  asks with and responds to it, and which agent roles may ask; there are no per-user lists. Hidden actions are left
+  out of the lists and the pending counts, but the attention summary still counts them per space and the change feed
+  still announces their IDs (they read as not found). Agents' own view of actions they asked is unaffected
+  (SM-HUI-008, ADR-0050).
 
 ## Control and repositories
 - **Repository reports follow events, not a clock.** The node reports a space's configured repositories (remote,
@@ -196,10 +201,15 @@
 - **Reassignment does not move work.** Reassigning a task (the task drawer, `spaceman task update --role/--run`, the API)
   records the new role and run; it never stops the run working on it or starts another: control acts on the new
   assignee. A run of another space is refused; a run ID that matches no run is accepted as given (SM-CTRL-004).
-- **The incident policy is partial.** It sets insertion, preemption (running tasks return to ready), the number of
-  active top-level tasks and whether escalation reorders. It does not define which triggers may raise incidents
-  (operators and control create incident tasks), what happens to a preempted task's workers (they keep running, and
-  control is not told), or how preempted work resumes (SM-QUEUE-009).
+- **Incidents only from trusted triggers; pausing is unexercised with real harnesses.** A space's queue policy names
+  who may raise incidents (operators and control by default; event subscriptions and templates when listed). Workers,
+  schedules, other spaces and the other inbox sources can never be trusted, even when control relays them: their
+  incidents become proposals an operator confirms, or are refused (SM-QUEUE-009, ADR-0050). Trusting control trusts
+  its judgement, which reads untrusted content; remove `control` to make it relay trusted sources only. A preempted
+  task's workers finish, are paused (their turn interrupted) or are stopped, as the policy says. Pausing sends
+  herdr-core's interrupt (Esc or Ctrl+C) and has been verified only with the in-memory runner; a paused worker stays
+  paused until it is resumed, and automatic resumption only restarts tasks that still have a live worker (others wait
+  for control to launch one).
 - **Repository credentials stay on the node.** Configured repositories are cloned and fetched with the node's own Git
   authentication (SSH keys, credential helpers, Hallpass Git roles). SpaceMan stores no Git credentials and refuses
   URLs that carry them, so a remote that needs a token in its URL cannot be configured; set up the node's Git instead
@@ -318,6 +328,10 @@
 - **Step-up leaves the page.** Re-authenticating an SSO session goes to the provider and back; the action that asked
   for it has to be repeated.
 - **Test-login previews are in memory** for ten minutes and are lost when central restarts.
+- **Changing a user's email is not an SSO change.** Identities are matched by issuer and subject, never by email, so
+  editing a user's email never relinks an identity, and SpaceMan does not copy a provider's later email changes to the
+  user. Changing a password user's email ends their sessions (it is their sign-in name); API tokens keep working
+  (SM-API-004, ADR-0050).
 
 ## Backups and restore
 - **The KEK is the single point of recovery.** Every backup file is sealed under the KEK, and the KEK is never in a
@@ -375,9 +389,9 @@
 
 ## Terraform provider
 - **Phases 1 and 2, not published.** The provider (its own repository, `terraform-provider-spaceman`, ADR-0047) covers what the API supports today (ADR-0035,
-  ADR-0041) and space repositories (ADR-0044). The backup target and schedule (configuration file only), type permissions
-  beyond space enablement (no API) and editing a user's email, display name or `mfa_required` (no API) are not managed
-  (SM-API-004). Terraform 1.11 or later is required (write-only arguments).
+  ADR-0041), space repositories (ADR-0044), human-action type permissions and user profile edits (ADR-0050). The backup
+  target and schedule (configuration file only) are not managed (SM-API-004). Terraform 1.11 or later is required
+  (write-only arguments).
 - **No server-side precondition for two resources.** The queue policy API has no version and a user's grant changes do
   not bump the user's version, so `spaceman_space_queue_policy` and `spaceman_user_grants` re-read before writing and
   refuse a change made since the refresh; a change landing between that read and the write is still overwritten.

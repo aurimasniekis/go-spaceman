@@ -1741,6 +1741,91 @@
   breaks the provider; run the provider's `make acc` against the change. Traceability rows that cite provider tests
   name tests in that repository.
 
+### ADR-0050 — Incident policy (trusted triggers, worker handling, resumption), run:diagnose, human-action type permissions and user profile edits (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (gap closure for SM-QUEUE-009, SM-CTRL-004, SM-HUI-008 and the user part of SM-API-004;
+  migration 0034, no node protocol change).
+- **Context:** The incident policy set insertion, preemption, the active limit and escalation reordering, but any caller
+  that could create a task could raise an incident, a preempted task's workers kept running without anyone being told,
+  and nothing defined resumption. `run:diagnose` existed but diagnostic launches were checked with `run:control`.
+  Human-action types had no permissions beyond space enablement, and a user's email, display name and `mfa_required`
+  could not be changed after creation, so Terraform refused those changes at plan time (ADR-0041).
+- **Decision:**
+  - **Trusted triggers.** A space's queue policy lists the sources trusted to raise incidents: `operator` (a person
+    through the API or UI, including the root token), `control` (the space's control on its own judgement),
+    `subscription:<id>` and `template:<id or slug>` (an event delivered by that subscription or rendered by that
+    template). Default: operator and control (what spaces had before). The trigger is where the request comes from:
+    an operator's call is `operator`; control's own request is `control`; control creating an incident from an inbox
+    item takes the item's source: an event's subscription and template, an operator's item `operator`, and the source
+    kind (worker, dreamer, kb, cross_space, webhook, schedule, human_response) for everything else. Those kinds can
+    never be listed, so a worker or another space can never raise an incident, even through control. An untrusted
+    request is, per policy, **proposed** (default: created as an ordinary task, inserted by priority, nothing preempted,
+    marked `incident_proposed_by`, audited `task.incident_proposed`, control told) or **refused** (403, audited
+    `task.incident_refused` in its own transaction). An operator confirms or dismisses a proposal
+    (`POST /spaces/{id}/tasks/{task}/incident`, `queue:write`, If-Match); confirming is itself a trigger check
+    (`operator` must be trusted) and applies insertion and preemption then. Agents have no tool to confirm.
+    Trusting `control` trusts its judgement: control acting on untrusted content can still call the tool without an
+    inbox item; remove `control` from the list to make control relay only trusted sources.
+  - **Worker handling** (`incident_workers`), for the assigned runs of each preempted task and of its subtasks, recorded
+    per run in `task_preemptions` and audited (`task.preempted` with the runs and actions; `run.paused` /
+    `run.stop_requested` per run): `finish` (default; the run keeps going and gets an idle-gated notice to wrap up and
+    report; a preempted task may then go ready → review), `pause` (central queues the existing `run.interrupt` command:
+    herdr-core sends Esc or Ctrl+C and the program stays, idle, with its session; skipped as `finish` while an operator
+    has taken the terminal over) or `interrupt` (the run is stopped politely, session resumable). Control gets a
+    durable notification listing the preempted tasks and what happened to their workers.
+  - **Capacity.** `incident_capacity` (0-20, default 0) adds top-level slots only incident tasks may use, so an
+    incident can start beside ordinary work without preempting it.
+  - **Resumption** (`incident_resume`), evaluated in the transaction that ends an incident (done, failed or cancelled),
+    never by polling: `manual` (default) tells control which preempted tasks wait; `auto` resumes every preempted ready
+    task of the space in queue order: one that is eligible and still has a live worker runs again and its paused
+    workers get an idle-gated "continue" notice; one whose workers are gone stays ready ("relaunch") for control to
+    start a new worker; one that is not eligible yet keeps its preemption ("waiting") for a later resume. An explicit
+    resume (`POST .../resume`, `queue:write`, or `spaceman_task_resume` for control) does the same for one task, and
+    starting a preempted task by hand resumes its paused workers. Each resumption closes the preemption records with
+    its outcome and is audited (`task.resumed`). Escalation is unchanged: it reorders only when the policy says so.
+  - **`run:diagnose`.** A diagnostic launch needs `run:diagnose` in addition to `run:control`, checked after the space
+    role decided the kind (a launch naming a diagnostic role is a diagnostic launch). Operators now hold
+    `run:diagnose` (GOAL SM-CTRL-004 lets operators launch audited diagnostics), admins hold everything, viewers
+    neither, so existing operators and admins keep working. Agents cannot launch diagnostics: control's worker tool
+    launches workers only, and a space role cannot change its kind. Launches stay audited with their kind.
+  - **Human-action type permissions.** `space_human_type_permissions` stores, per space and type (a built-in type or a
+    custom type's ID), the weakest role that sees actions of the type (default viewer), asks with it through the API
+    (default operator) and responds, assigns, comments, clarifies, moves or cancels (default operator), and which
+    agents may ask (`any`, only listed space roles, or `none`). They only narrow the role permissions
+    (`human_action:read`/`respond`, `approval:decide` still apply). Hidden actions are left out of the space and global
+    lists and of the global pending counts; reading or acting on one is "not found", acting on a visible one without
+    the responder role is forbidden. Changing them needs the new admin-only permission `human_type_permission:write`
+    (authorization is admin business; operators read them with `space_config:read`), audited
+    (`human_type.permission_set` / `_deleted` with before and after). Create without If-Match refuses an existing
+    permission; update needs If-Match.
+  - **User profile edits.** `PUT /users/{id}/profile` (global `user:write` with step-up, If-Match against the user's
+    version) replaces email, display name and the administrator's MFA setting, audited `user.profile_updated` with
+    the old and new email, the number of linked SSO identities and how the user was provisioned. Email is never an
+    SSO key (identities are matched by issuer and subject, HP-OIDC-009), so a change never links, unlinks or merges an
+    identity; an address in use is refused; a user with a password keeps an email (their sign-in name) and an email
+    change ends that user's sessions (API tokens keep working). The users API now returns `mfa_required_set` (the
+    administrator's setting) beside the effective `mfa_required`; clearing the setting never lifts MFA that policy
+    forces (`auth.require_totp` in production, operator or admin grants on a password account). The last-administrator
+    and SSO-only guards are checked relative to before the change.
+  - **Terraform** (provider repository): `spaceman_human_action_type_permission`; `spaceman_user` updates email,
+    display name and `mfa_required` in place; `spaceman_space_queue_policy` manages the incident fields.
+- **Alternatives:** an incident lane or automatic incidents from events (the brief forbids an immutable lane; events
+  stay inbox items for control); per-user type permissions (roles are the authorization model; a per-user list would
+  bypass Casbin); keeping diagnostics on `run:control` (the separate permission existed precisely to separate them);
+  treating `mfa_required` as the effective value on write (Terraform would see drift whenever policy forces MFA).
+- **Consequences:**
+  - **Security-relevant:** incidents from untrusted sources no longer preempt work; operators can hide or restrict
+    human-action types; diagnostics need their own permission (operators keep it by default). Tests:
+    `internal/queue` `TestIncidentTriggers`, `TestIncidentProposalDecision`, `TestPreemptedWorkers`,
+    `TestIncidentResumption`, `TestIncidentCapacity`; `internal/agenttools` `TestIncidentTriggersFromTools`;
+    `internal/authz` `TestDiagnoseAndTypePermissionRoles`, `TestHoldsRole`; `internal/human` `TestTypePermissions`;
+    `internal/auth` `TestUpdateProfile`; `internal/app` `TestIncidentPolicyEndToEnd`,
+    `TestOperatorRestartsControlAndDiagnostics`, `TestHumanTypePermissionsOverHTTP`, `TestUserProfileOverHTTP`.
+  - Pausing is simulated: the in-memory runner exits on an interrupt; with a real harness Esc stops the turn
+    (herdr-core contract) but no real-harness run has exercised a pause and resume.
+  - The attention summary still counts pending actions of hidden types (a number per space, never their content); the
+    change feed announces their IDs, which then read as not found.
+  - A paused worker stays paused until resumed; nothing times it out.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

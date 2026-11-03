@@ -178,6 +178,13 @@ func (a *App) grantsPrepare(ctx context.Context, _ *cobra.Command, _ *call, body
 	return nil
 }
 
+// profileBase is a user's profile as update-user takes it: the administrator's MFA setting, not the effective one.
+func profileBase(u map[string]any) map[string]any {
+	email, _ := u["email"].(string)
+	set, _ := u["mfa_required_set"].(bool)
+	return map[string]any{"email": email, "display_name": u["display_name"], "mfa_required": set}
+}
+
 const grantHelp = "grant ROLE[:SPACE] (viewer, operator or admin; SPACE an ID or slug, default * = every space and global administration)"
 
 func (a *App) userCmd() *cobra.Command {
@@ -196,6 +203,15 @@ func (a *App) userCmd() *cobra.Command {
 					body["grants"] = []any{}
 				}
 				return a.grantsPrepare(ctx, cmd, c, body)
+			}}),
+		a.cmd(opts{use: "update", short: "Change a user's email, display name or MFA requirement (only the flags given change)", op: "update-user",
+			get: "get-user", args: pos("user"), base: profileBase,
+			long: "Changing the email of a user with a password ends their sessions (it is their sign-in name); clearing --mfa-required never " +
+				"lifts MFA that policy forces (require_totp, operator or admin grants on a password account).",
+			example: "spaceman user update usr_01… --email ada@new.example --mfa-required",
+			form: func(f *form) {
+				f.str("email", "email", "email (empty removes it; a user with a password needs one)").str("display-name", "display_name", "display name").
+					boolean("mfa-required", "mfa_required", "require a second factor (--mfa-required=false clears the setting)")
 			}}),
 		a.cmd(opts{use: "disable", short: "Disable a user (ends their sessions and tokens)", op: "disable-user", get: "get-user", args: pos("user")}),
 		a.cmd(opts{use: "enable", short: "Enable a disabled user", op: "enable-user", get: "get-user", args: pos("user")}),

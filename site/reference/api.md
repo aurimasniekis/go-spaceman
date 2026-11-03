@@ -78,6 +78,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/users/{user_id}/identities` | `list-user-identities` | A user's linked sign-in identities |
 | `POST` | `/users/{user_id}/identities` | `link-user-identity` | Link an expected identity to a user |
 | `POST` | `/users/{user_id}/link-invite` | `issue-link-invite` | Issue a single-use SSO link invitation |
+| `PUT` | `/users/{user_id}/profile` | `update-user` | Change a user's email, display name and MFA requirement |
 | `POST` | `/users/{user_id}/reset-token` | `issue-reset` | Issue a one-time password reset token |
 
 ### tokens
@@ -257,6 +258,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/human-types/{type_id}/draft` | `save-human-type-draft` | Create or update the type's draft |
 | `POST` | `/human-types/{type_id}/publish` | `publish-human-type` | Publish the draft as the next immutable version |
 | `GET` | `/spaces/{space_id}/human-type-options` | `list-human-type-options` | Catalog types a space can enable (names and published versions only) |
+| `GET` | `/spaces/{space_id}/human-type-permissions` | `list-human-type-permissions` | Who may see, create and respond to each human-action type in the space |
+| `DELETE` | `/spaces/{space_id}/human-type-permissions/{action_type}` | `delete-human-type-permission` | Remove a type's permission (the defaults apply again) |
+| `GET` | `/spaces/{space_id}/human-type-permissions/{action_type}` | `get-human-type-permission` | The permission in force for a type (stored: false means the defaults) |
+| `PUT` | `/spaces/{space_id}/human-type-permissions/{action_type}` | `set-human-type-permission` | Set who may see, create and respond to a type in the space |
 | `GET` | `/spaces/{space_id}/human-types` | `list-space-human-types` | Custom types enabled in the space, with the version each uses now |
 | `DELETE` | `/spaces/{space_id}/human-types/{type_id}` | `disable-space-human-type` | Stop new actions of a type in the space |
 | `PUT` | `/spaces/{space_id}/human-types/{type_id}` | `enable-space-human-type` | Enable a type in the space (follow the latest version or pin one; optionally as a variant) |
@@ -373,7 +378,9 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}/tasks/{task_id}/blockers/{blocker_id}` | `resolve-task-blocker` | Remove a blocker |
 | `PUT` | `/spaces/{space_id}/tasks/{task_id}/dependencies` | `set-task-dependencies` | Replace a task's dependencies (cycles are rejected) |
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/escalate` | `escalate-task` | Escalate a task |
+| `POST` | `/spaces/{space_id}/tasks/{task_id}/incident` | `decide-incident` | Confirm or dismiss an incident proposal |
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/move` | `move-task` | Place a task in the queue |
+| `POST` | `/spaces/{space_id}/tasks/{task_id}/resume` | `resume-task` | Resume a task an incident preempted |
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/status` | `set-task-status` | Change a task's state |
 
 ### relocation

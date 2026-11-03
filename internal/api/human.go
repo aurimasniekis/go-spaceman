@@ -186,20 +186,22 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				allowed := func(id string) bool {
 					return (in.Space == "" || id == in.Space) && d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), id, authz.HumanRead)
 				}
-				l, err := svc.ListPending(ctx, allowed, in.filter(ctx, true))
+				// Type permissions hide actions of types the caller may not see, from the items and the counts (SM-HUI-008).
+				h := d.humanAccess(ctx, svc)
+				f := in.filter(ctx, true)
+				f.Visible = h.visible(ctx)
+				l, err := svc.ListPending(ctx, allowed, f)
 				if err != nil {
 					return nil, d.fail(ctx, "human.list_pending", err)
 				}
-				all, err := svc.PendingCounts(ctx)
+				all, err := svc.PendingCountsVisible(ctx, func(a *human.Action) bool { return allowed(a.SpaceID) && h.may(ctx, a, humanView) })
 				if err != nil {
 					return nil, d.fail(ctx, "human.list_pending", err)
 				}
 				out := PendingHumanActions{Items: l, Counts: map[string]int64{}}
 				for id, n := range all {
-					if allowed(id) {
-						out.Counts[id] = n
-						out.Total += n
-					}
+					out.Counts[id] = n
+					out.Total += n
 				}
 				return &struct{ Body PendingHumanActions }{Body: out}, nil
 			})
@@ -210,7 +212,9 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				Pending bool `query:"pending"`
 				HumanListQuery
 			}) (*struct{ Body HumanActionList }, error) {
-				l, err := svc.List(ctx, in.SpaceID, in.filter(ctx, in.Pending))
+				f := in.filter(ctx, in.Pending)
+				f.Visible = d.humanAccess(ctx, svc).visible(ctx)
+				l, err := svc.List(ctx, in.SpaceID, f)
 				if err != nil {
 					return nil, d.fail(ctx, "human.list", err)
 				}
@@ -219,7 +223,7 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "get-human-action", Method: http.MethodGet, Path: "/spaces/{space_id}/human-actions/{action_id}",
 			Summary: "A human action with its comments and notifications", Tags: tags},
 			func(ctx context.Context, in *HumanActionPath) (*humanOut, error) {
-				a, err := svc.Get(ctx, in.SpaceID, in.ActionID)
+				a, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanView)
 				if err != nil {
 					return nil, d.fail(ctx, "human.get", err)
 				}
@@ -236,6 +240,11 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				a, _, err := Idempotent(ctx, d, "create-human-action", in.IdempotencyKey, map[string]any{"space": in.SpaceID, "body": in.Body}, false, func() (*human.Action, error) {
 					actor := Actor(ctx)
 					b := in.Body
+					probe := &human.Action{SpaceID: in.SpaceID, Type: b.Type, TypeSlug: b.TypeSlug}
+					if h := d.humanAccess(ctx, svc); !h.may(ctx, probe, humanCreate) {
+						p := h.sets[in.SpaceID].For(probe)
+						return nil, apperr.New(apperr.CodeForbidden, "asking with %s in this space needs the %s role", typeName(probe), p.CreateRole)
+					}
 					a, _, err := svc.Create(ctx, actor, in.SpaceID, human.CreateInput{Type: b.Type, TypeSlug: b.TypeSlug, Title: b.Title, Body: b.Body, Request: b.Request,
 						Requester: human.Requester{Kind: "operator", ID: actor.ID, Label: actorLabel(ctx)}, TaskID: b.TaskID, BlocksTask: b.BlocksTask,
 						Priority: b.Priority, DueAt: b.DueAt, ExpiresAt: b.ExpiresAt, DedupKey: b.DedupKey, CorrelationID: b.CorrelationID, FollowUpOf: b.FollowUpOf,
@@ -264,7 +273,7 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "human.respond", err)
 				}
-				cur, err := svc.Get(ctx, in.SpaceID, in.ActionID)
+				cur, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond)
 				if err != nil {
 					return nil, d.fail(ctx, "human.respond", err)
 				}
@@ -294,6 +303,9 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "human.assign", err)
 				}
+				if _, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond); err != nil {
+					return nil, d.fail(ctx, "human.assign", err)
+				}
 				a, err := svc.Assign(ctx, Actor(ctx), in.SpaceID, in.ActionID, v, in.Body.Assignee)
 				if err != nil {
 					return nil, d.fail(ctx, "human.assign", err)
@@ -313,6 +325,9 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "human.cancel", err)
 				}
+				if _, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond); err != nil {
+					return nil, d.fail(ctx, "human.cancel", err)
+				}
 				a, err := svc.Cancel(ctx, Actor(ctx), in.SpaceID, in.ActionID, v, in.Body.Reason)
 				if err != nil {
 					return nil, d.fail(ctx, "human.cancel", err)
@@ -325,6 +340,9 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				HumanActionPath
 				Body HumanCommentInput
 			}) (*humanOut, error) {
+				if _, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond); err != nil {
+					return nil, d.fail(ctx, "human.comment", err)
+				}
 				a, err := svc.Comment(ctx, Actor(ctx), in.SpaceID, in.ActionID, human.CommentInput{Body: in.Body.Body, Label: actorLabel(ctx), AttachmentIDs: in.Body.AttachmentIDs})
 				if err != nil {
 					return nil, d.fail(ctx, "human.comment", err)
@@ -339,6 +357,9 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				HumanActionPath
 				Body HumanCommentInput
 			}) (*humanOut, error) {
+				if _, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond); err != nil {
+					return nil, d.fail(ctx, "human.clarify", err)
+				}
 				a, err := svc.RequestClarification(ctx, Actor(ctx), in.SpaceID, in.ActionID, human.CommentInput{Body: in.Body.Body, Label: actorLabel(ctx),
 					AttachmentIDs: in.Body.AttachmentIDs})
 				if err != nil {
@@ -534,6 +555,7 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				}
 				return humanResult(a), nil
 			})
+		registerHumanTypePermissions(api, d, svc)
 		ptags := []string{"human-action-policies"}
 		listPolicies := func(ctx context.Context, op, spaceID string) (*struct{ Body HumanPolicies }, error) {
 			items, err := svc.Policies(ctx, spaceID)
@@ -621,6 +643,9 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 					Before string `json:"before,omitempty" maxLength:"64" doc:"Place before this pending action; empty places it last"`
 				}
 			}) (*humanOut, error) {
+				if _, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond); err != nil {
+					return nil, d.fail(ctx, "human.move", err)
+				}
 				a, err := svc.Move(ctx, Actor(ctx), in.SpaceID, in.ActionID, in.Body.Before)
 				if err != nil {
 					return nil, d.fail(ctx, "human.move", err)

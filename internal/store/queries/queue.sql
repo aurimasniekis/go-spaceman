@@ -30,6 +30,30 @@ WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
 UPDATE tasks SET rank = sqlc.arg(rank), manual_position = sqlc.arg(manual_position), version = version + sqlc.arg(bump), updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id);
 
+-- name: SetTaskIncident :exec
+-- An incident's trigger, a proposal's source and the incident that preempted a task (SM-QUEUE-009).
+UPDATE tasks SET kind = sqlc.arg(kind), incident_trigger = sqlc.arg(incident_trigger), incident_proposed_by = sqlc.arg(incident_proposed_by),
+  version = version + sqlc.arg(bump), updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id);
+
+-- name: SetTaskPreemptedBy :exec
+UPDATE tasks SET preempted_by = sqlc.arg(preempted_by) WHERE id = sqlc.arg(id);
+
+-- name: InsertTaskPreemption :exec
+INSERT INTO task_preemptions (id, space_id, incident_id, task_id, run_id, action, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: ListOpenTaskPreemptions :many
+SELECT * FROM task_preemptions WHERE task_id = ? AND resumed_at IS NULL ORDER BY created_at, id;
+
+-- name: ListIncidentPreemptions :many
+SELECT * FROM task_preemptions WHERE incident_id = ? AND resumed_at IS NULL ORDER BY created_at, id;
+
+-- name: ListTaskPreemptions :many
+SELECT * FROM task_preemptions WHERE task_id = ? ORDER BY created_at DESC, id LIMIT 50;
+
+-- name: CloseTaskPreemption :exec
+UPDATE task_preemptions SET resumed_at = sqlc.arg(now), resumed_by = sqlc.arg(by), outcome = sqlc.arg(outcome) WHERE id = sqlc.arg(id) AND resumed_at IS NULL;
+
 -- name: SetTaskRankOnly :exec
 UPDATE tasks SET rank = ? WHERE id = ?;
 
@@ -59,11 +83,14 @@ SELECT b.* FROM task_blockers b JOIN tasks t ON t.id = b.task_id WHERE t.space_i
 SELECT * FROM queue_policies WHERE space_id = ?;
 
 -- name: UpsertQueuePolicy :exec
-INSERT INTO queue_policies (space_id, max_active, incident_insertion, incident_preempts, escalation_reorders, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO queue_policies (space_id, max_active, incident_insertion, incident_preempts, escalation_reorders, incident_triggers_json,
+  incident_untrusted, incident_workers, incident_capacity, incident_resume, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (space_id) DO UPDATE SET max_active = excluded.max_active, incident_insertion = excluded.incident_insertion,
-  incident_preempts = excluded.incident_preempts, escalation_reorders = excluded.escalation_reorders, version = queue_policies.version + 1,
-  updated_at = excluded.updated_at, updated_by = excluded.updated_by;
+  incident_preempts = excluded.incident_preempts, escalation_reorders = excluded.escalation_reorders,
+  incident_triggers_json = excluded.incident_triggers_json, incident_untrusted = excluded.incident_untrusted,
+  incident_workers = excluded.incident_workers, incident_capacity = excluded.incident_capacity, incident_resume = excluded.incident_resume,
+  version = queue_policies.version + 1, updated_at = excluded.updated_at, updated_by = excluded.updated_by;
 
 -- name: InsertQueueDecision :exec
 INSERT INTO queue_decisions (space_id, selected_id, skipped_json, at, by) VALUES (?, ?, ?, ?, ?);

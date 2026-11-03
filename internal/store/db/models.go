@@ -894,14 +894,19 @@ type QueueDecision struct {
 }
 
 type QueuePolicy struct {
-	SpaceID            string
-	MaxActive          int64
-	IncidentInsertion  string
-	IncidentPreempts   int64
-	EscalationReorders int64
-	Version            int64
-	UpdatedAt          int64
-	UpdatedBy          string
+	SpaceID              string
+	MaxActive            int64
+	IncidentInsertion    string
+	IncidentPreempts     int64
+	EscalationReorders   int64
+	Version              int64
+	UpdatedAt            int64
+	UpdatedBy            string
+	IncidentTriggersJson string
+	IncidentUntrusted    string
+	IncidentWorkers      string
+	IncidentCapacity     int64
+	IncidentResume       string
 }
 
 type RecoveryCode struct {
@@ -1173,6 +1178,19 @@ type SpaceHumanType struct {
 	CreatedBy            string
 }
 
+type SpaceHumanTypePermission struct {
+	SpaceID        string
+	ActionType     string
+	ViewRole       string
+	CreateRole     string
+	RespondRole    string
+	Agents         string
+	AgentRolesJson string
+	Version        int64
+	UpdatedAt      int64
+	UpdatedBy      string
+}
+
 type SpaceLimit struct {
 	SpaceID    string
 	ValuesJson string
@@ -1280,33 +1298,36 @@ type SubscriptionReplay struct {
 }
 
 type Task struct {
-	ID             string
-	SpaceID        string
-	ParentID       sql.NullString
-	Title          string
-	Objective      string
-	Acceptance     string
-	Kind           string
-	Priority       string
-	Rank           int64
-	ManualPosition int64
-	Status         string
-	StatusReason   string
-	ExclusionsJson string
-	AssigneeRole   string
-	AssigneeRun    string
-	Workspace      string
-	OriginKind     string
-	OriginID       string
-	DedupKey       string
-	Result         string
-	Preemptions    int64
-	CreatedAt      int64
-	CreatedBy      string
-	UpdatedAt      int64
-	StartedAt      sql.NullInt64
-	FinishedAt     sql.NullInt64
-	Version        int64
+	ID                 string
+	SpaceID            string
+	ParentID           sql.NullString
+	Title              string
+	Objective          string
+	Acceptance         string
+	Kind               string
+	Priority           string
+	Rank               int64
+	ManualPosition     int64
+	Status             string
+	StatusReason       string
+	ExclusionsJson     string
+	AssigneeRole       string
+	AssigneeRun        string
+	Workspace          string
+	OriginKind         string
+	OriginID           string
+	DedupKey           string
+	Result             string
+	Preemptions        int64
+	CreatedAt          int64
+	CreatedBy          string
+	UpdatedAt          int64
+	StartedAt          sql.NullInt64
+	FinishedAt         sql.NullInt64
+	Version            int64
+	PreemptedBy        string
+	IncidentTrigger    string
+	IncidentProposedBy string
 }
 
 type TaskBlocker struct {
@@ -1331,6 +1352,19 @@ type TaskDeadlineNotice struct {
 type TaskDependency struct {
 	TaskID    string
 	DependsOn string
+}
+
+type TaskPreemption struct {
+	ID         string
+	SpaceID    string
+	IncidentID string
+	TaskID     string
+	RunID      string
+	Action     string
+	CreatedAt  int64
+	ResumedAt  sql.NullInt64
+	ResumedBy  string
+	Outcome    string
 }
 
 type User struct {

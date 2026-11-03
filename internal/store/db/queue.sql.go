@@ -10,6 +10,27 @@ import (
 	"database/sql"
 )
 
+const closeTaskPreemption = `-- name: CloseTaskPreemption :exec
+UPDATE task_preemptions SET resumed_at = ?1, resumed_by = ?2, outcome = ?3 WHERE id = ?4 AND resumed_at IS NULL
+`
+
+type CloseTaskPreemptionParams struct {
+	Now     sql.NullInt64
+	By      string
+	Outcome string
+	ID      string
+}
+
+func (q *Queries) CloseTaskPreemption(ctx context.Context, arg CloseTaskPreemptionParams) error {
+	_, err := q.db.ExecContext(ctx, closeTaskPreemption,
+		arg.Now,
+		arg.By,
+		arg.Outcome,
+		arg.ID,
+	)
+	return err
+}
+
 const deleteTaskDependencies = `-- name: DeleteTaskDependencies :exec
 DELETE FROM task_dependencies WHERE task_id = ?
 `
@@ -20,7 +41,7 @@ func (q *Queries) DeleteTaskDependencies(ctx context.Context, taskID string) err
 }
 
 const getQueuePolicy = `-- name: GetQueuePolicy :one
-SELECT space_id, max_active, incident_insertion, incident_preempts, escalation_reorders, version, updated_at, updated_by FROM queue_policies WHERE space_id = ?
+SELECT space_id, max_active, incident_insertion, incident_preempts, escalation_reorders, version, updated_at, updated_by, incident_triggers_json, incident_untrusted, incident_workers, incident_capacity, incident_resume FROM queue_policies WHERE space_id = ?
 `
 
 func (q *Queries) GetQueuePolicy(ctx context.Context, spaceID string) (QueuePolicy, error) {
@@ -35,12 +56,17 @@ func (q *Queries) GetQueuePolicy(ctx context.Context, spaceID string) (QueuePoli
 		&i.Version,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.IncidentTriggersJson,
+		&i.IncidentUntrusted,
+		&i.IncidentWorkers,
+		&i.IncidentCapacity,
+		&i.IncidentResume,
 	)
 	return i, err
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version FROM tasks WHERE id = ?
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
@@ -74,12 +100,15 @@ func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.Version,
+		&i.PreemptedBy,
+		&i.IncidentTrigger,
+		&i.IncidentProposedBy,
 	)
 	return i, err
 }
 
 const getTaskByDedup = `-- name: GetTaskByDedup :one
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version FROM tasks WHERE space_id = ? AND dedup_key = ?
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE space_id = ? AND dedup_key = ?
 `
 
 type GetTaskByDedupParams struct {
@@ -118,6 +147,9 @@ func (q *Queries) GetTaskByDedup(ctx context.Context, arg GetTaskByDedupParams) 
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.Version,
+		&i.PreemptedBy,
+		&i.IncidentTrigger,
+		&i.IncidentProposedBy,
 	)
 	return i, err
 }
@@ -239,6 +271,109 @@ func (q *Queries) InsertTaskDependency(ctx context.Context, arg InsertTaskDepend
 	return err
 }
 
+const insertTaskPreemption = `-- name: InsertTaskPreemption :exec
+INSERT INTO task_preemptions (id, space_id, incident_id, task_id, run_id, action, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertTaskPreemptionParams struct {
+	ID         string
+	SpaceID    string
+	IncidentID string
+	TaskID     string
+	RunID      string
+	Action     string
+	CreatedAt  int64
+}
+
+func (q *Queries) InsertTaskPreemption(ctx context.Context, arg InsertTaskPreemptionParams) error {
+	_, err := q.db.ExecContext(ctx, insertTaskPreemption,
+		arg.ID,
+		arg.SpaceID,
+		arg.IncidentID,
+		arg.TaskID,
+		arg.RunID,
+		arg.Action,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const listIncidentPreemptions = `-- name: ListIncidentPreemptions :many
+SELECT id, space_id, incident_id, task_id, run_id, "action", created_at, resumed_at, resumed_by, outcome FROM task_preemptions WHERE incident_id = ? AND resumed_at IS NULL ORDER BY created_at, id
+`
+
+func (q *Queries) ListIncidentPreemptions(ctx context.Context, incidentID string) ([]TaskPreemption, error) {
+	rows, err := q.db.QueryContext(ctx, listIncidentPreemptions, incidentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskPreemption{}
+	for rows.Next() {
+		var i TaskPreemption
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.IncidentID,
+			&i.TaskID,
+			&i.RunID,
+			&i.Action,
+			&i.CreatedAt,
+			&i.ResumedAt,
+			&i.ResumedBy,
+			&i.Outcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenTaskPreemptions = `-- name: ListOpenTaskPreemptions :many
+SELECT id, space_id, incident_id, task_id, run_id, "action", created_at, resumed_at, resumed_by, outcome FROM task_preemptions WHERE task_id = ? AND resumed_at IS NULL ORDER BY created_at, id
+`
+
+func (q *Queries) ListOpenTaskPreemptions(ctx context.Context, taskID string) ([]TaskPreemption, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenTaskPreemptions, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskPreemption{}
+	for rows.Next() {
+		var i TaskPreemption
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.IncidentID,
+			&i.TaskID,
+			&i.RunID,
+			&i.Action,
+			&i.CreatedAt,
+			&i.ResumedAt,
+			&i.ResumedBy,
+			&i.Outcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueueDecisions = `-- name: ListQueueDecisions :many
 SELECT id, space_id, selected_id, skipped_json, at, "by" FROM queue_decisions WHERE space_id = ? ORDER BY id DESC LIMIT ?
 `
@@ -342,8 +477,46 @@ func (q *Queries) ListSpaceDependencies(ctx context.Context, spaceID string) ([]
 	return items, nil
 }
 
+const listTaskPreemptions = `-- name: ListTaskPreemptions :many
+SELECT id, space_id, incident_id, task_id, run_id, "action", created_at, resumed_at, resumed_by, outcome FROM task_preemptions WHERE task_id = ? ORDER BY created_at DESC, id LIMIT 50
+`
+
+func (q *Queries) ListTaskPreemptions(ctx context.Context, taskID string) ([]TaskPreemption, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskPreemptions, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskPreemption{}
+	for rows.Next() {
+		var i TaskPreemption
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.IncidentID,
+			&i.TaskID,
+			&i.RunID,
+			&i.Action,
+			&i.CreatedAt,
+			&i.ResumedAt,
+			&i.ResumedBy,
+			&i.Outcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTasks = `-- name: ListTasks :many
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version FROM tasks WHERE space_id = ? ORDER BY rank, created_at
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE space_id = ? ORDER BY rank, created_at
 `
 
 func (q *Queries) ListTasks(ctx context.Context, spaceID string) ([]Task, error) {
@@ -383,6 +556,9 @@ func (q *Queries) ListTasks(ctx context.Context, spaceID string) ([]Task, error)
 			&i.StartedAt,
 			&i.FinishedAt,
 			&i.Version,
+			&i.PreemptedBy,
+			&i.IncidentTrigger,
+			&i.IncidentProposedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -471,6 +647,48 @@ func (q *Queries) ResolveTaskBlocker(ctx context.Context, arg ResolveTaskBlocker
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setTaskIncident = `-- name: SetTaskIncident :exec
+UPDATE tasks SET kind = ?1, incident_trigger = ?2, incident_proposed_by = ?3,
+  version = version + ?4, updated_at = ?5
+WHERE id = ?6
+`
+
+type SetTaskIncidentParams struct {
+	Kind               string
+	IncidentTrigger    string
+	IncidentProposedBy string
+	Bump               int64
+	Now                int64
+	ID                 string
+}
+
+// An incident's trigger, a proposal's source and the incident that preempted a task (SM-QUEUE-009).
+func (q *Queries) SetTaskIncident(ctx context.Context, arg SetTaskIncidentParams) error {
+	_, err := q.db.ExecContext(ctx, setTaskIncident,
+		arg.Kind,
+		arg.IncidentTrigger,
+		arg.IncidentProposedBy,
+		arg.Bump,
+		arg.Now,
+		arg.ID,
+	)
+	return err
+}
+
+const setTaskPreemptedBy = `-- name: SetTaskPreemptedBy :exec
+UPDATE tasks SET preempted_by = ?1 WHERE id = ?2
+`
+
+type SetTaskPreemptedByParams struct {
+	PreemptedBy string
+	ID          string
+}
+
+func (q *Queries) SetTaskPreemptedBy(ctx context.Context, arg SetTaskPreemptedByParams) error {
+	_, err := q.db.ExecContext(ctx, setTaskPreemptedBy, arg.PreemptedBy, arg.ID)
+	return err
 }
 
 const setTaskRank = `-- name: SetTaskRank :exec
@@ -590,21 +808,29 @@ func (q *Queries) UpdateTaskFields(ctx context.Context, arg UpdateTaskFieldsPara
 }
 
 const upsertQueuePolicy = `-- name: UpsertQueuePolicy :exec
-INSERT INTO queue_policies (space_id, max_active, incident_insertion, incident_preempts, escalation_reorders, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO queue_policies (space_id, max_active, incident_insertion, incident_preempts, escalation_reorders, incident_triggers_json,
+  incident_untrusted, incident_workers, incident_capacity, incident_resume, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (space_id) DO UPDATE SET max_active = excluded.max_active, incident_insertion = excluded.incident_insertion,
-  incident_preempts = excluded.incident_preempts, escalation_reorders = excluded.escalation_reorders, version = queue_policies.version + 1,
-  updated_at = excluded.updated_at, updated_by = excluded.updated_by
+  incident_preempts = excluded.incident_preempts, escalation_reorders = excluded.escalation_reorders,
+  incident_triggers_json = excluded.incident_triggers_json, incident_untrusted = excluded.incident_untrusted,
+  incident_workers = excluded.incident_workers, incident_capacity = excluded.incident_capacity, incident_resume = excluded.incident_resume,
+  version = queue_policies.version + 1, updated_at = excluded.updated_at, updated_by = excluded.updated_by
 `
 
 type UpsertQueuePolicyParams struct {
-	SpaceID            string
-	MaxActive          int64
-	IncidentInsertion  string
-	IncidentPreempts   int64
-	EscalationReorders int64
-	UpdatedAt          int64
-	UpdatedBy          string
+	SpaceID              string
+	MaxActive            int64
+	IncidentInsertion    string
+	IncidentPreempts     int64
+	EscalationReorders   int64
+	IncidentTriggersJson string
+	IncidentUntrusted    string
+	IncidentWorkers      string
+	IncidentCapacity     int64
+	IncidentResume       string
+	UpdatedAt            int64
+	UpdatedBy            string
 }
 
 func (q *Queries) UpsertQueuePolicy(ctx context.Context, arg UpsertQueuePolicyParams) error {
@@ -614,6 +840,11 @@ func (q *Queries) UpsertQueuePolicy(ctx context.Context, arg UpsertQueuePolicyPa
 		arg.IncidentInsertion,
 		arg.IncidentPreempts,
 		arg.EscalationReorders,
+		arg.IncidentTriggersJson,
+		arg.IncidentUntrusted,
+		arg.IncidentWorkers,
+		arg.IncidentCapacity,
+		arg.IncidentResume,
 		arg.UpdatedAt,
 		arg.UpdatedBy,
 	)

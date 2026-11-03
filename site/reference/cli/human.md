@@ -17,6 +17,7 @@ Aliases: `human-action`, `human-actions`.
 | [`spaceman human get`](#spaceman-human-get) | Show a human action |
 | [`spaceman human list`](#spaceman-human-list) | Open human actions (every space you can see, or one with --space) |
 | [`spaceman human move`](#spaceman-human-move) | Reorder a pending human action (before another, or last) |
+| [`spaceman human permission`](#spaceman-human-permission) | Who may see, create and respond to each human-action type in a space (--space; changes need admin) |
 | [`spaceman human policy`](#spaceman-human-policy) | Reminder, escalation, rate-limit and routing policies (installation defaults, or a space's with --space) |
 | [`spaceman human respond`](#spaceman-human-respond) | Answer a human action with an outcome |
 | [`spaceman human route`](#spaceman-human-route) | Send a response notification no agent acknowledged to control or a running role |
@@ -198,6 +199,96 @@ API: `move-human-action` ([HTTP API](../api)).
 | `--before` | string |  | place it before this pending action (default: last) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human permission
+
+Who may see, create and respond to each human-action type in a space (--space; changes need admin).
+
+Aliases: `permissions`.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman human permission delete`](#spaceman-human-permission-delete) | Remove a type's permission (the defaults apply again) |
+| [`spaceman human permission get`](#spaceman-human-permission-get) | The permission in force for a type |
+| [`spaceman human permission list`](#spaceman-human-permission-list) | A space's stored type permissions (types without one use the defaults) |
+| [`spaceman human permission set`](#spaceman-human-permission-set) | Set a type's permission (only the flags given change; the rest is the permission in force) |
+
+## spaceman human permission delete
+
+Remove a type's permission (the defaults apply again).
+
+ACTION-TYPE is question, approval, todo, message, or a custom type's ID or slug.
+
+```sh
+spaceman human permission delete <action-type> [flags]
+```
+
+API: `delete-human-type-permission` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human permission get
+
+The permission in force for a type.
+
+ACTION-TYPE is question, approval, todo, message, or a custom type's ID or slug.
+
+```sh
+spaceman human permission get <action-type> [flags]
+```
+
+API: `get-human-type-permission` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human permission list
+
+A space's stored type permissions (types without one use the defaults).
+
+```sh
+spaceman human permission list [flags]
+```
+
+Aliases: `ls`.
+
+API: `list-human-type-permissions` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human permission set
+
+Set a type's permission (only the flags given change; the rest is the permission in force).
+
+ACTION-TYPE is question, approval, todo, message, or a custom type's ID or slug.
+
+```sh
+spaceman human permission set <action-type> [flags]
+```
+
+API: `get-human-type-permission`, `set-human-type-permission` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman human permission set --space payments approval --view-role operator --respond-role admin --agents roles --agent-role deployer
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--agent-role` | string, repeatable |  | space role whose agents may ask (repeatable; replaces the list) (repeatable or comma-separated) |
+| `--agents` | string |  | which agents may ask: any, roles (only --agent-role) or none |
+| `--create-role` | string |  | weakest role that may ask people with the type: operator or admin |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--respond-role` | string |  | weakest role that may respond, assign, comment or cancel: operator or admin |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--view-role` | string |  | weakest role that sees actions of the type: viewer, operator or admin |
 
 ## spaceman human policy
 

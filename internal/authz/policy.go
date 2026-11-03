@@ -57,8 +57,9 @@ var (
 	NodeEnroll = global("node", "enroll")
 
 	RunRead    = perm("run", "read")
-	RunControl = perm("run", "control")  // launch, stop, interrupt, restart control
-	RunDiag    = perm("run", "diagnose") // audited diagnostic launches
+	RunControl = perm("run", "control") // launch, stop, interrupt, restart control
+	// RunDiag is needed, on top of run:control, to launch a diagnostic run (audited as every launch, SM-CTRL-004).
+	RunDiag = perm("run", "diagnose")
 
 	TerminalWatch    = perm("terminal", "watch")
 	TerminalTakeover = perm("terminal", "takeover")
@@ -103,20 +104,23 @@ var (
 
 	SecretWrite = perm("secret", "write") // write-only: secrets are never readable through any permission
 
-	TemplateRead    = perm("template", "read")
-	TemplateWrite   = global("template", "write")
-	HumanTypeRead   = perm("human_type", "read")
-	HumanTypeWrite  = global("human_type", "write")
-	PromptRead      = perm("prompt", "read")
-	PromptWrite     = global("prompt", "write")
-	MCPRead         = perm("mcp", "read")
-	MCPWrite        = global("mcp", "write")
-	SkillRead       = perm("skill", "read")
-	SkillWrite      = global("skill", "write")
-	AccountRead     = global("account", "read")
-	AccountWrite    = global("account", "write")
-	ConnectionRead  = global("event_connection", "read")
-	ConnectionWrite = global("event_connection", "write")
+	TemplateRead  = perm("template", "read")
+	TemplateWrite = global("template", "write")
+	// HumanTypePermissionWrite changes who may see, create and respond to a human-action type in a space
+	// (SM-HUI-008, ADR-0050): authorization, so admins only.
+	HumanTypePermissionWrite = perm("human_type_permission", "write")
+	HumanTypeRead            = perm("human_type", "read")
+	HumanTypeWrite           = global("human_type", "write")
+	PromptRead               = perm("prompt", "read")
+	PromptWrite              = global("prompt", "write")
+	MCPRead                  = perm("mcp", "read")
+	MCPWrite                 = global("mcp", "write")
+	SkillRead                = perm("skill", "read")
+	SkillWrite               = global("skill", "write")
+	AccountRead              = global("account", "read")
+	AccountWrite             = global("account", "write")
+	ConnectionRead           = global("event_connection", "read")
+	ConnectionWrite          = global("event_connection", "write")
 
 	UserRead    = global("user", "read")
 	UserWrite   = global("user", "write")
@@ -134,10 +138,10 @@ var rolePermissions = map[Role][]Permission{
 		MemoryRead, SpaceConfigRead, TemplateRead, HumanTypeRead, PromptRead, MCPRead, SkillRead, NodeRead, ApprovalPolicyRead, XSpaceRead,
 	},
 	RoleOperator: {
-		SpaceWrite, RunControl, TerminalWatch, RecordingRead, InboxWrite, QueueWrite, MessageWrite, HumanRespond, ApprovalDecide,
+		SpaceWrite, RunControl, RunDiag, TerminalWatch, RecordingRead, InboxWrite, QueueWrite, MessageWrite, HumanRespond, ApprovalDecide,
 		AttachmentWrite, SubscriptionWrite, ReplayExecute, KBWrite, MemoryWrite, SpaceConfigWrite, ConnectionRead, XSpaceWrite,
 	},
-	// Admins hold every permission ("*"), including terminal takeover, diagnostics, recording deletion, secrets and,
+	// Admins hold every permission ("*"), including terminal takeover, recording deletion, secrets and,
 	// in the "*" domain, global administration.
 }
 

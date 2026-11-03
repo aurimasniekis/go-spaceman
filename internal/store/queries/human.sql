@@ -22,6 +22,9 @@ SELECT CAST(coalesce(max(rank), 0) AS INTEGER) AS r FROM human_actions WHERE spa
 -- name: CountPendingHuman :many
 SELECT space_id, count(*) AS n FROM human_actions WHERE status IN ('open', 'in_progress') GROUP BY space_id;
 
+-- name: CountPendingHumanByType :many
+SELECT space_id, type, type_slug, count(*) AS n FROM human_actions WHERE status IN ('open', 'in_progress') GROUP BY space_id, type, type_slug;
+
 -- name: UpdateHumanAssignment :execrows
 UPDATE human_actions SET assignee = sqlc.arg(assignee), status = sqlc.arg(status), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND status IN ('open', 'in_progress');
@@ -218,3 +221,21 @@ WHERE id = ? AND version = ?;
 
 -- name: DeleteHumanPolicy :execrows
 DELETE FROM human_policies WHERE id = ?;
+
+-- name: ListSpaceHumanTypePermissions :many
+SELECT * FROM space_human_type_permissions WHERE space_id = ? ORDER BY action_type;
+
+-- name: GetSpaceHumanTypePermission :one
+SELECT * FROM space_human_type_permissions WHERE space_id = ? AND action_type = ?;
+
+-- name: InsertSpaceHumanTypePermission :exec
+INSERT INTO space_human_type_permissions (space_id, action_type, view_role, create_role, respond_role, agents, agent_roles_json, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: UpdateSpaceHumanTypePermission :execrows
+UPDATE space_human_type_permissions SET view_role = sqlc.arg(view_role), create_role = sqlc.arg(create_role), respond_role = sqlc.arg(respond_role),
+  agents = sqlc.arg(agents), agent_roles_json = sqlc.arg(agent_roles_json), version = version + 1, updated_at = sqlc.arg(now), updated_by = sqlc.arg(by)
+WHERE space_id = sqlc.arg(space_id) AND action_type = sqlc.arg(action_type) AND version = sqlc.arg(version);
+
+-- name: DeleteSpaceHumanTypePermission :execrows
+DELETE FROM space_human_type_permissions WHERE space_id = ? AND action_type = ?;

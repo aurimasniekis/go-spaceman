@@ -76,6 +76,11 @@ func (sv *Supervisor) notify(ctx context.Context, spaceID, dedup, subject, body 
 	}
 }
 
+// Notify sends control a durable notification (incident decisions from the queue, SM-QUEUE-009).
+func (sv *Supervisor) Notify(spaceID, dedup, subject, body string) {
+	sv.do(func(ctx context.Context) { sv.notify(ctx, spaceID, dedup, subject, body) })
+}
+
 // OnInboxItem notifies control of a new inbox item it did not add itself.
 func (sv *Supervisor) OnInboxItem(it *inbox.Item) {
 	sv.do(func(ctx context.Context) {

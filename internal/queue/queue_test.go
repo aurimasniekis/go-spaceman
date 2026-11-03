@@ -89,7 +89,7 @@ func TestOrderingAndIncidents(t *testing.T) {
 	if got := f.order(); got != "hot a b low" {
 		t.Fatalf("priority insertion: %s", got)
 	}
-	inc, created, err := f.svc.Create(f.ctx, op, "spc_a", CreateInput{Title: "outage", Kind: "incident", Status: Ready, DedupKey: "alert:db"})
+	inc, created, err := f.svc.Create(f.ctx, op, "spc_a", CreateInput{Title: "outage", Kind: "incident", Status: Ready, DedupKey: "alert:db", Triggers: []string{TriggerOperator}})
 	if err != nil || !created || f.order() != "outage hot a b low" {
 		t.Fatalf("incident insertion: %v %s", err, f.order())
 	}
@@ -99,7 +99,7 @@ func TestOrderingAndIncidents(t *testing.T) {
 	if got := f.order(); got != "hot a b low outage" {
 		t.Fatalf("move: %s", got)
 	}
-	again, created, err := f.svc.Create(f.ctx, op, "spc_a", CreateInput{Title: "outage again", Kind: "incident", Status: Ready, DedupKey: "alert:db"})
+	again, created, err := f.svc.Create(f.ctx, op, "spc_a", CreateInput{Title: "outage again", Kind: "incident", Status: Ready, DedupKey: "alert:db", Triggers: []string{TriggerOperator}})
 	if err != nil || created || again.ID != inc.ID || f.order() != "hot a b low outage" || !again.Manual {
 		t.Fatalf("duplicate trigger re-promoted the incident: %v created=%v %s", err, created, f.order())
 	}
@@ -202,7 +202,7 @@ func TestStatesAndPreemption(t *testing.T) {
 	if f.get(work.ID).Status != Running {
 		t.Fatal("reordering changed a running task")
 	}
-	f.add(CreateInput{Title: "incident", Kind: "incident"})
+	f.add(CreateInput{Title: "incident", Kind: "incident", Triggers: []string{TriggerOperator}})
 	w := f.get(work.ID)
 	if w.Status != Ready || w.Preemptions != 1 || !strings.Contains(w.StatusReason, "preempted") {
 		t.Fatalf("preemption: %+v", w)
@@ -236,7 +236,7 @@ func TestTaskEventsRecorded(t *testing.T) {
 	a := f.add(CreateInput{Title: "TITLE-SECRET", Objective: "OBJECTIVE-SECRET", OriginKind: "inbox", OriginID: "inb_1"})
 	_, err = f.svc.SetStatus(f.ctx, op, "spc_a", a.ID, a.Version, StatusInput{Status: Running, Result: "RESULT-SECRET"})
 	must(t, err)
-	inc := f.add(CreateInput{Title: "incident", Kind: "incident"})
+	inc := f.add(CreateInput{Title: "incident", Kind: "incident", Triggers: []string{TriggerOperator}})
 	rows, err := f.s.ReadDB().QueryContext(f.ctx, `SELECT type, correlation_id, causation_id, payload_json FROM event_outbox ORDER BY created_at, id`)
 	must(t, err)
 	defer rows.Close()

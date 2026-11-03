@@ -96,6 +96,27 @@ func registerUsers(api huma.API, d *Deps) {
 			return userResult(u), nil
 		})
 
+	huma.Register(api, huma.Operation{OperationID: "update-user", Method: http.MethodPut, Path: "/users/{user_id}/profile",
+		Summary: "Change a user's email, display name and MFA requirement",
+		Description: "Replaces all three. Email is never an SSO key, so a change never links, unlinks or merges an identity; an address in use is " +
+			"refused, a user with a password keeps one, and changing it ends that user's sessions. Clearing mfa_required never lifts MFA that " +
+			"policy forces (require_totp, operator or admin grants on a password account).", Tags: tags},
+		func(ctx context.Context, in *struct {
+			UserPath
+			IfMatch
+			Body auth.ProfileInput
+		}) (*userOut, error) {
+			v, err := in.Version()
+			if err != nil {
+				return nil, d.fail(ctx, "users.update", err)
+			}
+			u, err := d.Auth.UpdateProfile(ctx, Actor(ctx), in.ID, v, in.Body)
+			if err != nil {
+				return nil, d.fail(ctx, "users.update", err)
+			}
+			return userResult(u), nil
+		})
+
 	for _, enable := range []bool{true, false} {
 		op, path, summary := "enable-user", "/users/{user_id}/enable", "Enable a user"
 		if !enable {

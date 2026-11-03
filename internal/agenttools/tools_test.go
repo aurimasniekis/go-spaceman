@@ -287,3 +287,24 @@ func TestUpstreamRouting(t *testing.T) {
 		t.Fatalf("unknown tool: %v", err)
 	}
 }
+
+// SM-QUEUE-009: control's incident trigger is control itself, or the source of the inbox item it acts on. A worker's
+// finding relayed as an incident is only a proposal; control on its own judgement raises one (trusted by default);
+// spaceman_task_resume resumes preempted work and refuses work that is not preempted.
+func TestIncidentTriggersFromTools(t *testing.T) {
+	f := newFx(t)
+	var item inbox.Item
+	must(t, f.call(f.wrk, "spaceman_inbox_add", map[string]any{"title": "Prod is on fire", "body": "details", "urgency": "urgent"}, &item))
+	var prop queue.Task
+	must(t, f.call(f.ctrl, "spaceman_task_create", map[string]any{"title": "Fire", "kind": "incident", "ready": true, "from_inbox_item": item.ID}, &prop))
+	if prop.Kind != "ordinary" || prop.IncidentProposedBy != "worker" {
+		t.Fatalf("relayed worker incident %+v", prop)
+	}
+	var inc queue.Task
+	must(t, f.call(f.ctrl, "spaceman_task_create", map[string]any{"title": "Fire (control)", "kind": "incident", "ready": true}, &inc))
+	if inc.Kind != "incident" || inc.IncidentTrigger != "control" {
+		t.Fatalf("control incident %+v", inc)
+	}
+	code(t, f.call(f.ctrl, "spaceman_task_resume", map[string]any{"task_id": inc.ID}, nil), apperr.CodePrecondition)
+	code(t, f.call(f.wrk, "spaceman_task_resume", map[string]any{"task_id": inc.ID}, nil), apperr.CodeForbidden)
+}

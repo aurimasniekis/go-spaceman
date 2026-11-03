@@ -93,6 +93,25 @@ plain text only, so a type can never run code in the UI.
 
 <Shot name="human-form-custom" alt="A deploy window request with environment, change and rollback plan, and a response form with window start, duration and conditions, with Scheduled and Declined buttons" caption="Answering a custom type" />
 
+## Type permissions
+
+By default, everyone who can read a space's human actions (viewers) sees every type, operators ask and respond, and any
+agent may ask. A space admin narrows that per type under **Human actions → Permissions** (or `spaceman human
+permission set`, or Terraform's `spaceman_human_action_type_permission`):
+
+| Setting | Values | Effect |
+|---|---|---|
+| **See** | viewer (default), operator, admin | Actions of the type are left out of lists and pending counts for weaker roles; opening one reads as not found. |
+| **Ask** | operator (default), admin | Who may create actions of the type in the UI, the API or the CLI. |
+| **Respond** | operator (default), admin | Who may answer, assign, comment, ask for clarification, reorder or cancel. |
+| **Agents** | any (default), listed roles, none | Which agents may ask with the type (`spaceman_human_ask`). |
+
+Permissions only narrow what roles allow: deciding an approval still needs `approval:decide`. Changing them needs a
+space admin (`human_type_permission:write`), is audited, and is sent with the permission's version. The attention
+summary still counts hidden actions (a number, never their content).
+
+<Shot name="human-permissions" alt="Type permissions of a space: view, create and respond roles and agent roles per type" caption="Who may see, ask and respond, per type" />
+
 ::: warning Outcomes are records, not permissions
 A custom outcome named *approved* is only a recorded answer. Custom types never grant anything; enforced approvals
 are a separate mechanism.

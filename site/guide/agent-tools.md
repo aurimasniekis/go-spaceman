@@ -21,7 +21,8 @@ Runs of a role granted an external MCP server also see that server's tools in th
 | `spaceman_tasks_list` | The queue in order, with eligibility reasons | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_task_get` | Read a task | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_queue_next` | The next eligible task and why others were skipped | ✓ | | | |
-| `spaceman_task_create` | Add a task (optionally from an inbox item) | ✓ | | | |
+| `spaceman_task_create` | Add a task (optionally from an inbox item); an incident needs a trusted trigger, else it is proposed or refused | ✓ | | | |
+| `spaceman_task_resume` | Resume a task an incident preempted | ✓ | | | |
 | `spaceman_task_set_status` | Move a task; a worker only its own task, to review or blocked | ✓ | own | | |
 | `spaceman_attachment_get` | Fetch a `spaceman://attachment/<id>` (text, or base64 up to 512 KiB) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_ask` | Ask a person: question, approval, to-do or message | ✓ | ✓ | ✓ | ✓ |

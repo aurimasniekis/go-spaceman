@@ -490,7 +490,7 @@ func (q *Queries) ExportTaskStats(ctx context.Context, spaceID string) (ExportTa
 }
 
 const exportTasks = `-- name: ExportTasks :many
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version FROM tasks WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
 `
 
 type ExportTasksParams struct {
@@ -536,6 +536,9 @@ func (q *Queries) ExportTasks(ctx context.Context, arg ExportTasksParams) ([]Tas
 			&i.StartedAt,
 			&i.FinishedAt,
 			&i.Version,
+			&i.PreemptedBy,
+			&i.IncidentTrigger,
+			&i.IncidentProposedBy,
 		); err != nil {
 			return nil, err
 		}

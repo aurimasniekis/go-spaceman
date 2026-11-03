@@ -99,10 +99,12 @@ type User struct {
 	SSOGrants   []authz.Grant `json:"sso_grants"`
 	HasPassword bool          `json:"has_password"`
 	MFAEnrolled bool          `json:"mfa_enrolled"`
-	MFARequired bool          `json:"mfa_required"`
-	Version     int64         `json:"version"`
-	CreatedAt   time.Time     `json:"created_at"`
-	LastLoginAt *time.Time    `json:"last_login_at,omitempty"`
+	MFARequired bool          `json:"mfa_required" doc:"Whether the user must use MFA: set by an administrator (mfa_required_set) or forced by policy"`
+	// MFARequiredSet is the administrator's setting; MFARequired also includes what policy forces.
+	MFARequiredSet bool       `json:"mfa_required_set" doc:"Whether an administrator requires MFA for this user"`
+	Version        int64      `json:"version"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastLoginAt    *time.Time `json:"last_login_at,omitempty"`
 }
 
 // Subject is the user's authorization subject.
@@ -224,7 +226,8 @@ func (svc *Service) hydrate(ctx context.Context, q *db.Queries, r db.User) (*Use
 	if t, err := q.GetTOTP(ctx, r.ID); err == nil && t.ConfirmedAt.Valid {
 		u.MFAEnrolled = true
 	}
-	u.MFARequired = r.MfaRequired == 1 || (u.HasPassword && (svc.opts.RequireTOTP || privileged(u.Grants)))
+	u.MFARequiredSet = r.MfaRequired == 1
+	u.MFARequired = u.MFARequiredSet || (u.HasPassword && (svc.opts.RequireTOTP || privileged(u.Grants)))
 	return u, nil
 }
 
@@ -551,3 +554,109 @@ func actorRef(a audit.Actor) string {
 }
 
 func newUserID() string { return ids.New(ids.User) }
+
+// ProfileInput replaces a user's profile (SM-API-004, ADR-0050).
+type ProfileInput struct {
+	Email       string `json:"email" maxLength:"254" doc:"Lower-cased and unique; empty removes it (refused for a user with a password: it is their sign-in name)"`
+	DisplayName string `json:"display_name" maxLength:"128"`
+	MFARequired bool   `json:"mfa_required" doc:"Require MFA for this user. Clearing it never lifts what policy forces (require_totp, operator or admin grants on a password account)"`
+}
+
+// UpdateProfile changes a user's email, display name and administrator MFA requirement (optimistic on version; the
+// API layer allows global administrators only). Email is never an SSO key — identities are matched by issuer and
+// subject (Hallpass HP-OIDC-009) — so an email change never links, unlinks or merges an SSO identity; an address in
+// use by another user is refused. A password user keeps an email (it is their sign-in name), and changing it ends
+// their sessions. Requiring MFA makes the user's password sessions enroll before anything else; clearing the setting
+// leaves policy-forced MFA in place. The last-administrator and SSO-only guards hold as for every user change.
+func (svc *Service) UpdateProfile(ctx context.Context, actor audit.Actor, id string, version int64, in ProfileInput) (*User, error) {
+	var email sql.NullString
+	if strings.TrimSpace(in.Email) != "" {
+		e, err := NormalizeEmail(in.Email)
+		if err != nil {
+			return nil, err
+		}
+		email = sql.NullString{String: e, Valid: true}
+	}
+	name := strings.TrimSpace(in.DisplayName)
+	if name == "" || len(name) > 128 {
+		return nil, apperr.New(apperr.CodeInvalid, "display name is required (at most 128 bytes)")
+	}
+	err := svc.s.W().TxNamed(ctx, "auth.update_profile", func(tx *store.Tx) error {
+		row, err := tx.Q.GetUser(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperr.New(apperr.CodeNotFound, "user not found")
+		} else if err != nil {
+			return err
+		}
+		if row.Version != version {
+			return apperr.New(apperr.CodeConflict, "the user changed (version %d, you sent %d); reload and retry", row.Version, version)
+		}
+		before, err := svc.hydrate(ctx, tx.Q, row)
+		if err != nil {
+			return err
+		}
+		emailChanged := email.String != row.Email.String
+		if emailChanged && !email.Valid && before.HasPassword {
+			return apperr.New(apperr.CodePrecondition, "this user signs in with a password, so they need an email address")
+		}
+		if emailChanged && email.Valid {
+			if other, err := tx.Q.GetUserByEmail(ctx, email); err == nil && other.ID != id {
+				return apperr.New(apperr.CodeAlreadyExists, "a user with this email already exists")
+			} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+		guard, err := newSSOAdminGuard(ctx, tx.Q)
+		if err != nil {
+			return err
+		}
+		adminsBefore, err := tx.Q.CountEnabledGlobalAdmins(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := tx.Q.UpdateUserProfile(ctx, db.UpdateUserProfileParams{Email: email, DisplayName: name, MfaRequired: b2i(in.MFARequired),
+			UpdatedAt: tx.NowMicros(), ID: id, Version: version})
+		if err != nil {
+			if store.IsConstraint(err) {
+				return apperr.New(apperr.CodeAlreadyExists, "a user with this email already exists")
+			}
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodeConflict, "the user changed; reload and retry")
+		}
+		// The administrator guards: a profile change never leaves fewer administrators who can sign in (relative to
+		// before, so an installation run with the root token alone can still edit profiles).
+		if adminsAfter, err := tx.Q.CountEnabledGlobalAdmins(ctx); err != nil {
+			return err
+		} else if adminsBefore > 0 && adminsAfter == 0 {
+			return ErrLastAdmin
+		}
+		if err := guard.check(ctx, tx.Q); err != nil {
+			return err
+		}
+		identities, err := tx.Q.CountUserIdentities(ctx, id)
+		if err != nil {
+			return err
+		}
+		if emailChanged && before.HasPassword {
+			// The sign-in name changed: sessions opened under the old one end (API tokens keep working).
+			if err := svc.revokeUserSessionsTx(ctx, tx, id, "email_changed", nil); err != nil {
+				return err
+			}
+		}
+		svc.publish(tx, id)
+		details := map[string]any{"display_name_changed": name != row.DisplayName, "mfa_required": in.MFARequired,
+			"mfa_required_before": row.MfaRequired == 1, "linked_identities": identities, "provisioned_via": row.ProvisionedVia}
+		if emailChanged {
+			details["email_before"], details["email"] = row.Email.String, email.String
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "user.profile_updated", Target: audit.Target{Type: "user", ID: id},
+			Details: details})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return svc.Get(ctx, id)
+}

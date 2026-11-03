@@ -17,6 +17,7 @@ Aliases: `users`.
 | [`spaceman user link-invite`](#spaceman-user-link-invite) | Issue a single-use SSO link invitation (72 hours) |
 | [`spaceman user list`](#spaceman-user-list) | Users |
 | [`spaceman user reset-token`](#spaceman-user-reset-token) | Issue a one-time password reset token for a user |
+| [`spaceman user update`](#spaceman-user-update) | Change a user's email, display name or MFA requirement (only the flags given change) |
 
 ## spaceman user create
 
@@ -210,4 +211,30 @@ spaceman user reset-token usr_01… --secret-file ./ada.reset
 |---|---|---|---|
 | `--secret-file` | string |  | write the one-time secret to this new file (mode 0600) instead of printing it |
 | `--show-secret` | bool |  | print the one-time secret (shown once; without this or --secret-file the command refuses to run) |
+
+## spaceman user update
+
+Change a user's email, display name or MFA requirement (only the flags given change).
+
+Changing the email of a user with a password ends their sessions (it is their sign-in name); clearing --mfa-required never lifts MFA that policy forces (require_totp, operator or admin grants on a password account).
+
+```sh
+spaceman user update <user> [flags]
+```
+
+API: `get-user`, `update-user` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman user update usr_01… --email ada@new.example --mfa-required
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--display-name` | string |  | display name |
+| `--email` | string |  | email (empty removes it; a user with a password needs one) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--mfa-required` | bool |  | require a second factor (--mfa-required=false clears the setting) |
 

@@ -63,7 +63,33 @@ func (a *App) humanExtra() []*cobra.Command {
 		a.cmd(opts{use: "approval", short: "The enforced approval behind an approval action", op: "get-action-approval", scoped: true, args: pos("action")}),
 		a.humanTypeCmd(),
 		a.humanPolicyCmd(),
+		a.humanPermissionCmd(),
 	}
+}
+
+var typePermCols = []col{c("TYPE", "action_type"), c("SLUG", "type_slug"), c("VIEW", "view_role"), c("CREATE", "create_role"), c("RESPOND", "respond_role"),
+	c("AGENTS", "agents"), c("AGENT ROLES", "agent_roles"), c("VERSION", "version")}
+
+// humanPermissionCmd manages who may see, create and respond to each human-action type in a space (SM-HUI-008).
+func (a *App) humanPermissionCmd() *cobra.Command {
+	const typeHelp = "ACTION-TYPE is question, approval, todo, message, or a custom type's ID or slug."
+	return group("permission", "Who may see, create and respond to each human-action type in a space (--space; changes need admin)", []string{"permissions"},
+		a.cmd(opts{use: "list", short: "A space's stored type permissions (types without one use the defaults)", op: "list-human-type-permissions",
+			alias: []string{"ls"}, scoped: true, view: view{items: "items", cols: typePermCols, empty: "No type permissions: viewers see, operators create and respond, any agent asks."}}),
+		a.cmd(opts{use: "get", short: "The permission in force for a type", op: "get-human-type-permission", scoped: true, args: pos("action-type"), long: typeHelp}),
+		a.cmd(opts{use: "set", short: "Set a type's permission (only the flags given change; the rest is the permission in force)", op: "set-human-type-permission",
+			get: "get-human-type-permission", merge: true, optionalIfMatch: true, scoped: true, args: pos("action-type"), long: typeHelp,
+			example: "spaceman human permission set --space payments approval --view-role operator --respond-role admin --agents roles --agent-role deployer",
+			form: func(f *form) {
+				f.str("view-role", "view_role", "weakest role that sees actions of the type: viewer, operator or admin").
+					str("create-role", "create_role", "weakest role that may ask people with the type: operator or admin").
+					str("respond-role", "respond_role", "weakest role that may respond, assign, comment or cancel: operator or admin").
+					str("agents", "agents", "which agents may ask: any, roles (only --agent-role) or none").
+					list("agent-role", "agent_roles", "space role whose agents may ask (repeatable; replaces the list)")
+			}}),
+		a.cmd(opts{use: "delete", short: "Remove a type's permission (the defaults apply again)", op: "delete-human-type-permission", scoped: true,
+			args: pos("action-type"), long: typeHelp, done: "Permission removed."}),
+	)
 }
 
 // typeDraftBase is the draft to edit: the current draft, or a new one starting from the latest published version.

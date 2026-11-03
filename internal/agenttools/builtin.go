@@ -124,7 +124,7 @@ type taskCreateIn struct {
 	Objective     string   `json:"objective,omitempty" jsonschema:"Markdown"`
 	Acceptance    string   `json:"acceptance,omitempty" jsonschema:"Markdown acceptance criteria"`
 	Priority      string   `json:"priority,omitempty" jsonschema:"low, normal, high or urgent"`
-	Kind          string   `json:"kind,omitempty" jsonschema:"ordinary (default) or incident"`
+	Kind          string   `json:"kind,omitempty" jsonschema:"ordinary (default) or incident; an incident needs a trigger the queue policy trusts (you, or the inbox item's source), otherwise it is proposed to operators or refused"`
 	Ready         bool     `json:"ready,omitempty" jsonschema:"put it in the queue as ready (default: backlog)"`
 	ParentID      string   `json:"parent_id,omitempty" jsonschema:"make it a subtask"`
 	DependsOn     []string `json:"depends_on,omitempty"`
@@ -169,8 +169,11 @@ func (r *Registry) registerTasks() {
 			if in.Ready {
 				status = queue.Ready
 			}
+			// An incident's trigger is where the request came from (SM-QUEUE-009): control itself, or the source of the
+			// inbox item it acts on (an event's subscription and template, an operator, …).
 			ci := queue.CreateInput{Title: in.Title, Objective: in.Objective, Acceptance: in.Acceptance, Priority: in.Priority, Kind: in.Kind, Status: status,
-				ParentID: in.ParentID, DependsOn: in.DependsOn, Exclusions: in.Exclusions, AssigneeRole: in.AssigneeRole, DedupKey: in.DedupKey}
+				ParentID: in.ParentID, DependsOn: in.DependsOn, Exclusions: in.Exclusions, AssigneeRole: in.AssigneeRole, DedupKey: in.DedupKey,
+				Triggers: []string{queue.TriggerControl}}
 			var item *inbox.Item
 			if in.FromInboxItem != "" {
 				it, err := r.d.Inbox.Get(ctx, p.SpaceID, in.FromInboxItem)
@@ -178,6 +181,7 @@ func (r *Registry) registerTasks() {
 					return nil, err
 				}
 				item, ci.OriginKind, ci.OriginID = it, "inbox_item", it.ID
+				ci.Triggers = queue.InboxTriggers(it.SourceKind, it.SourceID, it.Subscription, it.Trusted)
 			}
 			t, _, err := r.d.Queue.Create(ctx, actor(p), p.SpaceID, ci)
 			if err != nil {
@@ -190,6 +194,15 @@ func (r *Registry) registerTasks() {
 				}
 			}
 			return t, nil
+		})
+	Add(r, "spaceman_task_resume", "Resume a task an incident preempted (control only): it runs again when eligible with live workers (paused ones are "+
+		"told to continue); when its workers are gone it stays ready for you to launch a new one. Returns the outcome.",
+		control, false, func(ctx context.Context, p *fleet.RunPrincipal, in taskIn) (any, error) {
+			t, outcome, err := r.d.Queue.Resume(ctx, actor(p), p.SpaceID, in.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"task": t, "outcome": outcome}, nil
 		})
 	Add(r, "spaceman_task_set_status", "Change a task's state. Control may move any task; a worker may only mark its own assigned task review or blocked. "+
 		"Nothing is accepted automatically: control or an operator decides when work is done.",

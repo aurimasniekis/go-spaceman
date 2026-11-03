@@ -442,6 +442,10 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 				return err
 			}
 		}
+		// The space's type permission decides which agents may ask with this type (SM-HUI-008).
+		if err := checkAgentRequester(ctx, tx.Q, spaceID, &in); err != nil {
+			return err
+		}
 		if in.Type == TypeCustom {
 			st, err := spaceTypeBySlug(ctx, tx.Q, spaceID, in.TypeSlug)
 			if err != nil {

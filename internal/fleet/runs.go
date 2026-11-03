@@ -109,6 +109,9 @@ type LaunchInput struct {
 	AccountRef string           `json:"account_ref,omitempty"`
 	// RecordingMaxBytes is the space's recording quota, filled by launch resolution (not part of the API).
 	RecordingMaxBytes int64 `json:"-"`
+	// AuthorizeKind checks the caller may launch the resolved kind (the API: diagnostics need run:diagnose,
+	// SM-CTRL-004). It runs after the space role decided the kind and before anything is written.
+	AuthorizeKind func(kind string) error `json:"-"`
 }
 
 // LaunchRun creates a run pinned to the space's node and current lease generation and queues the launch command.
@@ -156,6 +159,11 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 	}
 	if err := v.Err(); err != nil {
 		return nil, err
+	}
+	if in.AuthorizeKind != nil {
+		if err := in.AuthorizeKind(in.Kind); err != nil {
+			return nil, err
+		}
 	}
 	if in.InstanceID == "" {
 		in.InstanceID = ids.New(ids.Instance)

@@ -14,9 +14,11 @@ Aliases: `tasks`, `queue`.
 | [`spaceman task depends`](#spaceman-task-depends) | Replace a task's dependencies (--on, repeatable; --none clears them; cycles are refused) |
 | [`spaceman task escalate`](#spaceman-task-escalate) | Escalate a task to urgent (to the top when the queue policy allows) |
 | [`spaceman task get`](#spaceman-task-get) | Show a task |
+| [`spaceman task incident`](#spaceman-task-incident) | Confirm or dismiss an incident proposal (an untrusted source asked for an incident) |
 | [`spaceman task list`](#spaceman-task-list) | The space's queue in order, with its policy |
 | [`spaceman task move`](#spaceman-task-move) | Reorder a task: --top, --bottom, --before or --after |
 | [`spaceman task next`](#spaceman-task-next) | The task the queue would start next, and why |
+| [`spaceman task resume`](#spaceman-task-resume) | Resume a task an incident preempted (runs again with its workers, or waits for a new worker) |
 | [`spaceman task set-policy`](#spaceman-task-set-policy) | Set the queue policy (only the flags given change) |
 | [`spaceman task set-status`](#spaceman-task-set-status) | Change a task's status |
 | [`spaceman task unblock`](#spaceman-task-unblock) | Remove a blocker from a task |
@@ -131,6 +133,29 @@ API: `get-task` ([HTTP API](../api)).
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman task incident
+
+Confirm or dismiss an incident proposal (an untrusted source asked for an incident).
+
+DECISION is confirm (the task becomes an incident raised by you; the policy's insertion and preemption apply now) or dismiss.
+
+```sh
+spaceman task incident <task> <decision> [flags]
+```
+
+API: `get-task`, `decide-incident` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman task incident --space payments tsk_01… confirm
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman task list
 
 The space's queue in order, with its policy.
@@ -180,11 +205,25 @@ API: `queue-next` ([HTTP API](../api)).
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman task resume
+
+Resume a task an incident preempted (runs again with its workers, or waits for a new worker).
+
+```sh
+spaceman task resume <task> [flags]
+```
+
+API: `resume-task` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman task set-policy
 
 Set the queue policy (only the flags given change).
 
-Reads the queue's policy and its version just before the change, so a concurrent edit is a conflict (exit code 3).
+Reads the queue's policy and its version just before the change, so a concurrent edit is a conflict (exit code 3). Incident triggers are operator, control, subscription:&lt;id&gt; and template:&lt;id or slug&gt;; an incident from any other source is proposed to operators or refused (--incident-untrusted).
 
 ```sh
 spaceman task set-policy [flags]
@@ -192,14 +231,26 @@ spaceman task set-policy [flags]
 
 API: `list-tasks`, `set-queue-policy` ([HTTP API](../api)).
 
+Example:
+
+```sh
+spaceman task set-policy --space payments --incident-preempts --incident-trigger operator --incident-trigger template:pagerduty --incident-workers pause --incident-resume auto
+```
+
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--escalation-reorders` | bool |  | escalation may move a task to the top |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--incident-capacity` | integer |  | extra top-level slots only incidents may use |
 | `--incident-insertion` | string |  | where new incident tasks go: top or priority |
 | `--incident-preempts` | bool |  | a new incident returns running ordinary tasks to ready |
+| `--incident-resume` | string |  | when the incident ends: manual or auto |
+| `--incident-trigger` | string, repeatable |  | source trusted to raise incidents (repeatable; replaces the list) (repeatable or comma-separated) |
+| `--incident-untrusted` | string |  | an incident from an untrusted source: propose or refuse |
+| `--incident-workers` | string |  | a preempted task's workers: finish, pause or interrupt |
 | `--max-active` | integer |  | top-level tasks that may run at once |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--trust-nobody` | bool |  | trust no source to raise incidents (every incident becomes a proposal or is refused) |
 
 ## spaceman task set-status
 

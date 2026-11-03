@@ -44,7 +44,10 @@ attention:
 
 - a new inbox item it did not add itself;
 - a task moved to review, blocked or failed by someone else;
-- a worker run that ended, with its task's state.
+- a worker run that ended, with its task's state;
+- an incident that preempted running work (which tasks, and what happened to their workers), a source that only
+  proposed an incident, and an incident that ended with the preempted tasks that wait or were resumed (see
+  [Incidents](./queue#incidents)).
 
 When control's program is idle it is told that messages are waiting. A control run started later finds them too.
 
@@ -54,3 +57,12 @@ If a control run ends while it was still wanted (it crashed or its harness exite
 on the same instance, **resuming its session** when the harness supports it. Recovery is bounded: after three restarts
 within an hour, SpaceMan stops and raises an urgent [human action](./human-actions), "Control keeps stopping", with the
 steps to check. A control run that an operator stopped, or one in a paused space, is never restarted.
+
+An operator **restarts control** by stopping its run (Runs, or `spaceman run stop`) and launching control again:
+SpaceMan never restarts a run an operator stopped, and a second control run is refused while one is wanted.
+
+## Diagnostics
+
+A **diagnostic** run (kind `diagnostic`, or a space role of that kind) investigates a space without being a worker. Launching
+one needs `run:diagnose` on top of `run:control`; operators and admins hold both, viewers neither. The launch is
+audited with its kind like every launch. Control cannot launch diagnostics: its tool starts workers only.

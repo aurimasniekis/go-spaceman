@@ -7,12 +7,35 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Changed
+- **Security:** a diagnostic run's launch needs `run:diagnose` on top of `run:control` (SM-CTRL-004, ADR-0050).
+  Operators now hold `run:diagnose`, so operators and admins keep launching diagnostics; viewers never could.
+- **Security:** an incident task from a source the queue policy does not trust no longer jumps the queue or preempts
+  work; by default it becomes a proposal (ADR-0050).
 - The Terraform provider moved to its own repository, `terraform-provider-spaceman` (module
   `github.com/aurimasniekis/terraform-provider-spaceman`), with its history (ADR-0047). This repository no longer contains
   it, and `make check`, CI and the Makefile no longer refer to it: its unit and acceptance tests run there, and the
   acceptance tests build central from a SpaceMan checkout (`SPACEMAN_SRC`, or `../spaceman`).
 
 ### Added
+- Incident policy (ADR-0050, SM-QUEUE-009, migration 0034): a space's queue policy names the **trusted triggers** that
+  may raise incidents (`operator`, `control`, `subscription:<id>`, `template:<id or slug>`; default operator and
+  control); an incident from any other source — including one control relays from a worker's, schedule's or another
+  space's inbox item — is **proposed** (an ordinary task an operator confirms or dismisses, `POST
+  /spaces/{id}/tasks/{task}/incident`, `spaceman task incident`) or **refused**, as the policy says. Preempted tasks'
+  workers **finish** (told to wrap up), are **paused** (their turn interrupted with the existing `run.interrupt`
+  command) or are **interrupted** (stopped, session resumable), recorded per run in a preemption log and audited;
+  **incident capacity** adds top-level slots for incidents; **resumption** is manual (control is told) or automatic
+  when the incident ends, and `POST .../resume`, `spaceman task resume` and the control tool `spaceman_task_resume`
+  resume one task. Control gets a notification for each step. Queue policy dialog, task drawer (confirm, dismiss,
+  resume, preemption log) and Terraform `spaceman_space_queue_policy` fields.
+- Human-action type permissions (ADR-0050, SM-HUI-008): per space and type, who sees, asks with and responds to it
+  (weakest role) and which agent roles may ask; enforced in the lists, counts, reads, responses and creation; managed
+  by space admins (`human_type_permission:write`) under `/spaces/{id}/human-type-permissions`, in the space's human
+  actions page, `spaceman human permission` and Terraform `spaceman_human_action_type_permission`.
+- User profile edits (ADR-0050, SM-API-004): `PUT /users/{id}/profile` (global admin, step-up, If-Match, audited)
+  changes a user's email, display name and administrator MFA setting; the users API returns `mfa_required_set` beside
+  the effective `mfa_required`. **Edit** on the Users page, `spaceman user update`, and Terraform `spaceman_user` now
+  updates these fields in place instead of refusing them.
 - Space repositories (ADR-0044, SM-REPO-001/003, SM-SPACE-001, SM-UI-002, SM-API-004): a central list per space (name,
   folder, clone URL without credentials, default branch, role code or kb, clone policy auto, on_demand or manual) with
   API CRUD under `/spaces/{id}/repositories` (If-Match, audited), a sync endpoint, the node protocol command

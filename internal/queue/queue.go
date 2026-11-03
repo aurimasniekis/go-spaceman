@@ -58,36 +58,44 @@ func terminal(s string) bool { return s == Done || s == Failed || s == Cancelled
 
 // Task is one unit of accepted work (SM-QUEUE-003).
 type Task struct {
-	ID           string     `json:"id"`
-	SpaceID      string     `json:"space_id"`
-	ParentID     string     `json:"parent_id,omitempty"`
-	Title        string     `json:"title"`
-	Objective    string     `json:"objective" doc:"Markdown"`
-	Acceptance   string     `json:"acceptance" doc:"Acceptance criteria (Markdown)"`
-	Kind         string     `json:"kind" enum:"ordinary,incident"`
-	Priority     string     `json:"priority" enum:"low,normal,high,urgent"`
-	Position     int        `json:"position" doc:"1-based place in the effective order"`
-	Depth        int        `json:"depth" doc:"0 for top-level tasks"`
-	Manual       bool       `json:"manual" doc:"Placed by an operator: duplicate triggers never move it"`
-	Status       string     `json:"status" enum:"backlog,ready,running,blocked,review,done,failed,cancelled"`
-	StatusReason string     `json:"status_reason,omitempty"`
-	Exclusions   []string   `json:"exclusions" doc:"Resource keys this task holds exclusively while running"`
-	AssigneeRole string     `json:"assignee_role,omitempty"`
-	AssigneeRun  string     `json:"assignee_run,omitempty"`
-	Workspace    string     `json:"workspace,omitempty"`
-	OriginKind   string     `json:"origin_kind,omitempty"`
-	OriginID     string     `json:"origin_id,omitempty"`
-	DedupKey     string     `json:"dedup_key,omitempty"`
-	Result       string     `json:"result,omitempty"`
-	Preemptions  int64      `json:"preemptions"`
-	DependsOn    []string   `json:"depends_on"`
-	Blockers     []Blocker  `json:"blockers"`
-	Waiting      []string   `json:"waiting,omitempty" doc:"Why a ready task is not eligible now"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	Version      int64      `json:"version"`
+	ID           string   `json:"id"`
+	SpaceID      string   `json:"space_id"`
+	ParentID     string   `json:"parent_id,omitempty"`
+	Title        string   `json:"title"`
+	Objective    string   `json:"objective" doc:"Markdown"`
+	Acceptance   string   `json:"acceptance" doc:"Acceptance criteria (Markdown)"`
+	Kind         string   `json:"kind" enum:"ordinary,incident"`
+	Priority     string   `json:"priority" enum:"low,normal,high,urgent"`
+	Position     int      `json:"position" doc:"1-based place in the effective order"`
+	Depth        int      `json:"depth" doc:"0 for top-level tasks"`
+	Manual       bool     `json:"manual" doc:"Placed by an operator: duplicate triggers never move it"`
+	Status       string   `json:"status" enum:"backlog,ready,running,blocked,review,done,failed,cancelled"`
+	StatusReason string   `json:"status_reason,omitempty"`
+	Exclusions   []string `json:"exclusions" doc:"Resource keys this task holds exclusively while running"`
+	AssigneeRole string   `json:"assignee_role,omitempty"`
+	AssigneeRun  string   `json:"assignee_run,omitempty"`
+	Workspace    string   `json:"workspace,omitempty"`
+	OriginKind   string   `json:"origin_kind,omitempty"`
+	OriginID     string   `json:"origin_id,omitempty"`
+	DedupKey     string   `json:"dedup_key,omitempty"`
+	Result       string   `json:"result,omitempty"`
+	Preemptions  int64    `json:"preemptions"`
+	// PreemptedBy is the incident that returned this task to ready; it is cleared when the task resumes (SM-QUEUE-009).
+	PreemptedBy string `json:"preempted_by,omitempty" doc:"The incident that preempted this task; cleared when it resumes"`
+	// IncidentTrigger is the trusted source that raised an incident task (operator, control, subscription:…, template:…).
+	IncidentTrigger string `json:"incident_trigger,omitempty" doc:"The trusted source that raised this incident"`
+	// IncidentProposedBy is set while an untrusted source's incident request waits for an operator (ADR-0050).
+	IncidentProposedBy string `json:"incident_proposed_by,omitempty" doc:"An untrusted source asked for this task to be an incident; an operator confirms or dismisses it"`
+	// PreemptionLog is the task's recent preemptions and what happened to its workers (Get only).
+	PreemptionLog []Preemption `json:"preemption_log,omitempty"`
+	DependsOn     []string     `json:"depends_on"`
+	Blockers      []Blocker    `json:"blockers"`
+	Waiting       []string     `json:"waiting,omitempty" doc:"Why a ready task is not eligible now"`
+	CreatedAt     time.Time    `json:"created_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
+	StartedAt     *time.Time   `json:"started_at,omitempty"`
+	FinishedAt    *time.Time   `json:"finished_at,omitempty"`
+	Version       int64        `json:"version"`
 	// Attachments are files of the space the objective or acceptance references (SM-ATT-001).
 	Attachments []*attachments.Attachment `json:"attachments,omitempty"`
 }
@@ -105,14 +113,43 @@ type Blocker struct {
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 }
 
-// Policy is a space's queue policy (SM-QUEUE-007/009).
+// Policy is a space's queue policy (SM-QUEUE-007/009). The incident fields are optional in a write: an omitted one
+// takes its default (ADR-0050).
 type Policy struct {
 	MaxActive          int    `json:"max_active" minimum:"1" maximum:"20" doc:"Top-level tasks that may run at once (default 1)"`
 	IncidentInsertion  string `json:"incident_insertion" enum:"top,priority" doc:"Where new incident tasks go"`
 	IncidentPreempts   bool   `json:"incident_preempts" doc:"A new incident returns running ordinary top-level tasks to ready (preemption, not failure)"`
 	EscalationReorders bool   `json:"escalation_reorders" doc:"Escalation may move a task to the top; otherwise it only raises priority"`
-	Version            int64  `json:"version"`
+	// IncidentTriggers are the sources trusted to raise incidents. nil means the default (operator and control); an
+	// empty list trusts nobody.
+	IncidentTriggers  []string `json:"incident_triggers" required:"false" maxItems:"50" doc:"Sources trusted to raise incidents: operator, control, subscription:<id>, template:<id or slug>. Omitted: operator and control; empty: nobody"`
+	IncidentUntrusted string   `json:"incident_untrusted,omitempty" enum:"propose,refuse" doc:"An incident from an untrusted source: propose (an ordinary task an operator may confirm as an incident, default) or refuse"`
+	IncidentWorkers   string   `json:"incident_workers,omitempty" enum:"finish,pause,interrupt" doc:"What happens to a preempted task's worker runs: finish (keep running and told to wrap up, default), pause (current turn interrupted, the run stays idle until resumed) or interrupt (stopped, session resumable)"`
+	IncidentCapacity  int      `json:"incident_capacity,omitempty" minimum:"0" maximum:"20" doc:"Extra top-level slots only incident tasks may use (default 0)"`
+	IncidentResume    string   `json:"incident_resume,omitempty" enum:"manual,auto" doc:"When the incident ends: manual (control or an operator resumes preempted tasks, default) or auto (eligible preempted tasks with live workers run again; paused workers are told to continue)"`
+	Version           int64    `json:"version"`
 }
+
+// Incident policy values (ADR-0050).
+const (
+	TriggerOperator   = "operator"
+	TriggerControl    = "control"
+	UntrustedPropose  = "propose"
+	UntrustedRefuse   = "refuse"
+	WorkersFinish     = "finish"
+	WorkersPause      = "pause"
+	WorkersInterrupt  = "interrupt"
+	ResumeManual      = "manual"
+	ResumeAuto        = "auto"
+	KindIncident      = "incident"
+	KindOrdinary      = "ordinary"
+	defaultUntrusted  = UntrustedPropose
+	defaultWorkers    = WorkersFinish
+	defaultResumption = ResumeManual
+)
+
+// DefaultTriggers are the sources trusted to raise incidents in a space without a stored policy.
+func DefaultTriggers() []string { return []string{TriggerOperator, TriggerControl} }
 
 // Skip is a ready task that was not selected, and why (SM-QUEUE-005).
 type Skip struct {
@@ -139,6 +176,11 @@ type Service struct {
 	// DefaultMaxActive is the top-level task limit of spaces without a queue policy (limits.max_top_level_tasks,
 	// ADR-0036); 0 means 1.
 	DefaultMaxActive int
+	// Workers pauses, stops and notifies the worker runs of preempted tasks (the fleet; nil in unit tests that run no
+	// workers: preemption then changes task states only).
+	Workers Workers
+	// Notify tells the space's control about incident decisions (preemption, proposals, resolution), after commit.
+	Notify func(spaceID, dedup, subject, body string)
 }
 
 // New returns the service.
@@ -158,6 +200,7 @@ func t2(v sql.NullInt64) *time.Time {
 
 func fromRow(r db.Task) *Task {
 	t := &Task{ID: r.ID, SpaceID: r.SpaceID, ParentID: r.ParentID.String, Title: r.Title, Objective: r.Objective, Acceptance: r.Acceptance, Kind: r.Kind,
+		PreemptedBy: r.PreemptedBy, IncidentTrigger: r.IncidentTrigger, IncidentProposedBy: r.IncidentProposedBy,
 		Priority: r.Priority, Manual: r.ManualPosition == 1, Status: r.Status, StatusReason: r.StatusReason, AssigneeRole: r.AssigneeRole,
 		AssigneeRun: r.AssigneeRun, Workspace: r.Workspace, OriginKind: r.OriginKind, OriginID: r.OriginID, DedupKey: r.DedupKey, Result: r.Result,
 		Preemptions: r.Preemptions, CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(),
@@ -182,7 +225,8 @@ func (svc *Service) defaultPolicy() Policy {
 	if n < 1 || n > 20 {
 		n = 1
 	}
-	return Policy{MaxActive: n, IncidentInsertion: "top"}
+	return Policy{MaxActive: n, IncidentInsertion: "top", IncidentTriggers: DefaultTriggers(), IncidentUntrusted: defaultUntrusted,
+		IncidentWorkers: defaultWorkers, IncidentResume: defaultResumption}
 }
 
 func (svc *Service) load(ctx context.Context, q *db.Queries, spaceID string) (*snapshot, error) {
@@ -228,7 +272,9 @@ func (svc *Service) load(ctx context.Context, q *db.Queries, spaceID string) (*s
 	}
 	if p, err := q.GetQueuePolicy(ctx, spaceID); err == nil {
 		sn.policy = Policy{MaxActive: int(p.MaxActive), IncidentInsertion: p.IncidentInsertion, IncidentPreempts: p.IncidentPreempts == 1,
-			EscalationReorders: p.EscalationReorders == 1, Version: p.Version}
+			EscalationReorders: p.EscalationReorders == 1, IncidentTriggers: []string{}, IncidentUntrusted: p.IncidentUntrusted,
+			IncidentWorkers: p.IncidentWorkers, IncidentCapacity: int(p.IncidentCapacity), IncidentResume: p.IncidentResume, Version: p.Version}
+		_ = json.Unmarshal([]byte(p.IncidentTriggersJson), &sn.policy.IncidentTriggers)
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
@@ -278,8 +324,8 @@ func (sn *snapshot) why(t *Task) []string {
 		if p := sn.byID[t.ParentID]; p != nil && p.Status != Running {
 			out = append(out, fmt.Sprintf("parent %q is %s", p.Title, p.Status))
 		}
-	} else if n := sn.runningTop(); n >= sn.policy.MaxActive {
-		out = append(out, fmt.Sprintf("%d top-level task(s) already running (limit %d)", n, sn.policy.MaxActive))
+	} else if n, limit := sn.runningTop(), sn.topLimit(t); n >= limit {
+		out = append(out, fmt.Sprintf("%d top-level task(s) already running (limit %d)", n, limit))
 	}
 	for _, x := range t.Exclusions {
 		for _, o := range sn.byID {
@@ -357,6 +403,9 @@ type CreateInput struct {
 	// DedupKey makes repeated triggers idempotent: an existing task with the key is returned unchanged (never moved).
 	DedupKey  string
 	DependsOn []string
+	// Triggers name who asks for an incident (kind incident), most specific first: operator, control,
+	// subscription:<id>, template:<id>. The first one the queue policy trusts raises it (SM-QUEUE-009).
+	Triggers []string
 	// AttachmentIDs are attachments of the space the task references (at most 20).
 	AttachmentIDs []string
 }
@@ -410,7 +459,8 @@ func checkExclusions(xs []string) error {
 }
 
 // Create adds a task. With a dedup key that already exists, the existing task is returned and created is false: a
-// duplicate trigger never re-promotes a task an operator moved (SM-QUEUE-002).
+// duplicate trigger never re-promotes a task an operator moved (SM-QUEUE-002). An incident is raised only by a source
+// the space's queue policy trusts (in.Triggers); an untrusted one is refused or becomes a proposal (SM-QUEUE-009).
 func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID string, in CreateInput) (*Task, bool, error) {
 	if err := in.validate(); err != nil {
 		return nil, false, err
@@ -419,10 +469,10 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		in.Exclusions = []string{}
 	}
 	id := ids.New(ids.Task)
-	created := false
-	var preempted []string
+	created, refused := false, ""
+	var fx *effects
 	err := svc.s.W().TxNamed(ctx, "queue.create", func(tx *store.Tx) error {
-		created, preempted = false, nil
+		created, refused, fx = false, "", &effects{}
 		sp, err := tx.Q.GetSpace(ctx, spaceID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return apperr.New(apperr.CodeNotFound, "space not found")
@@ -452,6 +502,18 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 				return apperr.New(apperr.CodeInvalid, "dependency %q is not a task of this space", d)
 			}
 		}
+		trigger, proposedBy := "", ""
+		if in.Kind == KindIncident {
+			var trusted bool
+			trigger, trusted = sn.policy.trusts(in.Triggers)
+			if !trusted {
+				if sn.policy.IncidentUntrusted == UntrustedRefuse {
+					refused = trigger
+					return apperr.New(apperr.CodeForbidden, "the queue policy does not trust %s to raise incidents", trigger)
+				}
+				in.Kind, proposedBy, trigger = KindOrdinary, trigger, ""
+			}
+		}
 		rank, err := sn.insertRank(ctx, tx, in.ParentID, in.Kind, in.Priority)
 		if err != nil {
 			return err
@@ -463,6 +525,12 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			DedupKey: in.DedupKey, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
+		if trigger != "" || proposedBy != "" {
+			if err := tx.Q.SetTaskIncident(ctx, db.SetTaskIncidentParams{Kind: in.Kind, IncidentTrigger: trigger, IncidentProposedBy: proposedBy,
+				Bump: 0, Now: tx.NowMicros(), ID: id}); err != nil {
+				return err
+			}
+		}
 		for _, d := range in.DependsOn {
 			if err := tx.Q.InsertTaskDependency(ctx, db.InsertTaskDependencyParams{TaskID: id, DependsOn: d}); err != nil {
 				return err
@@ -472,22 +540,10 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			return err
 		}
 		created = true
-		if in.Kind == "incident" && in.ParentID == "" && sn.policy.IncidentPreempts {
-			for _, t := range sn.order {
-				if t.ParentID == "" && t.Kind == "ordinary" && t.Status == Running {
-					if _, err := tx.Q.SetTaskStatus(ctx, db.SetTaskStatusParams{Status: Ready, StatusReason: "preempted by incident " + in.Title, Result: t.Result,
-						Preempted: 1, Now: tx.NowMicros(), MarkFinished: int64(0), ID: t.ID, Version: t.Version}); err != nil {
-						return err
-					}
-					preempted = append(preempted, t.ID)
-					if err := svc.changes.Record(ctx, tx, spaceID, "task", t.ID, "updated", t.Version+1); err != nil {
-						return err
-					}
-					if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: Running, To: Ready,
-						Preempted: true}, Correlation: t.ID, Causation: id}); err != nil {
-						return err
-					}
-				}
+		var preempted []string
+		if in.Kind == KindIncident && in.ParentID == "" && sn.policy.IncidentPreempts {
+			if preempted, err = svc.preemptTx(ctx, tx, actor, sn, id, in.Title, fx); err != nil {
+				return err
 			}
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "task", id, "created", 1); err != nil {
@@ -498,13 +554,30 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			OriginID: outbox.CleanID(in.OriginID)}, Status: in.Status}, Correlation: id, Causation: in.OriginID}); err != nil {
 			return err
 		}
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.created", Target: audit.Target{Type: "task", ID: id},
-			Details: map[string]any{"space_id": spaceID, "kind": in.Kind, "priority": in.Priority, "origin": in.OriginKind + ":" + in.OriginID, "preempted": preempted}})
+		details := map[string]any{"space_id": spaceID, "kind": in.Kind, "priority": in.Priority, "origin": in.OriginKind + ":" + in.OriginID, "preempted": preempted}
+		if trigger != "" {
+			details["incident_trigger"] = trigger
+		}
+		if proposedBy != "" {
+			details["incident_proposed_by"] = proposedBy
+			if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.incident_proposed", Target: audit.Target{Type: "task", ID: id},
+				Details: map[string]any{"space_id": spaceID, "trigger": proposedBy}}); err != nil {
+				return err
+			}
+			fx.note(spaceID, "incident-proposed:"+id, "Incident proposed: "+in.Title,
+				fmt.Sprintf("Task %s was asked to be an incident by %s, which this space's queue policy does not trust. It was added as an ordinary "+
+					"task; an operator may confirm it as an incident.", id, proposedBy))
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.created", Target: audit.Target{Type: "task", ID: id}, Details: details})
 		return err
 	})
 	if err != nil {
+		if refused != "" {
+			svc.auditRefused(ctx, actor, spaceID, "", refused)
+		}
 		return nil, false, err
 	}
+	svc.after(ctx, actor, fx)
 	t, err := svc.Get(ctx, spaceID, id)
 	return t, created, err
 }
@@ -524,6 +597,11 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Task, error) 
 	t := sn.byID[id]
 	if t == nil {
 		return nil, errNotFound
+	}
+	if t.Preemptions > 0 {
+		if t.PreemptionLog, err = svc.Preemptions(ctx, t.ID); err != nil {
+			return nil, err
+		}
 	}
 	return t, svc.withAttachments(ctx, t)
 }

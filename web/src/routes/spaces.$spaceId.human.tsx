@@ -14,6 +14,7 @@ import { isPending } from '@/features/human/badges'
 import { NewActionModal } from '@/features/human/NewActionModal'
 import { PoliciesPanel } from '@/features/human/PoliciesPanel'
 import { SpaceTypesModal } from '@/features/human/SpaceTypesModal'
+import { TypePermissionsModal } from '@/features/human/TypePermissionsModal'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { useView } from '@/lib/viewPrefs'
@@ -43,6 +44,7 @@ function SpaceHumanPage() {
   const [creating, setCreating] = useState(false)
   const [types, setTypes] = useState(false)
   const [policies, setPolicies] = useState(false)
+  const [perms, setPerms] = useState(false)
   const items = list.data?.items ?? []
   return (
     <>
@@ -51,6 +53,7 @@ function SpaceHumanPage() {
           <>
             <Button variant="default" onClick={() => setPolicies(true)}>Policies</Button>
             {canWrite && <Button variant="default" onClick={() => setTypes(true)}>Types</Button>}
+            <Button variant="default" onClick={() => setPerms(true)}>Permissions</Button>
             {canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>}
           </>
         )} />
@@ -68,6 +71,7 @@ function SpaceHumanPage() {
       </Drawer>
       <NewActionModal spaceId={spaceId} opened={creating} onClose={() => setCreating(false)} />
       {types && <SpaceTypesModal spaceId={spaceId} onClose={() => setTypes(false)} />}
+      {perms && <TypePermissionsModal spaceId={spaceId} canAdmin={atLeast(roleIn(me, spaceId), 'admin')} onClose={() => setPerms(false)} />}
       <Modal opened={policies} onClose={() => setPolicies(false)} title="Reminders, escalation and routing in this space" size="85rem">
         <Text size="sm" c="dimmed" mb="sm">The policy in force for each type, and where it comes from. A space policy replaces the installation default for its types.</Text>
         <PoliciesPanel spaceId={spaceId} canWrite={canWrite} />

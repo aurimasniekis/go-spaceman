@@ -64,6 +64,7 @@ var rules = map[string]Rule{
 	"get-user":        Global(authz.UserRead),
 	"create-user":     StepUp(authz.UserWrite),
 	"set-user-grants": StepUp(authz.UserWrite),
+	"update-user":     StepUp(authz.UserWrite),
 	"enable-user":     StepUp(authz.UserWrite),
 	"disable-user":    StepUp(authz.UserWrite),
 	"issue-reset":     StepUp(authz.UserWrite),

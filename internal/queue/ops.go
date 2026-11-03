@@ -195,9 +195,12 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 		return nil, apperr.New(apperr.CodeInvalid, "reason or result too long")
 	}
 	from := ""
+	var fx *effects
 	t, err := svc.mutate(ctx, "queue.status", spaceID, id, version, func(tx *store.Tx, sn *snapshot, t *Task) error {
-		from = t.Status
-		if !slices.Contains(transitions[from], in.Status) {
+		from, fx = t.Status, &effects{}
+		// A preempted task whose workers were let finish may still be reported for review (SM-QUEUE-009).
+		finishing := from == Ready && in.Status == Review && t.PreemptedBy != ""
+		if !slices.Contains(transitions[from], in.Status) && !finishing {
 			return apperr.New(apperr.CodePrecondition, "a %s task cannot become %s", from, in.Status)
 		}
 		if in.Status == Running {
@@ -224,10 +227,26 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 			Preempted: preempted == 1}, Correlation: t.ID}); err != nil {
 			return err
 		}
-		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.status", Target: audit.Target{Type: "task", ID: t.ID},
-			Details: map[string]any{"space_id": spaceID, "from": from, "to": in.Status, "reason": in.Reason, "preempted": preempted == 1}})
-		return err
+		if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.status", Target: audit.Target{Type: "task", ID: t.ID},
+			Details: map[string]any{"space_id": spaceID, "from": from, "to": in.Status, "reason": in.Reason, "preempted": preempted == 1}}); err != nil {
+			return err
+		}
+		t.Status, t.Version = in.Status, t.Version+1
+		// A preempted task that someone starts, finishes or moves elsewhere leaves its preemption: starting it resumes
+		// its paused workers (SM-QUEUE-009).
+		if t.PreemptedBy != "" && in.Status != Ready {
+			if _, err := svc.resumeTx(ctx, tx, actor, sn, t, fx); err != nil {
+				return err
+			}
+		}
+		if t.Kind == KindIncident && terminal(in.Status) && !terminal(from) {
+			return svc.incidentEndedTx(ctx, tx, actor, sn, t, fx)
+		}
+		return nil
 	})
+	if err == nil {
+		svc.after(ctx, actor, fx)
+	}
 	if err == nil && svc.OnStatus != nil {
 		svc.OnStatus(actor, t, from)
 	}
@@ -421,20 +440,20 @@ func (svc *Service) Decisions(ctx context.Context, spaceID string, limit int) ([
 	return out, nil
 }
 
-// SetPolicy replaces a space's queue policy.
+// SetPolicy replaces a space's queue policy. Omitted incident fields take their defaults (ADR-0050).
 func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID string, p Policy) (Policy, error) {
-	if p.MaxActive < 1 || p.MaxActive > 20 {
-		return Policy{}, apperr.New(apperr.CodeInvalid, "max_active must be 1-20")
+	if err := normalizePolicy(&p); err != nil {
+		return Policy{}, err
 	}
-	if p.IncidentInsertion != "top" && p.IncidentInsertion != "priority" {
-		return Policy{}, apperr.New(apperr.CodeInvalid, "incident_insertion must be top or priority")
-	}
+	triggers, _ := json.Marshal(p.IncidentTriggers)
 	err := svc.s.W().TxNamed(ctx, "queue.policy", func(tx *store.Tx) error {
 		if _, err := tx.Q.GetSpace(ctx, spaceID); errors.Is(err, sql.ErrNoRows) {
 			return apperr.New(apperr.CodeNotFound, "space not found")
 		}
 		if err := tx.Q.UpsertQueuePolicy(ctx, db.UpsertQueuePolicyParams{SpaceID: spaceID, MaxActive: int64(p.MaxActive), IncidentInsertion: p.IncidentInsertion,
-			IncidentPreempts: b2i(p.IncidentPreempts), EscalationReorders: b2i(p.EscalationReorders), UpdatedAt: tx.NowMicros(), UpdatedBy: actor.ID}); err != nil {
+			IncidentPreempts: b2i(p.IncidentPreempts), EscalationReorders: b2i(p.EscalationReorders), IncidentTriggersJson: string(triggers),
+			IncidentUntrusted: p.IncidentUntrusted, IncidentWorkers: p.IncidentWorkers, IncidentCapacity: int64(p.IncidentCapacity),
+			IncidentResume: p.IncidentResume, UpdatedAt: tx.NowMicros(), UpdatedBy: actor.ID}); err != nil {
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "space", spaceID, "updated", 0); err != nil {
@@ -442,7 +461,8 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "queue.policy_updated", Target: audit.Target{Type: "space", ID: spaceID},
 			Details: map[string]any{"max_active": p.MaxActive, "incident_insertion": p.IncidentInsertion, "incident_preempts": p.IncidentPreempts,
-				"escalation_reorders": p.EscalationReorders}})
+				"escalation_reorders": p.EscalationReorders, "incident_triggers": p.IncidentTriggers, "incident_untrusted": p.IncidentUntrusted,
+				"incident_workers": p.IncidentWorkers, "incident_capacity": p.IncidentCapacity, "incident_resume": p.IncidentResume}})
 		return err
 	})
 	if err != nil {

@@ -26,6 +26,7 @@ function UsersPage() {
   const admin = hasGlobal(me, 'admin')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
+  const [profile, setProfile] = useState<User | null>(null)
   const [identities, setIdentities] = useState<User | null>(null)
   const [reset, setReset] = useState<{ user: string; token: string } | null>(null)
   const spaceName = (d: string) => (d === '*' ? 'all spaces' : (spaces.data?.find((s) => s.id === d)?.name ?? d))
@@ -86,6 +87,7 @@ function UsersPage() {
                     <Menu position="bottom-end">
                       <Menu.Target><Button variant="subtle" size="compact-xs" aria-label={`Actions for ${u.display_name}`}><IconDots size={14} /></Button></Menu.Target>
                       <Menu.Dropdown>
+                        <Menu.Item onClick={() => setProfile(u)}>Edit profile</Menu.Item>
                         <Menu.Item onClick={() => setEditing(u)}>Edit grants</Menu.Item>
                         <Menu.Item onClick={() => setIdentities(u)}>Sign-in identities…</Menu.Item>
                         <Menu.Item onClick={() => void issueReset(u)}>Password reset token</Menu.Item>
@@ -101,6 +103,7 @@ function UsersPage() {
       </Card>
       <CreateUserModal opened={creating} onClose={() => setCreating(false)} />
       {editing && <EditGrantsModal user={editing} onClose={() => setEditing(null)} />}
+      {profile && <EditProfileModal user={profile} onClose={() => setProfile(null)} />}
       {identities && <UserIdentitiesModal user={identities} onClose={() => setIdentities(null)} />}
       <SecretModal title={`Password reset token for ${reset?.user ?? ''}`} secret={reset?.token ?? null} onClose={() => setReset(null)}>
         <Text size="sm">Give it to the user over a trusted channel. They open <b>{window.location.origin}/reset</b>, paste it and choose a new password. It works once.</Text>
@@ -137,6 +140,56 @@ function EditGrantsModal({ user, onClose }: { user: User; onClose: () => void })
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save grants</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
+    </Modal>
+  )
+}
+
+/**
+ * A user's email, display name and administrator MFA requirement (SM-API-004). Saved whole at the version shown
+ * (If-Match). Email is never an SSO key, so a change never links or unlinks an identity.
+ */
+function EditProfileModal({ user, onClose }: { user: User; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [error, setError] = useState('')
+  const form = useForm({
+    defaultValues: { email: user.email ?? '', display_name: user.display_name, mfa_required: user.mfa_required_set },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        unwrap(await api.PUT('/users/{user_id}/profile', { params: { path: { user_id: user.id }, header: { 'If-Match': ifMatch(user.version) } },
+          body: { email: value.email.trim(), display_name: value.display_name, mfa_required: value.mfa_required } }))
+        void qc.invalidateQueries({ queryKey: keys.users })
+        notifyOk(`${value.display_name}: profile saved`)
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
+  const forced = user.mfa_required && !user.mfa_required_set
+  return (
+    <Modal opened onClose={onClose} title={`Profile of ${user.display_name}`}>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <form.Field name="display_name" validators={{ onBlur: required('Name') }}>
+            {(f) => <TextInput label="Name" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
+          </form.Field>
+          <form.Field name="email">
+            {(f) => <TextInput label="Email" type="email" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)}
+              description={user.has_password ? 'Their sign-in name: changing it ends their sessions, and it cannot be removed while they have a password.' : 'Optional for a user without a password.'} />}
+          </form.Field>
+          <form.Field name="mfa_required">
+            {(f) => <Switch label="Require multi-factor authentication" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)}
+              description={forced ? 'Policy already requires MFA for this user (require_totp, or an operator or admin grant on a password account); clearing this never lifts that.'
+                : 'Clearing it never lifts MFA that policy requires.'} />}
+          </form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save profile</Button>}</form.Subscribe>
           </Group>
         </Stack>
       </form>

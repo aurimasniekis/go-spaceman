@@ -956,6 +956,40 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByText('run.launched').first()).toBeVisible()
   })
 
+  // Incident policy (SM-QUEUE-009, ADR-0050), seeded late so earlier captures keep their queue: trusted triggers, paused
+  // workers and automatic resumption; then an incident an operator raises preempts the running SDK bump.
+  const qp = (await api.call<{ policy: { version: number } }>('GET', `/spaces/${payments.id}/tasks`)).policy
+  await api.call('PUT', `/spaces/${payments.id}/queue/policy`, { max_active: 1, incident_insertion: 'top', incident_preempts: true, escalation_reorders: false,
+    incident_triggers: ['control', 'operator', 'template:pagerduty-alert'], incident_untrusted: 'propose', incident_workers: 'pause', incident_capacity: 0,
+    incident_resume: 'auto', version: qp.version })
+  await capture(page, 'queue-policy', async () => {
+    await page.goto(`/spaces/${payments.id}/queue`)
+    await page.getByRole('button', { name: 'Policy' }).click()
+    await expect(page.getByText('template:pagerduty-alert').first()).toBeVisible()
+  })
+  await task({ title: 'Card authorisations failing in eu-west', kind: 'incident', priority: 'urgent', objective: 'Restore authorisations; find the failing dependency.' })
+  await capture(page, 'queue-preempted', async () => {
+    await page.goto(`/spaces/${payments.id}/queue`)
+    await page.getByRole('listitem', { name: /Bump the card SDK to 7.2/ }).click()
+    await expect(page.getByText('Preempted by an incident')).toBeVisible()
+  })
+  // Human-action type permissions (SM-HUI-008): approvals in payments are seen by operators and answered by admins only.
+  await api.call('PUT', `/spaces/${payments.id}/human-type-permissions/approval`, { view_role: 'operator', create_role: 'operator', respond_role: 'admin',
+    agents: 'roles', agent_roles: ['control', 'implementor'] })
+  await capture(page, 'human-permissions', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByRole('button', { name: 'Permissions' }).click()
+    await expect(page.getByRole('table', { name: 'Type permissions' })).toBeVisible()
+    await expect(page.getByText('control, implementor')).toBeVisible()
+  })
+  // A user's profile (SM-API-004): email, name and the administrator's MFA requirement (not saved).
+  await capture(page, 'auth-user-profile', async () => {
+    await page.goto('/users')
+    await page.getByRole('button', { name: 'Actions for Sam Rivera' }).click()
+    await page.getByRole('menuitem', { name: 'Edit profile' }).click()
+    await expect(page.getByRole('dialog', { name: 'Profile of Sam Rivera' })).toBeVisible()
+  })
+
   // Backups (SM-STORE-005): one manual backup of the seeded stack, verified.
   type Backups = { busy: boolean; items: { id: string; state: string; verify_state: string }[] }
   const made = await api.call<{ id: string }>('POST', '/system/backups')

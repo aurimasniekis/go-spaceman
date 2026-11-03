@@ -2019,6 +2019,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/human-type-permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Who may see, create and respond to each human-action type in the space */
+        get: operations["list-human-type-permissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-type-permissions/{action_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The permission in force for a type (stored: false means the defaults) */
+        get: operations["get-human-type-permission"];
+        /**
+         * Set who may see, create and respond to a type in the space
+         * @description Without If-Match the permission is created and an existing one is refused; with If-Match it is updated at that version. Permissions narrow the roles' own permissions and are audited.
+         */
+        put: operations["set-human-type-permission"];
+        post?: never;
+        /** Remove a type's permission (the defaults apply again) */
+        delete: operations["delete-human-type-permission"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/human-types": {
         parameters: {
             query?: never;
@@ -3285,6 +3324,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/tasks/{task_id}/incident": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm or dismiss an incident proposal
+         * @description A source the queue policy does not trust asked for this task to be an incident. Confirming makes it an incident raised by you (the policy's insertion and preemption apply now); dismissing keeps it an ordinary task.
+         */
+        post: operations["decide-incident"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/tasks/{task_id}/move": {
         parameters: {
             query?: never;
@@ -3299,6 +3358,26 @@ export interface paths {
          * @description Operator placement is authoritative: policy and duplicate triggers never move the task again. Moving never stops work.
          */
         post: operations["move-task"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/tasks/{task_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a task an incident preempted
+         * @description A ready, eligible task with live workers runs again and its paused workers are told to continue; a task whose workers are gone stays ready for control to launch a new one. The outcome says which.
+         */
+        post: operations["resume-task"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3772,6 +3851,26 @@ export interface paths {
          * @description Hand the URL to the user out of band: it links the identity they sign in with at the provider to this user (72 hours).
          */
         post: operations["issue-link-invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{user_id}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change a user's email, display name and MFA requirement
+         * @description Replaces all three. Email is never an SSO key, so a change never links, unlinks or merges an identity; an address in use is refused, a user with a password keeps one, and changing it ends that user's sessions. Clearing mfa_required never lifts MFA that policy forces (require_totp, operator or admin grants on a password account).
+         */
+        put: operations["update-user"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4339,6 +4438,19 @@ export interface components {
             /** @enum {string} */
             role: "viewer" | "operator" | "admin";
         };
+        AuthProfileInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AuthProfileInput.json
+             */
+            readonly $schema?: string;
+            display_name: string;
+            /** @description Lower-cased and unique; empty removes it (refused for a user with a password: it is their sign-in name) */
+            email: string;
+            /** @description Require MFA for this user. Clearing it never lifts what policy forces (require_totp, operator or admin grants on a password account) */
+            mfa_required: boolean;
+        };
         AuthRootToken: {
             /**
              * Format: uri
@@ -4388,7 +4500,10 @@ export interface components {
             /** Format: date-time */
             last_login_at?: string;
             mfa_enrolled: boolean;
+            /** @description Whether the user must use MFA: set by an administrator (mfa_required_set) or forced by policy */
             mfa_required: boolean;
+            /** @description Whether an administrator requires MFA for this user */
+            mfa_required_set: boolean;
             provisioned_via: string;
             sso_grants: components["schemas"]["AuthzGrant"][];
             /** Format: int64 */
@@ -4989,6 +5104,16 @@ export interface components {
             /** @description The bearer token; shown once and never retrievable again */
             secret: string;
             token: components["schemas"]["AuthAPIToken"];
+        };
+        "Decide-incidentRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Decide-incidentRequest.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            decision: "confirm" | "dismiss";
         };
         "Decline-xspace-requestRequest": {
             /**
@@ -6355,6 +6480,75 @@ export interface components {
             name: string;
             slug: string;
             versions: components["schemas"]["PromptVersionN"][];
+        };
+        HumanTypePermission: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanTypePermission.json
+             */
+            readonly $schema?: string;
+            /** @description question, approval, todo, message, or a custom type's ID */
+            action_type: string;
+            /** @description Space roles whose agents may ask when agents is roles */
+            agent_roles: string[];
+            /**
+             * @description Which agents may ask with this type: any (default), only agent_roles, or none
+             * @enum {string}
+             */
+            agents: "any" | "roles" | "none";
+            /**
+             * @description Weakest role that may ask people with this type (default operator)
+             * @enum {string}
+             */
+            create_role: "operator" | "admin";
+            /**
+             * @description Weakest role that may respond, assign, comment, clarify, move or cancel (default operator)
+             * @enum {string}
+             */
+            respond_role: "operator" | "admin";
+            space_id: string;
+            /** @description false: no permission is stored and the defaults apply */
+            stored: boolean;
+            /** @description A custom type's slug */
+            type_slug?: string;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /** Format: int64 */
+            version: number;
+            /**
+             * @description Weakest role that sees actions of this type (default viewer)
+             * @enum {string}
+             */
+            view_role: "viewer" | "operator" | "admin";
+        };
+        HumanTypePermissionInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanTypePermissionInput.json
+             */
+            readonly $schema?: string;
+            agent_roles?: string[];
+            /** @enum {string} */
+            agents?: "any" | "roles" | "none";
+            /** @enum {string} */
+            create_role?: "operator" | "admin";
+            /** @enum {string} */
+            respond_role?: "operator" | "admin";
+            /** @enum {string} */
+            view_role?: "viewer" | "operator" | "admin";
+        };
+        HumanTypePermissions: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanTypePermissions.json
+             */
+            readonly $schema?: string;
+            /** @description Stored permissions; types without one use the defaults (viewers see, operators create and respond, any agent asks) */
+            items: components["schemas"]["HumanTypePermission"][];
         };
         HumanTypeSpec: {
             outcomes: string[];
@@ -8151,6 +8345,11 @@ export interface components {
             /** @description Escalation may move a task to the top; otherwise it only raises priority */
             escalation_reorders: boolean;
             /**
+             * Format: int64
+             * @description Extra top-level slots only incident tasks may use (default 0)
+             */
+            incident_capacity?: number;
+            /**
              * @description Where new incident tasks go
              * @enum {string}
              */
@@ -8158,12 +8357,43 @@ export interface components {
             /** @description A new incident returns running ordinary top-level tasks to ready (preemption, not failure) */
             incident_preempts: boolean;
             /**
+             * @description When the incident ends: manual (control or an operator resumes preempted tasks, default) or auto (eligible preempted tasks with live workers run again; paused workers are told to continue)
+             * @enum {string}
+             */
+            incident_resume?: "manual" | "auto";
+            /** @description Sources trusted to raise incidents: operator, control, subscription:<id>, template:<id or slug>. Omitted: operator and control; empty: nobody */
+            incident_triggers?: string[];
+            /**
+             * @description An incident from an untrusted source: propose (an ordinary task an operator may confirm as an incident, default) or refuse
+             * @enum {string}
+             */
+            incident_untrusted?: "propose" | "refuse";
+            /**
+             * @description What happens to a preempted task's worker runs: finish (keep running and told to wrap up, default), pause (current turn interrupted, the run stays idle until resumed) or interrupt (stopped, session resumable)
+             * @enum {string}
+             */
+            incident_workers?: "finish" | "pause" | "interrupt";
+            /**
              * Format: int64
              * @description Top-level tasks that may run at once (default 1)
              */
             max_active: number;
             /** Format: int64 */
             version: number;
+        };
+        QueuePreemption: {
+            /** @enum {string} */
+            action: "preempted" | "finish" | "pause" | "interrupt";
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            incident_id: string;
+            outcome?: string;
+            /** Format: date-time */
+            resumed_at?: string;
+            resumed_by?: string;
+            run_id?: string;
+            task_id: string;
         };
         QueueSelection: {
             /**
@@ -8207,6 +8437,10 @@ export interface components {
             /** Format: date-time */
             finished_at?: string;
             id: string;
+            /** @description An untrusted source asked for this task to be an incident; an operator confirms or dismisses it */
+            incident_proposed_by?: string;
+            /** @description The trusted source that raised this incident */
+            incident_trigger?: string;
             /** @enum {string} */
             kind: "ordinary" | "incident";
             /** @description Placed by an operator: duplicate triggers never move it */
@@ -8221,6 +8455,9 @@ export interface components {
              * @description 1-based place in the effective order
              */
             position: number;
+            /** @description The incident that preempted this task; cleared when it resumes */
+            preempted_by?: string;
+            preemption_log?: components["schemas"]["QueuePreemption"][];
             /** Format: int64 */
             preemptions: number;
             /** @enum {string} */
@@ -8569,6 +8806,17 @@ export interface components {
             state?: components["schemas"]["BackupRestoreState"];
             /** Format: int64 */
             still_paused: number;
+        };
+        ResumeOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ResumeOut.json
+             */
+            readonly $schema?: string;
+            /** @description resumed, relaunch (no live worker), waiting: <reason> (still preempted) or superseded */
+            outcome: string;
+            task: components["schemas"]["QueueTask"];
         };
         RetentionDefault: {
             /**
@@ -14238,6 +14486,143 @@ export interface operations {
             };
         };
     };
+    "list-human-type-permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanTypePermissions"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-human-type-permission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                /** @description question, approval, todo, message, or a custom type's ID or slug */
+                action_type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanTypePermission"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-human-type-permission": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                /** @description question, approval, todo, message, or a custom type's ID or slug */
+                action_type: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HumanTypePermissionInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanTypePermission"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-human-type-permission": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                /** @description question, approval, todo, message, or a custom type's ID or slug */
+                action_type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-space-human-types": {
         parameters: {
             query?: never;
@@ -17266,6 +17651,46 @@ export interface operations {
             };
         };
     };
+    "decide-incident": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Decide-incidentRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "move-task": {
         parameters: {
             query?: never;
@@ -17290,6 +17715,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueueTask"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resume-task": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeOut"];
                 };
             };
             /** @description Error */
@@ -18350,6 +18808,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LinkInvite"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-user": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthProfileInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthUser"];
                 };
             };
             /** @description Error */

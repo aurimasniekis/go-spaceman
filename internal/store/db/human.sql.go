@@ -87,6 +87,45 @@ func (q *Queries) CountPendingHumanByRun(ctx context.Context, requesterRun strin
 	return count, err
 }
 
+const countPendingHumanByType = `-- name: CountPendingHumanByType :many
+SELECT space_id, type, type_slug, count(*) AS n FROM human_actions WHERE status IN ('open', 'in_progress') GROUP BY space_id, type, type_slug
+`
+
+type CountPendingHumanByTypeRow struct {
+	SpaceID  string
+	Type     string
+	TypeSlug string
+	N        int64
+}
+
+func (q *Queries) CountPendingHumanByType(ctx context.Context) ([]CountPendingHumanByTypeRow, error) {
+	rows, err := q.db.QueryContext(ctx, countPendingHumanByType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountPendingHumanByTypeRow{}
+	for rows.Next() {
+		var i CountPendingHumanByTypeRow
+		if err := rows.Scan(
+			&i.SpaceID,
+			&i.Type,
+			&i.TypeSlug,
+			&i.N,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countWantedControlRuns = `-- name: CountWantedControlRuns :one
 SELECT count(*) FROM runs WHERE space_id = ? AND kind = 'control' AND desired = 'running'
 `
@@ -121,6 +160,23 @@ type DeleteSpaceHumanTypeParams struct {
 
 func (q *Queries) DeleteSpaceHumanType(ctx context.Context, arg DeleteSpaceHumanTypeParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteSpaceHumanType, arg.SpaceID, arg.TypeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteSpaceHumanTypePermission = `-- name: DeleteSpaceHumanTypePermission :execrows
+DELETE FROM space_human_type_permissions WHERE space_id = ? AND action_type = ?
+`
+
+type DeleteSpaceHumanTypePermissionParams struct {
+	SpaceID    string
+	ActionType string
+}
+
+func (q *Queries) DeleteSpaceHumanTypePermission(ctx context.Context, arg DeleteSpaceHumanTypePermissionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSpaceHumanTypePermission, arg.SpaceID, arg.ActionType)
 	if err != nil {
 		return 0, err
 	}
@@ -754,6 +810,33 @@ func (q *Queries) GetSpaceHumanType(ctx context.Context, arg GetSpaceHumanTypePa
 	return i, err
 }
 
+const getSpaceHumanTypePermission = `-- name: GetSpaceHumanTypePermission :one
+SELECT space_id, action_type, view_role, create_role, respond_role, agents, agent_roles_json, version, updated_at, updated_by FROM space_human_type_permissions WHERE space_id = ? AND action_type = ?
+`
+
+type GetSpaceHumanTypePermissionParams struct {
+	SpaceID    string
+	ActionType string
+}
+
+func (q *Queries) GetSpaceHumanTypePermission(ctx context.Context, arg GetSpaceHumanTypePermissionParams) (SpaceHumanTypePermission, error) {
+	row := q.db.QueryRowContext(ctx, getSpaceHumanTypePermission, arg.SpaceID, arg.ActionType)
+	var i SpaceHumanTypePermission
+	err := row.Scan(
+		&i.SpaceID,
+		&i.ActionType,
+		&i.ViewRole,
+		&i.CreateRole,
+		&i.RespondRole,
+		&i.Agents,
+		&i.AgentRolesJson,
+		&i.Version,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
 const insertHumanAction = `-- name: InsertHumanAction :exec
 INSERT INTO human_actions (id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id,
   requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank,
@@ -1022,6 +1105,38 @@ func (q *Queries) InsertHumanTypeVersion(ctx context.Context, arg InsertHumanTyp
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const insertSpaceHumanTypePermission = `-- name: InsertSpaceHumanTypePermission :exec
+INSERT INTO space_human_type_permissions (space_id, action_type, view_role, create_role, respond_role, agents, agent_roles_json, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertSpaceHumanTypePermissionParams struct {
+	SpaceID        string
+	ActionType     string
+	ViewRole       string
+	CreateRole     string
+	RespondRole    string
+	Agents         string
+	AgentRolesJson string
+	UpdatedAt      int64
+	UpdatedBy      string
+}
+
+func (q *Queries) InsertSpaceHumanTypePermission(ctx context.Context, arg InsertSpaceHumanTypePermissionParams) error {
+	_, err := q.db.ExecContext(ctx, insertSpaceHumanTypePermission,
+		arg.SpaceID,
+		arg.ActionType,
+		arg.ViewRole,
+		arg.CreateRole,
+		arg.RespondRole,
+		arg.Agents,
+		arg.AgentRolesJson,
+		arg.UpdatedAt,
+		arg.UpdatedBy,
 	)
 	return err
 }
@@ -1652,6 +1767,44 @@ func (q *Queries) ListSpaceHumanPolicies(ctx context.Context, spaceID sql.NullSt
 	return items, nil
 }
 
+const listSpaceHumanTypePermissions = `-- name: ListSpaceHumanTypePermissions :many
+SELECT space_id, action_type, view_role, create_role, respond_role, agents, agent_roles_json, version, updated_at, updated_by FROM space_human_type_permissions WHERE space_id = ? ORDER BY action_type
+`
+
+func (q *Queries) ListSpaceHumanTypePermissions(ctx context.Context, spaceID string) ([]SpaceHumanTypePermission, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceHumanTypePermissions, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceHumanTypePermission{}
+	for rows.Next() {
+		var i SpaceHumanTypePermission
+		if err := rows.Scan(
+			&i.SpaceID,
+			&i.ActionType,
+			&i.ViewRole,
+			&i.CreateRole,
+			&i.RespondRole,
+			&i.Agents,
+			&i.AgentRolesJson,
+			&i.Version,
+			&i.UpdatedAt,
+			&i.UpdatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSpaceHumanTypes = `-- name: ListSpaceHumanTypes :many
 SELECT space_id, type_id, version_pin, label, default_priority, default_expiry_minutes, created_at, created_by FROM space_human_types WHERE space_id = ? ORDER BY type_id
 `
@@ -2099,6 +2252,44 @@ func (q *Queries) UpdateHumanTypeDraft(ctx context.Context, arg UpdateHumanTypeD
 		arg.Notes,
 		arg.UpdatedAt,
 		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateSpaceHumanTypePermission = `-- name: UpdateSpaceHumanTypePermission :execrows
+UPDATE space_human_type_permissions SET view_role = ?1, create_role = ?2, respond_role = ?3,
+  agents = ?4, agent_roles_json = ?5, version = version + 1, updated_at = ?6, updated_by = ?7
+WHERE space_id = ?8 AND action_type = ?9 AND version = ?10
+`
+
+type UpdateSpaceHumanTypePermissionParams struct {
+	ViewRole       string
+	CreateRole     string
+	RespondRole    string
+	Agents         string
+	AgentRolesJson string
+	Now            int64
+	By             string
+	SpaceID        string
+	ActionType     string
+	Version        int64
+}
+
+func (q *Queries) UpdateSpaceHumanTypePermission(ctx context.Context, arg UpdateSpaceHumanTypePermissionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSpaceHumanTypePermission,
+		arg.ViewRole,
+		arg.CreateRole,
+		arg.RespondRole,
+		arg.Agents,
+		arg.AgentRolesJson,
+		arg.Now,
+		arg.By,
+		arg.SpaceID,
+		arg.ActionType,
 		arg.Version,
 	)
 	if err != nil {

@@ -14,6 +14,8 @@ export function TaskPriority({ task }: { task: Task }) {
   return (
     <>
       {task.kind === 'incident' && <Badge color="owlRed" variant="filled">incident</Badge>}
+      {task.incident_proposed_by && <Badge color="owlRed" variant="outline" title={`Proposed by ${task.incident_proposed_by}; an operator confirms or dismisses it`}>incident proposed</Badge>}
+      {task.preempted_by && <Badge color="owlYellow" variant="light" title="An incident preempted this task (not a failure); it waits to resume">preempted</Badge>}
       {task.priority !== 'normal' && <Badge color={priorityColor[task.priority]} variant="outline">{task.priority}</Badge>}
     </>
   )
