@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -479,6 +480,11 @@ func (svc *Service) preparePayload(ctx context.Context, r db.Relocation) (proto.
 			rr := proto.RelocateRepo{Path: repo.Path, Remotes: repo.Remotes, Branch: repo.Branch, Head: repo.Head, Branches: repo.Branches,
 				Worktrees: []proto.ExportedWorktree{}}
 			for _, w := range repo.Worktrees {
+				// The report comes from the source node: a path outside the space folder is refused here as well as on
+				// the destination (security review SR-M02).
+				if !localSpacePath(w.Path) || !localSpacePath(repo.Path) {
+					return p, fmt.Errorf("the inspection report has an invalid path %q", w.Path)
+				}
 				rr.Worktrees = append(rr.Worktrees, proto.ExportedWorktree{Path: w.Path, Branch: w.Branch, Head: w.Head})
 			}
 			p.Repos = append(p.Repos, rr)
@@ -818,4 +824,11 @@ func (svc *Service) removeMemoryBlobs(id string) {
 	if left == 0 {
 		_ = os.Remove(dir)
 	}
+}
+
+// localSpacePath reports whether a slash-separated path reported by a node stays inside the space folder and outside
+// the harnesses' instances folder.
+func localSpacePath(p string) bool {
+	return p != "" && path.Clean(p) == p && !path.IsAbs(p) && p != ".." && !strings.HasPrefix(p, "../") &&
+		p != "instances" && !strings.HasPrefix(p, "instances/")
 }

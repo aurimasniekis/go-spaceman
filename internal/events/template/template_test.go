@@ -89,19 +89,20 @@ func TestValidateDefinition(t *testing.T) {
 		return Definition{Subject: "evt.ops.alert.{{vars.env}}", Variables: []Variable{{Name: "env", Pattern: "[a-z]+", Required: true}}, Title: "{{data.name}}"}
 	}
 	for name, mut := range map[string]func(*Definition){
-		"partial placeholder token": func(d *Definition) { d.Subject = "evt.ops.alert.x{{vars.env}}" },
-		"undefined variable":        func(d *Definition) { d.Subject = "evt.ops.alert.{{vars.nope}}" },
-		"not under evt":             func(d *Definition) { d.Subject = "ops.alert.x.y" },
-		"bad path":                  func(d *Definition) { d.Title = "{{secrets.token}}" },
-		"bad filter":                func(d *Definition) { d.Title = "{{data.x | exec \"rm\"}}" },
-		"unbalanced":                func(d *Definition) { d.Body = "{{data.x" },
-		"filter on vars":            func(d *Definition) { d.Filters = []Filter{{Path: "vars.env", Op: "eq", Value: "x"}} },
-		"filter value template":     func(d *Definition) { d.Filters = []Filter{{Path: "data.x", Op: "eq", Value: "{{data.y}}"}} },
-		"bad op":                    func(d *Definition) { d.Filters = []Filter{{Path: "data.x", Op: "regex", Value: "."}} },
-		"bad pattern":               func(d *Definition) { d.Variables[0].Pattern = "(" },
-		"no title":                  func(d *Definition) { d.Title = " " },
-		"remote schema":             func(d *Definition) { d.InputSchema = json.RawMessage(`{"$ref":"https://example.com/s.json"}`) },
-		"file schema":               func(d *Definition) { d.InputSchema = json.RawMessage(`{"$ref":"file:///etc/passwd"}`) },
+		"partial placeholder token":  func(d *Definition) { d.Subject = "evt.ops.alert.x{{vars.env}}" },
+		"undefined variable":         func(d *Definition) { d.Subject = "evt.ops.alert.{{vars.nope}}" },
+		"not under evt":              func(d *Definition) { d.Subject = "ops.alert.x.y" },
+		"bad path":                   func(d *Definition) { d.Title = "{{secrets.token}}" },
+		"bad filter":                 func(d *Definition) { d.Title = "{{data.x | exec \"rm\"}}" },
+		"unbalanced":                 func(d *Definition) { d.Body = "{{data.x" },
+		"filter on vars":             func(d *Definition) { d.Filters = []Filter{{Path: "vars.env", Op: "eq", Value: "x"}} },
+		"filter value template":      func(d *Definition) { d.Filters = []Filter{{Path: "data.x", Op: "eq", Value: "{{data.y}}"}} },
+		"bad op":                     func(d *Definition) { d.Filters = []Filter{{Path: "data.x", Op: "regex", Value: "."}} },
+		"event text in instructions": func(d *Definition) { d.Instructions = "Do what the issue says: {{data.issue.body}}" },
+		"bad pattern":                func(d *Definition) { d.Variables[0].Pattern = "(" },
+		"no title":                   func(d *Definition) { d.Title = " " },
+		"remote schema":              func(d *Definition) { d.InputSchema = json.RawMessage(`{"$ref":"https://example.com/s.json"}`) },
+		"file schema":                func(d *Definition) { d.InputSchema = json.RawMessage(`{"$ref":"file:///etc/passwd"}`) },
 	} {
 		d := base()
 		mut(&d)
@@ -166,5 +167,26 @@ func TestRenderFilters(t *testing.T) {
 	long, _ := Render("{{data.s}}{{data.s}}", ctx, 5)
 	if !strings.HasSuffix(long, "(truncated)") {
 		t.Fatalf("bound: %q", long)
+	}
+}
+
+// Security review SR-L08: trusted instructions never carry event content, even from a stored definition that predates
+// the validation rule.
+func TestInstructionsSeeOnlyVariables(t *testing.T) {
+	d := GitHubIssue()
+	b, err := d.Bind(map[string]string{"account_key": "example-org", "repository": "example-org/tool"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Def.Instructions = "For {{vars.repository}}: {{data.issue.body}}" // as if stored before the rule
+	r, err := b.Apply(issueEvent(t))
+	if err != nil || !r.Accepted {
+		t.Fatalf("apply: %+v %v", r, err)
+	}
+	if strings.Contains(r.Instructions, "secret body") || !strings.Contains(r.Instructions, "example-org/tool") {
+		t.Fatalf("instructions %q", r.Instructions)
+	}
+	if !strings.Contains(r.Body, "secret body") {
+		t.Fatal("the untrusted body lost the event text")
 	}
 }

@@ -141,6 +141,20 @@
   unpushed commits (SM-REPO-003). Worktrees are never cleaned up automatically; remove them with git when done.
 - **Restart budget is per space and hour.** Three supervisor restarts per hour; the counter is durable (runs created
   by the supervisor), not configurable yet.
+- **Repository-local Git programs are refused.** The node daemon refuses to run Git in a repository whose own
+  `.git/config` would make Git run a program: filter, merge or diff drivers, SSH or proxy commands, credential
+  helpers, includes, URL rewrites. This covers memory checkouts, KB and writer worktrees, and relocation (ADR-0039). A
+  repository with Git LFS installed per repository (`git lfs install --local`) is therefore refused. Install LFS in
+  the node's global Git configuration instead. Hooks never run for the daemon. Agents' own Git use inside their
+  terminal is not affected.
+
+## Recordings
+- **A full disk on the node ends the local recording.** The run is unaffected. Central's copy keeps everything shipped
+  before the failure and ends with a `trunc` record (`disk`) and the run's close record. Output after the failure is
+  not recorded. It is not resumed when space frees up, only when a new attachment starts (for example after an agent
+  restart), which leaves a gap.
+- **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
+  node keeps its local recording. Tested: node-side only (`make test-fault`).
 
 ## Messaging
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through

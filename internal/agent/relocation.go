@@ -410,7 +410,21 @@ func (a *Agent) relocExport(ctx context.Context, g *projectGit, spaceID string, 
 func safeRel(rel string) bool {
 	c := filepath.Clean(filepath.FromSlash(rel))
 	return rel != "" && c == filepath.FromSlash(rel) && !filepath.IsAbs(c) && c != ".." && !strings.HasPrefix(c, ".."+string(filepath.Separator)) &&
-		c != "instances" && !strings.HasPrefix(c, "instances"+string(filepath.Separator))
+		!underReserved(c)
+}
+
+// reservedDirs are the space folder's top-level folders that hold the harnesses' own state (native configuration and
+// transcripts per instance): nothing a relocation carries may be placed in them or replace them, whatever its type.
+var reservedDirs = []string{"instances"}
+
+// underReserved reports whether a cleaned relative path is a reserved folder or inside one (extra adds more names).
+func underReserved(c string, extra ...string) bool {
+	for _, d := range append(append([]string{}, reservedDirs...), extra...) {
+		if c == d || strings.HasPrefix(c, d+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func digest(path string) (int64, string, error) {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
@@ -88,8 +89,15 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 			Summary: "The next eligible task and why higher tasks were skipped", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				Record bool `query:"record" doc:"Store the decision for inspection"`
+				Record bool `query:"record" doc:"Store the decision for inspection (needs queue:write)"`
 			}) (*struct{ Body *queue.Selection }, error) {
+				// Storing the decision is a write: a viewer may ask what is next, not record it (security review SR-L07).
+				if in.Record {
+					p := PrincipalFrom(ctx)
+					if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.QueueWrite) {
+						return nil, d.fail(ctx, "queue.next", apperr.New(apperr.CodeForbidden, "recording a decision needs queue:write"))
+					}
+				}
 				s, err := svc.Next(ctx, Actor(ctx), in.SpaceID, in.Record)
 				if err != nil {
 					return nil, d.fail(ctx, "queue.next", err)

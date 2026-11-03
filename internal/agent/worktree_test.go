@@ -80,3 +80,46 @@ func TestPrepareWorktree(t *testing.T) {
 		t.Fatal("unknown base must fail")
 	}
 }
+
+// Security review SR-M03/SR-M04: an agent that can write a repository's .git cannot make the node daemon run its code
+// when the daemon prepares a writer worktree: hooks are not run, and repository configuration that names a program
+// (here a clean/smudge filter) makes the daemon refuse git there.
+func TestPrepareWorktreeRunsNoRepositoryCode(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := context.Background()
+	space := t.TempDir()
+	repo := filepath.Join(space, "repos", "api")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-q", "-m", "init")
+	marker := filepath.Join(space, "ran")
+	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o700); err != nil { //nolint:gosec // the hook under test
+		t.Fatal(err)
+	}
+	if _, err := prepareWorktree(ctx, space, proto.Worktree{Repo: "repos/api", Branch: "spaceman/tsk-hook"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the repository's post-checkout hook ran in the node daemon")
+	}
+	gitRun(t, repo, "config", "filter.evil.smudge", "touch "+marker)
+	if err := os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("* filter=evil\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := prepareWorktree(ctx, space, proto.Worktree{Repo: "repos/api", Branch: "spaceman/tsk-filter"})
+	if err == nil || !strings.Contains(err.Error(), "filter.evil.smudge") {
+		t.Fatalf("a repository with a filter driver: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the repository's filter ran in the node daemon")
+	}
+}

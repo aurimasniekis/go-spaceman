@@ -312,6 +312,13 @@ func TestTools(t *testing.T) {
 	var other Message
 	must(t, call(pc, "spaceman_message_send", map[string]any{"to": "operators", "subject": "FYI"}, &other))
 	code(t, call(pw, "spaceman_message_resolve", map[string]any{"message_id": other.ID}, nil), apperr.CodeForbidden)
+	// Security review SR-L05: a run that is not a recipient cannot reply to (and so resolve) another's request.
+	var opsReq Message
+	must(t, call(pc, "spaceman_message_send", map[string]any{"to": "operators", "subject": "May I deploy?", "request": true}, &opsReq))
+	code(t, call(pw, "spaceman_message_reply", map[string]any{"message_id": opsReq.ID, "body": "sure"}, nil), apperr.CodeForbidden)
+	if got, _ := f.svc.Get(f.ctx, "spc_a", opsReq.ID); got.State == Resolved {
+		t.Fatal("a non-recipient's reply resolved the request")
+	}
 	must(t, call(pc, "spaceman_message_resolve", map[string]any{"message_id": other.ID, "resolution": "obsolete"}, nil))
 	sys, _, err := f.svc.Send(f.ctx, audit.System, "spc_a", From{Kind: "system"}, SendInput{To: "control", Kind: "notification", Subject: "New inbox item"})
 	must(t, err)

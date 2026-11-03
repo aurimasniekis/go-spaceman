@@ -123,6 +123,7 @@ func (svc *Service) login(ctx context.Context, in LoginInput) (*LoginResult, err
 		return nil, ErrLocalLoginDisabled
 	}
 	acctKey, ipK := throttleKeyAccount(in.Email), ipKey(in.Meta.IP)
+	defer svc.attempts.lock(acctKey)()
 	if t, err := svc.throttled(ctx, acctKey, ipK); err != nil {
 		return nil, err
 	} else if t {
@@ -150,7 +151,7 @@ func (svc *Service) login(ctx context.Context, in LoginInput) (*LoginResult, err
 	if err := svc.acquire(ctx); err != nil {
 		return nil, err
 	}
-	ok, verr := VerifyPassword(pw, phc)
+	ok, verr := loginVerify(pw, phc)
 	svc.release()
 	success := found && ok && verr == nil && perr == nil && opRow.Enabled == 1
 	if !success {
@@ -288,6 +289,7 @@ func accountKey(op *User) string {
 // counts as a failure and is audited (SR-05).
 func (svc *Service) checkCurrentPassword(ctx context.Context, p *Principal, password, ip, purpose string) error {
 	key := accountKey(p.User)
+	defer svc.attempts.lock(key)()
 	if t, err := svc.throttled(ctx, key); err != nil {
 		return err
 	} else if t {

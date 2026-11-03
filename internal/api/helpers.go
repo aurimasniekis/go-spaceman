@@ -11,6 +11,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
@@ -86,6 +87,10 @@ func Idempotent[O any](ctx context.Context, d *Deps, op string, key IdempotencyK
 	}
 	sum := sha256.Sum256(append([]byte(op+"\x00"), body...))
 	principal := principalKeyOf(PrincipalFrom(ctx))
+	// Concurrent requests with the same key (a client retrying while its first attempt is still running) run one at
+	// a time, so the second sees the first one's stored result instead of creating a duplicate (security review
+	// SR-L01). One central owns the database (SM-INV-001), so an in-process lock suffices.
+	defer idempotencyLocks.lock(principal + "\x00" + op + "\x00" + k)()
 	now := d.now()
 	row, err := d.Store.R().GetIdempotency(ctx, db.GetIdempotencyParams{Principal: principal, Operation: op, Key: k, ExpiresAt: now.UnixMicro()})
 	switch {
@@ -120,6 +125,42 @@ func Idempotent[O any](ctx context.Context, d *Deps, op string, key IdempotencyK
 	})
 	return o, false, nil
 }
+
+// keyLocks are mutexes by key, created on demand and dropped when unused.
+type keyLocks struct {
+	mu   sync.Mutex
+	keys map[string]*keyLock
+}
+
+type keyLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (l *keyLocks) lock(key string) func() {
+	l.mu.Lock()
+	if l.keys == nil {
+		l.keys = map[string]*keyLock{}
+	}
+	e := l.keys[key]
+	if e == nil {
+		e = &keyLock{}
+		l.keys[key] = e
+	}
+	e.refs++
+	l.mu.Unlock()
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		l.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(l.keys, key)
+		}
+		l.mu.Unlock()
+	}
+}
+
+var idempotencyLocks keyLocks
 
 func principalKeyOf(p *auth.Principal) string {
 	switch {

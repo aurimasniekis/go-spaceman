@@ -1196,6 +1196,62 @@
   - No Terraform resources yet (M5-01 phase 2); no real-harness evidence: the simulated suite and the dev stack (stub
     harness) only.
 
+### ADR-0039 — Security review fixes: serialized credential attempts, daemon Git that runs no repository code, contained relocation paths (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (M4-08).
+- **Context:** The M4-08 review (SECURITY_REVIEW.md) found four medium and fourteen low issues. The fixes below change
+  security behaviour. All of them tighten it, and none relaxes a requirement, but some refuse things that worked before,
+  so they are recorded as a **security-relevant change**.
+- **Decision:**
+  - **Credential attempts are serialized per throttle key** (`internal/auth/attempts.go`): password login (account
+    key), the current-password check (account key), every second-factor check and TOTP confirmation (MFA key). The
+    throttle check, the verification and the recorded failure therefore act as one step, and a burst cannot outrun
+    the throttle (T-28). The lock is in-process because one central owns the database (SM-INV-001). Logins from one
+    IP to different accounts are not serialized, so a shared NAT does not queue unrelated users.
+  - **Idempotent requests are serialized per (principal, operation, key)**, so concurrent retries create once (SR-L01).
+  - **The node daemon's Git runs no repository code** (T-26):
+    - Writer worktrees are prepared with `core.hooksPath=/dev/null`, `core.fsmonitor=false` and the scrubbed Git
+      environment, as relocation already was.
+    - Before any Git command in an existing repository (memory checkouts, KB worktrees, writer worktrees, relocation),
+      the daemon lists the repository's own configuration (scopes `local` and `worktree`). It refuses to run when a key
+      would make Git run a program or reach an unchosen transport: filter, merge or diff drivers, `diff.external`,
+      `core.sshCommand`, `core.gitProxy`, `core.askPass`, `core.pager`, `core.editor`, `core.alternateRefsCommand`,
+      `sequence.editor`, `include.path`, `includeIf.*.path`, `credential.*`, `uploadpack.packObjectsHook`,
+      `remote.*.uploadpack`, `remote.*.receivepack`, `remote.*.vcs`, `gpg.*program`, `protocol.*allow`,
+      `url.*.insteadOf` / `pushInsteadOf` and `ssh.variant`.
+    - The node's global and system configuration are the node operator's and stay in effect (SM-REPO-005).
+  - **Relocation paths are contained** (T-27):
+    - Central refuses inspection reports with worktree or repository paths outside the space folder.
+    - The destination refuses worktree paths outside the space folder, in `instances/` or `dreams/`, or through a
+      symlinked parent (checked before and after creating parents), and refuses a worktree folder that already exists.
+    - The loose-file archive re-checks each symlink when it creates it and refuses `instances` whatever its type. The
+      relocation walk skips `instances` whatever its type.
+  - **Smaller authorization fixes:**
+    - Purging a space removes its grants through the auth service, which reloads the engine after commit (SR-L02).
+    - Only a recipient may reply to a message (SR-L05).
+    - Deleting a transcript needs re-authentication with MFA, as deleting a recording does (SR-L06).
+    - Recording a queue decision needs `queue:write` (SR-L07).
+    - Event-template instructions may use only the template's variables (`vars.*` placeholders), and are rendered with the variables alone (SR-L08, T-29).
+  - **Fault behaviour** found by the fault suite (`make test-fault`):
+    - A recording write failure (a full disk) hands its `trunc` record (`disk`) and the run's close record to the
+      shipper, so central's copy ends visibly. The quota `trunc` record is shipped too.
+    - A writer resuming after local loss continues above central's acknowledged sequence.
+    - A stopped agent ends its recorders.
+    - A storage-busy API error answers `Retry-After: 1`.
+- **Alternatives:**
+  - For the throttle: a database reservation of the attempt before verifying. It is equivalent with one central and
+    costs a write transaction per attempt, including successful ones.
+  - For Git: disabling filters per name with `-c filter.<name>.clean=`. Names are unbounded, and this does not cover
+    merge drivers, includes or URL rewrites.
+  - Moving the memory checkouts' Git directories out of the agent's reach is a larger change to ADR-0025 and remains an
+    option.
+- **Consequences:**
+  - A repository whose `.git/config` defines a filter, such as Git LFS installed with `git lfs install --local`, is
+    refused for daemon Git operations: memory checkpoints of that checkout, worktree preparation and relocation. The
+    error names the key. Installing LFS in the node's global configuration keeps it working. Recorded in LIMITATIONS.md.
+  - One extra `git config` process runs before each daemon Git command in a repository.
+  - Concurrent logins to one account wait for each other (each verification takes one Argon2id hash).
+  - The open low and info findings, with their follow-ups, are listed in SECURITY_REVIEW.md.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

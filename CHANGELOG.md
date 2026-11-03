@@ -19,6 +19,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `relocation_stop_runs`, `relocation_recovery`, `relocation_retain_days`, `relocation_timeout`) instead of being refused.
 
 ### Security
+- Security review (M4-08, `docs/SECURITY_REVIEW.md`, ADR-0039). The fixes:
+  - **Login and MFA throttles hold under parallel attempts.** Attempts on one account or second factor are serialized,
+    so a burst can no longer try many TOTP codes in one throttle window.
+  - **The node daemon no longer runs code from repositories agents can write.** Writer worktrees are prepared with
+    hooks and fsmonitor disabled. Git refuses to run in a repository whose own configuration defines a program, such as
+    a filter, merge or diff driver, SSH or proxy command, credential helper, include or URL rewrite. This covers memory
+    checkouts, KB and writer worktrees, and relocation.
+  - **Relocation keeps everything inside the destination's space folder.** Worktree paths are validated centrally and
+    on the destination and may not pass through a symlink. Chained symlinks in the loose-file archive and a symlink in
+    place of `instances/` are refused.
+  - **Purging a space now forgets its grants immediately.** The authorization engine used to keep them in memory until
+    its next reload.
+  - **Concurrent requests with one `Idempotency-Key` create the resource once.**
+  - **Agent tools:** only a recipient may reply to a message, and so resolve it.
+  - **API:** deleting a transcript needs re-authentication with MFA, like deleting a recording. Recording a queue
+    decision (`GET …/queue/next?record=true`) needs `queue:write`.
+  - **Event templates:** instructions may only use the template's variables (`vars.*` placeholders) and never contain event text.
+  - **Documentation:** the threat model and the Security page now state every SM-SEC-001 boundary, and
+    `make traceability` checks that they keep doing so.
 - Cross-space requests (SM-XSPACE-001…003, ADR-0038): a space's control can ask another space a question, delegate
   work to it or ask one of its knowledge bases, only as far as both spaces allow. Each space sets, per peer, what it
   accepts (discovery, questions, delegation, knowledge per KB, what its replies disclose, quotas) and what its own control
@@ -45,6 +64,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   history and items they create are marked.
 
 ### Fixed
+- Recordings on a full disk: the run continues as before. Central's copy now ends with a `trunc` record (`disk`) and
+  the run's close record instead of stopping silently. A quota truncation also reaches central's copy, and a recording
+  resumed after a local loss continues above central's sequence numbers.
+- A stopped node agent ends its recorders. In-process restarts used to leave two recorders on one run.
+- A storage-busy API error (503 `unavailable`) now carries `Retry-After`.
+- `make test-pulse` ran a directory that did not exist. It now runs the Pulse/NATS integration tests. New
+  `make test-fault` suite (`test/fault`).
+- Two tests that failed under heavy machine load (`TestRunKickAndRetryTimer`, `TestLoginThrottlingAndEnumeration`) now
+  wait for the right condition and check that the dummy hash runs, without weakening what they assert.
 - Live updates: a browser whose change-feed position is ahead of the server (after a restore from backup) now gets a gap
   and reloads instead of silently skipping changes.
 - A space's goals and standing instructions now reach every run's system prompt (the launch dialog already said so).

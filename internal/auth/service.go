@@ -53,6 +53,8 @@ type Service struct {
 	opts  Options
 	sem   chan struct{}
 	rev   *Revocations
+	// attempts serializes credential attempts per throttle key (attempts.go).
+	attempts attemptLocks
 }
 
 // New returns the user authentication service. az is reloaded after every committed grant change.
@@ -313,6 +315,23 @@ func (svc *Service) insertGrants(ctx context.Context, tx *store.Tx, subject stri
 		}
 	}
 	if len(grants) > 0 {
+		svc.reloadAfterCommit(ctx, tx)
+	}
+	return nil
+}
+
+// RemoveDomainGrants deletes every grant in one domain (a purged space) inside the caller's transaction and, once it
+// commits, reloads the authorization engine and has open streams re-check their access, exactly as any other grant
+// change does. Without the reload the engine kept the deleted grants in memory until the next unrelated reload.
+func (svc *Service) RemoveDomainGrants(ctx context.Context, tx *store.Tx, domain string) error {
+	if domain == "" || domain == "*" {
+		return apperr.New(apperr.CodeInvalid, "only a space's grants can be removed this way")
+	}
+	n, err := tx.Q.DeleteRoleGrantsByDomain(ctx, domain)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
 		svc.reloadAfterCommit(ctx, tx)
 	}
 	return nil

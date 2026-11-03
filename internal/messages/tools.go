@@ -36,6 +36,11 @@ func recipient(p *fleet.RunPrincipal) Recipient {
 	return Recipient{SpaceID: p.SpaceID, RunID: p.RunID, Role: p.Role, Control: p.Kind == agenttools.KindControl}
 }
 
+// isRecipient reports whether the calling run is among a message's recipients (its run, its role, or control).
+func isRecipient(m *Message, p *fleet.RunPrincipal) bool {
+	return (m.ToKind == "run" && m.ToID == p.RunID) || (m.ToKind == "role" && m.ToID == p.Role) || (m.ToKind == "control" && p.Kind == agenttools.KindControl)
+}
+
 func agentActor(p *fleet.RunPrincipal) audit.Actor {
 	return audit.Actor{Type: audit.ActorAgent, ID: p.RunID}
 }
@@ -65,6 +70,11 @@ func Tools(svc *Service) func(r *agenttools.Registry) {
 				if err != nil {
 					return nil, err
 				}
+				// Only a recipient replies; a reply resolves a request, so another run of the space must not close
+				// requests it was never part of (security review SR-L05).
+				if !isRecipient(orig, p) {
+					return nil, apperr.New(apperr.CodeForbidden, "only a recipient of a message may reply to it")
+				}
 				to := "operators"
 				switch orig.FromKind {
 				case "run":
@@ -90,8 +100,7 @@ func Tools(svc *Service) func(r *agenttools.Registry) {
 					return nil, err
 				}
 				sender := m.FromKind == "run" && m.FromID == p.RunID
-				rcpt := (m.ToKind == "run" && m.ToID == p.RunID) || (m.ToKind == "role" && m.ToID == p.Role) || (m.ToKind == "control" && p.Kind == agenttools.KindControl)
-				if !sender && !rcpt {
+				if !sender && !isRecipient(m, p) {
 					return nil, apperr.New(apperr.CodeForbidden, "only the sender or a recipient may resolve a message")
 				}
 				return svc.Resolve(ctx, agentActor(p), p.SpaceID, in.MessageID, in.Resolution)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -268,32 +269,72 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 	}
 	op, _ := f.s.R().GetUserByEmail(f.ctx, nullStr("admin@example.com"))
 	must(t, f.svc.ClearThrottle(f.ctx, audit.System, op.ID))
-	// Timing: unknown accounts do comparable work (dummy hash). Medians must be within 25% (Hallpass HP-AUTH-005).
+	// Unknown accounts do the same work as known ones: exactly one Argon2id verification, against a hash with the
+	// same parameters (memory, time, threads, key length) as the real account's (HP-AUTH-005). This is the
+	// deterministic check; the timing comparison below confirms it on the clock.
+	var verified []string
+	loginVerify = func(pw []byte, phc string) (bool, error) {
+		verified = append(verified, phc)
+		return VerifyPassword(pw, phc)
+	}
+	t.Cleanup(func() { loginVerify = VerifyPassword })
+	params := func(phc string) string {
+		parts := strings.Split(phc, "$")
+		if len(parts) != 6 {
+			t.Fatalf("not a PHC hash: %d parts", len(parts))
+		}
+		return parts[1] + "$" + parts[2] + "$" + parts[3] + "$" + strconv.Itoa(len(parts[4])) + "$" + strconv.Itoa(len(parts[5]))
+	}
+	f.clk.Advance(time.Hour)
+	_ = bad("admin@example.com")
+	_ = bad("nobody@example.com")
+	_ = bad("not an email")
+	if len(verified) != 3 {
+		t.Fatalf("password verifications = %d, want one per attempt (3)", len(verified))
+	}
+	if verified[1] == verified[0] || verified[1] != dummyHash() || verified[2] != dummyHash() {
+		t.Fatal("an unknown account is not verified against the dummy hash")
+	}
+	if params(verified[0]) != params(verified[1]) {
+		t.Fatalf("dummy hash parameters %s differ from the account's %s", params(verified[1]), params(verified[0]))
+	}
+	loginVerify = VerifyPassword
+	must(t, f.svc.ClearThrottle(f.ctx, audit.System, op.ID))
+
+	// Timing: medians of interleaved attempts must be within 25% (Hallpass HP-AUTH-005). Interleaving makes load drift
+	// affect both kinds alike; a machine under very heavy load (load average above 100 was seen) can still skew one
+	// round, so up to three rounds are measured and one in range passes. A missing dummy hash would make unknown
+	// accounts orders of magnitude faster in every round, which the check above also rules out.
 	if testing.Short() {
 		return
 	}
-	// Interleave the two kinds of attempts so load drift on the machine (CI runners) affects both alike.
-	var kd, ud []time.Duration
-	for i := range 21 {
-		for _, email := range []string{"admin@example.com", "nobody@example.com"} {
-			f.clk.Advance(time.Hour)
-			start := time.Now()
-			_, _ = f.svc.Login(f.ctx, LoginInput{Email: email, Password: "wrong password!!", Meta: SessionMeta{IP: "203.0.114." + itoa(i)}})
-			if email == "nobody@example.com" {
-				ud = append(ud, time.Since(start))
-			} else {
-				kd = append(kd, time.Since(start))
+	round := func(r int) (known, unknown time.Duration) {
+		var kd, ud []time.Duration
+		for i := range 21 {
+			for _, email := range []string{"admin@example.com", "nobody@example.com"} {
+				f.clk.Advance(time.Hour)
+				start := time.Now()
+				_, _ = f.svc.Login(f.ctx, LoginInput{Email: email, Password: "wrong password!!", Meta: SessionMeta{IP: "203.0." + itoa(114+r) + "." + itoa(i)}})
+				if email == "nobody@example.com" {
+					ud = append(ud, time.Since(start))
+				} else {
+					kd = append(kd, time.Since(start))
+				}
 			}
 		}
+		slices.Sort(kd)
+		slices.Sort(ud)
+		return kd[len(kd)/2], ud[len(ud)/2]
 	}
-	slices.Sort(kd)
-	slices.Sort(ud)
-	known, unknown := kd[len(kd)/2], ud[len(ud)/2]
-	ratio := float64(known) / float64(unknown)
-	t.Logf("median known=%s unknown=%s ratio=%.2f", known, unknown, ratio)
-	if ratio < 0.75 || ratio > 1.33 {
-		t.Fatalf("login timing reveals account existence: known=%s unknown=%s", known, unknown)
+	for r := range 3 {
+		known, unknown := round(r)
+		ratio := float64(known) / float64(unknown)
+		t.Logf("round %d: median known=%s unknown=%s ratio=%.2f", r, known, unknown, ratio)
+		if ratio >= 0.75 && ratio <= 1.33 {
+			return
+		}
 	}
+	t.Fatal("login timing reveals account existence in every round")
 }
 
 func TestSessionLifecycle(t *testing.T) {

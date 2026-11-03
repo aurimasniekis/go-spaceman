@@ -134,9 +134,13 @@ test-fault:
 test-real:
 	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE $(GO) test -tags real -count=1 -timeout 30m ./...
 
-# Pulse/NATS integration against an embedded nats-server and the real go-pulse SDK.
+# Pulse/NATS integration against an embedded nats-server (internal/events/pulsetest, operator/JWT mode, JetStream) and
+# the real go-pulse SDK: ingestion (durable consumers, dedup, fan-out, quarantine, cursors, replay, loop guard), outbox
+# publication, and the central end-to-end paths. These tests also run in `make test`; this target runs just them,
+# uncached. Simulated evidence: a real pulsed deployment is not involved (docs/TEST_STRATEGY.md).
 test-pulse:
-	$(GO) test -tags pulse -count=1 -timeout 10m ./test/pulse/
+	$(GO) test -count=1 -timeout 10m ./internal/events/... ./internal/outbox/
+	$(GO) test -count=1 -timeout 10m -run '^(TestEventsOverHTTP|TestOutboundEventsOverHTTP|TestRunLifecycleEvents|TestBackupRestoreEndToEnd)$$' ./internal/app/
 
 # ---- Docs site and screenshots ----
 .PHONY: site site-dev site-check screenshots

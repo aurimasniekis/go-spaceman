@@ -71,6 +71,10 @@ func HashPassword(pw []byte, p Params) (string, error) {
 
 var errBadHash = errors.New("malformed password hash")
 
+// loginVerify is the password check of Login, for known and unknown accounts alike. Tests replace it to observe that an
+// unknown account is verified against the dummy hash with the same parameters as a real one (HP-AUTH-005).
+var loginVerify = VerifyPassword
+
 // VerifyPassword checks pw against a PHC hash in constant time.
 func VerifyPassword(pw []byte, phc string) (bool, error) {
 	parts := strings.Split(phc, "$")

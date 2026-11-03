@@ -282,3 +282,75 @@ func writeTar(t *testing.T, path, name string) {
 	_ = tw.Close()
 	_ = zw.Close()
 }
+
+func writeLinks(t *testing.T, path string, links [][2]string) {
+	t.Helper()
+	f, err := os.Create(path) //nolint:gosec // test path
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zw := gzip.NewWriter(f)
+	tw := tar.NewWriter(zw)
+	for _, l := range links {
+		if err := tw.WriteHeader(&tar.Header{Name: l[0], Typeflag: tar.TypeSymlink, Linkname: l[1], Mode: 0o777}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = tw.Close()
+	_ = zw.Close()
+}
+
+// Security review SR-L04: symlinks of the same archive cannot be chained to write outside the space folder, and a
+// symlink cannot take the place of the harnesses' instances folder.
+func TestReadLooseRefusesChainedAndReservedLinks(t *testing.T) {
+	outside := t.TempDir()
+	chained := filepath.Join(t.TempDir(), "chained.tar.gz")
+	writeLinks(t, chained, [][2]string{{"a", outside}, {"a/b", "/etc/passwd"}})
+	if _, err := readLoose(t.TempDir(), chained, 1<<20); err == nil {
+		t.Fatal("a symlink inside another symlink of the archive was created")
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "b")); err == nil {
+		t.Fatal("the archive wrote outside the space folder")
+	}
+	reserved := filepath.Join(t.TempDir(), "reserved.tar.gz")
+	writeLinks(t, reserved, [][2]string{{"instances", outside}})
+	if _, err := readLoose(t.TempDir(), reserved, 1<<20); err == nil {
+		t.Fatal("a symlink named instances was accepted")
+	}
+}
+
+// Security review SR-M02: worktree paths from the source's report must stay inside the destination's space folder and
+// never pass through a symlink (for example one the repository just checked out committed).
+func TestAddWorktreesRefusesEscapes(t *testing.T) {
+	g, err := newProjectGit()
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	ctx := context.Background()
+	space := t.TempDir()
+	repo := filepath.Join(space, "proj")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(repo, "README.md"), "x")
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "-q", "-m", "init")
+	gitRun(t, repo, "branch", "side")
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(repo, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"../escape", "/abs/path", "instances/ins_1/x", "dreams/run_x", "proj/sub/git"} {
+		if err := g.addWorktrees(ctx, space, repo, []proto.ExportedWorktree{{Path: p, Branch: "side"}}); err == nil {
+			t.Errorf("worktree path %q accepted", p)
+		}
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Fatal("a worktree was created outside the space folder")
+	}
+	if err := g.addWorktrees(ctx, space, repo, []proto.ExportedWorktree{{Path: "worktrees/side", Branch: "side"}}); err != nil {
+		t.Fatalf("a normal worktree path: %v", err)
+	}
+}

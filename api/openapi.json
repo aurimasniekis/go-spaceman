@@ -21605,12 +21605,12 @@
             }
           },
           {
-            "description": "Store the decision for inspection",
+            "description": "Store the decision for inspection (needs queue:write)",
             "explode": false,
             "in": "query",
             "name": "record",
             "schema": {
-              "description": "Store the decision for inspection",
+              "description": "Store the decision for inspection (needs queue:write)",
               "type": "boolean"
             }
           }

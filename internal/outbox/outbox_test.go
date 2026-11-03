@@ -460,7 +460,8 @@ func (d *countingDialer) dial(context.Context) (Publisher, func(), error) {
 
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// Generous: the conditions are reached in milliseconds, but a loaded machine can stall the relay goroutine.
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -485,11 +486,16 @@ func TestRunKickAndRetryTimer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// The first publish fails; the retry timer (not another kick) publishes it.
-	eventually(t, "published after retry", func() bool { return d.pub.count() == 1 })
+	// The first publish fails; the retry timer (not another kick) publishes it. The publisher sees the event before the
+	// relay marks the row published in its own transaction, so wait for the row too: under heavy load that window was
+	// long enough for a status read in between to still count the event as pending.
+	eventually(t, "published after retry and marked", func() bool {
+		st, err := o.Status(ctx)
+		return err == nil && d.pub.count() == 1 && st.Pending == 0
+	})
 	st, _ := o.Status(ctx)
-	if st.FailedSinceStart != 1 || st.Pending != 0 {
-		t.Fatalf("status %+v", st)
+	if st.FailedSinceStart != 1 || st.Pending != 0 || d.pub.count() != 1 {
+		t.Fatalf("status %+v, published %d", st, d.pub.count())
 	}
 	cancel()
 	<-done

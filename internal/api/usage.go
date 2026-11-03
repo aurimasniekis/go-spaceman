@@ -11,11 +11,12 @@ import (
 )
 
 // UsageRules are the authorization rules of the usage and transcript operations. Transcripts are as sensitive as
-// recordings: reading needs recording:read, deleting recording:delete.
+// recordings: reading needs recording:read, deleting recording:delete with a recent re-authentication and MFA.
 var UsageRules = map[string]Rule{
-	"get-run-usage":     InSpace(authz.RunRead),
-	"get-space-usage":   InSpace(authz.RunRead),
-	"delete-transcript": InSpace(authz.RecordingDelete),
+	"get-run-usage":   InSpace(authz.RunRead),
+	"get-space-usage": InSpace(authz.RunRead),
+	// Deleting a transcript is as irreversible as deleting a recording, so it needs the same step-up (SR-L06).
+	"delete-transcript": {Perm: authz.RecordingDelete, Space: true, Reauth: true, MFA: true},
 }
 
 // RegisterUsage registers the usage operations.

@@ -14,6 +14,8 @@ const docPages: Record<string, string> = {
   SCREENSHOTS: '/development/screenshots',
   GOAL: repo + '/blob/main/docs/GOAL.md',
   PLAN: repo + '/blob/main/docs/PLAN.md',
+  SECURITY_REVIEW: repo + '/blob/main/docs/SECURITY_REVIEW.md',
+  TEST_STRATEGY: repo + '/blob/main/docs/TEST_STRATEGY.md',
 };
 
 export default withMermaid(

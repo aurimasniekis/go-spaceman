@@ -14,10 +14,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
@@ -61,7 +63,22 @@ func gitEnv(extra ...string) []string {
 	return append(env, append([]string{"GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}, extra...)...)
 }
 
+// runEnv runs git in dir; inside an existing repository it first refuses repository configuration that would run a
+// program (memory.UnsafeConfig), because agents can write the repositories' .git.
 func (g *projectGit) runEnv(ctx context.Context, dir string, timeout time.Duration, env []string, args ...string) (string, error) {
+	if len(args) > 0 && memory.Guarded(args[0]) {
+		list, err := g.rawEnv(ctx, dir, timeout, nil, "config", "--list", "--name-only", "--show-scope")
+		if err != nil {
+			return "", err
+		}
+		if err := memory.UnsafeConfig(list, true); err != nil {
+			return "", err
+		}
+	}
+	return g.rawEnv(ctx, dir, timeout, env, args...)
+}
+
+func (g *projectGit) rawEnv(ctx context.Context, dir string, timeout time.Duration, env []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, g.bin, append(append([]string{}, safeGitOpts...), args...)...) //nolint:gosec // fixed git subcommands; validated arguments
@@ -150,8 +167,8 @@ func walkSpace(space string) (spaceLayout, error) {
 		}
 		for _, e := range ents {
 			child := filepath.Join(rel, e.Name())
-			if rel == "" && e.Name() == "instances" && e.IsDir() {
-				continue
+			if rel == "" && slices.Contains(reservedDirs, e.Name()) {
+				continue // the harnesses' own state, whatever its type (a planted symlink too), is never carried
 			}
 			if rel == "" && strings.HasPrefix(e.Name(), ".spaceman-") {
 				continue // SpaceMan's own markers
@@ -555,9 +572,26 @@ func (g *projectGit) setUpstream(ctx context.Context, dir string, b proto.Branch
 
 func (g *projectGit) addWorktrees(ctx context.Context, space, dir string, wts []proto.ExportedWorktree) error {
 	for _, w := range wts {
-		wdir := filepath.Join(space, filepath.FromSlash(w.Path))
+		// The path comes from the source node's report. It must stay inside the space folder, outside its reserved
+		// folders, and must not pass through a symlink: the repository just checked out may contain committed
+		// symlinks, and git would create the worktree wherever one points (security review SR-M02).
+		if !safeRel(w.Path) || underReserved(filepath.Clean(filepath.FromSlash(w.Path)), "dreams") {
+			return fmt.Errorf("invalid worktree path %q", w.Path)
+		}
+		rel := filepath.FromSlash(w.Path)
+		if err := noSymlinkParents(space, rel); err != nil {
+			return fmt.Errorf("worktree %s: %w", w.Path, err)
+		}
+		wdir := filepath.Join(space, rel)
+		if _, err := os.Lstat(wdir); err == nil {
+			return fmt.Errorf("worktree %s: the folder already exists on the destination", w.Path)
+		}
 		if err := os.MkdirAll(filepath.Dir(wdir), 0o700); err != nil {
 			return err
+		}
+		// MkdirAll may have created parents; re-check that none of them is (or became) a symlink.
+		if err := noSymlinkParents(space, rel); err != nil {
+			return fmt.Errorf("worktree %s: %w", w.Path, err)
 		}
 		args := []string{"worktree", "add", "--quiet"}
 		if w.Branch != "" {
@@ -738,7 +772,7 @@ func readLoose(space, archive string, maxBytes int64) (int, error) {
 		}
 		clean := filepath.Clean(filepath.FromSlash(hdr.Name))
 		if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." ||
-			strings.HasPrefix(clean, "instances"+string(filepath.Separator)) {
+			underReserved(clean) || clean == "worktrees" {
 			return n, fmt.Errorf("unsafe path %q in the archive", hdr.Name)
 		}
 		dst := filepath.Join(space, clean)
@@ -750,7 +784,7 @@ func readLoose(space, archive string, maxBytes int64) (int, error) {
 		}
 		switch hdr.Typeflag {
 		case tar.TypeSymlink:
-			links = append(links, link{dst, hdr.Linkname})
+			links = append(links, link{clean, hdr.Linkname})
 		case tar.TypeReg:
 			total += hdr.Size
 			if total > maxBytes {
@@ -771,11 +805,20 @@ func readLoose(space, archive string, maxBytes int64) (int, error) {
 			n++
 		}
 	}
+	// Each symlink is checked again when it is created: an earlier link of the same archive may now be a parent of
+	// its path (security review SR-L04).
 	for _, l := range links {
-		if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
+		if err := noSymlinkParents(space, l.path); err != nil {
 			return n, err
 		}
-		if err := os.Symlink(l.target, l.path); err != nil {
+		dst := filepath.Join(space, l.path)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return n, err
+		}
+		if err := noSymlinkParents(space, l.path); err != nil {
+			return n, err
+		}
+		if err := os.Symlink(l.target, dst); err != nil {
 			return n, err
 		}
 		n++

@@ -8,11 +8,15 @@
 //	{"seq":3,"t":…,"k":"size","cols":120,"rows":40}
 //	{"seq":4,"t":…,"k":"gap","why":"reattach"}             // output may be missing here (no stream offsets, S-3)
 //	{"seq":5,"t":…,"k":"close","exit_code":0,"reason":"exited"}
-//	{"seq":6,"t":…,"k":"trunc","why":"quota"}               // recording stopped early (quota or disk)
+//	{"seq":6,"t":…,"k":"trunc","why":"quota"}               // recording stopped early ("quota" or "disk")
 //
 // A frame is written on every flush (at least once per FlushInterval), so after a crash a segment decodes up to its
 // last complete frame; Read reports a torn tail as Truncated rather than failing (SM-REC-003). Sequence numbers are
 // continuous across segments and survive restarts of the writer (Resume).
+//
+// A write failure (a full disk, an I/O error) never reaches the recorded program: the writer stops recording output,
+// and its trunc record — which it usually cannot store itself — is handed to the caller (Truncation) so central's copy
+// shows where and why the recording ended (SM-REC-004).
 package recording
 
 import (
@@ -66,9 +70,19 @@ const (
 	segmentSuffix   = ".smrec.zst"
 )
 
+// File is a segment file the Writer appends to: an *os.File unless Options.Create says otherwise.
+type File interface {
+	io.Writer
+	Sync() error
+	Close() error
+}
+
 // Options configure a Writer.
 type Options struct {
 	Dir string
+	// Create creates a new segment file (exclusively, mode 0600). Nil uses the filesystem; fault tests inject a disk
+	// that fills up.
+	Create func(path string) (File, error)
 	// MaxBytes bounds the total compressed size of the recording (quota); 0 is unlimited. When exceeded a trunc
 	// record is written and further output is dropped — the run itself is never affected (SM-REC-004).
 	MaxBytes int64
@@ -80,7 +94,7 @@ type Writer struct {
 	mu       sync.Mutex
 	o        Options
 	enc      *zstd.Encoder
-	f        *os.File
+	f        File
 	segIndex int
 	segBytes int64
 	segStart time.Time
@@ -89,6 +103,9 @@ type Writer struct {
 	buf      bytes.Buffer
 	stopped  bool
 	err      error
+	// trunc is the truncation record not yet taken by Truncation (quota reached or a write failure).
+	trunc    *Record
+	truncOut bool
 }
 
 // SegmentName returns the file name of segment n.
@@ -115,6 +132,9 @@ func Segments(dir string) ([]string, error) {
 func Open(o Options) (*Writer, error) {
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Create == nil {
+		o.Create = createFile
 	}
 	if err := os.MkdirAll(o.Dir, 0o700); err != nil {
 		return nil, err
@@ -147,6 +167,10 @@ func Open(o Options) (*Writer, error) {
 	return w, nil
 }
 
+func createFile(path string) (File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // path built from Dir and SegmentName
+}
+
 // Seq returns the last written sequence number.
 func (w *Writer) Seq() uint64 {
 	w.mu.Lock()
@@ -166,7 +190,17 @@ func (w *Writer) AddRecord(r Record) (Record, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.err != nil {
-		return Record{}, w.err
+		if r.Kind != KindClose {
+			return Record{}, w.err
+		}
+		// The program's end still gets its sequence number, so the caller can ship it to central's copy even though
+		// it cannot be stored here.
+		w.seq++
+		r.Seq = w.seq
+		if r.T == 0 {
+			r.T = w.o.Now().UnixMicro()
+		}
+		return r, w.err
 	}
 	if w.stopped && r.Kind != KindClose {
 		return Record{}, nil
@@ -216,6 +250,29 @@ func (w *Writer) Append(r Record) (bool, error) {
 	return true, nil
 }
 
+// SkipTo moves the next sequence number past seq (no-op when the writer is already there). A node whose local
+// recording lost records that central already stores (a failed disk, then a restart) continues above central's copy
+// instead of renumbering; readers count the jump as a gap.
+func (w *Writer) SkipTo(seq uint64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if seq > w.seq {
+		w.seq = seq
+	}
+}
+
+// Truncation returns, once, the trunc record that ended this recording early (quota reached or a write failure), so
+// the caller can ship it with the records before it.
+func (w *Writer) Truncation() (Record, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.trunc == nil || w.truncOut {
+		return Record{}, false
+	}
+	w.truncOut = true
+	return *w.trunc, true
+}
+
 // Flush writes buffered records as one complete zstd frame and syncs it.
 func (w *Writer) Flush() error {
 	w.mu.Lock()
@@ -230,8 +287,7 @@ func (w *Writer) flushLocked() error {
 	now := w.o.Now()
 	if w.f == nil || w.segBytes >= SegmentMaxBytes || now.Sub(w.segStart) >= SegmentMaxAge {
 		if err := w.rotateLocked(now); err != nil {
-			w.err = err
-			return err
+			return w.failLocked(now, fmt.Errorf("recording segment: %w", err))
 		}
 	}
 	frame := w.enc.EncodeAll(w.buf.Bytes(), nil)
@@ -240,32 +296,48 @@ func (w *Writer) flushLocked() error {
 		w.stopped = true
 		w.buf.Reset()
 		w.seq++
-		trunc, _ := json.Marshal(Record{Seq: w.seq, T: now.UnixMicro(), Kind: KindTrunc, Why: "quota"})
-		frame = w.enc.EncodeAll(append(trunc, '\n'), nil)
+		tr := Record{Seq: w.seq, T: now.UnixMicro(), Kind: KindTrunc, Why: "quota"}
+		w.trunc = &tr
+		line, _ := json.Marshal(tr)
+		frame = w.enc.EncodeAll(append(line, '\n'), nil)
 	}
 	n, err := w.f.Write(frame)
 	w.segBytes += int64(n)
 	w.total += int64(n)
 	w.buf.Reset()
 	if err != nil {
-		w.err = fmt.Errorf("recording write: %w", err)
-		return w.err
+		return w.failLocked(now, fmt.Errorf("recording write: %w", err))
 	}
 	if err := w.f.Sync(); err != nil {
-		w.err = fmt.Errorf("recording sync: %w", err)
-		return w.err
+		return w.failLocked(now, fmt.Errorf("recording sync: %w", err))
 	}
 	return nil
 }
 
+// failLocked stops the writer after a write failure: buffered records are lost locally (the caller has them), later
+// output is dropped, and a trunc record ("disk") is kept for Truncation. A partial frame may remain on disk; readers
+// report it as Truncated.
+func (w *Writer) failLocked(now time.Time, err error) error {
+	w.err = err
+	w.buf.Reset()
+	if w.trunc == nil || w.trunc.Why != "disk" {
+		w.seq++
+		w.trunc = &Record{Seq: w.seq, T: now.UnixMicro(), Kind: KindTrunc, Why: "disk"}
+		w.truncOut = false
+	}
+	return err
+}
+
 func (w *Writer) rotateLocked(now time.Time) error {
 	if w.f != nil {
-		if err := w.f.Close(); err != nil {
+		err := w.f.Close()
+		w.f = nil
+		if err != nil {
 			return err
 		}
 	}
 	w.segIndex++
-	f, err := os.OpenFile(filepath.Join(w.o.Dir, SegmentName(w.segIndex)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	f, err := w.o.Create(filepath.Join(w.o.Dir, SegmentName(w.segIndex)))
 	if err != nil {
 		return err
 	}

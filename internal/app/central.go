@@ -129,6 +129,8 @@ type Central struct {
 type Options struct {
 	Clock   clock.Clock
 	Environ []string
+	// StoreBusyTimeout overrides SQLite's busy timeout (fault tests of lock contention; 0 keeps the default).
+	StoreBusyTimeout time.Duration
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -141,7 +143,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	m := metrics.New()
 	st, err := store.Open(ctx, store.Options{DataDir: cfg.DataDir, Logger: obs.Component(log, "store"), Clock: o.Clock, Metrics: m,
-		AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
+		BusyTimeout: o.StoreBusyTimeout, AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +307,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Memory.Outbox = c.Outbox
 	c.Fleet.Hub().Memory = c.Memory
 	c.Fleet.MemoryExport = c.Memory
+	c.Fleet.Grants = c.Auth
 	c.KB = kb.New(st, c.Audit, c.Changes, c.Fleet, c.Messages, o.Clock, obs.Component(log, "kb"))
 	c.KB.Outbox = c.Outbox
 	c.KB.SpaceLimits = func(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {

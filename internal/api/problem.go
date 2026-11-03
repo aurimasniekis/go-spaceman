@@ -123,7 +123,12 @@ func (d *Deps) fail(ctx context.Context, op string, err error) error {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return newProblem(499, "client_closed_request", "client closed request", nil)
-	case errors.Is(err, store.ErrBusy), errors.Is(err, store.ErrFull), errors.Is(err, store.ErrIO):
+	case errors.Is(err, store.ErrBusy):
+		// Contention outlived the store's bounded retries: nothing was written, so the client may retry (with the
+		// same Idempotency-Key for creates).
+		d.log().WarnContext(ctx, "api storage busy", slog.String("op", op), slog.String("error.message", err.Error()))
+		return newProblem(http.StatusServiceUnavailable, apperr.CodeUnavailable, "storage busy; retry shortly", nil).withHeader("Retry-After", "1")
+	case errors.Is(err, store.ErrFull), errors.Is(err, store.ErrIO):
 		d.log().ErrorContext(ctx, "api storage error", slog.String("op", op), slog.String("error.message", err.Error()))
 		return newProblem(http.StatusServiceUnavailable, apperr.CodeUnavailable, "storage temporarily unavailable", nil)
 	}

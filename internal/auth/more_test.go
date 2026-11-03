@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,5 +96,66 @@ func TestMFAThrottleAndSessionRevoke(t *testing.T) {
 	must(t, err)
 	if op, err := f.svc.SetEnabled(f.ctx, actor, other.ID, true); err != nil || !op.Enabled {
 		t.Fatal(err)
+	}
+}
+
+// Security review SR-M01: parallel wrong second-factor codes cannot outrun the throttle. Attempts on one factor are
+// serialized, so after the free attempts every further code in the burst is refused before it is checked.
+func TestMFAThrottleHoldsUnderConcurrency(t *testing.T) {
+	f := newFx(t)
+	f.bootstrap()
+	f.loginEnrolled("admin@example.com")
+	res, err := f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW})
+	must(t, err)
+	const burst = 24
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	throttled, wrong := 0, 0
+	for range burst {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := f.svc.VerifyMFA(f.ctx, res.Principal, "111111", SessionMeta{})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case errors.Is(err, ErrThrottled):
+				throttled++
+			case err != nil:
+				wrong++
+			}
+		}()
+	}
+	wg.Wait()
+	// throttleFree failures are free, the next one sets the delay; the fake clock does not move, so the rest wait.
+	if wrong > throttleFree+1 || throttled != burst-wrong {
+		t.Fatalf("%d codes were checked and %d throttled out of %d parallel attempts; at most %d may be checked",
+			wrong, throttled, burst, throttleFree+1)
+	}
+}
+
+// The same holds for parallel password guesses against one account from many addresses.
+func TestLoginThrottleHoldsUnderConcurrency(t *testing.T) {
+	f := newFx(t)
+	f.bootstrap()
+	const burst = 16
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	checked := 0
+	for i := range burst {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: "wrong password!!", Meta: SessionMeta{IP: "198.51.100." + itoa(i+1)}})
+			if !errors.Is(err, ErrThrottled) {
+				mu.Lock()
+				checked++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if checked > throttleFree+1 {
+		t.Fatalf("%d of %d parallel guesses were checked; at most %d may be", checked, burst, throttleFree+1)
 	}
 }

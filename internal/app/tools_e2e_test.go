@@ -195,8 +195,16 @@ func TestAgentToolsOverBridge(t *testing.T) {
 
 // SM-COMM-001…003 end to end: a worker messages control through its tools; when control's program reports idle,
 // the notifier types a content-free notice into control's terminal (idle-gated), the node accepts it and the message
-// becomes available; control reads, acknowledges and replies, and the worker is notified in turn.
+// becomes available; control reads, acknowledges and replies, and the worker is notified in turn. Run with control
+// and the worker on the same harness and on different ones (mixed-harness communication, brief §40): messages pass
+// through central, so the harness pairing changes nothing.
 func TestMessagesDeliveredToIdleRuns(t *testing.T) {
+	for _, pair := range [][2]string{{hns.KindClaude, hns.KindClaude}, {hns.KindClaude, hns.KindCodex}, {hns.KindCodex, hns.KindClaude}} {
+		t.Run(pair[0]+"-control-"+pair[1]+"-worker", func(t *testing.T) { messagesDeliveredToIdleRuns(t, pair[0], pair[1]) })
+	}
+}
+
+func messagesDeliveredToIdleRuns(t *testing.T, ctrlHarness, wrkHarness string) {
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()
@@ -210,8 +218,8 @@ func TestMessagesDeliveredToIdleRuns(t *testing.T) {
 	}
 	bindStubAccounts(t, e.c, sp.ID)
 	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
-	ctrl, _ := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: hns.KindClaude})
-	wrk, _ := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: hns.KindClaude})
+	ctrl, _ := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "control", Role: "control", Harness: ctrlHarness})
+	wrk, _ := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: wrkHarness})
 	eventually(t, "runs running", func() bool { return e.run1(ctrl.ID).Observed == "running" && e.run1(wrk.ID).Observed == "running" })
 	nctx, stop := context.WithCancel(ctx)
 	t.Cleanup(stop)

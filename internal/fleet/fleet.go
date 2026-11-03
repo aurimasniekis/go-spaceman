@@ -86,6 +86,15 @@ type Service struct {
 	reloc   relocEngine
 	// MemoryExport writes central's role memory for a relocation's destination (nil: spaces with memory cannot relocate).
 	MemoryExport MemoryExporter
+	// Grants removes a purged space's role grants and reloads the authorization engine after commit (the auth
+	// service). Nil only in fleet-only tests: purge then deletes the rows but cannot reload an engine it does not know.
+	Grants GrantRemover
+}
+
+// GrantRemover deletes every role grant of one domain inside a write transaction and refreshes authorization after
+// it commits (auth.Service.RemoveDomainGrants).
+type GrantRemover interface {
+	RemoveDomainGrants(ctx context.Context, tx *store.Tx, domain string) error
 }
 
 // New builds the service and its hub.

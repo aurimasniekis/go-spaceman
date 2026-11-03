@@ -3,6 +3,46 @@
 > Living document. Threat IDs (`T-NN`) are stable. Each mitigation names the requirement or ADR that implements it and the test that
 > verifies it, once that test exists.
 
+## Security boundaries (SM-SEC-001)
+
+SpaceMan is built for **trusted teams, not hostile multi-tenancy**. Operators, node operators and the people who
+configure events, repositories and MCP servers are trusted. Spaces separate work and authorization; they do not contain a
+hostile agent or operator. The following boundaries are stated explicitly; `make traceability` checks that this list and
+the site's Security page keep them.
+
+- **Folder grouping is not isolation.** A space folder on a node is a working directory, not a sandbox (SM-INV-007).
+  Every space on a node runs as the agent's OS user; an agent can read and write other spaces' folders there, and a node
+  operator can read all of them.
+- **Shell access can bypass MCP.** SpaceMan mediates only what passes through its own tools and the MCP gateway. An
+  agent with shell access can reach the network, other repositories and other processes directly, without SpaceMan's
+  grants, approvals, egress policy or audit (LIMITATIONS.md "Shell access bypasses the gateway").
+- **Privileged nodes can read runtime secrets.** A harness credential has to exist in the harness process; root, the
+  agent's OS user and anyone who can attach to the process on that node can read it (SM-ACCT-005). Run credentials
+  and upstream MCP credentials resolved for a run are equally visible there.
+- **Transcripts and recordings are sensitive.** Terminal recordings and native transcripts contain whatever the agent
+  saw and typed, including secrets and private code. They are separate permissions (`recording:read`,
+  `recording:delete` with step-up), sealed in backups and never in logs or events.
+- **Revocation cannot undo completed actions.** Revoking a session, token, grant or run credential stops what comes
+  next (ADR-0033, T-24); commits pushed, messages sent, tool calls executed and approvals consumed before it stay done.
+- **Terminating a parent does not prove its descendants stopped.** Stopping a run ends its herdr-core terminal, and the
+  lease guard ends a space's terminals when the daemon dies (ADR-0017), but processes an agent started outside the
+  terminal (daemons, `nohup`, other sessions) may survive. SpaceMan reports the terminal it ended, not the absence of
+  every descendant (SM-NODE-008).
+- **Prompt injection is expected.** Events, repositories, memory, skills, KB content, messages, attachments,
+  cross-space requests, human responses and upstream MCP results may carry instructions. They are untrusted content,
+  never an authority source: every tool call is authorized centrally from the run's credential and the stored policy,
+  never from model obedience (SM-INV-018, T-03, T-16, T-19, T-20, T-25).
+- **Shared support must not leak unrelated conversations.** KB support runs as one session per requester (ADR-0026);
+  a request never joins another requester's conversation, human responses reach only their target (ADR-0032), and
+  cross-space knowledge requests get a session of their own per source run (ADR-0038).
+- **Advisory approvals are not enforcement.** An approval human action records a person's decision; only enforced
+  approvals, bound to the exact operation and arguments of an operation SpaceMan itself performs, gate anything
+  (SM-APPR-001, ADR-0024). Harness permission prompts and shell commands are not intercepted.
+- **Custom schemas cannot mint authority.** A custom human-action field or outcome such as "approved" grants nothing;
+  enforcement uses only approval records SpaceMan created for gated operations (SM-HTYPE-006, T-07).
+
+The 2026-11-03 review of these boundaries and of the code is in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
+
 ## Assets
 Harness credentials (Claude OAuth tokens, OpenAI/Codex keys); upstream MCP credentials; Pulse `.creds`; node credentials; run credentials;
 root and API tokens; the KEK and keyring; operator sessions; source code in workspaces; memory and KB repositories; transcripts and
@@ -51,3 +91,7 @@ flowchart LR
 | T-23 | After a restore, stale runs, commands or approvals act again (double execution) | Restore comes up paused; lease generations jump by 1,000,000 and older runs are fenced; queued commands cancelled, run credentials and approvals with uses left revoked | SM-STORE-006, ADR-0031 (`TestApplyPendingRestore`, `TestBackupRestoreEndToEnd`) |
 | T-25 | One space's agents or operators read another space's data through a cross-space request: a prompt-injected worker sends data out, a destination reply leaks internal detail, a source plants instructions in the destination, or requests loop or flood | Separate inbound and outbound grants per ordered pair, off by default, each edited only by its own space (`xspace:write`); only control runs have the tools (and the service refuses other kinds); a space that may not discover another gets `not_found`; replies reduced to the destination's disclosure level (none / summary / detailed) before they are stored, attachments never cross, notifications carry no reply text; the destination's task, inbox item and deciding run are hidden from the source; request text is marked as untrusted content in the destination, whose control alone decides and executes; KB access only through a support session of the destination's KB, never the repository; depth limit, loop refusal on the visited spaces, per-pair and per-source quotas; every refusal audited as denied | SM-XSPACE-001…003, SM-INV-008, ADR-0038 (`TestPermissionMatrix`, `TestAcceptReplyAndDisclosure`, `TestDepthLoopsAndQuotas`, `TestOnlyControlAsksOtherSpaces`, `TestCrossSpaceRequests`) |
 | T-24 | A revoked session, token or grant keeps reading through a stream opened before the revocation (live terminal, change feed, node connection) | Committed revocations and grant changes signal the affected streams after commit and they re-authorize at once (`unauthenticated` / `forbidden`); the change feed filters each change by current grants; a periodic re-check every `auth.stream_revalidate` (≤ 60 s) bounds expiry, idle timeout and out-of-process changes, also for node credentials; run credentials are checked on every tool call. Revocation never undoes completed actions | SM-AUTH-007, ADR-0033 (`TestStreamWatchSignals`, `TestWatchStreamEndsOnRevocation`, `TestTerminalStreamEndsOnRevocation`, `TestNodeConnectionEndsWithItsCredential`) |
+| T-26 | An agent makes the node daemon run its code through a repository it can write: Git hooks, fsmonitor, or configured filter, merge and diff drivers, pagers, SSH or proxy commands, credential helpers, includes and URL rewrites in `.git/config` (memory checkouts, KB worktrees, writer worktrees, relocation) | Every daemon Git call runs with hooks and fsmonitor disabled and a scrubbed environment; before Git runs in an existing repository the daemon reads the repository's own configuration and refuses keys that would run a program | SM-MEM-003, SM-REPO-005, ADR-0039 (`TestPrepareWorktreeRunsNoRepositoryCode`, `TestUnsafeConfig`, `TestRunRefusesUnsafeRepositoryConfig`) |
+| T-27 | A relocation writes outside the destination's space folder: a worktree path through a symlink the repository committed, a `../` path from a compromised source, chained symlinks in the loose-file archive, or a symlink in place of `instances/` | Central and the destination validate every reported path; worktrees and archive entries are refused when a parent is a symlink (checked before and after creating parents, and again for each symlink when it is created); reserved folders are refused whatever their type | SM-SPACE-005, ADR-0037, ADR-0039 (`TestAddWorktreesRefusesEscapes`, `TestReadLooseRefusesChainedAndReservedLinks`) |
+| T-28 | Parallel guesses outrun the login or MFA throttle (every attempt reads "not throttled" before any failure commits) | Credential attempts are serialized per throttle key in central, so each attempt sees the failures before it | SM-AUTH-001, ADR-0039 (`TestMFAThrottleHoldsUnderConcurrency`, `TestLoginThrottleHoldsUnderConcurrency`) |
+| T-29 | Event text becomes trusted instructions through a template | Template instructions may only use the template's variables, and are rendered with the variables alone | SM-INBOX-004, SM-EVT-008, ADR-0039 (`TestInstructionsSeeOnlyVariables`) |

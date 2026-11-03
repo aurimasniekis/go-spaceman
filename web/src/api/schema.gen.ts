@@ -13887,7 +13887,7 @@ export interface operations {
     "queue-next": {
         parameters: {
             query?: {
-                /** @description Store the decision for inspection */
+                /** @description Store the decision for inspection (needs queue:write) */
                 record?: boolean;
             };
             header?: never;

@@ -113,6 +113,7 @@ func (svc *Service) ConfirmTOTP(ctx context.Context, p *Principal, code string, 
 		return nil, "", err
 	}
 	opID := p.User.ID
+	defer svc.attempts.lock(mfaKey(opID))()
 	if t, err := svc.throttled(ctx, mfaKey(opID)); err != nil {
 		return nil, "", err
 	} else if t {
@@ -199,6 +200,7 @@ func (svc *Service) recordMFAFailure(ctx context.Context, opID, ip, purpose stri
 // the shared MFA throttle, verifies a TOTP code (no step reuse) or consumes a recovery code, and records and
 // audits failures (Hallpass HP-AUTH-004, SR-05). ok is false for a wrong code.
 func (svc *Service) verifySecondFactor(ctx context.Context, opID, code, ip, purpose string) (ok bool, method string, err error) {
+	defer svc.attempts.lock(mfaKey(opID))()
 	if t, err := svc.throttled(ctx, mfaKey(opID)); err != nil {
 		return false, "", err
 	} else if t {

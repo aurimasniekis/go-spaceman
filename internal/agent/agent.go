@@ -31,6 +31,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
 )
 
@@ -56,6 +57,8 @@ type Options struct {
 	Log          *slog.Logger
 	// Wrap overrides how a harness launch becomes a runner argv (tests); nil uses the launcher shim.
 	Wrap func(runDir string, l harness.Launch) []string
+	// RecordingCreate creates recording segment files; nil uses the filesystem (fault tests inject a full disk).
+	RecordingCreate func(path string) (recording.File, error)
 }
 
 // Agent is a running node agent.
@@ -177,6 +180,9 @@ func RunName(runID string) string     { return "r-" + strings.TrimPrefix(runID, 
 func (a *Agent) Run(ctx context.Context) error {
 	a.mem.base = context.WithoutCancel(ctx)
 	defer a.drain(30 * time.Second)
+	// Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
+	// recorder attached when the next one adopts the run.
+	defer a.stopRecorders()
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err
@@ -214,6 +220,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-time.After(backoff):
 		}
 		backoff = min(backoff*2, a.o.ReconnectMax)
+	}
+}
+
+// stopRecorders ends every live recording (each flushes and closes its writer).
+func (a *Agent) stopRecorders() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, cancel := range a.recorders {
+		cancel()
 	}
 }
 

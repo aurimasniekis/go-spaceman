@@ -42,8 +42,22 @@ func (g *Git) Run(ctx context.Context, dir string, id *Identity, args ...string)
 	return g.RunInput(ctx, dir, id, nil, args...)
 }
 
-// RunInput is Run with stdin.
+// RunInput is Run with stdin. Inside an existing repository the repository's configuration is checked first and git
+// is not run when it would execute a configured program (UnsafeConfig).
 func (g *Git) RunInput(ctx context.Context, dir string, id *Identity, stdin []byte, args ...string) (string, error) {
+	if len(args) > 0 && Guarded(args[0]) {
+		list, err := g.run(ctx, dir, nil, nil, "config", "--list", "--name-only", "--show-scope")
+		if err != nil {
+			return "", err
+		}
+		if err := UnsafeConfig(list, true); err != nil {
+			return "", err
+		}
+	}
+	return g.run(ctx, dir, id, stdin, args...)
+}
+
+func (g *Git) run(ctx context.Context, dir string, id *Identity, stdin []byte, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, g.Bin, append(append([]string{}, safeOpts...), args...)...) //nolint:gosec // fixed git subcommands; arguments are validated by callers
 	cmd.Dir = dir
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",

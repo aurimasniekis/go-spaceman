@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
@@ -19,7 +20,7 @@ import (
 // repository at space/<repo> on the branch (created from the base when it does not exist). An existing worktree of
 // that repository at that folder is reused. Nothing is ever reset, deleted, forced or pushed (SM-REPO-006), and git
 // runs with the node's own environment, so the node's git configuration and credentials are used, never replaced
-// (SM-REPO-005). It returns the worktree folder.
+// (SM-REPO-005), with hooks and fsmonitor disabled. It returns the worktree folder.
 func prepareWorktree(ctx context.Context, space string, w proto.Worktree) (string, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -27,10 +28,14 @@ func prepareWorktree(ctx context.Context, space string, w proto.Worktree) (strin
 	}
 	repo := filepath.Join(space, filepath.Clean("/"+w.Repo))
 	dir := filepath.Join(space, "worktrees", strings.ReplaceAll(w.Branch, "/", "-"))
-	run := func(args ...string) (string, error) {
+	// git runs with the node's configuration and credentials but with hooks and fsmonitor off, and not at all when
+	// the repository's own configuration would run a program: agents can write the repository's .git, and the daemon
+	// must not run their code (security review SR-M03).
+	raw := func(args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(ctx, time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, git, append([]string{"-C", repo}, args...)...) //nolint:gosec // fixed git subcommands; validated names
+		cmd := exec.CommandContext(ctx, git, append(append(append([]string{}, safeGitOpts...), "-C", repo), args...)...) //nolint:gosec // fixed git subcommands; validated names
+		cmd.Env = gitEnv()
 		var out, errb bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errb
 		if err := cmd.Run(); err != nil {
@@ -42,8 +47,24 @@ func prepareWorktree(ctx context.Context, space string, w proto.Worktree) (strin
 		}
 		return out.String(), nil
 	}
-	if _, err := run("rev-parse", "--git-dir"); err != nil {
+	guard := func() error {
+		list, err := raw("config", "--list", "--name-only", "--show-scope")
+		if err != nil {
+			return err
+		}
+		return memory.UnsafeConfig(list, true)
+	}
+	run := func(args ...string) (string, error) {
+		if err := guard(); err != nil {
+			return "", err
+		}
+		return raw(args...)
+	}
+	if _, err := raw("rev-parse", "--git-dir"); err != nil {
 		return "", fmt.Errorf("%s is not a git repository", w.Repo)
+	}
+	if err := guard(); err != nil {
+		return "", fmt.Errorf("%s: %w", w.Repo, err)
 	}
 	list, err := run("worktree", "list", "--porcelain")
 	if err != nil {

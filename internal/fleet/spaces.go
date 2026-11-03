@@ -293,11 +293,18 @@ func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string
 			`DELETE FROM node_commands WHERE space_id = ?`,
 			`DELETE FROM run_credentials WHERE run_id IN (SELECT id FROM runs WHERE space_id = ?)`,
 			`DELETE FROM runs WHERE space_id = ?`,
-			`DELETE FROM role_grants WHERE domain = ?`,
 		} {
 			if _, err := tx.SQL.ExecContext(ctx, q, id); err != nil {
 				return err
 			}
+		}
+		// The space's grants go through the auth service so the authorization engine forgets them once this commits.
+		if svc.Grants != nil {
+			if err := svc.Grants.RemoveDomainGrants(ctx, tx, id); err != nil {
+				return err
+			}
+		} else if _, err := tx.Q.DeleteRoleGrantsByDomain(ctx, id); err != nil {
+			return err
 		}
 		if _, err := tx.Q.DeleteSpace(ctx, id); err != nil {
 			return err

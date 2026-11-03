@@ -1,11 +1,13 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -23,7 +25,7 @@ func (a *Agent) RecordingDir(runID string) string { return filepath.Join(a.runDi
 // because herdr-core streams carry no offsets (S-3).
 func (a *Agent) record(ctx context.Context, row runRow) {
 	log := a.log.With(slog.String(obs.FieldRunID, row.RunID))
-	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: 512 << 20, Now: a.o.Clock.Now})
+	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: 512 << 20, Now: a.o.Clock.Now, Create: a.o.RecordingCreate})
 	if err != nil {
 		log.Warn("open recording", obs.Err(err))
 		return
@@ -70,17 +72,40 @@ func (a *Agent) record(ctx context.Context, row runRow) {
 // central after every flush (at most once a second); shipping never blocks recording.
 func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recording.Writer, flush *time.Ticker, prelude []recording.Record) bool {
 	var batch []recording.Record
+	// truncated adds the writer's trunc record (quota reached, or the local disk failed) after the records before it,
+	// so central's copy shows where and why the recording ended; the run itself is never affected (SM-REC-004).
+	truncated := func() {
+		if tr, ok := w.Truncation(); ok {
+			if tr.Why == "disk" {
+				a.log.Warn("recording stopped: the local recording cannot be written; central keeps the records shipped so far",
+					slog.String(obs.FieldRunID, row.RunID), obs.Err(w.Err()))
+			}
+			batch = append(batch, tr)
+		}
+	}
 	add := func(r recording.Record) {
-		if stored, err := w.AddRecord(r); err == nil && stored.Seq != 0 {
+		// After a local loss (a failed disk, then a restart) central may already hold higher sequence numbers:
+		// continue above them rather than have central ignore the new records as repeats.
+		if acked := a.ackedSeq(row.RunID); acked > w.Seq() {
+			w.SkipTo(acked)
+		}
+		// A stored record has a sequence number; after a write failure only the close record still gets one (it
+		// cannot be stored locally, but central can keep it).
+		if stored, _ := w.AddRecord(r); stored.Seq != 0 {
 			batch = append(batch, stored)
 		}
+		truncated()
 	}
 	for _, r := range prelude {
 		add(r)
 	}
 	ship := func() {
 		_ = w.Flush()
+		truncated()
 		if len(batch) > 0 {
+			// Central stores records in sequence order and ignores repeats, so a trunc record numbered while its
+			// neighbour was being added must not overtake it.
+			slices.SortFunc(batch, func(x, y recording.Record) int { return cmp.Compare(x.Seq, y.Seq) })
 			a.ship(ctx, row.RunID, row.SpaceID, batch)
 			batch = nil
 		}
@@ -179,6 +204,13 @@ func (a *Agent) catchUpRecordings(ctx context.Context) {
 			a.ship(ctx, r.RunID, r.SpaceID, res.Records[start:end])
 		}
 	}
+}
+
+// ackedSeq is central's highest stored recording sequence of a run (0 when unknown).
+func (a *Agent) ackedSeq(runID string) uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.acked[runID]
 }
 
 func (a *Agent) recordingAck(ack proto.RecordingAck) {

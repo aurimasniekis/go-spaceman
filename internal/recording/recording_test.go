@@ -2,8 +2,10 @@ package recording
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -128,4 +130,112 @@ func TestAppendIsIdempotent(t *testing.T) {
 	if len(res.Records) != 4 || res.Gaps != 1 || res.Records[3].Seq != 7 {
 		t.Fatalf("append result %+v", res)
 	}
+}
+
+// fullDisk is a segment file that accepts limit bytes in total and then fails like a full disk (ENOSPC), after
+// having written part of the frame.
+type fullDisk struct {
+	f     *os.File
+	left  *int64
+	syncs int
+}
+
+func (d *fullDisk) Write(p []byte) (int, error) {
+	if int64(len(p)) <= *d.left {
+		*d.left -= int64(len(p))
+		return d.f.Write(p)
+	}
+	n := int(*d.left)
+	*d.left = 0
+	_, _ = d.f.Write(p[:n])
+	return n, syscall.ENOSPC
+}
+func (d *fullDisk) Sync() error  { d.syncs++; return d.f.Sync() }
+func (d *fullDisk) Close() error { return d.f.Close() }
+
+// SM-REC-004 (fault: disk exhaustion): a write failure stops recording output without failing callers that only add
+// output; the writer hands out a "disk" trunc record (once) numbered after every record it assigned, and the close
+// record still gets a sequence number for central's copy. What reached the disk stays readable, the torn frame is
+// reported as Truncated.
+func TestDiskFullTruncates(t *testing.T) {
+	dir := t.TempDir()
+	left := int64(1 << 30)
+	w, err := Open(Options{Dir: dir, Create: func(path string) (File, error) {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return &fullDisk{f: f, left: &left}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, w.Add(Record{Kind: KindOpen, Cols: 80, Rows: 24, RunID: "run_x"}))
+	must(t, w.Add(Record{Kind: KindOut, Data: []byte("before\n")}))
+	must(t, w.Flush())
+	if _, ok := w.Truncation(); ok {
+		t.Fatal("truncation before any failure")
+	}
+	left = 10 // the disk fills up in the middle of the next frame
+	must(t, w.Add(Record{Kind: KindOut, Data: bytes.Repeat([]byte("lost "), 100)}))
+	if err := w.Flush(); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("flush error %v, want ENOSPC", err)
+	}
+	tr, ok := w.Truncation()
+	if !ok || tr.Kind != KindTrunc || tr.Why != "disk" || tr.Seq != 4 {
+		t.Fatalf("truncation %+v %v", tr, ok)
+	}
+	if _, again := w.Truncation(); again {
+		t.Fatal("truncation handed out twice")
+	}
+	if r, err := w.AddRecord(Record{Kind: KindOut, Data: []byte("dropped")}); r.Seq != 0 || err == nil {
+		t.Fatalf("output after failure %+v %v", r, err)
+	}
+	code := 0
+	cl, err := w.AddRecord(Record{Kind: KindClose, ExitCode: &code, Reason: "exited"})
+	if cl.Seq != 5 || err == nil {
+		t.Fatalf("close after failure %+v %v", cl, err)
+	}
+	_ = w.Close()
+	res, err := Read(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Records) != 2 || !res.Truncated || string(res.Records[1].Data) != "before\n" {
+		t.Fatalf("after disk full: %+v", res)
+	}
+	// A writer reopened later (space freed) continues after the last stored record; SkipTo moves it above records
+	// central kept that the disk lost.
+	w2, err := Open(Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w2.Seq() != 2 {
+		t.Fatalf("resumed at %d", w2.Seq())
+	}
+	w2.SkipTo(5)
+	w2.SkipTo(3) // never backwards
+	must(t, w2.Add(Record{Kind: KindGap, Why: "reattach"}))
+	must(t, w2.Close())
+	res, _ = Read(dir, 0)
+	if last := res.Records[len(res.Records)-1]; last.Seq != 6 || res.Gaps < 2 {
+		t.Fatalf("after resume: last %+v gaps %d", last, res.Gaps)
+	}
+}
+
+// The quota trunc record is also handed out, so central's copy ends with it too.
+func TestQuotaTruncationHandedOut(t *testing.T) {
+	w, err := Open(Options{Dir: t.TempDir(), MaxBytes: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		must(t, w.Add(Record{Kind: KindOut, Data: bytes.Repeat([]byte{byte('a' + i)}, 64)}))
+		must(t, w.Flush())
+	}
+	tr, ok := w.Truncation()
+	if !ok || tr.Why != "quota" {
+		t.Fatalf("quota truncation %+v %v", tr, ok)
+	}
+	must(t, w.Close())
 }

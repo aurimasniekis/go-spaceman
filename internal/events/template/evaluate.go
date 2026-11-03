@@ -111,8 +111,16 @@ func (b *Bound) Apply(e Event) (*Result, error) {
 		dst  *string
 		tmpl string
 		max  int
-	}{{&r.Title, b.Def.Title, MaxTitle}, {&r.Body, b.Def.Body, MaxBody}, {&r.Instructions, b.Def.Instructions, MaxInstructions}, {&r.Correlation, b.Def.Correlation, 256}} {
-		if *x.dst, err = Render(x.tmpl, ctx, x.max); err != nil {
+		vars bool
+	}{{&r.Title, b.Def.Title, MaxTitle, false}, {&r.Body, b.Def.Body, MaxBody, false}, {&r.Instructions, b.Def.Instructions, MaxInstructions, true},
+		{&r.Correlation, b.Def.Correlation, 256, false}} {
+		c := ctx
+		if x.vars {
+			// Trusted instructions see only the template's variables, also for versions stored before validation
+			// refused event references in them.
+			c = Context{Vars: ctx.Vars}
+		}
+		if *x.dst, err = Render(x.tmpl, c, x.max); err != nil {
 			return nil, err
 		}
 	}

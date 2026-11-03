@@ -126,6 +126,11 @@ func (d *Definition) Validate() error {
 			add("filters[%d]: in needs values", i)
 		}
 	}
+	// Instructions become trusted metadata of the inbox item, so they may only come from the template and its
+	// variables, never from the event (SM-INBOX-004, SM-EVT-008; security review SR-L08).
+	if strings.Count(d.Instructions, "{{") != len(reVarsOnly.FindAllString(d.Instructions, -1)) {
+		add("instructions: may only use {{vars.name}} placeholders; event content is untrusted and cannot become instructions")
+	}
 	for name, tmpl := range map[string]string{"title": d.Title, "body": d.Body, "instructions": d.Instructions, "correlation": d.Correlation} {
 		if err := Check(tmpl); err != nil {
 			add("%s: %v", name, err)
