@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Release readiness report (`docs/RELEASE_READINESS.md`, site: Development → Release readiness): what is implemented,
+  tested and verified for real, what is not, and what a production release still needs. It makes no production-readiness
+  claim.
 - Documentation site completed (SM-DOCS-001…005): new **Architecture**, **Deployment overview** (topology, install paths
   and a recovery map), **Troubleshooting** (startup errors, readiness codes, node connection, leases, recordings,
   sign-in) and **Publishing the site** pages; a **Configuration reference** generated from `internal/config`'s types,
