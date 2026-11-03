@@ -38,10 +38,14 @@ func (f *fx) end(run string) {
 
 func (f *fx) answer(a *Action) *Action {
 	f.t.Helper()
-	got, err := f.svc.Respond(f.ctx, op, "spc_a", a.ID, 0, RespondInput{Outcome: "answered", Response: Response{Answer: "yes"}})
+	got, err := f.svc.Respond(f.ctx, op, "spc_a", a.ID, 0, RespondInput{Outcome: "answered", Response: Response{Answer: responseMarker}})
 	must(f.t, err)
 	return got
 }
+
+// responseMarker is the test response. It uses only letters Crockford base32 never contains (i, l, o, u), so no random
+// ID in a payload can contain it and the "the response is not leaked" checks below cannot match by chance.
+const responseMarker = "louilou"
 
 func (f *fx) get(id string) *Action {
 	f.t.Helper()
@@ -78,11 +82,11 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 	if n.TargetKind != TargetOperators || n.OriginalRun != "run_1" || n.RoutedFrom != "run:run_1" || n.RouteReason != ReasonRequesterEnded || n.RoutedAt == nil {
 		t.Fatalf("undeliverable %+v", n)
 	}
-	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND body NOT LIKE '%yes%'`) != 1 {
+	if f.count(`SELECT count(*) FROM messages WHERE to_kind = 'operators' AND correlation_id = '`+a.ID+`' AND body NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("no operator message (or it carries the response)")
 	}
 	if f.count(`SELECT count(*) FROM audit_events WHERE action = 'human_action.rerouted'`) != 1 ||
-		f.count(`SELECT count(*) FROM event_outbox WHERE type = 'spaceman.human.action_rerouted.v1' AND payload_json NOT LIKE '%yes%'`) != 1 {
+		f.count(`SELECT count(*) FROM event_outbox WHERE type = 'spaceman.human.action_rerouted.v1' AND payload_json NOT LIKE '%louilou%'`) != 1 {
 		t.Fatal("reroute not audited or published")
 	}
 
@@ -236,7 +240,7 @@ func TestResponsesHiddenFromUnrelatedRuns(t *testing.T) {
 		return l[0]
 	}
 	for name, v := range map[string]Viewer{"requester": {RunID: "run_1"}, "same instance": {RunID: "run_x", InstanceID: "ins_1"}, "control": {RunID: "run_c", Control: true}} {
-		if got := view(v); got.ResponseHidden || !strings.Contains(string(got.Response), "yes") {
+		if got := view(v); got.ResponseHidden || !strings.Contains(string(got.Response), responseMarker) {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
