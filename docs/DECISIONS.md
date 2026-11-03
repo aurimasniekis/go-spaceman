@@ -208,7 +208,7 @@
   program ends, unless `outlive_parent` is set.
 - **Decision:**
   - **Guard terminal.** For each space with active runs, the node starts a guard terminal `g-<space short id>` (`no_parent:true`) running
-    `spaceman-agent lease-guard --lease-file <space run dir>/lease.json`.
+    `spaceman-agent lease-guard --lease-file <space run dir>/lease.json`. It ends with the space's last live run (ADR-0043).
   - **Daemon side.** The daemon rewrites the lease file atomically. Its `valid_until` is the central lease expiry plus the disconnect grace.
   - **Guard side.** The guard checks the file every second, uses only local time and the file, and exits when `now > valid_until` or the
     file is missing or invalid.
@@ -1425,6 +1425,30 @@
 - **Consequences:** core subscriptions lose messages by design and say so; content-hash dedup can merge genuinely
   repeated identical messages without an ID or time; the durable lag gauge costs one consumer-info request per
   subscription and round; rate-limited events are counted with origin `live`.
+
+### ADR-0043 — A space's lease guard ends with its last live run
+- **Status:** Accepted, 2026-11-03 (traceability audit; amends ADR-0017).
+- **Context:** ADR-0017 starts a lease-guard terminal "for each space with active runs". The node agent started the
+  guard at a space's first launch and never ended it, so every space that had ever run kept a process on its node that
+  read the lease file once a second for as long as central kept renewing the lease. That is a permanent polling loop
+  per sleeping space, which SM-ARCH-004 forbids.
+- **Decision:**
+  - When a run of a space ends, the agent checks the runner for the space's live managed terminals. If there are none,
+    it kills and removes the space's guard terminal. A space without live runs keeps no guard.
+  - A launch starts a new guard (`ensureGuard`) before its run and starts the run under it. A per-space lock is held
+    from `ensureGuard` until the run is started, and the retirement takes the same lock, so a guard is never ended
+    under a starting run.
+  - Nothing else changes: the guard's file check, the lease file, the parenting of runs and the dead-daemon bound are
+    as in ADR-0017.
+- **Not a security relaxation.** Enforcement is unchanged for every live run: each one still runs under a live guard.
+  The guard is retired only when it has no live runs left to end.
+- **Alternatives:** keep the guard and accept one 1-second file check per idle space (contradicts SM-ARCH-004 and
+  ADR-0017's own scope). Make the guard wait on a file-change notification instead of polling (the guard has to
+  notice lease *expiry*, a moment in time rather than a file change, so it would still need a timer).
+- **Consequences:** a space's first launch after an idle period starts two terminals (guard and run), as its very first
+  launch did. A guard left by an older agent is retired when that space's next run ends. Tested with the fake runner
+  (`internal/app` `TestIdleSpaceKeepsNoLeaseGuard`). The real herdr-core suite still covers the guard ending a dead
+  agent's runs (`TestRealNodeEndToEnd`), but it does not cover retiring the guard.
 
 ## 2. Open items and unresolved contracts
 

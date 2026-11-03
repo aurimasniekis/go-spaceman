@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
@@ -190,6 +191,11 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("harness not installed on this node", nil)
 		return
 	}
+	// The space's guard lock is held until the run is started under the guard, so retiring an idle space's guard
+	// (retireGuard) never ends it under a starting run.
+	gl := a.guardLock(c.SpaceID)
+	gl.Lock()
+	defer gl.Unlock()
 	guard, err := a.ensureGuard(ctx, c.SpaceID)
 	if err != nil {
 		fail("lease guard unavailable", err)
@@ -329,6 +335,7 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 			a.mem.flush(bctx, row, "run ended")
 			a.usageFinal(bctx, row)
 		})
+		a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)
@@ -547,6 +554,44 @@ func (a *Agent) ensureGuard(ctx context.Context, spaceID string) (string, error)
 		return "", err
 	}
 	return p.ID, nil
+}
+
+// guardLock returns the lock that serializes a space's lease guard.
+func (a *Agent) guardLock(spaceID string) *sync.Mutex {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	m := a.guardLocks[spaceID]
+	if m == nil {
+		m = &sync.Mutex{}
+		a.guardLocks[spaceID] = m
+	}
+	return m
+}
+
+// retireGuard ends a space's lease guard once none of the space's runs is live on the node (ADR-0043, SM-ARCH-004): a
+// space without runs keeps no process polling its lease file. The guard has nothing left to end, and the next launch
+// starts a new one before its run.
+func (a *Agent) retireGuard(ctx context.Context, spaceID string) {
+	gl := a.guardLock(spaceID)
+	gl.Lock()
+	defer gl.Unlock()
+	live, err := a.o.Runner.List(ctx, map[string]string{"spaceman.managed": "1", "spaceman.space": spaceID}, false)
+	if err != nil || len(live) > 0 {
+		return
+	}
+	guards, err := a.o.Runner.List(ctx, map[string]string{"spaceman.guard": spaceID}, true)
+	if err != nil {
+		return
+	}
+	for _, g := range guards {
+		if g.State == runner.StateLive {
+			if _, err := a.o.Runner.Kill(ctx, g.ID); err != nil {
+				a.log.Warn("retire the lease guard", slog.String(obs.FieldSpaceID, spaceID), obs.Err(err))
+				continue
+			}
+		}
+		_ = a.o.Runner.Remove(ctx, g.ID)
+	}
 }
 
 // SecretsFile is the per-run secret file read (and unlinked) by the launcher shim.

@@ -43,7 +43,9 @@ reports again.
 A process cannot enforce its own timeout after it has died. SpaceMan therefore starts a **lease guard** per space: a small
 `spaceman-agent lease-guard` process in its own herdr-core terminal that watches a lease file the agent renews. Every run
 terminal is a child of the guard, and herdr-core ends child terminals when their parent exits. When the lease file is not
-renewed in time, the guard exits and herdr-core ends the space's runs, with no agent involved.
+renewed in time, the guard exits and herdr-core ends the space's runs, with no agent involved. The guard lives only while
+the space has runs on the node: it is started before the space's first run and ended with its last one, so an idle
+space keeps no process on the node.
 
 This was verified on macOS against herdr-core 0.1.16 by killing the agent with `SIGKILL` (`test/real`). It depends on the
 herdr-core core itself staying alive, a node operator can defeat it, and it cannot stop processes an agent started

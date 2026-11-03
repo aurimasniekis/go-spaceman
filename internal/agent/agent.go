@@ -98,6 +98,8 @@ type Agent struct {
 	stopping bool
 	// reloc tracks relocation steps and transfers (ADR-0037).
 	reloc relocState
+	// guardLocks serialize each space's lease guard between launches and retirement (ADR-0043), by space ID.
+	guardLocks map[string]*sync.Mutex
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
@@ -157,7 +159,7 @@ func New(j *Journal, o Options) *Agent {
 		o.HTTPClient = http.DefaultClient
 	}
 	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
-		recorders: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1)}
+		recorders: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}}
 	a.mem = newMemManager(a)
 	return a
 }
