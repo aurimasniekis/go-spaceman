@@ -56,7 +56,15 @@ active runs. **Restore** makes an archived space active again. **Purge** permane
 SpaceMan records (runs, commands, its lease and grants). Purge never touches upstream repositories, and the folder on
 the node is left in place.
 
-The web UI has no archive control yet. Use the command line or the API:
+In the web UI, the space's **More actions** menu (on its overview and on each row of **Spaces**) has **Archive…**,
+**Restore…** and **Purge…**. Each asks for confirmation; purge also asks you to type the space's slug, is offered only
+for an archived space, needs global administration (`space:purge`) and a fresh sign-in with your second factor.
+**Spaces** lists active and paused spaces by default; choose **Archived** to find one to restore or purge. Archiving
+is refused while runs are active: pause the space with **Interrupt** or **Emergency stop** first.
+
+<Shot name="space-purge" alt="The purge confirmation dialog of an archived space, with the space's slug typed to confirm" caption="Purging an archived space asks for its slug" />
+
+The same operations from the command line or the API:
 
 ```sh
 spaceman space archive payments

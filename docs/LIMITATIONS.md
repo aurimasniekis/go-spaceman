@@ -42,9 +42,9 @@
 - **Paused spaces always ingest, and wakes are not deferred.** Subscriptions keep running while a space is paused
   (there is no setting to stop them), and nothing holds back control's notification of a new item: with **Hold**,
   a control run that is still running is notified at once. Only launches are refused while paused (SM-EVT-014).
-- **Custom subscriptions are created without the UI.** The UI subscribes a space to a template; a subscription with a
-  custom definition is created through the API or `spaceman subscription create --custom`. Template definitions are
-  edited as JSON, not in a visual editor (SM-EVT-017).
+- **Definitions are edited as JSON.** A custom definition (in the subscribe dialog) and a template draft are written as
+  JSON text, checked as you type and by the server, with a sample-event preview; there is no field-by-field visual
+  editor (SM-EVT-017).
 
 ## Event publication
 - **Off by default; nothing is back-filled.** Events of a period with `events.outbound.enabled: false` are never
@@ -167,13 +167,19 @@
   it (ADR-0032, SM-HUM-009).
 - **Responses never become inbox items.** A routed response reaches control as a durable notification, not as an inbox
   item; the inbox's `human_response` source kind has no producer (SM-INBOX-001).
-- **No search and no clarification requests.** Human actions are listed by type and status only; there is no text
-  search, and no way to ask the requester for more information other than a comment (SM-HUM-006).
-- **Few filters.** The Needs you page filters by type and by reminded or escalated, and a space's tab by pending or
-  not. There is no assigned-to-me, unassigned, space, status, priority or due filter, and no choice of sort order
-  (SM-HUI-001).
-- **No notification preferences**, and a task's human-action blocker and an action's requester run are shown by ID,
-  not linked (SM-HUI-006).
+- **Search is a substring match.** The search matches every word of the query as a substring of the title or the
+  Markdown text, case-insensitively, over at most the space's 5,000 pending and its most recent final actions (the
+  global list: the 5,000 oldest pending); there is no full-text index, ranking, stemming or search of comments and
+  responses. Needs you lists pending actions only, so its status filter offers open and in progress (SM-HUM-006,
+  SM-HUI-001).
+- **Clarification answers come as comments.** An agent requester answers a clarification request with
+  `spaceman_human_reply`; the request itself does not change (a corrected request is a follow-up). An operator
+  requester sees the question on the action but is not notified unless their notification preferences say so and the
+  UI is open (SM-HUM-006).
+- **Notifications are in the web UI only.** Notification preferences decide what the open web UI announces to a user
+  (in-app, and desktop notifications where the browser allows them). Nothing is announced while no SpaceMan page is
+  open, and SpaceMan sends no e-mail or chat messages; external systems can follow the outbound `human.action.*` events
+  (SM-HUI-006).
 - **Retention deletes whole actions, daily.** A finished action is deleted with its comments and notifications once
   its space's `retention_human_actions_days` has passed, by one daily pass; there is no archive tier and no per-type
   period. Open actions and finished ones that open work still refers to are kept (ADR-0045, SM-HUI-007).
@@ -187,8 +193,9 @@
   minutes old and says when it was made; work an agent is doing right now shows after its run ends or the next sync
   (SM-REPO-003). Each report asks every remote for its default branch (`git ls-remote`, 30 s each), so an unreachable
   remote slows the report down. Worktrees are never cleaned up automatically; remove them with git when done.
-- **Reassigning a task is API-only.** A task's `assignee_run` and `assignee_role` can be changed through the API (the
-  CLI sets the role only); the UI has no reassign control (SM-CTRL-004).
+- **Reassignment does not move work.** Reassigning a task (the task drawer, `spaceman task update --role/--run`, the API)
+  records the new role and run; it never stops the run working on it or starts another: control acts on the new
+  assignee. A run of another space is refused; a run ID that matches no run is accepted as given (SM-CTRL-004).
 - **The incident policy is partial.** It sets insertion, preemption (running tasks return to ready), the number of
   active top-level tasks and whether escalation reorders. It does not define which triggers may raise incidents
   (operators and control create incident tasks), what happens to a preempted task's workers (they keep running, and
@@ -230,29 +237,29 @@
   release ignores it and keeps 512 MiB, and a run keeps the size it started with (SM-REC-003).
 
 ## Web UI
-- **No single attention summary.** A space's overview shows its node, lease, active runs, accounts, roles and usage, and
-  the section links count new inbox items, open human actions, operator messages and incoming cross-space requests.
-  The next runnable task and skipped tasks with their blockers are on the Queue page, ingestion problems (subscription
-  errors, quarantine) on the Events page, memory sync state and conflicts on the Memory page, and knowledge-base work on
-  the Knowledge page. Nothing gathers them on one view. Of storage problems, the UI shows only a truncated recording on the
-  run's terminal, labelled "Truncated (quota)" even when the node's disk was full; quota use and free space are not
-  shown (SM-UI-003).
-- **No archive control.** The UI creates, edits, pauses and resumes spaces; archiving, restoring and purging are done
-  with the CLI or the API (SM-SPACE-002).
-- **No terminal takeover.** Terminals are watch-only. The `terminal:takeover` permission exists, but no API or page
-  takes over a terminal; operators give input through **Message the agent** (SM-UI-004).
-- **TanStack Table and Store are not used.** They are dependencies, but tables are Mantine tables and state is React
-  state and TanStack Query (SM-UI-001).
-- **Not every form uses TanStack Form.** Sign-in, setup, reset and recovery, account, spaces, runs, nodes, users,
-  tokens, accounts, sign-in providers, inbox items, tasks, event connections and subscriptions, schedules, messages,
-  new prompts, and human-action requests, responses and policies do. Other forms (among them MCP servers, approval
-  policies, skills, roles and space roles, prompt drafts, event templates, knowledge bases, dreams, cross-space
-  settings, relocation, limits, human-action types, group mappings and linked identities) and the schema-driven fields
-  inside the response form use plain React state (SM-ATT-007).
+- **The attention summary covers central, not node disks.** **Attention** (and each space overview's counters) gathers
+  pending human actions, blocked and failed tasks, quarantined events, unknown and recently failed runs, budget notices,
+  attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and central's storage
+  health. Node disks are not reported: a full node disk shows only as a truncated recording on its run, labelled
+  "Truncated (quota)" even then. Storage health has no change-feed event, so that section refreshes with other changes
+  or on **Refresh**. Memory sync state and knowledge-base work stay on their pages (SM-UI-003).
+- **Terminal takeover is time-bound and keeps the terminal's size.** An admin (`terminal:takeover`) can take over a
+  running terminal; automated input waits until it ends. It ends 30 seconds after the holder's page stops renewing it,
+  so revoking the holder's session ends it within 30 seconds (they cannot type after revocation). The terminal keeps its
+  size (200×120) rather than fitting the browser. Agents older than node protocol 1.6 cannot be taken over, and the
+  typed-byte count in the audit record is per central process (ADR-0046, SM-UI-004).
+- **TanStack Table on some lists.** The attention summary and the nodes page use the shared TanStack Table component
+  (sortable headers, a filter box); other lists are Mantine tables or card lists. TanStack Store holds per-browser view
+  preferences (table sort and filter, human-action filters); server data stays in TanStack Query (SM-UI-001).
+- **View controls keep React state.** Every form uses TanStack Form, including the schema-driven human-action fields.
+  Filters, tabs, version pickers and open or closed flags are view state, not forms, and stay React state or TanStack
+  Store (SM-ATT-007).
 
 ## Attachments
-- **Only inbox items carry attachments.** Tasks, human actions, comments and messages hold Markdown text only, so files
-  can be pasted, dropped or attached only when writing an inbox item, not when replying (SM-ATT-001, SM-ATT-002).
+- **Attachments are added when writing, not later.** Inbox items, tasks (at creation), human-action requests, responses
+  and comments, and messages and replies reference attachments of their space. Editing a task does not add
+  attachments, and agents reference attachments only as `spaceman://attachment/<id>` links in their text (they cannot
+  upload) (SM-ATT-001, SM-ATT-002).
 - **Attachment retention follows references, not Markdown.** An attachment expires once every item that references
   it (an inbox item's attachment list) is finished. A `spaceman://attachment/…` link pasted into another item's text is
   not a reference: that link breaks when the attachment expires (SM-ATT-006).

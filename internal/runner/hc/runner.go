@@ -209,6 +209,46 @@ func (r *Runner) Attach(ctx context.Context, id string, observe bool, cols, rows
 	return &stream{ch: r.c.takeChannel(out.Channel)}, &p, nil
 }
 
+// Takeover attaches interactively (observe false) at the terminal's current size on a dedicated connection to the same
+// core: an interactive attach resizes the terminal to the viewer's size (S-3), so the current size is kept, and a
+// client-side detach frame is not part of the verified protocol, so the stream's Close ends the whole connection
+// (S-5, docs/contracts/herdr-core.md).
+func (r *Runner) Takeover(ctx context.Context, id string) (runner.Stream, *runner.Process, error) {
+	if r.c.socket == "" {
+		return nil, nil, errors.New("hc: takeover needs a dialed client")
+	}
+	cur, err := r.Get(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cur.State != runner.StateLive {
+		return nil, nil, runner.ErrFinished
+	}
+	c, err := Dial(ctx, r.c.socket)
+	if err != nil {
+		return nil, nil, err
+	}
+	sub := &Runner{c: c}
+	st, p, err := sub.Attach(ctx, id, false, cur.Cols, cur.Rows)
+	if err != nil {
+		_ = c.Close()
+		return nil, nil, err
+	}
+	p.CoreID = r.c.hello.Core.ID
+	return &ownedStream{Stream: st, c: c}, p, nil
+}
+
+// ownedStream is a stream on its own connection; closing it closes the connection.
+type ownedStream struct {
+	runner.Stream
+	c *Client
+}
+
+func (s *ownedStream) Close() error {
+	_ = s.Stream.Close()
+	return s.c.Close()
+}
+
 type stream struct{ ch *channel }
 
 func (s *stream) Next(ctx context.Context) ([]byte, *runner.CloseInfo, error) {

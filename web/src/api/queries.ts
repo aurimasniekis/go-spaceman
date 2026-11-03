@@ -67,6 +67,29 @@ export const keys = {
   schedule: (space: string, id: string) => ['schedules', space, id] as const,
   repositories: (space: string) => ['repositories', space] as const,
   userIdentities: (id: string) => ['identities', id] as const,
+  attention: (space = '') => ['attention', space] as const,
+  humanSearch: (space: string, f: HumanQuery) => ['human', 'search', space, f] as const,
+  notificationPrefs: ['notification-prefs'] as const,
+}
+
+/** Search, filter and sort parameters of the human-action listings (SM-HUM-006, SM-HUI-001). */
+export interface HumanQuery {
+  q?: string
+  type?: string
+  status?: string
+  assignee?: string
+  priority?: string
+  requester?: string
+  due?: string
+  sort?: string
+  space?: string
+  pending?: boolean
+}
+
+function humanParams(f: HumanQuery) {
+  const out: Record<string, string | boolean> = {}
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '' && v !== false) out[k] = v as string | boolean
+  return out
 }
 
 export interface AuditFilter {
@@ -276,6 +299,36 @@ export const useHumanActions = (space: string) =>
     queryKey: keys.human(space),
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-actions', { params: { path: { space_id: space } } })),
   })
+
+/** A space's human actions, searched and filtered on the server; the previous result stays while a new one loads. */
+export const useHumanSearch = (space: string, f: HumanQuery) =>
+  useQuery({
+    queryKey: keys.humanSearch(space, f),
+    placeholderData: keepPreviousData,
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-actions', {
+      params: { path: { space_id: space }, query: humanParams(f) as never },
+    })),
+  })
+
+/** Pending human actions across your spaces, searched and filtered on the server (the Needs you page). */
+export const useHumanPendingSearch = (f: HumanQuery) =>
+  useQuery({
+    queryKey: keys.humanSearch('', f),
+    placeholderData: keepPreviousData,
+    queryFn: async () => unwrap(await api.GET('/human-actions', { params: { query: humanParams(f) as never } })),
+  })
+
+/** What needs a person (SM-UI-003): across your spaces, or one space. Refreshed by the change feed. */
+export const useAttention = (space = '', enabled = true) =>
+  useQuery({
+    queryKey: keys.attention(space),
+    enabled,
+    queryFn: async () => unwrap(await api.GET('/attention', { params: { query: space ? { space } : {} } })),
+  })
+
+/** Your notification preferences (SM-HUI-006); version 0 means the defaults. */
+export const useNotificationPrefs = (enabled = true) =>
+  useQuery({ queryKey: keys.notificationPrefs, enabled, queryFn: async () => unwrap(await api.GET('/auth/me/notification-preferences')) })
 
 /** Pending human actions across every space the principal can read, with counts (the nav badge). */
 export const useHumanPending = (enabled = true) =>

@@ -657,6 +657,318 @@
         ],
         "type": "object"
       },
+      "Attention": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Attention.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "backups": {
+            "$ref": "#/components/schemas/AttentionBackups"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "nodes": {
+            "description": "Active nodes that are not connected (node:read)",
+            "items": {
+              "$ref": "#/components/schemas/AttentionNode"
+            },
+            "type": "array"
+          },
+          "outbox": {
+            "$ref": "#/components/schemas/AttentionOutbox"
+          },
+          "spaces": {
+            "description": "Readable spaces with at least one item, most items first",
+            "items": {
+              "$ref": "#/components/schemas/AttentionSpace"
+            },
+            "type": "array"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/AttentionStorage"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "spaces",
+          "total",
+          "checked_at"
+        ],
+        "type": "object"
+      },
+      "AttentionBackups": {
+        "additionalProperties": false,
+        "properties": {
+          "last_failed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_succeeded_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_verify_failed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "description": "failing: the latest backup or verification failed",
+            "enum": [
+              "none",
+              "ok",
+              "failing"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      },
+      "AttentionCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "description": "A short code, never a path or error text",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
+      "AttentionNode": {
+        "additionalProperties": false,
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_disconnect_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "spaces": {
+            "description": "IDs of readable spaces pinned to the node",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "state",
+          "connected",
+          "spaces"
+        ],
+        "type": "object"
+      },
+      "AttentionOutbox": {
+        "additionalProperties": false,
+        "properties": {
+          "dead": {
+            "description": "Events that will not be published again (dead letters)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "retrying": {
+            "description": "Events that failed at least once and are retried",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dead",
+          "retrying"
+        ],
+        "type": "object"
+      },
+      "AttentionSpace": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_exceeded": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "budget_warnings": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "human_escalated": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "human_overdue": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "human_pending": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "human_unassigned": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "node_disconnected": {
+            "type": "boolean"
+          },
+          "quarantine_open": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "runs_failed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "runs_unknown": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "storage_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "storage_near_quota": {
+            "description": "Attachment storage is at least 90% of the quota",
+            "type": "boolean"
+          },
+          "storage_quota_bytes": {
+            "description": "0: no quota",
+            "format": "int64",
+            "type": "integer"
+          },
+          "tasks_blocked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tasks_failed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "description": "Items in this space that need a person (the counts above, without the unassigned and overdue subsets)",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "space_id",
+          "slug",
+          "name",
+          "state",
+          "total"
+        ],
+        "type": "object"
+      },
+      "AttentionStorage": {
+        "additionalProperties": false,
+        "properties": {
+          "below_reserve": {
+            "type": "boolean"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionCheck"
+            },
+            "type": "array"
+          },
+          "disk_available_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_error": {
+            "type": "string"
+          },
+          "disk_reserve_bytes": {
+            "description": "Free space below this degrades readiness",
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_total_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_used_percent": {
+            "format": "double",
+            "type": "number"
+          },
+          "problem": {
+            "description": "Readiness is not ready, the database is not ok, or free space is below the reserve",
+            "type": "boolean"
+          },
+          "readiness": {
+            "description": "ready, degraded, failed, starting or stopping",
+            "type": "string"
+          },
+          "store_reason": {
+            "type": "string"
+          },
+          "store_state": {
+            "enum": [
+              "ok",
+              "degraded",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "readiness",
+          "checks",
+          "store_state",
+          "disk_total_bytes",
+          "disk_available_bytes",
+          "disk_used_percent",
+          "disk_reserve_bytes",
+          "below_reserve",
+          "problem"
+        ],
+        "type": "object"
+      },
       "AuditGap": {
         "additionalProperties": false,
         "properties": {
@@ -2334,29 +2646,6 @@
         ],
         "type": "object"
       },
-      "Comment-human-actionRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "/api/v1/schemas/Comment-human-actionRequest.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "body": {
-            "description": "Markdown",
-            "maxLength": 20000,
-            "type": "string"
-          }
-        },
-        "required": [
-          "body"
-        ],
-        "type": "object"
-      },
       "ConnectionBody": {
         "additionalProperties": false,
         "properties": {
@@ -2638,6 +2927,14 @@
             "format": "uri",
             "readOnly": true,
             "type": "string"
+          },
+          "attachment_ids": {
+            "description": "Attachments of this space the request references (upload them first)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
           },
           "blocks_task": {
             "description": "Block the task until a person responds",
@@ -4787,6 +5084,10 @@
           "status_kind": {
             "type": "string"
           },
+          "takeover": {
+            "$ref": "#/components/schemas/FleetTakeover",
+            "description": "The terminal takeover in force: an operator types into the terminal and automated input is paused"
+          },
           "terminal_id": {
             "type": "string"
           },
@@ -4994,6 +5295,68 @@
         },
         "required": [
           "destination_node_id"
+        ],
+        "type": "object"
+      },
+      "FleetTakeover": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetTakeover.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "end_reason": {
+            "enum": [
+              "",
+              "released",
+              "ended",
+              "expired",
+              "run_ended",
+              "node_failed"
+            ],
+            "type": "string"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "ended_by": {
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "It ends unless the holder renews it before this",
+            "format": "date-time",
+            "type": "string"
+          },
+          "holder": {
+            "description": "Who holds it: user:\u003cid\u003e or root",
+            "type": "string"
+          },
+          "holder_label": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "holder",
+          "started_at",
+          "expires_at"
         ],
         "type": "object"
       },
@@ -5434,6 +5797,13 @@
           "assignee": {
             "type": "string"
           },
+          "attachments": {
+            "description": "Files the request references; set by Get",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentsAttachment"
+            },
+            "type": "array"
+          },
           "blocks_task": {
             "type": "boolean"
           },
@@ -5555,6 +5925,12 @@
             "type": "string"
           },
           "response": {},
+          "response_attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentsAttachment"
+            },
+            "type": "array"
+          },
           "response_hidden": {
             "description": "Agent tools: the response, comments and reason are hidden from runs the action is not related to",
             "type": "boolean"
@@ -5663,6 +6039,12 @@
       "HumanComment": {
         "additionalProperties": false,
         "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentsAttachment"
+            },
+            "type": "array"
+          },
           "author": {
             "type": "string"
           },
@@ -5678,13 +6060,54 @@
           },
           "id": {
             "type": "string"
+          },
+          "kind": {
+            "description": "clarification: a person asked the requester for more information; reply: the requester answered",
+            "enum": [
+              "comment",
+              "clarification",
+              "reply"
+            ],
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "kind",
           "body",
           "author",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "HumanCommentInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanCommentInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "attachment_ids": {
+            "description": "Attachments of this space the comment references",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "body": {
+            "description": "Markdown",
+            "maxLength": 20000,
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
         ],
         "type": "object"
       },
@@ -5712,10 +6135,12 @@
             "type": "string"
           },
           "kind": {
+            "description": "clarification: a person asked the requester for more information; the action stays pending",
             "enum": [
               "resolved",
               "cancelled",
-              "expired"
+              "expired",
+              "clarification"
             ],
             "type": "string"
           },
@@ -8848,6 +9273,12 @@
           "acknowledged_by": {
             "type": "string"
           },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentsAttachment"
+            },
+            "type": "array"
+          },
           "available_at": {
             "format": "date-time",
             "type": "string"
@@ -9002,6 +9433,159 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "NotificationPrefs": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/NotificationPrefs.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "assigned_to_me": {
+            "description": "An action was assigned to you",
+            "type": "boolean"
+          },
+          "clarifications": {
+            "description": "Replies to clarification requests, and clarification requests on actions you asked",
+            "type": "boolean"
+          },
+          "desktop": {
+            "description": "Also show a desktop notification (the browser asks for permission)",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "Announce human-action changes in the web UI",
+            "type": "boolean"
+          },
+          "escalations": {
+            "description": "An action escalated",
+            "type": "boolean"
+          },
+          "min_priority": {
+            "description": "Only actions of at least this priority (assignments to you always count)",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "muted_spaces": {
+            "description": "Spaces whose actions are never announced",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "new_actions": {
+            "description": "A new pending action in a space you can read",
+            "type": "boolean"
+          },
+          "reminders": {
+            "description": "A reminder for a pending action",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "desktop",
+          "new_actions",
+          "assigned_to_me",
+          "escalations",
+          "reminders",
+          "clarifications",
+          "min_priority",
+          "muted_spaces"
+        ],
+        "type": "object"
+      },
+      "NotificationPrefsOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/NotificationPrefsOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "assigned_to_me": {
+            "description": "An action was assigned to you",
+            "type": "boolean"
+          },
+          "clarifications": {
+            "description": "Replies to clarification requests, and clarification requests on actions you asked",
+            "type": "boolean"
+          },
+          "desktop": {
+            "description": "Also show a desktop notification (the browser asks for permission)",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "Announce human-action changes in the web UI",
+            "type": "boolean"
+          },
+          "escalations": {
+            "description": "An action escalated",
+            "type": "boolean"
+          },
+          "min_priority": {
+            "description": "Only actions of at least this priority (assignments to you always count)",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "muted_spaces": {
+            "description": "Spaces whose actions are never announced",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "new_actions": {
+            "description": "A new pending action in a space you can read",
+            "type": "boolean"
+          },
+          "reminders": {
+            "description": "A reminder for a pending action",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "enabled",
+          "desktop",
+          "new_actions",
+          "assigned_to_me",
+          "escalations",
+          "reminders",
+          "clarifications",
+          "min_priority",
+          "muted_spaces"
+        ],
         "type": "object"
       },
       "OidcClaims": {
@@ -11117,6 +11701,12 @@
           "assignee_run": {
             "type": "string"
           },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentsAttachment"
+            },
+            "type": "array"
+          },
           "blockers": {
             "items": {
               "$ref": "#/components/schemas/QueueBlocker"
@@ -11493,6 +12083,14 @@
             "format": "uri",
             "readOnly": true,
             "type": "string"
+          },
+          "attachment_ids": {
+            "description": "Attachments of this space the reply references",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
           },
           "body": {
             "maxLength": 100000,
@@ -12022,6 +12620,14 @@
           "answer": {
             "maxLength": 50000,
             "type": "string"
+          },
+          "attachment_ids": {
+            "description": "Attachments of this space the response references",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
           },
           "data": {
             "description": "Custom types: the response, validated against the type version's response schema"
@@ -12983,6 +13589,14 @@
             "readOnly": true,
             "type": "string"
           },
+          "attachment_ids": {
+            "description": "Attachments of this space the message references",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
           "body": {
             "description": "Markdown",
             "maxLength": 100000,
@@ -13625,6 +14239,30 @@
         ],
         "type": "object"
       },
+      "Takeover-inputRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Takeover-inputRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "data": {
+            "description": "Keystrokes as the terminal produces them",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
       "TaskBody": {
         "additionalProperties": false,
         "properties": {
@@ -13644,6 +14282,14 @@
           "assignee_role": {
             "maxLength": 48,
             "type": "string"
+          },
+          "attachment_ids": {
+            "description": "Attachments of this space the task references (an inbox item's attachments are added)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "type": "array"
           },
           "depends_on": {
             "items": {
@@ -15289,6 +15935,51 @@
         ]
       }
     },
+    "/attention": {
+      "get": {
+        "description": "One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. Computed on request (one query per category); clients refresh it when the change feed reports a change.",
+        "operationId": "get-attention",
+        "parameters": [
+          {
+            "description": "Only this space (and no installation-wide sections)",
+            "explode": false,
+            "in": "query",
+            "name": "space",
+            "schema": {
+              "description": "Only this space (and no installation-wide sections)",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attention"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "What needs a person",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/audit": {
       "get": {
         "description": "Without after, events are returned newest first and paged with cursor. With after (a sequence number, 0 for the start), events with a higher sequence are returned oldest first; next_after is the position to store and resume from. When audit retention deleted events after that position, gap says so (after, oldest retained sequence).",
@@ -15613,6 +16304,103 @@
           }
         },
         "summary": "The signed-in principal",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/me/notification-preferences": {
+      "get": {
+        "description": "Defaults (version 0) until you save them.",
+        "operationId": "get-notification-preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPrefsOut"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Your notification preferences",
+        "tags": [
+          "auth"
+        ]
+      },
+      "put": {
+        "description": "Send If-Match with the version you read (\"0\" for the defaults).",
+        "operationId": "set-notification-preferences",
+        "parameters": [
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPrefs"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPrefsOut"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Save your notification preferences",
         "tags": [
           "auth"
         ]
@@ -16905,19 +17693,125 @@
     },
     "/human-actions": {
       "get": {
-        "description": "Only spaces where you have human_action:read are included.",
+        "description": "Only spaces where you have human_action:read are included. Filters and search narrow the items; the counts are always all pending actions per space.",
         "operationId": "list-pending-human-actions",
         "parameters": [
           {
+            "description": "One type",
             "explode": false,
             "in": "query",
             "name": "type",
             "schema": {
+              "description": "One type",
               "enum": [
                 "question",
                 "approval",
                 "todo",
                 "message",
+                "custom",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Search the title and Markdown body (case-insensitive; every word must occur)",
+            "explode": false,
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "description": "Search the title and Markdown body (case-insensitive; every word must occur)",
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "description": "One status",
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "One status",
+              "enum": [
+                "open",
+                "in_progress",
+                "resolved",
+                "cancelled",
+                "expired",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "A user ID, me (the signed-in user) or unassigned",
+            "explode": false,
+            "in": "query",
+            "name": "assignee",
+            "schema": {
+              "description": "A user ID, me (the signed-in user) or unassigned",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "One priority",
+            "explode": false,
+            "in": "query",
+            "name": "priority",
+            "schema": {
+              "description": "One priority",
+              "enum": [
+                "low",
+                "normal",
+                "high",
+                "urgent",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The requester's kind (agent, operator, system), ID, run or role, or part of its label",
+            "explode": false,
+            "in": "query",
+            "name": "requester",
+            "schema": {
+              "description": "The requester's kind (agent, operator, system), ID, run or role, or part of its label",
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "description": "overdue: pending past its due date; due: has a due date; expiring: pending with an expiry",
+            "explode": false,
+            "in": "query",
+            "name": "due",
+            "schema": {
+              "description": "overdue: pending past its due date; due: has a due date; expiring: pending with an expiry",
+              "enum": [
+                "overdue",
+                "due",
+                "expiring",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display order; never changes the space's durable order. Default: rank (space), oldest (global)",
+            "explode": false,
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "description": "Display order; never changes the space's durable order. Default: rank (space), oldest (global)",
+              "enum": [
+                "rank",
+                "priority",
+                "due",
+                "newest",
+                "oldest",
+                "updated",
                 ""
               ],
               "type": "string"
@@ -16932,6 +17826,17 @@
               "maximum": 500,
               "minimum": 0,
               "type": "integer"
+            }
+          },
+          {
+            "description": "Only this space",
+            "explode": false,
+            "in": "query",
+            "name": "space",
+            "schema": {
+              "description": "Only this space",
+              "maxLength": 64,
+              "type": "string"
             }
           }
         ],
@@ -20281,15 +21186,121 @@
             }
           },
           {
+            "description": "One type",
             "explode": false,
             "in": "query",
             "name": "type",
             "schema": {
+              "description": "One type",
               "enum": [
                 "question",
                 "approval",
                 "todo",
                 "message",
+                "custom",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Search the title and Markdown body (case-insensitive; every word must occur)",
+            "explode": false,
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "description": "Search the title and Markdown body (case-insensitive; every word must occur)",
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "description": "One status",
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "One status",
+              "enum": [
+                "open",
+                "in_progress",
+                "resolved",
+                "cancelled",
+                "expired",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "A user ID, me (the signed-in user) or unassigned",
+            "explode": false,
+            "in": "query",
+            "name": "assignee",
+            "schema": {
+              "description": "A user ID, me (the signed-in user) or unassigned",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "One priority",
+            "explode": false,
+            "in": "query",
+            "name": "priority",
+            "schema": {
+              "description": "One priority",
+              "enum": [
+                "low",
+                "normal",
+                "high",
+                "urgent",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The requester's kind (agent, operator, system), ID, run or role, or part of its label",
+            "explode": false,
+            "in": "query",
+            "name": "requester",
+            "schema": {
+              "description": "The requester's kind (agent, operator, system), ID, run or role, or part of its label",
+              "maxLength": 200,
+              "type": "string"
+            }
+          },
+          {
+            "description": "overdue: pending past its due date; due: has a due date; expiring: pending with an expiry",
+            "explode": false,
+            "in": "query",
+            "name": "due",
+            "schema": {
+              "description": "overdue: pending past its due date; due: has a due date; expiring: pending with an expiry",
+              "enum": [
+                "overdue",
+                "due",
+                "expiring",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Display order; never changes the space's durable order. Default: rank (space), oldest (global)",
+            "explode": false,
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "description": "Display order; never changes the space's durable order. Default: rank (space), oldest (global)",
+              "enum": [
+                "rank",
+                "priority",
+                "due",
+                "newest",
+                "oldest",
+                "updated",
                 ""
               ],
               "type": "string"
@@ -20668,6 +21679,75 @@
         ]
       }
     },
+    "/spaces/{space_id}/human-actions/{action_id}/clarify": {
+      "post": {
+        "description": "The action stays pending. The question is kept as a clarification comment; an agent requester receives a durable clarification notification routed like a response and answers with a reply comment. A clarification is never a response.",
+        "operationId": "clarify-human-action",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanCommentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanAction"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Ask the requester for more information",
+        "tags": [
+          "human-actions"
+        ]
+      }
+    },
     "/spaces/{space_id}/human-actions/{action_id}/comments": {
       "post": {
         "description": "Comments are discussion and never count as a response.",
@@ -20696,7 +21776,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Comment-human-actionRequest"
+                "$ref": "#/components/schemas/HumanCommentInput"
               }
             }
           },
@@ -24312,6 +25392,244 @@
           }
         },
         "summary": "Stop a run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/takeover": {
+      "post": {
+        "description": "You type into the terminal (takeover-input) and every automated input to it is refused until the takeover ends: Message the agent, and the notices that tell the agent about messages and human responses (they are delivered afterwards). Everyone watching sees who holds it. It lasts 30 s unless renewed, and ends on release, when the run ends, or when the node cannot hold it. Audited (start and end, never the keystrokes).",
+        "operationId": "start-takeover",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetTakeover"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Take over a run's terminal",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/end": {
+      "post": {
+        "description": "The holder releases it; anyone else with terminal:takeover in the space can end it too (recorded as ended). Automated input resumes.",
+        "operationId": "end-takeover",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "takeover_id",
+            "required": true,
+            "schema": {
+              "pattern": "^tko_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetTakeover"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "End a takeover",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/input": {
+      "post": {
+        "description": "Only the holder types. The text goes to the program as keystrokes, escape sequences included (\\r is Enter); at most 4096 bytes per request and 50 requests or 64 KiB per second. It is never stored or logged.",
+        "operationId": "takeover-input",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "takeover_id",
+            "required": true,
+            "schema": {
+              "pattern": "^tko_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Takeover-inputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Type into a taken-over terminal",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/renew": {
+      "post": {
+        "description": "Only the holder renews. A takeover that is not renewed ends.",
+        "operationId": "renew-takeover",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^run_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "takeover_id",
+            "required": true,
+            "schema": {
+              "pattern": "^tko_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetTakeover"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Keep your takeover for another 30 s",
         "tags": [
           "runs"
         ]

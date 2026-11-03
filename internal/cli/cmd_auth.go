@@ -173,6 +173,21 @@ func (a *App) sessionCmd() *cobra.Command {
 	)
 }
 
+func (a *App) notificationsCmd() *cobra.Command {
+	return group("notifications", "Your notification preferences: what the web UI announces to you", []string{"notification-preferences"},
+		a.cmd(opts{use: "get", short: "Your notification preferences (defaults until saved)", op: "get-notification-preferences"}),
+		a.cmd(opts{use: "set", short: "Change your notification preferences (only the flags given change)", op: "set-notification-preferences",
+			get: "get-notification-preferences", merge: true,
+			form: func(f *form) {
+				f.boolean("enabled", "enabled", "announce human-action changes in the web UI").boolean("desktop", "desktop", "also show desktop notifications").
+					boolean("new-actions", "new_actions", "new pending actions").boolean("assigned-to-me", "assigned_to_me", "actions assigned to you").
+					boolean("escalations", "escalations", "escalations").boolean("reminders", "reminders", "reminders").
+					boolean("clarifications", "clarifications", "clarification requests and replies").
+					str("min-priority", "min_priority", "low, normal, high or urgent").list("mute", "muted_spaces", "space ID never announced (repeatable; replaces the list)")
+			}}),
+	)
+}
+
 func (a *App) mfaCmd() *cobra.Command {
 	return group("mfa", "Your second factor: TOTP enrollment and recovery codes", nil,
 		a.cmd(opts{use: "enroll", short: "Start TOTP enrollment; the otpauth URI (the TOTP secret) is shown once", op: "start-enroll", //nolint:gosec // G101 false positive: response field names, not credentials
@@ -202,6 +217,8 @@ func (a *App) passwordCmd() *cobra.Command {
 func (a *App) systemExtra() []*cobra.Command {
 	return []*cobra.Command{
 		a.cmd(opts{use: "outbox", short: "Outbound event publication status (pending, retrying, dead, recent failures)", op: "get-outbound-events"}),
+		a.cmd(opts{use: "attention", short: "What needs a person: human actions, blocked tasks, quarantine, runs, budgets, nodes, outbox, backups, storage",
+			op: "get-attention", query: []qflag{qs("space", "space", "only this space")}}),
 		group("restore", "The notice a central shows after a restore", nil,
 			a.cmd(opts{use: "get", short: "The restore notice: what the restore changed and what is still paused", op: "get-restore-state"}),
 			a.cmd(opts{use: "acknowledge", short: "Dismiss the restore notice", op: "acknowledge-restore"}),

@@ -120,3 +120,23 @@ Method: `hc attach` (hc 0.1.16) was run under a PTY through a logging Unix-socke
   For `created`, `data` is the full Terminal. For `finished`, it is `{exit_code, finished_ms, reason, signal}`. A `foreground` event type also exists.
   The `missed` event shape has **not** been observed: SpaceMan treats `type:"missed"` as a missed signal and re-snapshots, and that
   path is unverified.
+
+### S-5: interactive attach for terminal takeover (SM-UI-004), and key names
+Run on 2026-11-03 with hc 0.1.16 on macOS against an isolated core (own `HC_SESSION`, XDG directories and short `socket`,
+`HC_TERMINAL_*` unset), by hand and in `internal/runner/hc` `TestRealTakeoverTypesAndDetaches` (`go test -tags real`).
+- **Schema text (`hc schema`).** `terminal.attach` params: `terminal`, `cols`, `rows` (required), `history`, `observe` ("Watch only:
+  never type or resize"), `resumed` ("Back after a dropped line: sets the size only once active again"), `display`, `caller`.
+  `terminal.send`: "Paste text and press Enter, once nobody has typed for ~3 s; keys a person presses meanwhile are held, then
+  delivered. Refuses a blocked program unless `force`." `terminal.keys`: "Press named keys, encoded for the program's current
+  keyboard modes. Same quiet rule as send."
+- **Interactive attach types bytes.** An attach with `observe:false` opened at the terminal's current size (200×120) on a
+  connection of its own: DATA frames written by the client reach the program verbatim (`typed $HOME ~ "q" \x` then `\r`
+  arrived as one line in `cat`), and the terminal keeps its size. After the client closes that connection the terminal still
+  has its size, and a later `terminal.send` is delivered (about 3 s after the last typed key, the quiet rule).
+- **No client detach frame is used.** A client-side CLOSE on an attach channel was not observed in real traffic (S-3), so
+  SpaceMan detaches a takeover by closing its dedicated connection.
+- **`terminal.keys` names.** Accepted: single letters and digits, `.`, `/`, `'`, `space`, `tab`, `enter`, `esc`/`escape`,
+  `backspace`, `delete`, `up`/`down`/`left`/`right`, `home`, `end`, `pgup`, `pgdn`, `f1`…, `ctrl+<k>`, `alt+<k>`, `shift+<k>`,
+  `ctrl+left`. Refused with `invalid_params` ("unknown key"): `"`, `\`, `$`, `~`. Keys cannot carry arbitrary text, so
+  takeover types through the interactive attach rather than `terminal.keys`.
+→ Terminal takeover (ADR-0046) uses an interactive attach on a dedicated connection, at the current size.

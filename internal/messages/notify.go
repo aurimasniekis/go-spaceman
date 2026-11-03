@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -99,6 +101,9 @@ func (n *Notifier) Sweep(ctx context.Context) error {
 			continue
 		}
 		sent, err := n.notify(ctx, r, now)
+		if errors.Is(err, fleet.ErrTakenOver) {
+			continue // an operator has taken over the terminal: the notice waits until the takeover ends (SM-UI-004)
+		}
 		if err != nil {
 			n.log.Warn("notice", slog.String(obs.FieldRunID, r.ID), obs.Err(err))
 			continue

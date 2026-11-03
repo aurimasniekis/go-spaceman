@@ -1,5 +1,6 @@
 import { Badge, Button, Card, Drawer, Group, NumberInput, SegmentedControl, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
+import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
@@ -68,20 +69,22 @@ function Access({ spaceId, canWrite }: { spaceId: string; canWrite: boolean }) {
   const peers = useXSpacePeers(spaceId)
   const settings = useXSpaceSettings(spaceId)
   const [editing, setEditing] = useState<XSpacePeer | 'new' | null>(null)
-  const [v, setV] = useState({ profile: '', max_depth: 3, max_outgoing_per_hour: 60 })
+  const form = useForm({
+    defaultValues: { profile: '', max_depth: 3, max_outgoing_per_hour: 60 },
+    onSubmit: async ({ value }) => {
+      try {
+        const header = settings.data && settings.data.version > 0 ? { 'If-Match': ifMatch(settings.data.version) } : undefined
+        unwrap(await api.PUT('/spaces/{space_id}/xspace/settings', { params: { path: { space_id: spaceId }, header }, body: value }))
+        void qc.invalidateQueries({ queryKey: ['xspace-settings', spaceId] })
+        notifyOk('Cross-space settings saved')
+      } catch (e) {
+        notifyError(e)
+      }
+    },
+  })
   useEffect(() => {
-    if (settings.data) setV({ profile: settings.data.profile, max_depth: settings.data.max_depth, max_outgoing_per_hour: settings.data.max_outgoing_per_hour })
-  }, [settings.data])
-  const saveSettings = async () => {
-    try {
-      const header = settings.data && settings.data.version > 0 ? { 'If-Match': ifMatch(settings.data.version) } : undefined
-      unwrap(await api.PUT('/spaces/{space_id}/xspace/settings', { params: { path: { space_id: spaceId }, header }, body: v }))
-      void qc.invalidateQueries({ queryKey: ['xspace-settings', spaceId] })
-      notifyOk('Cross-space settings saved')
-    } catch (e) {
-      notifyError(e)
-    }
-  }
+    if (settings.data) form.reset({ profile: settings.data.profile, max_depth: settings.data.max_depth, max_outgoing_per_hour: settings.data.max_outgoing_per_hour })
+  }, [settings.data, form])
   const remove = async (p: XSpacePeer) => {
     if (!window.confirm(`Remove this space's configuration for ${p.peer.name || p.peer.id}? Nothing is allowed with it afterwards.`)) return
     try {
@@ -97,16 +100,28 @@ function Access({ spaceId, canWrite }: { spaceId: string; canWrite: boolean }) {
     <Stack gap="md">
       <ErrorAlert error={peers.error ?? settings.error} />
       <Card withBorder>
-        <Text fw={600} mb="xs">This space</Text>
-        <Textarea label="Profile for peers" description="What spaces allowed to discover this one see about it; agents read it, so write it for them" autosize minRows={2}
-          maxLength={2000} disabled={!canWrite} value={v.profile} onChange={(e) => setV({ ...v, profile: e.target.value })} />
-        <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs">
-          <NumberInput label="Deepest request chain accepted" description="A request asked because of a request… counts one deeper" min={1} max={8}
-            disabled={!canWrite} value={v.max_depth} onChange={(n) => setV({ ...v, max_depth: Number(n) || 3 })} />
-          <NumberInput label="Outgoing requests per hour" description="Everything this space's control sends, to every peer" min={1} max={1000}
-            disabled={!canWrite} value={v.max_outgoing_per_hour} onChange={(n) => setV({ ...v, max_outgoing_per_hour: Number(n) || 60 })} />
-        </SimpleGrid>
-        {canWrite && <Group justify="flex-end" mt="sm"><Button onClick={() => void saveSettings()}>Save</Button></Group>}
+        <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+          <Text fw={600} mb="xs">This space</Text>
+          <form.Field name="profile">
+            {(f) => <Textarea label="Profile for peers" description="What spaces allowed to discover this one see about it; agents read it, so write it for them" autosize minRows={2}
+              maxLength={2000} disabled={!canWrite} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs">
+            <form.Field name="max_depth">
+              {(f) => <NumberInput label="Deepest request chain accepted" description="A request asked because of a request… counts one deeper" min={1} max={8}
+                disabled={!canWrite} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 3)} />}
+            </form.Field>
+            <form.Field name="max_outgoing_per_hour">
+              {(f) => <NumberInput label="Outgoing requests per hour" description="Everything this space's control sends, to every peer" min={1} max={1000}
+                disabled={!canWrite} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 60)} />}
+            </form.Field>
+          </SimpleGrid>
+          {canWrite && (
+            <Group justify="flex-end" mt="sm">
+              <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+            </Group>
+          )}
+        </form>
       </Card>
       <Card p={0}>
         <Group justify="space-between" p="sm">

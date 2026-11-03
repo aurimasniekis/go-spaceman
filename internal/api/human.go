@@ -24,6 +24,7 @@ var HumanRules = map[string]Rule{
 	"assign-human-action":        InSpace(authz.HumanRespond),
 	"cancel-human-action":        InSpace(authz.HumanRespond),
 	"comment-human-action":       InSpace(authz.HumanRespond),
+	"clarify-human-action":       InSpace(authz.HumanRespond),
 	"move-human-action":          InSpace(authz.HumanRespond),
 	"list-human-types":           Global(authz.HumanTypeRead),
 	"get-human-type":             Global(authz.HumanTypeRead),
@@ -92,6 +93,12 @@ type HumanTypePath struct {
 	TypeID string `path:"type_id" maxLength:"64"`
 }
 
+// HumanCommentInput is a comment or a clarification request.
+type HumanCommentInput struct {
+	Body          string   `json:"body" maxLength:"20000" doc:"Markdown"`
+	AttachmentIDs []string `json:"attachment_ids,omitempty" maxItems:"20" doc:"Attachments of this space the comment references"`
+}
+
 // HumanActionPath identifies a human action.
 type HumanActionPath struct {
 	SpaceID  string `path:"space_id" maxLength:"64"`
@@ -113,6 +120,29 @@ type CreateHumanActionInput struct {
 	DedupKey      string          `json:"dedup_key,omitempty" maxLength:"256"`
 	CorrelationID string          `json:"correlation_id,omitempty" maxLength:"256"`
 	FollowUpOf    string          `json:"follow_up_of,omitempty" maxLength:"64" doc:"Correct an earlier action without changing it"`
+	AttachmentIDs []string        `json:"attachment_ids,omitempty" maxItems:"20" doc:"Attachments of this space the request references (upload them first)"`
+}
+
+// HumanListQuery are the search, filter and sort parameters of the human-action listings (SM-HUM-006, SM-HUI-001).
+type HumanListQuery struct {
+	Type      string `query:"type" enum:"question,approval,todo,message,custom," doc:"One type"`
+	Q         string `query:"q" maxLength:"200" doc:"Search the title and Markdown body (case-insensitive; every word must occur)"`
+	Status    string `query:"status" enum:"open,in_progress,resolved,cancelled,expired," doc:"One status"`
+	Assignee  string `query:"assignee" maxLength:"64" doc:"A user ID, me (the signed-in user) or unassigned"`
+	Priority  string `query:"priority" enum:"low,normal,high,urgent," doc:"One priority"`
+	Requester string `query:"requester" maxLength:"200" doc:"The requester's kind (agent, operator, system), ID, run or role, or part of its label"`
+	Due       string `query:"due" enum:"overdue,due,expiring," doc:"overdue: pending past its due date; due: has a due date; expiring: pending with an expiry"`
+	Sort      string `query:"sort" enum:"rank,priority,due,newest,oldest,updated," doc:"Display order; never changes the space's durable order. Default: rank (space), oldest (global)"`
+	Limit     int    `query:"limit" minimum:"0" maximum:"500"`
+}
+
+func (q HumanListQuery) filter(ctx context.Context, pendingOnly bool) human.ListFilter {
+	assignee := q.Assignee
+	if assignee == "me" {
+		assignee = Actor(ctx).ID
+	}
+	return human.ListFilter{Pending: pendingOnly, Type: q.Type, Query: q.Q, Status: q.Status, Assignee: assignee, Priority: q.Priority,
+		Requester: q.Requester, Due: q.Due, Sort: q.Sort, Limit: q.Limit}
 }
 
 // HumanActionList is a list of human actions.
@@ -146,14 +176,17 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
 		tags := []string{"human-actions"}
 		huma.Register(api, huma.Operation{OperationID: "list-pending-human-actions", Method: http.MethodGet, Path: "/human-actions",
-			Summary: "Pending human actions across your spaces", Description: "Only spaces where you have human_action:read are included.", Tags: tags},
+			Summary: "Pending human actions across your spaces", Description: "Only spaces where you have human_action:read are included. " +
+				"Filters and search narrow the items; the counts are always all pending actions per space.", Tags: tags},
 			func(ctx context.Context, in *struct {
-				Type  string `query:"type" enum:"question,approval,todo,message,"`
-				Limit int    `query:"limit" minimum:"0" maximum:"500"`
+				HumanListQuery
+				Space string `query:"space" maxLength:"64" doc:"Only this space"`
 			}) (*struct{ Body PendingHumanActions }, error) {
 				p := PrincipalFrom(ctx)
-				allowed := func(id string) bool { return d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), id, authz.HumanRead) }
-				l, err := svc.ListPending(ctx, allowed, human.ListFilter{Pending: true, Type: in.Type, Limit: in.Limit})
+				allowed := func(id string) bool {
+					return (in.Space == "" || id == in.Space) && d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), id, authz.HumanRead)
+				}
+				l, err := svc.ListPending(ctx, allowed, in.filter(ctx, true))
 				if err != nil {
 					return nil, d.fail(ctx, "human.list_pending", err)
 				}
@@ -174,11 +207,10 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 			Summary: "A space's human actions", Description: "Pending actions first in their order, then recent final ones.", Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				Pending bool   `query:"pending"`
-				Type    string `query:"type" enum:"question,approval,todo,message,"`
-				Limit   int    `query:"limit" minimum:"0" maximum:"500"`
+				Pending bool `query:"pending"`
+				HumanListQuery
 			}) (*struct{ Body HumanActionList }, error) {
-				l, err := svc.List(ctx, in.SpaceID, human.ListFilter{Pending: in.Pending, Type: in.Type, Limit: in.Limit})
+				l, err := svc.List(ctx, in.SpaceID, in.filter(ctx, in.Pending))
 				if err != nil {
 					return nil, d.fail(ctx, "human.list", err)
 				}
@@ -206,7 +238,8 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 					b := in.Body
 					a, _, err := svc.Create(ctx, actor, in.SpaceID, human.CreateInput{Type: b.Type, TypeSlug: b.TypeSlug, Title: b.Title, Body: b.Body, Request: b.Request,
 						Requester: human.Requester{Kind: "operator", ID: actor.ID, Label: actorLabel(ctx)}, TaskID: b.TaskID, BlocksTask: b.BlocksTask,
-						Priority: b.Priority, DueAt: b.DueAt, ExpiresAt: b.ExpiresAt, DedupKey: b.DedupKey, CorrelationID: b.CorrelationID, FollowUpOf: b.FollowUpOf})
+						Priority: b.Priority, DueAt: b.DueAt, ExpiresAt: b.ExpiresAt, DedupKey: b.DedupKey, CorrelationID: b.CorrelationID, FollowUpOf: b.FollowUpOf,
+						AttachmentIDs: b.AttachmentIDs})
 					return a, err
 				})
 				if err != nil {
@@ -224,6 +257,7 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				Body struct {
 					Outcome string `json:"outcome" maxLength:"32" doc:"answered, approved, denied, completed, acknowledged, or a custom type's outcome"`
 					human.Response
+					AttachmentIDs []string `json:"attachment_ids,omitempty" maxItems:"20" doc:"Attachments of this space the response references"`
 				}
 			}) (*humanOut, error) {
 				v, err := in.Version()
@@ -240,7 +274,8 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 						return nil, d.fail(ctx, "human.respond", apperr.New(apperr.CodeForbidden, "deciding approvals needs approval:decide"))
 					}
 				}
-				a, err := svc.Respond(ctx, Actor(ctx), in.SpaceID, in.ActionID, v, human.RespondInput{Outcome: in.Body.Outcome, Response: in.Body.Response})
+				a, err := svc.Respond(ctx, Actor(ctx), in.SpaceID, in.ActionID, v, human.RespondInput{Outcome: in.Body.Outcome, Response: in.Body.Response,
+					AttachmentIDs: in.Body.AttachmentIDs})
 				if err != nil {
 					return nil, d.fail(ctx, "human.respond", err)
 				}
@@ -288,13 +323,26 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 			Summary: "Comment on a human action", Description: "Comments are discussion and never count as a response.", Tags: tags, DefaultStatus: http.StatusCreated},
 			func(ctx context.Context, in *struct {
 				HumanActionPath
-				Body struct {
-					Body string `json:"body" maxLength:"20000" doc:"Markdown"`
-				}
+				Body HumanCommentInput
 			}) (*humanOut, error) {
-				a, err := svc.AddComment(ctx, Actor(ctx), in.SpaceID, in.ActionID, in.Body.Body, actorLabel(ctx))
+				a, err := svc.Comment(ctx, Actor(ctx), in.SpaceID, in.ActionID, human.CommentInput{Body: in.Body.Body, Label: actorLabel(ctx), AttachmentIDs: in.Body.AttachmentIDs})
 				if err != nil {
 					return nil, d.fail(ctx, "human.comment", err)
+				}
+				return humanResult(a), nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "clarify-human-action", Method: http.MethodPost, Path: "/spaces/{space_id}/human-actions/{action_id}/clarify",
+			Summary: "Ask the requester for more information",
+			Description: "The action stays pending. The question is kept as a clarification comment; an agent requester receives a durable clarification " +
+				"notification routed like a response and answers with a reply comment. A clarification is never a response.", Tags: tags, DefaultStatus: http.StatusCreated},
+			func(ctx context.Context, in *struct {
+				HumanActionPath
+				Body HumanCommentInput
+			}) (*humanOut, error) {
+				a, err := svc.RequestClarification(ctx, Actor(ctx), in.SpaceID, in.ActionID, human.CommentInput{Body: in.Body.Body, Label: actorLabel(ctx),
+					AttachmentIDs: in.Body.AttachmentIDs})
+				if err != nil {
+					return nil, d.fail(ctx, "human.clarify", err)
 				}
 				return humanResult(a), nil
 			})

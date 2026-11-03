@@ -36,6 +36,9 @@ type fakeProc struct {
 	out    chan []byte
 	done   chan struct{}
 	inputs []string
+	// typed is what takeover streams wrote; attached counts open takeover streams.
+	typed    []byte
+	attached int
 }
 
 // New returns an empty fake runner.
@@ -239,6 +242,91 @@ func (s *stream) Next(ctx context.Context) ([]byte, *runner.CloseInfo, error) {
 func (s *stream) Resize(int, int) error { return nil }
 func (s *stream) Write([]byte) error    { return nil }
 func (s *stream) Close() error          { return nil }
+
+// Takeover implements runner.Runner: an interactive stream whose writes are recorded as typed bytes. It carries no
+// output (the recorder's observe stream gets that) and ends when the program ends.
+func (f *Fake) Takeover(_ context.Context, id string) (runner.Stream, *runner.Process, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fp, ok := f.procs[id]
+	if !ok {
+		return nil, nil, runner.ErrNotFound
+	}
+	if fp.p.State != runner.StateLive {
+		return nil, nil, runner.ErrFinished
+	}
+	fp.attached++
+	p := fp.p
+	return &takeoverStream{f: f, fp: fp, closed: make(chan struct{})}, &p, nil
+}
+
+type takeoverStream struct {
+	f      *Fake
+	fp     *fakeProc
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (s *takeoverStream) Next(ctx context.Context) ([]byte, *runner.CloseInfo, error) {
+	select {
+	case <-s.fp.done:
+		s.f.mu.Lock()
+		p := s.fp.p
+		s.f.mu.Unlock()
+		return nil, &runner.CloseInfo{ExitCode: p.ExitCode, Reason: p.Reason}, nil
+	case <-s.closed:
+		return nil, nil, context.Canceled
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+}
+
+func (s *takeoverStream) Resize(int, int) error { return nil }
+
+func (s *takeoverStream) Write(p []byte) error {
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	select {
+	case <-s.closed:
+		return fmt.Errorf("takeover stream closed")
+	default:
+	}
+	if s.fp.p.State != runner.StateLive {
+		return runner.ErrFinished
+	}
+	s.fp.typed = append(s.fp.typed, p...)
+	return nil
+}
+
+func (s *takeoverStream) Close() error {
+	s.once.Do(func() {
+		s.f.mu.Lock()
+		s.fp.attached--
+		s.f.mu.Unlock()
+		close(s.closed)
+	})
+	return nil
+}
+
+// Typed returns the bytes takeover streams typed into a process.
+func (f *Fake) Typed(id string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fp, ok := f.procs[id]; ok {
+		return string(fp.typed)
+	}
+	return ""
+}
+
+// TakeoverAttached returns how many takeover streams are open on a process.
+func (f *Fake) TakeoverAttached(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fp, ok := f.procs[id]; ok {
+		return fp.attached
+	}
+	return 0
+}
 
 // Output writes program output to a live process.
 func (f *Fake) Output(id string, data string) {

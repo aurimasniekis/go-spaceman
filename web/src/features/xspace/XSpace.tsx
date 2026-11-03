@@ -1,5 +1,6 @@
 import { Alert, Badge, Button, Card, Checkbox, Group, Modal, NumberInput, Select, SimpleGrid, Stack, Table, TagsInput, Text, Textarea } from '@mantine/core'
 import { IconInfoCircle } from '@tabler/icons-react'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type XSpacePeer, type XSpacePeerInput, type XSpaceRequest } from '@/api/client'
@@ -50,9 +51,10 @@ export function RequestTable({ items, global, onOpen }: { items: XSpaceRequest[]
 /** A request's details; operators of the viewing space may withdraw an outgoing or decline a pending incoming one. */
 export function RequestDetail({ spaceId, r, canWrite, onDone }: { spaceId: string; r: XSpaceRequest; canWrite: boolean; onDone: () => void }) {
   const qc = useQueryClient()
-  const [reason, setReason] = useState('')
+  const form = useForm({ defaultValues: { reason: '' } })
   const can = actions(r)
   const act = async (what: 'cancel' | 'decline') => {
+    const { reason } = form.state.values
     try {
       const params = { path: { space_id: spaceId, request_id: r.id } }
       if (what === 'cancel') unwrap(await api.POST('/spaces/{space_id}/xspace/requests/{request_id}/cancel', { params, body: { reason } }))
@@ -107,14 +109,18 @@ export function RequestDetail({ spaceId, r, canWrite, onDone }: { spaceId: strin
       )}
       <Text size="xs" c="dimmed">Asked {datetime(r.created_at)}{r.decided_at && ` · decided ${datetime(r.decided_at)}`}{r.closed_at && ` · closed ${datetime(r.closed_at)}`}</Text>
       {canWrite && (can.cancel || can.decline) && (
-        <Stack gap="xs">
-          <Textarea label="Reason" description={can.decline ? 'Reaches the requester only when this space discloses text to it' : 'Shown to the other space'}
-            autosize minRows={1} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-          <Group justify="flex-end">
-            {can.cancel && <Button color="owlRed" variant="light" onClick={() => void act('cancel')}>Withdraw request</Button>}
-            {can.decline && <Button color="owlRed" variant="light" onClick={() => void act('decline')}>Decline</Button>}
-          </Group>
-        </Stack>
+        <form onSubmit={(e) => { e.preventDefault(); void act(can.cancel ? 'cancel' : 'decline') }}>
+          <Stack gap="xs">
+            <form.Field name="reason">
+              {(f) => <Textarea label="Reason" description={can.decline ? 'Reaches the requester only when this space discloses text to it' : 'Shown to the other space'}
+                autosize minRows={1} maxLength={500} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+            </form.Field>
+            <Group justify="flex-end">
+              {can.cancel && <Button color="owlRed" variant="light" onClick={() => void act('cancel')}>Withdraw request</Button>}
+              {can.decline && <Button color="owlRed" variant="light" onClick={() => void act('decline')}>Decline</Button>}
+            </Group>
+          </Stack>
+        </form>
       )}
     </Stack>
   )
@@ -138,61 +144,80 @@ const emptyInput: XSpacePeerInput = {
 export function PeerModal({ spaceId, peer, configured, onClose }: { spaceId: string; peer: XSpacePeer | null; configured: string[]; onClose: () => void }) {
   const qc = useQueryClient()
   const spaces = (useSpaces().data ?? []).filter((s) => s.id !== spaceId && (s.id === peer?.peer.id || !configured.includes(s.id)))
-  const [peerId, setPeerId] = useState<string | null>(peer?.peer.id ?? null)
-  const [v, setV] = useState<XSpacePeerInput>(peer ? { inbound: { ...peer.inbound }, outbound: { ...peer.outbound } } : emptyInput)
   const [error, setError] = useState('')
-  const inb = (patch: Partial<XSpacePeerInput['inbound']>) => setV({ ...v, inbound: { ...v.inbound, ...patch } })
-  const out = (patch: Partial<XSpacePeerInput['outbound']>) => setV({ ...v, outbound: { ...v.outbound, ...patch } })
-  const save = async () => {
-    if (!peerId) return setError('Choose the peer space')
-    try {
-      const header = peer ? { 'If-Match': ifMatch(peer.version) } : undefined
-      unwrap(await api.PUT('/spaces/{space_id}/xspace/peers/{peer_id}', { params: { path: { space_id: spaceId, peer_id: peerId }, header }, body: v }))
-      void qc.invalidateQueries({ queryKey: ['xspace-peers', spaceId] })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { peerId: peer?.peer.id ?? '', ...(peer ? { inbound: { ...peer.inbound }, outbound: { ...peer.outbound } } : emptyInput) },
+    onSubmit: async ({ value: { peerId, ...v } }) => {
+      setError('')
+      try {
+        const header = peer ? { 'If-Match': ifMatch(peer.version) } : undefined
+        unwrap(await api.PUT('/spaces/{space_id}/xspace/peers/{peer_id}', { params: { path: { space_id: spaceId, peer_id: peerId }, header }, body: v }))
+        void qc.invalidateQueries({ queryKey: ['xspace-peers', spaceId] })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
+  const knowledge = useSelector(form.store, (st) => st.values.inbound.knowledge)
+  const check = (name: 'inbound.discover' | 'inbound.questions' | 'inbound.delegation' | 'inbound.knowledge' | 'outbound.questions' | 'outbound.delegation' | 'outbound.knowledge', label: string) => (
+    <form.Field name={name}>{(f) => <Checkbox label={label} checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}</form.Field>
+  )
   return (
     <Modal opened onClose={onClose} size="lg" title={peer ? `Cross-space access with ${peer.peer.name || peer.peer.id}` : 'Add a peer space'}>
-      <Stack gap="sm">
-        <Select label="Peer space" searchable disabled={peer !== null} value={peerId} onChange={setPeerId}
-          data={spaces.map((s) => ({ value: s.id, label: `${s.name} (${s.slug})` }))} />
-        <Alert color="owlBlue" variant="light" icon={<IconInfoCircle size={16} />}>
-          Each grant is separate and off until set. A request needs this space's grant and the other space's matching grant on its own side.
-        </Alert>
-        <Card withBorder p="sm">
-          <Text fw={600} size="sm" mb="xs">This space accepts from it</Text>
-          <SimpleGrid cols={2} spacing="xs">
-            <Checkbox label="Discovery: it sees this space and its profile" checked={v.inbound.discover} onChange={(e) => inb({ discover: e.currentTarget.checked })} />
-            <Checkbox label="Questions to this space's control" checked={v.inbound.questions} onChange={(e) => inb({ questions: e.currentTarget.checked })} />
-            <Checkbox label="Delegation: work this space decides and runs" checked={v.inbound.delegation} onChange={(e) => inb({ delegation: e.currentTarget.checked })} />
-            <Checkbox label="Knowledge: questions to this space's KBs" checked={v.inbound.knowledge} onChange={(e) => inb({ knowledge: e.currentTarget.checked })} />
-          </SimpleGrid>
-          {v.inbound.knowledge && (
-            <TagsInput mt="xs" label="Knowledge bases" description="KB slugs it may ask; empty allows every enabled KB" value={v.inbound.kbs} onChange={(kbs) => inb({ kbs })} />
-          )}
-          <Select mt="xs" label="Replies disclose" allowDeselect={false} value={v.inbound.disclosure}
-            onChange={(x) => inb({ disclosure: (x ?? 'none') as XSpacePeerInput['inbound']['disclosure'] })}
-            data={[{ value: 'none', label: 'The outcome only (no text)' }, { value: 'summary', label: 'A summary: reply text up to 2,000 characters' },
-              { value: 'detailed', label: 'Detailed: reply text up to 20,000 characters and KB evidence' }]} />
-          <SimpleGrid cols={2} mt="xs">
-            <NumberInput label="Requests per hour" min={1} max={1000} value={v.inbound.max_per_hour} onChange={(n) => inb({ max_per_hour: Number(n) || 20 })} />
-            <NumberInput label="Open at once" min={1} max={100} value={v.inbound.max_pending} onChange={(n) => inb({ max_pending: Number(n) || 5 })} />
-          </SimpleGrid>
-        </Card>
-        <Card withBorder p="sm">
-          <Text fw={600} size="sm" mb="xs">This space's control may send it</Text>
-          <Group>
-            <Checkbox label="Questions" checked={v.outbound.questions} onChange={(e) => out({ questions: e.currentTarget.checked })} />
-            <Checkbox label="Delegation" checked={v.outbound.delegation} onChange={(e) => out({ delegation: e.currentTarget.checked })} />
-            <Checkbox label="Knowledge questions" checked={v.outbound.knowledge} onChange={(e) => out({ knowledge: e.currentTarget.checked })} />
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <form.Field name="peerId" validators={{ onSubmit: ({ value }) => (value ? undefined : 'Choose the peer space') }}>
+            {(f) => <Select label="Peer space" searchable disabled={peer !== null} value={f.state.value || null} onChange={(x) => f.handleChange(x ?? '')}
+              error={f.state.meta.errors[0] ? String(f.state.meta.errors[0]) : undefined}
+              data={spaces.map((s) => ({ value: s.id, label: `${s.name} (${s.slug})` }))} />}
+          </form.Field>
+          <Alert color="owlBlue" variant="light" icon={<IconInfoCircle size={16} />}>
+            Each grant is separate and off until set. A request needs this space's grant and the other space's matching grant on its own side.
+          </Alert>
+          <Card withBorder p="sm">
+            <Text fw={600} size="sm" mb="xs">This space accepts from it</Text>
+            <SimpleGrid cols={2} spacing="xs">
+              {check('inbound.discover', 'Discovery: it sees this space and its profile')}
+              {check('inbound.questions', "Questions to this space's control")}
+              {check('inbound.delegation', 'Delegation: work this space decides and runs')}
+              {check('inbound.knowledge', "Knowledge: questions to this space's KBs")}
+            </SimpleGrid>
+            {knowledge && (
+              <form.Field name="inbound.kbs">
+                {(f) => <TagsInput mt="xs" label="Knowledge bases" description="KB slugs it may ask; empty allows every enabled KB" value={f.state.value} onChange={(kbs) => f.handleChange(kbs)} />}
+              </form.Field>
+            )}
+            <form.Field name="inbound.disclosure">
+              {(f) => <Select mt="xs" label="Replies disclose" allowDeselect={false} value={f.state.value}
+                onChange={(x) => f.handleChange((x ?? 'none') as XSpacePeerInput['inbound']['disclosure'])}
+                data={[{ value: 'none', label: 'The outcome only (no text)' }, { value: 'summary', label: 'A summary: reply text up to 2,000 characters' },
+                  { value: 'detailed', label: 'Detailed: reply text up to 20,000 characters and KB evidence' }]} />}
+            </form.Field>
+            <SimpleGrid cols={2} mt="xs">
+              <form.Field name="inbound.max_per_hour">
+                {(f) => <NumberInput label="Requests per hour" min={1} max={1000} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 20)} />}
+              </form.Field>
+              <form.Field name="inbound.max_pending">
+                {(f) => <NumberInput label="Open at once" min={1} max={100} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 5)} />}
+              </form.Field>
+            </SimpleGrid>
+          </Card>
+          <Card withBorder p="sm">
+            <Text fw={600} size="sm" mb="xs">This space's control may send it</Text>
+            <Group>
+              {check('outbound.questions', 'Questions')}
+              {check('outbound.delegation', 'Delegation')}
+              {check('outbound.knowledge', 'Knowledge questions')}
+            </Group>
+          </Card>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
           </Group>
-        </Card>
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-      </Stack>
+        </Stack>
+      </form>
     </Modal>
   )
 }

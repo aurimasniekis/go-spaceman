@@ -831,7 +831,7 @@ func (q *Queries) InsertHumanAction(ctx context.Context, arg InsertHumanActionPa
 }
 
 const insertHumanComment = `-- name: InsertHumanComment :exec
-INSERT INTO human_comments (id, action_id, body, author, author_label, created_at) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO human_comments (id, action_id, body, author, author_label, created_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertHumanCommentParams struct {
@@ -841,6 +841,7 @@ type InsertHumanCommentParams struct {
 	Author      string
 	AuthorLabel string
 	CreatedAt   int64
+	Kind        string
 }
 
 func (q *Queries) InsertHumanComment(ctx context.Context, arg InsertHumanCommentParams) error {
@@ -851,6 +852,7 @@ func (q *Queries) InsertHumanComment(ctx context.Context, arg InsertHumanComment
 		arg.Author,
 		arg.AuthorLabel,
 		arg.CreatedAt,
+		arg.Kind,
 	)
 	return err
 }
@@ -1259,7 +1261,7 @@ func (q *Queries) ListHumanActions(ctx context.Context, arg ListHumanActionsPara
 }
 
 const listHumanComments = `-- name: ListHumanComments :many
-SELECT id, action_id, body, author, author_label, created_at FROM human_comments WHERE action_id = ? ORDER BY created_at
+SELECT id, action_id, body, author, author_label, created_at, kind FROM human_comments WHERE action_id = ? ORDER BY created_at
 `
 
 func (q *Queries) ListHumanComments(ctx context.Context, actionID string) ([]HumanComment, error) {
@@ -1278,6 +1280,7 @@ func (q *Queries) ListHumanComments(ctx context.Context, actionID string) ([]Hum
 			&i.Author,
 			&i.AuthorLabel,
 			&i.CreatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}

@@ -130,6 +130,7 @@ func Register(mux *http.ServeMux, d *Deps) huma.API {
 	registerAuth(api, d)
 	registerRecovery(api, d)
 	registerUsers(api, d)
+	registerPrefs(api, d)
 	registerTokens(api, d)
 	registerAudit(api, d)
 	for _, f := range d.Extra {

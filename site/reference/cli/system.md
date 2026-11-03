@@ -6,6 +6,7 @@ A running central: version, backups, outbox, restore and break-glass notices, ro
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman system attention`](#spaceman-system-attention) | What needs a person: human actions, blocked tasks, quarantine, runs, budgets, nodes, outbox, backups, storage |
 | [`spaceman system backup`](#spaceman-system-backup) | Backups of a running central: list, create and verify (restore is offline: `spaceman backup restore`) |
 | [`spaceman system break-glass`](#spaceman-system-break-glass) | Unacknowledged use of a break-glass recovery login |
 | [`spaceman system info`](#spaceman-system-info) | Version, readiness and bootstrap state (needs no token) |
@@ -13,6 +14,20 @@ A running central: version, backups, outbox, restore and break-glass notices, ro
 | [`spaceman system restore`](#spaceman-system-restore) | The notice a central shows after a restore |
 | [`spaceman system retention`](#spaceman-system-retention) | Retention: installation defaults, audit retention and the daily pass |
 | [`spaceman system root-token`](#spaceman-system-root-token) | The root token: show its metadata, rotate or revoke it |
+
+## spaceman system attention
+
+What needs a person: human actions, blocked tasks, quarantine, runs, budgets, nodes, outbox, backups, storage.
+
+```sh
+spaceman system attention [flags]
+```
+
+API: `get-attention` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | only this space |
 
 ## spaceman system backup
 

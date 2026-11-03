@@ -14,6 +14,8 @@ interface Props {
   runId: string
   /** live streams the running terminal; replay plays the stored recording. */
   mode: 'live' | 'replay'
+  /** Set while the viewer holds a takeover of the terminal (SM-UI-004): the terminal's keys go here. */
+  onInput?: ((data: string) => void) | null
 }
 
 /** Mounts a ghostty-web terminal into a div and disposes it on unmount. */
@@ -59,10 +61,14 @@ function useTerminal() {
 
 type LiveState = 'connecting' | 'live' | 'ended' | 'denied'
 
-function StatusBadges({ sum, live }: { sum: RecordingSummary; live?: LiveState }) {
+function StatusBadges({ sum, live, typing }: { sum: RecordingSummary; live?: LiveState; typing?: boolean }) {
   return (
     <Group gap={6}>
-      {live === 'live' && <Badge color="owlGreen" leftSection={<Box w={6} h={6} style={{ borderRadius: 3, background: 'currentColor' }} />}>Live · watch-only</Badge>}
+      {live === 'live' && (
+        <Badge color={typing ? 'owlYellow' : 'owlGreen'} leftSection={<Box w={6} h={6} style={{ borderRadius: 3, background: 'currentColor' }} />}>
+          {typing ? 'Live · you are typing' : 'Live · watch-only'}
+        </Badge>
+      )}
       {live === 'connecting' && <Badge color="owlYellow">Connecting…</Badge>}
       {live === 'ended' && <Badge color="gray">Stream ended</Badge>}
       {live === 'denied' && <Badge color="owlRed">Access lost</Badge>}
@@ -87,8 +93,19 @@ function StatusBadges({ sum, live }: { sum: RecordingSummary; live?: LiveState }
  * stream when the viewer's access does (SM-AUTH-007): a removed grant shows "Access lost"; an invalid session is
  * re-checked and either resumes (rotated session) or goes to sign-in.
  */
-function LiveTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
+function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
   const { ref, box, term, error } = useTerminal()
+  // Watch-only unless the viewer holds a takeover; ghostty-web reads disableStdin on every key (0.4.0 source).
+  useEffect(() => {
+    if (!term || !onInput) return
+    term.options.disableStdin = false
+    const sub = term.onData(onInput)
+    term.focus()
+    return () => {
+      sub.dispose()
+      term.options.disableStdin = true
+    }
+  }, [term, onInput])
   const [sum, setSum] = useState<RecordingSummary>(emptySummary)
   const [state, setState] = useState<LiveState>('connecting')
   const [attempt, setAttempt] = useState(0)
@@ -129,11 +146,11 @@ function LiveTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   }, [term, spaceId, runId, attempt])
   return (
     <Stack gap="xs">
-      <StatusBadges sum={sum} live={state} />
+      <StatusBadges sum={sum} live={state} typing={!!onInput} />
       {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
       <Box ref={box} className="sm-terminal" style={{ overflow: 'auto', maxHeight: '70vh' }}>
-        <div ref={ref} data-testid="terminal" aria-label="Run terminal (watch-only)" />
+        <div ref={ref} data-testid="terminal" aria-label={onInput ? 'Run terminal (taken over: your keys go to the program)' : 'Run terminal (watch-only)'} />
       </Box>
     </Stack>
   )
@@ -272,6 +289,6 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   )
 }
 
-export function TerminalView({ spaceId, runId, mode }: Props) {
-  return mode === 'live' ? <LiveTerminal spaceId={spaceId} runId={runId} /> : <ReplayTerminal spaceId={spaceId} runId={runId} />
+export function TerminalView({ spaceId, runId, mode, onInput }: Props) {
+  return mode === 'live' ? <LiveTerminal spaceId={spaceId} runId={runId} onInput={onInput} /> : <ReplayTerminal spaceId={spaceId} runId={runId} />
 }

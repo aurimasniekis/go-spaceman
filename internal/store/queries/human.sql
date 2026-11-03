@@ -38,7 +38,7 @@ UPDATE human_actions SET rank = ?, updated_at = ? WHERE id = ?;
 SELECT * FROM human_actions WHERE expires_at IS NOT NULL AND expires_at <= ? AND status IN ('open', 'in_progress');
 
 -- name: InsertHumanComment :exec
-INSERT INTO human_comments (id, action_id, body, author, author_label, created_at) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO human_comments (id, action_id, body, author, author_label, created_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListHumanComments :many
 SELECT * FROM human_comments WHERE action_id = ? ORDER BY created_at;

@@ -1,16 +1,20 @@
-import { Anchor, Badge, Button, Card, Divider, Group, Modal, Stack, Text, Textarea, Title } from '@mantine/core'
+import { Anchor, Badge, Button, Card, Divider, Group, Modal, Stack, Text, Title } from '@mantine/core'
 import { IconHandGrab, IconUserMinus } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type HumanAction, type HumanNotification } from '@/api/client'
 import { keys, useMe } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
+import { AttachmentList } from '@/components/AttachmentList'
+import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
+import { markOwnChange } from '@/features/notifications/notify'
 import { FollowUpBadges, HumanStatusBadge, isPending, notificationTarget, PriorityBadge, requesterLabel, routeReasonLabel, TypeBadge, type Resp } from './badges'
 import { EnforcedApprovalCard, useActionApproval } from './EnforcedApproval'
+import { CommentBox } from './CommentBox'
 import { RespondForm } from './RespondForm'
 import { DataView } from './SchemaForm'
 
@@ -25,9 +29,7 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
   const me = useMe().data
   const role = roleIn(me, action.space_id)
   const canRespond = atLeast(role, 'operator')
-  const [comment, setComment] = useState('')
   const [cancelling, setCancelling] = useState(false)
-  const [reason, setReason] = useState('')
   const pending = isPending(action)
   const resp = (action.response ?? {}) as Resp
   const path = { space_id: action.space_id, action_id: action.id }
@@ -35,32 +37,31 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
   const done = (a: HumanAction) => {
     void qc.invalidateQueries({ queryKey: keys.human(action.space_id) })
     void qc.invalidateQueries({ queryKey: keys.humanPending })
+    void qc.invalidateQueries({ queryKey: ['human', 'search'] })
     onChanged?.(a)
   }
   const assign = async (assignee: string) => {
+    markOwnChange(action.id)
     try {
       done(unwrap(await api.POST('/spaces/{space_id}/human-actions/{action_id}/assign', { params: { path, header: { 'If-Match': ifMatch(action.version) } }, body: { assignee } })))
     } catch (e) {
       notifyError(e, 'Could not change the assignment')
     }
   }
-  const addComment = async () => {
-    try {
-      done(unwrap(await api.POST('/spaces/{space_id}/human-actions/{action_id}/comments', { params: { path }, body: { body: comment } })))
-      setComment('')
-    } catch (e) {
-      notifyError(e, 'Could not add the comment')
-    }
-  }
-  const cancel = async () => {
-    try {
-      done(unwrap(await api.POST('/spaces/{space_id}/human-actions/{action_id}/cancel', { params: { path, header: { 'If-Match': ifMatch(action.version) } }, body: { reason } })))
-      setCancelling(false)
-      notifyOk('Withdrawn')
-    } catch (e) {
-      notifyError(e, 'Could not withdraw the action')
-    }
-  }
+  const cancelForm = useAppForm({
+    defaultValues: { reason: '' },
+    onSubmit: async ({ value }) => {
+      try {
+        done(unwrap(await api.POST('/spaces/{space_id}/human-actions/{action_id}/cancel', {
+          params: { path, header: { 'If-Match': ifMatch(action.version) } }, body: { reason: value.reason } })))
+        setCancelling(false)
+        cancelForm.reset()
+        notifyOk('Withdrawn')
+      } catch (e) {
+        notifyError(e, 'Could not withdraw the action')
+      }
+    },
+  })
 
   return (
     <Stack gap="md">
@@ -70,7 +71,11 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
           {action.blocks_task && <Badge variant="outline" color="owlYellow">blocks its task</Badge>}</Group>
         <Title order={3}>{action.title}</Title>
         <Text size="sm" c="dimmed">
-          {requesterLabel(action)} · {spaceName ? `${spaceName} · ` : ''}asked {ago(action.created_at)}
+          {action.requester_kind === 'agent' && action.requester_run
+            ? <>{action.requester_label || action.requester_role || 'An agent'} · run{' '}
+              <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId: action.space_id, runId: action.requester_run }} size="sm" className="mono">{action.requester_run}</AnchorLink></>
+            : requesterLabel(action)}
+          {' '}· {spaceName ? `${spaceName} · ` : ''}asked {ago(action.created_at)}
           {action.due_at ? ` · due ${datetime(action.due_at)}` : ''}{action.expires_at ? ` · expires ${datetime(action.expires_at)}` : ''}
         </Text>
         {(action.reminder_count > 0 || action.escalated_at || (pending && (action.next_reminder_at || action.escalate_at))) && (
@@ -81,8 +86,9 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
               pending && action.escalate_at && `escalates ${datetime(action.escalate_at)}`].filter(Boolean).join(' · ')}
           </Text>
         )}
-        {action.task_id && <Text size="sm">Task: <AnchorLink to="/spaces/$spaceId/queue" params={{ spaceId: action.space_id }} size="sm">{action.task_id}</AnchorLink></Text>}
-        {action.follow_up_of && <Text size="sm">Follow-up of <span className="mono">{action.follow_up_of}</span> (the original is unchanged)</Text>}
+        {action.task_id && <Text size="sm">Task: <AnchorLink to="/spaces/$spaceId/queue" params={{ spaceId: action.space_id }} search={{ task: action.task_id }} size="sm" className="mono">{action.task_id}</AnchorLink></Text>}
+        {action.inbox_item_id && <Text size="sm">Inbox item: <AnchorLink to="/spaces/$spaceId/inbox/$itemId" params={{ spaceId: action.space_id, itemId: action.inbox_item_id }} size="sm" className="mono">{action.inbox_item_id}</AnchorLink></Text>}
+        {action.follow_up_of && <Text size="sm">Follow-up of <AnchorLink to="/spaces/$spaceId/human" params={{ spaceId: action.space_id }} search={{ action: action.follow_up_of }} size="sm" className="mono">{action.follow_up_of}</AnchorLink> (the original is unchanged)</Text>}
       </Stack>
 
       {action.body && (
@@ -91,6 +97,7 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
           <MarkdownView source={action.body} spaceId={action.space_id} />
         </Card>
       )}
+      {(action.attachments ?? []).length > 0 && <AttachmentList spaceId={action.space_id} list={action.attachments ?? []} />}
 
       {action.type === 'custom' && (
         <Card withBorder>
@@ -121,6 +128,7 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
           {action.type === 'custom' && resp.data !== undefined && <DataView data={resp.data} schema={action.type_spec?.response_schema} ui={action.type_spec?.ui} />}
           {resp.note && <Text size="sm" mt={4}>Note: {resp.note}</Text>}
           {action.status_reason && <Text size="sm" mt={4}>Reason: {action.status_reason}</Text>}
+          {(action.response_attachments ?? []).length > 0 && <AttachmentList spaceId={action.space_id} list={action.response_attachments ?? []} title="Attached to the response" />}
           <Text size="xs" c="dimmed" mt="xs">Responses are final. To correct one, create a follow-up.</Text>
         </Card>
       )}
@@ -132,26 +140,28 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
       <Divider label="Comments (discussion, not a response)" labelPosition="left" />
       <Stack gap={6}>
         {(action.comments ?? []).map((c) => (
-          <Card key={c.id} p="xs">
-            <Text size="xs" c="dimmed">{c.author_label || c.author} · {ago(c.created_at)}</Text>
+          <Card key={c.id} p="xs" withBorder={c.kind !== 'comment'}>
+            <Group gap="xs">
+              {c.kind === 'clarification' && <Badge size="xs" variant="light" color="owlBlue">clarification requested</Badge>}
+              {c.kind === 'reply' && <Badge size="xs" variant="light" color="owlGreen">requester's reply</Badge>}
+              <Text size="xs" c="dimmed">{c.author_label || c.author} · {ago(c.created_at)}</Text>
+            </Group>
             <MarkdownView source={c.body} spaceId={action.space_id} />
+            {(c.attachments ?? []).length > 0 && <AttachmentList spaceId={action.space_id} list={c.attachments ?? []} title="Attached" />}
           </Card>
         ))}
         {(action.comments ?? []).length === 0 && <Text size="sm" c="dimmed">No comments.</Text>}
-        {canRespond && (
-          <Group align="flex-end" wrap="nowrap">
-            <Textarea aria-label="Comment" placeholder="Add a comment" autosize minRows={1} maxRows={6} style={{ flex: 1 }} value={comment} onChange={(e) => setComment(e.target.value)} />
-            <Button variant="default" disabled={!comment.trim()} onClick={() => void addComment()}>Comment</Button>
-          </Group>
-        )}
+        {canRespond && <CommentBox action={action} onDone={done} />}
       </Stack>
       {pending && canRespond && <Anchor size="sm" c="owlRed" component="button" onClick={() => setCancelling(true)} style={{ alignSelf: 'flex-start' }}>Withdraw this action…</Anchor>}
       <Modal opened={cancelling} onClose={() => setCancelling(false)} title="Withdraw the action">
-        <Stack gap="sm">
-          <Text size="sm">The requester is notified, and a task it blocks is unblocked.</Text>
-          <Textarea label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-          <Group justify="flex-end"><Button color="owlRed" onClick={() => void cancel()}>Withdraw</Button></Group>
-        </Stack>
+        <form onSubmit={(e) => { e.preventDefault(); void cancelForm.handleSubmit() }}>
+          <Stack gap="sm">
+            <Text size="sm">The requester is notified, and a task it blocks is unblocked.</Text>
+            <cancelForm.AppField name="reason">{(f) => <f.TextareaField label="Reason" autosize minRows={2} />}</cancelForm.AppField>
+            <Group justify="flex-end"><cancelForm.AppForm><cancelForm.SubmitButton color="owlRed">Withdraw</cancelForm.SubmitButton></cancelForm.AppForm></Group>
+          </Stack>
+        </form>
       </Modal>
     </Stack>
   )

@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
@@ -128,25 +129,30 @@ type Action struct {
 	UpdatedAt        time.Time       `json:"updated_at"`
 	Version          int64           `json:"version"`
 	// TypeSpec is the captured custom type version (schemas, safe UI metadata, outcomes); set by Get.
-	TypeSpec      *TypeSpec      `json:"type_spec,omitempty"`
-	Comments      []Comment      `json:"comments,omitempty"`
-	Notifications []Notification `json:"notifications,omitempty"`
+	TypeSpec    *TypeSpec                 `json:"type_spec,omitempty"`
+	Attachments []*attachments.Attachment `json:"attachments,omitempty" doc:"Files the request references; set by Get"`
+	// ResponseAttachments are files the response references; set by Get.
+	ResponseAttachments []*attachments.Attachment `json:"response_attachments,omitempty"`
+	Comments            []Comment                 `json:"comments,omitempty"`
+	Notifications       []Notification            `json:"notifications,omitempty"`
 }
 
 // Comment is discussion on an action; it is never a response.
 type Comment struct {
-	ID          string    `json:"id"`
-	Body        string    `json:"body"`
-	Author      string    `json:"author"`
-	AuthorLabel string    `json:"author_label,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string                    `json:"id"`
+	Kind        string                    `json:"kind" enum:"comment,clarification,reply" doc:"clarification: a person asked the requester for more information; reply: the requester answered"`
+	Body        string                    `json:"body"`
+	Author      string                    `json:"author"`
+	AuthorLabel string                    `json:"author_label,omitempty"`
+	CreatedAt   time.Time                 `json:"created_at"`
+	Attachments []*attachments.Attachment `json:"attachments,omitempty"`
 }
 
 // Notification is a durable, correlated notice of an outcome to the requester (SM-HUM-009), with where it is routed
 // and why.
 type Notification struct {
 	ID             string     `json:"id"`
-	Kind           string     `json:"kind" enum:"resolved,cancelled,expired"`
+	Kind           string     `json:"kind" enum:"resolved,cancelled,expired,clarification" doc:"clarification: a person asked the requester for more information; the action stays pending"`
 	TargetKind     string     `json:"target_kind" enum:"run,instance,control,operators" doc:"run: one run; instance: the next run of the requester's agent instance; control: the space's control; operators: no agent can take it (undeliverable)"`
 	TargetRun      string     `json:"target_run,omitempty"`
 	TargetRole     string     `json:"target_role,omitempty"`
@@ -185,7 +191,19 @@ type CreateInput struct {
 	DueAt         *time.Time
 	ExpiresAt     *time.Time
 	FollowUpOf    string
+	// AttachmentIDs are attachments of the space the request references (SM-ATT-001).
+	AttachmentIDs []string
 }
+
+// Attachment owner kinds (SM-ATT-001): the request, the response and each comment reference their own attachments,
+// which are served with the space's attachment permission (SM-ATT-004).
+const (
+	OwnerAction   = "human_action"
+	OwnerResponse = "human_response"
+	OwnerComment  = "human_comment"
+	// MaxAttachments bounds the attachments of one request, response or comment.
+	MaxAttachments = 20
+)
 
 // Service manages human actions.
 type Service struct {
@@ -365,6 +383,9 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 	if len(in.Body) > 100_000 {
 		v.Add("body", "at most 100000 bytes")
 	}
+	if len(in.AttachmentIDs) > MaxAttachments {
+		v.Add("attachment_ids", "at most %d attachments", MaxAttachments)
+	}
 	var req json.RawMessage
 	canBlock := true
 	if in.Type == TypeCustom {
@@ -489,6 +510,9 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			FollowUpOf: in.FollowUpOf, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
+		if err := attachments.Reference(ctx, tx, spaceID, OwnerAction, id, in.AttachmentIDs); err != nil {
+			return err
+		}
 		if in.BlocksTask {
 			if err := tx.Q.InsertTaskBlocker(ctx, db.InsertTaskBlockerParams{ID: ids.New("blk"), TaskID: in.TaskID, Kind: "human_action", RefID: id,
 				Note: in.Title, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID}); err != nil {
@@ -549,8 +573,23 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Action, error
 	if err != nil {
 		return nil, err
 	}
+	cids := make([]string, 0, len(cs))
 	for _, c := range cs {
-		a.Comments = append(a.Comments, Comment{ID: c.ID, Body: c.Body, Author: c.Author, AuthorLabel: c.AuthorLabel, CreatedAt: time.UnixMicro(c.CreatedAt).UTC()})
+		cids = append(cids, c.ID)
+	}
+	byComment, err := attachments.ByOwners(ctx, svc.s.R(), OwnerComment, cids)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range cs {
+		a.Comments = append(a.Comments, Comment{ID: c.ID, Kind: c.Kind, Body: c.Body, Author: c.Author, AuthorLabel: c.AuthorLabel,
+			CreatedAt: time.UnixMicro(c.CreatedAt).UTC(), Attachments: byComment[c.ID]})
+	}
+	if a.Attachments, err = svc.attachmentsOf(ctx, OwnerAction, id); err != nil {
+		return nil, err
+	}
+	if a.ResponseAttachments, err = svc.attachmentsOf(ctx, OwnerResponse, id); err != nil {
+		return nil, err
 	}
 	ns, err := svc.s.R().ListHumanNotifications(ctx, id)
 	if err != nil {
@@ -563,6 +602,19 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Action, error
 			Delivered: tn(n.DeliveredAt), Acknowledged: tn(n.AcknowledgedAt)})
 	}
 	return a, nil
+}
+
+// attachmentsOf returns the attachments an owner references (nil when none, so the field is omitted).
+func (svc *Service) attachmentsOf(ctx context.Context, kind, id string) ([]*attachments.Attachment, error) {
+	rows, err := svc.s.R().ListAttachmentsByOwner(ctx, db.ListAttachmentsByOwnerParams{OwnerKind: kind, OwnerID: id})
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	out := make([]*attachments.Attachment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, attachments.FromRow(r))
+	}
+	return out, nil
 }
 
 // limit enforces the pending limit and the rate limits of an agent requester (SM-HUM-011). The errors tell the agent

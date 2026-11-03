@@ -39,6 +39,22 @@ it to be eligible. Returning a running task to ready is a **preemption** and is 
 Nothing is accepted automatically: a worker finishing or a person answering a question never marks a task done; control
 or an operator decides.
 
+## Reassigning a task
+
+The task drawer's **Assignee** form sets the role a task is for and, optionally, a run of the space that should work on
+it (choosing a run fills in its role); clear either to unassign it. The change is sent with the task's version, so a
+concurrent edit is refused, and the audit log records the previous and the new assignee. Reassigning never stops or
+starts a run: control acts on the new assignee. A run of another space is refused. From the command line:
+`spaceman task update --space payments TASK --role reviewer --run RUN_ID` (`--run ""` clears the run).
+
+<Shot name="queue-reassign" alt="A task's drawer with its Assignee form: a role and a run of the space chosen, and a Reassign button" caption="Reassigning a task to a role and a run" />
+
+## Attachments
+
+A task's objective is written in the same Markdown composer as inbox items: paste, drop or attach images and files.
+They are stored as the space's attachments, listed in the task's drawer, and given to agents as
+`spaceman://attachment/<id>` references. A task created from an inbox item also references the item's attachments.
+
 ## Policy
 
 **Policy** sets how many top-level tasks may run at once, where new incident tasks go (top or by priority), whether a

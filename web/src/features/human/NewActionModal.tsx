@@ -1,9 +1,10 @@
-import { Button, Checkbox, Group, Modal, SegmentedControl, Select, Stack, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
+import { Button, Checkbox, Group, Modal, SegmentedControl, Select, Stack, TagsInput, Text, TextInput } from '@mantine/core'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type HumanAction, type HumanType } from '@/api/client'
 import { keys, useQueue, useSpaceHumanTypes } from '@/api/queries'
+import { Composer } from '@/components/composer/Composer'
 import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError, required } from '@/lib/form'
 import { typeLabel } from './badges'
@@ -16,27 +17,30 @@ export function NewActionModal({ spaceId, opened, onClose }: { spaceId: string; 
   const [error, setError] = useState('')
   const [key, setKey] = useState(idempotencyKey)
   const custom = useSpaceHumanTypes(spaceId).data ?? []
-  const [data, setData] = useState<Record<string, unknown>>({})
+  const [composerKey, setComposerKey] = useState(0)
   const form = useForm({
     defaultValues: {
       type: 'todo' as string, title: '', body: '', priority: 'normal' as HumanAction['priority'], options: [] as string[], allowText: true,
       approvalAction: '', steps: [] as string[], requiresAck: true, taskId: '', blocks: false,
+      data: {} as Record<string, unknown>, attachmentIds: [] as string[],
     },
     onSubmit: async ({ value: v }) => {
       setError('')
       const slug = v.type.startsWith('custom:') ? v.type.slice(7) : ''
-      const request = slug ? data : v.type === 'question' ? { options: v.options, allow_text: v.allowText }
+      const request = slug ? v.data : v.type === 'question' ? { options: v.options, allow_text: v.allowText }
         : v.type === 'approval' ? { action: v.approvalAction } : v.type === 'todo' ? { steps: v.steps } : { requires_ack: v.requiresAck }
       try {
         unwrap(await api.POST('/spaces/{space_id}/human-actions', {
           params: { path: { space_id: spaceId }, header: { 'Idempotency-Key': key } },
           body: { type: (slug ? 'custom' : v.type) as HumanType, type_slug: slug || undefined, title: v.title, body: v.body || undefined,
-            priority: slug ? undefined : v.priority, request, task_id: v.taskId || undefined, blocks_task: v.taskId ? v.blocks : undefined },
+            priority: slug ? undefined : v.priority, request, task_id: v.taskId || undefined, blocks_task: v.taskId ? v.blocks : undefined,
+            attachment_ids: v.attachmentIds.length ? v.attachmentIds : undefined },
         }))
         void qc.invalidateQueries({ queryKey: keys.human(spaceId) })
         void qc.invalidateQueries({ queryKey: keys.humanPending })
         setKey(idempotencyKey())
         form.reset()
+        setComposerKey((k) => k + 1)
         onClose()
       } catch (e) {
         setError(errorMessage(e))
@@ -53,7 +57,7 @@ export function NewActionModal({ spaceId, opened, onClose }: { spaceId: string; 
               <SegmentedControl fullWidth value={f.state.value} onChange={(v) => f.handleChange(v)}
                 data={(['question', 'approval', 'todo', 'message'] as const).map((t) => ({ value: t, label: typeLabel[t] }))} />
             ) : (
-              <Select label="Type" allowDeselect={false} value={f.state.value} onChange={(v) => { if (v) { f.handleChange(v); setData({}) } }}
+              <Select label="Type" allowDeselect={false} value={f.state.value} onChange={(v) => { if (v) { f.handleChange(v); form.setFieldValue('data', {}) } }}
                 data={[{ group: 'Built-in', items: (['question', 'approval', 'todo', 'message'] as const).map((t) => ({ value: t, label: typeLabel[t] })) },
                   { group: 'This space', items: custom.map((c) => ({ value: `custom:${c.slug}`, label: `${c.label} (v${c.number})` })) }]} />
             )}
@@ -61,9 +65,11 @@ export function NewActionModal({ spaceId, opened, onClose }: { spaceId: string; 
           <form.Field name="title" validators={{ onBlur: required('Title') }}>
             {(f) => <TextInput label="Title" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
           </form.Field>
-          <form.Field name="body">
-            {(f) => <Textarea label="Details" description="Markdown" autosize minRows={3} maxRows={10} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-          </form.Field>
+          <Stack gap={4}>
+            <Text size="sm" fw={500}>Details</Text>
+            <Composer key={composerKey} spaceId={spaceId} ariaLabel="Details" minHeight={90} placeholder="Markdown; paste, drop or attach files"
+              onChange={(v) => { form.setFieldValue('body', v.markdown); form.setFieldValue('attachmentIds', v.attachmentIds) }} />
+          </Stack>
           <form.Subscribe selector={(s) => s.values.type}>
             {(type) => (
               <>
@@ -89,7 +95,11 @@ export function NewActionModal({ spaceId, opened, onClose }: { spaceId: string; 
                 )}
                 {type.startsWith('custom:') && (() => {
                   const c = custom.find((x) => `custom:${x.slug}` === type)
-                  return c ? <SchemaForm label="Request" schema={c.request_schema} ui={c.ui} value={data} onChange={setData} /> : null
+                  return c ? (
+                    <form.Field name="data">
+                      {(f) => <SchemaForm label="Request" schema={c.request_schema} ui={c.ui} value={f.state.value} onChange={(v) => f.handleChange(v)} />}
+                    </form.Field>
+                  ) : null
                 })()}
                 {type === 'message' && (
                   <form.Field name="requiresAck">

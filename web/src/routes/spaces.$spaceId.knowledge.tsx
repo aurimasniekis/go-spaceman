@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, Code, Drawer, Group, Modal, NumberInput, Select, SimpleGrid, Stack, Table, Tabs, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
+import { Alert, Badge, Button, Card, Code, Drawer, Group, Modal, Select, SimpleGrid, Stack, Table, Tabs, Text } from '@mantine/core'
 import { IconInfoCircle, IconPlus } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
@@ -7,6 +7,7 @@ import { api, unwrap, type KBDetail, type KnowledgeBase } from '@/api/client'
 import { useKB, useKBs, useMe, useSpace, useSpaceRoles } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
+import { useAppForm } from '@/components/form/appForm'
 import { PageHeader } from '@/components/PageHeader'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
@@ -193,50 +194,61 @@ function Proposals({ spaceId, d, canWrite }: { spaceId: string; d: KBDetail; can
 function KBModal({ spaceId, kb, onClose }: { spaceId: string; kb: KnowledgeBase | null; onClose: () => void }) {
   const qc = useQueryClient()
   const roles = useSpaceRoles(spaceId).data ?? []
-  const [v, setV] = useState({ slug: kb?.slug ?? '', name: kb?.name ?? '', description: kb?.description ?? '', repo: kb?.repo ?? '', base_branch: kb?.base_branch ?? 'main',
-    space_role: kb?.space_role ?? '', entry_instructions: kb?.entry_instructions ?? '', validator: kb?.validator ?? [], write_policy: (kb?.write_policy ?? 'review') as 'read_only' | 'review' | 'serialized',
-    allowed_roles: kb?.allowed_roles ?? ['*'], max_sessions: kb?.max_sessions ?? 2, idle_minutes: Math.round((kb?.idle_sleep_seconds ?? 900) / 60),
-    timeout_minutes: Math.round((kb?.request_timeout_seconds ?? 1800) / 60), enabled: kb?.enabled ?? true })
   const [error, setError] = useState('')
-  const save = async () => {
-    const body = { slug: kb ? undefined : v.slug, name: v.name, description: v.description, repo: v.repo, base_branch: v.base_branch, space_role: v.space_role,
-      entry_instructions: v.entry_instructions, validator: v.validator, write_policy: v.write_policy, allowed_roles: v.allowed_roles, max_sessions: v.max_sessions,
-      idle_sleep_seconds: v.idle_minutes * 60, request_timeout_seconds: v.timeout_minutes * 60, enabled: v.enabled }
-    try {
-      if (kb) unwrap(await api.PUT('/spaces/{space_id}/kbs/{kb_id}', { params: { path: { space_id: spaceId, kb_id: kb.id }, header: { 'If-Match': `"${kb.version}"` } }, body }))
-      else unwrap(await api.POST('/spaces/{space_id}/kbs', { params: { path: { space_id: spaceId } }, body }))
-      void qc.invalidateQueries({ queryKey: ['kbs', spaceId] })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useAppForm({
+    defaultValues: { slug: kb?.slug ?? '', name: kb?.name ?? '', description: kb?.description ?? '', repo: kb?.repo ?? '', base_branch: kb?.base_branch ?? 'main',
+      space_role: kb?.space_role ?? '', entry_instructions: kb?.entry_instructions ?? '', validator: kb?.validator ?? [], write_policy: (kb?.write_policy ?? 'review') as 'read_only' | 'review' | 'serialized',
+      allowed_roles: kb?.allowed_roles ?? ['*'], max_sessions: kb?.max_sessions ?? 2, idle_minutes: Math.round((kb?.idle_sleep_seconds ?? 900) / 60),
+      timeout_minutes: Math.round((kb?.request_timeout_seconds ?? 1800) / 60), enabled: kb?.enabled ?? true },
+    onSubmit: async ({ value: v }) => {
+      setError('')
+      const body = { slug: kb ? undefined : v.slug, name: v.name, description: v.description, repo: v.repo, base_branch: v.base_branch, space_role: v.space_role,
+        entry_instructions: v.entry_instructions, validator: v.validator, write_policy: v.write_policy, allowed_roles: v.allowed_roles, max_sessions: v.max_sessions,
+        idle_sleep_seconds: v.idle_minutes * 60, request_timeout_seconds: v.timeout_minutes * 60, enabled: v.enabled }
+      try {
+        if (kb) unwrap(await api.PUT('/spaces/{space_id}/kbs/{kb_id}', { params: { path: { space_id: spaceId, kb_id: kb.id }, header: { 'If-Match': `"${kb.version}"` } }, body }))
+        else unwrap(await api.POST('/spaces/{space_id}/kbs', { params: { path: { space_id: spaceId } }, body }))
+        void qc.invalidateQueries({ queryKey: ['kbs', spaceId] })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title={kb ? `Edit ${kb.name}` : 'Add a knowledge base'} size="lg">
-      <Stack gap="sm">
-        <SimpleGrid cols={2}>
-          <TextInput label="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-          <TextInput label="Slug" classNames={{ input: 'mono' }} disabled={kb !== null} value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} />
-          <TextInput label="Repository" description="A Git repository folder in the space" placeholder="repos/payments-kb" classNames={{ input: 'mono' }} value={v.repo} onChange={(e) => setV({ ...v, repo: e.target.value })} />
-          <TextInput label="Knowledge branch" description="Accepted knowledge; must not be checked out" classNames={{ input: 'mono' }} value={v.base_branch} onChange={(e) => setV({ ...v, base_branch: e.target.value })} />
-        </SimpleGrid>
-        <Textarea label="Description" autosize minRows={1} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
-        <Select label="Sessions run as" description="A space role whose template is of kind kb" data={roles.map((r) => r.name)} value={v.space_role || null} onChange={(x) => setV({ ...v, space_role: x ?? '' })} />
-        <Textarea label="Entry instructions" description="What a session reads first, e.g. 'Follow AGENTS.md; you are a consumer: propose, do not accept.'" autosize minRows={2}
-          value={v.entry_instructions} onChange={(e) => setV({ ...v, entry_instructions: e.target.value })} />
-        <Select label="Write policy" allowDeselect={false} value={v.write_policy} onChange={(x) => setV({ ...v, write_policy: (x ?? 'review') as typeof v.write_policy })}
-          data={[{ value: 'read_only', label: 'Read-only: sessions answer, never change the KB' }, { value: 'review', label: 'Reviewed: a person accepts proposals' },
-            { value: 'serialized', label: 'Serialized: proposals are accepted one at a time after the check' }]} />
-        <TagsInput label="Check before accepting" description="A command run on the merged result, e.g. python3 tools/kb.py check" value={v.validator} onChange={(validator) => setV({ ...v, validator })} />
-        <TagsInput label="Admitted roles" description="Requester roles that may ask; * admits every role" value={v.allowed_roles} onChange={(allowed_roles) => setV({ ...v, allowed_roles })} />
-        <SimpleGrid cols={3}>
-          <NumberInput label="Sessions at once" min={1} max={16} value={v.max_sessions} onChange={(n) => setV({ ...v, max_sessions: Number(n) || 2 })} />
-          <NumberInput label="Sleep when idle (min)" min={1} max={1440} value={v.idle_minutes} onChange={(n) => setV({ ...v, idle_minutes: Number(n) || 15 })} />
-          <NumberInput label="Question timeout (min)" min={1} max={1440} value={v.timeout_minutes} onChange={(n) => setV({ ...v, timeout_minutes: Number(n) || 30 })} />
-        </SimpleGrid>
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <SimpleGrid cols={2}>
+            <form.AppField name="name">{(f) => <f.TextField label="Name" />}</form.AppField>
+            <form.AppField name="slug">{(f) => <f.TextField label="Slug" classNames={{ input: 'mono' }} disabled={kb !== null} />}</form.AppField>
+            <form.AppField name="repo">{(f) => <f.TextField label="Repository" description="A Git repository folder in the space" placeholder="repos/payments-kb" classNames={{ input: 'mono' }} />}</form.AppField>
+            <form.AppField name="base_branch">{(f) => <f.TextField label="Knowledge branch" description="Accepted knowledge; must not be checked out" classNames={{ input: 'mono' }} />}</form.AppField>
+          </SimpleGrid>
+          <form.AppField name="description">{(f) => <f.TextareaField label="Description" autosize minRows={1} />}</form.AppField>
+          <form.AppField name="space_role">{(f) => <f.SelectField label="Sessions run as" description="A space role whose template is of kind kb" data={roles.map((r) => r.name)} />}</form.AppField>
+          <form.AppField name="entry_instructions">
+            {(f) => <f.TextareaField label="Entry instructions" description="What a session reads first, e.g. 'Follow AGENTS.md; you are a consumer: propose, do not accept.'" autosize minRows={2} />}
+          </form.AppField>
+          <form.Field name="write_policy">
+            {(f) => <Select label="Write policy" allowDeselect={false} value={f.state.value} onChange={(x) => f.handleChange((x ?? 'review') as typeof f.state.value)}
+              data={[{ value: 'read_only', label: 'Read-only: sessions answer, never change the KB' }, { value: 'review', label: 'Reviewed: a person accepts proposals' },
+                { value: 'serialized', label: 'Serialized: proposals are accepted one at a time after the check' }]} />}
+          </form.Field>
+          <form.AppField name="validator">{(f) => <f.TagsField label="Check before accepting" description="A command run on the merged result, e.g. python3 tools/kb.py check" />}</form.AppField>
+          <form.AppField name="allowed_roles">{(f) => <f.TagsField label="Admitted roles" description="Requester roles that may ask; * admits every role" />}</form.AppField>
+          <SimpleGrid cols={3}>
+            <form.AppField name="max_sessions">{(f) => <f.NumberField label="Sessions at once" min={1} max={16} fallback={2} />}</form.AppField>
+            <form.AppField name="idle_minutes">{(f) => <f.NumberField label="Sleep when idle (min)" min={1} max={1440} fallback={15} />}</form.AppField>
+            <form.AppField name="timeout_minutes">{(f) => <f.NumberField label="Question timeout (min)" min={1} max={1440} fallback={30} />}</form.AppField>
+          </SimpleGrid>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.AppForm><form.SubmitButton>Save</form.SubmitButton></form.AppForm>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

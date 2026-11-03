@@ -214,6 +214,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		_ = h.writeNow(ctx, s, proto.TypeError, proto.Error{Code: "incompatible", Message: err.Error()})
 		return err
 	}
+	s.minor = minor
 	caps, _ := json.Marshal(hello.Capabilities)
 	if err := svc.s.W().TxNamed(ctx, "fleet.node_connect", func(tx *store.Tx) error {
 		return tx.Q.RecordNodeConnect(ctx, db.RecordNodeConnectParams{AgentVersion: truncate(hello.AgentVersion, 64), ProtocolMinor: int64(minor),
@@ -252,6 +253,12 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	}
 	if err := h.sendReconcile(ctx, s); err != nil {
 		return err
+	}
+	// The node learns which of its terminals are taken over before any command (it refuses run.input for them).
+	if s.minor >= proto.MinorTakeover {
+		if err := h.sendTakeovers(ctx, s); err != nil {
+			return err
+		}
 	}
 	go h.dispatchLoop(ctx, s)
 	go h.credentialLoop(ctx, s)
@@ -511,6 +518,12 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			_ = s.send(proto.TypeRelocationData, svc.now(), svc.relocationFetch(context.WithoutCancel(ctx), s.nodeID, f))
 		}()
 		return nil
+	case proto.TypeTakeoverEnded:
+		var m proto.TakeoverEnded
+		if err := env.Decode(&m); err != nil {
+			return err
+		}
+		return svc.nodeEndedTakeover(ctx, s.nodeID, m)
 	case proto.TypeRecording:
 		var c proto.RecordingChunk
 		if err := env.Decode(&c); err != nil {

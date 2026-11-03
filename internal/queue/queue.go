@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -87,7 +88,12 @@ type Task struct {
 	StartedAt    *time.Time `json:"started_at,omitempty"`
 	FinishedAt   *time.Time `json:"finished_at,omitempty"`
 	Version      int64      `json:"version"`
+	// Attachments are files of the space the objective or acceptance references (SM-ATT-001).
+	Attachments []*attachments.Attachment `json:"attachments,omitempty"`
 }
+
+// OwnerKind is the attachment owner kind of tasks.
+const OwnerKind = "task"
 
 // Blocker is an explicit reason a task cannot proceed (SM-QUEUE-006).
 type Blocker struct {
@@ -351,6 +357,8 @@ type CreateInput struct {
 	// DedupKey makes repeated triggers idempotent: an existing task with the key is returned unchanged (never moved).
 	DedupKey  string
 	DependsOn []string
+	// AttachmentIDs are attachments of the space the task references (at most 20).
+	AttachmentIDs []string
 }
 
 func (in *CreateInput) validate() error {
@@ -382,6 +390,9 @@ func (in *CreateInput) validate() error {
 	}
 	if err := checkExclusions(in.Exclusions); err != nil {
 		v.Add("exclusions", "%v", err)
+	}
+	if len(in.AttachmentIDs) > 20 {
+		v.Add("attachment_ids", "at most 20 attachments")
 	}
 	return v.Err()
 }
@@ -457,6 +468,9 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 				return err
 			}
 		}
+		if err := attachments.Reference(ctx, tx, spaceID, OwnerKind, id, in.AttachmentIDs); err != nil {
+			return err
+		}
 		created = true
 		if in.Kind == "incident" && in.ParentID == "" && sn.policy.IncidentPreempts {
 			for _, t := range sn.order {
@@ -511,7 +525,23 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Task, error) 
 	if t == nil {
 		return nil, errNotFound
 	}
-	return t, nil
+	return t, svc.withAttachments(ctx, t)
+}
+
+// withAttachments sets the tasks' attachments (one query).
+func (svc *Service) withAttachments(ctx context.Context, l ...*Task) error {
+	ids := make([]string, 0, len(l))
+	for _, t := range l {
+		ids = append(ids, t.ID)
+	}
+	by, err := attachments.ByOwners(ctx, svc.s.R(), OwnerKind, ids)
+	if err != nil {
+		return err
+	}
+	for _, t := range l {
+		t.Attachments = by[t.ID]
+	}
+	return nil
 }
 
 // List returns a space's queue in its effective order, with eligibility notes on ready tasks, and the policy.
@@ -520,5 +550,6 @@ func (svc *Service) List(ctx context.Context, spaceID string) ([]*Task, Policy, 
 	if err != nil {
 		return nil, Policy{}, err
 	}
-	return append([]*Task{}, sn.order...), sn.policy, nil
+	out := append([]*Task{}, sn.order...)
+	return out, sn.policy, svc.withAttachments(ctx, out...)
 }

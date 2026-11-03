@@ -49,6 +49,17 @@ choosing history is a replay.
 
 <Shot name="events-subscribe" alt="Subscribe dialog with a connection, the GitHub pull requests template and its variables" caption="Subscribing a space" />
 
+**Custom definition** in the same dialog subscribes with a definition of this subscription's own instead of a catalog
+template (it has no catalog entry and no versions). It is written as JSON in an editor that checks it as you type:
+the subject must start with `evt.`, a title and a valid urgency are required, variables must be named once with valid
+patterns, every placeholder of a variable (`vars.<name>` in double braces) must be defined, filter paths start with `event.` or `data.` and use a known
+operator. **Copy from a template** starts from a published template's definition. **Test against a sample event**
+runs the server's preview (the same validation the subscription gets) with a sample subject and payload and shows the
+resulting inbox item or why the event would be filtered or quarantined. The subscription page shows a custom
+definition read-only under **Definition**. The editor is a validated JSON text editor, not a field-by-field form.
+
+<Shot name="events-subscribe-custom" alt="Subscribe dialog in custom-definition mode: a JSON definition, a variable value and an accepted sample-event preview" caption="Subscribing with a custom definition" />
+
 Each subscription has its own **durable consumer**, so two spaces subscribed to the same events each get their own copy.
 The subscription page shows the exact **Pulse grant** it needs; the Pulse operator adds it for SpaceMan's client.
 

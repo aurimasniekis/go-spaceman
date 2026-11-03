@@ -1,10 +1,11 @@
-import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, NumberInput, Select, SimpleGrid, Stack, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
+import { Badge, Button, Card, Drawer, Group, Modal, SimpleGrid, Stack, Text } from '@mantine/core'
 import { IconMoonStars, IconPlus } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, unwrap, type DreamConfig } from '@/api/client'
 import { useDreams, useMe, useSpaceRoles } from '@/api/queries'
 import { errorMessage } from '@/components/ErrorAlert'
+import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
@@ -97,45 +98,52 @@ function DreamRuns({ spaceId, d, canWrite, onEdit }: { spaceId: string; d: Dream
 function DreamModal({ spaceId, d, onClose }: { spaceId: string; d: DreamConfig | null; onClose: () => void }) {
   const qc = useQueryClient()
   const roles = useSpaceRoles(spaceId).data ?? []
-  const [v, setV] = useState({ slug: d?.slug ?? '', name: d?.name ?? '', space_role: d?.space_role ?? '', memory_roles: d?.memory_roles ?? ['*'],
-    transcript_roles: d?.transcript_roles ?? ['*'], include_own: d?.include_own ?? false, instructions: d?.instructions ?? '', interval_hours: d?.interval_hours ?? 0,
-    max_minutes: d?.max_minutes ?? 30, max_tokens: d?.max_tokens ?? 0, max_files: d?.max_files ?? 20, max_bytes: d?.max_bytes ?? 2097152, enabled: d?.enabled ?? true })
   const [error, setError] = useState('')
-  const save = async () => {
-    const body = { ...v, slug: d ? undefined : v.slug }
-    try {
-      if (d) unwrap(await api.PUT('/spaces/{space_id}/dreams/{dream_id}', { params: { path: { space_id: spaceId, dream_id: d.id }, header: { 'If-Match': `"${d.version}"` } }, body }))
-      else unwrap(await api.POST('/spaces/{space_id}/dreams', { params: { path: { space_id: spaceId } }, body }))
-      void qc.invalidateQueries({ queryKey: ['dreams', spaceId] })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useAppForm({
+    defaultValues: { slug: d?.slug ?? '', name: d?.name ?? '', space_role: d?.space_role ?? '', memory_roles: d?.memory_roles ?? ['*'],
+      transcript_roles: d?.transcript_roles ?? ['*'], include_own: d?.include_own ?? false, instructions: d?.instructions ?? '', interval_hours: d?.interval_hours ?? 0,
+      max_minutes: d?.max_minutes ?? 30, max_tokens: d?.max_tokens ?? 0, max_files: d?.max_files ?? 20, max_bytes: d?.max_bytes ?? 2097152, enabled: d?.enabled ?? true },
+    onSubmit: async ({ value: v }) => {
+      setError('')
+      const body = { ...v, slug: d ? undefined : v.slug }
+      try {
+        if (d) unwrap(await api.PUT('/spaces/{space_id}/dreams/{dream_id}', { params: { path: { space_id: spaceId, dream_id: d.id }, header: { 'If-Match': `"${d.version}"` } }, body }))
+        else unwrap(await api.POST('/spaces/{space_id}/dreams', { params: { path: { space_id: spaceId } }, body }))
+        void qc.invalidateQueries({ queryKey: ['dreams', spaceId] })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title={d ? `Edit ${d.name}` : 'Add a dream'} size="lg">
-      <Stack gap="sm">
-        <SimpleGrid cols={2}>
-          <TextInput label="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-          <TextInput label="Slug" classNames={{ input: 'mono' }} disabled={d !== null} value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} />
-        </SimpleGrid>
-        <Select label="Dreams as" description="A space role whose template is of kind dreamer" data={roles.map((r) => r.name)} value={v.space_role || null}
-          onChange={(x) => setV({ ...v, space_role: x ?? '' })} />
-        <TagsInput label="Memories to consolidate" description="Role names; * for every role" value={v.memory_roles} onChange={(memory_roles) => setV({ ...v, memory_roles })} />
-        <TagsInput label="Transcripts it may read" description="Role names; * for every role" value={v.transcript_roles} onChange={(transcript_roles) => setV({ ...v, transcript_roles })} />
-        <Checkbox label="Also read the dreamer's own transcripts" checked={v.include_own} onChange={(e) => setV({ ...v, include_own: e.currentTarget.checked })} />
-        <Textarea label="Instructions" autosize minRows={2} value={v.instructions} onChange={(e) => setV({ ...v, instructions: e.target.value })} />
-        <SimpleGrid cols={3}>
-          <NumberInput label="Every (hours)" description="0: manual" min={0} max={720} value={v.interval_hours} onChange={(n) => setV({ ...v, interval_hours: Number(n) || 0 })} />
-          <NumberInput label="Time budget (min)" min={5} max={240} value={v.max_minutes} onChange={(n) => setV({ ...v, max_minutes: Number(n) || 30 })} />
-          <NumberInput label="Token budget" description="Told to the dreamer" min={0} value={v.max_tokens} onChange={(n) => setV({ ...v, max_tokens: Number(n) || 0 })} />
-          <NumberInput label="Evidence files" min={1} max={200} value={v.max_files} onChange={(n) => setV({ ...v, max_files: Number(n) || 20 })} />
-          <NumberInput label="Evidence bytes" min={65536} max={67108864} step={65536} value={v.max_bytes} onChange={(n) => setV({ ...v, max_bytes: Number(n) || 2097152 })} />
-        </SimpleGrid>
-        <Checkbox label="Enabled" checked={v.enabled} onChange={(e) => setV({ ...v, enabled: e.currentTarget.checked })} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <SimpleGrid cols={2}>
+            <form.AppField name="name">{(f) => <f.TextField label="Name" />}</form.AppField>
+            <form.AppField name="slug">{(f) => <f.TextField label="Slug" classNames={{ input: 'mono' }} disabled={d !== null} />}</form.AppField>
+          </SimpleGrid>
+          <form.AppField name="space_role">{(f) => <f.SelectField label="Dreams as" description="A space role whose template is of kind dreamer" data={roles.map((r) => r.name)} />}</form.AppField>
+          <form.AppField name="memory_roles">{(f) => <f.TagsField label="Memories to consolidate" description="Role names; * for every role" />}</form.AppField>
+          <form.AppField name="transcript_roles">{(f) => <f.TagsField label="Transcripts it may read" description="Role names; * for every role" />}</form.AppField>
+          <form.AppField name="include_own">{(f) => <f.CheckboxField label="Also read the dreamer's own transcripts" />}</form.AppField>
+          <form.AppField name="instructions">{(f) => <f.TextareaField label="Instructions" autosize minRows={2} />}</form.AppField>
+          <SimpleGrid cols={3}>
+            <form.AppField name="interval_hours">{(f) => <f.NumberField label="Every (hours)" description="0: manual" min={0} max={720} />}</form.AppField>
+            <form.AppField name="max_minutes">{(f) => <f.NumberField label="Time budget (min)" min={5} max={240} fallback={30} />}</form.AppField>
+            <form.AppField name="max_tokens">{(f) => <f.NumberField label="Token budget" description="Told to the dreamer" min={0} />}</form.AppField>
+            <form.AppField name="max_files">{(f) => <f.NumberField label="Evidence files" min={1} max={200} fallback={20} />}</form.AppField>
+            <form.AppField name="max_bytes">{(f) => <f.NumberField label="Evidence bytes" min={65536} max={67108864} step={65536} fallback={2097152} />}</form.AppField>
+          </SimpleGrid>
+          <form.AppField name="enabled">{(f) => <f.CheckboxField label="Enabled" />}</form.AppField>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.AppForm><form.SubmitButton>Save</form.SubmitButton></form.AppForm>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

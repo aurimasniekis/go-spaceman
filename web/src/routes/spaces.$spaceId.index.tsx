@@ -17,7 +17,9 @@ import { LaunchRunModal } from '@/features/spaces/LaunchRunModal'
 import { SpaceFormModal } from '@/features/spaces/SpaceFormModal'
 import { RelocateModal } from '@/features/spaces/RelocateModal'
 import { RelocationCard } from '@/features/spaces/RelocationCard'
+import { SpaceLifecycleMenu } from '@/features/spaces/SpaceLifecycle'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
+import { SpaceAttentionCard } from '@/features/attention/SpaceAttentionCard'
 import { atLeast, hasGlobal, roleIn } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
@@ -94,6 +96,7 @@ function SpacePage() {
                 <Button leftSection={<IconRocket size={14} />} disabled={s.state !== 'active'} onClick={() => setLaunching(true)}>Launch run</Button>
               </Tooltip>
             )}
+            <SpaceLifecycleMenu space={s} />
           </>
         }
       />
@@ -127,6 +130,7 @@ function SpacePage() {
           <Text fw={600} size="xl" mt={2}>{active.length}</Text>
         </Card>
       </SimpleGrid>
+      <SpaceAttentionCard spaceId={s.id} />
       <RelocationCard spaceId={s.id} canMove={canMove} />
       <SpaceAccountsCard spaceId={s.id} />
       <SpaceRolesCard spaceId={s.id} />

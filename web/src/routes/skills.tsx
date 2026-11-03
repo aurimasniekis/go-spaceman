@@ -1,5 +1,6 @@
 import { ActionIcon, Badge, Button, Card, Drawer, Group, Modal, Stack, Table, Tabs, Text, Textarea, TextInput } from '@mantine/core'
 import { IconPlus, IconTrash, IconUpload } from '@tabler/icons-react'
+import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -56,26 +57,36 @@ const template = (slug: string) => `---\nname: ${slug}\ndescription: Use when 鈥
 
 function NewSkillModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
-  const [v, setV] = useState({ slug: '', name: '', description: '' })
   const [error, setError] = useState('')
-  const create = async () => {
-    try {
-      unwrap(await api.POST('/skills', { body: { ...v, files: { 'SKILL.md': template(v.slug) } } }))
-      void qc.invalidateQueries({ queryKey: keys.skills })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { slug: '', name: '', description: '' },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        unwrap(await api.POST('/skills', { body: { ...value, files: { 'SKILL.md': template(value.slug) } } }))
+        void qc.invalidateQueries({ queryKey: keys.skills })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title="New skill">
-      <Stack gap="sm">
-        <TextInput label="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-        <TextInput label="Slug" description="Also the skill's name in SKILL.md" classNames={{ input: 'mono' }} value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} />
-        <Textarea label="Description" autosize minRows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void create()}>Create</Button></Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <form.Field name="name">{(f) => <TextInput label="Name" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          <form.Field name="slug">
+            {(f) => <TextInput label="Slug" description="Also the skill's name in SKILL.md" classNames={{ input: 'mono' }} value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          <form.Field name="description">{(f) => <Textarea label="Description" autosize minRows={2} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Create</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }
@@ -84,18 +95,26 @@ function SkillEditor({ skill, canWrite }: { skill: Skill; canWrite: boolean }) {
   const qc = useQueryClient()
   const draft = skill.versions?.find((v) => v.state === 'draft')
   const base = draft ?? skill.versions?.find((v) => v.state === 'published')
-  const [files, setFiles] = useState<Record<string, string>>(base?.files ?? {})
   const [active, setActive] = useState<string>('SKILL.md')
-  const [newPath, setNewPath] = useState('')
   const refresh = () => void qc.invalidateQueries({ queryKey: keys.skills })
-  const save = async () => {
-    try {
-      unwrap(await api.PUT('/skills/{skill_id}/draft', { params: { path: { skill_id: skill.id }, header: draft ? { 'If-Match': ifMatch(draft.version) } : {} }, body: { files } }))
-      refresh()
-      notifyOk('Draft saved')
-    } catch (e) {
-      notifyError(e, 'Could not save the draft')
-    }
+  const form = useForm({
+    defaultValues: { files: (base?.files ?? {}) as Record<string, string>, newPath: '' },
+    onSubmit: async ({ value }) => {
+      try {
+        unwrap(await api.PUT('/skills/{skill_id}/draft', { params: { path: { skill_id: skill.id }, header: draft ? { 'If-Match': ifMatch(draft.version) } : {} }, body: { files: value.files } }))
+        refresh()
+        notifyOk('Draft saved')
+      } catch (e) {
+        notifyError(e, 'Could not save the draft')
+      }
+    },
+  })
+  const addFile = () => {
+    const { files, newPath } = form.state.values
+    if (!newPath || newPath in files) return
+    form.setFieldValue('files', { ...files, [newPath]: '' })
+    setActive(newPath)
+    form.setFieldValue('newPath', '')
   }
   const publish = async () => {
     try {
@@ -106,39 +125,55 @@ function SkillEditor({ skill, canWrite }: { skill: Skill; canWrite: boolean }) {
       notifyError(e, 'Could not publish')
     }
   }
-  const paths = Object.keys(files).sort((a, b) => (a === 'SKILL.md' ? -1 : b === 'SKILL.md' ? 1 : a.localeCompare(b)))
   return (
-    <Stack gap="sm">
-      <Text size="sm" c="dimmed"><span className="mono">{skill.slug}</span>{skill.description ? ` 路 ${skill.description}` : ''}</Text>
-      <Group gap={4}>{(skill.versions ?? []).filter((v) => v.state === 'published').map((v) => <Badge key={v.id} variant="outline">v{v.number} 路 {datetime(v.published_at)} 路 {v.sha256.slice(0, 8)}</Badge>)}</Group>
-      <Tabs value={active} onChange={(v) => v && setActive(v)}>
-        <Tabs.List>
-          {paths.map((p) => <Tabs.Tab key={p} value={p} className="mono">{p}</Tabs.Tab>)}
-        </Tabs.List>
-        {paths.map((p) => (
-          <Tabs.Panel key={p} value={p} pt="xs">
-            <Group align="flex-start" wrap="nowrap">
-              <Textarea aria-label={`Contents of ${p}`} classNames={{ input: 'mono' }} autosize minRows={12} maxRows={30} style={{ flex: 1 }} readOnly={!canWrite}
-                value={files[p]} onChange={(e) => setFiles({ ...files, [p]: e.target.value })} />
-              {canWrite && p !== 'SKILL.md' && (
-                <ActionIcon aria-label={`Remove ${p}`} onClick={() => { const n = { ...files }; delete n[p]; setFiles(n); setActive('SKILL.md') }}><IconTrash size={14} /></ActionIcon>
-              )}
+    <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed"><span className="mono">{skill.slug}</span>{skill.description ? ` 路 ${skill.description}` : ''}</Text>
+        <Group gap={4}>{(skill.versions ?? []).filter((v) => v.state === 'published').map((v) => <Badge key={v.id} variant="outline">v{v.number} 路 {datetime(v.published_at)} 路 {v.sha256.slice(0, 8)}</Badge>)}</Group>
+        <form.Field name="files">
+          {(f) => {
+            const files = f.state.value
+            const paths = Object.keys(files).sort((a, b) => (a === 'SKILL.md' ? -1 : b === 'SKILL.md' ? 1 : a.localeCompare(b)))
+            return (
+              <Tabs value={active} onChange={(v) => v && setActive(v)}>
+                <Tabs.List>
+                  {paths.map((p) => <Tabs.Tab key={p} value={p} className="mono">{p}</Tabs.Tab>)}
+                </Tabs.List>
+                {paths.map((p) => (
+                  <Tabs.Panel key={p} value={p} pt="xs">
+                    <Group align="flex-start" wrap="nowrap">
+                      <Textarea aria-label={`Contents of ${p}`} classNames={{ input: 'mono' }} autosize minRows={12} maxRows={30} style={{ flex: 1 }} readOnly={!canWrite}
+                        value={files[p]} onChange={(e) => f.handleChange({ ...files, [p]: e.target.value })} />
+                      {canWrite && p !== 'SKILL.md' && (
+                        <ActionIcon aria-label={`Remove ${p}`} onClick={() => { const n = { ...files }; delete n[p]; f.handleChange(n); setActive('SKILL.md') }}><IconTrash size={14} /></ActionIcon>
+                      )}
+                    </Group>
+                  </Tabs.Panel>
+                ))}
+              </Tabs>
+            )
+          }}
+        </form.Field>
+        {canWrite && (
+          <>
+            <Group align="flex-end">
+              <form.Field name="newPath">
+                {(f) => <TextInput label="Add a file" placeholder="references/commands.md" classNames={{ input: 'mono' }} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addFile() } }} />}
+              </form.Field>
+              <form.Subscribe selector={(st) => st.values}>
+                {(v) => (
+                  <Button variant="default" disabled={!v.newPath || v.newPath in v.files} onClick={addFile}>Add</Button>
+                )}
+              </form.Subscribe>
             </Group>
-          </Tabs.Panel>
-        ))}
-      </Tabs>
-      {canWrite && (
-        <>
-          <Group align="flex-end">
-            <TextInput label="Add a file" placeholder="references/commands.md" classNames={{ input: 'mono' }} value={newPath} onChange={(e) => setNewPath(e.target.value)} />
-            <Button variant="default" disabled={!newPath || newPath in files} onClick={() => { setFiles({ ...files, [newPath]: '' }); setActive(newPath); setNewPath('') }}>Add</Button>
-          </Group>
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => void save()}>Save draft</Button>
-            <Button leftSection={<IconUpload size={14} />} disabled={!draft} onClick={() => void publish()}>Publish</Button>
-          </Group>
-        </>
-      )}
-    </Stack>
+            <Group justify="flex-end">
+              <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" variant="default" loading={busy}>Save draft</Button>}</form.Subscribe>
+              <Button leftSection={<IconUpload size={14} />} disabled={!draft} onClick={() => void publish()}>Publish</Button>
+            </Group>
+          </>
+        )}
+      </Stack>
+    </form>
   )
 }

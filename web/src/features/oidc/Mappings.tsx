@@ -1,5 +1,6 @@
 import { ActionIcon, Badge, Button, Group, Select, Stack, Table, Text, TextInput } from '@mantine/core'
 import { IconPlus, IconTrash } from '@tabler/icons-react'
+import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, check, unwrap, type OidcMapping, type Role } from '@/api/client'
@@ -23,24 +24,24 @@ export function Mappings({ providerId, providerName }: { providerId: string; pro
   const qc = useQueryClient()
   const mappings = useOidcMappings(providerId)
   const spaces = useSpaces()
-  const [group, setGroup] = useState('')
-  const [role, setRole] = useState<Role>('viewer')
-  const [domain, setDomain] = useState('*')
   const [error, setError] = useState('')
   const domains = [{ value: '*', label: 'All spaces (global)' }, ...(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }))]
   const spaceName = (d: string) => (d === '*' ? 'all spaces' : (spaces.data?.find((s) => s.id === d)?.name ?? d))
   const refresh = () => void qc.invalidateQueries({ queryKey: keys.oidcMappings(providerId) })
 
-  const add = async () => {
-    setError('')
-    try {
-      unwrap(await api.POST('/oidc/providers/{provider_id}/mappings', { params: { path: { provider_id: providerId } }, body: { group_value: group.trim(), role, domain } }))
-      setGroup('')
-      refresh()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { group: '', role: 'viewer' as Role, domain: '*' },
+    onSubmit: async ({ value: { group, role, domain }, formApi }) => {
+      setError('')
+      try {
+        unwrap(await api.POST('/oidc/providers/{provider_id}/mappings', { params: { path: { provider_id: providerId } }, body: { group_value: group.trim(), role, domain } }))
+        formApi.setFieldValue('group', '')
+        refresh()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   const remove = async (m: OidcMapping) => {
     try {
       check(await api.DELETE('/oidc/providers/{provider_id}/mappings/{mapping_id}', { params: { path: { provider_id: providerId, mapping_id: m.id } } }))
@@ -67,12 +68,22 @@ export function Mappings({ providerId, providerName }: { providerId: string; pro
         </Table.Tbody>
       </Table>
       {mappings.isSuccess && mappings.data.length === 0 && <Text size="sm" c="dimmed">No mappings: people who sign in here get only the grants given to them on the Users page.</Text>}
-      <Group gap="xs" align="flex-end" wrap="nowrap">
-        <TextInput label="Group" aria-label={`New group for ${providerName}`} placeholder="spaceman-operators" flex={1} value={group} onChange={(e) => setGroup(e.target.value)} />
-        <Select label="Role" aria-label={`Role for ${providerName}`} w={130} allowDeselect={false} data={ROLES} value={role} onChange={(v) => v && setRole(v as Role)} />
-        <Select label="Scope" aria-label={`Scope for ${providerName}`} w={220} allowDeselect={false} searchable data={domains} value={domain} onChange={(v) => v && setDomain(v)} />
-        <Button variant="default" leftSection={<IconPlus size={14} />} disabled={!group.trim()} onClick={() => void add()}>Add mapping</Button>
-      </Group>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Group gap="xs" align="flex-end" wrap="nowrap">
+          <form.Field name="group">
+            {(f) => <TextInput label="Group" aria-label={`New group for ${providerName}`} placeholder="spaceman-operators" flex={1} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          <form.Field name="role">
+            {(f) => <Select label="Role" aria-label={`Role for ${providerName}`} w={130} allowDeselect={false} data={ROLES} value={f.state.value} onChange={(v) => v && f.handleChange(v as Role)} />}
+          </form.Field>
+          <form.Field name="domain">
+            {(f) => <Select label="Scope" aria-label={`Scope for ${providerName}`} w={220} allowDeselect={false} searchable data={domains} value={f.state.value} onChange={(v) => v && f.handleChange(v)} />}
+          </form.Field>
+          <form.Subscribe selector={(st) => [st.values.group.trim() !== '', st.isSubmitting] as const}>
+            {([ok, busy]) => <Button type="submit" variant="default" leftSection={<IconPlus size={14} />} disabled={!ok} loading={busy}>Add mapping</Button>}
+          </form.Subscribe>
+        </Group>
+      </form>
       {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
     </Stack>
   )

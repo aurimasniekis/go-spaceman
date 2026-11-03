@@ -20,7 +20,7 @@ Aliases: `tasks`, `queue`.
 | [`spaceman task set-policy`](#spaceman-task-set-policy) | Set the queue policy (only the flags given change) |
 | [`spaceman task set-status`](#spaceman-task-set-status) | Change a task's status |
 | [`spaceman task unblock`](#spaceman-task-unblock) | Remove a blocker from a task |
-| [`spaceman task update`](#spaceman-task-update) | Edit a task (only the flags given change) |
+| [`spaceman task update`](#spaceman-task-update) | Edit or reassign a task (only the flags given change) |
 
 ## spaceman task block
 
@@ -236,7 +236,7 @@ API: `resolve-task-blocker` ([HTTP API](../api)).
 
 ## spaceman task update
 
-Edit a task (only the flags given change).
+Edit or reassign a task (only the flags given change).
 
 ```sh
 spaceman task update <task> [flags]
@@ -254,7 +254,8 @@ API: `get-task`, `update-task` ([HTTP API](../api)).
 | `--objective` | string |  | objective |
 | `--objective-file` | string |  | read --objective from a file (- reads standard input) |
 | `--priority` | string |  | low, normal, high or urgent |
-| `--role` | string |  | assignee role |
+| `--role` | string |  | assignee role (empty clears it) |
+| `--run` | string |  | assignee run ID (empty clears it) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--title` | string |  | title |
 | `--workspace` | string |  | workspace |

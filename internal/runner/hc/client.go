@@ -85,8 +85,9 @@ type frame struct {
 
 // Client is one framed connection to a herdr-core core. It is safe for concurrent use.
 type Client struct {
-	conn  net.Conn
-	hello Hello
+	conn   net.Conn
+	hello  Hello
+	socket string
 
 	wmu sync.Mutex
 	w   *bufio.Writer
@@ -112,7 +113,7 @@ func Dial(ctx context.Context, socket string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hc dial %s: %w", socket, err)
 	}
-	c := &Client{conn: conn, w: bufio.NewWriter(conn), pending: map[int64]chan rpcResponse{}, channels: map[uint32]*channel{},
+	c := &Client{conn: conn, socket: socket, w: bufio.NewWriter(conn), pending: map[int64]chan rpcResponse{}, channels: map[uint32]*channel{},
 		done: make(chan struct{}), nextID: 1}
 	if dl, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(dl)

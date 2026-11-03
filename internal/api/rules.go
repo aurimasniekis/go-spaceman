@@ -50,6 +50,9 @@ var rules = map[string]Rule{
 	"list-sessions":   {Session: true, UserOnly: true},
 	"revoke-session":  {Session: true, UserOnly: true},
 	"change-password": {Session: true, UserOnly: true, Reauth: true},
+	// A signed-in user's own notification preferences (SM-HUI-006).
+	"get-notification-preferences": {Session: true, UserOnly: true},
+	"set-notification-preferences": {Session: true, UserOnly: true},
 	// Token redemption is public: the single-use token is the credential (throttled and audited by the auth service).
 	"reset-password":            public(),
 	"recovery-login":            public(),

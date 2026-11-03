@@ -69,6 +69,10 @@ func TestNegotiate(t *testing.T) {
 	if m, err := Negotiate(0, 3); err != nil || m != 3 || MaxMinor < MinorMemoryFlush {
 		t.Fatalf("%d %v", m, err)
 	}
+	// A node that predates takeovers (minor 3) still connects; central then offers no takeover for its runs.
+	if m, err := Negotiate(0, 3); err != nil || m != 3 || m >= MinorTakeover {
+		t.Fatalf("older node: %d %v", m, err)
+	}
 	if _, err := Negotiate(MaxMinor+1, MaxMinor+2); err == nil {
 		t.Fatal("incompatible range accepted")
 	}

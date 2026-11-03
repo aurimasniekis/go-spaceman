@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -49,6 +50,7 @@ type TaskBody struct {
 	Workspace     string   `json:"workspace,omitempty" maxLength:"256"`
 	DependsOn     []string `json:"depends_on,omitempty" maxItems:"50"`
 	FromInboxItem string   `json:"from_inbox_item,omitempty" maxLength:"64" doc:"Create the task from an inbox item: the item is marked done and linked to the task"`
+	AttachmentIDs []string `json:"attachment_ids,omitempty" maxItems:"20" doc:"Attachments of this space the task references (an inbox item's attachments are added)"`
 }
 
 // QueueOut is a space's queue in its effective order.
@@ -133,7 +135,7 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 				t, _, err := Idempotent(ctx, d, "create-task", in.IdempotencyKey, map[string]any{"space": in.SpaceID, "body": in.Body}, false, func() (*queue.Task, error) {
 					ci := queue.CreateInput{Title: in.Body.Title, Objective: in.Body.Objective, Acceptance: in.Body.Acceptance, Kind: in.Body.Kind, Priority: in.Body.Priority,
 						Status: in.Body.Status, ParentID: in.Body.ParentID, Exclusions: in.Body.Exclusions, AssigneeRole: in.Body.AssigneeRole, Workspace: in.Body.Workspace,
-						DependsOn: in.Body.DependsOn}
+						DependsOn: in.Body.DependsOn, AttachmentIDs: in.Body.AttachmentIDs}
 					var item *inbox.Item
 					if in.Body.FromInboxItem != "" {
 						it, err := ib.Get(ctx, in.SpaceID, in.Body.FromInboxItem)
@@ -142,6 +144,11 @@ func RegisterQueue(svc *queue.Service, ib *inbox.Service) func(api huma.API, d *
 						}
 						item = it
 						ci.OriginKind, ci.OriginID = "inbox_item", it.ID
+						for _, att := range it.Attachments {
+							if !slices.Contains(ci.AttachmentIDs, att.ID) && len(ci.AttachmentIDs) < 20 {
+								ci.AttachmentIDs = append(ci.AttachmentIDs, att.ID)
+							}
+						}
 					}
 					t, _, err := svc.Create(ctx, Actor(ctx), in.SpaceID, ci)
 					if err != nil {

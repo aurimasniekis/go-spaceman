@@ -28,8 +28,9 @@ const (
 	// 1: agent tool calls (tool.call / tool.result); 2: memory sync, KB acceptance, dreams, usage and transcripts;
 	// 3: space relocation (space.relocate.* commands, relocation reports and transfers, ADR-0037); 4: configured space
 	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044); 5: memory flush
-	// before a backup (memory.flush / memory.flushed, ADR-0045)
-	MaxMinor = 5
+	// before a backup (memory.flush / memory.flushed, ADR-0045); 6: terminal takeover (takeover.state, takeover.input,
+	// takeover.ended; SM-UI-004, ADR-0046)
+	MaxMinor = 6
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -55,6 +56,7 @@ const (
 	TypeRelocationFetch  = "relocation.fetch"  // minor ≥ 3: the destination asks for part of a relocation file
 	TypeRepoStatus       = "repos.status"      // minor ≥ 4: the state of a space's configured repositories
 	TypeMemoryFlushed    = "memory.flushed"    // minor ≥ 5: the outcome of a memory.flush
+	TypeTakeoverEnded    = "takeover.ended"    // minor ≥ 6: the node could not hold a takeover (attach failed, terminal closed)
 
 	// central → node
 	TypeWelcome             = "welcome"
@@ -69,6 +71,8 @@ const (
 	TypeRelocationUploadAck = "relocation.upload_ack" // minor ≥ 3
 	TypeRelocationData      = "relocation.data"       // minor ≥ 3: the answer to a relocation.fetch
 	TypeMemoryFlush         = "memory.flush"          // minor ≥ 5: checkpoint and sync spaces' role memory now (backup prep)
+	TypeTakeoverState       = "takeover.state"        // minor ≥ 6: every active takeover of the node's runs (the whole set)
+	TypeTakeoverInput       = "takeover.input"        // minor ≥ 6: an operator's keystrokes for a taken-over terminal
 	TypeError               = "error"
 )
 
@@ -435,6 +439,42 @@ func (c Command) Validate() error {
 		return fmt.Errorf("unknown command kind %q", c.Kind)
 	}
 	return nil
+}
+
+// MinorTakeover is the first minor version that carries terminal takeovers (SM-UI-004).
+const MinorTakeover = 6
+
+// MaxTakeoverInput bounds the keystrokes of one takeover.input message.
+const MaxTakeoverInput = 4096
+
+// Takeover is one active terminal takeover of a run on the node.
+type Takeover struct {
+	TakeoverID string `json:"takeover_id"`
+	SpaceID    string `json:"space_id"`
+	RunID      string `json:"run_id"`
+	Generation int64  `json:"generation"`
+}
+
+// TakeoverState is the complete set of active takeovers of the node's runs. Central sends it after the node connects
+// and whenever a takeover starts or ends; the node attaches interactively for each one it lacks and detaches from
+// each one no longer listed. While a run is taken over the node refuses run.input for it (automated input is paused).
+type TakeoverState struct {
+	Takeovers []Takeover `json:"takeovers"`
+}
+
+// TakeoverInput is part of an operator's typing: bytes for the program, as the browser terminal produced them
+// (escape sequences included). They are never journaled or logged.
+type TakeoverInput struct {
+	TakeoverID string `json:"takeover_id"`
+	RunID      string `json:"run_id"`
+	Data       []byte `json:"data"`
+}
+
+// TakeoverEnded tells central that the node no longer holds a takeover, and why.
+type TakeoverEnded struct {
+	TakeoverID string `json:"takeover_id"`
+	RunID      string `json:"run_id"`
+	Reason     string `json:"reason"`
 }
 
 // MinorTools is the first minor version that carries agent tool calls.

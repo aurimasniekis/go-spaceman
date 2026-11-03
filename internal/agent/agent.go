@@ -102,6 +102,8 @@ type Agent struct {
 	guardLocks map[string]*sync.Mutex
 	// repoLocks serialize each space's repository syncs and clones (ADR-0044), by space ID.
 	repoLocks map[string]*sync.Mutex
+	// takeovers are the runs whose terminal an operator has taken over (SM-UI-004), by run ID.
+	takeovers map[string]*takeover
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
@@ -161,7 +163,7 @@ func New(j *Journal, o Options) *Agent {
 		o.HTTPClient = http.DefaultClient
 	}
 	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
-		recorders: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}}
+		recorders: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, takeovers: map[string]*takeover{}}
 	a.mem = newMemManager(a)
 	return a
 }
@@ -187,6 +189,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
 	// recorder attached when the next one adopts the run.
 	defer a.stopRecorders()
+	defer a.stopTakeovers()
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err
@@ -396,6 +399,16 @@ func (a *Agent) session(ctx context.Context) error {
 			var res proto.ToolResult
 			if err := env.Decode(&res); err == nil {
 				a.toolResult(res)
+			}
+		case proto.TypeTakeoverState:
+			var st proto.TakeoverState
+			if err := env.Decode(&st); err == nil {
+				a.applyTakeovers(ctx, st)
+			}
+		case proto.TypeTakeoverInput:
+			var in proto.TakeoverInput
+			if err := env.Decode(&in); err == nil {
+				a.takeoverInput(in)
 			}
 		case proto.TypeTranscriptAck:
 			var ack proto.TranscriptAck

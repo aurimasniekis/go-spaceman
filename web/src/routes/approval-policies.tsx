@@ -1,5 +1,6 @@
 import { ActionIcon, Alert, Button, Card, Group, Modal, NumberInput, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
 import { IconInfoCircle, IconPlus, IconTrash } from '@tabler/icons-react'
+import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -8,6 +9,7 @@ import { keys, useApprovalPolicies, useMe, useSpaces } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { hasGlobal } from '@/lib/access'
+import { fieldError, required } from '@/lib/form'
 import { notifyError } from '@/lib/notify'
 
 export const Route = createFileRoute('/approval-policies')({ component: ApprovalPoliciesPage })
@@ -64,33 +66,45 @@ function ApprovalPoliciesPage() {
 
 function PolicyModal({ onClose, spaces }: { onClose: () => void; spaces: { value: string; label: string }[] }) {
   const qc = useQueryClient()
-  const [v, setV] = useState({ space_id: '', operation: '', uses: 1, valid_minutes: 60, request_hours: 24, note: '' })
   const [error, setError] = useState('')
-  const save = async () => {
-    try {
-      unwrap(await api.POST('/approval-policies', { body: { space_id: v.space_id || undefined, operation: v.operation, uses: v.uses, valid_seconds: v.valid_minutes * 60,
-        request_ttl_seconds: v.request_hours * 3600, note: v.note || undefined } }))
-      void qc.invalidateQueries({ queryKey: keys.approvalPolicies })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { space_id: '', operation: '', uses: 1, valid_minutes: 60, request_hours: 24, note: '' },
+    onSubmit: async ({ value: v }) => {
+      setError('')
+      try {
+        unwrap(await api.POST('/approval-policies', { body: { space_id: v.space_id || undefined, operation: v.operation, uses: v.uses, valid_seconds: v.valid_minutes * 60,
+          request_ttl_seconds: v.request_hours * 3600, note: v.note || undefined } }))
+        void qc.invalidateQueries({ queryKey: keys.approvalPolicies })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title="Add an approval policy">
-      <Stack gap="sm">
-        <TextInput label="Operation" description="spaceman.<tool>, mcp.<server>.<tool>, or a prefix such as mcp.deploys.*" placeholder="mcp.deploys.deploy" classNames={{ input: 'mono' }}
-          value={v.operation} onChange={(e) => setV({ ...v, operation: e.target.value })} />
-        <Select label="Space" data={[{ value: '', label: 'Every space' }, ...spaces]} value={v.space_id} onChange={(x) => setV({ ...v, space_id: x ?? '' })} allowDeselect={false} />
-        <Group grow>
-          <NumberInput label="Uses per approval" min={1} max={100} value={v.uses} onChange={(n) => setV({ ...v, uses: Number(n) || 1 })} />
-          <NumberInput label="Usable for (minutes)" min={1} max={10080} value={v.valid_minutes} onChange={(n) => setV({ ...v, valid_minutes: Number(n) || 60 })} />
-          <NumberInput label="Request waits (hours)" min={1} max={720} value={v.request_hours} onChange={(n) => setV({ ...v, request_hours: Number(n) || 24 })} />
-        </Group>
-        <Textarea label="Note" autosize minRows={1} value={v.note} onChange={(e) => setV({ ...v, note: e.target.value })} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Add</Button></Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <form.Field name="operation" validators={{ onBlur: required('Operation') }}>
+            {(f) => <TextInput label="Operation" description="spaceman.<tool>, mcp.<server>.<tool>, or a prefix such as mcp.deploys.*" placeholder="mcp.deploys.deploy" classNames={{ input: 'mono' }}
+              value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
+          </form.Field>
+          <form.Field name="space_id">
+            {(f) => <Select label="Space" data={[{ value: '', label: 'Every space' }, ...spaces]} value={f.state.value} onChange={(x) => f.handleChange(x ?? '')} allowDeselect={false} />}
+          </form.Field>
+          <Group grow>
+            <form.Field name="uses">{(f) => <NumberInput label="Uses per approval" min={1} max={100} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 1)} />}</form.Field>
+            <form.Field name="valid_minutes">{(f) => <NumberInput label="Usable for (minutes)" min={1} max={10080} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 60)} />}</form.Field>
+            <form.Field name="request_hours">{(f) => <NumberInput label="Request waits (hours)" min={1} max={720} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 24)} />}</form.Field>
+          </Group>
+          <form.Field name="note">{(f) => <Textarea label="Note" autosize minRows={1} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Add</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

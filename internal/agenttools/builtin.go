@@ -275,6 +275,11 @@ type humanListIn struct {
 	Pending bool `json:"pending,omitempty" jsonschema:"only open or in-progress actions"`
 }
 
+type humanReplyIn struct {
+	ActionID string `json:"action_id"`
+	Body     string `json:"body" jsonschema:"Markdown: the information the person asked for"`
+}
+
 type humanCancelIn struct {
 	ActionID string `json:"action_id"`
 	Reason   string `json:"reason,omitempty"`
@@ -337,6 +342,15 @@ func (r *Registry) registerHuman() {
 				}
 			}
 			return r.d.Human.ForViewer(ctx, p.SpaceID, viewer(p), out...)
+		})
+	Add(r, "spaceman_human_reply", "Answer a clarification request on a human action you asked (a notice of kind clarification in spaceman_messages; "+
+		"the question is the action's latest clarification comment in spaceman_human_get). The action stays pending; this is not a response.", allKinds, false,
+		func(ctx context.Context, p *fleet.RunPrincipal, in humanReplyIn) (any, error) {
+			a, err := r.d.Human.ReplyAsRequester(ctx, actor(p), p.SpaceID, in.ActionID, viewer(p), in.Body, label(p))
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"action_id": a.ID, "status": a.Status, "comments": len(a.Comments)}, nil
 		})
 	Add(r, "spaceman_human_cancel", "Withdraw a pending human action you asked (control may withdraw any).", allKinds, false,
 		func(ctx context.Context, p *fleet.RunPrincipal, in humanCancelIn) (any, error) {

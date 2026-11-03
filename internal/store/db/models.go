@@ -406,6 +406,7 @@ type HumanComment struct {
 	Author      string
 	AuthorLabel string
 	CreatedAt   int64
+	Kind        string
 }
 
 type HumanNotification struct {
@@ -787,6 +788,13 @@ type NodeEnrollment struct {
 	CreatedBy string
 }
 
+type NotificationPref struct {
+	UserID    string
+	PrefsJson string
+	UpdatedAt int64
+	Version   int64
+}
+
 type OidcAuthState struct {
 	StateHash      []byte
 	ProviderID     string
@@ -1030,6 +1038,19 @@ type RunCredential struct {
 	CreatedAt int64
 	RevokedAt sql.NullInt64
 	TokenEnc  []byte
+}
+
+type RunTakeover struct {
+	ID          string
+	RunID       string
+	SpaceID     string
+	Holder      string
+	HolderLabel string
+	StartedAt   int64
+	ExpiresAt   int64
+	EndedAt     sql.NullInt64
+	EndedBy     string
+	EndReason   string
 }
 
 type RunToolCall struct {

@@ -1,5 +1,6 @@
 import { Anchor, Badge, Box, Breadcrumbs, Button, Card, Code, Group, Modal, Select, SimpleGrid, Stack, Text, Textarea, TextInput, Title } from '@mantine/core'
 import { IconArrowBackUp, IconGitFork, IconUpload } from '@tabler/icons-react'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
@@ -81,24 +82,26 @@ function PromptPage() {
 function DraftCard({ prompt, draft, canWrite }: { prompt: Prompt; draft?: PromptVersion; canWrite: boolean }) {
   const qc = useQueryClient()
   const prompts = usePrompts()
-  const [body, setBody] = useState(draft?.body ?? '')
-  const [notes, setNotes] = useState(draft?.notes ?? '')
-  const [extendsPrompt, setExtendsPrompt] = useState<string | null>(null)
-  const [extendsVersion, setExtendsVersion] = useState<string | null>(draft?.extends || null)
+  const refresh = () => void qc.invalidateQueries({ queryKey: keys.prompt(prompt.id) })
+  const initial = () => ({ body: draft?.body ?? '', notes: draft?.notes ?? '', extendsPrompt: null as string | null, extendsVersion: (draft?.extends || null) as string | null })
+  const form = useForm({
+    defaultValues: initial(),
+    onSubmit: async ({ value }) => {
+      try {
+        unwrap(await api.PUT('/prompts/{prompt_id}/draft', { params: { path: { prompt_id: prompt.id }, header: draft ? { 'If-Match': ifMatch(draft.version) } : {} },
+          body: { body: value.body, notes: value.notes, extends: value.extendsVersion ?? undefined } }))
+        refresh()
+        notifyOk('Draft saved')
+      } catch (e) {
+        notifyError(e, 'Could not save the draft')
+      }
+    },
+  })
+  const extendsPrompt = useSelector(form.store, (st) => st.values.extendsPrompt)
   const parent = useQuery({ queryKey: keys.prompt(extendsPrompt ?? ''), enabled: !!extendsPrompt,
     queryFn: async () => unwrap(await api.GET('/prompts/{prompt_id}', { params: { path: { prompt_id: extendsPrompt! } } })) })
-  useEffect(() => { setBody(draft?.body ?? ''); setNotes(draft?.notes ?? ''); setExtendsVersion(draft?.extends || null) }, [draft?.id, draft?.version])
-  const refresh = () => void qc.invalidateQueries({ queryKey: keys.prompt(prompt.id) })
-  const save = async () => {
-    try {
-      unwrap(await api.PUT('/prompts/{prompt_id}/draft', { params: { path: { prompt_id: prompt.id }, header: draft ? { 'If-Match': ifMatch(draft.version) } : {} },
-        body: { body, notes, extends: extendsVersion ?? undefined } }))
-      refresh()
-      notifyOk('Draft saved')
-    } catch (e) {
-      notifyError(e, 'Could not save the draft')
-    }
-  }
+  // A newly saved draft (another version) becomes the form's starting point.
+  useEffect(() => { form.reset(initial()) }, [draft?.id, draft?.version])
   const publish = async () => {
     try {
       const v = unwrap(await api.POST('/prompts/{prompt_id}/publish', { params: { path: { prompt_id: prompt.id }, header: { 'If-Match': ifMatch(draft!.version) } } }))
@@ -116,32 +119,41 @@ function DraftCard({ prompt, draft, canWrite }: { prompt: Prompt; draft?: Prompt
       notifyError(e, 'Could not discard the draft')
     }
   }
-  const dirty = draft ? body !== draft.body || notes !== (draft.notes ?? '') || (extendsVersion ?? '') !== (draft.extends ?? '') : body !== ''
+  const dirty = useSelector(form.store, ({ values: v }) =>
+    draft ? v.body !== draft.body || v.notes !== (draft.notes ?? '') || (v.extendsVersion ?? '') !== (draft.extends ?? '') : v.body !== '')
   return (
     <Card>
       <Group justify="space-between" mb="xs">
         <Text fw={600}>{draft ? 'Draft' : 'New draft'}</Text>
         {draft && <Text size="xs" c="dimmed">saved {datetime(draft.created_at)}</Text>}
       </Group>
-      <Stack gap="sm">
-        <Textarea aria-label="Draft body" description="Markdown" autosize minRows={10} maxRows={28} classNames={{ input: 'mono' }} readOnly={!canWrite}
-          value={body} onChange={(e) => setBody(e.target.value)} />
-        <Group grow align="flex-end">
-          <Select label="Extends (optional)" description="Its content comes first" clearable searchable value={extendsPrompt} onChange={setExtendsPrompt}
-            data={(prompts.data ?? []).filter((x) => x.id !== prompt.id && x.latest > 0).map((x) => ({ value: x.id, label: x.name }))} disabled={!canWrite} />
-          <Select label="Version" clearable value={extendsVersion} onChange={setExtendsVersion} disabled={!canWrite}
-            placeholder={draft?.extends ? draft.extends : 'none'}
-            data={(parent.data?.versions ?? []).filter((v) => v.state === 'published').map((v) => ({ value: v.id, label: `v${v.number}` }))} />
-        </Group>
-        <TextInput label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} readOnly={!canWrite} />
-        {canWrite && (
-          <Group justify="flex-end">
-            {draft && <Button variant="subtle" color="owlRed" onClick={() => void discard()}>Discard</Button>}
-            <Button variant="default" disabled={!dirty} onClick={() => void save()}>Save draft</Button>
-            <Button leftSection={<IconUpload size={14} />} disabled={!draft || dirty} onClick={() => void publish()}>Publish</Button>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <form.Field name="body">
+            {(f) => <Textarea aria-label="Draft body" description="Markdown" autosize minRows={10} maxRows={28} classNames={{ input: 'mono' }} readOnly={!canWrite}
+              value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          <Group grow align="flex-end">
+            <form.Field name="extendsPrompt">
+              {(f) => <Select label="Extends (optional)" description="Its content comes first" clearable searchable value={f.state.value} onChange={(x) => f.handleChange(x)}
+                data={(prompts.data ?? []).filter((x) => x.id !== prompt.id && x.latest > 0).map((x) => ({ value: x.id, label: x.name }))} disabled={!canWrite} />}
+            </form.Field>
+            <form.Field name="extendsVersion">
+              {(f) => <Select label="Version" clearable value={f.state.value} onChange={(x) => f.handleChange(x)} disabled={!canWrite}
+                placeholder={draft?.extends ? draft.extends : 'none'}
+                data={(parent.data?.versions ?? []).filter((v) => v.state === 'published').map((v) => ({ value: v.id, label: `v${v.number}` }))} />}
+            </form.Field>
           </Group>
-        )}
-      </Stack>
+          <form.Field name="notes">{(f) => <TextInput label="Notes" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} readOnly={!canWrite} />}</form.Field>
+          {canWrite && (
+            <Group justify="flex-end">
+              {draft && <Button variant="subtle" color="owlRed" onClick={() => void discard()}>Discard</Button>}
+              <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" variant="default" loading={busy} disabled={!dirty}>Save draft</Button>}</form.Subscribe>
+              <Button leftSection={<IconUpload size={14} />} disabled={!draft || dirty} onClick={() => void publish()}>Publish</Button>
+            </Group>
+          )}
+        </Stack>
+      </form>
     </Card>
   )
 }
@@ -175,28 +187,35 @@ function DiffModal({ versions, initial, onClose }: { versions: PromptVersion[]; 
 function ForkModal({ version, prompt, onClose }: { version: PromptVersion; prompt: Prompt; onClose: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const [slug, setSlug] = useState(`${prompt.slug}-fork`)
-  const [name, setName] = useState(`${prompt.name} (fork)`)
   const [error, setError] = useState('')
-  const fork = async () => {
-    try {
-      const p = unwrap(await api.POST('/prompt-versions/{version_id}/fork', { params: { path: { version_id: version.id } }, body: { slug, name } }))
-      void qc.invalidateQueries({ queryKey: keys.prompts })
-      onClose()
-      void navigate({ to: '/prompts/$promptId', params: { promptId: p.id } })
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { slug: `${prompt.slug}-fork`, name: `${prompt.name} (fork)` },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        const p = unwrap(await api.POST('/prompt-versions/{version_id}/fork', { params: { path: { version_id: version.id } }, body: value }))
+        void qc.invalidateQueries({ queryKey: keys.prompts })
+        onClose()
+        void navigate({ to: '/prompts/$promptId', params: { promptId: p.id } })
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title={`Fork version ${version.number}`}>
-      <Stack gap="sm">
-        <Text size="sm">The new prompt starts from this version and records where it came from. Forks never merge back automatically.</Text>
-        <TextInput label="Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <TextInput label="Slug" classNames={{ input: 'mono' }} value={slug} onChange={(e) => setSlug(e.target.value)} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void fork()}>Fork</Button></Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <Text size="sm">The new prompt starts from this version and records where it came from. Forks never merge back automatically.</Text>
+          <form.Field name="name">{(f) => <TextInput label="Name" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          <form.Field name="slug">{(f) => <TextInput label="Slug" classNames={{ input: 'mono' }} value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Fork</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

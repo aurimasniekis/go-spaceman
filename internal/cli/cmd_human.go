@@ -48,7 +48,13 @@ func (a *App) humanExtra() []*cobra.Command {
 			}}),
 		assign,
 		a.cmd(opts{use: "comment", short: "Comment on a human action (comments never count as a response)", op: "comment-human-action", scoped: true,
-			args: pos("action"), form: func(f *form) { f.text("body", "body", "comment (Markdown, required)") }}),
+			args: pos("action"), form: func(f *form) {
+				f.text("body", "body", "comment (Markdown, required)").list("attachment", "attachment_ids", "attachment ID to reference (repeatable)")
+			}}),
+		a.cmd(opts{use: "clarify", short: "Ask the requester for more information (the action stays pending; never a response)", op: "clarify-human-action",
+			scoped: true, args: pos("action"), form: func(f *form) {
+				f.text("body", "body", "the question (Markdown, required)").list("attachment", "attachment_ids", "attachment ID to reference (repeatable)")
+			}}),
 		a.cmd(opts{use: "move", short: "Reorder a pending human action (before another, or last)", op: "move-human-action", scoped: true, args: pos("action"),
 			form: func(f *form) { f.str("before", "before", "place it before this pending action (default: last)") }}),
 		a.cmd(opts{use: "route", short: "Send a response notification no agent acknowledged to control or a running role", op: "route-human-notification",

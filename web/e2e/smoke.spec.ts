@@ -315,4 +315,41 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('textbox', { name: 'Code' }).fill(totp(secret))
   await page.getByRole('button', { name: 'Verify' }).click()
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+
+  // The attention summary gathers what needs a person (SM-UI-003).
+  await page.getByRole('link', { name: 'Attention' }).click()
+  await expect(page.getByRole('heading', { name: 'Attention' })).toBeVisible()
+  await expect(page.getByText('Storage', { exact: true })).toBeVisible()
+
+  // Space lifecycle in the UI (SM-SPACE-002): archive, restore, archive again and purge. Purge needs a recent sign-in
+  // with the second factor, which the sign-in above is.
+  await page.getByRole('link', { name: 'Spaces' }).click()
+  await page.getByRole('button', { name: 'New space' }).click()
+  await page.getByLabel('Name').fill('Scratch')
+  await page.getByLabel('Slug').fill('scratch')
+  await page.getByRole('textbox', { name: 'Pinned node' }).click()
+  await page.getByRole('option', { name: 'dev-node' }).click()
+  await page.getByRole('button', { name: 'Create space' }).click()
+  await expect(page.getByRole('heading', { name: /Scratch/ })).toBeVisible()
+  const lifecycle = async (item: string, confirm: string) => {
+    await page.getByRole('button', { name: 'More actions for Scratch' }).click()
+    await page.getByRole('menuitem', { name: item }).click()
+    await page.getByRole('dialog').getByRole('button', { name: confirm, exact: true }).click()
+  }
+  await lifecycle('Archive…', 'Archive')
+  await expect(page.getByRole('dialog')).toBeHidden()
+  await expect(page.getByText('archived', { exact: true }).first()).toBeVisible()
+  await lifecycle('Restore…', 'Restore')
+  await expect(page.getByRole('dialog')).toBeHidden()
+  await lifecycle('Archive…', 'Archive')
+  await expect(page.getByRole('dialog')).toBeHidden()
+  await page.getByRole('button', { name: 'More actions for Scratch' }).click()
+  await page.getByRole('menuitem', { name: 'Purge…' }).click()
+  const purge = page.getByRole('dialog', { name: 'Purge Scratch?' })
+  await expect(purge.getByRole('button', { name: 'Purge', exact: true })).toBeDisabled()
+  await purge.getByLabel(/to confirm/).fill('scratch')
+  await purge.getByRole('button', { name: 'Purge', exact: true }).click()
+  await expect(page.getByText('Scratch purged')).toBeVisible()
+  await page.getByText('All', { exact: true }).click()
+  await expect(page.getByRole('link', { name: 'Scratch' })).toHaveCount(0)
 })

@@ -173,6 +173,25 @@ func TestReferencesAndGC(t *testing.T) {
 	if l, _ := f.svc.ListByOwner(f.ctx, "inbox_item", "inb_1"); len(l) != 1 || l[0].ID != kept.ID {
 		t.Fatalf("owner list %+v", l)
 	}
+	// List views read the attachments of several owners in one query (SM-ATT-001: tasks, messages).
+	if err := f.s.W().TxNamed(f.ctx, "test.ref", func(tx *store.Tx) error {
+		return Reference(f.ctx, tx, "spc_a", "task", "tsk_2", []string{kept.ID, dropped.ID})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	by, err := ByOwners(f.ctx, f.s.R(), "task", []string{"tsk_1", "tsk_2"})
+	if err != nil || len(by["tsk_2"]) != 2 || len(by["tsk_1"]) != 0 || by["tsk_2"][0].SpaceID != "spc_a" {
+		t.Fatalf("by owners %+v (%v)", by, err)
+	}
+	if empty, err := ByOwners(f.ctx, f.s.R(), "task", nil); err != nil || len(empty) != 0 {
+		t.Fatalf("no owners %+v (%v)", empty, err)
+	}
+	if err := f.s.W().TxNamed(f.ctx, "test.unref", func(tx *store.Tx) error {
+		_, err := tx.Q.DeleteAttachmentRefsByOwner(f.ctx, db.DeleteAttachmentRefsByOwnerParams{OwnerKind: "task", OwnerID: "tsk_2"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// Within the grace period nothing goes.
 	if rows, _, err := f.svc.GC(f.ctx); err != nil || rows != 0 {
 		t.Fatalf("early gc removed %d (%v)", rows, err)

@@ -1,5 +1,6 @@
 import { Badge, Button, Card, Group, Modal, MultiSelect, Select, Stack, Table, Tabs, Text, Textarea, TextInput } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -76,39 +77,56 @@ function RolesPage() {
   )
 }
 
+const submitOn = (handle: () => Promise<void>) => (e: React.FormEvent) => {
+  e.preventDefault()
+  void handle()
+}
+
 function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
   const qc = useQueryClient()
-  const [v, setV] = useState({ slug: p?.slug ?? '', name: p?.name ?? '', harness: p?.harness ?? 'claude-code', model: p?.model ?? '', description: p?.description ?? '',
-    settings: p?.settings ?? {} })
   const [error, setError] = useState('')
-  const save = async () => {
-    try {
-      unwrap(await api.PUT('/harness-profiles/{profile_id}', { params: { path: { profile_id: p?.id ?? 'new' }, header: { 'If-Match': ifMatch(p?.version ?? 0) } },
-        body: v }))
-      void qc.invalidateQueries({ queryKey: keys.profiles })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { slug: p?.slug ?? '', name: p?.name ?? '', harness: (p?.harness ?? 'claude-code') as Profile['harness'], model: p?.model ?? '', description: p?.description ?? '',
+      settings: (p?.settings ?? {}) as Record<string, string> },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        unwrap(await api.PUT('/harness-profiles/{profile_id}', { params: { path: { profile_id: p?.id ?? 'new' }, header: { 'If-Match': ifMatch(p?.version ?? 0) } },
+          body: value }))
+        void qc.invalidateQueries({ queryKey: keys.profiles })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title={p ? `Edit ${p.name}` : 'New harness profile'} size="lg">
-      <Stack gap="sm">
-        <Group grow>
-          <TextInput label="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-          <TextInput label="Slug" disabled={!!p} classNames={{ input: 'mono' }} value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} />
-        </Group>
-        <Group grow>
-          <Select label="Harness" disabled={!!p} allowDeselect={false} value={v.harness} onChange={(x) => x && setV({ ...v, harness: x as Profile['harness'] })}
-            data={[{ value: 'claude-code', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />
-          <TextInput label="Model" description="Harness default when empty" classNames={{ input: 'mono' }} value={v.model} onChange={(e) => setV({ ...v, model: e.target.value })} />
-        </Group>
-        <SettingsEditor value={v.settings} onChange={(settings) => setV({ ...v, settings })} />
-        <Textarea label="Description" autosize minRows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
-        {p && <Text size="xs" c="dimmed">Saving creates revision {p.revision + 1}; it applies to later launches.</Text>}
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-      </Stack>
+      <form onSubmit={submitOn(form.handleSubmit)}>
+        <Stack gap="sm">
+          <Group grow>
+            <form.Field name="name">{(f) => <TextInput label="Name" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+            <form.Field name="slug">{(f) => <TextInput label="Slug" disabled={!!p} classNames={{ input: 'mono' }} value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          </Group>
+          <Group grow>
+            <form.Field name="harness">
+              {(f) => <Select label="Harness" disabled={!!p} allowDeselect={false} value={f.state.value} onChange={(x) => x && f.handleChange(x as Profile['harness'])}
+                data={[{ value: 'claude-code', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />}
+            </form.Field>
+            <form.Field name="model">
+              {(f) => <TextInput label="Model" description="Harness default when empty" classNames={{ input: 'mono' }} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+            </form.Field>
+          </Group>
+          <form.Field name="settings">{(f) => <SettingsEditor value={f.state.value} onChange={(settings) => f.handleChange(settings)} />}</form.Field>
+          <form.Field name="description">{(f) => <Textarea label="Description" autosize minRows={2} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          {p && <Text size="xs" c="dimmed">Saving creates revision {p.revision + 1}; it applies to later launches.</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }
@@ -117,49 +135,71 @@ function TemplateModal({ t, onClose }: { t?: RoleTemplate; onClose: () => void }
   const qc = useQueryClient()
   const prompts = usePrompts()
   const profiles = useProfiles()
-  const [v, setV] = useState({ slug: t?.slug ?? '', name: t?.name ?? '', kind: t?.kind ?? 'worker', description: t?.description ?? '', profile_id: t?.profile_id ?? '',
-    prompt_id: t?.prompt_id ?? '', prompt_pin: t?.prompt_pin ?? '', memory_conventions: t?.memory_conventions ?? '', settings: t?.settings ?? {}, skills: t?.skills ?? [] })
   const skills = useSkills()
-  const prompt = usePrompt(v.prompt_id || '_none')
   const [error, setError] = useState('')
-  const save = async () => {
-    try {
-      unwrap(await api.PUT('/role-templates/{template_id}', { params: { path: { template_id: t?.id ?? 'new' }, header: { 'If-Match': ifMatch(t?.version ?? 0) } },
-        body: v }))
-      void qc.invalidateQueries({ queryKey: keys.roleTemplates })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { slug: t?.slug ?? '', name: t?.name ?? '', kind: (t?.kind ?? 'worker') as RoleTemplate['kind'], description: t?.description ?? '', profile_id: t?.profile_id ?? '',
+      prompt_id: t?.prompt_id ?? '', prompt_pin: t?.prompt_pin ?? '', memory_conventions: t?.memory_conventions ?? '', settings: (t?.settings ?? {}) as Record<string, string>,
+      skills: t?.skills ?? [] },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        unwrap(await api.PUT('/role-templates/{template_id}', { params: { path: { template_id: t?.id ?? 'new' }, header: { 'If-Match': ifMatch(t?.version ?? 0) } },
+          body: value }))
+        void qc.invalidateQueries({ queryKey: keys.roleTemplates })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
+  const promptId = useSelector(form.store, (st) => st.values.prompt_id)
+  const prompt = usePrompt(promptId || '_none')
   return (
     <Modal opened onClose={onClose} title={t ? `Edit ${t.name}` : 'New role template'} size="lg">
-      <Stack gap="sm">
-        <Group grow>
-          <TextInput label="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-          <TextInput label="Slug" disabled={!!t} classNames={{ input: 'mono' }} value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} />
-        </Group>
-        <Group grow>
-          <Select label="Run kind" disabled={!!t} allowDeselect={false} value={v.kind} onChange={(x) => x && setV({ ...v, kind: x as RoleTemplate['kind'] })}
-            data={['control', 'worker', 'kb', 'dreamer', 'diagnostic']} />
-          <Select label="Harness profile" clearable value={v.profile_id || null} onChange={(x) => setV({ ...v, profile_id: x ?? '' })}
-            data={(profiles.data ?? []).map((p) => ({ value: p.id, label: p.name }))} />
-        </Group>
-        <Group grow>
-          <Select label="Prompt" clearable searchable value={v.prompt_id || null} onChange={(x) => setV({ ...v, prompt_id: x ?? '', prompt_pin: '' })}
-            data={(prompts.data ?? []).map((p) => ({ value: p.id, label: p.name }))} />
-          <Select label="Version" allowDeselect={false} disabled={!v.prompt_id} value={v.prompt_pin || 'follow'} onChange={(x) => setV({ ...v, prompt_pin: x === 'follow' || !x ? '' : x })}
-            data={[{ value: 'follow', label: 'Follow the latest' }, ...(prompt.data?.versions ?? []).filter((x) => x.state === 'published').map((x) => ({ value: x.id, label: `Pin v${x.number}` }))]} />
-        </Group>
-        <MultiSelect label="Skills" description="Each follows its latest published version" searchable value={v.skills.map((x) => x.skill_id)}
-          onChange={(ids) => setV({ ...v, skills: ids.map((id) => v.skills.find((x) => x.skill_id === id) ?? { skill_id: id }) })}
-          data={(skills.data ?? []).filter((x) => x.latest > 0).map((x) => ({ value: x.id, label: x.name }))} />
-        <Textarea label="Memory conventions" description="Where and how this role keeps memory" autosize minRows={2} value={v.memory_conventions}
-          onChange={(e) => setV({ ...v, memory_conventions: e.target.value })} />
-        <SettingsEditor value={v.settings} onChange={(settings) => setV({ ...v, settings })} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-      </Stack>
+      <form onSubmit={submitOn(form.handleSubmit)}>
+        <Stack gap="sm">
+          <Group grow>
+            <form.Field name="name">{(f) => <TextInput label="Name" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+            <form.Field name="slug">{(f) => <TextInput label="Slug" disabled={!!t} classNames={{ input: 'mono' }} value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          </Group>
+          <Group grow>
+            <form.Field name="kind">
+              {(f) => <Select label="Run kind" disabled={!!t} allowDeselect={false} value={f.state.value} onChange={(x) => x && f.handleChange(x as RoleTemplate['kind'])}
+                data={['control', 'worker', 'kb', 'dreamer', 'diagnostic']} />}
+            </form.Field>
+            <form.Field name="profile_id">
+              {(f) => <Select label="Harness profile" clearable value={f.state.value || null} onChange={(x) => f.handleChange(x ?? '')}
+                data={(profiles.data ?? []).map((p) => ({ value: p.id, label: p.name }))} />}
+            </form.Field>
+          </Group>
+          <Group grow>
+            <form.Field name="prompt_id">
+              {(f) => <Select label="Prompt" clearable searchable value={f.state.value || null} onChange={(x) => { f.handleChange(x ?? ''); form.setFieldValue('prompt_pin', '') }}
+                data={(prompts.data ?? []).map((p) => ({ value: p.id, label: p.name }))} />}
+            </form.Field>
+            <form.Field name="prompt_pin">
+              {(f) => <Select label="Version" allowDeselect={false} disabled={!promptId} value={f.state.value || 'follow'} onChange={(x) => f.handleChange(x === 'follow' || !x ? '' : x)}
+                data={[{ value: 'follow', label: 'Follow the latest' }, ...(prompt.data?.versions ?? []).filter((x) => x.state === 'published').map((x) => ({ value: x.id, label: `Pin v${x.number}` }))]} />}
+            </form.Field>
+          </Group>
+          <form.Field name="skills">
+            {(f) => <MultiSelect label="Skills" description="Each follows its latest published version" searchable value={f.state.value.map((x) => x.skill_id)}
+              onChange={(ids) => f.handleChange(ids.map((id) => f.state.value.find((x) => x.skill_id === id) ?? { skill_id: id }))}
+              data={(skills.data ?? []).filter((x) => x.latest > 0).map((x) => ({ value: x.id, label: x.name }))} />}
+          </form.Field>
+          <form.Field name="memory_conventions">
+            {(f) => <Textarea label="Memory conventions" description="Where and how this role keeps memory" autosize minRows={2} value={f.state.value}
+              onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          <form.Field name="settings">{(f) => <SettingsEditor value={f.state.value} onChange={(settings) => f.handleChange(settings)} />}</form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

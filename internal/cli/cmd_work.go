@@ -52,11 +52,12 @@ func (a *App) taskCmd() *cobra.Command {
 			view: view{items: "tasks", cols: taskCols, empty: "The queue is empty."}}),
 		a.cmd(opts{use: "get", short: "Show a task", op: "get-task", scoped: true, args: pos("task")}),
 		a.cmd(opts{use: "create", short: "Add a task to the queue", op: "create-task", scoped: true, idem: true, form: create}),
-		a.cmd(opts{use: "update", short: "Edit a task (only the flags given change)", op: "update-task", get: "get-task", merge: true, scoped: true,
+		a.cmd(opts{use: "update", short: "Edit or reassign a task (only the flags given change)", op: "update-task", get: "get-task", merge: true, scoped: true,
 			args: pos("task"),
 			form: func(f *form) {
 				f.str("title", "title", "title").text("objective", "objective", "objective").text("acceptance", "acceptance", "acceptance criteria").
-					str("priority", "priority", "low, normal, high or urgent").str("role", "assignee_role", "assignee role").
+					str("priority", "priority", "low, normal, high or urgent").str("role", "assignee_role", "assignee role (empty clears it)").
+					str("run", "assignee_run", "assignee run ID (empty clears it)").
 					str("workspace", "workspace", "workspace").list("exclusion", "exclusions", "exclusion (replaces the list)")
 			}}),
 		a.cmd(opts{use: "move", short: "Reorder a task: --top, --bottom, --before or --after", op: "move-task", scoped: true, args: pos("task"),
@@ -102,8 +103,12 @@ func (a *App) humanCmd() *cobra.Command {
 	return group("human", "Human actions: list, create, respond, assign, comment and cancel; types and policies", []string{"human-action", "human-actions"},
 		a.cmd(opts{use: "list", short: "Open human actions (every space you can see, or one with --space)", op: "list-human-actions",
 			global: "list-pending-human-actions", alias: []string{"ls"}, scoped: true,
-			query: []qflag{qb("pending", "pending", "with --space: only open actions"), qs("type", "type", "only this type"), limitFlag()},
-			view:  view{items: "items", cols: humanCols, empty: "No human actions."}}),
+			query: []qflag{qb("pending", "pending", "with --space: only open actions"), qs("type", "type", "only this type"),
+				qs("search", "q", "search the title and body (every word must occur)"), qs("status", "status", "only this status"),
+				qs("assignee", "assignee", "a user ID, me or unassigned"), qs("priority", "priority", "only this priority"),
+				qs("requester", "requester", "the requester's kind, ID, run or role, or part of its label"),
+				qs("due", "due", "overdue, due or expiring"), qs("sort", "sort", "rank, priority, due, newest, oldest or updated"), limitFlag()},
+			view: view{items: "items", cols: humanCols, empty: "No human actions."}}),
 		a.cmd(opts{use: "get", short: "Show a human action", op: "get-human-action", scoped: true, args: pos("action")}),
 		a.cmd(opts{use: "respond", short: "Answer a human action with an outcome", op: "respond-human-action", get: "get-human-action", scoped: true,
 			args:    pos("action"),

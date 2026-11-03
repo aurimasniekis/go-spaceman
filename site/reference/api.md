@@ -34,6 +34,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `GET` | `/attention` | `get-attention` | What needs a person |
 | `GET` | `/system/info` | `get-system-info` | Public system status |
 | `GET` | `/system/outbound-events` | `get-outbound-events` | Outbound event publication status |
 
@@ -46,6 +47,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/auth/login` | `login` | Sign in with email and password |
 | `POST` | `/auth/logout` | `logout` | Sign out (revokes this session) |
 | `GET` | `/auth/me` | `get-me` | The signed-in principal |
+| `GET` | `/auth/me/notification-preferences` | `get-notification-preferences` | Your notification preferences |
+| `PUT` | `/auth/me/notification-preferences` | `set-notification-preferences` | Save your notification preferences |
 | `POST` | `/auth/mfa/enroll` | `start-enroll` | Start TOTP enrollment |
 | `POST` | `/auth/mfa/enroll/confirm` | `confirm-enroll` | Confirm TOTP enrollment |
 | `POST` | `/auth/mfa/recovery-codes` | `regenerate-recovery-codes` | Replace your recovery codes |
@@ -135,6 +138,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/runs/{run_id}` | `get-run` | Get a run |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/input` | `send-input` | Send safe input to a run (delivered only while the program reports idle, unless forced) |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/stop` | `stop-run` | Stop a run |
+| `POST` | `/spaces/{space_id}/runs/{run_id}/takeover` | `start-takeover` | Take over a run's terminal |
+| `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/end` | `end-takeover` | End a takeover |
+| `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/input` | `takeover-input` | Type into a taken-over terminal |
+| `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/renew` | `renew-takeover` | Keep your takeover for another 30 s |
 
 ### recordings
 
@@ -264,6 +271,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/human-actions/{action_id}` | `get-human-action` | A human action with its comments and notifications |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/assign` | `assign-human-action` | Assign (claim) or unassign a human action |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/cancel` | `cancel-human-action` | Withdraw a pending human action |
+| `POST` | `/spaces/{space_id}/human-actions/{action_id}/clarify` | `clarify-human-action` | Ask the requester for more information |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/comments` | `comment-human-action` | Comment on a human action |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/move` | `move-human-action` | Reorder a pending human action |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/notifications/{notification_id}/route` | `route-human-notification` | Send a response notification to control or a running role |

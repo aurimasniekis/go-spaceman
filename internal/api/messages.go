@@ -73,11 +73,12 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 				SpacePath
 				IdempotencyKey
 				Body struct {
-					To            string `json:"to" maxLength:"80" doc:"control, role:<name> or run:<run id>"`
-					Subject       string `json:"subject" maxLength:"200"`
-					Body          string `json:"body,omitempty" maxLength:"100000" doc:"Markdown"`
-					Request       bool   `json:"request,omitempty" doc:"Expect a reply"`
-					CorrelationID string `json:"correlation_id,omitempty" maxLength:"256"`
+					To            string   `json:"to" maxLength:"80" doc:"control, role:<name> or run:<run id>"`
+					Subject       string   `json:"subject" maxLength:"200"`
+					Body          string   `json:"body,omitempty" maxLength:"100000" doc:"Markdown"`
+					Request       bool     `json:"request,omitempty" doc:"Expect a reply"`
+					CorrelationID string   `json:"correlation_id,omitempty" maxLength:"256"`
+					AttachmentIDs []string `json:"attachment_ids,omitempty" maxItems:"20" doc:"Attachments of this space the message references"`
 				}
 			}) (*struct{ Body *messages.Message }, error) {
 				m, _, err := Idempotent(ctx, d, "send-message", in.IdempotencyKey, map[string]any{"space": in.SpaceID, "body": in.Body}, false, func() (*messages.Message, error) {
@@ -89,7 +90,7 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 						kind = "request"
 					}
 					m, _, err := svc.Send(ctx, Actor(ctx), in.SpaceID, operatorFrom(ctx), messages.SendInput{To: in.Body.To, Kind: kind, Subject: in.Body.Subject,
-						Body: in.Body.Body, CorrelationID: in.Body.CorrelationID})
+						Body: in.Body.Body, CorrelationID: in.Body.CorrelationID, AttachmentIDs: in.Body.AttachmentIDs})
 					return m, err
 				})
 				if err != nil {
@@ -111,7 +112,8 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 			func(ctx context.Context, in *struct {
 				MessagePath
 				Body struct {
-					Body string `json:"body" maxLength:"100000"`
+					Body          string   `json:"body" maxLength:"100000"`
+					AttachmentIDs []string `json:"attachment_ids,omitempty" maxItems:"20" doc:"Attachments of this space the reply references"`
 				}
 			}) (*struct{ Body *messages.Message }, error) {
 				orig, err := svc.Get(ctx, in.SpaceID, in.MessageID)
@@ -122,7 +124,7 @@ func RegisterMessages(svc *messages.Service) func(api huma.API, d *Deps) {
 					return nil, d.fail(ctx, "messages.reply", errReplyOnlyRuns)
 				}
 				m, _, err := svc.Send(ctx, Actor(ctx), in.SpaceID, operatorFrom(ctx), messages.SendInput{To: "run:" + orig.FromID, Kind: "reply",
-					Subject: "Re: " + orig.Subject, Body: in.Body.Body, ReplyTo: orig.ID})
+					Subject: "Re: " + orig.Subject, Body: in.Body.Body, ReplyTo: orig.ID, AttachmentIDs: in.Body.AttachmentIDs})
 				if err != nil {
 					return nil, d.fail(ctx, "messages.reply", err)
 				}

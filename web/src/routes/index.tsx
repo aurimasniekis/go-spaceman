@@ -1,8 +1,9 @@
 import { Card, Group, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
+import type { ReactNode } from 'react'
 import { api, unwrap } from '@/api/client'
-import { keys, useMe, useNodes, useSpaces } from '@/api/queries'
+import { keys, useAttention, useMe, useNodes, useSpaces } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
@@ -14,7 +15,7 @@ export const Route = createFileRoute('/')({ component: Overview })
 
 const ENDED = ['exited', 'failed', 'lost']
 
-function Stat({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
+function Stat({ label, value, hint }: { label: string; value: number | string; hint?: ReactNode }) {
   return (
     <Card>
       <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{label}</Text>
@@ -39,6 +40,7 @@ function Overview() {
   const active = runs.flatMap((q) => q.data ?? []).filter((r) => !ENDED.includes(r.observed))
   const name = (id: string) => list.find((s) => s.id === id)?.name ?? id
   const connected = (nodes.data ?? []).filter((n) => n.connected).length
+  const attention = useAttention()
 
   return (
     <>
@@ -47,7 +49,8 @@ function Overview() {
       <SimpleGrid cols={{ base: 2, sm: 4 }} mb="md">
         <Stat label="Spaces" value={list.length} hint={`${list.filter((s) => s.state === 'paused').length} paused`} />
         <Stat label="Active runs" value={active.length} hint={`${active.filter((r) => r.status === 'working').length} working`} />
-        <Stat label="Needs attention" value={active.filter((r) => r.status === 'blocked' || r.observed === 'unknown').length} hint="blocked or on an offline node" />
+        <Stat label="Needs attention" value={attention.data?.total ?? '—'}
+          hint={<AnchorLink to="/attention" size="xs">human actions, tasks, runs, storage…</AnchorLink>} />
         {showNodes && <Stat label="Nodes" value={`${connected}/${nodes.data?.length ?? 0}`} hint="connected" />}
       </SimpleGrid>
       <SimpleGrid cols={{ base: 1, md: showNodes ? 2 : 1 }}>

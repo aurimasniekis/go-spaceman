@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type Task } from '@/api/client'
 import { keys, useQueue } from '@/api/queries'
+import { Composer } from '@/components/composer/Composer'
 import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError, required } from '@/lib/form'
 
@@ -20,10 +21,11 @@ export function TaskModal({ spaceId, seed, opened, onClose, onCreated }: { space
   const queue = useQueue(spaceId)
   const [error, setError] = useState('')
   const [key, setKey] = useState(idempotencyKey)
+  const [composerKey, setComposerKey] = useState(0)
   const form = useForm({
     defaultValues: {
       title: seed?.title ?? '', objective: seed?.objective ?? '', acceptance: '', priority: 'normal' as Task['priority'], kind: 'ordinary' as Task['kind'],
-      status: 'ready' as 'ready' | 'backlog', exclusions: [] as string[], parent: seed?.parentId ?? '', dependsOn: [] as string[],
+      status: 'ready' as 'ready' | 'backlog', exclusions: [] as string[], parent: seed?.parentId ?? '', dependsOn: [] as string[], attachmentIds: [] as string[],
     },
     onSubmit: async ({ value }) => {
       setError('')
@@ -31,12 +33,14 @@ export function TaskModal({ spaceId, seed, opened, onClose, onCreated }: { space
         const t = unwrap(await api.POST('/spaces/{space_id}/tasks', {
           params: { path: { space_id: spaceId }, header: { 'Idempotency-Key': key } },
           body: { title: value.title, objective: value.objective, acceptance: value.acceptance, priority: value.priority, kind: value.kind, status: value.status,
-            exclusions: value.exclusions, parent_id: value.parent || undefined, depends_on: value.dependsOn, from_inbox_item: seed?.fromInboxItem },
+            exclusions: value.exclusions, parent_id: value.parent || undefined, depends_on: value.dependsOn, from_inbox_item: seed?.fromInboxItem,
+            attachment_ids: value.attachmentIds.length > 0 ? value.attachmentIds : undefined },
         }))
         void qc.invalidateQueries({ queryKey: keys.queue(spaceId) })
         void qc.invalidateQueries({ queryKey: keys.inbox(spaceId) })
         setKey(idempotencyKey())
         form.reset()
+        setComposerKey((k) => k + 1)
         onClose()
         onCreated?.(t)
       } catch (e) {
@@ -52,9 +56,13 @@ export function TaskModal({ spaceId, seed, opened, onClose, onCreated }: { space
           <form.Field name="title" validators={{ onBlur: required('Title') }}>
             {(f) => <TextInput label="Title" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
           </form.Field>
-          <form.Field name="objective">
-            {(f) => <Textarea label="Objective" description="Markdown" autosize minRows={3} maxRows={10} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-          </form.Field>
+          <Stack gap={4}>
+            <Text size="sm" fw={500} id="task-objective-label">Objective</Text>
+            <Text size="xs" c="dimmed">Markdown; paste, drop or attach images and files</Text>
+            <Composer key={composerKey} spaceId={spaceId} ariaLabel="Objective" initialMarkdown={seed?.objective} minHeight={120}
+              onSubmit={() => void form.handleSubmit()}
+              onChange={(v) => { form.setFieldValue('objective', v.markdown); form.setFieldValue('attachmentIds', v.attachmentIds) }} />
+          </Stack>
           <form.Field name="acceptance">
             {(f) => <Textarea label="Acceptance criteria" description="Markdown; control decides when they are met" autosize minRows={2} maxRows={8} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>

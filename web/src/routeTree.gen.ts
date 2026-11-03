@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ApprovalPoliciesRouteImport } from './routes/approval-policies'
+import { Route as AttentionRouteImport } from './routes/attention'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as BackupsRouteImport } from './routes/backups'
 import { Route as CrossSpaceRouteImport } from './routes/cross-space'
@@ -73,6 +74,11 @@ const AccountsRoute = AccountsRouteImport.update({
 const ApprovalPoliciesRoute = ApprovalPoliciesRouteImport.update({
   id: '/approval-policies',
   path: '/approval-policies',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AttentionRoute = AttentionRouteImport.update({
+  id: '/attention',
+  path: '/attention',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuditRoute = AuditRouteImport.update({
@@ -291,6 +297,7 @@ export interface FileRoutesByFullPath {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
+  '/attention': typeof AttentionRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
   '/cross-space': typeof CrossSpaceRoute
@@ -338,6 +345,7 @@ export interface FileRoutesByTo {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
+  '/attention': typeof AttentionRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
   '/cross-space': typeof CrossSpaceRoute
@@ -381,6 +389,7 @@ export interface FileRoutesById {
   '/account': typeof AccountRoute
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
+  '/attention': typeof AttentionRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
   '/cross-space': typeof CrossSpaceRoute
@@ -430,6 +439,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/approval-policies'
+    | '/attention'
     | '/audit'
     | '/backups'
     | '/cross-space'
@@ -477,6 +487,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/approval-policies'
+    | '/attention'
     | '/audit'
     | '/backups'
     | '/cross-space'
@@ -519,6 +530,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/accounts'
     | '/approval-policies'
+    | '/attention'
     | '/audit'
     | '/backups'
     | '/cross-space'
@@ -567,6 +579,7 @@ export interface RootRouteChildren {
   AccountRoute: typeof AccountRoute
   AccountsRoute: typeof AccountsRoute
   ApprovalPoliciesRoute: typeof ApprovalPoliciesRoute
+  AttentionRoute: typeof AttentionRoute
   AuditRoute: typeof AuditRoute
   BackupsRoute: typeof BackupsRoute
   CrossSpaceRoute: typeof CrossSpaceRoute
@@ -617,6 +630,13 @@ declare module '@tanstack/react-router' {
       path: '/approval-policies'
       fullPath: '/approval-policies'
       preLoaderRoute: typeof ApprovalPoliciesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/attention': {
+      id: '/attention'
+      path: '/attention'
+      fullPath: '/attention'
+      preLoaderRoute: typeof AttentionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/audit': {
@@ -1003,6 +1023,7 @@ const rootRouteChildren: RootRouteChildren = {
   AccountRoute: AccountRoute,
   AccountsRoute: AccountsRoute,
   ApprovalPoliciesRoute: ApprovalPoliciesRoute,
+  AttentionRoute: AttentionRoute,
   AuditRoute: AuditRoute,
   BackupsRoute: BackupsRoute,
   CrossSpaceRoute: CrossSpaceRoute,

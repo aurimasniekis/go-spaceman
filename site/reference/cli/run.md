@@ -14,6 +14,7 @@ Aliases: `runs`.
 | [`spaceman run list`](#spaceman-run-list) | A space's runs, newest first |
 | [`spaceman run recording`](#spaceman-run-recording) | A run's terminal recording: read records, download or delete central's copy |
 | [`spaceman run stop`](#spaceman-run-stop) | Stop a run |
+| [`spaceman run takeover`](#spaceman-run-takeover) | Take over a run's terminal: type into it while automated input is paused (needs terminal:takeover) |
 | [`spaceman run transcript`](#spaceman-run-transcript) | A run's stored native transcript: download or delete |
 | [`spaceman run usage`](#spaceman-run-usage) | A run's token usage and cost estimate (unknown usage is reported as unknown) |
 
@@ -187,6 +188,91 @@ API: `stop-run` ([HTTP API](../api)).
 | `--mode` | string |  | interrupt (default) or kill |
 | `--reason` | string |  | reason, recorded with the run |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run takeover
+
+Take over a run's terminal: type into it while automated input is paused (needs terminal:takeover).
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman run takeover end`](#spaceman-run-takeover-end) | End a takeover (yours, or another operator's); automated input resumes |
+| [`spaceman run takeover renew`](#spaceman-run-takeover-renew) | Keep your takeover for another 30 s |
+| [`spaceman run takeover start`](#spaceman-run-takeover-start) | Take over a run's terminal (prints the takeover ID; it ends unless renewed within 30 s) |
+| [`spaceman run takeover type`](#spaceman-run-takeover-type) | Type into the taken-over terminal (keystrokes; --enter presses Enter after the text) |
+
+## spaceman run takeover end
+
+End a takeover (yours, or another operator's); automated input resumes.
+
+```sh
+spaceman run takeover end <run> <takeover> [flags]
+```
+
+API: `end-takeover` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run takeover renew
+
+Keep your takeover for another 30 s.
+
+```sh
+spaceman run takeover renew <run> <takeover> [flags]
+```
+
+API: `renew-takeover` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run takeover start
+
+Take over a run's terminal (prints the takeover ID; it ends unless renewed within 30 s).
+
+While you hold the takeover, Message the agent and the terminal notices for messages and human responses are refused; they go out after it ends. Renew it with `spaceman run takeover renew` at least every 30 s, type with `spaceman run takeover type`, and release it with `spaceman run takeover end`. Start and end are audited; keystrokes are never stored.
+
+```sh
+spaceman run takeover start <run> [flags]
+```
+
+API: `start-takeover` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman run takeover start --space payments run_01…
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run takeover type
+
+Type into the taken-over terminal (keystrokes; --enter presses Enter after the text).
+
+```sh
+spaceman run takeover type <run> <takeover> [flags]
+```
+
+API: `takeover-input` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman run takeover type --space payments run_01… tko_01… --text 'y' --enter
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--enter` | bool |  | press Enter after the text |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--text` | string |  | text to type, as keystrokes (required) |
+| `--text-file` | string |  | read --text from a file (- reads standard input) |
 
 ## spaceman run transcript
 

@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Group, Radio, Stack, Text, Textarea } from '@mantine/core'
+import { Alert, Button, Checkbox, Group, Radio, Stack, Text } from '@mantine/core'
 import { IconCheck, IconInfoCircle, IconShieldCheck, IconX } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
@@ -10,6 +10,7 @@ import { MarkdownView } from '@/components/MarkdownView'
 import type { ApprovalReq, MessageReq, QuestionReq, TodoReq } from './badges'
 import { useActionApproval } from './EnforcedApproval'
 import { SchemaForm } from './SchemaForm'
+import { Composer } from '@/components/composer/Composer'
 
 type Outcome = string
 
@@ -21,23 +22,26 @@ type Outcome = string
 export function RespondForm({ action, canDecide, onDone }: { action: HumanAction; canDecide: boolean; onDone?: (a: HumanAction) => void }) {
   const qc = useQueryClient()
   const [error, setError] = useState('')
-  const [data, setData] = useState<Record<string, unknown>>({})
   const enforced = useActionApproval(action)
   const req = (action.request ?? {}) as QuestionReq & ApprovalReq & TodoReq & MessageReq
   const options = req.options ?? []
   const freeText = options.length === 0 || !!req.allow_text
   const steps = req.steps ?? []
   const form = useForm({
-    defaultValues: { choice: '', answer: '', note: '', done: steps.map(() => false) },
+    defaultValues: { choice: '', answer: '', note: '', done: steps.map(() => false), data: {} as Record<string, unknown>,
+      answerFiles: [] as string[], noteFiles: [] as string[] },
     onSubmitMeta: { outcome: 'answered' as Outcome },
     onSubmit: async ({ value, meta }) => {
       setError('')
       const outcome = meta.outcome
       const answer = action.type === 'question' ? (value.answer.trim() || value.choice) : undefined
+      // Files pasted, dropped or attached into the answer or the note (SM-ATT-001/002).
+      const files = [...new Set([...(answer === value.answer.trim() ? value.answerFiles : []), ...value.noteFiles])]
       try {
         const next = unwrap(await api.POST('/spaces/{space_id}/human-actions/{action_id}/respond', {
           params: { path: { space_id: action.space_id, action_id: action.id }, header: { 'If-Match': ifMatch(action.version) } },
-          body: { outcome, answer, note: value.note || undefined, data: action.type === 'custom' ? data : undefined },
+          body: { outcome, answer, note: value.note.trim() || undefined, data: action.type === 'custom' ? value.data : undefined,
+            attachment_ids: files.length > 0 ? files : undefined },
         }))
         void qc.invalidateQueries({ queryKey: keys.human(action.space_id) })
         void qc.invalidateQueries({ queryKey: keys.humanPending })
@@ -48,6 +52,15 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
     },
   })
   const submit = (outcome: Outcome) => void form.handleSubmit({ outcome })
+  // The note in the TipTap composer: Markdown with files pasted, dropped or attached.
+  const noteComposer = (label: string, description?: string) => (
+    <Stack gap={4}>
+      <Text size="sm" fw={500}>{label}</Text>
+      {description && <Text size="xs" c="dimmed">{description}</Text>}
+      <Composer spaceId={action.space_id} ariaLabel={label} minHeight={70} placeholder="Markdown; paste, drop or attach files"
+        onChange={(v) => { form.setFieldValue('note', v.markdown); form.setFieldValue('noteFiles', v.attachmentIds) }} />
+    </Stack>
+  )
 
   return (
     <form onSubmit={(e) => { e.preventDefault(); submit(action.type === 'question' ? 'answered' : action.type === 'todo' ? 'completed' : action.type === 'custom' ? (action.type_spec?.outcomes[0] ?? 'done') : 'acknowledged') }}>
@@ -64,10 +77,12 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
               </form.Field>
             )}
             {freeText && (
-              <form.Field name="answer">
-                {(f) => <Textarea label={options.length > 0 ? 'Or write an answer' : 'Answer'} description="Markdown" autosize minRows={3} maxRows={12}
-                  value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-              </form.Field>
+              <Stack gap={4}>
+                <Text size="sm" fw={500}>{options.length > 0 ? 'Or write an answer' : 'Answer'}</Text>
+                <Composer spaceId={action.space_id} ariaLabel={options.length > 0 ? 'Or write an answer' : 'Answer'} minHeight={90}
+                  placeholder="Markdown; paste, drop or attach files"
+                  onChange={(v) => { form.setFieldValue('answer', v.markdown); form.setFieldValue('answerFiles', v.attachmentIds) }} />
+              </Stack>
             )}
             <form.Subscribe selector={(s) => s.values.answer.trim() !== '' || s.values.choice !== ''}>
               {(ok) => <Group justify="flex-end"><Button type="submit" disabled={!ok} leftSection={<IconCheck size={14} />}>Send answer</Button></Group>}
@@ -88,9 +103,7 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
             )}
             {req.action && <Text size="sm"><b>Requested:</b> {req.action}</Text>}
             {req.details && <MarkdownView source={req.details} spaceId={action.space_id} />}
-            <form.Field name="note">
-              {(f) => <Textarea label="Note" description="Required to deny" autosize minRows={2} maxRows={8} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-            </form.Field>
+            {noteComposer('Note', 'Required to deny')}
             {canDecide ? (
               <form.Subscribe selector={(s) => s.values.note.trim() !== ''}>
                 {(hasNote) => (
@@ -116,9 +129,7 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
                 )}
               </form.Field>
             )}
-            <form.Field name="note">
-              {(f) => <Textarea label="Note" description="Optional: what you did" autosize minRows={2} maxRows={8} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-            </form.Field>
+            {noteComposer('Note', 'Optional: what you did')}
             <form.Subscribe selector={(s) => s.values.done.every(Boolean)}>
               {(all) => <Group justify="flex-end"><Button type="submit" disabled={!all} leftSection={<IconCheck size={14} />}>Mark completed</Button></Group>}
             </form.Subscribe>
@@ -127,10 +138,10 @@ export function RespondForm({ action, canDecide, onDone }: { action: HumanAction
 
         {action.type === 'custom' && action.type_spec && (
           <>
-            <SchemaForm label="Response" schema={action.type_spec.response_schema} ui={action.type_spec.ui} value={data} onChange={setData} />
-            <form.Field name="note">
-              {(f) => <Textarea label="Note" autosize minRows={2} maxRows={8} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+            <form.Field name="data">
+              {(f) => <SchemaForm label="Response" schema={action.type_spec?.response_schema} ui={action.type_spec?.ui} value={f.state.value} onChange={(v) => f.handleChange(v)} />}
             </form.Field>
+            {noteComposer('Note')}
             <Text size="xs" c="dimmed">A custom type records an answer; it never grants anything, whatever its outcomes are called.</Text>
             <Group justify="flex-end">
               {action.type_spec.outcomes.map((o, i) => (

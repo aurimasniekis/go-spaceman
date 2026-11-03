@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Code, Group, Menu, Modal, Stack, Table, Text, TextInput, Tooltip } from '@mantine/core'
+import { Badge, Button, Code, Group, Menu, Modal, Stack, Text, TextInput, Tooltip } from '@mantine/core'
 import { IconDots, IconPlus } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
@@ -6,6 +6,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type Node } from '@/api/client'
 import { keys, useMe, useNodes } from '@/api/queries'
+import { DataTable, type ColumnDef } from '@/components/DataTable'
 import { ErrorAlert, errorMessage } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { SecretModal } from '@/components/SecretModal'
@@ -50,70 +51,60 @@ function NodesPage() {
       <PageHeader title="Nodes" description="Machines running spaceman-agent. Each space is pinned to one node."
         actions={admin && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>Add node</Button>} />
       <ErrorAlert error={nodes.error} />
-      <Card p={0}>
-        <Table>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Name</Table.Th>
-              <Table.Th>State</Table.Th>
-              <Table.Th>Agent</Table.Th>
-              <Table.Th>Runner</Table.Th>
-              <Table.Th>Harnesses</Table.Th>
-              <Table.Th>Last seen</Table.Th>
-              {admin && <Table.Th w={40} />}
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {(nodes.data ?? []).map((n) => (
-              <Table.Tr key={n.id}>
-                <Table.Td>
-                  <Text size="sm" fw={500}>{n.name}</Text>
-                  <Text size="xs" c="dimmed" className="mono">{n.id}</Text>
-                </Table.Td>
-                <Table.Td><NodeState node={n} /></Table.Td>
-                <Table.Td><Text size="sm" className="mono">{n.agent_version || '—'}</Text><Text size="xs" c="dimmed">{n.capabilities.os}/{n.capabilities.arch}</Text></Table.Td>
-                <Table.Td>
-                  {n.capabilities.runner.kind ? (
-                    <Tooltip label={n.capabilities.runner.error || `core ${n.capabilities.runner.core_id}`}>
-                      <Badge color={n.capabilities.runner.error ? 'owlRed' : 'gray'} variant="outline">{n.capabilities.runner.kind} {n.capabilities.runner.version}</Badge>
-                    </Tooltip>
-                  ) : '—'}
-                </Table.Td>
-                <Table.Td>
-                  <Group gap={4}>
-                    {n.capabilities.harnesses.map((h) => (
-                      <Tooltip key={h.kind} label={h.available ? `${h.version} · ${h.capabilities.join(', ')}` : h.error || 'not available'}>
-                        <Badge color={h.available ? 'owlBlue' : 'gray'} variant={h.available ? 'light' : 'outline'}>{h.kind}</Badge>
-                      </Tooltip>
-                    ))}
-                    {n.capabilities.harnesses.length === 0 && <Text size="xs" c="dimmed">—</Text>}
-                  </Group>
-                </Table.Td>
-                <Table.Td><Tooltip label={datetime(n.last_seen_at)}><Text size="xs" c="dimmed">{isSet(n.last_seen_at) ? ago(n.last_seen_at) : 'never'}</Text></Tooltip></Table.Td>
-                {admin && (
-                  <Table.Td>
-                    <Menu position="bottom-end">
-                      <Menu.Target><Button variant="subtle" size="compact-xs" aria-label={`Actions for ${n.name}`}><IconDots size={14} /></Button></Menu.Target>
-                      <Menu.Dropdown>
-                        <Menu.Item onClick={() => void reissue(n)} disabled={n.state === 'revoked'}>New enrollment token</Menu.Item>
-                        {n.state === 'disabled' ? (
-                          <Menu.Item onClick={() => void setState(n, 'active')}>Enable</Menu.Item>
-                        ) : (
-                          <Menu.Item onClick={() => void setState(n, 'disabled')} disabled={n.state === 'revoked'}>Disable</Menu.Item>
-                        )}
-                        <Menu.Item color="owlRed" onClick={() => void setState(n, 'revoked')} disabled={n.state === 'revoked'}>Revoke credential</Menu.Item>
-                      </Menu.Dropdown>
-                    </Menu>
-                  </Table.Td>
-                )}
-              </Table.Tr>
-            ))}
-            {nodes.isSuccess && nodes.data.length === 0 && (
-              <Table.Tr><Table.Td colSpan={7}><Text size="sm" c="dimmed" ta="center" p="md">No nodes yet. Add one, then enroll spaceman-agent on it.</Text></Table.Td></Table.Tr>
-            )}
-          </Table.Tbody>
-        </Table>
-      </Card>
+      <DataTable view="nodes" data={nodes.data ?? []} getRowId={(n) => n.id} filterLabel="Filter nodes" caption="Nodes"
+        defaultSort={[{ id: 'name', desc: false }]} empty="No nodes yet. Add one, then enroll spaceman-agent on it." columns={[
+          {
+            id: 'name', header: 'Name', accessorFn: (n) => n.name,
+            cell: ({ row: { original: n } }) => <><Text size="sm" fw={500}>{n.name}</Text><Text size="xs" c="dimmed" className="mono">{n.id}</Text></>,
+          },
+          { id: 'state', header: 'State', accessorFn: (n) => `${n.state} ${n.connected ? 'connected' : 'offline'}`, cell: ({ row: { original: n } }) => <NodeState node={n} /> },
+          {
+            id: 'agent', header: 'Agent', accessorFn: (n) => n.agent_version,
+            cell: ({ row: { original: n } }) => <><Text size="sm" className="mono">{n.agent_version || '—'}</Text><Text size="xs" c="dimmed">{n.capabilities.os}/{n.capabilities.arch}</Text></>,
+          },
+          {
+            id: 'runner', header: 'Runner', accessorFn: (n) => `${n.capabilities.runner.kind} ${n.capabilities.runner.version}`,
+            cell: ({ row: { original: n } }) => n.capabilities.runner.kind ? (
+              <Tooltip label={n.capabilities.runner.error || `core ${n.capabilities.runner.core_id}`}>
+                <Badge color={n.capabilities.runner.error ? 'owlRed' : 'gray'} variant="outline">{n.capabilities.runner.kind} {n.capabilities.runner.version}</Badge>
+              </Tooltip>
+            ) : '—',
+          },
+          {
+            id: 'harnesses', header: 'Harnesses', enableSorting: false, accessorFn: (n) => n.capabilities.harnesses.map((h) => h.kind).join(' '),
+            cell: ({ row: { original: n } }) => (
+              <Group gap={4}>
+                {n.capabilities.harnesses.map((h) => (
+                  <Tooltip key={h.kind} label={h.available ? `${h.version} · ${h.capabilities.join(', ')}` : h.error || 'not available'}>
+                    <Badge color={h.available ? 'owlBlue' : 'gray'} variant={h.available ? 'light' : 'outline'}>{h.kind}</Badge>
+                  </Tooltip>
+                ))}
+                {n.capabilities.harnesses.length === 0 && <Text size="xs" c="dimmed">—</Text>}
+              </Group>
+            ),
+          },
+          {
+            id: 'seen', header: 'Last seen', accessorFn: (n) => (isSet(n.last_seen_at) ? Date.parse(n.last_seen_at!) : 0), sortDescFirst: true,
+            cell: ({ row: { original: n } }) => <Tooltip label={datetime(n.last_seen_at)}><Text size="xs" c="dimmed">{isSet(n.last_seen_at) ? ago(n.last_seen_at) : 'never'}</Text></Tooltip>,
+          },
+          ...(admin ? [{
+            id: 'actions', header: '', enableSorting: false, size: 40,
+            cell: ({ row: { original: n } }: { row: { original: Node } }) => (
+              <Menu position="bottom-end">
+                <Menu.Target><Button variant="subtle" size="compact-xs" aria-label={`Actions for ${n.name}`}><IconDots size={14} /></Button></Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item onClick={() => void reissue(n)} disabled={n.state === 'revoked'}>New enrollment token</Menu.Item>
+                  {n.state === 'disabled' ? (
+                    <Menu.Item onClick={() => void setState(n, 'active')}>Enable</Menu.Item>
+                  ) : (
+                    <Menu.Item onClick={() => void setState(n, 'disabled')} disabled={n.state === 'revoked'}>Disable</Menu.Item>
+                  )}
+                  <Menu.Item color="owlRed" onClick={() => void setState(n, 'revoked')} disabled={n.state === 'revoked'}>Revoke credential</Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            ),
+          } satisfies ColumnDef<Node, unknown>] : []),
+        ] satisfies ColumnDef<Node, unknown>[]} />
       <CreateNodeModal opened={creating} onClose={() => setCreating(false)} onCreated={(token, node, expires) => setEnrollment({ token, node, expires })} />
       <SecretModal title={`Enrollment token for ${enrollment?.node ?? ''}`} secret={enrollment?.token ?? null} onClose={() => setEnrollment(null)}>
         <Text size="sm">On the node, with <Code>central.url</Code> set in its configuration, run:</Text>

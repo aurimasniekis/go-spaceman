@@ -7,8 +7,10 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
@@ -29,6 +31,8 @@ var outcomes = map[string][]string{
 type RespondInput struct {
 	Outcome string
 	Response
+	// AttachmentIDs are attachments of the space the response references (SM-ATT-001).
+	AttachmentIDs []string
 }
 
 func pending(status string) bool { return status == Open || status == InProgress }
@@ -107,6 +111,12 @@ func (svc *Service) Respond(ctx context.Context, actor audit.Actor, spaceID, id 
 		}
 		if r.Type == TypeApproval && in.Outcome == "denied" && strings.TrimSpace(in.Note) == "" {
 			return invalid("note", "say why the request is denied")
+		}
+		if len(in.AttachmentIDs) > MaxAttachments {
+			return invalid("attachment_ids", "at most %d attachments", MaxAttachments)
+		}
+		if err := attachments.Reference(ctx, tx, spaceID, OwnerResponse, r.ID, in.AttachmentIDs); err != nil {
+			return err
 		}
 		resp, _ := json.Marshal(in.Response)
 		return svc.finalize(ctx, tx, actor, r, Resolved, in.Outcome, string(resp), "", "resolved")
@@ -225,12 +235,79 @@ func (svc *Service) Assign(ctx context.Context, actor audit.Actor, spaceID, id s
 	return svc.Get(ctx, spaceID, id)
 }
 
+// Comment kinds (SM-HUM-006). All of them are discussion and never count as a response.
+const (
+	CommentPlain         = "comment"
+	CommentClarification = "clarification" // a person asks the requester for more information
+	CommentReply         = "reply"         // the requester answers a clarification request
+)
+
+// CommentInput is a comment on an action.
+type CommentInput struct {
+	Body  string
+	Label string
+	// AttachmentIDs are attachments of the action's space the comment references (SM-ATT-001).
+	AttachmentIDs []string
+}
+
 // AddComment adds discussion; it never changes the status or counts as a response (SM-HUM-006). Comments are allowed
 // on final actions too, so a person can explain a decision afterwards.
 func (svc *Service) AddComment(ctx context.Context, actor audit.Actor, spaceID, id, body, label string) (*Action, error) {
-	body = strings.TrimSpace(body)
+	return svc.Comment(ctx, actor, spaceID, id, CommentInput{Body: body, Label: label})
+}
+
+// Comment adds a plain comment with optional attachments.
+func (svc *Service) Comment(ctx context.Context, actor audit.Actor, spaceID, id string, in CommentInput) (*Action, error) {
+	return svc.comment(ctx, actor, spaceID, id, CommentPlain, in, nil)
+}
+
+// RequestClarification asks the requester for more information (SM-HUM-006). The action stays pending and keeps its
+// assignee; the question is stored as a clarification comment and, for an agent requester, a durable clarification
+// notification reaches the requester's run through the same routing as a response (SM-HUM-009). The requester answers
+// with a reply (ReplyAsRequester); an operator requester reads and answers it in the UI as a comment.
+func (svc *Service) RequestClarification(ctx context.Context, actor audit.Actor, spaceID, id string, in CommentInput) (*Action, error) {
+	a, err := svc.comment(ctx, actor, spaceID, id, CommentClarification, in, func(tx *store.Tx, r db.HumanAction) error {
+		if !pending(r.Status) {
+			return apperr.New(apperr.CodeConflict, "the action is already %s; ask in a comment or a follow-up instead", r.Status)
+		}
+		if r.RequesterKind == "agent" {
+			return svc.notify(ctx, tx, r, NoticeClarification)
+		}
+		return nil
+	})
+	if err == nil {
+		svc.notified()
+	}
+	return a, err
+}
+
+// ReplyAsRequester lets the requester's run (or its agent instance, or control) answer a clarification request. Other
+// runs cannot write on an action they are not related to.
+func (svc *Service) ReplyAsRequester(ctx context.Context, actor audit.Actor, spaceID, id string, v Viewer, body, label string) (*Action, error) {
+	a, err := svc.Get(ctx, spaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	l, err := svc.ForViewer(ctx, spaceID, v, a)
+	if err != nil {
+		return nil, err
+	}
+	if l[0].ResponseHidden {
+		return nil, apperr.New(apperr.CodeForbidden, "only the run that asked (or control) can reply on this action")
+	}
+	return svc.comment(ctx, actor, spaceID, id, CommentReply, CommentInput{Body: body, Label: label}, nil)
+}
+
+// NoticeClarification is the notification kind of a clarification request.
+const NoticeClarification = "clarification"
+
+func (svc *Service) comment(ctx context.Context, actor audit.Actor, spaceID, id, kind string, in CommentInput, extra func(*store.Tx, db.HumanAction) error) (*Action, error) {
+	body := strings.TrimSpace(in.Body)
 	if body == "" || len(body) > 20_000 {
 		return nil, invalid("body", "is required (at most 20000 bytes)")
+	}
+	if len(in.AttachmentIDs) > MaxAttachments {
+		return nil, invalid("attachment_ids", "at most %d attachments", MaxAttachments)
 	}
 	err := svc.s.W().TxNamed(ctx, "human.comment", func(tx *store.Tx) error {
 		r, err := tx.Q.GetHumanAction(ctx, id)
@@ -239,15 +316,31 @@ func (svc *Service) AddComment(ctx context.Context, actor audit.Actor, spaceID, 
 		} else if err != nil {
 			return err
 		}
+		if extra != nil {
+			if err := extra(tx, r); err != nil {
+				return err
+			}
+		}
 		cid := ids.New(ids.Comment)
-		if err := tx.Q.InsertHumanComment(ctx, db.InsertHumanCommentParams{ID: cid, ActionID: id, Body: body, Author: actor.ID, AuthorLabel: label, CreatedAt: tx.NowMicros()}); err != nil {
+		if err := tx.Q.InsertHumanComment(ctx, db.InsertHumanCommentParams{ID: cid, ActionID: id, Body: body, Author: actor.ID, AuthorLabel: in.Label,
+			CreatedAt: tx.NowMicros(), Kind: kind}); err != nil {
+			return err
+		}
+		if err := attachments.Reference(ctx, tx, spaceID, OwnerComment, cid, in.AttachmentIDs); err != nil {
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, spaceID, "human_action", id, "updated", r.Version); err != nil {
 			return err
 		}
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "human_action.commented", Target: audit.Target{Type: "human_action", ID: id},
-			Details: map[string]any{"space_id": spaceID, "comment_id": cid}})
+		action := "human_action.commented"
+		switch kind {
+		case CommentClarification:
+			action = "human_action.clarification_requested"
+		case CommentReply:
+			action = "human_action.clarification_replied"
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: action, Target: audit.Target{Type: "human_action", ID: id},
+			Details: map[string]any{"space_id": spaceID, "comment_id": cid, "attachments": len(in.AttachmentIDs)}})
 		return err
 	})
 	if err != nil {
@@ -300,15 +393,104 @@ func (svc *Service) Move(ctx context.Context, actor audit.Actor, spaceID, id, be
 	return svc.Get(ctx, spaceID, id)
 }
 
-// ListFilter narrows a listing.
+// ListFilter narrows a listing (SM-HUM-006, SM-HUI-001). Empty fields do not filter.
 type ListFilter struct {
 	Pending bool
 	Type    string
-	Limit   int
+	// Query matches the title and the Markdown body, case-insensitively; every word must occur.
+	Query string
+	// Status is one status (open, in_progress, resolved, cancelled, expired).
+	Status string
+	// Assignee is a user ID, or Unassigned for actions nobody claimed.
+	Assignee string
+	// Priority is one priority (low, normal, high, urgent).
+	Priority string
+	// Requester matches the requester's kind, ID, run or role exactly, or its label case-insensitively.
+	Requester string
+	// Due is DueOverdue (due date passed), DueSet (has a due date) or DueExpiring (has an expiry).
+	Due string
+	// Sort is one of the Sort* orders; empty keeps the listing's default order.
+	Sort  string
+	Limit int
 }
 
-func (f ListFilter) keep(r db.HumanAction) bool {
-	return (!f.Pending || pending(r.Status)) && (f.Type == "" || r.Type == f.Type)
+// Filter and sort values.
+const (
+	Unassigned  = "unassigned"
+	DueOverdue  = "overdue"
+	DueSet      = "due"
+	DueExpiring = "expiring"
+
+	SortRank     = "rank"     // the space's durable order (pending first); the global view's default is oldest first
+	SortPriority = "priority" // urgent first, then by rank
+	SortDue      = "due"      // earliest due date first; actions without one last
+	SortNewest   = "newest"   // most recently created first
+	SortOldest   = "oldest"   // oldest first
+	SortUpdated  = "updated"  // most recently changed first
+)
+
+// Sorts lists the sort orders a listing accepts.
+var Sorts = []string{SortRank, SortPriority, SortDue, SortNewest, SortOldest, SortUpdated}
+
+// Validate checks the filter's enumerated fields.
+func (f ListFilter) Validate() error {
+	v := &apperr.Validation{}
+	if f.Status != "" && !slices.Contains([]string{Open, InProgress, Resolved, Cancelled, Expired}, f.Status) {
+		v.Add("status", "must be open, in_progress, resolved, cancelled or expired")
+	}
+	if f.Priority != "" && priorities[f.Priority] == 0 {
+		v.Add("priority", "must be low, normal, high or urgent")
+	}
+	if f.Due != "" && !slices.Contains([]string{DueOverdue, DueSet, DueExpiring}, f.Due) {
+		v.Add("due", "must be overdue, due or expiring")
+	}
+	if f.Sort != "" && !slices.Contains(Sorts, f.Sort) {
+		v.Add("sort", "must be one of %s", strings.Join(Sorts, ", "))
+	}
+	if len(f.Query) > 200 {
+		v.Add("q", "at most 200 bytes")
+	}
+	return v.Err()
+}
+
+func (f ListFilter) keep(r db.HumanAction, now int64) bool {
+	if (f.Pending && !pending(r.Status)) || (f.Type != "" && r.Type != f.Type) || (f.Status != "" && r.Status != f.Status) ||
+		(f.Priority != "" && r.Priority != f.Priority) {
+		return false
+	}
+	switch {
+	case f.Assignee == Unassigned && r.Assignee != "":
+		return false
+	case f.Assignee != "" && f.Assignee != Unassigned && r.Assignee != f.Assignee:
+		return false
+	}
+	switch f.Due {
+	case DueOverdue:
+		if !r.DueAt.Valid || r.DueAt.Int64 >= now || !pending(r.Status) {
+			return false
+		}
+	case DueSet:
+		if !r.DueAt.Valid {
+			return false
+		}
+	case DueExpiring:
+		if !r.ExpiresAt.Valid || !pending(r.Status) {
+			return false
+		}
+	}
+	if f.Requester != "" && f.Requester != r.RequesterKind && f.Requester != r.RequesterID && f.Requester != r.RequesterRun &&
+		f.Requester != r.RequesterRole && !strings.Contains(strings.ToLower(r.RequesterLabel), strings.ToLower(f.Requester)) {
+		return false
+	}
+	if q := strings.TrimSpace(f.Query); q != "" {
+		hay := strings.ToLower(r.Title + "\n" + r.Body)
+		for _, w := range strings.Fields(strings.ToLower(q)) {
+			if !strings.Contains(hay, w) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (f ListFilter) limit() int {
@@ -318,34 +500,76 @@ func (f ListFilter) limit() int {
 	return f.Limit
 }
 
-// List returns a space's actions: pending first in rank order, then the most recent final ones.
+// priorities orders priorities for sorting (higher is more urgent).
+var priorities = map[string]int{"low": 1, "normal": 2, "high": 3, "urgent": 4}
+
+// sortActions orders a listing. Sorting is for display only and never changes a space's durable rank (SM-HUI-004).
+// Ties keep the listing's default order (stable sort).
+func sortActions(l []*Action, by string) {
+	cmpTime := func(a, b *time.Time) int {
+		switch {
+		case a == nil && b == nil:
+			return 0
+		case a == nil:
+			return 1
+		case b == nil:
+			return -1
+		}
+		return a.Compare(*b)
+	}
+	switch by {
+	case SortPriority:
+		slices.SortStableFunc(l, func(a, b *Action) int { return priorities[b.Priority] - priorities[a.Priority] })
+	case SortDue:
+		slices.SortStableFunc(l, func(a, b *Action) int { return cmpTime(a.DueAt, b.DueAt) })
+	case SortNewest:
+		slices.SortStableFunc(l, func(a, b *Action) int { return b.CreatedAt.Compare(a.CreatedAt) })
+	case SortOldest:
+		slices.SortStableFunc(l, func(a, b *Action) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	case SortUpdated:
+		slices.SortStableFunc(l, func(a, b *Action) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
+	}
+}
+
+// List returns a space's actions: pending first in rank order, then the most recent final ones. Filters apply
+// before the limit, so a search finds matches beyond the first page of the unfiltered list.
 func (svc *Service) List(ctx context.Context, spaceID string, f ListFilter) ([]*Action, error) {
+	if err := f.Validate(); err != nil {
+		return nil, err
+	}
 	rows, err := svc.s.R().ListHumanActions(ctx, db.ListHumanActionsParams{SpaceID: spaceID, Limit: int64(f.limit()) + MaxPendingCeiling})
 	if err != nil {
 		return nil, err
 	}
+	now := svc.clock.Now().UnixMicro()
 	out := []*Action{}
 	for _, r := range rows {
-		if f.keep(r) && len(out) < f.limit() {
+		if f.keep(r, now) && len(out) < f.limit() {
 			out = append(out, fromRow(r))
 		}
 	}
+	sortActions(out, f.Sort)
 	return out, nil
 }
 
 // ListPending returns pending actions across the given spaces (the caller's authorized spaces), oldest first, for the
 // global view (SM-HUM-001). allowed nil means every space.
 func (svc *Service) ListPending(ctx context.Context, allowed func(spaceID string) bool, f ListFilter) ([]*Action, error) {
+	if err := f.Validate(); err != nil {
+		return nil, err
+	}
 	rows, err := svc.s.R().ListPendingHumanActions(ctx, 5000)
 	if err != nil {
 		return nil, err
 	}
+	now := svc.clock.Now().UnixMicro()
 	out := []*Action{}
 	for _, r := range rows {
-		if (allowed == nil || allowed(r.SpaceID)) && f.keep(r) && len(out) < f.limit() {
+		if (allowed == nil || allowed(r.SpaceID)) && f.keep(r, now) && len(out) < f.limit() {
 			out = append(out, fromRow(r))
 		}
 	}
+	sortActions(out, f.Sort)
 	return out, nil
 }
 

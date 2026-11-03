@@ -47,6 +47,12 @@ A response to a human action whose requester's run has ended reaches control (or
 with the run that asked and the reason, so the receiving agent knows it is handling someone else's answer. See
 [Human actions](./human-actions#requesters-and-notifications).
 
+## Attachments
+
+Messages and replies to agents are written in the Markdown composer, so images and files can be pasted, dropped or
+attached. They are stored as the space's attachments and listed with the message; agents read them through
+`spaceman_attachment_get`.
+
 ## For operators
 
 **Send message** writes to control, a role or one run. Messages from agents to operators show a badge on the section's link;

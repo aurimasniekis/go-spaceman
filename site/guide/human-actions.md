@@ -10,6 +10,47 @@ counted.
 
 <Shot name="human-global" alt="Needs you page listing a blocking question, an approval, two to-dos and an informational message across two spaces" caption="Everything waiting for a person, across spaces" />
 
+## Search, filters and sorting
+
+Both lists have a search box and filters above them. The search runs on the server over the title and the Markdown
+text (case-insensitive; every word must occur). The filters are type, status, assignee (**Assigned to me** or
+**Unassigned**), priority, due date (**Overdue**, **Has a due date**, **Expires**), requester (its kind, run, role, or
+part of its name) and, in Needs you, space. **Sort** shows the list by priority, due date, newest, oldest or most
+recently changed; sorting is for display only and never changes a space's order, which people set by moving actions.
+Needs you lists pending actions, so its status filter offers *open* and *in progress*; a space's list can also show
+resolved, withdrawn and expired actions. The filters you choose are remembered in this browser per list. The same
+parameters work on the API (`q`, `type`, `status`, `assignee` with `me` or `unassigned`, `priority`, `requester`,
+`due`, `sort`; `space` on the global list) and the command line (`spaceman human list --search … --assignee me`).
+
+<Shot name="human-search" alt="A space's human actions searched for the word retry and sorted by priority" caption="Searching and filtering a space's human actions" />
+
+## Comments and clarification
+
+Comments are discussion and never count as a response. They are written in the Markdown composer, so images and files
+can be pasted, dropped or attached, as they can in an answer or a note when you respond, and when you create an action.
+
+While an action is pending, **Ask the requester** posts the comment as a **clarification request**. The action stays
+pending and keeps its assignee. When an agent asked, it receives the question like a response: a durable
+`clarification` notice, routed to its run (or, if that ended, by the same policy as a response), and it answers with
+`spaceman_human_reply`, which appears as *requester's reply*. When an operator asked, the question is shown to them on
+the action. A clarification is never a response and never resolves the action.
+
+<Shot name="human-clarify" alt="A pending question with a clarification request to its requester, asking which refunds are meant" caption="Asking the requester for more information" />
+
+Links in the drawer lead to what an action refers to: the requester's run, the related task, the inbox item it came
+from, and the action it follows up. A task's human-action blocker links back to the action.
+
+## Notification preferences
+
+Under **Account → Notifications** you choose what the web UI announces to you while it is open: new actions in your
+spaces, actions assigned to you, escalations, reminders, and clarification requests and replies; the lowest priority
+to announce (assignments to you always are); spaces to mute; and whether to also show desktop notifications (the
+browser asks for permission). Preferences are stored per user (`GET`/`PUT /api/v1/auth/me/notification-preferences`,
+`spaceman notifications set`). SpaceMan itself sends no e-mail or chat notifications; the outbound lifecycle events
+(`human.action.*`) can feed such a system.
+
+<Shot name="account-notifications" alt="The notification preferences on the Account page: new actions, assignments, escalations and clarifications announced, high priority and above, the infrastructure space muted" caption="Notification preferences" />
+
 ## Types
 
 | Type | Asks for | Response |

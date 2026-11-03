@@ -1,5 +1,6 @@
 import { ActionIcon, Alert, Badge, Button, Card, Checkbox, Drawer, Group, Modal, MultiSelect, NumberInput, Select, SimpleGrid, Stack, Table, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
 import { IconPlugConnected, IconPlus, IconTrash } from '@tabler/icons-react'
+import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -58,64 +59,104 @@ type HeaderRow = { name: string; value: string }
 
 function ServerModal({ server, onClose }: { server: McpServer | null; onClose: () => void }) {
   const qc = useQueryClient()
-  const [v, setV] = useState({ slug: server?.slug ?? '', name: server?.name ?? '', description: server?.description ?? '', url: server?.url ?? '',
-    allow_private: server?.allow_private ?? false, tools: server?.tools ?? [], call_timeout_ms: server?.call_timeout_ms ?? 20000,
-    max_concurrency: server?.max_concurrency ?? 4, max_result_bytes: server?.max_result_bytes ?? 262144, enabled: server?.enabled ?? true })
-  const [replace, setReplace] = useState(server === null)
-  const [headers, setHeaders] = useState<HeaderRow[]>(server === null ? [{ name: 'Authorization', value: '' }] : [])
   const [error, setError] = useState('')
-  const save = async () => {
-    setError('')
-    const h = Object.fromEntries(headers.filter((r) => r.name).map((r) => [r.name, r.value]))
-    const body = { ...v, slug: server ? undefined : v.slug, set_headers: replace, headers: replace ? h : undefined }
-    try {
-      if (server) unwrap(await api.PUT('/mcp-servers/{server_id}', { params: { path: { server_id: server.id }, header: { 'If-Match': ifMatch(server.version) } }, body }))
-      else unwrap(await api.POST('/mcp-servers', { body }))
-      void qc.invalidateQueries({ queryKey: keys.mcpServers })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: {
+      slug: server?.slug ?? '', name: server?.name ?? '', description: server?.description ?? '', url: server?.url ?? '',
+      allow_private: server?.allow_private ?? false, tools: server?.tools ?? [], call_timeout_ms: server?.call_timeout_ms ?? 20000,
+      max_concurrency: server?.max_concurrency ?? 4, max_result_bytes: server?.max_result_bytes ?? 262144, enabled: server?.enabled ?? true,
+      replace: server === null,
+      headers: (server === null ? [{ name: 'Authorization', value: '' }] : []) as HeaderRow[],
+    },
+    onSubmit: async ({ value }) => {
+      setError('')
+      const { replace, headers, ...v } = value
+      const h = Object.fromEntries(headers.filter((r) => r.name).map((r) => [r.name, r.value]))
+      const body = { ...v, slug: server ? undefined : v.slug, set_headers: replace, headers: replace ? h : undefined }
+      try {
+        if (server) unwrap(await api.PUT('/mcp-servers/{server_id}', { params: { path: { server_id: server.id }, header: { 'If-Match': ifMatch(server.version) } }, body }))
+        else unwrap(await api.POST('/mcp-servers', { body }))
+        void qc.invalidateQueries({ queryKey: keys.mcpServers })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title={server ? `Edit ${server.name}` : 'Add an MCP server'} size="lg">
-      <Stack gap="sm">
-        <SimpleGrid cols={2}>
-          <TextInput label="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-          <TextInput label="Slug" description="Tools appear as slug__tool" classNames={{ input: 'mono' }} disabled={server !== null} value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} />
-        </SimpleGrid>
-        <TextInput label="Endpoint" description="Streamable HTTP; https unless private networks are allowed" placeholder="https://mcp.example.com/mcp" classNames={{ input: 'mono' }}
-          value={v.url} onChange={(e) => setV({ ...v, url: e.target.value })} />
-        <Textarea label="Description" autosize minRows={1} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
-        <Stack gap={4}>
-          <Group justify="space-between">
-            <Text size="sm" fw={500}>Request headers</Text>
-            {server && <Checkbox label="Replace the stored headers" checked={replace} onChange={(e) => setReplace(e.currentTarget.checked)} />}
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <SimpleGrid cols={2}>
+            <form.Field name="name">{(f) => <TextInput label="Name" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+            <form.Field name="slug">
+              {(f) => <TextInput label="Slug" description="Tools appear as slug__tool" classNames={{ input: 'mono' }} disabled={server !== null} value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}
+            </form.Field>
+          </SimpleGrid>
+          <form.Field name="url">
+            {(f) => <TextInput label="Endpoint" description="Streamable HTTP; https unless private networks are allowed" placeholder="https://mcp.example.com/mcp" classNames={{ input: 'mono' }}
+              value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          <form.Field name="description">{(f) => <Textarea label="Description" autosize minRows={1} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          <form.Subscribe selector={(st) => st.values.replace}>
+            {(replace) => (
+              <Stack gap={4}>
+                <Group justify="space-between">
+                  <Text size="sm" fw={500}>Request headers</Text>
+                  {server && <form.Field name="replace">{(f) => <Checkbox label="Replace the stored headers" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}</form.Field>}
+                </Group>
+                {server && !replace && <Text size="xs" c="dimmed">Stored: {server.header_names.join(', ') || 'none'}. Values are never shown.</Text>}
+                {replace && (
+                  <form.Field name="headers" mode="array">
+                    {(list) => (
+                      <>
+                        {list.state.value.map((_, i) => (
+                          <Group key={i} gap="xs" wrap="nowrap">
+                            <form.Field name={`headers[${i}].name`}>
+                              {(f) => <TextInput aria-label={`Header ${i + 1} name`} placeholder="Authorization" classNames={{ input: 'mono' }} style={{ flex: 1 }} value={f.state.value}
+                                onChange={(e) => f.handleChange(e.target.value)} />}
+                            </form.Field>
+                            <form.Field name={`headers[${i}].value`}>
+                              {(f) => <TextInput aria-label={`Header ${i + 1} value`} type="password" placeholder="Bearer …" style={{ flex: 2 }} value={f.state.value} autoComplete="off"
+                                onChange={(e) => f.handleChange(e.target.value)} />}
+                            </form.Field>
+                            <ActionIcon variant="subtle" aria-label={`Remove header ${i + 1}`} onClick={() => list.removeValue(i)}><IconTrash size={14} /></ActionIcon>
+                          </Group>
+                        ))}
+                        <Button variant="subtle" size="xs" w="fit-content" onClick={() => list.pushValue({ name: '', value: '' })}>Add header</Button>
+                      </>
+                    )}
+                  </form.Field>
+                )}
+              </Stack>
+            )}
+          </form.Subscribe>
+          <form.Field name="tools">
+            {(f) => <TagsInput label="Offered tools" description="Upstream tool names agents may use; empty offers every tool" value={f.state.value} onChange={(tools) => f.handleChange(tools)} />}
+          </form.Field>
+          <SimpleGrid cols={3}>
+            <form.Field name="call_timeout_ms">
+              {(f) => <NumberInput label="Call timeout (ms)" min={1000} max={20000} step={1000} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 20000)} />}
+            </form.Field>
+            <form.Field name="max_concurrency">
+              {(f) => <NumberInput label="Concurrent calls" min={1} max={32} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 4)} />}
+            </form.Field>
+            <form.Field name="max_result_bytes">
+              {(f) => <NumberInput label="Max result (bytes)" min={1024} max={4194304} step={65536} value={f.state.value} onChange={(n) => f.handleChange(Number(n) || 262144)} />}
+            </form.Field>
+          </SimpleGrid>
+          <form.Field name="allow_private">
+            {(f) => <Checkbox label="Allow private networks" description="Loopback, private and unique-local addresses, and plain http. Link-local (cloud metadata) addresses stay refused."
+              checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
+          </form.Field>
+          <form.Field name="enabled">{(f) => <Checkbox label="Enabled" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}</form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
           </Group>
-          {server && !replace && <Text size="xs" c="dimmed">Stored: {server.header_names.join(', ') || 'none'}. Values are never shown.</Text>}
-          {replace && headers.map((r, i) => (
-            <Group key={i} gap="xs" wrap="nowrap">
-              <TextInput aria-label={`Header ${i + 1} name`} placeholder="Authorization" classNames={{ input: 'mono' }} style={{ flex: 1 }} value={r.name}
-                onChange={(e) => setHeaders(headers.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-              <TextInput aria-label={`Header ${i + 1} value`} type="password" placeholder="Bearer …" style={{ flex: 2 }} value={r.value} autoComplete="off"
-                onChange={(e) => setHeaders(headers.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))} />
-              <ActionIcon variant="subtle" aria-label={`Remove header ${i + 1}`} onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><IconTrash size={14} /></ActionIcon>
-            </Group>
-          ))}
-          {replace && <Button variant="subtle" size="xs" w="fit-content" onClick={() => setHeaders([...headers, { name: '', value: '' }])}>Add header</Button>}
         </Stack>
-        <TagsInput label="Offered tools" description="Upstream tool names agents may use; empty offers every tool" value={v.tools} onChange={(tools) => setV({ ...v, tools })} />
-        <SimpleGrid cols={3}>
-          <NumberInput label="Call timeout (ms)" min={1000} max={20000} step={1000} value={v.call_timeout_ms} onChange={(n) => setV({ ...v, call_timeout_ms: Number(n) || 20000 })} />
-          <NumberInput label="Concurrent calls" min={1} max={32} value={v.max_concurrency} onChange={(n) => setV({ ...v, max_concurrency: Number(n) || 4 })} />
-          <NumberInput label="Max result (bytes)" min={1024} max={4194304} step={65536} value={v.max_result_bytes} onChange={(n) => setV({ ...v, max_result_bytes: Number(n) || 262144 })} />
-        </SimpleGrid>
-        <Checkbox label="Allow private networks" description="Loopback, private and unique-local addresses, and plain http. Link-local (cloud metadata) addresses stay refused."
-          checked={v.allow_private} onChange={(e) => setV({ ...v, allow_private: e.currentTarget.checked })} />
-        <Checkbox label="Enabled" checked={v.enabled} onChange={(e) => setV({ ...v, enabled: e.currentTarget.checked })} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-      </Stack>
+      </form>
     </Modal>
   )
 }
@@ -126,7 +167,19 @@ function ServerDetail({ server, canWrite, onEdit, onDeleted }: { server: McpServ
   const spaces = useSpaces()
   const [found, setFound] = useState<McpDiscovered | null>(null)
   const [checking, setChecking] = useState(false)
-  const [g, setG] = useState({ space_id: '', role: '*', tools: [] as string[] })
+  const grantForm = useForm({
+    defaultValues: { space_id: '', role: '*', tools: [] as string[] },
+    onSubmit: async ({ value, formApi }) => {
+      try {
+        unwrap(await api.POST('/mcp-servers/{server_id}/grants', { params: { path: { server_id: server.id } }, body: value }))
+        formApi.reset()
+        refresh()
+        notifyOk('Granted')
+      } catch (e) {
+        notifyError(e, 'Could not grant the server')
+      }
+    },
+  })
   const spaceName = (id: string) => spaces.data?.find((s) => s.id === id)?.name ?? id
   const runCheck = async () => {
     setChecking(true)
@@ -141,16 +194,6 @@ function ServerDetail({ server, canWrite, onEdit, onDeleted }: { server: McpServ
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: keys.mcpGrants(server.id) })
     void qc.invalidateQueries({ queryKey: keys.mcpServers })
-  }
-  const grant = async () => {
-    try {
-      unwrap(await api.POST('/mcp-servers/{server_id}/grants', { params: { path: { server_id: server.id } }, body: g }))
-      setG({ space_id: '', role: '*', tools: [] })
-      refresh()
-      notifyOk('Granted')
-    } catch (e) {
-      notifyError(e, 'Could not grant the server')
-    }
   }
   const revoke = async (id: string) => {
     try {
@@ -213,13 +256,23 @@ function ServerDetail({ server, canWrite, onEdit, onDeleted }: { server: McpServ
         </Table>
         {grants.isSuccess && grants.data.length === 0 && <Text size="sm" c="dimmed">Not granted to any space yet.</Text>}
         {canWrite && (
-          <Group align="flex-end" gap="xs">
-            <Select label="Space" placeholder="Choose a space" data={(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }))} value={g.space_id || null}
-              onChange={(x) => setG({ ...g, space_id: x ?? '' })} />
-            <TextInput label="Space role" description="* for every role" classNames={{ input: 'mono' }} w={140} value={g.role} onChange={(e) => setG({ ...g, role: e.target.value })} />
-            <MultiSelect label="Tools" placeholder="All offered" data={toolOptions} value={g.tools} onChange={(tools) => setG({ ...g, tools })} searchable w={220} />
-            <Button disabled={!g.space_id} onClick={() => void grant()}>Grant</Button>
-          </Group>
+          <form onSubmit={(e) => { e.preventDefault(); void grantForm.handleSubmit() }}>
+            <Group align="flex-end" gap="xs">
+              <grantForm.Field name="space_id">
+                {(f) => <Select label="Space" placeholder="Choose a space" data={(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }))} value={f.state.value || null}
+                  onChange={(x) => f.handleChange(x ?? '')} />}
+              </grantForm.Field>
+              <grantForm.Field name="role">
+                {(f) => <TextInput label="Space role" description="* for every role" classNames={{ input: 'mono' }} w={140} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+              </grantForm.Field>
+              <grantForm.Field name="tools">
+                {(f) => <MultiSelect label="Tools" placeholder="All offered" data={toolOptions} value={f.state.value} onChange={(tools) => f.handleChange(tools)} searchable w={220} />}
+              </grantForm.Field>
+              <grantForm.Subscribe selector={(st) => [st.values.space_id, st.isSubmitting] as const}>
+                {([space, busy]) => <Button type="submit" disabled={!space} loading={busy}>Grant</Button>}
+              </grantForm.Subscribe>
+            </Group>
+          </form>
         )}
       </Stack>
     </Stack>

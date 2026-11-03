@@ -316,6 +316,20 @@ func TestBodyBuilders(t *testing.T) {
 		t.Fatalf("on %v", b)
 	}
 
+	// SM-CTRL-004: reassigning a task merges the given assignee into the current task and sends its version.
+	f.json("GET "+sp+"/tasks/tsk_1", 200, map[string]any{"id": "tsk_1", "title": "first", "priority": "normal", "assignee_role": "planner",
+		"assignee_run": "run_old", "exclusions": []any{}, "version": 7})
+	f.on("PUT "+sp+"/tasks/tsk_1", echo)
+	e.ok(t, "task", "update", "--space", spaceID, "tsk_1", "--run", "run_new", "--role", "implementor")
+	if r := f.last("PUT", sp+"/tasks/tsk_1"); r.body["assignee_run"] != "run_new" || r.body["assignee_role"] != "implementor" || r.body["title"] != "first" ||
+		r.header.Get("If-Match") != `"7"` {
+		t.Fatalf("reassign %v %v", r.header, r.body)
+	}
+	e.ok(t, "task", "update", "--space", spaceID, "tsk_1", "--run", "")
+	if r := f.last("PUT", sp+"/tasks/tsk_1"); r.body["assignee_run"] != "" || r.body["assignee_role"] != "planner" {
+		t.Fatalf("clear run %v", r.body)
+	}
+
 	f.json("GET "+sp+"/human-actions/hac_1", 200, map[string]any{"id": "hac_1", "version": 3})
 	f.on("POST "+sp+"/human-actions/hac_1/assign", echo)
 	e.code(t, ExitUsage, "human", "assign", "--space", spaceID, "hac_1")

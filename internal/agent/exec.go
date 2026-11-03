@@ -148,6 +148,11 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 			a.ack(ctx, c, proto.AckRejected, "run is not running")
 			return
 		}
+		// Automated input is paused while an operator has taken over the terminal (SM-UI-004).
+		if a.takenOver(c.RunID) {
+			a.ack(ctx, c, proto.AckRejected, "an operator has taken over the terminal; input is paused")
+			return
+		}
 		if err := a.o.Runner.Send(ctx, r.TerminalID, p.Text, !p.Force); err != nil {
 			reason := "send failed"
 			if errors.Is(err, runner.ErrBusy) {

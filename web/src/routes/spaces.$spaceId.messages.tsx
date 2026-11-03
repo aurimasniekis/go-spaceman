@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, Select, Stack, Text, Textarea, TextInput } from '@mantine/core'
+import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core'
 import { IconArrowRight, IconCheck, IconMessagePlus } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
@@ -6,7 +6,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type Message } from '@/api/client'
 import { keys, useMe, useMessages, useRuns, useSpace } from '@/api/queries'
+import { AttachmentList } from '@/components/AttachmentList'
+import { Composer } from '@/components/composer/Composer'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
+import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
 import { PageHeader } from '@/components/PageHeader'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
@@ -75,8 +78,17 @@ function MessagesPage() {
 
 function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; canWrite: boolean }) {
   const qc = useQueryClient()
-  const [reply, setReply] = useState('')
   const path = { space_id: spaceId, message_id: m.id }
+  const [replyKey, setReplyKey] = useState(0)
+  const replyForm = useAppForm({
+    defaultValues: { body: '', attachmentIds: [] as string[] },
+    onSubmit: async ({ value }) => act(async () => {
+      unwrap(await api.POST('/spaces/{space_id}/messages/{message_id}/reply', { params: { path },
+        body: { body: value.body, attachment_ids: value.attachmentIds.length ? value.attachmentIds : undefined } }))
+      replyForm.reset()
+      setReplyKey((k) => k + 1)
+    }, 'Could not reply'),
+  })
   const act = async (fn: () => Promise<unknown>, what: string) => {
     try {
       await fn()
@@ -100,6 +112,7 @@ function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; 
         {m.from_kind === 'run' && <Badge variant="outline" color="gray" mb="xs">written by an agent: untrusted content</Badge>}
         {m.body ? <MarkdownView source={m.body} spaceId={spaceId} /> : <Text size="sm" c="dimmed">No body.</Text>}
       </Card>
+      {(m.attachments ?? []).length > 0 && <AttachmentList spaceId={spaceId} list={m.attachments ?? []} />}
       {canWrite && open && (
         <Group gap="xs">
           {m.to_kind === 'operators' && m.state !== 'acknowledged' && (
@@ -115,15 +128,18 @@ function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; 
         </Group>
       )}
       {canWrite && m.from_kind === 'run' && (
-        <Stack gap={4}>
-          <Textarea label="Reply" description="Markdown; delivered to the sending run" autosize minRows={2} maxRows={8} value={reply} onChange={(e) => setReply(e.target.value)} />
-          <Group justify="flex-end">
-            <Button size="xs" disabled={!reply.trim()} onClick={() => void act(async () => {
-              unwrap(await api.POST('/spaces/{space_id}/messages/{message_id}/reply', { params: { path }, body: { body: reply } }))
-              setReply('')
-            }, 'Could not reply')}>Send reply</Button>
-          </Group>
-        </Stack>
+        <form onSubmit={(e) => { e.preventDefault(); void replyForm.handleSubmit() }}>
+          <Stack gap={4}>
+            <Text size="sm" fw={500}>Reply</Text>
+            <Text size="xs" c="dimmed">Markdown; delivered to the sending run. Paste, drop or attach files.</Text>
+            <Composer key={replyKey} spaceId={spaceId} ariaLabel="Reply" minHeight={70}
+              onChange={(v) => { replyForm.setFieldValue('body', v.markdown); replyForm.setFieldValue('attachmentIds', v.attachmentIds) }}
+              onSubmit={() => void replyForm.handleSubmit()} />
+            <replyForm.Subscribe selector={(st) => st.values.body.trim() !== ''}>
+              {(has) => <Group justify="flex-end"><replyForm.AppForm><replyForm.SubmitButton size="xs" disabled={!has}>Send reply</replyForm.SubmitButton></replyForm.AppForm></Group>}
+            </replyForm.Subscribe>
+          </Stack>
+        </form>
       )}
     </Stack>
   )
@@ -136,12 +152,13 @@ function ComposeModal({ spaceId, onClose }: { spaceId: string; onClose: () => vo
   const [error, setError] = useState('')
   const [key] = useState(idempotencyKey)
   const form = useForm({
-    defaultValues: { to: 'control', subject: '', body: '', request: false },
+    defaultValues: { to: 'control', subject: '', body: '', request: false, attachmentIds: [] as string[] },
     onSubmit: async ({ value }) => {
       setError('')
       try {
         unwrap(await api.POST('/spaces/{space_id}/messages', { params: { path: { space_id: spaceId }, header: { 'Idempotency-Key': key } },
-          body: { to: value.to, subject: value.subject, body: value.body || undefined, request: value.request } }))
+          body: { to: value.to, subject: value.subject, body: value.body || undefined, request: value.request,
+            attachment_ids: value.attachmentIds.length ? value.attachmentIds : undefined } }))
         void qc.invalidateQueries({ queryKey: keys.messages(spaceId) })
         onClose()
       } catch (e) {
@@ -161,9 +178,11 @@ function ComposeModal({ spaceId, onClose }: { spaceId: string; onClose: () => vo
           <form.Field name="subject" validators={{ onBlur: required('Subject') }}>
             {(f) => <TextInput label="Subject" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={f.state.meta.isTouched ? f.state.meta.errors[0] : undefined} />}
           </form.Field>
-          <form.Field name="body">
-            {(f) => <Textarea label="Message" description="Markdown" autosize minRows={3} maxRows={12} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
-          </form.Field>
+          <Stack gap={4}>
+            <Text size="sm" fw={500}>Message</Text>
+            <Composer spaceId={spaceId} ariaLabel="Message" minHeight={110} placeholder="Markdown; paste, drop or attach files"
+              onChange={(v) => { form.setFieldValue('body', v.markdown); form.setFieldValue('attachmentIds', v.attachmentIds) }} />
+          </Stack>
           <form.Field name="request">
             {(f) => <Checkbox label="Expect a reply (a request)" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
           </form.Field>

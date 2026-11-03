@@ -115,7 +115,37 @@ func (a *App) runExtra() []*cobra.Command {
 		a.cmd(opts{use: "delete", short: "Delete a run's stored transcript", op: "delete-transcript", scoped: true, args: pos("run"),
 			confirm: "delete the transcript permanently", done: "Transcript deleted."}),
 	)
+	takeover := group("takeover", "Take over a run's terminal: type into it while automated input is paused (needs terminal:takeover)", nil,
+		a.cmd(opts{use: "start", short: "Take over a run's terminal (prints the takeover ID; it ends unless renewed within 30 s)", op: "start-takeover",
+			scoped: true, args: pos("run"),
+			long: "While you hold the takeover, Message the agent and the terminal notices for messages and human responses are refused; they go " +
+				"out after it ends. Renew it with `spaceman run takeover renew` at least every 30 s, type with `spaceman run takeover type`, and " +
+				"release it with `spaceman run takeover end`. Start and end are audited; keystrokes are never stored.",
+			example: "spaceman run takeover start --space payments run_01…"}),
+		a.cmd(opts{use: "renew", short: "Keep your takeover for another 30 s", op: "renew-takeover", scoped: true, args: pos("run", "takeover")}),
+		a.cmd(opts{use: "type", short: "Type into the taken-over terminal (keystrokes; --enter presses Enter after the text)", op: "takeover-input",
+			scoped: true, args: pos("run", "takeover"), done: "Typed.",
+			example: "spaceman run takeover type --space payments run_01… tko_01… --text 'y' --enter",
+			form: func(f *form) {
+				f.text("text", "data", "text to type, as keystrokes (required)").boolean("enter", "enter", "press Enter after the text")
+			},
+			prepare: func(_ context.Context, _ *cobra.Command, _ *call, body map[string]any) error {
+				text, _ := body["data"].(string)
+				if enter, _ := body["enter"].(bool); enter {
+					text += "\r"
+				}
+				delete(body, "enter")
+				if text == "" {
+					return usageErrorf("--text or --enter is required")
+				}
+				body["data"] = text
+				return nil
+			}}),
+		a.cmd(opts{use: "end", short: "End a takeover (yours, or another operator's); automated input resumes", op: "end-takeover", scoped: true,
+			args: pos("run", "takeover")}),
+	)
 	return []*cobra.Command{
+		takeover,
 		a.cmd(opts{use: "input", short: "Send input to a run (delivered only while the program is idle, unless --force)", op: "send-input", scoped: true,
 			args: pos("run"), done: "Input accepted.",
 			form: func(f *form) {

@@ -84,6 +84,7 @@ type Service struct {
 	hub     *Hub
 	rec     *Recordings
 	reloc   relocEngine
+	tko     takeovers
 	// MemoryExport writes central's role memory for a relocation's destination (nil: spaces with memory cannot relocate).
 	MemoryExport MemoryExporter
 	// Grants removes a purged space's role grants and reloads the authorization engine after commit (the auth
@@ -120,7 +121,8 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o, reloc: relocEngine{retain: make(chan struct{}, 1)}}
+	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o, reloc: relocEngine{retain: make(chan struct{}, 1)},
+		tko: takeovers{meters: map[string]*takeoverMeter{}, wake: make(chan struct{}, 1)}}
 	svc.hub = newHub(svc)
 	svc.rec = newRecordings(o.RecordingsDir, o.Clock.Now)
 	return svc

@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Browser, type Page } from '@playwright/test'
 
-import { Api, env, settle, startAgent } from './stack'
+import { Api, env, nextTotpWindow, settle, startAgent } from './stack'
+import { totp } from './totp'
 
 /**
  * Regenerates the documentation screenshots (site/public/screenshots, inventory in docs/SCREENSHOTS.md) from the real UI
@@ -86,7 +87,10 @@ test('documentation screenshots', async ({ page, browser }) => {
   const adminPw = password()
   await asRoot.call('POST', '/users', { display_name: 'Alex Morgan', email: 'alex@example.com', password: adminPw, mfa_required: true, grants: [{ role: 'admin', domain: '*' }] })
   const api = new Api(page.request, base)
-  await api.signIn('alex@example.com', adminPw)
+  const adminTotp = await api.signIn('alex@example.com', adminPw)
+  // In-app notifications of new actions would appear over the captures; the documentation shots turn them off.
+  await api.call('PUT', '/auth/me/notification-preferences', { enabled: false, desktop: false, new_actions: true, assigned_to_me: true, escalations: true,
+    reminders: false, clarifications: true, min_priority: 'low', muted_spaces: [] }, { 'If-Match': '"0"' })
 
   const node = await api.call<{ node: { id: string }; token: string }>('POST', '/nodes', { name: 'build-01', description: 'Workstation in the office rack' })
   await api.call('POST', '/nodes', { name: 'gpu-02', description: 'Spare machine, not enrolled yet' })
@@ -371,6 +375,13 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}`)
     await expect(page.getByRole('cell', { name: 'reviewer (worker)' })).toBeVisible()
   })
+  // Everything that needs a person (SM-UI-003): pending human actions, blocked tasks, quarantine, runs, nodes, storage.
+  await capture(page, 'attention', async () => {
+    await page.goto('/attention')
+    await expect(page.getByRole('heading', { name: 'Attention' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Payments platform' })).toBeVisible()
+    await expect(page.getByText('Storage', { exact: true })).toBeVisible()
+  })
   // Relocation dialog (SM-SPACE-005). The second node is enrolled through the API only (no second agent runs in this
   // stack), so it has never connected: the dialog names it as not available instead of offering it.
   const spare = await api.call<{ node: { id: string }; token: string }>('POST', '/nodes', { name: 'build-02', description: 'Second workstation' })
@@ -391,6 +402,17 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByLabel('Description', { exact: true }).fill('iOS and Android clients')
     await page.getByLabel('Goals').fill('Ship offline mode in the next release.')
   })
+  // Purging an archived space asks for its slug (SM-SPACE-002); the dialog is shown, never confirmed.
+  const oldReports = await mk('old-reports', 'Old reports', 'Reporting jobs replaced by the warehouse', 'Nothing; kept for reference.')
+  await api.call('POST', `/spaces/${oldReports.id}/state`, { state: 'archived' }, { 'If-Match': `"${oldReports.version}"` })
+  await capture(page, 'space-purge', async () => {
+    await page.goto('/spaces')
+    await page.getByText('Archived (1)').click()
+    await page.getByRole('button', { name: 'More actions for Old reports' }).click()
+    await page.getByRole('menuitem', { name: 'Purge…' }).click()
+    await page.getByLabel(/to confirm/).fill('old-reports')
+    await expect(page.getByRole('button', { name: 'Purge', exact: true })).toBeEnabled()
+  })
   await capture(page, 'run-launch', async () => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Launch run' }).click()
@@ -403,6 +425,30 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByText('Live · watch-only')).toBeVisible()
     await page.waitForTimeout(1_500)
   })
+  // Terminal takeover (SM-UI-004): the admin takes over control's terminal; automated input waits until it is released.
+  // Takeover needs a recent sign-in: a fresh code (codes are single-use) re-authenticates the admin's session once,
+  // before the capture, so no open page sees its session rotate.
+  await page.goto('about:blank')
+  await nextTotpWindow()
+  await api.call('POST', '/auth/reauth', { password: adminPw, code: totp(adminTotp) })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
+  await capture(page, 'terminal-takeover', async () => {
+    await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
+    const take = page.getByRole('button', { name: 'Take over terminal' })
+    const banner = page.getByText('You have taken over this terminal')
+    await expect(take.or(banner)).toBeVisible()
+    if (await take.isVisible()) {
+      await take.click()
+      await page.getByRole('dialog').getByRole('button', { name: 'Take over', exact: true }).click()
+    }
+    await expect(banner).toBeVisible()
+    await page.waitForTimeout(1_000)
+  })
+  {
+    const held = await api.call<{ takeover?: { id: string } }>('GET', `/spaces/${payments.id}/runs/${control.id}`)
+    if (held.takeover) await api.call('POST', `/spaces/${payments.id}/runs/${control.id}/takeover/${held.takeover.id}/end`, {})
+  }
   await capture(page, 'terminal-replay', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${finished.id}?view=replay`)
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
@@ -442,6 +488,14 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/queue`)
     await page.getByRole('listitem', { name: /Load-test the new retry budget/ }).click()
     await expect(page.getByText('Not eligible now')).toBeVisible()
+  })
+  await capture(page, 'queue-reassign', async () => {
+    await page.goto(`/spaces/${payments.id}/queue`)
+    await page.getByRole('listitem', { name: /Load-test the new retry budget/ }).click()
+    const form = page.getByRole('form', { name: 'Reassign the task' })
+    await form.getByRole('textbox', { name: 'Role' }).click()
+    await page.getByRole('option', { name: 'reviewer' }).click()
+    await expect(form.getByRole('button', { name: 'Reassign' })).toBeEnabled()
   })
   await capture(page, 'accounts', async () => {
     await page.goto('/accounts')
@@ -652,6 +706,25 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByRole('listitem', { name: /Deploy the settlement retry change/ }).click()
     await expect(page.getByText('Advisory decision')).toBeVisible()
   })
+  // Search, filters and sort (SM-HUM-006, SM-HUI-001): the filters are kept per list in this browser, so they are cleared after.
+  await capture(page, 'human-search', async () => {
+    await page.evaluate(() => localStorage.removeItem('spaceman.views.v1'))
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByRole('textbox', { name: 'Search title and text' }).fill('retry')
+    await page.getByRole('textbox', { name: 'Sort' }).click()
+    await page.getByRole('option', { name: 'Priority' }).click()
+    await expect(page.getByText('Deploy the settlement retry change to production')).toBeVisible()
+    await expect(page.getByText("Confirm the bank's maintenance window")).toBeHidden()
+  })
+  await page.evaluate(() => localStorage.removeItem('spaceman.views.v1'))
+  // A clarification request to the requester (SM-HUM-006): the action stays pending.
+  const unclear = await human(payments.id, { type: 'question', title: 'Which merchants see the duplicate refunds?', body: 'Two merchants reported it since Tuesday.',
+    request: { allow_text: true } })
+  await api.call('POST', `/spaces/${payments.id}/human-actions/${unclear.id}/clarify`, { body: 'Do you mean card refunds only, or bank transfers too?' })
+  await capture(page, 'human-clarify', async () => {
+    await page.goto(`/spaces/${payments.id}/human?action=${unclear.id}`)
+    await expect(page.getByText('clarification requested')).toBeVisible()
+  })
   await capture(page, 'events-catalog', async () => {
     await page.goto('/events')
     await expect(page.getByText('GitHub pull requests')).toBeVisible()
@@ -691,6 +764,21 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByLabel('repository').fill('example-org/docs')
     await page.getByText('Core NATS (non-durable)').click()
     await expect(page.getByText('Non-durable subscription', { exact: true })).toBeVisible()
+  })
+  // A custom definition instead of a template (SM-EVT-017), tested against a sample event through the preview API.
+  await capture(page, 'events-subscribe-custom', async () => {
+    await page.goto(`/spaces/${docs.id}/events`)
+    await page.getByRole('button', { name: 'Subscribe' }).click()
+    await page.getByLabel('Name').fill('ops alerts')
+    await page.getByRole('textbox', { name: 'Connection' }).click()
+    await page.getByRole('option', { name: 'pulse-prod' }).click()
+    await page.getByText('Custom definition', { exact: true }).click()
+    await page.getByLabel('environment').fill('production')
+    await page.getByRole('button', { name: 'Test against a sample event' }).click()
+    await page.getByLabel('Sample subject').fill('evt.ops.alert.production')
+    await page.getByLabel('Sample payload').fill('{"name":"disk full","summary":"95% used on /data"}')
+    await page.getByRole('button', { name: 'Test', exact: true }).click()
+    await expect(page.getByText('accepted', { exact: true })).toBeVisible()
   })
   await capture(page, 'events-subscription', async () => {
     await page.goto(`/spaces/${payments.id}/events/${issues.id}`)
@@ -851,6 +939,17 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'auth-tokens', async () => {
     await page.goto('/tokens')
     await expect(page.getByText('terraform-ci').first()).toBeVisible()
+  })
+  await capture(page, 'account-notifications', async () => {
+    await page.goto('/account')
+    await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible()
+    await page.getByLabel('Announce human-action changes').check() // turned off for the captures, shown on (not saved)
+    await page.getByRole('textbox', { name: 'Lowest priority' }).click()
+    await page.getByRole('option', { name: 'High' }).click()
+    await page.getByRole('textbox', { name: 'Muted spaces' }).click()
+    await page.getByRole('option', { name: 'Infrastructure' }).click()
+    await page.keyboard.press('Escape')
+    await page.getByRole('heading', { name: 'Notifications' }).scrollIntoViewIfNeeded()
   })
   await capture(page, 'audit-log', async () => {
     await page.goto('/audit')

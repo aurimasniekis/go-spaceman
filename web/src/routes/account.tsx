@@ -9,6 +9,7 @@ import { ErrorAlert, errorMessage } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { SecretModal } from '@/components/SecretModal'
 import { Identities } from '@/features/auth/Identities'
+import { NotificationPrefsCard } from '@/features/notifications/NotificationPrefs'
 import { hasGlobal } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
 import { fieldError } from '@/lib/form'
@@ -28,6 +29,7 @@ function AccountPage() {
       <Stack gap="lg">
         {me?.user && <Sessions />}
         {me?.user && <Identities ssoError={sso_error} />}
+        {me?.user && <NotificationPrefsCard />}
         {me?.user?.has_password && <ChangePassword />}
         {me?.user?.mfa_enrolled && <RecoveryCodes />}
         {hasGlobal(me, 'admin') && <RootToken />}

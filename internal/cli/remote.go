@@ -16,7 +16,7 @@ func (a *App) Commands() []*cobra.Command {
 		a.accountCmd(), a.promptCmd(), a.skillCmd(), a.profileCmd(), a.roleCmd(), a.eventCmd(), a.mcpCmd(), a.approvalPolicyCmd(),
 		a.xspaceCmd(), a.userCmd(), a.tokenCmd(), a.auditCmd(), a.systemCmd(), a.whoamiCmd(),
 		a.kbCmd(), a.repoCmd(), a.memoryCmd(), a.messageCmd(), a.dreamCmd(), a.approvalCmd(), a.attachmentCmd(),
-		a.oidcCmd(), a.identityCmd(), a.sessionCmd(), a.mfaCmd(), a.passwordCmd(), a.watchCmd(),
+		a.oidcCmd(), a.identityCmd(), a.sessionCmd(), a.notificationsCmd(), a.mfaCmd(), a.passwordCmd(), a.watchCmd(),
 	}
 	byName := map[string]*cobra.Command{}
 	for _, c := range cmds {

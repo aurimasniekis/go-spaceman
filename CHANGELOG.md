@@ -41,6 +41,36 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Direct sign-in through one provider (`/login?password=1` shows every method).
 - RP-initiated logout per provider (`end_session_enabled`, API, UI, CLI `--end-session`, Terraform
   `spaceman_oidc_provider.end_session_enabled`): signing out of an SSO session offers sign-out at the provider.
+- Attention summary (SM-UI-003): an **Attention** page, `GET /api/v1/attention` and `spaceman system attention` gather
+  what needs a person: pending, overdue and escalated human actions, blocked and failed tasks, quarantined events,
+  unknown and recently failed runs, budget notices, attachment storage near its quota, spaces whose node is not
+  connected, and, with `system:read`, disconnected nodes, outbound dead letters, failing backups and central's storage
+  health (readiness checks, database state, data-disk free space against its reserve). Each category is filtered by the
+  caller's permissions; one grouped query per category, refreshed from the change feed. Each space overview shows its
+  counters.
+- Terminal takeover (SM-UI-004, ADR-0046, **security-relevant**): an admin holding `terminal:takeover` can take over a
+  running terminal from the run page (and `spaceman run takeover`). Keystrokes go through herdr-core's interactive
+  attach (contract S-5), are bounded and never stored or logged; every automated input (Message the agent, message and
+  human-response notices, queued node input) waits until the takeover ends; every viewer sees who holds it; it is
+  audited and ends on release, expiry (30 s without renewal), run end or node failure. Node protocol 1.6.
+- Human actions (SM-HUM-006, SM-HUI-001, SM-HUI-006): server-side search (`q`) over title and text, filters for status,
+  assignee (`me`, `unassigned`), priority, requester, due date and space, and display sorts, on both lists and the
+  CLI; **Ask the requester** clarification requests (`POST …/clarify`, a durable `clarification` notice routed like a
+  response) and the agent tool `spaceman_human_reply`; links from task blockers and actions to the requester run, task,
+  inbox item and follow-up; per-user notification preferences (`/auth/me/notification-preferences`, Account →
+  Notifications, `spaceman notifications`) for in-app and desktop notifications.
+- Attachments beyond the inbox (SM-ATT-001/002): tasks, human-action requests, responses and comments, and messages and
+  replies reference attachments (`attachment_ids`), written in the TipTap composer with paste, drop and attach.
+- Space archive, restore and purge in the web UI (SM-SPACE-002), with confirmation dialogs; purge asks for the slug and
+  a recent sign-in with MFA. Spaces lists archived spaces on request.
+- Task reassignment in the task drawer and `spaceman task update --run` (SM-CTRL-004); the audit record of a task
+  update names the previous and new assignee, and a run of another space is refused.
+- Custom-definition subscriptions in the subscribe dialog (SM-EVT-017): a JSON editor with validation as you type and a
+  sample-event preview through the preview API; a custom subscription shows its definition.
+- TanStack Table (sortable, filterable shared table on the attention and nodes pages) and TanStack Store (per-browser
+  view preferences) are now used (SM-UI-001); every form uses TanStack Form, including the schema-driven human-action
+  fields (SM-ATT-007).
+- Migration 0031: clarification notices and comment kinds, notification preferences, terminal takeovers.
 - Release readiness report (`docs/RELEASE_READINESS.md`, site: Development → Release readiness): what is implemented,
   tested and verified for real, what is not, and what a production release still needs. It makes no production-readiness
   claim.

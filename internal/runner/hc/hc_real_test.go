@@ -175,3 +175,63 @@ func TestRealEvents(t *testing.T) {
 		}
 	}
 }
+
+// SM-UI-004, S-5: an interactive attach on its own connection types into the program (bytes, not key names), keeps
+// the terminal's size when it attaches at the current size, and closing it ends the dedicated connection; a later
+// terminal.send is still delivered (hc holds it until ~3 s after the last typed key, its documented quiet rule).
+func TestRealTakeoverTypesAndDetaches(t *testing.T) {
+	r, _ := realCore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	p, err := r.Start(ctx, runner.Spec{Name: "r-takeover", Argv: []string{"/bin/cat"}, Cwd: "/tmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ap, err := r.Takeover(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ap.Cols != 200 || ap.Rows != 120 {
+		t.Fatalf("takeover changed the size: %dx%d", ap.Cols, ap.Rows)
+	}
+	// Characters terminal.keys has no name for ($ ~ " \) travel as plain bytes.
+	if err := st.Write([]byte("typed $HOME ~ \"q\" \\x\r")); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	for !strings.Contains(out.String(), `typed $HOME ~ "q" \x`) {
+		data, closed, err := st.Next(ctx)
+		if err != nil || closed != nil {
+			t.Fatalf("stream: %v %v (got %q)", err, closed, out.String())
+		}
+		out.Write(data)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.Get(ctx, p.ID); err != nil || got.Cols != 200 || got.Rows != 120 {
+		t.Fatalf("after takeover: %+v %v", got, err)
+	}
+	// After the release, automated input goes in again (after the quiet period that follows the last typed key).
+	obs, _, err := r.Attach(ctx, p.ID, true, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obs.Close()
+	start := time.Now()
+	if err := r.Send(ctx, p.ID, "after-release", false); err != nil {
+		t.Fatal(err)
+	}
+	var seen strings.Builder
+	for strings.Count(seen.String(), "after-release") < 2 { // the echo and cat's copy
+		data, closed, err := obs.Next(ctx)
+		if err != nil || closed != nil {
+			t.Fatalf("observe: %v %v (got %q)", err, closed, seen.String())
+		}
+		seen.Write(data)
+	}
+	t.Logf("send after release delivered in %s", time.Since(start).Round(time.Millisecond))
+	if _, err := r.Kill(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+}

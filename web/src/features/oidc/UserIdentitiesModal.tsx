@@ -1,4 +1,5 @@
 import { Button, Group, Modal, Select, Stack, Table, Text, TextInput } from '@mantine/core'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, check, unwrap, type OidcIdentity, type User } from '@/api/client'
@@ -15,8 +16,9 @@ export function UserIdentitiesModal({ user, onClose }: { user: User; onClose: ()
   const qc = useQueryClient()
   const identities = useUserIdentities(user.id)
   const providers = useOidcProviders().data?.items ?? []
-  const [provider, setProvider] = useState<string | null>(null)
-  const [subject, setSubject] = useState('')
+  const form = useForm({ defaultValues: { provider: '', subject: '' } })
+  const provider = useSelector(form.store, (st) => st.values.provider)
+  const subjectOk = useSelector(form.store, (st) => st.values.subject.trim() !== '')
   const [error, setError] = useState('')
   const [invite, setInvite] = useState<string | null>(null)
   const refresh = () => {
@@ -32,12 +34,12 @@ export function UserIdentitiesModal({ user, onClose }: { user: User; onClose: ()
     }
   }
   const link = () => run(async () => {
-    check(await api.POST('/users/{user_id}/identities', { params: { path: { user_id: user.id } }, body: { provider_id: provider ?? '', subject: subject.trim() } }))
-    setSubject('')
+    check(await api.POST('/users/{user_id}/identities', { params: { path: { user_id: user.id } }, body: { provider_id: provider, subject: form.state.values.subject.trim() } }))
+    form.setFieldValue('subject', '')
     refresh()
   })
   const issue = () => run(async () => {
-    const r = unwrap(await api.POST('/users/{user_id}/link-invite', { params: { path: { user_id: user.id } }, body: { provider_id: provider ?? '' } }))
+    const r = unwrap(await api.POST('/users/{user_id}/link-invite', { params: { path: { user_id: user.id } }, body: { provider_id: provider } }))
     setInvite(`${window.location.origin}${r.url}`)
   })
   const unlink = (i: OidcIdentity) => run(async () => {
@@ -62,11 +64,20 @@ export function UserIdentitiesModal({ user, onClose }: { user: User; onClose: ()
           </Table.Tbody>
         </Table>
         {identities.isSuccess && identities.data.length === 0 && <Text size="sm" c="dimmed">No linked identity.</Text>}
-        <Select label="Provider" allowDeselect={false} data={providers.map((p) => ({ value: p.id, label: p.display_name }))} value={provider} onChange={setProvider} />
-        <Group gap="xs" align="flex-end" wrap="nowrap">
-          <TextInput label="Subject" description="The provider's stable sub claim (Porch: the u_… user ID), never an email" flex={1} className="mono" value={subject} onChange={(e) => setSubject(e.target.value)} />
-          <Button variant="default" disabled={!provider || !subject.trim()} onClick={() => void link()}>Link</Button>
-        </Group>
+        <form onSubmit={(e) => { e.preventDefault(); if (provider && subjectOk) void link() }}>
+          <Stack gap="sm">
+            <form.Field name="provider">
+              {(f) => <Select label="Provider" allowDeselect={false} data={providers.map((p) => ({ value: p.id, label: p.display_name }))} value={f.state.value || null} onChange={(x) => f.handleChange(x ?? '')} />}
+            </form.Field>
+            <Group gap="xs" align="flex-end" wrap="nowrap">
+              <form.Field name="subject">
+                {(f) => <TextInput label="Subject" description="The provider's stable sub claim (Porch: the u_… user ID), never an email" flex={1} className="mono" value={f.state.value}
+                  onChange={(e) => f.handleChange(e.target.value)} />}
+              </form.Field>
+              <Button type="submit" variant="default" disabled={!provider || !subjectOk}>Link</Button>
+            </Group>
+          </Stack>
+        </form>
         <Group justify="space-between">
           <Button variant="subtle" disabled={!provider} onClick={() => void issue()}>Issue a link invitation instead</Button>
           <Button onClick={onClose}>Done</Button>

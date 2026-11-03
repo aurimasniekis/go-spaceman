@@ -113,33 +113,33 @@ const manual = (u: User): GrantInput[] => u.grants.filter((g) => g.source === 'm
 
 function EditGrantsModal({ user, onClose }: { user: User; onClose: () => void }) {
   const qc = useQueryClient()
-  const [grants, setGrants] = useState<GrantInput[]>(manual(user))
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  const save = async () => {
-    setBusy(true)
-    setError('')
-    try {
-      unwrap(await api.PUT('/users/{user_id}/grants', { params: { path: { user_id: user.id }, header: { 'If-Match': ifMatch(user.version) } }, body: { grants } }))
-      void qc.invalidateQueries({ queryKey: keys.users })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const form = useForm({
+    defaultValues: { grants: manual(user) },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        unwrap(await api.PUT('/users/{user_id}/grants', { params: { path: { user_id: user.id }, header: { 'If-Match': ifMatch(user.version) } }, body: { grants: value.grants } }))
+        void qc.invalidateQueries({ queryKey: keys.users })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title={`Grants for ${user.display_name}`} size="lg">
-      <Stack gap="sm">
-        <GrantsEditor value={grants} onChange={setGrants} />
-        {(user.sso_grants ?? []).length > 0 && <Text size="xs" c="dimmed">Grants from single sign-on come from the identity provider's group mappings, apply only to SSO sessions and are not edited here.</Text>}
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button loading={busy} onClick={() => void save()}>Save grants</Button>
-        </Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <form.Field name="grants">{(f) => <GrantsEditor value={f.state.value} onChange={f.handleChange} />}</form.Field>
+          {(user.sso_grants ?? []).length > 0 && <Text size="xs" c="dimmed">Grants from single sign-on come from the identity provider's group mappings, apply only to SSO sessions and are not edited here.</Text>}
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(s) => s.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save grants</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

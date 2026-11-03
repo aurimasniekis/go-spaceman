@@ -1,5 +1,6 @@
 import { Alert, Anchor, Badge, Breadcrumbs, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
 import { IconChevronDown, IconCopy, IconTrash } from '@tabler/icons-react'
+import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -8,7 +9,9 @@ import { keys, useDeliveries, useMe, useQuarantine, useReplays, useSpace, useSub
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { coreExplanation, DeliveryBadge, OutcomeBadge, SubscriptionState } from '@/features/events/badges'
+import { DefinitionView } from '@/features/events/DefinitionView'
 import { atLeast, roleIn } from '@/lib/access'
+import { fieldError, required } from '@/lib/form'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 
@@ -130,6 +133,7 @@ function SubscriptionPage() {
           <Tabs.Tab value="deliveries">Deliveries</Tabs.Tab>
           <Tabs.Tab value="quarantine">Quarantine {s.quarantined > 0 && <Badge ml={4} size="xs" color="owlRed">{s.quarantined}</Badge>}</Tabs.Tab>
           <Tabs.Tab value="replays">Replays {(replays.data ?? []).length > 0 && <Badge ml={4} size="xs" color="gray">{(replays.data ?? []).length}</Badge>}</Tabs.Tab>
+          {s.custom && <Tabs.Tab value="definition">Definition</Tabs.Tab>}
         </Tabs.List>
         <Tabs.Panel value="deliveries" pt="sm">
           <Card p={0}>
@@ -200,6 +204,11 @@ function SubscriptionPage() {
             </Table>
           </Card>
         </Tabs.Panel>
+        {s.custom && (
+          <Tabs.Panel value="definition" pt="sm">
+            <Card><Stack gap="xs"><Text size="xs" c="dimmed">This subscription's own definition (not from the template catalog).</Text><DefinitionView def={s.custom} /></Stack></Card>
+          </Tabs.Panel>
+        )}
       </Tabs>
       {cursorOpen && <ReplayModal spaceId={spaceId} sub={s} onClose={() => setCursorOpen(false)} onDone={() => {
         void qc.invalidateQueries({ queryKey: keys.subscription(spaceId, subscriptionId) })
@@ -224,43 +233,61 @@ function OriginBadge({ d }: { d: Delivery }) {
 }
 
 function ReplayModal({ spaceId, sub, onClose, onDone }: { spaceId: string; sub: Subscription; onClose: () => void; onDone: () => void }) {
-  const [policy, setPolicy] = useState<'all' | 'time' | 'seq'>('time')
-  const [time, setTime] = useState('')
-  const [seq, setSeq] = useState('')
-  const [reason, setReason] = useState('')
-  const [fresh, setFresh] = useState(false)
   const [error, setError] = useState('')
-  const ready = reason.trim() !== '' && (policy === 'all' || (policy === 'time' && time) || (policy === 'seq' && seq))
-  const submit = async () => {
-    setError('')
-    try {
-      unwrap(await api.POST('/spaces/{space_id}/subscriptions/{subscription_id}/replay', {
-        params: { path: { space_id: spaceId, subscription_id: sub.id }, header: { 'If-Match': ifMatch(sub.version) } },
-        body: { policy, time: policy === 'time' ? new Date(time).toISOString() : undefined, seq: policy === 'seq' ? Number(seq) : undefined, reason: reason.trim(), fresh_items: fresh },
-      }))
-      notifyOk('Replay requested')
-      onDone()
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { policy: 'time' as 'all' | 'time' | 'seq', time: '', seq: '', reason: '', fresh: false },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        unwrap(await api.POST('/spaces/{space_id}/subscriptions/{subscription_id}/replay', {
+          params: { path: { space_id: spaceId, subscription_id: sub.id }, header: { 'If-Match': ifMatch(sub.version) } },
+          body: { policy: value.policy, time: value.policy === 'time' ? new Date(value.time).toISOString() : undefined, seq: value.policy === 'seq' ? Number(value.seq) : undefined,
+            reason: value.reason.trim(), fresh_items: value.fresh },
+        }))
+        notifyOk('Replay requested')
+        onDone()
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title={`Replay ${sub.name}`} size="lg">
-      <Stack gap="sm">
-        <Text size="sm">The consumer is recreated at the chosen position and the events are delivered again, marked as a replay (never as retries). The replay is audited with your reason.</Text>
-        <SegmentedControl value={policy} onChange={(v) => setPolicy(v as typeof policy)} data={[{ value: 'time', label: 'From a time' }, { value: 'seq', label: 'From a sequence' }, { value: 'all', label: 'Everything retained' }]} />
-        {policy === 'time' && <TextInput type="datetime-local" label="From" value={time} onChange={(e) => setTime(e.target.value)} />}
-        {policy === 'seq' && <TextInput label="Stream sequence" value={seq} onChange={(e) => setSeq(e.target.value.replace(/\D/g, ''))} />}
-        <Textarea label="Reason" description="Recorded in the audit log and the replay history" required autosize minRows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-        <Checkbox label="Create fresh items" checked={fresh} onChange={(e) => setFresh(e.currentTarget.checked)}
-          description="By default an event that already produced an inbox item is recorded as a duplicate and creates nothing. With fresh items, each replayed event creates one new item (once per replay)." />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button disabled={!ready} onClick={() => void submit()}>Replay</Button>
-        </Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <Text size="sm">The consumer is recreated at the chosen position and the events are delivered again, marked as a replay (never as retries). The replay is audited with your reason.</Text>
+          <form.Field name="policy">
+            {(f) => <SegmentedControl value={f.state.value} onChange={(v) => f.handleChange(v as typeof f.state.value)} aria-label="Replay from"
+              data={[{ value: 'time', label: 'From a time' }, { value: 'seq', label: 'From a sequence' }, { value: 'all', label: 'Everything retained' }]} />}
+          </form.Field>
+          <form.Subscribe selector={(s) => s.values.policy}>
+            {(policy) => policy === 'time' ? (
+              <form.Field name="time">{(f) => <TextInput type="datetime-local" label="From" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+            ) : policy === 'seq' ? (
+              <form.Field name="seq">{(f) => <TextInput label="Stream sequence" value={f.state.value} onChange={(e) => f.handleChange(e.target.value.replace(/\D/g, ''))} />}</form.Field>
+            ) : null}
+          </form.Subscribe>
+          <form.Field name="reason" validators={{ onBlur: required('Reason') }}>
+            {(f) => <Textarea label="Reason" description="Recorded in the audit log and the replay history" required autosize minRows={2} maxLength={500} value={f.state.value}
+              onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} error={fieldError(f.state.meta)} />}
+          </form.Field>
+          <form.Field name="fresh">
+            {(f) => <Checkbox label="Create fresh items" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)}
+              description="By default an event that already produced an inbox item is recorded as a duplicate and creates nothing. With fresh items, each replayed event creates one new item (once per replay)." />}
+          </form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(s) => ({ v: s.values, busy: s.isSubmitting })}>
+              {({ v, busy }) => {
+                const ready = v.reason.trim() !== '' && (v.policy === 'all' || (v.policy === 'time' && v.time !== '') || (v.policy === 'seq' && v.seq !== ''))
+                return <Button type="submit" disabled={!ready} loading={busy}>Replay</Button>
+              }}
+            </form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

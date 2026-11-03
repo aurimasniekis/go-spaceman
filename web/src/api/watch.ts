@@ -16,8 +16,15 @@ export interface Change {
   version?: number
 }
 
+/** Resource types whose changes can change the attention summary (SM-UI-003). */
+const ATTENTION = new Set(['space', 'run', 'node', 'task', 'human_action', 'event_subscription', 'space_limits', 'backup', 'relocation', 'restore'])
+
+/** Listeners told of every change after the cache is invalidated (in-app notifications, SM-HUI-006). */
+export const changeListeners = new Set<(c: Change) => void>()
+
 /** Invalidates the cached queries a change affects (SM-UI-006: pages update live, never by polling the resources). */
 export function applyChange(qc: QueryClient, c: Change) {
+  if (ATTENTION.has(c.resource_type)) void qc.invalidateQueries({ queryKey: ['attention'] })
   switch (c.resource_type) {
     case 'space':
       void qc.invalidateQueries({ queryKey: keys.spaces })
@@ -110,6 +117,7 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'human_action':
       if (c.space_id) void qc.invalidateQueries({ queryKey: keys.human(c.space_id) })
       void qc.invalidateQueries({ queryKey: keys.humanPending })
+      void qc.invalidateQueries({ queryKey: ['human', 'search'] })
       break
     case 'user':
       void qc.invalidateQueries({ queryKey: keys.users })
@@ -172,7 +180,9 @@ export function useWatch(enabled: boolean): WatchState {
     es.addEventListener('change', (ev) => {
       last.current = Number((ev as MessageEvent<string>).lastEventId) || last.current
       try {
-        applyChange(qc, JSON.parse((ev as MessageEvent<string>).data) as Change)
+        const c = JSON.parse((ev as MessageEvent<string>).data) as Change
+        applyChange(qc, c)
+        for (const l of changeListeners) l(c)
       } catch {
         // A malformed event is ignored; the next list refetch is authoritative.
       }

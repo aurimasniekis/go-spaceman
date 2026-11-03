@@ -1,5 +1,6 @@
 import { Checkbox, Group, NumberInput, Radio, Select, Stack, Switch, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
-import { useState } from 'react'
+import { useForm, useSelector } from '@tanstack/react-form'
+import { fieldError, required } from '@/lib/form'
 
 // A JSON Schema 2020-12 subset rendered as a form (SM-HTYPE-003). Only data from the schema and the type's safe UI
 // metadata is used; nothing in either is executed. Fields the form cannot render, and anyone who prefers it, use the
@@ -29,82 +30,122 @@ export function formable(schema: unknown): boolean {
   })
 }
 
+/** The value without empty fields: an empty string, a cleared number or an empty list means "not given". */
+function compact(v: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(v).filter(([, x]) => !(x === '' || x === undefined || x === null || (Array.isArray(x) && x.length === 0))))
+}
+
+function parseObject(text: string): Record<string, unknown> {
+  const v = JSON.parse(text || '{}') as unknown
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('must be a JSON object')
+  return v as Record<string, unknown>
+}
+
+/**
+ * The fields of a schema as a TanStack Form (SM-ATT-007): each property is a form field (required ones validated), and
+ * the JSON fallback is a validated text field. Every change reports the compacted object through onChange, so a parent
+ * form holds it as one field.
+ */
 export function SchemaForm({ schema, ui, value, onChange, label }: { schema: unknown; ui?: unknown; value: Record<string, unknown>; onChange: (v: Record<string, unknown>) => void; label: string }) {
   const s = (schema ?? {}) as ObjectSchema
   const meta = (ui ?? {}) as UIMeta
   const canForm = formable(schema)
-  const [json, setJson] = useState(!canForm)
-  const [text, setText] = useState(JSON.stringify(value, null, 2))
-  const [parseError, setParseError] = useState('')
+  const form = useForm({ defaultValues: { data: value, json: !canForm, text: JSON.stringify(value, null, 2) } })
+  const json = useSelector(form.store, (st) => st.values.json)
   const props = s.properties ?? {}
   const order = [...(meta.order ?? []).filter((k) => k in props), ...Object.keys(props).filter((k) => !(meta.order ?? []).includes(k))]
-  const set = (k: string, v: unknown) => {
-    const next = { ...value }
-    if (v === '' || v === undefined || (Array.isArray(v) && v.length === 0)) delete next[k]
-    else next[k] = v
-    onChange(next)
-  }
+  const emit = () => onChange(compact(form.state.values.data))
   return (
     <Stack gap="xs">
       <Group justify="space-between">
         <Text size="sm" fw={600}>{label}</Text>
-        <Switch size="xs" label="Edit as JSON" checked={json} disabled={!canForm} onChange={(e) => {
-          setJson(e.currentTarget.checked)
-          setText(JSON.stringify(value, null, 2))
-        }} />
+        <form.Field name="json">
+          {(f) => (
+            <Switch size="xs" label="Edit as JSON" checked={f.state.value} disabled={!canForm} onChange={(e) => {
+              f.handleChange(e.currentTarget.checked)
+              form.setFieldValue('text', JSON.stringify(compact(form.state.values.data), null, 2))
+            }} />
+          )}
+        </form.Field>
       </Group>
       {json ? (
-        <Textarea aria-label={`${label} (JSON)`} classNames={{ input: 'mono' }} autosize minRows={4} maxRows={16} value={text} error={parseError || undefined}
-          description={canForm ? undefined : 'This type uses fields the form cannot show; edit the JSON directly.'}
-          onChange={(e) => {
-            setText(e.target.value)
+        <form.Field name="text" validators={{
+          onChange: ({ value: t }) => {
             try {
-              const v = JSON.parse(e.target.value || '{}') as unknown
-              if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('must be a JSON object')
-              setParseError('')
-              onChange(v as Record<string, unknown>)
+              parseObject(t)
+              return undefined
             } catch (err) {
-              setParseError(`Not valid: ${(err as Error).message}`)
+              return `Not valid: ${(err as Error).message}`
             }
-          }} />
+          },
+        }}>
+          {(f) => (
+            <Textarea aria-label={`${label} (JSON)`} classNames={{ input: 'mono' }} autosize minRows={4} maxRows={16} value={f.state.value}
+              error={f.state.meta.errors[0] ? String(f.state.meta.errors[0]) : undefined}
+              description={canForm ? undefined : 'This type uses fields the form cannot show; edit the JSON directly.'}
+              onBlur={f.handleBlur}
+              onChange={(e) => {
+                f.handleChange(e.target.value)
+                try {
+                  const v = parseObject(e.target.value)
+                  form.setFieldValue('data', v)
+                  onChange(v)
+                } catch {
+                  // the field's validator shows the error; the last valid object stays in force
+                }
+              }} />
+          )}
+        </form.Field>
       ) : order.length === 0 ? <Text size="sm" c="dimmed">No fields.</Text> : order.map((k) => {
         const p = props[k]
-        const f = meta.fields?.[k] ?? {}
-        const fieldLabel = f.label || p.title || k
-        const desc = f.help || p.description
-        const required = (s.required ?? []).includes(k)
+        const fm = meta.fields?.[k] ?? {}
+        const fieldLabel = fm.label || p.title || k
+        const desc = fm.help || p.description
+        const req = (s.required ?? []).includes(k)
         const t = kind(p)
-        const v = value[k]
-        if (t === 'boolean') return <Checkbox key={k} label={fieldLabel} description={desc} checked={v === true} onChange={(e) => set(k, e.currentTarget.checked)} />
-        if (t === 'number' || t === 'integer') {
-          return <NumberInput key={k} label={fieldLabel} description={desc} withAsterisk={required} allowDecimal={t === 'number'} value={typeof v === 'number' ? v : ''}
-            onChange={(n) => set(k, typeof n === 'number' ? n : undefined)} />
-        }
-        if (t === 'array') {
-          const opts = (p.items?.enum ?? []).map(String)
-          return <TagsInput key={k} label={fieldLabel} description={desc} withAsterisk={required} data={opts} value={Array.isArray(v) ? v.map(String) : []}
-            onChange={(x) => set(k, x)} />
-        }
-        if (p.enum) {
-          const opts = p.enum.map(String)
-          if (f.widget === 'radio') {
-            return (
-              <Radio.Group key={k} label={fieldLabel} description={desc} withAsterisk={required} value={typeof v === 'string' ? v : ''} onChange={(x) => set(k, x)}>
-                <Stack gap={4} mt={4}>{opts.map((o) => <Radio key={o} value={o} label={o} />)}</Stack>
-              </Radio.Group>
-            )
-          }
-          return <Select key={k} label={fieldLabel} description={desc} withAsterisk={required} clearable={!required} data={opts} value={typeof v === 'string' ? v : null}
-            onChange={(x) => set(k, x ?? undefined)} />
-        }
-        if (f.widget === 'textarea' || f.widget === 'markdown') {
-          return <Textarea key={k} label={fieldLabel} description={desc} withAsterisk={required} placeholder={f.placeholder} autosize minRows={2} maxRows={10}
-            value={typeof v === 'string' ? v : ''} onChange={(e) => set(k, e.target.value)} />
-        }
-        const inputType = p.format === 'date' || f.widget === 'date' ? 'date' : p.format === 'date-time' || f.widget === 'datetime' ? 'datetime-local'
-          : p.format === 'email' || f.widget === 'email' ? 'email' : p.format === 'uri' || f.widget === 'url' ? 'url' : 'text'
-        return <TextInput key={k} type={inputType} label={fieldLabel} description={desc} withAsterisk={required} placeholder={f.placeholder}
-          value={typeof v === 'string' ? v : ''} onChange={(e) => set(k, e.target.value)} />
+        const validators = req && t !== 'boolean' ? { onBlur: required(fieldLabel), onChange: required(fieldLabel) } : undefined
+        return (
+          <form.Field key={k} name={`data.${k}`} validators={validators}>
+            {(f) => {
+              const v = f.state.value
+              const set = (x: unknown) => {
+                f.handleChange(x)
+                emit()
+              }
+              const error = fieldError(f.state.meta)
+              if (t === 'boolean') return <Checkbox label={fieldLabel} description={desc} checked={v === true} onChange={(e) => set(e.currentTarget.checked)} />
+              if (t === 'number' || t === 'integer') {
+                return <NumberInput label={fieldLabel} description={desc} withAsterisk={req} allowDecimal={t === 'number'} value={typeof v === 'number' ? v : ''} error={error}
+                  onBlur={f.handleBlur} onChange={(n) => set(typeof n === 'number' ? n : undefined)} />
+              }
+              if (t === 'array') {
+                const opts = (p.items?.enum ?? []).map(String)
+                return <TagsInput label={fieldLabel} description={desc} withAsterisk={req} data={opts} value={Array.isArray(v) ? v.map(String) : []} error={error}
+                  onBlur={f.handleBlur} onChange={(x) => set(x)} />
+              }
+              if (p.enum) {
+                const opts = p.enum.map(String)
+                if (fm.widget === 'radio') {
+                  return (
+                    <Radio.Group label={fieldLabel} description={desc} withAsterisk={req} value={typeof v === 'string' ? v : ''} error={error} onChange={(x) => set(x)}>
+                      <Stack gap={4} mt={4}>{opts.map((o) => <Radio key={o} value={o} label={o} />)}</Stack>
+                    </Radio.Group>
+                  )
+                }
+                return <Select label={fieldLabel} description={desc} withAsterisk={req} clearable={!req} data={opts} value={typeof v === 'string' ? v : null} error={error}
+                  onBlur={f.handleBlur} onChange={(x) => set(x ?? undefined)} />
+              }
+              if (fm.widget === 'textarea' || fm.widget === 'markdown') {
+                return <Textarea label={fieldLabel} description={desc} withAsterisk={req} placeholder={fm.placeholder} autosize minRows={2} maxRows={10} error={error}
+                  value={typeof v === 'string' ? v : ''} onBlur={f.handleBlur} onChange={(e) => set(e.target.value)} />
+              }
+              const inputType = p.format === 'date' || fm.widget === 'date' ? 'date' : p.format === 'date-time' || fm.widget === 'datetime' ? 'datetime-local'
+                : p.format === 'email' || fm.widget === 'email' ? 'email' : p.format === 'uri' || fm.widget === 'url' ? 'url' : 'text'
+              return <TextInput type={inputType} label={fieldLabel} description={desc} withAsterisk={req} placeholder={fm.placeholder} error={error}
+                value={typeof v === 'string' ? v : ''} onBlur={f.handleBlur} onChange={(e) => set(e.target.value)} />
+            }}
+          </form.Field>
+        )
       })}
     </Stack>
   )

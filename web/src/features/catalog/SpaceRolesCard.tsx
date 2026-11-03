@@ -1,5 +1,6 @@
 import { Badge, Button, Card, Code, Drawer, Group, Modal, MultiSelect, Select, Stack, Table, Text, Textarea, TextInput } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, unwrap, type SpaceRole } from '@/api/client'
@@ -94,24 +95,29 @@ function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
 function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRole; onClose: () => void }) {
   const qc = useQueryClient()
   const options = useRoleOptions(spaceId)
-  const [v, setV] = useState({ name: role?.name ?? '', template_id: role?.template_id ?? '', profile_id: role?.profile_id ?? '', prompt_id: role?.prompt_id ?? '',
-    prompt_pin: role?.prompt_pin ?? '', model: role?.model ?? '', instructions: role?.instructions ?? '', settings: role?.settings ?? {}, skills: role?.skills ?? [] })
   const [error, setError] = useState('')
-  const versions = options.data?.prompts.find((p) => p.id === v.prompt_id)?.versions ?? []
-  const save = async () => {
-    try {
-      unwrap(await api.PUT('/spaces/{space_id}/roles/{name}', { params: { path: { space_id: spaceId, name: v.name } },
-        body: { template_id: v.template_id, profile_id: v.profile_id, prompt_id: v.prompt_id, prompt_pin: v.prompt_pin, model: v.model, settings: v.settings,
-          instructions: v.instructions, skills: v.skills } }))
-      void qc.invalidateQueries({ queryKey: keys.spaceRoles(spaceId) })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { name: role?.name ?? '', template_id: role?.template_id ?? '', profile_id: role?.profile_id ?? '', prompt_id: role?.prompt_id ?? '',
+      prompt_pin: role?.prompt_pin ?? '', model: role?.model ?? '', instructions: role?.instructions ?? '', settings: (role?.settings ?? {}) as Record<string, string>,
+      skills: role?.skills ?? [] },
+    onSubmit: async ({ value: v }) => {
+      setError('')
+      try {
+        unwrap(await api.PUT('/spaces/{space_id}/roles/{name}', { params: { path: { space_id: spaceId, name: v.name } },
+          body: { template_id: v.template_id, profile_id: v.profile_id, prompt_id: v.prompt_id, prompt_pin: v.prompt_pin, model: v.model, settings: v.settings,
+            instructions: v.instructions, skills: v.skills } }))
+        void qc.invalidateQueries({ queryKey: keys.spaceRoles(spaceId) })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
+  const promptId = useSelector(form.store, (st) => st.values.prompt_id)
+  const versions = options.data?.prompts.find((p) => p.id === promptId)?.versions ?? []
   const remove = async () => {
     try {
-      const r = await api.DELETE('/spaces/{space_id}/roles/{name}', { params: { path: { space_id: spaceId, name: v.name } } })
+      const r = await api.DELETE('/spaces/{space_id}/roles/{name}', { params: { path: { space_id: spaceId, name: form.state.values.name } } })
       if (r.error) throw r.error
       void qc.invalidateQueries({ queryKey: keys.spaceRoles(spaceId) })
       onClose()
@@ -121,36 +127,56 @@ function RoleModal({ spaceId, role, onClose }: { spaceId: string; role?: SpaceRo
   }
   return (
     <Modal opened onClose={onClose} title={role ? `Role ${role.name}` : 'Add a role'} size="lg">
-      <Stack gap="sm">
-        <Group grow>
-          <TextInput label="Role name" description="e.g. implementor-backend" disabled={!!role} classNames={{ input: 'mono' }} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-          <Select label="Role template" allowDeselect={false} value={v.template_id || null} onChange={(x) => x && setV({ ...v, template_id: x })}
-            data={(options.data?.templates ?? []).map((t) => ({ value: t.id, label: `${t.name} (${t.kind})` }))} />
-        </Group>
-        <Text size="xs" c="dimmed">Leave the fields below empty to use the template's values.</Text>
-        <Group grow>
-          <Select label="Harness profile" clearable value={v.profile_id || null} onChange={(x) => setV({ ...v, profile_id: x ?? '' })}
-            data={(options.data?.profiles ?? []).map((p) => ({ value: p.id, label: p.name }))} />
-          <TextInput label="Model" classNames={{ input: 'mono' }} value={v.model} onChange={(e) => setV({ ...v, model: e.target.value })} />
-        </Group>
-        <Group grow>
-          <Select label="Prompt" clearable searchable value={v.prompt_id || null} onChange={(x) => setV({ ...v, prompt_id: x ?? '', prompt_pin: '' })}
-            data={(options.data?.prompts ?? []).map((p) => ({ value: p.id, label: p.name }))} />
-          <Select label="Version" allowDeselect={false} disabled={!v.prompt_id} value={v.prompt_pin || 'follow'} onChange={(x) => setV({ ...v, prompt_pin: x === 'follow' || !x ? '' : x })}
-            data={[{ value: 'follow', label: 'Follow the latest' }, ...versions.map((x) => ({ value: x.id, label: `Pin v${x.number}` }))]} />
-        </Group>
-        <MultiSelect label="Extra skills" description="Added to the template's skills" searchable value={v.skills.map((x) => x.skill_id)}
-          onChange={(ids) => setV({ ...v, skills: ids.map((id) => v.skills.find((x) => x.skill_id === id) ?? { skill_id: id }) })}
-          data={(options.data?.skills ?? []).filter((x) => (x.versions ?? []).length > 0).map((x) => ({ value: x.id, label: x.name }))} />
-        <SettingsEditor value={v.settings} onChange={(settings) => setV({ ...v, settings })} />
-        <Textarea label="Instructions for this role in this space" description="Appended after the role's prompt" autosize minRows={2} value={v.instructions}
-          onChange={(e) => setV({ ...v, instructions: e.target.value })} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="space-between">
-          {role ? <Button variant="subtle" color="owlRed" onClick={() => void remove()}>Remove role</Button> : <span />}
-          <Group gap="xs"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-        </Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <Group grow>
+            <form.Field name="name">
+              {(f) => <TextInput label="Role name" description="e.g. implementor-backend" disabled={!!role} classNames={{ input: 'mono' }} value={f.state.value} onBlur={f.handleBlur}
+                onChange={(e) => f.handleChange(e.target.value)} />}
+            </form.Field>
+            <form.Field name="template_id">
+              {(f) => <Select label="Role template" allowDeselect={false} value={f.state.value || null} onChange={(x) => x && f.handleChange(x)}
+                data={(options.data?.templates ?? []).map((t) => ({ value: t.id, label: `${t.name} (${t.kind})` }))} />}
+            </form.Field>
+          </Group>
+          <Text size="xs" c="dimmed">Leave the fields below empty to use the template's values.</Text>
+          <Group grow>
+            <form.Field name="profile_id">
+              {(f) => <Select label="Harness profile" clearable value={f.state.value || null} onChange={(x) => f.handleChange(x ?? '')}
+                data={(options.data?.profiles ?? []).map((p) => ({ value: p.id, label: p.name }))} />}
+            </form.Field>
+            <form.Field name="model">{(f) => <TextInput label="Model" classNames={{ input: 'mono' }} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          </Group>
+          <Group grow>
+            <form.Field name="prompt_id">
+              {(f) => <Select label="Prompt" clearable searchable value={f.state.value || null} onChange={(x) => { f.handleChange(x ?? ''); form.setFieldValue('prompt_pin', '') }}
+                data={(options.data?.prompts ?? []).map((p) => ({ value: p.id, label: p.name }))} />}
+            </form.Field>
+            <form.Field name="prompt_pin">
+              {(f) => <Select label="Version" allowDeselect={false} disabled={!promptId} value={f.state.value || 'follow'} onChange={(x) => f.handleChange(x === 'follow' || !x ? '' : x)}
+                data={[{ value: 'follow', label: 'Follow the latest' }, ...versions.map((x) => ({ value: x.id, label: `Pin v${x.number}` }))]} />}
+            </form.Field>
+          </Group>
+          <form.Field name="skills">
+            {(f) => <MultiSelect label="Extra skills" description="Added to the template's skills" searchable value={f.state.value.map((x) => x.skill_id)}
+              onChange={(ids) => f.handleChange(ids.map((id) => f.state.value.find((x) => x.skill_id === id) ?? { skill_id: id }))}
+              data={(options.data?.skills ?? []).filter((x) => (x.versions ?? []).length > 0).map((x) => ({ value: x.id, label: x.name }))} />}
+          </form.Field>
+          <form.Field name="settings">{(f) => <SettingsEditor value={f.state.value} onChange={(settings) => f.handleChange(settings)} />}</form.Field>
+          <form.Field name="instructions">
+            {(f) => <Textarea label="Instructions for this role in this space" description="Appended after the role's prompt" autosize minRows={2} value={f.state.value}
+              onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="space-between">
+            {role ? <Button variant="subtle" color="owlRed" onClick={() => void remove()}>Remove role</Button> : <span />}
+            <Group gap="xs">
+              <Button variant="default" onClick={onClose}>Cancel</Button>
+              <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+            </Group>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

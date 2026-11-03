@@ -78,7 +78,8 @@ const (
 	Relocation     = "rlc"
 	Schedule       = "sch"
 	Retention      = "ret"
-	Operation      = "op" // long-running operation
+	Takeover       = "tko" // terminal takeover (SM-UI-004)
+	Operation      = "op"  // long-running operation
 )
 
 const encoding = "0123456789abcdefghjkmnpqrstvwxyz"

@@ -1,5 +1,6 @@
 import { Badge, Button, Card, Drawer, Group, Modal, NumberInput, Select, SimpleGrid, Stack, Table, TagsInput, Text, Textarea, TextInput } from '@mantine/core'
 import { IconPlus, IconUpload } from '@tabler/icons-react'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
@@ -57,62 +58,87 @@ function HumanTypesPage() {
 
 function NewTypeModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
-  const [v, setV] = useState({ slug: '', name: '', description: '' })
   const [error, setError] = useState('')
-  const create = async () => {
-    try {
-      unwrap(await api.POST('/human-types', { body: { ...v, request_schema: { type: 'object', properties: {} }, response_schema: { type: 'object', properties: {} }, outcomes: ['done'] } }))
-      void qc.invalidateQueries({ queryKey: keys.humanTypes })
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    }
-  }
+  const form = useForm({
+    defaultValues: { slug: '', name: '', description: '' },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        unwrap(await api.POST('/human-types', { body: { ...value, request_schema: { type: 'object', properties: {} }, response_schema: { type: 'object', properties: {} }, outcomes: ['done'] } }))
+        void qc.invalidateQueries({ queryKey: keys.humanTypes })
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title="New human action type">
-      <Stack gap="sm">
-        <TextInput label="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
-        <TextInput label="Slug" classNames={{ input: 'mono' }} value={v.slug} onChange={(e) => setV({ ...v, slug: e.target.value })} />
-        <Textarea label="Description" autosize minRows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void create()}>Create</Button></Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <form.Field name="name">{(f) => <TextInput label="Name" value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          <form.Field name="slug">{(f) => <TextInput label="Slug" classNames={{ input: 'mono' }} value={f.state.value} onBlur={f.handleBlur} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          <form.Field name="description">{(f) => <Textarea label="Description" autosize minRows={2} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Create</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }
 
 const pretty = (v: unknown) => JSON.stringify(v ?? {}, null, 2)
 
+type Parsed = { req: unknown; resp: unknown; ui: unknown; error: string }
+
+function parseAll(req: string, resp: string, ui: string): Parsed {
+  try {
+    return { req: JSON.parse(req) as unknown, resp: JSON.parse(resp) as unknown, ui: JSON.parse(ui) as unknown, error: '' }
+  } catch (e) {
+    return { req: {}, resp: {}, ui: {}, error: (e as Error).message }
+  }
+}
+
+const jsonValid = ({ value }: { value: string }) => {
+  try {
+    JSON.parse(value)
+    return undefined
+  } catch (e) {
+    return `Not valid JSON: ${(e as Error).message}`
+  }
+}
+
 function TypeEditor({ t, canWrite }: { t: CatalogHumanType; canWrite: boolean }) {
   const qc = useQueryClient()
   const draft = t.versions?.find((v) => v.state === 'draft')
   const base = draft ?? t.versions?.find((v) => v.state === 'published')
-  const [req, setReq] = useState(pretty(base?.request_schema))
-  const [resp, setResp] = useState(pretty(base?.response_schema))
-  const [ui, setUi] = useState(pretty(base?.ui))
-  const [outcomes, setOutcomes] = useState<string[]>(base?.outcomes ?? ['done'])
-  const [priority, setPriority] = useState<string>(base?.default_priority ?? 'normal')
-  const [expiry, setExpiry] = useState<number>(base?.default_expiry_minutes ?? 0)
-  const [notes, setNotes] = useState(draft?.notes ?? '')
   const [sample, setSample] = useState<Record<string, unknown>>({})
-  const parsed = useMemo(() => {
-    try {
-      return { req: JSON.parse(req) as unknown, resp: JSON.parse(resp) as unknown, ui: JSON.parse(ui) as unknown, error: '' }
-    } catch (e) {
-      return { req: {}, resp: {}, ui: {}, error: (e as Error).message }
-    }
-  }, [req, resp, ui])
   const refresh = () => void qc.invalidateQueries({ queryKey: keys.humanTypes })
-  const save = async () => {
-    try {
-      unwrap(await api.PUT('/human-types/{type_id}/draft', { params: { path: { type_id: t.id }, header: draft ? { 'If-Match': ifMatch(draft.version) } : {} },
-        body: { request_schema: parsed.req, response_schema: parsed.resp, ui: parsed.ui, outcomes, default_priority: priority as 'normal', default_expiry_minutes: expiry, notes } }))
-      refresh()
-      notifyOk('Draft saved')
-    } catch (e) {
-      notifyError(e, 'Could not save the draft')
-    }
-  }
+  const form = useForm({
+    defaultValues: {
+      req: pretty(base?.request_schema), resp: pretty(base?.response_schema), ui: pretty(base?.ui), outcomes: base?.outcomes ?? ['done'],
+      priority: (base?.default_priority ?? 'normal') as 'low' | 'normal' | 'high' | 'urgent', expiry: base?.default_expiry_minutes ?? 0, notes: draft?.notes ?? '',
+    },
+    onSubmit: async ({ value: v }) => {
+      const p = parseAll(v.req, v.resp, v.ui)
+      if (p.error) return
+      try {
+        unwrap(await api.PUT('/human-types/{type_id}/draft', { params: { path: { type_id: t.id }, header: draft ? { 'If-Match': ifMatch(draft.version) } : {} },
+          body: { request_schema: p.req, response_schema: p.resp, ui: p.ui, outcomes: v.outcomes, default_priority: v.priority, default_expiry_minutes: v.expiry, notes: v.notes } }))
+        refresh()
+        notifyOk('Draft saved')
+      } catch (e) {
+        notifyError(e, 'Could not save the draft')
+      }
+    },
+  })
+  const req = useSelector(form.store, (st) => st.values.req)
+  const resp = useSelector(form.store, (st) => st.values.resp)
+  const ui = useSelector(form.store, (st) => st.values.ui)
+  const parsed = useMemo(() => parseAll(req, resp, ui), [req, resp, ui])
   const publish = async () => {
     try {
       unwrap(await api.POST('/human-types/{type_id}/publish', { params: { path: { type_id: t.id }, header: { 'If-Match': ifMatch(draft!.version) } } }))
@@ -123,36 +149,52 @@ function TypeEditor({ t, canWrite }: { t: CatalogHumanType; canWrite: boolean })
     }
   }
   return (
-    <Stack gap="sm">
-      <Text size="sm" c="dimmed"><span className="mono">{t.slug}</span>{t.description ? ` · ${t.description}` : ''}</Text>
-      <Group gap={4}>
-        {(t.versions ?? []).filter((v) => v.state === 'published').map((v) => <Badge key={v.id} variant="outline">v{v.number} · {datetime(v.published_at)}</Badge>)}
-      </Group>
-      <Text size="xs" c="dimmed">{draft ? 'Editing the draft.' : 'Saving starts a new draft from the latest version.'} Published versions never change; actions keep the version they were created with.</Text>
-      <SimpleGrid cols={{ base: 1, md: 2 }}>
-        <Textarea label="Request schema" description="JSON Schema 2020-12; root type object" classNames={{ input: 'mono' }} autosize minRows={8} maxRows={18} value={req} onChange={(e) => setReq(e.target.value)} readOnly={!canWrite} />
-        <Textarea label="Response schema" description="What the person fills in" classNames={{ input: 'mono' }} autosize minRows={8} maxRows={18} value={resp} onChange={(e) => setResp(e.target.value)} readOnly={!canWrite} />
-      </SimpleGrid>
-      <Textarea label="Form metadata" description='{"order": [...], "fields": {"name": {"label", "help", "widget", "placeholder"}}}; nothing else is accepted' classNames={{ input: 'mono' }}
-        autosize minRows={3} maxRows={10} value={ui} onChange={(e) => setUi(e.target.value)} readOnly={!canWrite} />
-      <Group grow align="flex-start">
-        <TagsInput label="Outcomes" description="How a person can finish it" value={outcomes} onChange={setOutcomes} disabled={!canWrite} />
-        <Select label="Default priority" allowDeselect={false} value={priority} onChange={(v) => v && setPriority(v)} data={['low', 'normal', 'high', 'urgent']} disabled={!canWrite} />
-        <NumberInput label="Expires after (minutes)" description="0: never" min={0} value={expiry} onChange={(v) => setExpiry(typeof v === 'number' ? v : 0)} disabled={!canWrite} />
-      </Group>
-      <TextInput label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} readOnly={!canWrite} />
-      {parsed.error ? <Text c="owlRed" size="sm" role="alert">Not valid JSON: {parsed.error}</Text> : (
-        <Card withBorder>
-          <Text size="xs" c="dimmed" mb="xs">Preview of the request form</Text>
-          <SchemaForm label="Request" schema={parsed.req} ui={parsed.ui} value={sample} onChange={setSample} />
-        </Card>
-      )}
-      {canWrite && (
-        <Group justify="flex-end">
-          <Button variant="default" disabled={!!parsed.error} onClick={() => void save()}>Save draft</Button>
-          <Button leftSection={<IconUpload size={14} />} disabled={!draft} onClick={() => void publish()}>Publish</Button>
+    <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed"><span className="mono">{t.slug}</span>{t.description ? ` · ${t.description}` : ''}</Text>
+        <Group gap={4}>
+          {(t.versions ?? []).filter((v) => v.state === 'published').map((v) => <Badge key={v.id} variant="outline">v{v.number} · {datetime(v.published_at)}</Badge>)}
         </Group>
-      )}
-    </Stack>
+        <Text size="xs" c="dimmed">{draft ? 'Editing the draft.' : 'Saving starts a new draft from the latest version.'} Published versions never change; actions keep the version they were created with.</Text>
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <form.Field name="req" validators={{ onChange: jsonValid }}>
+            {(f) => <Textarea label="Request schema" description="JSON Schema 2020-12; root type object" classNames={{ input: 'mono' }} autosize minRows={8} maxRows={18}
+              value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} readOnly={!canWrite} />}
+          </form.Field>
+          <form.Field name="resp" validators={{ onChange: jsonValid }}>
+            {(f) => <Textarea label="Response schema" description="What the person fills in" classNames={{ input: 'mono' }} autosize minRows={8} maxRows={18}
+              value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} readOnly={!canWrite} />}
+          </form.Field>
+        </SimpleGrid>
+        <form.Field name="ui" validators={{ onChange: jsonValid }}>
+          {(f) => <Textarea label="Form metadata" description='{"order": [...], "fields": {"name": {"label", "help", "widget", "placeholder"}}}; nothing else is accepted' classNames={{ input: 'mono' }}
+            autosize minRows={3} maxRows={10} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} readOnly={!canWrite} />}
+        </form.Field>
+        <Group grow align="flex-start">
+          <form.Field name="outcomes">
+            {(f) => <TagsInput label="Outcomes" description="How a person can finish it" value={f.state.value} onChange={(x) => f.handleChange(x)} disabled={!canWrite} />}
+          </form.Field>
+          <form.Field name="priority">
+            {(f) => <Select label="Default priority" allowDeselect={false} value={f.state.value} onChange={(v) => v && f.handleChange(v as typeof f.state.value)} data={['low', 'normal', 'high', 'urgent']} disabled={!canWrite} />}
+          </form.Field>
+          <form.Field name="expiry">
+            {(f) => <NumberInput label="Expires after (minutes)" description="0: never" min={0} value={f.state.value} onChange={(v) => f.handleChange(typeof v === 'number' ? v : 0)} disabled={!canWrite} />}
+          </form.Field>
+        </Group>
+        <form.Field name="notes">{(f) => <TextInput label="Notes" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} readOnly={!canWrite} />}</form.Field>
+        {parsed.error ? <Text c="owlRed" size="sm" role="alert">Not valid JSON: {parsed.error}</Text> : (
+          <Card withBorder>
+            <Text size="xs" c="dimmed" mb="xs">Preview of the request form</Text>
+            <SchemaForm label="Request" schema={parsed.req} ui={parsed.ui} value={sample} onChange={setSample} />
+          </Card>
+        )}
+        {canWrite && (
+          <Group justify="flex-end">
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" variant="default" loading={busy} disabled={!!parsed.error}>Save draft</Button>}</form.Subscribe>
+            <Button leftSection={<IconUpload size={14} />} disabled={!draft} onClick={() => void publish()}>Publish</Button>
+          </Group>
+        )}
+      </Stack>
+    </form>
   )
 }

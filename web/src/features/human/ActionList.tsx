@@ -7,6 +7,7 @@ import { useMe } from '@/api/queries'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
+import { markOwnChange } from '@/features/notifications/notify'
 import { ActionDetail } from './ActionDetail'
 import { FollowUpBadges, HumanStatusBadge, isPending, PriorityBadge, requesterLabel, TypeBadge, type MessageReq } from './badges'
 
@@ -42,9 +43,9 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
     setPicked([])
     void qc.invalidateQueries({ queryKey: ['human'] })
   }
-  const claim = (a: HumanAction) => api.POST('/spaces/{space_id}/human-actions/{action_id}/assign', {
+  const claim = (a: HumanAction) => (markOwnChange(a.id), api.POST('/spaces/{space_id}/human-actions/{action_id}/assign', {
     params: { path: { space_id: a.space_id, action_id: a.id }, header: { 'If-Match': ifMatch(a.version) } }, body: { assignee: me!.user!.id },
-  }).then(unwrap)
+  }).then(unwrap))
   const ack = (a: HumanAction) => api.POST('/spaces/{space_id}/human-actions/{action_id}/respond', {
     params: { path: { space_id: a.space_id, action_id: a.id }, header: { 'If-Match': ifMatch(a.version) } }, body: { outcome: 'acknowledged' },
   }).then(unwrap)

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -52,7 +53,15 @@ type Message struct {
 	Resolution     string     `json:"resolution,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	Version        int64      `json:"version"`
+	// Attachments are files of the space the body references (SM-ATT-001).
+	Attachments []*attachments.Attachment `json:"attachments,omitempty"`
 }
+
+// OwnerKind is the attachment owner kind of messages.
+const OwnerKind = "message"
+
+// MaxAttachments bounds a message's attachments.
+const MaxAttachments = 20
 
 // From identifies a sender; it is set from the caller's identity, never from the request body.
 type From struct {
@@ -67,6 +76,8 @@ type SendInput struct {
 	CorrelationID string
 	ReplyTo       string
 	DedupKey      string
+	// AttachmentIDs are attachments of the space the message references.
+	AttachmentIDs []string
 }
 
 // Service manages messages.
@@ -146,6 +157,9 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 	if len(in.DedupKey) > 256 || len(in.CorrelationID) > 256 {
 		v.Add("dedup_key", "keys are at most 256 characters")
 	}
+	if len(in.AttachmentIDs) > MaxAttachments {
+		v.Add("attachment_ids", "at most %d attachments", MaxAttachments)
+	}
 	if err := v.Err(); err != nil {
 		return nil, false, err
 	}
@@ -183,6 +197,9 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 			DedupKey: in.DedupKey, CreatedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
+		if err := attachments.Reference(ctx, tx, spaceID, OwnerKind, id, in.AttachmentIDs); err != nil {
+			return err
+		}
 		created = true
 		if in.Kind == "reply" && orig.Kind == "request" && orig.State != Resolved {
 			if _, err := tx.Q.ResolveMessage(ctx, db.ResolveMessageParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, Resolution: "replied: " + id,
@@ -218,7 +235,26 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Message, erro
 	} else if err != nil {
 		return nil, err
 	}
-	return fromRow(r), nil
+	return svc.withAttachments(ctx, fromRow(r))
+}
+
+// withAttachments sets the messages' attachments (one query).
+func (svc *Service) withAttachments(ctx context.Context, l ...*Message) (*Message, error) {
+	ids := make([]string, 0, len(l))
+	for _, m := range l {
+		ids = append(ids, m.ID)
+	}
+	by, err := attachments.ByOwners(ctx, svc.s.R(), OwnerKind, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range l {
+		m.Attachments = by[m.ID]
+	}
+	if len(l) == 0 {
+		return nil, nil
+	}
+	return l[0], nil
 }
 
 // List returns a space's recent messages, newest first.
@@ -233,6 +269,9 @@ func (svc *Service) List(ctx context.Context, spaceID string, limit int) ([]*Mes
 	out := make([]*Message, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, fromRow(r))
+	}
+	if _, err := svc.withAttachments(ctx, out...); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -319,6 +358,9 @@ func (svc *Service) Fetch(ctx context.Context, rc Recipient) (*Inbox, error) {
 		}
 		return nil
 	})
+	if err == nil {
+		_, err = svc.withAttachments(ctx, out.Messages...)
+	}
 	return out, err
 }
 

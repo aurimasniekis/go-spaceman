@@ -1,43 +1,23 @@
-import { Anchor, Badge, Breadcrumbs, Button, Card, Code, Group, Image, Menu, Modal, SimpleGrid, Stack, Text, Textarea, TextInput, Title } from '@mantine/core'
-import { IconCheck, IconChevronDown, IconClockPause, IconDownload, IconPaperclip, IconRotate, IconX } from '@tabler/icons-react'
+import { Anchor, Badge, Breadcrumbs, Button, Card, Code, Group, Menu, Modal, Stack, Text, Title } from '@mantine/core'
+import { IconCheck, IconChevronDown, IconClockPause, IconRotate, IconX } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { api, ifMatch, unwrap, type Attachment, type InboxItem } from '@/api/client'
+import { api, ifMatch, unwrap, type InboxItem } from '@/api/client'
 import { keys, useInboxItem, useMe, useSpace } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
-import { formatBytes } from '@/components/composer/upload'
+import { AttachmentList } from '@/components/AttachmentList'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
 import { InboxStatusBadge, ProvenanceBadges, sourceLabel, UrgencyBadge } from '@/features/inbox/badges'
 import { TaskModal } from '@/features/queue/TaskModal'
 import { atLeast, roleIn } from '@/lib/access'
 import { datetime } from '@/lib/format'
-import { attachmentURL } from '@/lib/markdown'
+import { required } from '@/lib/form'
 import { notifyError, notifyOk } from '@/lib/notify'
+import { useAppForm } from '@/components/form/appForm'
 
 export const Route = createFileRoute('/spaces/$spaceId/inbox/$itemId')({ component: ItemPage })
-
-function Attachments({ spaceId, list }: { spaceId: string; list: Attachment[] }) {
-  if (list.length === 0) return null
-  return (
-    <Stack gap={6}>
-      <Text size="sm" fw={600}>Attachments</Text>
-      <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
-        {list.map((a) => (
-          <Card key={a.id} p="xs">
-            {a.inline ? <Image src={attachmentURL(spaceId, a.id)} alt={a.name} h={90} fit="contain" radius="sm" /> : <IconPaperclip size={24} />}
-            <Group justify="space-between" wrap="nowrap" mt={4}>
-              <Text size="xs" truncate title={a.name}>{a.name}</Text>
-              <Anchor href={attachmentURL(spaceId, a.id)} download={a.name} aria-label={`Download ${a.name}`}><IconDownload size={14} /></Anchor>
-            </Group>
-            <Text size="xs" c="dimmed">{formatBytes(a.size)} · {a.mime}</Text>
-          </Card>
-        ))}
-      </SimpleGrid>
-    </Stack>
-  )
-}
 
 function ItemPage() {
   const { spaceId, itemId } = Route.useParams()
@@ -118,7 +98,7 @@ function ItemPage() {
           <MarkdownView source={it.body} spaceId={spaceId} />
         )}
       </Card>
-      <Attachments spaceId={spaceId} list={it.attachments ?? []} />
+      <AttachmentList spaceId={spaceId} list={it.attachments ?? []} />
       {Object.keys(it.trusted ?? {}).length > 0 && (
         <Stack gap={4}>
           <Text size="sm" fw={600}>Source metadata</Text>
@@ -128,27 +108,39 @@ function ItemPage() {
       )}
       {tasking && <TaskModal spaceId={spaceId} opened onClose={() => setTasking(false)} onCreated={() => void item.refetch()}
         seed={{ title: it.title, objective: it.content_type === 'text/markdown' ? it.body : undefined, fromInboxItem: it.id }} />}
-      <StatusDialog kind={dialog} onClose={() => setDialog(null)} onSubmit={(extra) => void setStatus(dialog === 'defer' ? 'deferred' : 'rejected', extra)} />
+      <StatusDialog kind={dialog} onClose={() => setDialog(null)} onSubmit={(extra) => setStatus(dialog === 'defer' ? 'deferred' : 'rejected', extra)} />
     </Stack>
   )
 }
 
-function StatusDialog({ kind, onClose, onSubmit }: { kind: 'reject' | 'defer' | null; onClose: () => void; onSubmit: (v: { reason?: string; defer_until?: string }) => void }) {
-  const [reason, setReason] = useState('')
-  const [until, setUntil] = useState('')
+function StatusDialog({ kind, onClose, onSubmit }: { kind: 'reject' | 'defer' | null; onClose: () => void; onSubmit: (v: { reason?: string; defer_until?: string }) => Promise<void> }) {
+  const form = useAppForm({
+    defaultValues: { reason: '', until: '' },
+    onSubmit: async ({ value }) => {
+      await onSubmit({ reason: value.reason || undefined, defer_until: kind === 'defer' ? new Date(value.until).toISOString() : undefined })
+      form.reset()
+    },
+  })
   return (
     <Modal opened={kind !== null} onClose={onClose} title={kind === 'defer' ? 'Defer item' : 'Reject item'}>
-      <Stack gap="sm">
-        {kind === 'defer' && <TextInput type="datetime-local" label="Until" value={until} onChange={(e) => setUntil(e.target.value)} required />}
-        <Textarea label="Reason" autosize minRows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button color={kind === 'reject' ? 'owlRed' : undefined} disabled={kind === 'defer' && !until}
-            onClick={() => onSubmit({ reason: reason || undefined, defer_until: kind === 'defer' ? new Date(until).toISOString() : undefined })}>
-            {kind === 'defer' ? 'Defer' : 'Reject'}
-          </Button>
-        </Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <form.AppForm>
+          <Stack gap="sm">
+            {kind === 'defer' && (
+              <form.AppField name="until" validators={{ onBlur: required('Until') }}>
+                {(f) => <f.TextField type="datetime-local" label="Until" required />}
+              </form.AppField>
+            )}
+            <form.AppField name="reason">{(f) => <f.TextareaField label="Reason" autosize minRows={2} />}</form.AppField>
+            <Group justify="flex-end">
+              <Button variant="default" onClick={onClose}>Cancel</Button>
+              <form.Subscribe selector={(s) => s.values.until}>
+                {(until) => <form.SubmitButton color={kind === 'reject' ? 'owlRed' : undefined} disabled={kind === 'defer' && !until}>{kind === 'defer' ? 'Defer' : 'Reject'}</form.SubmitButton>}
+              </form.Subscribe>
+            </Group>
+          </Stack>
+        </form.AppForm>
+      </form>
     </Modal>
   )
 }

@@ -11,6 +11,7 @@ Aliases: `human-action`, `human-actions`.
 | [`spaceman human approval`](#spaceman-human-approval) | The enforced approval behind an approval action |
 | [`spaceman human assign`](#spaceman-human-assign) | Assign (claim) a human action to a user, or --unassign it |
 | [`spaceman human cancel`](#spaceman-human-cancel) | Cancel a human action |
+| [`spaceman human clarify`](#spaceman-human-clarify) | Ask the requester for more information (the action stays pending; never a response) |
 | [`spaceman human comment`](#spaceman-human-comment) | Comment on a human action (comments never count as a response) |
 | [`spaceman human create`](#spaceman-human-create) | Ask a person for something (you are the requester) |
 | [`spaceman human get`](#spaceman-human-get) | Show a human action |
@@ -70,6 +71,24 @@ API: `get-human-action`, `cancel-human-action` ([HTTP API](../api)).
 | `--reason` | string |  | reason |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman human clarify
+
+Ask the requester for more information (the action stays pending; never a response).
+
+```sh
+spaceman human clarify <action> [flags]
+```
+
+API: `clarify-human-action` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--attachment` | string, repeatable |  | attachment ID to reference (repeatable) (repeatable or comma-separated) |
+| `--body` | string |  | the question (Markdown, required) |
+| `--body-file` | string |  | read --body from a file (- reads standard input) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman human comment
 
 Comment on a human action (comments never count as a response).
@@ -82,6 +101,7 @@ API: `comment-human-action` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--attachment` | string, repeatable |  | attachment ID to reference (repeatable) (repeatable or comma-separated) |
 | `--body` | string |  | comment (Markdown, required) |
 | `--body-file` | string |  | read --body from a file (- reads standard input) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
@@ -151,9 +171,16 @@ API: `list-human-actions`, `list-pending-human-actions` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--assignee` | string |  | a user ID, me or unassigned |
+| `--due` | string |  | overdue, due or expiring |
 | `--limit` | integer |  | maximum number of items |
 | `--pending` | bool |  | with --space: only open actions |
+| `--priority` | string |  | only this priority |
+| `--requester` | string |  | the requester's kind, ID, run or role, or part of its label |
+| `--search` | string |  | search the title and body (every word must occur) |
+| `--sort` | string |  | rank, priority, due, newest, oldest or updated |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE); without it, every space you can see |
+| `--status` | string |  | only this status |
 | `--type` | string |  | only this type |
 
 ## spaceman human move

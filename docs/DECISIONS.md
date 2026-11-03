@@ -1668,6 +1668,59 @@
   - An installation can be made SSO-only without an administrator lockout. Provider sign-out works only with providers
     that honour hint-less logout.
 
+### ADR-0046 — UI gap closure: terminal takeover, clarification notices, attention summary, per-user notification preferences (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (migration 0031; SM-UI-004, SM-HUM-006, SM-UI-003, SM-HUI-006, SM-ATT-001, SM-EVT-017).
+- **Context:** the web UI could not take over a terminal, ask a requester for more information, gather what needs a
+  person, or let a user choose notifications; only inbox items carried attachments. herdr-core 0.1.16 offers
+  `terminal.send` (paste plus Enter), `terminal.keys` (named keys only: `"`, `\`, `$` and `~` are refused) and
+  `terminal.attach` with `observe:false`, verified to type raw bytes (contract S-3 and S-5).
+- **Decision — terminal takeover (security-relevant: it opens operator keyboard input to agent terminals):**
+  - A takeover is a durable `run_takeovers` row held by one user (or root), started only with `terminal:takeover` in the
+    space (admins by default) plus a recent sign-in for browser sessions. At most one active takeover per run.
+  - The node opens an interactive attach at the terminal's current size on its own herdr-core connection, and closes
+    that connection to detach. Keystrokes travel `takeover-input` → central → ephemeral `takeover.input` → attach,
+    bounded to 4096 bytes per request and 50 requests or 64 KiB per second per takeover, never stored, logged or
+    audited. Node protocol minor 6; older nodes are refused takeover.
+  - While a run is taken over, central refuses `send-input` and terminal notices (`ErrTakenOver`) and the node refuses
+    `run.input`, the one command through which all automated input passes. Held notices go out after release. Stop and
+    interrupt still work.
+  - It lasts 30 s per renewal (the UI renews every 10 s) and ends on release, on another permitted operator's end, on
+    expiry (closed page, revoked session or token: bounded at 30 s; a revoked holder cannot type at once because every
+    input request is re-authorized), on run end, or when the node's attach breaks. It survives a central restart until
+    expiry. Start and end are audited with holder, reason, duration and bytes typed; every viewer of the run sees the
+    holder.
+- **Decision — clarification requests:** `POST …/human-actions/{id}/clarify` stores a `clarification` comment (comments
+  now have a kind: comment, clarification, reply) and, for an agent requester, a `clarification` notification routed
+  exactly like a response (`human_notifications.kind` widened; the table is rebuilt with its columns in order). The
+  action stays pending; a clarification is never a response. The requester's run (or its instance, or control) answers
+  with the `spaceman_human_reply` tool; other runs are refused, as they are from the response.
+- **Decision — attention summary:** `GET /attention` is computed on request with one grouped query per category, plus
+  the fleet's in-memory node connections and the cached readiness report; there is no background loop. Each category
+  is included only where the caller holds its read permission (installation-wide sections need `system:read`, the node
+  list `node:read`). Clients refresh it from the change feed; storage health has no change event.
+- **Decision — notification preferences:** stored per user (`notification_prefs`, If-Match versions, audited), they
+  decide only what the open web UI announces (in-app and, with the browser's permission, desktop notifications). The
+  UI reads a changed action once per change-feed entry; nothing polls. SpaceMan sends no e-mail or chat notifications.
+- **Decision — attachments beyond the inbox:** tasks (at creation), human-action requests, responses and comments, and
+  messages and replies reference attachments through the existing `attachment_refs` (owner kinds `task`,
+  `human_action`, `human_response`, `human_comment`, `message`). Every referenced attachment must belong to the item's
+  space (checked in the write transaction), and content stays served by the space's `attachment:read` route, so
+  authorization matches the owning item's space as for inbox items.
+- **Interpretation — custom definition editor (SM-EVT-017):** the subscribe dialog's custom path is a JSON editor with
+  structural validation as you type, server validation and a sample-event preview. It is the custom editor GOAL asks
+  for; a field-by-field visual editor is not built (LIMITATIONS).
+- **Security notes:** takeover keystrokes may contain secrets; they cross only the node WebSocket and appear in the
+  recording only as whatever the program echoes. Automated input stays paused until a revoked holder's takeover expires
+  (at most 30 s). Clarification notices reveal the question only to runs related to the action. The attention summary
+  reveals counts only for readable spaces.
+- **Alternatives:** takeover through `terminal.keys` (cannot carry arbitrary text) or `terminal.send` (always presses
+  Enter); clarification as a plain comment (does not reach an agent requester); a polled health summary (forbidden by
+  SM-ARCH-004); browser-only notification settings (not per user).
+- **Consequences:** migration 0031; node protocol 1.6; tests `internal/app` `TestTerminalTakeover`, `TestAttentionOverHTTP`,
+  `TestHumanSearchClarifyAttachmentsAndPrefsOverHTTP`, `internal/human` `TestClarificationRequest`,
+  `TestSearchFiltersAndSorts`, `TestActionAttachments`; real `TestRealTakeover` and `TestRealTakeoverTypesAndDetaches`
+  (hc 0.1.16).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -1676,7 +1729,7 @@
 | K-2 | ~~Whether hc persists `env`.~~ **Resolved 2026-11-02:** yes, plaintext `restart_env` → ADR-0009 shim required. | — | done |
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
-| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). | — | done |
+| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). 2026-11-03 (ADR-0046): `term.options.disableStdin` is read on every key, `onData` delivers typed input and `focus()` exists (checked in the 0.4.0 dist). | — | done |
 | K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | ~~llm-knowledge-base-template layout and licence; Piebald dream prompts licence.~~ **Resolved 2026-11-02:** KB template in `docs/contracts/kb-template.md`. Piebald-AI/claude-code-system-prompts is MIT, but its files are extracted Claude Code prompts whose text the repository licence may not cover; SpaceMan's dream prompt is written from the brief's principles and copies none of it (ADR-0027). | — | done |

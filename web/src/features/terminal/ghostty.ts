@@ -9,7 +9,10 @@ export function loadGhostty(): Promise<void> {
   return ready
 }
 
-/** Creates a watch-only terminal: keyboard input is never sent anywhere (SM-UI-004; takeover is a separate permission). */
+/**
+ * Creates a watch-only terminal: keyboard input is never sent anywhere (SM-UI-004). Only a takeover's holder turns
+ * input on (TerminalView), and the server accepts their keys only while they hold it.
+ */
 export async function createTerminal(el: HTMLElement, cols = 120, rows = 40): Promise<Terminal> {
   await loadGhostty()
   const term = new Terminal({

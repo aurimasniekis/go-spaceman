@@ -149,6 +149,15 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, spaceID, id s
 		in.Exclusions = []string{}
 	}
 	return svc.mutate(ctx, "queue.update", spaceID, id, version, func(tx *store.Tx, _ *snapshot, t *Task) error {
+		// SM-CTRL-004: a reassignment never points a task at another space's run. (An ID no run has is kept as given.)
+		if in.AssigneeRun != "" && in.AssigneeRun != t.AssigneeRun {
+			r, err := tx.Q.GetRun(ctx, in.AssigneeRun)
+			if err == nil && r.SpaceID != spaceID {
+				return apperr.New(apperr.CodeInvalid, "assignee run %q is not a run of this space", in.AssigneeRun)
+			} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		ex, _ := json.Marshal(in.Exclusions)
 		if _, err := tx.Q.UpdateTaskFields(ctx, db.UpdateTaskFieldsParams{Title: c.Title, Objective: in.Objective, Acceptance: in.Acceptance, Priority: c.Priority,
 			ExclusionsJson: string(ex), AssigneeRole: in.AssigneeRole, AssigneeRun: in.AssigneeRun, Workspace: in.Workspace, Now: tx.NowMicros(), ID: t.ID,
@@ -158,8 +167,13 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, spaceID, id s
 		if err := svc.changes.Record(ctx, tx, spaceID, "task", t.ID, "updated", version+1); err != nil {
 			return err
 		}
+		details := map[string]any{"space_id": spaceID, "priority": c.Priority}
+		if in.AssigneeRole != t.AssigneeRole || in.AssigneeRun != t.AssigneeRun {
+			details["assignee_role"], details["assignee_run"] = in.AssigneeRole, in.AssigneeRun
+			details["previous_assignee_role"], details["previous_assignee_run"] = t.AssigneeRole, t.AssigneeRun
+		}
 		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.updated", Target: audit.Target{Type: "task", ID: t.ID},
-			Details: map[string]any{"space_id": spaceID, "priority": c.Priority}})
+			Details: details})
 		return err
 	})
 }

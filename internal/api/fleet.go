@@ -30,6 +30,12 @@ var FleetRules = map[string]Rule{
 	"launch-run": InSpace(authz.RunControl),
 	"stop-run":   InSpace(authz.RunControl),
 	"send-input": InSpace(authz.RunControl),
+
+	// Terminal takeover (takeover.go).
+	"start-takeover": TakeoverRules["start-takeover"],
+	"renew-takeover": TakeoverRules["renew-takeover"],
+	"takeover-input": TakeoverRules["takeover-input"],
+	"end-takeover":   TakeoverRules["end-takeover"],
 }
 
 type spaceOut struct {
@@ -297,6 +303,7 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				}
 				return &struct{}{}, nil
 			})
+		registerTakeover(api, d, f)
 	}
 }
 

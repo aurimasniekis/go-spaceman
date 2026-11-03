@@ -124,6 +124,10 @@ type Runner interface {
 	Send(ctx context.Context, id, text string, ifIdle bool) error
 	Remove(ctx context.Context, id string) error
 	Attach(ctx context.Context, id string, observe bool, cols, rows int) (Stream, *Process, error)
+	// Takeover opens an interactive attach for an operator's takeover (SM-UI-004): input written to the stream reaches
+	// the program as keystrokes. It attaches at the terminal's current size, so the program's screen keeps its size,
+	// and it uses a connection of its own, so Close detaches for certain (the core drops an attach with its connection).
+	Takeover(ctx context.Context, id string) (Stream, *Process, error)
 	// Subscribe streams change events; the first event is a snapshot.
 	Subscribe(ctx context.Context, labels map[string]string) (<-chan Event, error)
 	Close() error

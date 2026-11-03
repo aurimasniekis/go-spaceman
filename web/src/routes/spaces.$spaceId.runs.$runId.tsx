@@ -1,14 +1,15 @@
-import { Anchor, Badge, Breadcrumbs, Button, Card, Group, Menu, SegmentedControl, SimpleGrid, Stack, Text, TextInput, Tooltip } from '@mantine/core'
+import { Anchor, Badge, Breadcrumbs, Button, Card, Group, Menu, SegmentedControl, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
 import { RunUsageCard } from '@/features/usage/UsageCards'
 import { IconChevronDown, IconSend, IconPlayerStop } from '@tabler/icons-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState } from 'react'
-import { api, check, unwrap } from '@/api/client'
+import { api, check, unwrap, type Me, type Run } from '@/api/client'
 import { keys, useMe, useRun, useSpace } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
+import { useAppForm } from '@/components/form/appForm'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { RunState } from '@/components/StatusBadge'
+import { TakeoverPanel, useTakeoverInput } from '@/features/terminal/Takeover'
 import { TerminalView } from '@/features/terminal/TerminalView'
 import { atLeast, roleIn } from '@/lib/access'
 import { datetime, isSet } from '@/lib/format'
@@ -29,14 +30,34 @@ function RunPage() {
   const space = useSpace(spaceId)
   const run = useRun(spaceId, runId)
   const me = useMe().data
-  const [input, setInput] = useState('')
   const operator = atLeast(roleIn(me, spaceId), 'operator')
+  // terminal:takeover is an admin permission by default (the API enforces it).
+  const canTakeOver = atLeast(roleIn(me, spaceId), 'admin')
 
   if (run.error) return <ErrorAlert error={run.error} />
   if (!run.data) return null
   const r = run.data
   const ended = ENDED.includes(r.observed)
   const mode = view ?? (ended ? 'replay' : 'live')
+  return <RunView spaceId={spaceId} runId={runId} r={r} ended={ended} mode={mode} operator={operator} canTakeOver={canTakeOver}
+    me={me} spaceName={space.data?.name} navigate={(v) => void navigate({ search: { view: v } })} qc={qc} />
+}
+
+function RunView({ spaceId, runId, r, ended, mode, operator, canTakeOver, me, spaceName, navigate, qc }: {
+  spaceId: string
+  runId: string
+  r: Run
+  ended: boolean
+  mode: 'live' | 'replay'
+  operator: boolean
+  canTakeOver: boolean
+  me: Me | null | undefined
+  spaceName?: string
+  navigate: (v: 'live' | 'replay') => void
+  qc: QueryClient
+}) {
+  const onKeys = useTakeoverInput(spaceId, runId, r, me)
+  const takenOver = !!r.takeover
 
   const stop = async (m: 'interrupt' | 'kill') => {
     try {
@@ -47,21 +68,24 @@ function RunPage() {
     }
   }
 
-  const send = async () => {
-    try {
-      check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: runId } }, body: { text: input } }))
-      setInput('')
-      notifyOk('Delivered when the agent is idle')
-    } catch (e) {
-      notifyError(e, 'Could not send input')
-    }
-  }
+  const inputForm = useAppForm({
+    defaultValues: { text: '' },
+    onSubmit: async ({ value }) => {
+      try {
+        check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: runId } }, body: { text: value.text } }))
+        inputForm.reset()
+        notifyOk('Delivered when the agent is idle')
+      } catch (e) {
+        notifyError(e, 'Could not send input')
+      }
+    },
+  })
 
   return (
     <Stack gap="md">
       <Breadcrumbs>
         <Anchor component={Link} to="/spaces" size="sm">Spaces</Anchor>
-        <AnchorLink to="/spaces/$spaceId" params={{ spaceId }} size="sm">{space.data?.name ?? spaceId}</AnchorLink>
+        <AnchorLink to="/spaces/$spaceId" params={{ spaceId }} size="sm">{spaceName ?? spaceId}</AnchorLink>
         <Text size="sm" className="mono">{runId}</Text>
       </Breadcrumbs>
       <Group justify="space-between" wrap="nowrap">
@@ -73,7 +97,7 @@ function RunPage() {
           {r.adopted && <Tooltip label="Adopted from the node after a restart"><Badge color="gray" variant="outline">adopted</Badge></Tooltip>}
         </Group>
         <Group gap="xs">
-          <SegmentedControl value={mode} onChange={(v) => void navigate({ search: { view: v as 'live' | 'replay' } })}
+          <SegmentedControl value={mode} onChange={(v) => navigate(v as 'live' | 'replay')}
             data={[{ value: 'live', label: 'Live', disabled: ended }, { value: 'replay', label: 'Replay' }]} aria-label="Terminal view" />
           {operator && !ended && (
             <Menu position="bottom-end">
@@ -89,18 +113,24 @@ function RunPage() {
         </Group>
       </Group>
 
-      <TerminalView key={mode} spaceId={spaceId} runId={runId} mode={mode} />
+      <TakeoverPanel spaceId={spaceId} runId={runId} run={r} me={me} canTakeOver={canTakeOver} ended={ended} />
 
-      {operator && !ended && (
+      <TerminalView key={mode} spaceId={spaceId} runId={runId} mode={mode} onInput={mode === 'live' ? onKeys : null} />
+
+      {operator && !ended && !takenOver && (
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            if (input.trim()) void send()
+            if (inputForm.state.values.text.trim()) void inputForm.handleSubmit()
           }}
         >
           <Group gap="xs" wrap="nowrap">
-            <TextInput flex={1} placeholder="Message the agent (sent at its next idle point)" value={input} onChange={(e) => setInput(e.target.value)} aria-label="Message the agent" />
-            <Button type="submit" leftSection={<IconSend size={14} />} disabled={!input.trim()}>Send</Button>
+            <inputForm.AppField name="text">
+              {(f) => <f.TextField flex={1} placeholder="Message the agent (sent at its next idle point)" aria-label="Message the agent" />}
+            </inputForm.AppField>
+            <inputForm.Subscribe selector={(st) => st.values.text.trim() !== ''}>
+              {(has) => <Button type="submit" leftSection={<IconSend size={14} />} disabled={!has}>Send</Button>}
+            </inputForm.Subscribe>
           </Group>
         </form>
       )}

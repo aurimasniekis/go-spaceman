@@ -1,6 +1,6 @@
 import { Badge, Button, Group, Modal, Select, Stack, Table, Text, TextInput } from '@mantine/core'
+import { useForm } from '@tanstack/react-form'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
 import { api, unwrap } from '@/api/client'
 import { keys, useSpaceHumanTypes } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
@@ -12,13 +12,12 @@ export function SpaceTypesModal({ spaceId, onClose }: { spaceId: string; onClose
   const enabled = useSpaceHumanTypes(spaceId).data ?? []
   const options = useQuery({ queryKey: ['human-type-options', spaceId],
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-type-options', { params: { path: { space_id: spaceId } } })).items })
-  const [labels, setLabels] = useState<Record<string, string>>({})
-  const [pins, setPins] = useState<Record<string, string>>({})
+  const form = useForm({ defaultValues: { labels: {} as Record<string, string>, pins: {} as Record<string, string> } })
   const refresh = () => void qc.invalidateQueries({ queryKey: keys.spaceHumanTypes(spaceId) })
   const enable = async (typeId: string) => {
     try {
       unwrap(await api.PUT('/spaces/{space_id}/human-types/{type_id}', { params: { path: { space_id: spaceId, type_id: typeId } },
-        body: { label: labels[typeId] || undefined, version_pin: pins[typeId] || undefined } }))
+        body: { label: form.state.values.labels[typeId] || undefined, version_pin: form.state.values.pins[typeId] || undefined } }))
       refresh()
     } catch (e) {
       notifyError(e, 'Could not enable the type')
@@ -46,10 +45,16 @@ export function SpaceTypesModal({ spaceId, onClose }: { spaceId: string; onClose
               return (
                 <Table.Tr key={o.id}>
                   <Table.Td><Text size="sm" fw={500}>{o.name}</Text>{on && <Badge size="xs" color="owlGreen">enabled · v{on.number}</Badge>}</Table.Td>
-                  <Table.Td><TextInput aria-label={`Label for ${o.name}`} placeholder={on?.label ?? o.name} value={labels[o.id] ?? ''} onChange={(e) => setLabels({ ...labels, [o.id]: e.target.value })} /></Table.Td>
                   <Table.Td>
-                    <Select aria-label={`Version of ${o.name}`} allowDeselect={false} value={pins[o.id] ?? 'follow'} onChange={(v) => setPins({ ...pins, [o.id]: v === 'follow' || !v ? '' : v })}
-                      data={[{ value: 'follow', label: 'Latest' }, ...o.versions.map((v) => ({ value: v.id, label: `v${v.number}` }))]} />
+                    <form.Field name={`labels.${o.id}`}>
+                      {(f) => <TextInput aria-label={`Label for ${o.name}`} placeholder={on?.label ?? o.name} value={f.state.value ?? ''} onChange={(e) => f.handleChange(e.target.value)} />}
+                    </form.Field>
+                  </Table.Td>
+                  <Table.Td>
+                    <form.Field name={`pins.${o.id}`}>
+                      {(f) => <Select aria-label={`Version of ${o.name}`} allowDeselect={false} value={f.state.value || 'follow'} onChange={(v) => f.handleChange(v === 'follow' || !v ? '' : v)}
+                        data={[{ value: 'follow', label: 'Latest' }, ...o.versions.map((v) => ({ value: v.id, label: `v${v.number}` }))]} />}
+                    </form.Field>
                   </Table.Td>
                   <Table.Td>
                     <Group gap={4} justify="flex-end" wrap="nowrap">

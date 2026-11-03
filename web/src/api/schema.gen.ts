@@ -212,6 +212,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What needs a person
+         * @description One summary of pending human actions, blocked and failed tasks, quarantined events, runs in unknown or failed states, budgets near their limit, attachment storage near its quota, disconnected nodes, outbound dead letters, failing backups and storage problems. Each category is included only where you may read it. Computed on request (one query per category); clients refresh it when the change feed reports a change.
+         */
+        get: operations["get-attention"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit": {
         parameters: {
             query?: never;
@@ -317,6 +337,30 @@ export interface paths {
         /** The signed-in principal */
         get: operations["get-me"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/me/notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your notification preferences
+         * @description Defaults (version 0) until you save them.
+         */
+        get: operations["get-notification-preferences"];
+        /**
+         * Save your notification preferences
+         * @description Send If-Match with the version you read ("0" for the defaults).
+         */
+        put: operations["set-notification-preferences"];
         post?: never;
         delete?: never;
         options?: never;
@@ -759,7 +803,7 @@ export interface paths {
         };
         /**
          * Pending human actions across your spaces
-         * @description Only spaces where you have human_action:read are included.
+         * @description Only spaces where you have human_action:read are included. Filters and search narrow the items; the counts are always all pending actions per space.
          */
         get: operations["list-pending-human-actions"];
         put?: never;
@@ -1823,6 +1867,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/human-actions/{action_id}/clarify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask the requester for more information
+         * @description The action stays pending. The question is kept as a clarification comment; an agent requester receives a durable clarification notification routed like a response and answers with a reply comment. A clarification is never a response.
+         */
+        post: operations["clarify-human-action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/human-actions/{action_id}/comments": {
         parameters: {
             query?: never;
@@ -2771,6 +2835,86 @@ export interface paths {
         put?: never;
         /** Stop a run */
         post: operations["stop-run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/runs/{run_id}/takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take over a run's terminal
+         * @description You type into the terminal (takeover-input) and every automated input to it is refused until the takeover ends: Message the agent, and the notices that tell the agent about messages and human responses (they are delivered afterwards). Everyone watching sees who holds it. It lasts 30 s unless renewed, and ends on release, when the run ends, or when the node cannot hold it. Audited (start and end, never the keystrokes).
+         */
+        post: operations["start-takeover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End a takeover
+         * @description The holder releases it; anyone else with terminal:takeover in the space can end it too (recorded as ended). Automated input resumes.
+         */
+        post: operations["end-takeover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Type into a taken-over terminal
+         * @description Only the holder types. The text goes to the program as keystrokes, escape sequences included (\r is Enter); at most 4096 bytes per request and 50 requests or 64 KiB per second. It is never stored or logged.
+         */
+        post: operations["takeover-input"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keep your takeover for another 30 s
+         * @description Only the holder renews. A takeover that is not renewed ends.
+         */
+        post: operations["renew-takeover"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3945,6 +4089,132 @@ export interface components {
             space_id: string;
             uploaded_by: string;
         };
+        Attention: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Attention.json
+             */
+            readonly $schema?: string;
+            backups?: components["schemas"]["AttentionBackups"];
+            /** Format: date-time */
+            checked_at: string;
+            /** @description Active nodes that are not connected (node:read) */
+            nodes?: components["schemas"]["AttentionNode"][];
+            outbox?: components["schemas"]["AttentionOutbox"];
+            /** @description Readable spaces with at least one item, most items first */
+            spaces: components["schemas"]["AttentionSpace"][];
+            storage?: components["schemas"]["AttentionStorage"];
+            /** Format: int64 */
+            total: number;
+        };
+        AttentionBackups: {
+            /** Format: date-time */
+            last_failed_at?: string;
+            /** Format: date-time */
+            last_succeeded_at?: string;
+            /** Format: date-time */
+            last_verify_failed_at?: string;
+            /**
+             * @description failing: the latest backup or verification failed
+             * @enum {string}
+             */
+            state: "none" | "ok" | "failing";
+        };
+        AttentionCheck: {
+            /** @description A short code, never a path or error text */
+            error?: string;
+            name: string;
+            status: string;
+        };
+        AttentionNode: {
+            connected: boolean;
+            id: string;
+            /** Format: date-time */
+            last_disconnect_at?: string;
+            name: string;
+            /** @description IDs of readable spaces pinned to the node */
+            spaces: string[];
+            state: string;
+        };
+        AttentionOutbox: {
+            /**
+             * Format: int64
+             * @description Events that will not be published again (dead letters)
+             */
+            dead: number;
+            /**
+             * Format: int64
+             * @description Events that failed at least once and are retried
+             */
+            retrying: number;
+        };
+        AttentionSpace: {
+            /** Format: int64 */
+            budget_exceeded?: number;
+            /** Format: int64 */
+            budget_warnings?: number;
+            /** Format: int64 */
+            human_escalated?: number;
+            /** Format: int64 */
+            human_overdue?: number;
+            /** Format: int64 */
+            human_pending?: number;
+            /** Format: int64 */
+            human_unassigned?: number;
+            name: string;
+            node_disconnected?: boolean;
+            /** Format: int64 */
+            quarantine_open?: number;
+            /** Format: int64 */
+            runs_failed?: number;
+            /** Format: int64 */
+            runs_unknown?: number;
+            slug: string;
+            space_id: string;
+            state: string;
+            /** Format: int64 */
+            storage_bytes?: number;
+            /** @description Attachment storage is at least 90% of the quota */
+            storage_near_quota?: boolean;
+            /**
+             * Format: int64
+             * @description 0: no quota
+             */
+            storage_quota_bytes?: number;
+            /** Format: int64 */
+            tasks_blocked?: number;
+            /** Format: int64 */
+            tasks_failed?: number;
+            /**
+             * Format: int64
+             * @description Items in this space that need a person (the counts above, without the unassigned and overdue subsets)
+             */
+            total: number;
+        };
+        AttentionStorage: {
+            below_reserve: boolean;
+            checks: components["schemas"]["AttentionCheck"][];
+            /** Format: int64 */
+            disk_available_bytes: number;
+            disk_error?: string;
+            /**
+             * Format: int64
+             * @description Free space below this degrades readiness
+             */
+            disk_reserve_bytes: number;
+            /** Format: int64 */
+            disk_total_bytes: number;
+            /** Format: double */
+            disk_used_percent: number;
+            /** @description Readiness is not ready, the database is not ok, or free space is below the reserve */
+            problem: boolean;
+            /** @description ready, degraded, failed, starting or stopping */
+            readiness: string;
+            store_reason?: string;
+            /** @enum {string} */
+            store_state: "ok" | "degraded" | "failed";
+        };
         AuditGap: {
             /** Format: int64 */
             after: number;
@@ -4551,16 +4821,6 @@ export interface components {
             /** @description TOTP code or recovery code */
             code: string;
         };
-        "Comment-human-actionRequest": {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example /api/v1/schemas/Comment-human-actionRequest.json
-             */
-            readonly $schema?: string;
-            /** @description Markdown */
-            body: string;
-        };
         ConnectionBody: {
             /**
              * Format: uri
@@ -4661,6 +4921,8 @@ export interface components {
              * @example /api/v1/schemas/CreateHumanActionInput.json
              */
             readonly $schema?: string;
+            /** @description Attachments of this space the request references (upload them first) */
+            attachment_ids?: string[];
             /** @description Block the task until a person responds */
             blocks_task?: boolean;
             /** @description Markdown */
@@ -5487,6 +5749,8 @@ export interface components {
             /** @description Program-reported status (OSC 7501): idle, working, done, blocked, error */
             status?: string;
             status_kind?: string;
+            /** @description The terminal takeover in force: an operator types into the terminal and automated input is paused */
+            takeover?: components["schemas"]["FleetTakeover"];
             terminal_id?: string;
             /** Format: int64 */
             turn: number;
@@ -5564,6 +5828,31 @@ export interface components {
             source_unavailable?: boolean;
             /** @description Pause the space (interrupt) and stop its runs; without it the space must be paused with no active runs */
             stop_runs?: boolean;
+        };
+        FleetTakeover: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetTakeover.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            end_reason?: "" | "released" | "ended" | "expired" | "run_ended" | "node_failed";
+            /** Format: date-time */
+            ended_at?: string;
+            ended_by?: string;
+            /**
+             * Format: date-time
+             * @description It ends unless the holder renews it before this
+             */
+            expires_at: string;
+            /** @description Who holds it: user:<id> or root */
+            holder: string;
+            holder_label?: string;
+            id: string;
+            run_id: string;
+            /** Format: date-time */
+            started_at: string;
         };
         FleetUpdateSpaceInput: {
             /**
@@ -5715,6 +6004,8 @@ export interface components {
              */
             readonly $schema?: string;
             assignee?: string;
+            /** @description Files the request references; set by Get */
+            attachments?: components["schemas"]["AttachmentsAttachment"][];
             blocks_task: boolean;
             /** @description Markdown, untrusted when an agent wrote it */
             body: string;
@@ -5767,6 +6058,7 @@ export interface components {
             responded_at?: string;
             responded_by?: string;
             response: unknown;
+            response_attachments?: components["schemas"]["AttachmentsAttachment"][];
             /** @description Agent tools: the response, comments and reason are hidden from runs the action is not related to */
             response_hidden?: boolean;
             space_id: string;
@@ -5801,12 +6093,30 @@ export interface components {
             items: components["schemas"]["HumanAction"][];
         };
         HumanComment: {
+            attachments?: components["schemas"]["AttachmentsAttachment"][];
             author: string;
             author_label?: string;
             body: string;
             /** Format: date-time */
             created_at: string;
             id: string;
+            /**
+             * @description clarification: a person asked the requester for more information; reply: the requester answered
+             * @enum {string}
+             */
+            kind: "comment" | "clarification" | "reply";
+        };
+        HumanCommentInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanCommentInput.json
+             */
+            readonly $schema?: string;
+            /** @description Attachments of this space the comment references */
+            attachment_ids?: string[];
+            /** @description Markdown */
+            body: string;
         };
         HumanNotification: {
             /** Format: date-time */
@@ -5821,8 +6131,11 @@ export interface components {
              */
             hold_until?: string;
             id: string;
-            /** @enum {string} */
-            kind: "resolved" | "cancelled" | "expired";
+            /**
+             * @description clarification: a person asked the requester for more information; the action stays pending
+             * @enum {string}
+             */
+            kind: "resolved" | "cancelled" | "expired" | "clarification";
             /** @description The requester's run */
             original_run?: string;
             /** Format: int64 */
@@ -7018,6 +7331,7 @@ export interface components {
             /** Format: date-time */
             acknowledged_at?: string;
             acknowledged_by?: string;
+            attachments?: components["schemas"]["AttachmentsAttachment"][];
             /** Format: date-time */
             available_at?: string;
             /** @description Markdown; untrusted when an agent wrote it */
@@ -7069,6 +7383,68 @@ export interface components {
             before_id?: string;
             /** @enum {string} */
             to?: "top" | "bottom";
+        };
+        NotificationPrefs: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/NotificationPrefs.json
+             */
+            readonly $schema?: string;
+            /** @description An action was assigned to you */
+            assigned_to_me: boolean;
+            /** @description Replies to clarification requests, and clarification requests on actions you asked */
+            clarifications: boolean;
+            /** @description Also show a desktop notification (the browser asks for permission) */
+            desktop: boolean;
+            /** @description Announce human-action changes in the web UI */
+            enabled: boolean;
+            /** @description An action escalated */
+            escalations: boolean;
+            /**
+             * @description Only actions of at least this priority (assignments to you always count)
+             * @enum {string}
+             */
+            min_priority: "low" | "normal" | "high" | "urgent";
+            /** @description Spaces whose actions are never announced */
+            muted_spaces: string[];
+            /** @description A new pending action in a space you can read */
+            new_actions: boolean;
+            /** @description A reminder for a pending action */
+            reminders: boolean;
+        };
+        NotificationPrefsOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/NotificationPrefsOut.json
+             */
+            readonly $schema?: string;
+            /** @description An action was assigned to you */
+            assigned_to_me: boolean;
+            /** @description Replies to clarification requests, and clarification requests on actions you asked */
+            clarifications: boolean;
+            /** @description Also show a desktop notification (the browser asks for permission) */
+            desktop: boolean;
+            /** @description Announce human-action changes in the web UI */
+            enabled: boolean;
+            /** @description An action escalated */
+            escalations: boolean;
+            /**
+             * @description Only actions of at least this priority (assignments to you always count)
+             * @enum {string}
+             */
+            min_priority: "low" | "normal" | "high" | "urgent";
+            /** @description Spaces whose actions are never announced */
+            muted_spaces: string[];
+            /** @description A new pending action in a space you can read */
+            new_actions: boolean;
+            /** @description A reminder for a pending action */
+            reminders: boolean;
+            /** Format: date-time */
+            updated_at?: string;
+            /** Format: int64 */
+            version: number;
         };
         OidcClaims: {
             acr?: string;
@@ -7815,6 +8191,7 @@ export interface components {
             acceptance: string;
             assignee_role?: string;
             assignee_run?: string;
+            attachments?: components["schemas"]["AttachmentsAttachment"][];
             blockers: components["schemas"]["QueueBlocker"][];
             /** Format: date-time */
             created_at: string;
@@ -7962,6 +8339,8 @@ export interface components {
              * @example /api/v1/schemas/Reply-messageRequest.json
              */
             readonly $schema?: string;
+            /** @description Attachments of this space the reply references */
+            attachment_ids?: string[];
             body: string;
         };
         ReposInput: {
@@ -8171,6 +8550,8 @@ export interface components {
              */
             readonly $schema?: string;
             answer?: string;
+            /** @description Attachments of this space the response references */
+            attachment_ids?: string[];
             /** @description Custom types: the response, validated against the type version's response schema */
             data?: unknown;
             note?: string;
@@ -8552,6 +8933,8 @@ export interface components {
              * @example /api/v1/schemas/Send-messageRequest.json
              */
             readonly $schema?: string;
+            /** @description Attachments of this space the message references */
+            attachment_ids?: string[];
             /** @description Markdown */
             body?: string;
             correlation_id?: string;
@@ -8791,6 +9174,16 @@ export interface components {
             otpauth_uri: string;
             secret: string;
         };
+        "Takeover-inputRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Takeover-inputRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Keystrokes as the terminal produces them */
+            data: string;
+        };
         TaskBody: {
             /**
              * Format: uri
@@ -8800,6 +9193,8 @@ export interface components {
             readonly $schema?: string;
             acceptance?: string;
             assignee_role?: string;
+            /** @description Attachments of this space the task references (an inbox item's attachments are added) */
+            attachment_ids?: string[];
             depends_on?: string[];
             exclusions?: string[];
             /** @description Create the task from an inbox item: the item is marked done and linked to the task */
@@ -9686,6 +10081,38 @@ export interface operations {
             };
         };
     };
+    "get-attention": {
+        parameters: {
+            query?: {
+                /** @description Only this space (and no installation-wide sections) */
+                space?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attention"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-audit": {
         parameters: {
             query?: {
@@ -9894,6 +10321,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPrefsOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPrefs"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPrefsOut"];
                 };
             };
             /** @description Error */
@@ -10821,8 +11315,25 @@ export interface operations {
     "list-pending-human-actions": {
         parameters: {
             query?: {
-                type?: "question" | "approval" | "todo" | "message" | "";
+                /** @description One type */
+                type?: "question" | "approval" | "todo" | "message" | "custom" | "";
+                /** @description Search the title and Markdown body (case-insensitive; every word must occur) */
+                q?: string;
+                /** @description One status */
+                status?: "open" | "in_progress" | "resolved" | "cancelled" | "expired" | "";
+                /** @description A user ID, me (the signed-in user) or unassigned */
+                assignee?: string;
+                /** @description One priority */
+                priority?: "low" | "normal" | "high" | "urgent" | "";
+                /** @description The requester's kind (agent, operator, system), ID, run or role, or part of its label */
+                requester?: string;
+                /** @description overdue: pending past its due date; due: has a due date; expiring: pending with an expiry */
+                due?: "overdue" | "due" | "expiring" | "";
+                /** @description Display order; never changes the space's durable order. Default: rank (space), oldest (global) */
+                sort?: "rank" | "priority" | "due" | "newest" | "oldest" | "updated" | "";
                 limit?: number;
+                /** @description Only this space */
+                space?: string;
             };
             header?: never;
             path?: never;
@@ -13177,7 +13688,22 @@ export interface operations {
         parameters: {
             query?: {
                 pending?: boolean;
-                type?: "question" | "approval" | "todo" | "message" | "";
+                /** @description One type */
+                type?: "question" | "approval" | "todo" | "message" | "custom" | "";
+                /** @description Search the title and Markdown body (case-insensitive; every word must occur) */
+                q?: string;
+                /** @description One status */
+                status?: "open" | "in_progress" | "resolved" | "cancelled" | "expired" | "";
+                /** @description A user ID, me (the signed-in user) or unassigned */
+                assignee?: string;
+                /** @description One priority */
+                priority?: "low" | "normal" | "high" | "urgent" | "";
+                /** @description The requester's kind (agent, operator, system), ID, run or role, or part of its label */
+                requester?: string;
+                /** @description overdue: pending past its due date; due: has a due date; expiring: pending with an expiry */
+                due?: "overdue" | "due" | "expiring" | "";
+                /** @description Display order; never changes the space's durable order. Default: rank (space), oldest (global) */
+                sort?: "rank" | "priority" | "due" | "newest" | "oldest" | "updated" | "";
                 limit?: number;
             };
             header?: never;
@@ -13392,6 +13918,43 @@ export interface operations {
             };
         };
     };
+    "clarify-human-action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HumanCommentInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "comment-human-action": {
         parameters: {
             query?: never;
@@ -13404,7 +13967,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Comment-human-actionRequest"];
+                "application/json": components["schemas"]["HumanCommentInput"];
             };
         };
         responses: {
@@ -15617,6 +16180,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetRun"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "start-takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetTakeover"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "end-takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+                takeover_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetTakeover"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "takeover-input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+                takeover_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Takeover-inputRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "renew-takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+                takeover_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetTakeover"];
                 };
             };
             /** @description Error */

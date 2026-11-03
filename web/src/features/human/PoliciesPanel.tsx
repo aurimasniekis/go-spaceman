@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Checkbox, Group, Modal, NumberInput, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core'
-import { useForm } from '@tanstack/react-form'
+import { useForm, useSelector } from '@tanstack/react-form'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type HumanPolicy, type HumanPolicyFields } from '@/api/client'
@@ -112,15 +112,15 @@ function PolicyModal({ spaceId, type, stored, start, onClose, onSaved }: {
   spaceId?: string; type: PolicyType; stored?: HumanPolicy; start: HumanPolicyFields; onClose: () => void; onSaved: () => void
 }) {
   const [error, setError] = useState('')
-  const [scope, setScope] = useState<PolicyType>(type)
   const form = useForm({
     defaultValues: {
+      scope: type as PolicyType,
       remind_after_minutes: start.remind_after_minutes, remind_every_minutes: start.remind_every_minutes, max_reminders: start.max_reminders,
       escalate_after_minutes: start.escalate_after_minutes, escalate_priority: start.escalate_priority, escalate_assignee: start.escalate_assignee,
       requester_ended: start.requester_ended, hold_minutes: start.hold_minutes, successor_role: start.successor_role, wake_idle: start.wake_idle,
       rate_per_run_hour: start.rate_per_run_hour, rate_per_space_hour: start.rate_per_space_hour,
-    } satisfies HumanPolicyFields,
-    onSubmit: async ({ value }) => {
+    } satisfies HumanPolicyFields & { scope: PolicyType },
+    onSubmit: async ({ value: { scope, ...value } }) => {
       setError('')
       try {
         const header = stored && scope === type ? { 'If-Match': ifMatch(stored.version!) } : {}
@@ -144,13 +144,16 @@ function PolicyModal({ spaceId, type, stored, start, onClose, onSaved }: {
         onChange={(v) => f.handleChange(typeof v === 'number' ? v : 0)} />}
     </form.Field>
   )
+  const scope = useSelector(form.store, (st) => st.values.scope)
   return (
     <Modal opened onClose={onClose} title={`${spaceId ? 'Space policy' : 'Default policy'}: ${typeName(scope)}`} size="lg">
       <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
         <Stack gap="sm">
-          <Select label="Applies to" allowDeselect={false} value={scope} onChange={(v) => setScope((v ?? type) as PolicyType)}
-            description={spaceId ? 'A type-specific policy wins over "every type"; the installation defaults apply where the space has none.' : 'Spaces can override these.'}
-            data={TYPES.map((t) => ({ value: t, label: typeName(t) }))} />
+          <form.Field name="scope">
+            {(f) => <Select label="Applies to" allowDeselect={false} value={f.state.value} onChange={(v) => f.handleChange((v ?? type) as PolicyType)}
+              description={spaceId ? 'A type-specific policy wins over "every type"; the installation defaults apply where the space has none.' : 'Spaces can override these.'}
+              data={TYPES.map((t) => ({ value: t, label: typeName(t) }))} />}
+          </form.Field>
           <Title order={5}>Reminders</Title>
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
             {num('remind_after_minutes', 'First after (min)', '0: no reminders', 0, 43200)}
@@ -192,7 +195,7 @@ function PolicyModal({ spaceId, type, stored, start, onClose, onSaved }: {
           {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>
-            <Button type="submit">Save</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
           </Group>
         </Stack>
       </form>

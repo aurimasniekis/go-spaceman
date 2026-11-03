@@ -10,6 +10,24 @@ bind it to a private address and let only your monitoring reach it.
 | `/readyz` | 200 while the database is healthy and writable, also when only degraded (database busy, or the data disk below its 256 MiB / 2 % reserve); 503 otherwise. It is served once central has started, which needs the KEK. |
 | `/metrics` | Prometheus metrics in the text exposition format. Scrapes are limited in concurrency and time. |
 
+## Attention page
+
+For people, **Attention** in the web UI (and `GET /api/v1/attention`, `spaceman system attention`) gathers what needs
+a person in one view: pending, overdue and escalated human actions, blocked and failed tasks, quarantined events, runs
+whose state is unknown and runs that failed or were lost in the last 24 hours, budget warnings of the last 24 hours,
+attachment storage at 90 % or more of a space's quota, and spaces whose node is not connected, each linked to the page
+that handles it. With `system:read` it also shows enrolled nodes that are not connected, outbound dead letters,
+failing backups or verifications, and central's storage: readiness and its checks, the database's health and the data
+directory's free space against its reserve. Every section appears only where you may read it. Each space's overview
+shows the same counters for that space.
+
+It is computed on request, one grouped query per category, and refreshes when the change feed reports a change to a
+space, run, node, task, human action, subscription, limit or backup. Storage health has no change event: use
+**Refresh**, or the metrics and `/readyz` for alerting. Node disks are not reported; a recording cut short by a full
+node disk shows on its run.
+
+<Shot name="attention" alt="The Attention page: two spaces with pending human actions and quarantined events, outbound events, backups and central's storage with the data disk's free space" caption="Everything that needs a person" />
+
 ## Labels are bounded
 
 Every label value comes from a fixed list or a capped set of code-defined names (transaction names, job names, OIDC

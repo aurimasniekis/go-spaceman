@@ -1,5 +1,6 @@
 import { Alert, Badge, Button, Card, Group, Modal, NumberInput, SegmentedControl, SimpleGrid, Stack, Table, Text, Title, Tooltip } from '@mantine/core'
 import { IconInfoCircle, IconPencil } from '@tabler/icons-react'
+import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -152,53 +153,56 @@ const isRetention = (x: Limit) => x.unit === 'days'
 function EditLimits({ spaceId, l, canRetain, onClose }: { spaceId: string; l: Limits; canRetain: boolean; onClose: () => void }) {
   const qc = useQueryClient()
   const editable = l.limits.filter((x) => x.overridable)
-  const [values, setValues] = useState<Record<string, number | ''>>(() =>
-    Object.fromEntries(editable.map((x) => [x.key, x.override ?? ''])))
-  const [onLower, setOnLower] = useState<'drain' | 'stop'>(l.on_lower)
   const [error, setError] = useState('')
-  const [saving, setSaving] = useState(false)
-  const save = async () => {
-    setError('')
-    setSaving(true)
-    try {
-      const body = { values: Object.fromEntries(Object.entries(values).filter(([, v]) => v !== '')) as Record<string, number>, on_lower: onLower }
-      const header = l.version > 0 ? { 'If-Match': ifMatch(l.version) } : {}
-      const next = unwrap(await api.PUT('/spaces/{space_id}/limits', { params: { path: { space_id: spaceId }, header }, body }))
-      qc.setQueryData(keys.limits(spaceId), next)
-      notifyOk('Limits saved')
-      onClose()
-    } catch (e) {
-      setError(errorMessage(e))
-    } finally {
-      setSaving(false)
-    }
-  }
+  const form = useForm({
+    defaultValues: { values: Object.fromEntries(editable.map((x) => [x.key, x.override ?? ''])) as Record<string, number | ''>, on_lower: l.on_lower as 'drain' | 'stop' },
+    onSubmit: async ({ value }) => {
+      setError('')
+      try {
+        const body = { values: Object.fromEntries(Object.entries(value.values).filter(([, v]) => v !== '')) as Record<string, number>, on_lower: value.on_lower }
+        const header = l.version > 0 ? { 'If-Match': ifMatch(l.version) } : {}
+        const next = unwrap(await api.PUT('/spaces/{space_id}/limits', { params: { path: { space_id: spaceId }, header }, body }))
+        qc.setQueryData(keys.limits(spaceId), next)
+        notifyOk('Limits saved')
+        onClose()
+      } catch (e) {
+        setError(errorMessage(e))
+      }
+    },
+  })
+  // Limit keys are snake_case identifiers, so each is its own field under values.
   const input = (x: Limit) => (
-    <NumberInput key={x.key} label={x.label} disabled={isRetention(x) && !canRetain}
-      description={`${x.scope}${x.zero_means_none ? (isRetention(x) ? ' (0: keep)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
-      min={x.min} max={x.max} allowDecimal={false}
-      thousandSeparator="," placeholder={`Default: ${limitValue(x.default, x.unit, x.zero_means_none)}`} value={values[x.key]}
-      onChange={(v) => setValues((s) => ({ ...s, [x.key]: typeof v === 'number' ? v : '' }))} />
+    <form.Field key={x.key} name={`values.${x.key}`}>
+      {(f) => <NumberInput label={x.label} disabled={isRetention(x) && !canRetain}
+        description={`${x.scope}${x.zero_means_none ? (isRetention(x) ? ' (0: keep)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
+        min={x.min} max={x.max} allowDecimal={false}
+        thousandSeparator="," placeholder={`Default: ${limitValue(x.default, x.unit, x.zero_means_none)}`} value={f.state.value ?? ''}
+        onChange={(v) => f.handleChange(typeof v === 'number' ? v : '')} />}
+    </form.Field>
   )
   return (
     <Modal opened onClose={onClose} title="Edit this space's limits" size="xl">
-      <Stack gap="sm">
-        <Text size="sm" c="dimmed">Leave a field empty to use the installation default. Lowering a limit refuses new work beyond it; running work continues.
-          {' '}Shortening a retention period is different: the next daily retention pass deletes what is older (audited; never what an open item uses).</Text>
-        <SimpleGrid cols={{ base: 1, sm: 2 }}>{editable.map(input)}</SimpleGrid>
-        <div>
-          <Text size="sm" fw={500}>When the concurrent-runs limit is lowered</Text>
-          <SegmentedControl mt={4} value={onLower} onChange={(v) => setOnLower(v as 'drain' | 'stop')}
-            data={[{ value: 'drain', label: 'Drain: let runs finish' }, { value: 'stop', label: 'Stop the newest runs' }]} />
-          <Text size="xs" c="dimmed" mt={4}>Stop interrupts the newest worker and diagnostic runs beyond the new limit, then kills them after the grace. The oldest keep running.</Text>
-        </div>
-        <Text size="xs" c="dimmed">Budgets use usage reported by the harnesses, which arrives late or not at all: they warn and stop new runs, never running ones. Changes are audited.</Text>
-        {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button loading={saving} onClick={() => void save()}>Save</Button>
-        </Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">Leave a field empty to use the installation default. Lowering a limit refuses new work beyond it; running work continues.
+            {' '}Shortening a retention period is different: the next daily retention pass deletes what is older (audited; never what an open item uses).</Text>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>{editable.map(input)}</SimpleGrid>
+          <div>
+            <Text size="sm" fw={500}>When the concurrent-runs limit is lowered</Text>
+            <form.Field name="on_lower">
+              {(f) => <SegmentedControl mt={4} value={f.state.value} onChange={(v) => f.handleChange(v as 'drain' | 'stop')}
+                data={[{ value: 'drain', label: 'Drain: let runs finish' }, { value: 'stop', label: 'Stop the newest runs' }]} />}
+            </form.Field>
+            <Text size="xs" c="dimmed" mt={4}>Stop interrupts the newest worker and diagnostic runs beyond the new limit, then kills them after the grace. The oldest keep running.</Text>
+          </div>
+          <Text size="xs" c="dimmed">Budgets use usage reported by the harnesses, which arrives late or not at all: they warn and stop new runs, never running ones. Changes are audited.</Text>
+          {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={onClose}>Cancel</Button>
+            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

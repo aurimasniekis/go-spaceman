@@ -56,6 +56,7 @@ Every command accepts these.
 | [`spaceman message`](./message) | Durable messages between agents, control and operators: list, show, send, reply, ack and resolve (--space) |
 | [`spaceman mfa`](./mfa) | Your second factor: TOTP enrollment and recovery codes |
 | [`spaceman node`](./node) | Nodes: list, enroll, disable, enable and revoke |
+| [`spaceman notifications`](./notifications) | Your notification preferences: what the web UI announces to you |
 | [`spaceman oidc`](./oidc) | Single sign-on: OIDC providers, group mappings and sign-in settings |
 | [`spaceman openapi`](./openapi) | Print the OpenAPI 3.1 document of the API |
 | [`spaceman password`](./password) | Your password: change it (passwords come from files or standard input) |

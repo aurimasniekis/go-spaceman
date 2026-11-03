@@ -197,7 +197,7 @@ func (q *Queries) ExportHumanActions(ctx context.Context, arg ExportHumanActions
 }
 
 const exportHumanComments = `-- name: ExportHumanComments :many
-SELECT c.id, c.action_id, c.body, c.author, c.author_label, c.created_at FROM human_comments c JOIN human_actions h ON h.id = c.action_id
+SELECT c.id, c.action_id, c.body, c.author, c.author_label, c.created_at, c.kind FROM human_comments c JOIN human_actions h ON h.id = c.action_id
 WHERE h.space_id = ?1 AND c.id > ?2 ORDER BY c.id LIMIT ?3
 `
 
@@ -223,6 +223,7 @@ func (q *Queries) ExportHumanComments(ctx context.Context, arg ExportHumanCommen
 			&i.Author,
 			&i.AuthorLabel,
 			&i.CreatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}

@@ -55,6 +55,8 @@ type Run struct {
 	StartedAt  *time.Time      `json:"started_at,omitempty"`
 	EndedAt    *time.Time      `json:"ended_at,omitempty"`
 	ObservedAt *time.Time      `json:"observed_at,omitempty"`
+	// Takeover is the terminal takeover in force (SM-UI-004); set by GetRun.
+	Takeover *Takeover `json:"takeover,omitempty" doc:"The terminal takeover in force: an operator types into the terminal and automated input is paused"`
 }
 
 // LaunchSpec is the non-secret launch description stored with the run.
@@ -297,6 +299,10 @@ func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text s
 	if r.Desired != "running" || ended(r.Observed) {
 		return "", apperr.New(apperr.CodePrecondition, "the run is not running")
 	}
+	// Notices are automated input: none while an operator has taken over the terminal (SM-UI-004).
+	if err := refuseIfTakenOver(ctx, tx, r.ID); err != nil {
+		return "", err
+	}
 	return svc.queueCommandID(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdInput, "notice:"+ids.New(ids.Message), proto.InputPayload{Text: text})
 }
 
@@ -452,6 +458,10 @@ func (svc *Service) SendInput(ctx context.Context, actor audit.Actor, runID, tex
 		if r.Desired != "running" {
 			return apperr.New(apperr.CodePrecondition, "the run is stopping or stopped")
 		}
+		// While the terminal is taken over, only its holder types, through the takeover (SM-UI-004).
+		if err := refuseIfTakenOver(ctx, tx, r.ID); err != nil {
+			return err
+		}
 		nodeID = r.NodeID
 		if err := svc.queueCommand(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdInput, "input:"+ids.New(ids.Message),
 			proto.InputPayload{Text: text, Force: force}); err != nil {
@@ -475,7 +485,11 @@ func (svc *Service) GetRun(ctx context.Context, id string) (*Run, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	return runFromRow(r), nil
+	out := runFromRow(r)
+	if out.Takeover, err = svc.ActiveTakeover(ctx, id); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ListRuns returns a space's runs, newest first.
@@ -553,6 +567,9 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			}
 		}
 		if justEnded {
+			if err := svc.endRunTakeoverTx(ctx, tx, r); err != nil {
+				return err
+			}
 			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
 			if rep.ExitCode != nil {
 				c := int64(*rep.ExitCode)

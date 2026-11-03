@@ -11,6 +11,29 @@ agent input, use **Message the agent**, which delivers the text the next time th
 Watching a terminal needs the `terminal:watch` permission (operator and above). The stream re-checks your session
 periodically and ends if it was revoked or your grant was removed.
 
+## Taking over a terminal
+
+Sometimes an agent waits at a prompt that only a person at the keyboard can answer (a harness's own permission dialog,
+an interactive tool). **Take over terminal** on a running run's page lets one person type into it:
+
+- It needs the `terminal:takeover` permission (admins by default) and a recent sign-in. Operators see the takeover but
+  cannot start one.
+- While a terminal is taken over, every automated input to it waits: **Message the agent** is refused (and hidden),
+  message and human-response notices are held and sent after the takeover ends, and commands already queued on the node
+  are refused there. Stopping or interrupting the run still works.
+- Everyone watching the run sees a banner naming who holds it. The holder's page renews the takeover every 10 seconds;
+  it ends on **Release**, when another admin ends it, when the run ends, or 30 seconds after the holder's page stops
+  renewing it (a closed tab, a revoked session or token). A revoked holder can no longer type at once.
+- Start and end are audited (`run.takeover_started`, `run.takeover_ended`, with who, why it ended, how long and how many
+  bytes were typed). The keystrokes themselves are never stored, logged or audited; the recording shows only what the
+  program echoes, as for any output.
+- Typed keys reach the program through herdr-core's interactive attach on the node (node protocol 1.6; older agents
+  cannot be taken over). The terminal keeps its size rather than fitting your browser window.
+
+<Shot name="terminal-takeover" alt="A run's live terminal taken over by the signed-in admin: a banner says you have taken over this terminal, with a Release button" caption="A taken-over terminal: automated input waits until it is released" />
+
+From the command line: `spaceman run takeover start|type|renew|end` ([CLI reference](/reference/cli/run)).
+
 ## Replay
 
 **Replay** plays the stored recording with play and pause, 1× to 8× speed and seeking. Long idle stretches are shortened

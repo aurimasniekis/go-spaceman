@@ -161,6 +161,9 @@ func (svc *Service) Upload(ctx context.Context, actor audit.Actor, spaceID, name
 	return a, nil
 }
 
+// FromRow converts a stored attachment (for packages that list attachments by owner in their own reads).
+func FromRow(r db.Attachment) *Attachment { return fromRow(r) }
+
 func fromRow(r db.Attachment) *Attachment {
 	return &Attachment{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, Size: r.Size, MIME: r.Mime, SHA256: r.Sha256, UploadedBy: r.UploadedBy,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), Inline: InlineAllowed(r.Mime)}
@@ -222,6 +225,23 @@ func (svc *Service) ListByOwner(ctx context.Context, ownerKind, ownerID string) 
 	out := make([]*Attachment, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, fromRow(r))
+	}
+	return out, nil
+}
+
+// ByOwners returns the attachments of several items of one owner kind, keyed by owner ID, in one query (list views).
+func ByOwners(ctx context.Context, q *db.Queries, ownerKind string, ownerIDs []string) (map[string][]*Attachment, error) {
+	out := map[string][]*Attachment{}
+	if len(ownerIDs) == 0 {
+		return out, nil
+	}
+	rows, err := q.ListAttachmentsByOwners(ctx, db.ListAttachmentsByOwnersParams{OwnerKind: ownerKind, OwnerIds: ownerIDs})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.OwnerID] = append(out[r.OwnerID], fromRow(db.Attachment{ID: r.ID, SpaceID: r.SpaceID, Sha256: r.Sha256, Size: r.Size, Mime: r.Mime, Name: r.Name,
+			UploadedBy: r.UploadedBy, CreatedAt: r.CreatedAt}))
 	}
 	return out, nil
 }

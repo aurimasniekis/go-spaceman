@@ -405,7 +405,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Health.MustRegister(
 		health.StoreHealth("store", st.Health()),
 		health.StoreWritable("store.writable", st.W()),
-		health.DiskSpace("disk.data", cfg.DataDir, 256<<20, 2),
+		health.DiskSpace("disk.data", cfg.DataDir, dataReserveBytes, dataReservePercent),
 	)
 	_ = m.Register(c.Health.Collector())
 	m.ObserveFilesystem(metrics.VolumeData, cfg.DataDir)
@@ -423,6 +423,12 @@ func (c *Central) openKeyring(ctx context.Context, environ []string) error {
 	}
 	return nil
 }
+
+// The data directory's free-space reserve: below it readiness degrades (and the attention summary shows a storage problem).
+const (
+	dataReserveBytes   = 256 << 20
+	dataReservePercent = 2
+)
 
 // Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
@@ -456,10 +462,48 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterRetention(c.Retention, c.Exports)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
+}
+
+// attentionSources are the live inputs of the attention summary (SM-UI-003): spaces and node connections from the
+// fleet, readiness and storage health, the data directory's free space and each space's attachment quota.
+func (c *Central) attentionSources() *api.AttentionSources {
+	return &api.AttentionSources{
+		Spaces: func(ctx context.Context) ([]api.AttentionSpaceRef, error) {
+			l, err := c.Fleet.ListSpaces(ctx, nil)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]api.AttentionSpaceRef, 0, len(l))
+			for _, s := range l {
+				out = append(out, api.AttentionSpaceRef{ID: s.ID, Slug: s.Slug, Name: s.Name, State: s.State, NodeID: s.NodeID})
+			}
+			return out, nil
+		},
+		Nodes: func(ctx context.Context) ([]api.AttentionNode, error) {
+			l, err := c.Fleet.ListNodes(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]api.AttentionNode, 0, len(l))
+			for _, n := range l {
+				out = append(out, api.AttentionNode{ID: n.ID, Name: n.Name, State: n.State, Connected: n.Connected, LastDisconnectAt: n.LastDisconnectAt})
+			}
+			return out, nil
+		},
+		Readiness: c.Health.Evaluate,
+		StoreHealth: func() (string, string) {
+			h := c.Store.Health().Status()
+			return string(h.State), h.Reason
+		},
+		DataDir: c.Cfg.DataDir, MinFreeBytes: dataReserveBytes, MinFreePct: dataReservePercent,
+		StorageQuota: func(ctx context.Context, spaceID string) int64 {
+			return c.Limits.Value(ctx, nil, spaceID, limits.StorageQuota)
+		},
+	}
 }
 
 // Handler is the public listener's handler: the API under /api/ and the web UI elsewhere.
@@ -542,6 +586,8 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.Notifier.Run(ctx)
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)
+	// Terminal takeovers end when their holder stops renewing them (one timer; SM-UI-004).
+	go c.Fleet.RunTakeovers(ctx)
 	go c.KB.Run(ctx)
 	c.Repos.Bind(ctx)
 	go c.Dreams.Run(ctx)
@@ -613,13 +659,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterRetention(nil, nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.RetentionRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.RetentionRules, api.AttentionRules} {
 		for k, v := range m {
 			out[k] = v
 		}

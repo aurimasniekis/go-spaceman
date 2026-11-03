@@ -14,25 +14,32 @@
 | `setup-mfa` | Sign-in and access | TOTP enrollment on first sign-in | current |
 | `setup-node-enroll` | First node and space, Nodes and leases | Nodes | current |
 | `space-create` | First node and space | Space create form | current |
+| `space-purge` | First node and space | Purge confirmation of an archived space with the slug typed | current |
 | `space-overview` | Site landing, First node and space | Space overview with lease and runs (now with the Export action) | stale |
+| `attention` | Observability | Attention page: what needs a person across spaces (human actions, tasks, quarantine, runs, budgets, nodes, outbox, backups, storage) | current |
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
+| `terminal-takeover` | Terminals and recordings | Live terminal taken over by the signed-in admin, with the takeover banner | current |
 | `terminal-replay` | Site landing, Terminals and recordings | Replay with seek and speed | current |
 | `auth-users` | Sign-in and access | Users and grants | current |
 | `auth-tokens` | Sign-in and access | API tokens | current |
+| `account-notifications` | Human actions | Notification preferences on the Account page | current |
 | `audit-log` | Sign-in and access | Audit log | current |
 | `sign-in-sso` | Single sign-on | Sign-in page with a provider button above the password form | current |
 | `sign-in-providers` | Single sign-on | Sign-in providers: redirect URI, providers, group mappings to grants | stale |
 | `sign-in-provider-form` | Single sign-on | Provider form with the write-only client secret and the porch.groups claim | stale |
 | `queue` | The execution queue | Queue with running, ready, demoted incident, blocked, dependent and backlog tasks | current |
 | `queue-task` | The execution queue | Task drawer: eligibility reasons, state, dependencies, blockers | current |
+| `queue-reassign` | The execution queue | Task drawer's Assignee form: role and run chosen | current |
 | `inbox-list` | The inbox | Space inbox with status filter and counts | current |
 | `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
 | `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |
 | `human-global` | Human actions | Needs you: pending actions across spaces with the nav badge and a reminded to-do | current |
 | `human-space` | Human actions | A space's human actions, including a resolved one | current |
+| `human-search` | Human actions | A space's human actions searched and sorted by priority | current |
+| `human-clarify` | Human actions | A pending question with a clarification request to its requester | current |
 | `human-form-default` | Human actions | Approval drawer with the advisory notice and distinct Approve/Deny | current |
 | `human-policies` | Human actions | A space's policies in force per type with their source (space override, built-in) | current |
 | `human-rerouted` | Human actions | An answered question whose requester run had ended, routed to control with its provenance | current |
@@ -44,6 +51,7 @@
 | `event-template` | Events and subscriptions | Template definition with a sample test | current |
 | `events-subscribe` | Events and subscriptions | Subscription form with template variables and the delivery choice | current |
 | `events-subscribe-core` | Events and subscriptions | Subscription form with core NATS delivery and the non-durable warning | current |
+| `events-subscribe-custom` | Events and subscriptions | Subscribe dialog with a custom JSON definition and an accepted sample-event preview | current |
 | `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history with origins | current |
 | `events-quarantine` | Events and subscriptions | Quarantined event with reprocess/discard | current |
 | `events-core-subscription` | Events and subscriptions | Core NATS subscription: non-durable badge and explanation, subscribe grant, no cursor | current |

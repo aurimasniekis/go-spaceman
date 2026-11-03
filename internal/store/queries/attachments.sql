@@ -24,3 +24,8 @@ DELETE FROM attachments WHERE attachments.created_at < sqlc.arg(before)
 
 -- name: CountAttachmentsBySHA :one
 SELECT count(*) FROM attachments WHERE sha256 = ?;
+
+-- name: ListAttachmentsByOwners :many
+SELECT r.owner_id, a.id, a.space_id, a.sha256, a.size, a.mime, a.name, a.uploaded_by, a.created_at
+FROM attachments a JOIN attachment_refs r ON r.attachment_id = a.id
+WHERE r.owner_kind = sqlc.arg(owner_kind) AND r.owner_id IN (sqlc.slice(owner_ids)) ORDER BY a.created_at, a.id;

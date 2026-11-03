@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Button, Card, Checkbox, Group, Modal, NumberInput, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Badge, Button, Card, Checkbox, Group, Modal, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core'
 import { IconArrowDown, IconArrowUp, IconGripVertical, IconHandStop, IconPlus, IconSettings } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -11,11 +11,16 @@ import { TaskPriority, TaskStatus } from '@/features/queue/badges'
 import { dropOn, step } from '@/features/queue/order'
 import { TaskDrawer } from '@/features/queue/TaskDrawer'
 import { TaskModal } from '@/features/queue/TaskModal'
+import { useAppForm } from '@/components/form/appForm'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { notifyError } from '@/lib/notify'
 
-export const Route = createFileRoute('/spaces/$spaceId/queue')({ component: QueuePage })
+export const Route = createFileRoute('/spaces/$spaceId/queue')({
+  // ?task=<id> opens that task's drawer (links from human actions and the attention view, SM-HUI-006).
+  validateSearch: (s: Record<string, unknown>): { task?: string } => (typeof s.task === 'string' ? { task: s.task } : {}),
+  component: QueuePage,
+})
 
 function QueuePage() {
   const { spaceId } = Route.useParams()
@@ -26,7 +31,14 @@ function QueuePage() {
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
   const [creating, setCreating] = useState(false)
-  const [open, setOpen] = useState<string | null>(null)
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
+  const [openState, setOpenState] = useState<string | null>(null)
+  const open = openState ?? search.task ?? null
+  const setOpen = (id: string | null) => {
+    setOpenState(id)
+    if (!id && search.task) void navigate({ search: {} })
+  }
   const [dragging, setDragging] = useState<Task | null>(null)
   const [showDone, setShowDone] = useState(false)
   const [policyOpen, setPolicyOpen] = useState(false)
@@ -116,31 +128,43 @@ function QueuePage() {
 
 function PolicyModal({ spaceId, policy, onClose }: { spaceId: string; policy: QueuePolicy; onClose: () => void }) {
   const qc = useQueryClient()
-  const [p, setP] = useState(policy)
-  const save = async () => {
-    try {
-      unwrap(await api.PUT('/spaces/{space_id}/queue/policy', { params: { path: { space_id: spaceId } }, body: p }))
-      void qc.invalidateQueries({ queryKey: keys.queue(spaceId) })
-      onClose()
-    } catch (e) {
-      notifyError(e)
-    }
-  }
+  const form = useAppForm({
+    defaultValues: policy,
+    onSubmit: async ({ value }) => {
+      try {
+        unwrap(await api.PUT('/spaces/{space_id}/queue/policy', { params: { path: { space_id: spaceId } }, body: value }))
+        void qc.invalidateQueries({ queryKey: keys.queue(spaceId) })
+        onClose()
+      } catch (e) {
+        notifyError(e)
+      }
+    },
+  })
   return (
     <Modal opened onClose={onClose} title="Queue policy">
-      <Stack gap="sm">
-        <NumberInput label="Top-level tasks running at once" min={1} max={20} value={p.max_active} onChange={(v) => setP({ ...p, max_active: Number(v) || 1 })} />
-        <Stack gap={2}>
-          <Text size="sm" fw={500}>New incident tasks go</Text>
-          <SegmentedControl value={p.incident_insertion} onChange={(v) => setP({ ...p, incident_insertion: v as QueuePolicy['incident_insertion'] })}
-            data={[{ value: 'top', label: 'To the top' }, { value: 'priority', label: 'By priority' }]} />
-        </Stack>
-        <Checkbox label="A new incident preempts running ordinary tasks (they return to ready; this is not a failure)" checked={p.incident_preempts}
-          onChange={(e) => setP({ ...p, incident_preempts: e.currentTarget.checked })} />
-        <Checkbox label="Escalation may move a task to the top (otherwise it only raises priority)" checked={p.escalation_reorders}
-          onChange={(e) => setP({ ...p, escalation_reorders: e.currentTarget.checked })} />
-        <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></Group>
-      </Stack>
+      <form onSubmit={(e) => { e.preventDefault(); void form.handleSubmit() }}>
+        <form.AppForm>
+          <Stack gap="sm">
+            <form.AppField name="max_active">{(f) => <f.NumberField label="Top-level tasks running at once" min={1} max={20} fallback={1} />}</form.AppField>
+            <form.Field name="incident_insertion">
+              {(f) => (
+                <Stack gap={2}>
+                  <Text size="sm" fw={500} id="incident-insertion-label">New incident tasks go</Text>
+                  <SegmentedControl aria-labelledby="incident-insertion-label" value={f.state.value} onChange={(v) => f.handleChange(v as QueuePolicy['incident_insertion'])}
+                    data={[{ value: 'top', label: 'To the top' }, { value: 'priority', label: 'By priority' }]} />
+                </Stack>
+              )}
+            </form.Field>
+            <form.AppField name="incident_preempts">
+              {(f) => <f.CheckboxField label="A new incident preempts running ordinary tasks (they return to ready; this is not a failure)" />}
+            </form.AppField>
+            <form.AppField name="escalation_reorders">
+              {(f) => <f.CheckboxField label="Escalation may move a task to the top (otherwise it only raises priority)" />}
+            </form.AppField>
+            <Group justify="flex-end"><Button variant="default" onClick={onClose}>Cancel</Button><form.SubmitButton>Save</form.SubmitButton></Group>
+          </Stack>
+        </form.AppForm>
+      </form>
     </Modal>
   )
 }

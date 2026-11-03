@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"strings"
 )
 
 const countAttachmentsBySHA = `-- name: CountAttachmentsBySHA :one
@@ -141,6 +142,73 @@ func (q *Queries) ListAttachmentsByOwner(ctx context.Context, arg ListAttachment
 	for rows.Next() {
 		var i Attachment
 		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Sha256,
+			&i.Size,
+			&i.Mime,
+			&i.Name,
+			&i.UploadedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAttachmentsByOwners = `-- name: ListAttachmentsByOwners :many
+SELECT r.owner_id, a.id, a.space_id, a.sha256, a.size, a.mime, a.name, a.uploaded_by, a.created_at
+FROM attachments a JOIN attachment_refs r ON r.attachment_id = a.id
+WHERE r.owner_kind = ?1 AND r.owner_id IN (/*SLICE:owner_ids*/?) ORDER BY a.created_at, a.id
+`
+
+type ListAttachmentsByOwnersParams struct {
+	OwnerKind string
+	OwnerIds  []string
+}
+
+type ListAttachmentsByOwnersRow struct {
+	OwnerID    string
+	ID         string
+	SpaceID    string
+	Sha256     string
+	Size       int64
+	Mime       string
+	Name       string
+	UploadedBy string
+	CreatedAt  int64
+}
+
+func (q *Queries) ListAttachmentsByOwners(ctx context.Context, arg ListAttachmentsByOwnersParams) ([]ListAttachmentsByOwnersRow, error) {
+	query := listAttachmentsByOwners
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OwnerKind)
+	if len(arg.OwnerIds) > 0 {
+		for _, v := range arg.OwnerIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:owner_ids*/?", strings.Repeat(",?", len(arg.OwnerIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:owner_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAttachmentsByOwnersRow{}
+	for rows.Next() {
+		var i ListAttachmentsByOwnersRow
+		if err := rows.Scan(
+			&i.OwnerID,
 			&i.ID,
 			&i.SpaceID,
 			&i.Sha256,
