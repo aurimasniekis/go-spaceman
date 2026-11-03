@@ -170,3 +170,17 @@ func TestStreamRevalidateBounds(t *testing.T) {
 		}
 	}
 }
+
+// The command-line client's and the enrollment command's variables may be exported on the central host; central
+// ignores them instead of refusing to start, and still rejects real typos.
+func TestClientVariablesIgnoredByCentral(t *testing.T) {
+	env := []string{"SPACEMAN_PUBLIC_URL=https://spaceman.example.com", "SPACEMAN_SERVER=https://spaceman.example.com",
+		"SPACEMAN_TOKEN_FILE=/home/op/.config/spaceman/token", "SPACEMAN_OUTPUT=json", "SPACEMAN_SPACE=payments",
+		"SPACEMAN_ALLOW_INSECURE_HTTP=1", "SPACEMAN_ALLOW_NETWORK_FS=1", "SPACEMAN_ENROLL_TOKEN=x", "SPACEMAN_ENDPOINT=https://spaceman.example.com"}
+	if _, err := Load("", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load("", append(env, "SPACEMAN_HTTP_LISTN=:1")); err == nil || !strings.Contains(err.Error(), "SPACEMAN_HTTP_LISTN") {
+		t.Fatalf("typo accepted: %v", err)
+	}
+}

@@ -17,12 +17,22 @@ const (
 
 // Environment variables with a prefix that are not configuration overrides.
 var (
+	// The remote CLI (internal/cli) and `spaceman-agent enroll` read their own SPACEMAN_ variables; an operator's shell
+	// may export them on the central host, so central must not refuse to start (or run `spaceman backup`) because of them.
 	nonConfigEnv = map[string]bool{
-		"SPACEMAN_KEK":    true, // base64 KEK when kek.source = env
-		"SPACEMAN_CONFIG": true, // config file path
-		"SPACEMAN_REAL":   true, // opt-in real-dependency tests
-		"SPACEMAN_URL":    true, // CLI client endpoint
-		"SPACEMAN_TOKEN":  true, // CLI client bearer token
+		"SPACEMAN_KEK":                 true, // base64 KEK when kek.source = env
+		"SPACEMAN_CONFIG":              true, // config file path
+		"SPACEMAN_REAL":                true, // opt-in real-dependency tests
+		"SPACEMAN_URL":                 true, // reserved (earlier CLI endpoint name)
+		"SPACEMAN_SERVER":              true, // CLI: central URL
+		"SPACEMAN_TOKEN":               true, // CLI: bearer token
+		"SPACEMAN_TOKEN_FILE":          true, // CLI: bearer token file
+		"SPACEMAN_OUTPUT":              true, // CLI: output format
+		"SPACEMAN_SPACE":               true, // CLI: default space
+		"SPACEMAN_ALLOW_INSECURE_HTTP": true, // CLI: plain http to loopback
+		"SPACEMAN_ALLOW_NETWORK_FS":    true, // development mode only: allow data_dir on a network filesystem
+		"SPACEMAN_ENROLL_TOKEN":        true, // spaceman-agent enroll
+		"SPACEMAN_ENDPOINT":            true, // Terraform provider: central URL
 	}
 	nonConfigAgentEnv = map[string]bool{
 		"SPACEMAN_AGENT_CONFIG": true,
