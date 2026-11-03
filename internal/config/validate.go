@@ -286,6 +286,9 @@ func (c *AgentConfig) Validate() error {
 	} else if len(c.Runner.Socket) > MaxSocketPath {
 		v.add("runner.socket is %d bytes; unix socket paths must be at most %d bytes", len(c.Runner.Socket), MaxSocketPath)
 	}
+	if _, _, err := ParseTerminalSize(c.Runner.TerminalSize); err != nil {
+		v.add("runner.terminal_size: %v", err)
+	}
 	if c.ManagementListen != "" {
 		v.listen("management_listen", c.ManagementListen)
 	}

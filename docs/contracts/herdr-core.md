@@ -140,3 +140,19 @@ Run on 2026-11-03 with hc 0.1.16 on macOS against an isolated core (own `HC_SESS
   `ctrl+left`. Refused with `invalid_params` ("unknown key"): `"`, `\`, `$`, `~`. Keys cannot carry arbitrary text, so
   takeover types through the interactive attach rather than `terminal.keys`.
 → Terminal takeover (ADR-0046) uses an interactive attach on a dedicated connection, at the current size.
+
+### S-6: idle-gated input and terminal size (2026-11-03, hc 0.1.16, isolated core)
+- **`terminal.send` with `if` takes one exact status.** `hc send --help`: "Only type if the status is exactly this
+  [possible values: idle, working]". A program reporting `done` is refused: `status_mismatch`, "t2 is done, not idle".
+  Claude Code reports `done` after every turn and stays there until it gets input, so an `if: idle` gate alone refused
+  every SpaceMan notice after a run's first turn. `internal/runner/hc.Runner.Send` treats `done` like `idle` (a
+  finished turn waiting for input): when the gate refuses and `terminal.get` still reports `done`, it sends ungated;
+  the core still waits ~3 s without human typing before pressing Enter. `TestRealSendIdleOrDone` (idle and done
+  accepted, working refused).
+- **Programs start at the core's `headless` size.** `terminal.run` takes no size (`hc schema`: `cols`/`rows` appear
+  only in `Terminal` and `RunResult`). The default is 200×120. `config.toml` `headless = "COLSxROWS"` sets it (an
+  invalid value lets the core start but its terminals fail to spawn). A running core uses a rewritten value for the
+  programs it starts next, without a restart. The agent writes `runner.terminal_size` (default 160×48) there.
+- **An interactive attach resizes only while attached.** At another size it resizes the program at once (the program's
+  `stty size` changes); once the attach's connection closes, the program is back at the headless size. An observer
+  never resizes. `TestRealTerminalSize`.

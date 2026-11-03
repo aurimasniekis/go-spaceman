@@ -1,6 +1,10 @@
 package config
 
-import "github.com/aurimasniekis/go-spaceman/internal/obs"
+import (
+	"fmt"
+
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
+)
 
 // AgentConfig is the node `spaceman-agent` configuration.
 type AgentConfig struct {
@@ -39,6 +43,10 @@ type RunnerConfig struct {
 	Session string `yaml:"session"`
 	// Socket is the hc socket path. It must be short (macOS sun_path ≤ 103 bytes); default /run or /tmp based.
 	Socket string `yaml:"socket"`
+	// TerminalSize is the size programs start at, COLSxROWS (default 160x48; herdr-core's own default is 200x120).
+	// Watch-only viewers never resize a program, so this is the size agents lay out for. Programs already running keep
+	// their size.
+	TerminalSize string `yaml:"terminal_size"`
 }
 
 // HarnessConfig locates harness binaries on the node.
@@ -64,4 +72,15 @@ func LoadAgent(path string, environ []string) (*AgentConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// ParseTerminalSize reads a COLSxROWS terminal size (runner.terminal_size): 40-400 columns and 10-200 rows.
+func ParseTerminalSize(s string) (cols, rows int, err error) {
+	if _, err := fmt.Sscanf(s, "%dx%d", &cols, &rows); err != nil || fmt.Sprintf("%dx%d", cols, rows) != s {
+		return 0, 0, fmt.Errorf("must be COLSxROWS, like 160x48 (got %q)", s)
+	}
+	if cols < 40 || cols > 400 || rows < 10 || rows > 200 {
+		return 0, 0, fmt.Errorf("must be 40-400 columns and 10-200 rows (got %s)", s)
+	}
+	return cols, rows, nil
 }

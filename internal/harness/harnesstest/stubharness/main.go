@@ -11,11 +11,15 @@
 // "/dream" acts as a
 // dreamer: it reads DREAM.md and the evidence files it lists, appends a note to the first memory listed and reports
 // with findings that cite the files it read. A "/transcript" line writes a small transcript in Claude Code's format
-// (fictional token counts, no cost) where Claude Code keeps it. Not part of any release.
+// (fictional token counts, no cost) where Claude Code keeps it. A "/fullscreen" line prints a full-screen program's
+// start-up the way Claude Code 2.1.317 draws it (alternate screen, mouse and keyboard modes, synchronized output, a
+// path in its banner; fullscreen.bin, with neutral text), which the web terminal must survive being reopened after.
+// Not part of any release.
 package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,6 +31,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+//go:embed fullscreen.bin
+var fullscreen []byte
 
 func main() {
 	args := os.Args[1:]
@@ -50,6 +57,9 @@ func main() {
 		}
 	}
 	writes(prompt)
+	if strings.Contains(prompt, "/fullscreen") {
+		_, _ = os.Stdout.Write(fullscreen)
+	}
 	if strings.Contains(prompt, "/transcript") {
 		transcript(args, wd)
 	}

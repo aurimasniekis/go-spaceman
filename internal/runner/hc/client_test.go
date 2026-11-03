@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,7 +30,8 @@ type fakeCore struct {
 
 func startFake(t *testing.T, handle func(fc *fakeCore, w io.Writer, req map[string]any)) (*fakeCore, string) {
 	t.Helper()
-	sock := filepath.Join("/tmp", "smhc-test-"+strings.ReplaceAll(t.Name(), "/", "_")+".sock")
+	// Short (unix socket paths are limited, S-0) and unique per process, so concurrent test runs never share a socket.
+	sock := filepath.Join("/tmp", fmt.Sprintf("smhc-test-%s-%d.sock", strings.ReplaceAll(t.Name(), "/", "_"), os.Getpid()))
 	if len(sock) > MaxSocketPath {
 		sock = sock[:MaxSocketPath]
 	}

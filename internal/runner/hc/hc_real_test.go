@@ -235,3 +235,100 @@ func TestRealTakeoverTypesAndDetaches(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// SM-COMM-003: the idle-gated send types into a program that reports idle or done (a finished turn, how Claude Code
+// waits for input) and refuses one that reports working. herdr-core's own gate takes one exact status and refuses done.
+func TestRealSendIdleOrDone(t *testing.T) {
+	r, _ := realCore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	script := `printf '\033]7501;state=%s\007' "$0"; while read -r line; do echo "got:$line"; done`
+	for state, want := range map[string]bool{"idle": true, "done": true, "working": false} {
+		p, err := r.Start(ctx, runner.Spec{Name: "r-send-" + state, Argv: []string{"/bin/sh", "-c", script, state}, Cwd: "/tmp"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			got, err := r.Get(ctx, p.ID)
+			if err == nil && got.Status.State == state {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: status never reported (%+v, %v)", state, got, err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		err = r.Send(ctx, p.ID, "hello-"+state, true)
+		if want && err != nil {
+			t.Fatalf("%s: send refused: %v", state, err)
+		}
+		if !want && !errors.Is(err, runner.ErrBusy) {
+			t.Fatalf("%s: send = %v, want busy", state, err)
+		}
+		_, _ = r.Kill(ctx, p.ID)
+	}
+}
+
+// Terminal size (hc 0.1.16): programs start at the core's `headless` size (CoreOptions.TerminalSize; herdr-core's own
+// default is 200×120, and `hc run` takes no size). An interactive attach resizes a program only while it is attached:
+// once it detaches the program is back at the headless size, and an observer (the recorder) never resizes. A running
+// core reads a changed size for the programs it starts next, without a restart.
+func TestRealTerminalSize(t *testing.T) {
+	r, o := realCore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	start := func(name string) *runner.Process {
+		t.Helper()
+		p, err := r.Start(ctx, runner.Spec{Name: name, Argv: []string{"/bin/sh", "-c", "while :; do stty size; sleep 0.3; done"}, Cwd: "/tmp"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(300 * time.Millisecond)
+		got, err := r.Get(ctx, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if p := start("r-default"); p.Cols != 200 || p.Rows != 120 {
+		t.Fatalf("herdr-core's default size is %dx%d, want 200x120", p.Cols, p.Rows)
+	}
+	// An agent restart against the same running core, with a size configured (EnsureCore connects to the running core
+	// and rewrites its config).
+	o.TerminalSize = "160x48"
+	again, err := EnsureCore(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = again.Close()
+	p := start("r-sized")
+	if p.Cols != 160 || p.Rows != 48 {
+		t.Fatalf("a program started after the size changed is %dx%d, want 160x48", p.Cols, p.Rows)
+	}
+	// A short interactive attach at another size on its own connection: resized while attached, back afterwards.
+	c2, err := Dial(ctx, o.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := New(c2).Attach(ctx, p.ID, false, 120, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if g, _ := r.Get(ctx, p.ID); g == nil || g.Cols != 120 || g.Rows != 30 {
+		t.Fatalf("while attached: %+v", g)
+	}
+	_ = s.Close()
+	_ = c2.Close()
+	time.Sleep(300 * time.Millisecond)
+	obs, _, err := r.Attach(ctx, p.ID, true, 200, 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	_ = obs.Close()
+	if g, _ := r.Get(ctx, p.ID); g == nil || g.Cols != 160 || g.Rows != 48 {
+		t.Fatalf("after the attach and an observer: %+v, want the headless 160x48", g)
+	}
+}

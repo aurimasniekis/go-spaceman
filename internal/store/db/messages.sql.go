@@ -59,6 +59,24 @@ func (q *Queries) AckNotification(ctx context.Context, arg AckNotificationParams
 	return result.RowsAffected()
 }
 
+const clearRefusedMessageNotice = `-- name: ClearRefusedMessageNotice :exec
+UPDATE messages SET noticed_at = NULL WHERE notice_command = ?1 AND state = 'stored'
+`
+
+func (q *Queries) ClearRefusedMessageNotice(ctx context.Context, command string) error {
+	_, err := q.db.ExecContext(ctx, clearRefusedMessageNotice, command)
+	return err
+}
+
+const clearRefusedNotificationNotice = `-- name: ClearRefusedNotificationNotice :exec
+UPDATE human_notifications SET noticed_at = NULL WHERE notice_command = ?1 AND state = 'pending'
+`
+
+func (q *Queries) ClearRefusedNotificationNotice(ctx context.Context, command string) error {
+	_, err := q.db.ExecContext(ctx, clearRefusedNotificationNotice, command)
+	return err
+}
+
 const countOperatorMessages = `-- name: CountOperatorMessages :one
 SELECT count(*) FROM messages WHERE space_id = ? AND to_kind = 'operators' AND state IN ('stored', 'available')
 `

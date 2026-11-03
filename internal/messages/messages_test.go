@@ -246,6 +246,14 @@ func TestNotifier(t *testing.T) {
 	if got, _ := f.svc.Get(f.ctx, "spc_a", m.ID); got.State != Stored {
 		t.Fatalf("after refusal %+v", got)
 	}
+	// The refused items are due again at once (the next idle report retries), not after the retry interval.
+	must(t, f.s.W().TxNamed(f.ctx, "q", func(tx *store.Tx) error {
+		row, err := tx.Q.GetMessage(f.ctx, m.ID)
+		if err == nil && (row.NoticedAt.Valid || !due(row.NoticedAt, f.clk.Now())) {
+			t.Fatalf("a refused notice is not due again: %+v", row.NoticedAt)
+		}
+		return err
+	}))
 	ack(proto.AckAccepted)
 	if got, _ := f.svc.Get(f.ctx, "spc_a", m.ID); got.State != Available || got.DeliveredVia != "terminal_notice" {
 		t.Fatalf("after acceptance %+v", got)

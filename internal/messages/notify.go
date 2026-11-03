@@ -192,10 +192,14 @@ func plural(n int, one, many string) string {
 }
 
 // OnCommandAck marks the items a notice announced as available once the node accepted it (fleet.Options.OnCommandAck).
-// A refused notice (the program was busy) leaves them stored; the next idle report or sweep tries again.
+// A refused notice (the program was busy) leaves them stored and due again at once: the run's next idle report (or
+// the sweep) tries again, instead of waiting out the retry interval meant for notices that were typed.
 func (n *Notifier) OnCommandAck(ctx context.Context, tx *store.Tx, commandID, result string) error {
 	if result != proto.AckAccepted {
-		return nil
+		if err := tx.Q.ClearRefusedMessageNotice(ctx, commandID); err != nil {
+			return err
+		}
+		return tx.Q.ClearRefusedNotificationNotice(ctx, commandID)
 	}
 	now := sql.NullInt64{Int64: tx.NowMicros(), Valid: true}
 	rows, err := tx.Q.ListMessagesByNotice(ctx, commandID)

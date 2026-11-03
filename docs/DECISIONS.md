@@ -2034,6 +2034,48 @@
     profile override.
   - Installations that existed before this change get the starter set at their next start (the setting is new).
 
+### ADR-0052 — Notices to finished turns, a sensible terminal size, and a web terminal that survives reopening (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (operator reports from a dev stack running real Claude Code: a second inbox item
+  never reached control; the run page hung the browser tab when reopened; the terminal was far taller than the page;
+  no node protocol change, no migration).
+- **Context:**
+  - herdr-core's idle gate takes one exact status (`if: idle|working`, hc 0.1.16). Claude Code reports `done` after
+    every turn and stays there, so every notice after control's first turn was refused, and the refused notice was
+    then held for the 5-minute retry meant for notices that were typed (S-6).
+  - ghostty-web 0.4.0: disposing a terminal that drew Claude Code's full-screen start-up (alternate screen, mouse and
+    keyboard modes, synchronized output, a path in its banner) leaves the shared WebAssembly module in a state where
+    the next terminal's resize never returns; the tab hangs (Chrome `RESULT_CODE_HUNG`). Leaving the run page and
+    coming back inside the app does exactly that; a page load starts a fresh module, so it was fine.
+  - herdr-core starts programs at 200×120 when nobody is attached; agents lay out for 120 rows, about two screens of a
+    browser, and a watch-only viewer never resizes a program. ghostty-web cancels wheel events over the terminal, so
+    the box could not be scrolled with the wheel, and the view stayed at the top while the program drew lower down.
+  - Over HTTP/1.1 a browser opens at most six connections per host for all its tabs; each tab held two streams (the
+    change feed and a live terminal), so a few tabs exhausted them (reproduced: a fourth tab could not load).
+- **Decision:**
+  - **Notices reach finished turns.** `Runner.Send` with the idle gate sends `if: idle`; when herdr-core refuses and
+    `terminal.get` still reports `done`, it sends ungated. A `done` program has finished its turn and waits for input,
+    as an idle one does; a working, blocked or erroring program is still refused. **Security-relevant:** between the
+    status check and the send the program could start working (only through other input); herdr-core still waits
+    ~3 s without human typing before pressing Enter, and a notice carries no content (it only says to call
+    `spaceman_messages`). A refused notice is due again at once, so the run's next idle report retries it.
+  - **Terminal size.** The agent writes `headless = "<runner.terminal_size>"` (default `160x48`, validated
+    40-400×10-200) into its core's `config.toml`; programs started afterwards use it, with no core restart. Running
+    programs keep their size.
+  - **Web terminal.** A terminal is reset (RIS, `ESC c`) before it is disposed; `Terminal.reset()` does not avoid the
+    hang. The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
+    the box before it reaches ghostty-web's scrollback.
+  - **Connections.** One change-feed stream serves all tabs of a browser: the tab holding the Web Lock
+    `spaceman-watch` opens it and relays it over a BroadcastChannel; another tab takes over when it closes. Without
+    Web Locks (not a secure context: plain HTTP to another host) each tab keeps its own stream. A tab hidden for 5 s
+    releases its live terminal and resumes from the last record it drew when shown again.
+- **Consequences:**
+  - Control and workers get notices after every turn, as SM-COMM-003 intended. The fake runner always behaved this
+    way, which is why the tests did not catch it; `TestRealSendIdleOrDone` now runs against real herdr-core.
+  - `make e2e` reopens a full-screen run terminal (the stub harness's `/fullscreen` prints the start-up with neutral
+    text); without the reset the journey hangs.
+  - Existing runs keep 200×120 until relaunched; an agent restart applies the new size to later launches.
+  - ghostty-web's `onRender` is declared but never fired in 0.4.0; the view follows `onCursorMove` and resizes.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

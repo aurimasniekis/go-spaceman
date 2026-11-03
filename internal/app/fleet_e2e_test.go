@@ -471,11 +471,20 @@ func TestLateReportDoesNotReopenEndedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "exited", func() bool { o := e.run1(r.ID).Observed; return o == "exited" || o == "failed" })
-	ended := e.run1(r.ID)
 	e.stopAgent()
 
-	// The node's stale report, as if it had been sent before the exit but delivered after it.
+	// The node's stale report, as if it had been sent before the exit but delivered after it. The run is compared with
+	// its state just before the report, once the agent's own last updates have landed (slower under -race).
 	n := dialRawNode(t, e, proto.MaxMinor)
+	ended := e.run1(r.ID)
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		time.Sleep(300 * time.Millisecond)
+		next := e.run1(r.ID)
+		if next.Version == ended.Version {
+			break
+		}
+		ended = next
+	}
 	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: r.ID, SpaceID: sp.ID, Generation: ended.Generation, State: proto.RunRunning,
 		TerminalID: ended.TerminalID, Status: "working"})
 	cmd := n.next(t, proto.TypeCommand)

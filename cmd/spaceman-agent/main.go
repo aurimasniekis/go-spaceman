@@ -162,7 +162,8 @@ func runCmd(g *globals) *cobra.Command {
 				return err
 			}
 			hcBin := cfg.Runner.HCBinary
-			client, err := hc.EnsureCore(ctx, hc.CoreOptions{Binary: hcBin, Session: cfg.Runner.Session, Socket: cfg.Runner.Socket, Home: filepath.Join(cfg.DataDir, "hc")})
+			client, err := hc.EnsureCore(ctx, hc.CoreOptions{Binary: hcBin, Session: cfg.Runner.Session, Socket: cfg.Runner.Socket, Home: filepath.Join(cfg.DataDir, "hc"),
+				TerminalSize: cfg.Runner.TerminalSize})
 			if err != nil {
 				return fmt.Errorf("herdr-core: %w", err)
 			}

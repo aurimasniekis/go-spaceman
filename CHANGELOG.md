@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- Terminal notices reach agents after their first turn. herdr-core's idle gate refuses a program that reports `done`,
+  which Claude Code does after every turn, so new inbox items and messages were never announced; a refused notice now
+  also retries at the next idle report instead of 5 minutes later (ADR-0052).
+- Leaving a run page and coming back no longer hangs the browser tab when the run is a full-screen program such as
+  Claude Code (a ghostty-web 0.4.0 problem with disposed terminals, avoided by resetting the terminal first).
+- Control is told about tasks someone else adds to the queue (like new inbox items) and about tasks someone else makes
+  ready, for example from the backlog, so an operator's task no longer waits until control happens to look at the
+  queue (SM-CTRL-002).
+- The run terminal follows the cursor and scrolls with the mouse wheel, so the bottom of a tall terminal is reachable.
+- Several SpaceMan tabs no longer exhaust the browser's connections over plain HTTP: tabs share one change-feed stream,
+  and hidden tabs release their live terminal.
+
 ### Changed
 - **Security:** a diagnostic run's launch needs `run:diagnose` on top of `run:control` (SM-CTRL-004, ADR-0050).
   Operators now hold `run:diagnose`, so operators and admins keep launching diagnostics; viewers never could.
@@ -24,6 +37,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   ready-to-launch roles from them with **Add starter roles**, `spaceman role add-starters`, `POST
   /spaces/{id}/starter-roles`, or `starter_roles` when it is created (ticked by default in the UI).
 - `scripts/dev-stack.sh restart DIR`: rebuild and restart central on a dev stack's existing data.
+- Agent setting `runner.terminal_size` (default `160x48`): the size programs start at, instead of herdr-core's 200×120.
 - Role templates and harness profiles can be deleted (`DELETE /role-templates/{id}`, `DELETE /harness-profiles/{id}`,
   `spaceman role template delete`, `spaceman profile delete`, the Roles page) while nothing uses them.
 - Incident policy (ADR-0050, SM-QUEUE-009, migration 0034): a space's queue policy names the **trusted triggers** that

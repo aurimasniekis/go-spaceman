@@ -222,6 +222,7 @@ Configures the herdr-core runner (ADR-0007).
 | `runner.hc_binary` | `hc` | `SPACEMAN_AGENT_RUNNER_HC_BINARY` | The herdr-core client binary ("hc"). |
 | `runner.session` | `spaceman` | `SPACEMAN_AGENT_RUNNER_SESSION` | The dedicated hc session (lowercase token); never the operator's "default" core. |
 | `runner.socket` | `/run/spaceman-agent/hc.sock` | `SPACEMAN_AGENT_RUNNER_SOCKET` | The hc socket path. It must be short (macOS sun_path ≤ 103 bytes); default /run or /tmp based. |
+| `runner.terminal_size` | `160x48` | `SPACEMAN_AGENT_RUNNER_TERMINAL_SIZE` | The size programs start at, COLSxROWS (default 160x48; herdr-core's own default is 200x120). Watch-only viewers never resize a program, so this is the size agents lay out for. Programs already running keep their size. |
 
 ### `harness`
 

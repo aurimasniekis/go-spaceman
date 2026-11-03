@@ -25,6 +25,9 @@ WHERE id IN (sqlc.slice(ids)) AND state = 'stored';
 UPDATE messages SET state = 'available', available_at = sqlc.arg(now), delivered_via = 'terminal_notice', version = version + 1
 WHERE notice_command = sqlc.arg(command) AND state = 'stored';
 
+-- name: ClearRefusedMessageNotice :exec
+UPDATE messages SET noticed_at = NULL WHERE notice_command = sqlc.arg(command) AND state = 'stored';
+
 -- name: SetMessageNotice :exec
 UPDATE messages SET notice_command = sqlc.arg(command), noticed_at = sqlc.arg(now) WHERE id IN (sqlc.slice(ids));
 
@@ -53,6 +56,9 @@ UPDATE human_notifications SET state = 'delivered', delivered_at = sqlc.arg(now)
 
 -- name: MarkNotificationNoticeAccepted :execrows
 UPDATE human_notifications SET state = 'delivered', delivered_at = sqlc.arg(now) WHERE notice_command = sqlc.arg(command) AND state = 'pending';
+
+-- name: ClearRefusedNotificationNotice :exec
+UPDATE human_notifications SET noticed_at = NULL WHERE notice_command = sqlc.arg(command) AND state = 'pending';
 
 -- name: SetNotificationNotice :exec
 UPDATE human_notifications SET notice_command = sqlc.arg(command), noticed_at = sqlc.arg(now) WHERE id IN (sqlc.slice(ids));

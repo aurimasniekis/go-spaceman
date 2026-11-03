@@ -330,6 +330,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Supervisor.Inbox = c.Inbox
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Human.Inbox = c.Inbox // routed responses become inbox items when the human policy says so (SM-INBOX-001)
+	c.Queue.OnCreated = c.Supervisor.OnTaskCreated
 	c.Queue.OnStatus = func(actor audit.Actor, t *queue.Task, from string) {
 		c.Supervisor.OnTaskStatus(actor, t, from)
 		c.Human.Kick() // a task that starts or stops running moves the earliest task deadline (ADR-0036)

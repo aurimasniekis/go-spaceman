@@ -173,6 +173,8 @@ type Service struct {
 	changes *changefeed.Recorder
 	// OnStatus is called after a commit that changed a task's state, e.g. to wake control.
 	OnStatus func(actor audit.Actor, t *Task, from string)
+	// OnCreated is called after a commit that added a task (not for an idempotent replay of the same request).
+	OnCreated func(actor audit.Actor, t *Task)
 	// Outbox records task events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
 	Outbox *outbox.Outbox
 	// DefaultMaxActive is the top-level task limit of spaces without a queue policy (limits.max_top_level_tasks,
@@ -585,6 +587,9 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 	}
 	svc.after(ctx, actor, fx)
 	t, err := svc.Get(ctx, spaceID, id)
+	if err == nil && created && svc.OnCreated != nil {
+		svc.OnCreated(actor, t)
+	}
 	return t, created, err
 }
 

@@ -156,6 +156,13 @@ func TestControlSupervisor(t *testing.T) {
 	}
 	eventually(t, "inbox notification", func() bool { return toControl("New inbox item: Customers report slow refunds") })
 	task, _, _ := e.c.Queue.Create(ctx, admin, sp.ID, queue.CreateInput{Title: "Speed up refunds", Status: queue.Ready})
+	eventually(t, "new-task notification", func() bool { return toControl("New task: Speed up refunds") })
+	// An operator moving a backlog task to ready: control can start it now.
+	later, _, _ := e.c.Queue.Create(ctx, admin, sp.ID, queue.CreateInput{Title: "Archive old refunds", Status: queue.Backlog})
+	if _, err := e.c.Queue.SetStatus(ctx, admin, sp.ID, later.ID, later.Version, queue.StatusInput{Status: queue.Ready}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "ready notification", func() bool { return toControl("Task ready: Archive old refunds") })
 	task, _ = e.c.Queue.SetStatus(ctx, admin, sp.ID, task.ID, task.Version, queue.StatusInput{Status: "running"})
 	if _, err := e.c.Queue.SetStatus(ctx, admin, sp.ID, task.ID, task.Version, queue.StatusInput{Status: "review", Result: "PR #7"}); err != nil {
 		t.Fatal(err)

@@ -6,7 +6,7 @@ import { api, unwrap, type RecordingRecord } from '@/api/client'
 import { API_PREFIX } from '@/api/session'
 import { endReason, sessionStillValid } from '@/api/streams'
 import { clock } from '@/lib/format'
-import { createTerminal, fitFont } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, followCursor, wheelScrollsBox } from './ghostty'
 import { apply, emptySummary, indexAt, MAX_IDLE_MS, offsetMs, renderTo, type RecordingSummary } from './records'
 
 interface Props {
@@ -33,9 +33,13 @@ function useTerminal() {
     const ro = new ResizeObserver(fit)
     ro.observe(el)
     const sub = term.onResize(() => requestAnimationFrame(fit))
+    const unfollow = followCursor(term, el)
+    const unwheel = wheelScrollsBox(term, el)
     return () => {
       ro.disconnect()
       sub.dispose()
+      unfollow()
+      unwheel()
     }
   }, [term])
   useEffect(() => {
@@ -44,7 +48,7 @@ function useTerminal() {
     if (!ref.current) return
     createTerminal(ref.current)
       .then((created) => {
-        if (disposed) created.dispose()
+        if (disposed) disposeTerminal(created)
         else {
           t = created
           setTerm(created)
@@ -53,13 +57,39 @@ function useTerminal() {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
     return () => {
       disposed = true
-      t?.dispose()
+      if (t) disposeTerminal(t)
     }
   }, [])
   return { ref, box, term, error }
 }
 
 type LiveState = 'connecting' | 'live' | 'ended' | 'denied'
+
+/** How long a hidden tab keeps its live terminal stream before releasing the connection. */
+const HIDDEN_GRACE_MS = 5_000
+
+/**
+ * Whether the tab is visible, turning false only after it has been hidden for HIDDEN_GRACE_MS. Over HTTP/1.1 a browser
+ * opens at most six connections to a host for all its tabs, so background tabs give their live stream back.
+ */
+function useTabVisible(): boolean {
+  const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden')
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onChange = () => {
+      clearTimeout(timer)
+      if (document.visibilityState === 'hidden') timer = setTimeout(() => setVisible(false), HIDDEN_GRACE_MS)
+      else setVisible(true)
+    }
+    document.addEventListener('visibilitychange', onChange)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onChange)
+    }
+  }, [])
+  return visible
+}
 
 function StatusBadges({ sum, live, typing }: { sum: RecordingSummary; live?: LiveState; typing?: boolean }) {
   return (
@@ -109,10 +139,12 @@ function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
   const [sum, setSum] = useState<RecordingSummary>(emptySummary)
   const [state, setState] = useState<LiveState>('connecting')
   const [attempt, setAttempt] = useState(0)
+  const visible = useTabVisible()
   // What this terminal has drawn, kept across reconnects so output is never applied twice.
   const drawn = useRef<RecordingSummary>(emptySummary())
   useEffect(() => {
-    if (!term) return
+    // A hidden tab releases the stream; coming back resumes after the last record drawn.
+    if (!term || !visible) return
     let closed = false
     const after = drawn.current.lastSeq
     const es = new EventSource(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/terminal${after > 0 ? `?after=${after}` : ''}`)
@@ -143,7 +175,7 @@ function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
       closed = true
       es.close()
     }
-  }, [term, spaceId, runId, attempt])
+  }, [term, spaceId, runId, attempt, visible])
   return (
     <Stack gap="xs">
       <StatusBadges sum={sum} live={state} typing={!!onInput} />

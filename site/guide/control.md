@@ -43,7 +43,8 @@ Control does not poll. SpaceMan sends it a **notification** (a durable [message]
 attention:
 
 - a new inbox item it did not add itself;
-- a task moved to review, blocked or failed by someone else;
+- a new task someone else added to the queue (an operator in the UI, the API or the CLI);
+- a task made ready (it can start), or moved to review, blocked or failed, by someone else;
 - a worker run that ended, with its task's state;
 - an incident that preempted running work (which tasks, and what happened to their workers), a source that only
   proposed an incident, and an incident that ended with the preempted tasks that wait or were resumed (see

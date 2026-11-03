@@ -18,8 +18,9 @@ import (
 )
 
 // Supervisor keeps control informed and running (SM-CTRL-002):
-//   - control gets a durable notification for actionable events (a new inbox item it did not create, a task moved to
-//     review, blocked or failed by someone else, a worker run that ended); the notifier wakes it when idle, and a
+//   - control gets a durable notification for actionable events (a new inbox item or task it did not create, a task
+//     made ready or moved to review, blocked or failed by someone else, a worker run that ended); the notifier wakes it
+//     when idle, and a
 //     control started later reads them then;
 //   - a control run that ends while still wanted is relaunched, resuming its session, at most MaxRestarts times per
 //     Window; after that SpaceMan stops restarting and asks people to look (an urgent human action).
@@ -158,9 +159,27 @@ func (sv *Supervisor) flushDeferred(ctx context.Context, spaceID string) {
 	}
 }
 
-// OnTaskStatus notifies control when a task needs its decision: moved to review, blocked or failed by someone else.
+// OnTaskCreated notifies control of a task someone else added to the queue (an operator, the API, another service):
+// control decides when it runs. Tasks control creates itself are not announced.
+func (sv *Supervisor) OnTaskCreated(actor audit.Actor, t *queue.Task) {
+	sv.do(func(ctx context.Context) {
+		if actor.Type == audit.ActorAgent {
+			if r, err := sv.fl.GetRun(ctx, actor.ID); err == nil && r.Kind == agenttools.KindControl {
+				return
+			}
+		}
+		sv.notify(ctx, t.SpaceID, "task-new:"+t.ID, "New task: "+t.Title,
+			fmt.Sprintf("Task %s (%s, %s priority) was added to the queue. See whether it can start with spaceman_queue_next.", t.ID, t.Status, t.Priority))
+	})
+}
+
+// OnTaskStatus notifies control when a task needs its decision: made ready (it can start), or moved to review,
+// blocked or failed, by someone else.
 func (sv *Supervisor) OnTaskStatus(actor audit.Actor, t *queue.Task, from string) {
-	if t.Status != "review" && t.Status != "blocked" && t.Status != "failed" {
+	if t.Status != queue.Ready && t.Status != "review" && t.Status != "blocked" && t.Status != "failed" {
+		return
+	}
+	if t.Status == from {
 		return
 	}
 	sv.do(func(ctx context.Context) {

@@ -19,6 +19,10 @@ type CoreOptions struct {
 	Socket string
 	// Home is the agent-owned directory holding the core's XDG state and config.
 	Home string
+	// TerminalSize is the size programs start at while nobody is attached, COLSxROWS (config `headless`, hc 0.1.16;
+	// herdr-core's default is 200x120). Empty: herdr-core's default. An interactive attach resizes a program only while
+	// it is attached.
+	TerminalSize string
 }
 
 // MaxSocketPath is the longest socket path herdr-core accepts on macOS (S-0: "this system allows 103").
@@ -54,8 +58,8 @@ func (o CoreOptions) env() []string {
 		"XDG_RUNTIME_DIR="+filepath.Join(o.Home, "runtime"))
 }
 
-// writeConfig writes the core's config.toml: the short socket, and notes off (hc types nothing on its own into
-// parent agents' terminals).
+// writeConfig writes the core's config.toml: the short socket, notes off (hc types nothing on its own into parent
+// agents' terminals) and the size programs start at.
 func (o CoreOptions) writeConfig() error {
 	for _, d := range []string{"state", "config/herdr-core", "runtime"} {
 		if err := os.MkdirAll(filepath.Join(o.Home, d), 0o700); err != nil {
@@ -66,11 +70,15 @@ func (o CoreOptions) writeConfig() error {
 		return err
 	}
 	cfg := fmt.Sprintf("socket = %q\nnotes = false\n", o.Socket)
+	if o.TerminalSize != "" {
+		cfg += fmt.Sprintf("headless = %q\n", o.TerminalSize)
+	}
 	return os.WriteFile(filepath.Join(o.Home, "config", "herdr-core", "config.toml"), []byte(cfg), 0o600)
 }
 
 // EnsureCore starts the dedicated core when it is not running and connects to it. Programs of an existing core keep
-// running (herdr-core adopts them across core restarts).
+// running (herdr-core adopts them across core restarts). The config is written either way: a running core reads it for
+// the programs it starts next (the terminal size, S-6), so an agent restart applies a changed setting.
 func EnsureCore(ctx context.Context, o CoreOptions) (*Client, error) {
 	if o.Binary == "" {
 		o.Binary = "hc"
@@ -78,11 +86,11 @@ func EnsureCore(ctx context.Context, o CoreOptions) (*Client, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
 	}
-	if c, err := Dial(ctx, o.Socket); err == nil {
-		return c, nil
-	}
 	if err := o.writeConfig(); err != nil {
 		return nil, fmt.Errorf("hc config: %w", err)
+	}
+	if c, err := Dial(ctx, o.Socket); err == nil {
+		return c, nil
 	}
 	cmd := exec.CommandContext(ctx, o.Binary, "server", "start", "--json") //nolint:gosec // operator-configured binary
 	cmd.Env = o.env()

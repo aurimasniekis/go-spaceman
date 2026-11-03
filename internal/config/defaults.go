@@ -56,6 +56,9 @@ func DefaultAgent() *AgentConfig {
 			HCBinary: "hc",
 			Session:  "spaceman",
 			Socket:   "/run/spaceman-agent/hc.sock",
+			// herdr-core starts programs at 200x120 when nobody is attached; agents laid out for 120 rows are far taller
+			// than a browser shows.
+			TerminalSize: "160x48",
 		},
 		Harness: HarnessConfig{
 			ClaudeBinary: "claude",

@@ -265,8 +265,15 @@
 - **Terminal takeover is time-bound and keeps the terminal's size.** An admin (`terminal:takeover`) can take over a
   running terminal; automated input waits until it ends. It ends 30 seconds after the holder's page stops renewing it,
   so revoking the holder's session ends it within 30 seconds (they cannot type after revocation). The terminal keeps its
-  size (200×120) rather than fitting the browser. Agents older than node protocol 1.6 cannot be taken over, and the
+  size (the node's `runner.terminal_size`, 160×48 by default) rather than fitting the browser. Agents older than node protocol 1.6 cannot be taken over, and the
   typed-byte count in the audit record is per central process (ADR-0046, SM-UI-004).
+- **Terminals do not fit the browser.** A program runs at the node's terminal size (`runner.terminal_size`, default
+  160×48; runs started before that setting keep herdr-core's 200×120). The view scales the font to the width, follows
+  the cursor as output arrives, and scrolls with the wheel; a watch-only view never resizes the program (ADR-0052).
+- **Live views and many tabs over plain HTTP.** A browser opens at most six HTTP/1.1 connections to a host. The change
+  feed is shared by all tabs where Web Locks exist (HTTPS, or `localhost`); a hidden tab releases its live terminal after
+  5 seconds. Over plain HTTP to another host each tab holds its own feed, so only a few tabs work at once: serve central
+  over HTTPS (HTTP/2) for more (ADR-0052).
 - **TanStack Table on some lists.** The attention summary and the nodes page use the shared TanStack Table component
   (sortable headers, a filter box); other lists are Mantine tables or card lists. TanStack Store holds per-browser view
   preferences (table sort and filter, human-action filters); server data stays in TanStack Query (SM-UI-001).
@@ -298,7 +305,8 @@
 
 ## Messaging
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
-  OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself.
+  OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself. herdr-core's
+  own gate accepts only idle, so a `done` program gets the notice ungated after a fresh status check (ADR-0052).
 - **Native harness messaging is not used.** Claude Code's and Codex's own messaging features are not verified across
   standalone runs, so SpaceMan does not rely on them (SM-COMM-003).
 - **Schema forms cover common fields.** Strings (with formats and enums), numbers, booleans and string lists render as
