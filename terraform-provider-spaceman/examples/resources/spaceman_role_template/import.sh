@@ -1,0 +1,1 @@
+terraform import spaceman_role_template.worker rtp_01j0000000000000000000000

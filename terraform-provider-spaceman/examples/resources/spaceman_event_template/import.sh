@@ -1,0 +1,1 @@
+terraform import spaceman_event_template.deploy_failed etp_01j0000000000000000000000

@@ -175,6 +175,21 @@
 - **Upgrades are unexercised.** No upgrade from one release to another has run. Central and nodes on different versions
   are untested.
 
+## Terraform provider
+- **Phase 1 only, not published.** `terraform-provider-spaceman/` covers what the API supports today. Limits, schedules,
+  cross-space configuration, relocation, space repositories, the backup target and schedule, and users with their grants
+  are not resources yet (SM-API-004, ADR-0035). Terraform 1.11 or later is required (write-only arguments).
+- **No relocation.** A `node_id` change is refused at plan time until relocation exists; SM-API-005's "safe relocation"
+  is not met (M4-05).
+- **Removed fields keep their value.** Optional fields left out of the configuration are not owned, so removing one keeps
+  the last value instead of resetting it.
+- **Some objects cannot be deleted.** Destroying a prompt, skill, event template, human-action type, harness profile or
+  role template only removes it from Terraform's state; knowledge bases and dream configurations are disabled; spaces are
+  archived unless `purge_on_destroy` is set. Recreating such an object with the same slug fails until it is imported.
+- **Write-only rotation is explicit.** Terraform cannot see a changed write-only secret: bump its `_wo_version`.
+- **Tested against a local central only** (simulated, `make tf-acc`); no run against a production deployment, a real
+  identity provider or a real Pulse deployment is recorded.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned

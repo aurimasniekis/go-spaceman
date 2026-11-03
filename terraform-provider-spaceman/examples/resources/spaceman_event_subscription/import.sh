@@ -1,0 +1,2 @@
+# <space_id>/<subscription_id>
+terraform import spaceman_event_subscription.issues spc_01j0000000000000000000000/sub_01j0000000000000000000000

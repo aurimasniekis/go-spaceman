@@ -63,7 +63,25 @@ vuln:
 generate:
 	$(GO) generate ./...
 
-check: vet custom-vet lint race tools-test coverage traceability
+check: vet custom-vet lint race tools-test coverage traceability tf-test
+
+# ---- Terraform provider (nested module terraform-provider-spaceman, ADR-0035) ----
+.PHONY: tf-test tf-lint tf-acc tf-docs
+# Unit tests (client, schemas, conversions, docs drift) and vet; no server and no Terraform binary needed.
+tf-test:
+	cd terraform-provider-spaceman && $(GO) vet ./... && $(GO) test -count=1 ./...
+
+tf-lint:
+	cd terraform-provider-spaceman && golangci-lint run -c ../.golangci.yml ./...
+
+# Acceptance tests: builds spaceman and devpulse from this module, starts a throwaway central (random loopback port, own
+# data directory and KEK), runs Terraform (>= 1.11 on PATH) against it and removes only what it created.
+tf-acc:
+	cd terraform-provider-spaceman && TF_ACC=1 $(GO) test -count=1 -timeout 30m -run '^TestAcc' ./internal/provider
+
+# Regenerates terraform-provider-spaceman/docs from the schemas and examples.
+tf-docs:
+	cd terraform-provider-spaceman && SM_TF_DOCS=1 $(GO) test -count=1 -run TestDocsUpToDate ./internal/provider
 
 clean:
 	rm -rf $(BIN)

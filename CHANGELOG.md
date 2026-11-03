@@ -129,6 +129,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - A central-only Compose file, a container smoke test (`make image-smoke`), and a tag-triggered release workflow
     that only drafts a GitHub release and pushes no images.
   - Installation, containers (with the image matrix) and upgrade pages.
+- Terraform provider (`terraform-provider-spaceman/`, phase 1, not published): 20 resources for spaces, space roles and
+  account bindings, accounts, harness profiles, role templates, prompts, skills, MCP servers and grants, event
+  connections, templates and subscriptions, human-action types and their space enablement, approval policies, knowledge
+  bases, dream configurations, OIDC providers and group mappings, plus node, space and event-template data sources.
+  Credentials are write-only arguments with a version to rotate them; updates send `If-Match` with the version from
+  private state; catalog changes publish exactly one immutable version; UI edits show as drift only for configured fields;
+  a `node_id` change is refused until relocation exists. Acceptance tests run against a throwaway local central
+  (`make tf-acc`).
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

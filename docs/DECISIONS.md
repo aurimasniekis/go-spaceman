@@ -881,6 +881,72 @@
   - The units passed `systemd-analyze verify` on systemd 257 in a Debian 13 container, but have not run a real
     installation on a Linux host. Release CI has not run yet.
 
+### ADR-0035 — Terraform provider: nested module, write-only secrets, If-Match from private state, no silent replacement
+- **Status:** Accepted, 2026-11-03 (M5-01 phase 1).
+- **Context:** SM-API-004 asks Terraform to manage the durable configuration (spaces, roles, catalogs, account references,
+  MCP and skills, events, human-action types and policies, KB, limits, schedules, cross-space and auth configuration),
+  never runtime state; SM-API-005 asks for normal drift from UI edits, ownership of only the represented fields, safe
+  relocation on a `node_id` change, and no perpetual plans from secrets or immutable publication. The API (ADR-0003) already
+  has optimistic concurrency, idempotency keys and RFC 9457 problems; several catalog objects have no delete, and
+  relocation (M4-05), limits and schedules (M4-02) and cross-space requests (M4-06) are not built.
+- **Decision:**
+  - **Layout.** A nested Go module `terraform-provider-spaceman/` in this repository (no separate repository) on HashiCorp
+    terraform-plugin-framework v1.19.0 (protocol 6), framework-validators v0.19.0 and terraform-plugin-testing v1.16.0.
+    It has its own small typed client over the API's JSON (`internal/client`) and imports nothing from the central
+    module (whose packages are `internal/` anyway). Root `make check` runs its unit tests (`tf-test`); `make tf-acc` runs
+    the acceptance tests.
+  - **Authentication.** `Authorization: Bearer` with an API token or the root token (`SPACEMAN_ENDPOINT`,
+    `SPACEMAN_TOKEN`). Plain `http://` only to loopback hosts unless `allow_insecure_http` is set (opt-in; the token would
+    cross the network in clear text). Redirects are never followed, so the token never leaves the configured origin. The
+    client logs nothing, and errors carry the problem's code, detail and field errors, never bodies.
+  - **Concurrency and retries.** The server version of every object is kept in Terraform private state (refreshed on
+    every read) and sent as `If-Match` on updates; a 409 tells the operator the object changed after the plan. Creates send
+    a fresh `Idempotency-Key` where the API accepts one (spaces, accounts, MCP servers, OIDC providers) and only those, and
+    GETs, are retried on transport errors and 502/503/504; other creates are never retried, so a lost response can never
+    create a second object. One tolerated conflict: a subscription that follows a template's latest version is moved by
+    the publication of that template in the same apply; the update is retried once when that move is the only change.
+  - **Ownership (SM-API-005).** Optional fields are Optional+Computed with the prior value kept while unknown: a field the
+    configuration sets is owned and UI edits to it are drift; a field it leaves out keeps whatever SpaceMan holds. Removing
+    a field from the configuration therefore leaves the last value in place (documented). JSON attributes (schemas, UI
+    metadata, template definitions) compare semantically, so formatting never causes a diff; subscription variables
+    compare only the configured keys (defaults filled in by SpaceMan are not drift). `spaceman_space_accounts` owns a
+    space's whole binding set because the API replaces it as a whole.
+  - **Secrets.** Account secrets, MCP request headers, Pulse `.creds` and OIDC client secrets are Terraform write-only
+    arguments (`<name>_wo`, Terraform ≥ 1.11), never in plan or state, sent on create and whenever the companion
+    `<name>_wo_version` changes. The API's own counters (`secret_version`, `headers_version`, `client_id`,
+    `has_client_secret`) make rotations visible without revealing values.
+  - **Immutable versions.** Prompts, skills, event templates and human-action types are resources whose content describes
+    the latest published version. A content change saves the draft and publishes it (one version per change); an unchanged
+    configuration never publishes. A foreign unpublished draft is not drift; publishing replaces it with a warning (event
+    templates have no draft discard, so refusing would deadlock).
+  - **No silent replacement.** Where the API cannot change a field in place and the object cannot be deleted or holds
+    history (space slug, catalog slugs, kinds, harness, a prompt's name and description, KB and dream slugs), a plan-time
+    error refuses the change instead of `RequiresReplace`. A `node_id` change is refused at plan time with a diagnostic
+    naming the missing relocation (SM-SPACE-005…008, M4-05); it is never a destroy and recreate (SM-INV-003). Objects
+    that are cheap and safe to recreate (grants, mappings, approval policies, an account's kind, an MCP server's slug)
+    use ordinary replacement.
+  - **Destroy.** Objects without a delete API (prompts, skills, event templates, human-action types, harness profiles,
+    role templates) leave Terraform's state with a warning; knowledge bases and dream configurations are disabled;
+    spaces are archived, and purged only with `purge_on_destroy = true`.
+  - **Scope of phase 1.** Resources for everything the API supports today (20) and data sources for nodes, spaces and
+    event templates. Not managed: runtime state, nodes (one-time enrollment secret), API tokens (secret shown once).
+    Phase 2: limits, schedules, cross-space configuration and relocation (after M4-02/05/06), space repositories (no API),
+    backup target and schedule (configuration file only), users and role grants.
+  - **Docs.** `tfplugindocs` is not available offline in this environment, so `docs/` (registry layout) is rendered from
+    the schemas and `examples/` by `internal/provider/docs_test.go`, which also fails when the docs are stale.
+- **Alternatives:** a separate repository (the plan keeps the provider next to the API it tracks); generating the client
+  from `api/openapi.json` (large generated surface for ~60 operations, and the provider would still need hand-written
+  semantics); the plugin SDK v2 (no write-only arguments or private-state ergonomics of the framework); `RequiresReplace`
+  for `node_id` (would destroy and recreate a pinned space, which SM-INV-003 forbids); sensitive-but-stored secret
+  attributes (secrets in state); keeping the object version as a computed attribute (UI edits would show as "known after
+  apply" noise on every plan).
+- **Consequences:**
+  - Terraform ≥ 1.11 is required. Write-only values must be fed from ephemeral variables or resources to stay out of plans.
+  - A value removed from the configuration is not reset; operators must set it explicitly to change it.
+  - Catalog objects destroyed by Terraform remain in SpaceMan; re-creating one with the same slug fails until it is imported.
+  - When relocation lands, `node_id` changes become in-place updates; the plan-time refusal is the only part to replace.
+  - No central API changes were needed. The provider is not published to a registry.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

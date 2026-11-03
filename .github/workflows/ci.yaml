@@ -31,6 +31,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             tools/go.sum
+            terraform-provider-spaceman/go.sum
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
@@ -41,6 +42,9 @@ jobs:
         run: make sqlc-check
       - name: analyzer tests
         run: make tools-test
+      - name: terraform provider unit tests
+        # Acceptance tests (make tf-acc) need Terraform >= 1.11 and run locally.
+        run: make tf-test
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners; the 100 ms write-transaction guard is
         # still enforced by the non-race coverage run below.
