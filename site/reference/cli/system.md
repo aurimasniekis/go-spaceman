@@ -2,12 +2,16 @@
 
 # spaceman system
 
-A running central: version and readiness, backups.
+A running central: version, backups, outbox, restore and break-glass notices, root token.
 
 | Subcommand | Description |
 |---|---|
 | [`spaceman system backup`](#spaceman-system-backup) | Backups of a running central: list, create and verify (restore is offline: `spaceman backup restore`) |
+| [`spaceman system break-glass`](#spaceman-system-break-glass) | Unacknowledged use of a break-glass recovery login |
 | [`spaceman system info`](#spaceman-system-info) | Version, readiness and bootstrap state (needs no token) |
+| [`spaceman system outbox`](#spaceman-system-outbox) | Outbound event publication status (pending, retrying, dead, recent failures) |
+| [`spaceman system restore`](#spaceman-system-restore) | The notice a central shows after a restore |
+| [`spaceman system root-token`](#spaceman-system-root-token) | The root token: show its metadata, rotate or revoke it |
 
 ## spaceman system backup
 
@@ -53,6 +57,35 @@ spaceman system backup verify <backup> [flags]
 
 API: `verify-backup` ([HTTP API](../api)).
 
+## spaceman system break-glass
+
+Unacknowledged use of a break-glass recovery login.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman system break-glass acknowledge`](#spaceman-system-break-glass-acknowledge) | Acknowledge break-glass use |
+| [`spaceman system break-glass get`](#spaceman-system-break-glass-get) | Whether a break-glass recovery login has not been acknowledged yet |
+
+## spaceman system break-glass acknowledge
+
+Acknowledge break-glass use.
+
+```sh
+spaceman system break-glass acknowledge [flags]
+```
+
+API: `acknowledge-break-glass` ([HTTP API](../api)).
+
+## spaceman system break-glass get
+
+Whether a break-glass recovery login has not been acknowledged yet.
+
+```sh
+spaceman system break-glass get [flags]
+```
+
+API: `get-break-glass` ([HTTP API](../api)).
+
 ## spaceman system info
 
 Version, readiness and bootstrap state (needs no token).
@@ -62,4 +95,99 @@ spaceman system info [flags]
 ```
 
 API: `get-system-info` ([HTTP API](../api)).
+
+## spaceman system outbox
+
+Outbound event publication status (pending, retrying, dead, recent failures).
+
+```sh
+spaceman system outbox [flags]
+```
+
+API: `get-outbound-events` ([HTTP API](../api)).
+
+## spaceman system restore
+
+The notice a central shows after a restore.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman system restore acknowledge`](#spaceman-system-restore-acknowledge) | Dismiss the restore notice |
+| [`spaceman system restore get`](#spaceman-system-restore-get) | The restore notice: what the restore changed and what is still paused |
+
+## spaceman system restore acknowledge
+
+Dismiss the restore notice.
+
+```sh
+spaceman system restore acknowledge [flags]
+```
+
+API: `acknowledge-restore` ([HTTP API](../api)).
+
+## spaceman system restore get
+
+The restore notice: what the restore changed and what is still paused.
+
+```sh
+spaceman system restore get [flags]
+```
+
+API: `get-restore-state` ([HTTP API](../api)).
+
+## spaceman system root-token
+
+The root token: show its metadata, rotate or revoke it.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman system root-token get`](#spaceman-system-root-token-get) | Active root token metadata (never the token) |
+| [`spaceman system root-token revoke`](#spaceman-system-root-token-revoke) | Revoke the root token (issue a new one offline with `spaceman admin root-token rotate`) |
+| [`spaceman system root-token rotate`](#spaceman-system-root-token-rotate) | Rotate the root token; the new one is shown once and the old one stops working |
+
+## spaceman system root-token get
+
+Active root token metadata (never the token).
+
+```sh
+spaceman system root-token get [flags]
+```
+
+API: `get-root-token` ([HTTP API](../api)).
+
+## spaceman system root-token revoke
+
+Revoke the root token (issue a new one offline with `spaceman admin root-token rotate`).
+
+```sh
+spaceman system root-token revoke [flags]
+```
+
+API: `revoke-root-token` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--yes` | bool |  | confirm: revoke the root token |
+
+## spaceman system root-token rotate
+
+Rotate the root token; the new one is shown once and the old one stops working.
+
+```sh
+spaceman system root-token rotate [flags]
+```
+
+API: `rotate-root-token` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman system root-token rotate --yes --secret-file ./root.token
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--secret-file` | string |  | write the one-time secret to this new file (mode 0600) instead of printing it |
+| `--show-secret` | bool |  | print the one-time secret (shown once; without this or --secret-file the command refuses to run) |
+| `--yes` | bool |  | confirm: rotate the root token (the current one stops working) |
 

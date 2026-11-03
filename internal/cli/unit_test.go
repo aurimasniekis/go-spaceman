@@ -30,6 +30,7 @@ type recorded struct {
 	method, path, query string
 	header              http.Header
 	body                map[string]any
+	raw                 []byte
 }
 
 func newFake(t *testing.T) *fake {
@@ -40,7 +41,7 @@ func newFake(t *testing.T) *fake {
 		_ = json.Unmarshal(b, &body)
 		p := strings.TrimPrefix(r.URL.Path, APIPrefix)
 		f.mu.Lock()
-		f.reqs = append(f.reqs, recorded{method: r.Method, path: p, query: r.URL.RawQuery, header: r.Header.Clone(), body: body})
+		f.reqs = append(f.reqs, recorded{method: r.Method, path: p, query: r.URL.RawQuery, header: r.Header.Clone(), body: body, raw: b})
 		h := f.routes[r.Method+" "+p]
 		f.mu.Unlock()
 		if h == nil {
@@ -166,6 +167,43 @@ func TestCommandsMatchTheAPIDocument(t *testing.T) {
 	})
 	if len(used) < 120 {
 		t.Fatalf("only %d operations are reachable from the CLI", len(used))
+	}
+}
+
+// Every operation of the API document has a command or an explicit, documented exclusion (ADR-0040), so a new
+// operation cannot silently stay out of the CLI.
+func TestEveryOperationHasACommand(t *testing.T) {
+	live, err := specOnce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := ParseSpec(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := map[string]bool{}
+	for _, id := range Operations(newRootFor(&App{SpecSource: specOnce})) {
+		used[id] = true
+	}
+	for _, id := range spec.IDs() {
+		_, excluded := Excluded[id]
+		switch {
+		case used[id] && excluded:
+			t.Errorf("%s has a command but is listed in Excluded; remove the exclusion", id)
+		case !used[id] && !excluded:
+			t.Errorf("operation %s has no command: add one, or an entry with the reason to Excluded (and to ADR-0040 and site/operators/cli.md)", id)
+		}
+	}
+	for _, id := range ExcludedIDs() {
+		if _, err := spec.Op(id); err != nil {
+			t.Errorf("Excluded names %s, which the API document lacks", id)
+		}
+		if Excluded[id] == "" {
+			t.Errorf("Excluded %s has no reason", id)
+		}
+	}
+	if len(used)+len(Excluded) != len(spec.IDs()) {
+		t.Errorf("%d operations with commands + %d excluded != %d in the document", len(used), len(Excluded), len(spec.IDs()))
 	}
 }
 

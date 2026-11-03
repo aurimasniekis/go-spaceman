@@ -2,7 +2,7 @@
 
 # spaceman account
 
-Harness accounts (credentials): list, show, add, update and delete.
+Harness accounts (credentials): list, show, add, update, delete and bind to spaces.
 
 Aliases: `accounts`.
 
@@ -13,6 +13,8 @@ Aliases: `accounts`.
 | [`spaceman account get`](#spaceman-account-get) | Show an account |
 | [`spaceman account kinds`](#spaceman-account-kinds) | Account kinds and the harness each serves |
 | [`spaceman account list`](#spaceman-account-list) | Accounts (never their secrets) |
+| [`spaceman account set-space`](#spaceman-account-set-space) | Replace the accounts a space's runs may use (at most one default per harness) |
+| [`spaceman account space`](#spaceman-account-space) | Accounts a space's runs may use |
 | [`spaceman account update`](#spaceman-account-update) | Edit an account; give --secret-file or --secret-stdin to rotate the secret |
 
 ## spaceman account create
@@ -85,6 +87,43 @@ spaceman account list [flags]
 Aliases: `ls`.
 
 API: `list-accounts` ([HTTP API](../api)).
+
+## spaceman account set-space
+
+Replace the accounts a space's runs may use (at most one default per harness).
+
+```sh
+spaceman account set-space [flags]
+```
+
+API: `set-space-accounts` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman account set-space --space payments --account acc_01… --account acc_02… --default acc_01…
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--account` | string, repeatable |  | account ID the space may use (repeatable or comma-separated) |
+| `--default` | string, repeatable |  | account ID that is its harness's default (repeatable or comma-separated) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman account space
+
+Accounts a space's runs may use.
+
+```sh
+spaceman account space [flags]
+```
+
+API: `list-space-accounts` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman account update
 

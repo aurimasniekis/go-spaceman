@@ -47,7 +47,7 @@ func (a *App) taskCmd() *cobra.Command {
 			str("parent", "parent_id", "parent task ID").list("depends-on", "depends_on", "task it depends on").
 			list("exclusion", "exclusions", "exclusion").str("from-inbox", "from_inbox_item", "inbox item the task comes from")
 	}
-	return group("task", "The execution queue: list, show, create, reorder and update tasks (--space)", []string{"tasks", "queue"},
+	return group("task", "The execution queue: tasks, blockers, dependencies, escalation, decisions and policy (--space)", []string{"tasks", "queue"},
 		a.cmd(opts{use: "list", short: "The space's queue in order, with its policy", op: "list-tasks", alias: []string{"ls"}, scoped: true,
 			view: view{items: "tasks", cols: taskCols, empty: "The queue is empty."}}),
 		a.cmd(opts{use: "get", short: "Show a task", op: "get-task", scoped: true, args: pos("task")}),
@@ -99,7 +99,7 @@ func (a *App) taskCmd() *cobra.Command {
 }
 
 func (a *App) humanCmd() *cobra.Command {
-	return group("human", "Human actions: list, show, respond and cancel", []string{"human-action", "human-actions"},
+	return group("human", "Human actions: list, create, respond, assign, comment and cancel; types and policies", []string{"human-action", "human-actions"},
 		a.cmd(opts{use: "list", short: "Open human actions (every space you can see, or one with --space)", op: "list-human-actions",
 			global: "list-pending-human-actions", alias: []string{"ls"}, scoped: true,
 			query: []qflag{qb("pending", "pending", "with --space: only open actions"), qs("type", "type", "only this type"), limitFlag()},

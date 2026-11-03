@@ -2,19 +2,43 @@
 
 # spaceman task
 
-The execution queue: list, show, create, reorder and update tasks (--space).
+The execution queue: tasks, blockers, dependencies, escalation, decisions and policy (--space).
 
 Aliases: `tasks`, `queue`.
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman task block`](#spaceman-task-block) | Block a task explicitly (other tasks continue) |
 | [`spaceman task create`](#spaceman-task-create) | Add a task to the queue |
+| [`spaceman task decisions`](#spaceman-task-decisions) | Recorded queue selections: what was started and what was skipped, and why |
+| [`spaceman task depends`](#spaceman-task-depends) | Replace a task's dependencies (--on, repeatable; --none clears them; cycles are refused) |
+| [`spaceman task escalate`](#spaceman-task-escalate) | Escalate a task to urgent (to the top when the queue policy allows) |
 | [`spaceman task get`](#spaceman-task-get) | Show a task |
 | [`spaceman task list`](#spaceman-task-list) | The space's queue in order, with its policy |
 | [`spaceman task move`](#spaceman-task-move) | Reorder a task: --top, --bottom, --before or --after |
 | [`spaceman task next`](#spaceman-task-next) | The task the queue would start next, and why |
+| [`spaceman task set-policy`](#spaceman-task-set-policy) | Set the queue policy (only the flags given change) |
 | [`spaceman task set-status`](#spaceman-task-set-status) | Change a task's status |
+| [`spaceman task unblock`](#spaceman-task-unblock) | Remove a blocker from a task |
 | [`spaceman task update`](#spaceman-task-update) | Edit a task (only the flags given change) |
+
+## spaceman task block
+
+Block a task explicitly (other tasks continue).
+
+```sh
+spaceman task block <task> [flags]
+```
+
+API: `add-task-blocker` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--kind` | string |  | human_action or external (required) |
+| `--note` | string |  | note |
+| `--ref` | string |  | ID of what it waits for (a human action) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman task create
 
@@ -45,6 +69,53 @@ API: `create-task` ([HTTP API](../api)).
 | `--status` | string |  | backlog or ready (default) |
 | `--title` | string |  | title (required) |
 | `--workspace` | string |  | workspace |
+
+## spaceman task decisions
+
+Recorded queue selections: what was started and what was skipped, and why.
+
+```sh
+spaceman task decisions [flags]
+```
+
+API: `queue-decisions` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman task depends
+
+Replace a task's dependencies (--on, repeatable; --none clears them; cycles are refused).
+
+```sh
+spaceman task depends <task> [flags]
+```
+
+API: `set-task-dependencies` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--none` | bool |  | remove every dependency |
+| `--on` | string, repeatable |  | task it depends on (repeatable or comma-separated) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman task escalate
+
+Escalate a task to urgent (to the top when the queue policy allows).
+
+```sh
+spaceman task escalate <task> [flags]
+```
+
+API: `escalate-task` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--reason` | string |  | reason (required) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman task get
 
@@ -109,6 +180,27 @@ API: `queue-next` ([HTTP API](../api)).
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman task set-policy
+
+Set the queue policy (only the flags given change).
+
+Reads the queue's policy and its version just before the change, so a concurrent edit is a conflict (exit code 3).
+
+```sh
+spaceman task set-policy [flags]
+```
+
+API: `list-tasks`, `set-queue-policy` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--escalation-reorders` | bool |  | escalation may move a task to the top |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--incident-insertion` | string |  | where new incident tasks go: top or priority |
+| `--incident-preempts` | bool |  | a new incident returns running ordinary tasks to ready |
+| `--max-active` | integer |  | top-level tasks that may run at once |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman task set-status
 
 Change a task's status.
@@ -126,6 +218,20 @@ API: `get-task`, `set-task-status` ([HTTP API](../api)).
 | `--reason` | string |  | reason |
 | `--result` | string |  | result summary |
 | `--result-file` | string |  | read --result from a file (- reads standard input) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman task unblock
+
+Remove a blocker from a task.
+
+```sh
+spaceman task unblock <task> <blocker> [flags]
+```
+
+API: `resolve-task-blocker` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman task update

@@ -1345,7 +1345,7 @@
     overwrite). `--all` follows `next_cursor`. Problems are printed with code, field errors, operation and request ID.
     Exit codes: 0 ok, 1 usage, 2 API error / transport / unwanted final state, 3 conflict (409, 412, 428), 4 not found,
     5 authentication or authorization (401, 403, no token). `--yes` guards `node revoke`, `space purge` and
-    `space relocate release`.
+    `space relocate release` (more since the amendment below).
   - **Secrets (security).** The brief's `--token` flag is not provided: flag values are visible in the process list. The
     token comes from `--token-file` (refused when group- or world-readable), `SPACEMAN_TOKEN_FILE` or `SPACEMAN_TOKEN`.
     Every secret input (account secrets, passwords, Pulse `.creds`, MCP headers) is `--…-file` or `--…-stdin`; a test
@@ -1374,8 +1374,53 @@
   - Commands cover the operator surface (132 of the 248 operations), not every operation: KB requests and
     proposals, memory and its conflicts, messages, dreams, OIDC providers and mappings, human-action types and policies,
     quarantine, sessions, MFA and the root token have no command yet and stay reachable through the API, the UI or
-    Terraform. Listed in PLAN.md M5-02.
+    Terraform. Listed in PLAN.md M5-02. *(Superseded by the amendment below: 239 of 248.)*
   - API tokens are shown once by `token create` unless `--secret-file` is given; the root token cannot create them.
+- **Amendment (2026-11-03, M5-02 completion): every scriptable operation has a command.**
+  - **Coverage.** 107 more operations got commands, so 239 of the 248 operations are reachable from the CLI. New groups:
+    `kb` (with `request cancel`, `proposal accept|reject`), `memory` (collections, sync status, files, history,
+    conflicts), `message`, `dream`, `approval` (list, get, revoke; deciding stays `human respond`), `attachment`
+    (upload, get, download), `oidc` (providers, group mappings, test-login preview, sign-in providers), `identity`,
+    `session`, `mfa`, `password`, `watch`. Existing groups gained: `task block|unblock|escalate|depends|decisions|set-policy`,
+    `run input|usage|recording|transcript`, `space usage`, `human create|assign|comment|move|route|approval` with
+    `human type` (catalog and a space's enabled types) and `human policy` (installation defaults and space overrides),
+    `account space|set-space`, `mcp space-servers`, `role options`, `prompt diff|discard-draft|fork|rollback`,
+    `skill create|draft` (from a directory), `event template preview`, `event subscription quarantine
+    list|reprocess|discard`, `user reset-token|link-invite|identity`, and `system outbox|restore|break-glass|root-token`.
+  - **Coverage is enforced.** `cli.Excluded` lists the operations without a command, each with its reason;
+    `TestEveryOperationHasACommand` fails when an operation of the build's document has neither a command nor an
+    exclusion, when an excluded operation gains a command, or when an exclusion names an operation the document lacks.
+    The generated reference lists the exclusions.
+  - **Exclusions (9), all browser sign-in flows:** `login` (creates a browser session with a cookie and CSRF token; the
+    CLI uses API tokens), `logout` (ends the calling browser session; a token has none, `token revoke` revokes tokens),
+    `verify-mfa` (second step of an interactive sign-in), `reauth-password` and `reauth-totp` (step-up of a browser
+    session; tokens are not subject to re-authentication), `recovery-login` (break-glass sign-in that creates a
+    browser session), `start-oidc` and `oidc-callback` (browser redirects to and from the identity provider), and
+    `reset-password` (public and token-less; central accepts an anonymous state-changing request only from its own web
+    origin, and the CLI does not forge an `Origin` header to pass that check, so the user redeems the token that
+    `user reset-token` issues on the sign-in page). Of the raw routes, the live terminal stream has no command: it
+    replays terminal output with its escape sequences, which belongs in the web terminal viewer
+    (`run recording download` saves the recording instead). The change feed is followed with `spaceman watch`
+    (`--after`, `--count`; JSON Lines with `-o json`).
+  - **Conventions added (security).** One-time secrets of the new commands are shown **only on request**: `user
+    reset-token`, `user link-invite` (the URL carries the token), `mfa enroll` (the otpauth URI carries the TOTP
+    secret), `mfa confirm` and `mfa recovery-codes` (recovery codes) and `system root-token rotate` refuse to run
+    without `--secret-file PATH` (new `0600` file, `O_EXCL`; every response field that reveals the secret is replaced) or
+    `--show-secret` (printed once). `node create`, `node enrollment` and `token create` keep their documented behaviour.
+    New secret inputs are files or standard input only: `--client-secret-file` (OIDC), `--code-file`/`--code-stdin`
+    (TOTP), `--current-password-file`/`--new-password-file`. Downloads (`attachment download`, `run recording download`,
+    `run transcript download`) and `memory file --out` write to `--out` only: a new `0600` file that appears under its
+    name complete (temporary file and hard link), never replacing an existing one without `--force`; `--out -` streams
+    to standard output only when it is not a terminal. `memory file` without `--out` prints the agent-written text with
+    control characters removed. `--yes` now also guards `run recording delete`, `run transcript delete`, `oidc provider
+    delete`, `system root-token rotate|revoke`, `mfa recovery-codes`, `identity unlink`, `user identity unlink`, `event
+    subscription quarantine discard` and `prompt discard-draft`.
+  - **Updates without a get operation.** Dream configurations and human-action policies have no single-item read, so
+    their updates read the list, merge the flags given into the matching item and send its version as If-Match (a policy
+    that is not stored yet starts from the policy in force, without If-Match). The queue policy carries its version in
+    the body; `task set-policy` reads it just before the change. Knowledge base updates merge the `kb` object of the
+    detail read. Downloads and the change feed use the raw routes (`site/reference/api.md`), which have no request
+    timeout and are never retried; uploads are multipart forms with an Idempotency-Key.
 
 ### ADR-0042 — Core NATS subscriptions as a fixed, non-durable delivery mode; ingestion metrics with fixed-enum labels
 - **Status:** Accepted, 2026-11-03 (M2-03).

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/spf13/cobra"
 )
 
@@ -13,9 +15,34 @@ func (a *App) Commands() []*cobra.Command {
 		a.nodeCmd(), a.spaceCmd(), a.runCmd(), a.inboxCmd(), a.taskCmd(), a.humanCmd(), a.scheduleCmd(), a.limitsCmd(),
 		a.accountCmd(), a.promptCmd(), a.skillCmd(), a.profileCmd(), a.roleCmd(), a.eventCmd(), a.mcpCmd(), a.approvalPolicyCmd(),
 		a.xspaceCmd(), a.userCmd(), a.tokenCmd(), a.auditCmd(), a.systemCmd(), a.whoamiCmd(),
+		a.kbCmd(), a.memoryCmd(), a.messageCmd(), a.dreamCmd(), a.approvalCmd(), a.attachmentCmd(),
+		a.oidcCmd(), a.identityCmd(), a.sessionCmd(), a.mfaCmd(), a.passwordCmd(), a.watchCmd(),
 	}
+	byName := map[string]*cobra.Command{}
 	for _, c := range cmds {
 		c.GroupID = GroupID
+		byName[c.Name()] = c
+	}
+	// Commands added to existing groups.
+	for path, extra := range map[string][]*cobra.Command{
+		"space": a.spaceExtra(), "run": a.runExtra(), "task": a.taskExtra(), "human": a.humanExtra(), "account": a.accountExtra(),
+		"prompt": a.promptExtra(), "skill": a.skillExtra(), "user": a.userExtra(), "system": a.systemExtra(),
+		"event template": a.eventTemplateExtra(), "event subscription": {a.quarantineCmd()},
+		"role": {a.cmd(opts{use: "options", short: "Templates, profiles, prompts and skills a space role can use", op: "list-role-options", scoped: true})},
+		"mcp": {a.cmd(opts{use: "space-servers", short: "MCP servers granted in a space, with the roles and tools", op: "list-space-mcp-grants", scoped: true,
+			view: view{items: "items", cols: []col{c("SERVER", "server_id"), c("SLUG", "slug"), c("NAME", "name"), c("ROLE", "role"), c("TOOLS", "tools"), c("ENABLED", "enabled")},
+				empty: "No MCP servers granted."}})},
+	} {
+		parts := strings.Fields(path)
+		g := byName[parts[0]]
+		for _, p := range parts[1:] {
+			for _, ch := range g.Commands() {
+				if ch.Name() == p {
+					g = ch
+				}
+			}
+		}
+		g.AddCommand(extra...)
 	}
 	return cmds
 }

@@ -164,6 +164,9 @@ type call struct {
 	body    any
 	ifMatch string
 	idemKey string
+	// raw replaces the JSON body (a multipart upload) and is sent with rawType.
+	raw     []byte
+	rawType string
 	// anonymous calls may go without a token (public operations).
 	anonymous bool
 }
@@ -187,7 +190,7 @@ func (a *App) do(ctx context.Context, c call) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := Request{Method: op.Method, Path: path, Query: c.query, Body: c.body, Op: op.ID}
+	r := Request{Method: op.Method, Path: path, Query: c.query, Body: c.body, Op: op.ID, Raw: c.raw, ContentType: c.rawType}
 	if op.Headers["Idempotency-Key"] {
 		r.IdemKey = c.idemKey
 		if r.IdemKey == "" {

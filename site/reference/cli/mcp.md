@@ -2,12 +2,13 @@
 
 # spaceman mcp
 
-Central MCP gateway: servers and grants.
+Central MCP gateway: servers, grants and a space's servers.
 
 | Subcommand | Description |
 |---|---|
 | [`spaceman mcp grant`](#spaceman-mcp-grant) | Which spaces and roles may call an MCP server's tools |
 | [`spaceman mcp server`](#spaceman-mcp-server) | Upstream MCP servers: list, show, add, update, check and delete |
+| [`spaceman mcp space-servers`](#spaceman-mcp-space-servers) | MCP servers granted in a space, with the roles and tools |
 
 ## spaceman mcp grant
 
@@ -166,4 +167,18 @@ API: `get-mcp-server`, `update-mcp-server` ([HTTP API](../api)).
 | `--name` | string |  | name |
 | `--tool` | string, repeatable |  | tool to expose (default: all) (repeatable or comma-separated) |
 | `--url` | string |  | streamable HTTP URL of the MCP server |
+
+## spaceman mcp space-servers
+
+MCP servers granted in a space, with the roles and tools.
+
+```sh
+spaceman mcp space-servers [flags]
+```
+
+API: `list-space-mcp-grants` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 

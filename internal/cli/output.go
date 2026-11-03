@@ -126,7 +126,12 @@ func writeTable(w io.Writer, items []any, cols []col) error {
 	}
 	fmt.Fprintln(tw, strings.Join(heads, "\t"))
 	for _, it := range items {
-		m, _ := it.(map[string]any)
+		m, ok := it.(map[string]any)
+		if !ok {
+			// A list of scalars (file paths): one value per row.
+			fmt.Fprintln(tw, cell(it))
+			continue
+		}
 		cells := make([]string, len(cols))
 		for i, cl := range cols {
 			if cl.fn != nil {

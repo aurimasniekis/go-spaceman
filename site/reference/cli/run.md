@@ -2,16 +2,20 @@
 
 # spaceman run
 
-Runs: list, show, launch and stop (--space).
+Runs: list, show, launch, stop, send input; usage, recordings and transcripts (--space).
 
 Aliases: `runs`.
 
 | Subcommand | Description |
 |---|---|
 | [`spaceman run get`](#spaceman-run-get) | Show a run |
+| [`spaceman run input`](#spaceman-run-input) | Send input to a run (delivered only while the program is idle, unless --force) |
 | [`spaceman run launch`](#spaceman-run-launch) | Launch a run on the space's node |
 | [`spaceman run list`](#spaceman-run-list) | A space's runs, newest first |
+| [`spaceman run recording`](#spaceman-run-recording) | A run's terminal recording: read records, download or delete central's copy |
 | [`spaceman run stop`](#spaceman-run-stop) | Stop a run |
+| [`spaceman run transcript`](#spaceman-run-transcript) | A run's stored native transcript: download or delete |
+| [`spaceman run usage`](#spaceman-run-usage) | A run's token usage and cost estimate (unknown usage is reported as unknown) |
 
 ## spaceman run get
 
@@ -26,6 +30,24 @@ API: `get-run` ([HTTP API](../api)).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run input
+
+Send input to a run (delivered only while the program is idle, unless --force).
+
+```sh
+spaceman run input <run> [flags]
+```
+
+API: `send-input` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--force` | bool |  | deliver even while the program is busy |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--text` | string |  | text to type (required) |
+| `--text-file` | string |  | read --text from a file (- reads standard input) |
 
 ## spaceman run launch
 
@@ -80,6 +102,75 @@ API: `list-runs` ([HTTP API](../api)).
 | `--limit` | integer |  | maximum number of items |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman run recording
+
+A run's terminal recording: read records, download or delete central's copy.
+
+Aliases: `recordings`.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman run recording delete`](#spaceman-run-recording-delete) | Delete central's copy of a run's recording |
+| [`spaceman run recording download`](#spaceman-run-recording-download) | Download a run's recording (zstd-compressed JSON Lines) to a file |
+| [`spaceman run recording get`](#spaceman-run-recording-get) | Records of a run's terminal recording (output is base64; use download for a file) |
+
+## spaceman run recording delete
+
+Delete central's copy of a run's recording.
+
+```sh
+spaceman run recording delete <run> [flags]
+```
+
+API: `delete-recording` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--yes` | bool |  | confirm: delete the recording permanently |
+
+## spaceman run recording download
+
+Download a run's recording (zstd-compressed JSON Lines) to a file.
+
+Recordings may contain secrets typed or printed in the terminal; the file is created with mode 0600.
+
+```sh
+spaceman run recording download <run> [flags]
+```
+
+API: `get-recording` ([HTTP API](../api)).
+
+Raw route: `GET /spaces/{space_id}/runs/{run_id}/recording/download` (outside the OpenAPI document, same authentication; see the [HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman run recording download --space payments run_01… --out run.smrec.zst
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | bool |  | replace an existing file |
+| `--out` | string |  | file to write (mode 0600; - writes to standard output when it is not a terminal; required) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run recording get
+
+Records of a run's terminal recording (output is base64; use download for a file).
+
+```sh
+spaceman run recording get <run> [flags]
+```
+
+API: `get-recording` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--after` | integer |  | records with a sequence greater than this |
+| `--limit` | integer |  | maximum number of items |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman run stop
 
 Stop a run.
@@ -95,5 +186,71 @@ API: `stop-run` ([HTTP API](../api)).
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--mode` | string |  | interrupt (default) or kill |
 | `--reason` | string |  | reason, recorded with the run |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run transcript
+
+A run's stored native transcript: download or delete.
+
+Aliases: `transcripts`.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman run transcript delete`](#spaceman-run-transcript-delete) | Delete a run's stored transcript |
+| [`spaceman run transcript download`](#spaceman-run-transcript-download) | Download a run's stored transcript (JSON Lines) to a file |
+
+## spaceman run transcript delete
+
+Delete a run's stored transcript.
+
+```sh
+spaceman run transcript delete <run> [flags]
+```
+
+API: `delete-transcript` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--yes` | bool |  | confirm: delete the transcript permanently |
+
+## spaceman run transcript download
+
+Download a run's stored transcript (JSON Lines) to a file.
+
+Transcripts may contain secrets; they are never printed, and the file is created with mode 0600. `spaceman run usage` shows whether one is stored.
+
+```sh
+spaceman run transcript download <run> [flags]
+```
+
+API: `get-run-usage` ([HTTP API](../api)).
+
+Raw route: `GET /spaces/{space_id}/runs/{run_id}/transcript` (outside the OpenAPI document, same authentication; see the [HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman run transcript download --space payments run_01… --out transcript.jsonl
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | bool |  | replace an existing file |
+| `--out` | string |  | file to write (mode 0600; - writes to standard output when it is not a terminal; required) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run usage
+
+A run's token usage and cost estimate (unknown usage is reported as unknown).
+
+```sh
+spaceman run usage <run> [flags]
+```
+
+API: `get-run-usage` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 

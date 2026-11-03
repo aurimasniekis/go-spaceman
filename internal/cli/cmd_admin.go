@@ -180,7 +180,7 @@ func (a *App) grantsPrepare(ctx context.Context, _ *cobra.Command, _ *call, body
 const grantHelp = "grant ROLE[:SPACE] (viewer, operator or admin; SPACE an ID or slug, default * = every space and global administration)"
 
 func (a *App) userCmd() *cobra.Command {
-	return group("user", "Users: list, show, create, disable, enable and set grants", []string{"users"},
+	return group("user", "Users: list, show, create, disable, enable, grants, reset tokens and identities", []string{"users"},
 		a.cmd(opts{use: "list", short: "Users", op: "list-users", alias: []string{"ls"}, view: view{items: "items", cols: userCols, empty: "No users."}}),
 		a.cmd(opts{use: "get", short: "Show a user", op: "get-user", args: pos("user")}),
 		a.cmd(opts{use: "create", short: "Create a user (a password, if any, comes from a file or standard input)", op: "create-user", idem: true,
@@ -253,7 +253,7 @@ func (a *App) systemCmd() *cobra.Command {
 		a.cmd(opts{use: "create", short: "Start a backup now", op: "create-backup"}),
 		a.cmd(opts{use: "verify", short: "Verify a stored backup", op: "verify-backup", args: pos("backup")}),
 	)
-	return group("system", "A running central: version and readiness, backups", nil,
+	return group("system", "A running central: version, backups, outbox, restore and break-glass notices, root token", nil,
 		a.cmd(opts{use: "info", short: "Version, readiness and bootstrap state (needs no token)", op: "get-system-info", anonymous: true}),
 		backups,
 	)

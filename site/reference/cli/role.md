@@ -2,7 +2,7 @@
 
 # spaceman role
 
-Roles of a space (--space) and role templates.
+Roles of a space (--space), their options, and role templates.
 
 Aliases: `roles`.
 
@@ -11,6 +11,7 @@ Aliases: `roles`.
 | [`spaceman role delete`](#spaceman-role-delete) | Remove a role from a space |
 | [`spaceman role get`](#spaceman-role-get) | Show one of a space's roles |
 | [`spaceman role list`](#spaceman-role-list) | A space's roles |
+| [`spaceman role options`](#spaceman-role-options) | Templates, profiles, prompts and skills a space role can use |
 | [`spaceman role preview`](#spaceman-role-preview) | A role's effective configuration and where each value comes from |
 | [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration) |
 | [`spaceman role template`](#spaceman-role-template) | Role templates: list, show, create and update |
@@ -54,6 +55,20 @@ spaceman role list [flags]
 Aliases: `ls`.
 
 API: `list-space-roles` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman role options
+
+Templates, profiles, prompts and skills a space role can use.
+
+```sh
+spaceman role options [flags]
+```
+
+API: `list-role-options` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

@@ -2,17 +2,21 @@
 
 # spaceman prompt
 
-Prompt catalog: list, show, create, save a draft and publish.
+Prompt catalog: list, show, create, draft, publish, diff, fork and roll back.
 
 Aliases: `prompts`.
 
 | Subcommand | Description |
 |---|---|
 | [`spaceman prompt create`](#spaceman-prompt-create) | Add a prompt (with a first draft) |
+| [`spaceman prompt diff`](#spaceman-prompt-diff) | Line diff between two prompt versions |
+| [`spaceman prompt discard-draft`](#spaceman-prompt-discard-draft) | Discard a prompt's draft |
 | [`spaceman prompt draft`](#spaceman-prompt-draft) | Save the prompt's draft (starts one when there is none) |
+| [`spaceman prompt fork`](#spaceman-prompt-fork) | Fork a published version into a new prompt |
 | [`spaceman prompt get`](#spaceman-prompt-get) | A prompt with its draft and versions (ID or slug) |
 | [`spaceman prompt list`](#spaceman-prompt-list) | The prompt catalog |
 | [`spaceman prompt publish`](#spaceman-prompt-publish) | Publish the draft as the next immutable version |
+| [`spaceman prompt rollback`](#spaceman-prompt-rollback) | Publish an earlier version's content as a new version |
 
 ## spaceman prompt create
 
@@ -32,6 +36,35 @@ API: `create-prompt` ([HTTP API](../api)).
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--kind` | string |  | role, dream, kb, event or general (required) |
 | `--name` | string |  | name (required) |
+
+## spaceman prompt diff
+
+Line diff between two prompt versions.
+
+```sh
+spaceman prompt diff [flags]
+```
+
+API: `diff-prompt-versions` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--from` | string |  | version ID to compare from (required) |
+| `--to` | string |  | version ID to compare to (required) |
+
+## spaceman prompt discard-draft
+
+Discard a prompt's draft.
+
+```sh
+spaceman prompt discard-draft <prompt> [flags]
+```
+
+API: `discard-prompt-draft` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--yes` | bool |  | confirm: discard the draft |
 
 ## spaceman prompt draft
 
@@ -57,6 +90,21 @@ spaceman prompt draft control --body-file control.md --notes "tighten escalation
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--notes` | string |  | change notes |
+
+## spaceman prompt fork
+
+Fork a published version into a new prompt.
+
+```sh
+spaceman prompt fork <version-id> <slug> [flags]
+```
+
+API: `fork-prompt` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--name` | string |  | name of the new prompt (required) |
 
 ## spaceman prompt get
 
@@ -93,4 +141,19 @@ API: `get-prompt`, `publish-prompt` ([HTTP API](../api)).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+
+## spaceman prompt rollback
+
+Publish an earlier version's content as a new version.
+
+```sh
+spaceman prompt rollback <prompt> [flags]
+```
+
+API: `rollback-prompt` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--version` | string |  | version ID whose content to publish again (required) |
 

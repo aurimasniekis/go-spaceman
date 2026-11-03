@@ -60,7 +60,25 @@ pass show anthropic | spaceman account create --name ci --kind anthropic_api_key
 spaceman limits set --space payments --set max_concurrent_runs=3
 spaceman event subscription replay --space payments sub_01… --policy time --time 2026-11-01T00:00:00Z --reason "template fix"
 spaceman audit list --action space.relocated --all -o json
+spaceman task block --space payments tsk_01… --kind external --note "waiting for the vendor"
+spaceman human policy set approval --remind-after-minutes 30 --escalate-after-minutes 120 --escalate-priority urgent
+spaceman message send --space payments --to role:worker --subject "Freeze deploys" --body-file freeze.md --request
+spaceman attachment upload --space payments ./screenshot.png        # prints the spaceman://attachment/… uri
+spaceman run transcript download --space payments run_01… --out transcript.jsonl
+spaceman oidc provider create porch --issuer https://porch.example.com --client-id spaceman --client-secret-file ./porch.secret
+spaceman watch --after 1200 -o json                                  # the change feed as JSON Lines
 ```
+
+### What the command groups cover
+
+| Area | Commands |
+|---|---|
+| Fleet | `node`, `space` (with `relocate` and `usage`), `run` (with `input`, `usage`, `recording`, `transcript`) |
+| Work | `inbox`, `task` (blockers, dependencies, escalation, decisions, queue policy), `schedule`, `message`, `human` (actions, `type`, `policy`), `approval` |
+| Knowledge | `kb` (requests, proposals), `memory` (collections, files, history, conflicts), `dream`, `attachment` |
+| Configuration | `limits`, `account` (and a space's accounts), `prompt`, `skill`, `profile`, `role`, `event` (connections, templates, subscriptions, quarantine), `mcp`, `approval-policy`, `xspace` |
+| Access | `user` (grants, reset tokens, identities), `token`, `oidc` (providers, group mappings), `identity`, `session`, `mfa`, `password`, `whoami` |
+| Operations | `audit`, `system` (info, backups, outbox, restore and break-glass notices, root token), `watch` |
 
 ### Relocating a space
 
@@ -95,12 +113,29 @@ spaceman space relocate start payments --to build-02 --source-unavailable --ackn
   (exit code 3) instead of being overwritten.
 - **Bodies** can come from a JSON or YAML file with `-f FILE` (`-` reads standard input); flags override its fields. Long
   text fields have a `--…-file` variant.
-- **Secrets** (account secrets, Pulse credentials, MCP request headers, passwords) are read with `--…-file PATH` or
-  `--…-stdin`, never from flag values, and are never printed. One-time secrets that the server returns (enrollment and
-  API tokens) are printed once, or written to a new `0600` file with `--secret-file`.
+- **Secrets** (account secrets, Pulse credentials, MCP request headers, OIDC client secrets, passwords, TOTP codes) are
+  read with `--…-file PATH` or `--…-stdin`, never from flag values, and are never printed. One-time secrets that the
+  server returns are printed once, or written to a new `0600` file with `--secret-file`. Enrollment and API tokens
+  (`node create`, `node enrollment`, `token create`) are printed unless `--secret-file` is given; every other one-time
+  secret (`user reset-token`, `user link-invite`, `mfa enroll`, `mfa confirm`, `mfa recovery-codes`,
+  `system root-token rotate`) is shown only on request: the command refuses to run without `--secret-file` or
+  `--show-secret`.
+- **Downloads** (`attachment download`, `run recording download`, `run transcript download`, `memory file --out`)
+  write to `--out FILE`: a new `0600` file that appears only once it is complete, never replacing an existing file
+  without `--force`. `--out -` writes to standard output only when it is a pipe or a file, never a terminal: content may
+  be binary, carry escape sequences or contain secrets. `memory file` without `--out` prints the agent-written text
+  with control characters removed.
 - **Lists** that the API pages (inbox, audit) follow `next_cursor` with `--all`; without it the CLI prints one page and
   the cursor to continue from.
-- **Irreversible operations** (`node revoke`, `space purge`, `space relocate release`) need `--yes`.
+- **Irreversible operations** need `--yes`: `node revoke`, `space purge`, `space relocate release`,
+  `run recording delete`, `run transcript delete`, `prompt discard-draft`, `event subscription quarantine discard`,
+  `oidc provider delete`, `identity unlink`, `user identity unlink`, `mfa recovery-codes` and
+  `system root-token rotate|revoke`.
+- **Updates of resources without a single-item read** (dream configurations, human-action policies) read the list,
+  change only the flags given and send the version read as `If-Match`. `task set-policy` reads the queue policy and its
+  version just before the change.
+- **The change feed**: `spaceman watch` follows `GET /api/v1/watch` until interrupted (or `--count` changes), one line
+  per change (JSON Lines with `-o json`); a gap after `--after` is reported on standard error.
 - **Errors** are the API's RFC 9457 problems: the message, the stable code, field errors, the operation and the request
   ID (quote it when reporting a problem).
 
@@ -114,6 +149,24 @@ spaceman space relocate start payments --to build-02 --source-unavailable --ackn
 | `3` | conflict: `409`, `412` or `428` (the object changed since it was read, already exists, or a precondition failed) |
 | `4` | not found: `404` (a space you cannot read looks the same) |
 | `5` | authentication or authorization: `401`, `403`, or no usable token |
+
+## Operations without a command
+
+Every operation of the [HTTP API](/reference/api) has a command except these, which belong to the browser's sign-in
+flows. A test fails when a new operation has neither a command nor an entry here (ADR-0040).
+
+| Operation | Why |
+|---|---|
+| `login`, `verify-mfa` | interactive sign-in: it creates a browser session (cookie and CSRF token); the CLI authenticates with an API token |
+| `logout` | ends the browser session it is called from; revoke API tokens with `spaceman token revoke` |
+| `reauth-password`, `reauth-totp` | step-up of a browser session; API tokens are not subject to re-authentication |
+| `recovery-login` | break-glass sign-in that creates a browser session; use the recovery token on the sign-in page |
+| `start-oidc`, `oidc-callback` | browser redirects to and from the identity provider (sign-in, step-up, link, test login) |
+| `reset-password` | anonymous: central accepts it only from its own web origin, so the user redeems the token from `spaceman user reset-token` on the sign-in page |
+
+The live terminal stream (`…/runs/{run_id}/terminal`) has no command either: it replays a program's terminal output
+with its escape sequences, which belongs in the web UI's terminal viewer. `spaceman run recording download` saves the
+recording to a file instead.
 
 ## Backups
 

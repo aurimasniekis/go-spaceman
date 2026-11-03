@@ -2,7 +2,7 @@
 
 # spaceman space
 
-Spaces: create, edit, pause, archive, purge and relocate.
+Spaces: create, edit, pause, archive, purge, relocate and usage.
 
 Aliases: `spaces`.
 
@@ -18,6 +18,7 @@ Aliases: `spaces`.
 | [`spaceman space restore`](#spaceman-space-restore) | Restore an archived space |
 | [`spaceman space resume`](#spaceman-space-resume) | Resume a paused space |
 | [`spaceman space update`](#spaceman-space-update) | Edit a space's profile (only the flags given change) |
+| [`spaceman space usage`](#spaceman-space-usage) | A space's usage totals and runs (runs with unknown usage are counted separately) |
 
 ## spaceman space archive
 
@@ -300,4 +301,14 @@ API: `get-space`, `update-space` ([HTTP API](../api)).
 | `--name` | string |  | display name |
 | `--standing-instructions` | string |  | standing instructions for the space's agents |
 | `--standing-instructions-file` | string |  | read --standing-instructions from a file (- reads standard input) |
+
+## spaceman space usage
+
+A space's usage totals and runs (runs with unknown usage are counted separately).
+
+```sh
+spaceman space usage <space> [flags]
+```
+
+API: `get-space-usage` ([HTTP API](../api)).
 

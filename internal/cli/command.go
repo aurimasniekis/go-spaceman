@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strconv"
@@ -69,9 +70,13 @@ type opts struct {
 	view   view
 	// get is read first (same path parameters): its version becomes If-Match, and with merge the object is the base
 	// of the request body (so only the flags given change).
-	get     string
-	merge   bool
-	version func(map[string]any) string
+	get   string
+	merge bool
+	// find reads the object from a list operation instead (resources without a get operation).
+	find *finder
+	// mergeKey merges the object at this key of the response read (a detail that wraps the object) instead of the whole.
+	mergeKey string
+	version  func(map[string]any) string
 	// base derives the request body from the object read (instead of merge's projection).
 	base func(map[string]any) map[string]any
 	// drop removes fields of the object read from the merged body (fields that must only be sent on purpose).
@@ -91,9 +96,17 @@ type opts struct {
 	confirm string
 	// secret is the response field holding a one-time secret (--secret-file writes it there instead of printing it).
 	secret string
-	paged  bool
-	idem   bool
-	done   string
+	// redact lists further response fields that reveal the secret; --secret-file removes them from the output too.
+	redact []string
+	// onRequest prints the one-time secret only with --show-secret; without it or --secret-file the call is refused.
+	onRequest bool
+	// globalHelp describes what a scoped command does without --space (with global set).
+	globalHelp string
+	// text is a response field printed verbatim (control characters removed) in table format, or written with --out.
+	text  string
+	paged bool
+	idem  bool
+	done  string
 	// prepare adjusts the call after the body is built (validation, renamed operations).
 	prepare func(ctx context.Context, cmd *cobra.Command, c *call, body map[string]any) error
 	// run replaces the generic flow.
@@ -117,22 +130,28 @@ func (a *App) cmd(o opts) *cobra.Command {
 	}
 	cmd := &cobra.Command{Use: use, Short: o.short, Long: o.long, Example: o.example, Aliases: o.alias, Args: cobra.ExactArgs(len(o.args) + len(o.bodyArgs))}
 	ops := []string{}
-	for _, id := range []string{o.get, o.op, o.global} {
+	first, findGlobal := o.get, ""
+	if o.find != nil {
+		first, findGlobal = o.find.op, o.find.global
+	}
+	for _, id := range []string{first, o.op, o.global, findGlobal} {
 		if id != "" && !contains(ops, id) {
 			ops = append(ops, id)
 		}
 	}
 	cmd.Annotations = map[string]string{annOps: strings.Join(ops, ",")}
-	var space, ifMatch, secretFile, cursor, idemKey string
-	var yes, all bool
+	var space, ifMatch, secretFile, cursor, idemKey, textOut string
+	var yes, all, showSecret, force bool
 	if o.scoped {
 		help := "space ID or slug (env " + EnvSpace + ")"
-		if o.global != "" {
+		if o.globalHelp != "" {
+			help += "; " + o.globalHelp
+		} else if o.global != "" {
 			help += "; without it, every space you can see"
 		}
 		cmd.Flags().StringVar(&space, "space", "", help)
 	}
-	if o.get != "" {
+	if o.get != "" || o.find != nil {
 		cmd.Flags().StringVar(&ifMatch, "if-match", "", "expected object version (from an earlier read); default: the version read just before the change")
 	}
 	if o.confirm != "" {
@@ -140,6 +159,13 @@ func (a *App) cmd(o opts) *cobra.Command {
 	}
 	if o.secret != "" {
 		cmd.Flags().StringVar(&secretFile, "secret-file", "", "write the one-time secret to this new file (mode 0600) instead of printing it")
+		if o.onRequest {
+			cmd.Flags().BoolVar(&showSecret, "show-secret", false, "print the one-time secret (shown once; without this or --secret-file the command refuses to run)")
+		}
+	}
+	if o.text != "" {
+		cmd.Flags().StringVar(&textOut, "out", "", "write the "+o.text+" to this file instead of printing it")
+		cmd.Flags().BoolVar(&force, "force", false, "with --out: replace an existing file")
 	}
 	if o.paged {
 		cmd.Flags().BoolVar(&all, "all", false, "follow next_cursor and print every page")
@@ -216,8 +242,17 @@ func (a *App) cmd(o opts) *cobra.Command {
 			c.query.Set("cursor", cursor)
 		}
 		c.anonymous = o.anonymous
-		var base map[string]any
+		if o.secret != "" && o.onRequest && secretFile == "" && !showSecret {
+			return usageErrorf("this returns a one-time secret: give --secret-file PATH to store it, or --show-secret to print it once")
+		}
+		if textOut != "" && textOut != "-" && !force {
+			if _, err := os.Stat(textOut); err == nil {
+				return usageErrorf("%s exists; pass --force to replace it", textOut)
+			}
+		}
+		var base, obj map[string]any
 		var res *Response
+		have, versioned := false, true
 		if o.get != "" {
 			res, err = a.do(ctx, call{op: o.get, params: c.params})
 			var ae *APIError
@@ -227,18 +262,25 @@ func (a *App) cmd(o opts) *cobra.Command {
 			if err != nil {
 				return err
 			}
-		}
-		if res != nil {
-			obj, err := res.Object()
-			if err != nil {
+			if res != nil {
+				if obj, err = res.Object(); err != nil {
+					return err
+				}
+				have = true
+			}
+		} else if o.find != nil {
+			if obj, versioned, err = a.findObject(ctx, o.find, c.op == o.global, c.params); err != nil {
 				return err
 			}
+			have = true
+		}
+		if have {
 			if o.version != nil {
 				c.ifMatch = o.version(obj)
 			} else {
 				c.ifMatch = versionOf(res, obj)
 			}
-			if o.optionalIfMatch && (c.ifMatch == "" || c.ifMatch == "0") {
+			if !versioned || (o.optionalIfMatch && (c.ifMatch == "" || c.ifMatch == "0")) {
 				c.ifMatch = ""
 			}
 			if id, _ := obj["id"].(string); o.canonical != "" && id != "" {
@@ -252,7 +294,11 @@ func (a *App) cmd(o opts) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				base = op.project(obj)
+				src := obj
+				if o.mergeKey != "" {
+					src, _ = obj[o.mergeKey].(map[string]any)
+				}
+				base = op.project(src)
 				for _, k := range o.drop {
 					delete(base, k)
 				}
@@ -308,7 +354,7 @@ func (a *App) cmd(o opts) *cobra.Command {
 		}
 		out := res.Body
 		if o.secret != "" && secretFile != "" {
-			if out, err = writeSecret(out, o.secret, secretFile); err != nil {
+			if out, err = writeSecret(out, o.secret, o.redact, secretFile); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "The one-time secret was written to %s.\n", secretFile)
@@ -320,6 +366,23 @@ func (a *App) cmd(o opts) *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), o.done)
 			}
 			return nil
+		}
+		if o.text != "" && (textOut != "" || format == FormatTable) {
+			obj, err := res.Object()
+			if err != nil {
+				return err
+			}
+			s, _ := obj[o.text].(string)
+			if textOut != "" {
+				n, err := a.save(cmd, textOut, force, strings.NewReader(s))
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "Wrote %d bytes to %s.\n", n, textOut)
+				return nil
+			}
+			_, err = io.WriteString(cmd.OutOrStdout(), printable(s))
+			return err
 		}
 		if err := render(cmd.OutOrStdout(), format, out, o.view); err != nil {
 			return err
@@ -434,8 +497,9 @@ func (a *App) allPages(ctx context.Context, c call) (*Response, error) {
 	return &Response{Status: last.Status, Header: last.Header, Body: b}, nil
 }
 
-// writeSecret writes the one-time secret at key (top level) to a new 0600 file and returns the body without it.
-func writeSecret(body []byte, key, path string) ([]byte, error) {
+// writeSecret writes the one-time secret at key (top level; a string, or a list written one per line) to a new 0600
+// file and returns the body without it and without the redact fields that reveal it.
+func writeSecret(body []byte, key string, redact []string, path string) ([]byte, error) {
 	var m map[string]any
 	d := json.NewDecoder(strings.NewReader(string(body)))
 	d.UseNumber()
@@ -443,6 +507,13 @@ func writeSecret(body []byte, key, path string) ([]byte, error) {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	s, _ := m[key].(string)
+	if l, ok := m[key].([]any); ok {
+		lines := make([]string, 0, len(l))
+		for _, v := range l {
+			lines = append(lines, scalar(v))
+		}
+		s = strings.Join(lines, "\n")
+	}
 	if s == "" {
 		return nil, errors.New("the response holds no secret")
 	}
@@ -458,6 +529,11 @@ func writeSecret(body []byte, key, path string) ([]byte, error) {
 		return nil, err
 	}
 	m[key] = "(written to " + path + ")"
+	for _, k := range redact {
+		if _, ok := m[k]; ok {
+			m[k] = "(written to " + path + ")"
+		}
+	}
 	return json.Marshal(m)
 }
 

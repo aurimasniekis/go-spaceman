@@ -35,7 +35,7 @@ func (a *App) accountCmd() *cobra.Command {
 			str("description", "description", "description").boolean("enabled", "enabled", "enabled").kv("meta", "metadata", "metadata").
 			secret("secret", "secret", "the credential")
 	}
-	return group("account", "Harness accounts (credentials): list, show, add, update and delete", []string{"accounts"},
+	return group("account", "Harness accounts (credentials): list, show, add, update, delete and bind to spaces", []string{"accounts"},
 		a.cmd(opts{use: "list", short: "Accounts (never their secrets)", op: "list-accounts", alias: []string{"ls"},
 			view: view{items: "items", cols: accountCols, empty: "No accounts."}}),
 		a.cmd(opts{use: "get", short: "Show an account", op: "get-account", args: pos("account")}),
@@ -50,7 +50,7 @@ func (a *App) accountCmd() *cobra.Command {
 }
 
 func (a *App) promptCmd() *cobra.Command {
-	return group("prompt", "Prompt catalog: list, show, create, save a draft and publish", []string{"prompts"},
+	return group("prompt", "Prompt catalog: list, show, create, draft, publish, diff, fork and roll back", []string{"prompts"},
 		a.cmd(opts{use: "list", short: "The prompt catalog", op: "list-prompts", alias: []string{"ls"}, view: view{items: "items", cols: promptCols, empty: "No prompts."}}),
 		a.cmd(opts{use: "get", short: "A prompt with its draft and versions (ID or slug)", op: "get-prompt", args: pos("prompt")}),
 		a.cmd(opts{use: "create", short: "Add a prompt (with a first draft)", op: "create-prompt", bodyArgs: []string{"slug"},
@@ -82,7 +82,7 @@ func needVersion(msg string) func(ctx context.Context, cmd *cobra.Command, c *ca
 }
 
 func (a *App) skillCmd() *cobra.Command {
-	return group("skill", "Skill catalog: list, show and publish", []string{"skills"},
+	return group("skill", "Skill catalog: list, show, create, draft and publish", []string{"skills"},
 		a.cmd(opts{use: "list", short: "The skill catalog", op: "list-skills", alias: []string{"ls"}, view: view{items: "items", cols: skillCols, empty: "No skills."}}),
 		a.cmd(opts{use: "get", short: "A skill with its versions and files", op: "get-skill", args: pos("skill")}),
 		a.cmd(opts{use: "publish", short: "Publish the skill's draft", op: "publish-skill", get: "get-skill", canonical: "skill_id", args: pos("skill"), version: draftVersion,
@@ -140,7 +140,7 @@ func (a *App) roleCmd() *cobra.Command {
 		a.cmd(opts{use: "update", short: "Edit a role template (only the flags given change)", op: "save-role-template", get: "get-role-template",
 			canonical: "template_id", merge: true, args: pos("template"), form: tplForm}),
 	)
-	return group("role", "Roles of a space (--space) and role templates", []string{"roles"},
+	return group("role", "Roles of a space (--space), their options, and role templates", []string{"roles"},
 		a.cmd(opts{use: "list", short: "A space's roles", op: "list-space-roles", alias: []string{"ls"}, scoped: true,
 			view: view{items: "items", cols: roleCols, empty: "No roles."}}),
 		a.cmd(opts{use: "get", short: "Show one of a space's roles", op: "get-space-role", scoped: true, args: pos("name")}),
@@ -177,7 +177,7 @@ func (a *App) eventCmd() *cobra.Command {
 			get: "get-event-connection", merge: true, args: pos("connection"), form: conn}),
 		a.cmd(opts{use: "delete", short: "Delete an unused Pulse connection", op: "delete-event-connection", args: pos("connection"), done: "Connection deleted."}),
 	)
-	templates := group("template", "Event templates: list, show, create, save a draft and publish", []string{"templates"},
+	templates := group("template", "Event templates: list, show, create, save a draft, preview and publish", []string{"templates"},
 		a.cmd(opts{use: "list", short: "The event template catalog", op: "list-event-templates", alias: []string{"ls"},
 			view: view{items: "items", cols: etplCols, empty: "No event templates."}}),
 		a.cmd(opts{use: "get", short: "A template with its versions", op: "get-event-template", args: pos("template")}),
@@ -193,7 +193,7 @@ func (a *App) eventCmd() *cobra.Command {
 		a.cmd(opts{use: "publish", short: "Publish a template version (subscriptions following the latest move to it)", op: "publish-template",
 			args: pos("version-id")}),
 	)
-	subs := group("subscription", "A space's event subscriptions: list, show, add, update, delete and replay (--space)", []string{"subscriptions", "sub"},
+	subs := group("subscription", "A space's event subscriptions: list, show, add, update, delete, replay and quarantine (--space)", []string{"subscriptions", "sub"},
 		a.cmd(opts{use: "list", short: "A space's subscriptions", op: "list-subscriptions", alias: []string{"ls"}, scoped: true,
 			view: view{items: "items", cols: subCols, empty: "No subscriptions."}}),
 		a.cmd(opts{use: "get", short: "Show a subscription", op: "get-subscription", scoped: true, args: pos("subscription")}),
@@ -278,7 +278,7 @@ func (a *App) mcpCmd() *cobra.Command {
 			}}),
 		a.cmd(opts{use: "revoke", short: "Remove a grant", op: "revoke-mcp-grant", args: pos("server", "grant"), done: "Grant removed."}),
 	)
-	return group("mcp", "Central MCP gateway: servers and grants", nil, servers, grants)
+	return group("mcp", "Central MCP gateway: servers, grants and a space's servers", nil, servers, grants)
 }
 
 func (a *App) approvalPolicyCmd() *cobra.Command {

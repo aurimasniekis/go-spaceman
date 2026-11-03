@@ -35,32 +35,64 @@ Every command accepts these.
 
 | Command | Description |
 |---|---|
-| [`spaceman account`](./account) | Harness accounts (credentials): list, show, add, update and delete |
+| [`spaceman account`](./account) | Harness accounts (credentials): list, show, add, update, delete and bind to spaces |
 | [`spaceman admin`](./admin) | Bootstrap and break-glass administration (offline: takes the data-directory lock; needs the KEK) |
+| [`spaceman approval`](./approval) | Enforced approvals of a space: list, show and revoke (decide them with `spaceman human respond`) |
 | [`spaceman approval-policy`](./approval-policy) | Operations that need a person's approval |
+| [`spaceman attachment`](./attachment) | A space's attachments: upload, show and download (--space) |
 | [`spaceman audit`](./audit) | The audit log: list and verify the hash chain |
 | [`spaceman backup`](./backup) | Create, list, verify and restore sealed backups (docs: site/operators/backup.md) |
 | [`spaceman docs`](./docs) | Generate documentation |
+| [`spaceman dream`](./dream) | Dream configurations of a space: list, create, update, start and runs (--space) |
 | [`spaceman event`](./event) | Events: Pulse connections, templates and subscriptions |
-| [`spaceman human`](./human) | Human actions: list, show, respond and cancel |
+| [`spaceman human`](./human) | Human actions: list, create, respond, assign, comment and cancel; types and policies |
+| [`spaceman identity`](./identity) | Your linked sign-in identities: list and unlink (a user's: `spaceman user identity`) |
 | [`spaceman inbox`](./inbox) | A space's inbox: list, show, add and triage items (--space) |
+| [`spaceman kb`](./kb) | A space's knowledge bases: list, show, create, update; requests and proposals (--space) |
 | [`spaceman keys`](./keys) | Key-encryption key management |
 | [`spaceman limits`](./limits) | Space limits: show, override and list definitions |
-| [`spaceman mcp`](./mcp) | Central MCP gateway: servers and grants |
+| [`spaceman mcp`](./mcp) | Central MCP gateway: servers, grants and a space's servers |
+| [`spaceman memory`](./memory) | Role memory of a space: collections, sync status, files, history and conflicts (--space) |
+| [`spaceman message`](./message) | Durable messages between agents, control and operators: list, show, send, reply, ack and resolve (--space) |
+| [`spaceman mfa`](./mfa) | Your second factor: TOTP enrollment and recovery codes |
 | [`spaceman node`](./node) | Nodes: list, enroll, disable, enable and revoke |
+| [`spaceman oidc`](./oidc) | Single sign-on: OIDC providers and group mappings |
 | [`spaceman openapi`](./openapi) | Print the OpenAPI 3.1 document of the API |
+| [`spaceman password`](./password) | Your password: change it (passwords come from files or standard input) |
 | [`spaceman profile`](./profile) | Harness profiles: list, show, create and update |
-| [`spaceman prompt`](./prompt) | Prompt catalog: list, show, create, save a draft and publish |
-| [`spaceman role`](./role) | Roles of a space (--space) and role templates |
-| [`spaceman run`](./run) | Runs: list, show, launch and stop (--space) |
+| [`spaceman prompt`](./prompt) | Prompt catalog: list, show, create, draft, publish, diff, fork and roll back |
+| [`spaceman role`](./role) | Roles of a space (--space), their options, and role templates |
+| [`spaceman run`](./run) | Runs: list, show, launch, stop, send input; usage, recordings and transcripts (--space) |
 | [`spaceman schedule`](./schedule) | A space's schedules: list, show, create, update and delete (--space) |
 | [`spaceman serve`](./serve) | Run the control plane (API, web UI, node connections, management listener) |
-| [`spaceman skill`](./skill) | Skill catalog: list, show and publish |
-| [`spaceman space`](./space) | Spaces: create, edit, pause, archive, purge and relocate |
-| [`spaceman system`](./system) | A running central: version and readiness, backups |
-| [`spaceman task`](./task) | The execution queue: list, show, create, reorder and update tasks (--space) |
+| [`spaceman session`](./session) | Your sign-in sessions: list and revoke |
+| [`spaceman skill`](./skill) | Skill catalog: list, show, create, draft and publish |
+| [`spaceman space`](./space) | Spaces: create, edit, pause, archive, purge, relocate and usage |
+| [`spaceman system`](./system) | A running central: version, backups, outbox, restore and break-glass notices, root token |
+| [`spaceman task`](./task) | The execution queue: tasks, blockers, dependencies, escalation, decisions and policy (--space) |
 | [`spaceman token`](./token) | API tokens: list, create and revoke |
-| [`spaceman user`](./user) | Users: list, show, create, disable, enable and set grants |
+| [`spaceman user`](./user) | Users: list, show, create, disable, enable, grants, reset tokens and identities |
 | [`spaceman version`](./version) | Print build information |
+| [`spaceman watch`](./watch) | Follow the change feed: one line per change you may see, until interrupted |
 | [`spaceman whoami`](./whoami) | Who the token acts as, and how |
 | [`spaceman xspace`](./xspace) | Cross-space collaboration: peers, requests and settings |
+
+## Operations without a command
+
+Every other operation of the API has a command. These belong to the browser's sign-in flows; use the web UI.
+
+| Operation | Why |
+|---|---|
+| `login` | interactive sign-in: it creates a browser session (cookie and CSRF token); the CLI authenticates with an API token |
+| `logout` | ends the browser session it is called from; an API token has none (revoke tokens with `spaceman token revoke`) |
+| `oidc-callback` | the identity provider's browser redirect back to central |
+| `reauth-password` | step-up of a browser session; API tokens are not subject to re-authentication |
+| `reauth-totp` | step-up of an SSO browser session; API tokens are not subject to re-authentication |
+| `recovery-login` | break-glass sign-in that creates a browser session; the recovery token is used on the sign-in page |
+| `reset-password` | public and token-less: central accepts an anonymous state-changing request only from its own web origin (cross-site protection), so the user redeems the reset token on the sign-in page; `spaceman user reset-token` issues it |
+| `start-oidc` | browser redirect to the identity provider (sign-in, step-up, link or test login) |
+| `verify-mfa` | second step of an interactive sign-in, on the session that login created |
+
+Of the raw routes outside the OpenAPI document, the live terminal stream (`GET /spaces/{space_id}/runs/{run_id}/terminal`) has no
+command: it replays a program's terminal output, escape sequences included, which belongs in the web UI's terminal viewer.
+Download the recording instead (`spaceman run recording download`).

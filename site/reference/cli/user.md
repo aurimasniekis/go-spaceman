@@ -2,7 +2,7 @@
 
 # spaceman user
 
-Users: list, show, create, disable, enable and set grants.
+Users: list, show, create, disable, enable, grants, reset tokens and identities.
 
 Aliases: `users`.
 
@@ -13,7 +13,10 @@ Aliases: `users`.
 | [`spaceman user enable`](#spaceman-user-enable) | Enable a disabled user |
 | [`spaceman user get`](#spaceman-user-get) | Show a user |
 | [`spaceman user grants`](#spaceman-user-grants) | Replace a user's grants |
+| [`spaceman user identity`](#spaceman-user-identity) | A user's linked sign-in identities: list, link and unlink |
+| [`spaceman user link-invite`](#spaceman-user-link-invite) | Issue a single-use SSO link invitation (72 hours) |
 | [`spaceman user list`](#spaceman-user-list) | Users |
+| [`spaceman user reset-token`](#spaceman-user-reset-token) | Issue a one-time password reset token for a user |
 
 ## spaceman user create
 
@@ -96,6 +99,83 @@ API: `get-user`, `set-user-grants` ([HTTP API](../api)).
 | `--grant` | string, repeatable |  | grant ROLE[:SPACE] (viewer, operator or admin; SPACE an ID or slug, default * = every space and global administration) (repeatable or comma-separated) |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 
+## spaceman user identity
+
+A user's linked sign-in identities: list, link and unlink.
+
+Aliases: `identities`.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman user identity link`](#spaceman-user-identity-link) | Link an expected identity to a user |
+| [`spaceman user identity list`](#spaceman-user-identity-list) | A user's linked sign-in identities |
+| [`spaceman user identity unlink`](#spaceman-user-identity-unlink) | Unlink an identity from a user (drops their SSO grants and ends their sessions) |
+
+## spaceman user identity link
+
+Link an expected identity to a user.
+
+The subject is the provider's stable sub claim (with Porch the u_… user ID), never an email.
+
+```sh
+spaceman user identity link <user> [flags]
+```
+
+API: `link-user-identity` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--provider` | string |  | OIDC provider ID (required) |
+| `--subject` | string |  | the provider's subject (required) |
+
+## spaceman user identity list
+
+A user's linked sign-in identities.
+
+```sh
+spaceman user identity list <user> [flags]
+```
+
+Aliases: `ls`.
+
+API: `list-user-identities` ([HTTP API](../api)).
+
+## spaceman user identity unlink
+
+Unlink an identity from a user (drops their SSO grants and ends their sessions).
+
+```sh
+spaceman user identity unlink <user> [flags]
+```
+
+API: `unlink-user-identity` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--issuer` | string |  | issuer of the identity (required) |
+| `--subject` | string |  | subject of the identity (required) |
+| `--yes` | bool |  | confirm: unlink the identity and end the user's sessions |
+
+## spaceman user link-invite
+
+Issue a single-use SSO link invitation (72 hours).
+
+Hand the URL to the user out of band: it links the identity they sign in with at the provider to this user.
+
+```sh
+spaceman user link-invite <user> [flags]
+```
+
+API: `issue-link-invite` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--provider` | string |  | OIDC provider ID (required) |
+| `--secret-file` | string |  | write the one-time secret to this new file (mode 0600) instead of printing it |
+| `--show-secret` | bool |  | print the one-time secret (shown once; without this or --secret-file the command refuses to run) |
+
 ## spaceman user list
 
 Users.
@@ -107,4 +187,27 @@ spaceman user list [flags]
 Aliases: `ls`.
 
 API: `list-users` ([HTTP API](../api)).
+
+## spaceman user reset-token
+
+Issue a one-time password reset token for a user.
+
+Hand the token to the user out of band; they redeem it on the sign-in page (Reset password). Every session of the user ends when it is used.
+
+```sh
+spaceman user reset-token <user> [flags]
+```
+
+API: `issue-reset` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman user reset-token usr_01… --secret-file ./ada.reset
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--secret-file` | string |  | write the one-time secret to this new file (mode 0600) instead of printing it |
+| `--show-secret` | bool |  | print the one-time secret (shown once; without this or --secret-file the command refuses to run) |
 

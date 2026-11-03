@@ -118,6 +118,11 @@ type Request struct {
 	Body    any
 	IfMatch string // a version; sent as If-Match: "<version>"
 	IdemKey string // sent as Idempotency-Key; the request may then be retried
+	// Raw replaces the JSON body (a multipart upload) and is sent with ContentType.
+	Raw         []byte
+	ContentType string
+	// Accept replaces the default Accept header (event streams, downloads).
+	Accept string
 	// Op names the operation in errors.
 	Op string
 }
@@ -147,7 +152,9 @@ func (r *Response) Object() (map[string]any, error) {
 // the key makes a replayed create return the original result instead of creating a second object.
 func (c *Client) Do(ctx context.Context, r Request) (*Response, error) {
 	var payload []byte
-	if r.Body != nil {
+	if r.Raw != nil {
+		payload = r.Raw
+	} else if r.Body != nil {
 		var err error
 		if payload, err = json.Marshal(r.Body); err != nil {
 			return nil, fmt.Errorf("encode request: %w", err)
@@ -178,7 +185,7 @@ func (c *Client) Do(ctx context.Context, r Request) (*Response, error) {
 	return nil, lastErr
 }
 
-func (c *Client) once(ctx context.Context, r Request, payload []byte) (*Response, bool, error) {
+func (c *Client) newRequest(ctx context.Context, r Request, payload []byte) (*http.Request, error) {
 	u := c.base + r.Path
 	if len(r.Query) > 0 {
 		u += "?" + r.Query.Encode()
@@ -189,14 +196,21 @@ func (c *Client) once(ctx context.Context, r Request, payload []byte) (*Response
 	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, u, body)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	req.Header.Set("Accept", "application/json, application/problem+json")
+	accept := r.Accept
+	if accept == "" {
+		accept = "application/json, application/problem+json"
+	}
+	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", c.userAgent)
-	if payload != nil {
+	switch {
+	case r.ContentType != "" && payload != nil:
+		req.Header.Set("Content-Type", r.ContentType)
+	case payload != nil:
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if r.IfMatch != "" {
@@ -204,6 +218,14 @@ func (c *Client) once(ctx context.Context, r Request, payload []byte) (*Response
 	}
 	if r.IdemKey != "" {
 		req.Header.Set("Idempotency-Key", r.IdemKey)
+	}
+	return req, nil
+}
+
+func (c *Client) once(ctx context.Context, r Request, payload []byte) (*Response, bool, error) {
+	req, err := c.newRequest(ctx, r, payload)
+	if err != nil {
+		return nil, false, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -218,24 +240,55 @@ func (c *Client) once(ctx context.Context, r Request, payload []byte) (*Response
 		return nil, true, &NetError{Op: r.Method + " " + r.Path, Err: err}
 	}
 	if resp.StatusCode >= 300 {
-		ae := &APIError{Status: resp.StatusCode}
-		if json.Unmarshal(data, ae) != nil || ae.Status == 0 {
-			ae.Status = resp.StatusCode
-		}
-		ae.Method, ae.Path, ae.Op, ae.RequestID = r.Method, r.Path, r.Op, resp.Header.Get("X-Request-Id")
-		if ae.Title == "" {
-			ae.Title = http.StatusText(resp.StatusCode)
-		}
-		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-			ae.Detail = "the server answered with a redirect, which is never followed (the token stays with --server); check the URL"
-			if loc := resp.Header.Get("Location"); loc != "" {
-				ae.Detail += " (Location: " + loc + ")"
-			}
-		}
-		retry := resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusGatewayTimeout
+		ae, retry := problemOf(resp, data, r)
 		return nil, retry, ae
 	}
 	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: data}, false, nil
+}
+
+// Open performs a request whose response body the caller streams (a download or an event stream): it is never retried
+// and has no overall timeout (cancel the context to stop it). The caller closes the body.
+func (c *Client) Open(ctx context.Context, r Request) (*http.Response, error) {
+	req, err := c.newRequest(ctx, r, nil)
+	if err != nil {
+		return nil, err
+	}
+	hc := *c.http
+	hc.Timeout = 0
+	resp, err := hc.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, &NetError{Op: r.Method + " " + r.Path, Err: stripURL(err)}
+	}
+	if resp.StatusCode >= 300 {
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		ae, _ := problemOf(resp, data, r)
+		return nil, ae
+	}
+	return resp, nil
+}
+
+// problemOf turns an error response into an APIError and reports whether the status is worth a retry.
+func problemOf(resp *http.Response, data []byte, r Request) (*APIError, bool) {
+	ae := &APIError{Status: resp.StatusCode}
+	if json.Unmarshal(data, ae) != nil || ae.Status == 0 {
+		ae.Status = resp.StatusCode
+	}
+	ae.Method, ae.Path, ae.Op, ae.RequestID = r.Method, r.Path, r.Op, resp.Header.Get("X-Request-Id")
+	if ae.Title == "" {
+		ae.Title = http.StatusText(resp.StatusCode)
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		ae.Detail = "the server answered with a redirect, which is never followed (the token stays with --server); check the URL"
+		if loc := resp.Header.Get("Location"); loc != "" {
+			ae.Detail += " (Location: " + loc + ")"
+		}
+	}
+	retry := resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusGatewayTimeout
+	return ae, retry
 }
 
 // stripURL removes the request URL from a transport error (it never carries the token, but keeps messages short).

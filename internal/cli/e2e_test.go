@@ -298,6 +298,8 @@ func TestCLIAgainstCentral(t *testing.T) {
 		t.Fatalf("audit verify %v", v)
 	}
 
+	newGroupsAgainstCentral(t, c, e, str(usr, "id"))
+
 	// Archive and purge (needs --yes).
 	e.ok(t, "space", "archive", "billing")
 	e.code(t, ExitUsage, "space", "purge", "billing")

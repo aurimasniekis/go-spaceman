@@ -2,16 +2,56 @@
 
 # spaceman human
 
-Human actions: list, show, respond and cancel.
+Human actions: list, create, respond, assign, comment and cancel; types and policies.
 
 Aliases: `human-action`, `human-actions`.
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman human approval`](#spaceman-human-approval) | The enforced approval behind an approval action |
+| [`spaceman human assign`](#spaceman-human-assign) | Assign (claim) a human action to a user, or --unassign it |
 | [`spaceman human cancel`](#spaceman-human-cancel) | Cancel a human action |
+| [`spaceman human comment`](#spaceman-human-comment) | Comment on a human action (comments never count as a response) |
+| [`spaceman human create`](#spaceman-human-create) | Ask a person for something (you are the requester) |
 | [`spaceman human get`](#spaceman-human-get) | Show a human action |
 | [`spaceman human list`](#spaceman-human-list) | Open human actions (every space you can see, or one with --space) |
+| [`spaceman human move`](#spaceman-human-move) | Reorder a pending human action (before another, or last) |
+| [`spaceman human policy`](#spaceman-human-policy) | Reminder, escalation, rate-limit and routing policies (installation defaults, or a space's with --space) |
 | [`spaceman human respond`](#spaceman-human-respond) | Answer a human action with an outcome |
+| [`spaceman human route`](#spaceman-human-route) | Send a response notification no agent acknowledged to control or a running role |
+| [`spaceman human type`](#spaceman-human-type) | Human-action types: the catalog (list, get, create, draft, publish) and a space's enabled types |
+
+## spaceman human approval
+
+The enforced approval behind an approval action.
+
+```sh
+spaceman human approval <action> [flags]
+```
+
+API: `get-action-approval` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human assign
+
+Assign (claim) a human action to a user, or --unassign it.
+
+```sh
+spaceman human assign <action> [flags]
+```
+
+API: `get-human-action`, `assign-human-action` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--assignee` | string |  | user ID to assign it to |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--unassign` | bool |  | return the action to open |
 
 ## spaceman human cancel
 
@@ -29,6 +69,59 @@ API: `get-human-action`, `cancel-human-action` ([HTTP API](../api)).
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--reason` | string |  | reason |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human comment
+
+Comment on a human action (comments never count as a response).
+
+```sh
+spaceman human comment <action> [flags]
+```
+
+API: `comment-human-action` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--body` | string |  | comment (Markdown, required) |
+| `--body-file` | string |  | read --body from a file (- reads standard input) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human create
+
+Ask a person for something (you are the requester).
+
+```sh
+spaceman human create [flags]
+```
+
+API: `create-human-action` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman human create --space payments --type approval --title "Deploy to production?" --request-file approval.json
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--blocks-task` | bool |  | block the task until a person responds |
+| `--body` | string |  | body (Markdown) |
+| `--body-file` | string |  | read --body from a file (- reads standard input) |
+| `--correlation-id` | string |  | correlation ID |
+| `--dedup-key` | string |  | a repeated key returns the original action |
+| `--due-at` | string |  | RFC 3339 due time |
+| `--expires-at` | string |  | RFC 3339 expiry |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--follow-up-of` | string |  | earlier action this corrects |
+| `--idempotency-key` | string |  | Idempotency-Key to send (default: a fresh random key); reuse it to retry this create safely |
+| `--priority` | string |  | low, normal, high or urgent |
+| `--request-file` | string |  | type-specific request (JSON or YAML file): question &#123;options, allow_text&#125;, approval &#123;action, details&#125;, todo &#123;steps&#125;, message &#123;requires_ack&#125; |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--task` | string |  | task it belongs to |
+| `--title` | string |  | title (required) |
+| `--type` | string |  | question, approval, todo, message or custom (required) |
+| `--type-slug` | string |  | with custom: a catalog type enabled in the space |
 
 ## spaceman human get
 
@@ -63,6 +156,103 @@ API: `list-human-actions`, `list-pending-human-actions` ([HTTP API](../api)).
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE); without it, every space you can see |
 | `--type` | string |  | only this type |
 
+## spaceman human move
+
+Reorder a pending human action (before another, or last).
+
+```sh
+spaceman human move <action> [flags]
+```
+
+API: `move-human-action` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--before` | string |  | place it before this pending action (default: last) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human policy
+
+Reminder, escalation, rate-limit and routing policies (installation defaults, or a space's with --space).
+
+Aliases: `policies`.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman human policy delete`](#spaceman-human-policy-delete) | Remove a stored policy (the next less specific one applies) |
+| [`spaceman human policy list`](#spaceman-human-policy-list) | The policy in force for each type, with its source |
+| [`spaceman human policy set`](#spaceman-human-policy-set) | Set the policy of a type (only the flags given change; the rest is the policy in force) |
+
+## spaceman human policy delete
+
+Remove a stored policy (the next less specific one applies).
+
+ACTION-TYPE is question, approval, todo, message, custom or all (every type).
+
+```sh
+spaceman human policy delete <action-type> [flags]
+```
+
+API: `delete-space-human-policy`, `delete-human-policy` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE); without it, the installation default |
+
+## spaceman human policy list
+
+The policy in force for each type, with its source.
+
+```sh
+spaceman human policy list [flags]
+```
+
+Aliases: `ls`.
+
+API: `list-space-human-policies`, `list-human-policies` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE); without it, the installation defaults |
+
+## spaceman human policy set
+
+Set the policy of a type (only the flags given change; the rest is the policy in force).
+
+ACTION-TYPE is question, approval, todo, message, custom or all (every type). The fields not given keep the stored policy of the type, or else the policy in force for it; for all without a stored policy they start from the policy in force for questions.
+
+```sh
+spaceman human policy set <action-type> [flags]
+```
+
+API: `list-space-human-policies`, `set-space-human-policy`, `set-human-policy`, `list-human-policies` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman human policy set approval --remind-after-minutes 30 --escalate-after-minutes 120 --escalate-priority urgent
+spaceman human policy set --space payments all --requester-ended reroute --successor-role control
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--escalate-after-minutes` | integer |  | escalate this long after the action was asked (0: never) |
+| `--escalate-assignee` | string |  | user ID to assign it to when it escalates |
+| `--escalate-priority` | string |  | raise the priority to high or urgent when it escalates |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--hold-minutes` | integer |  | with next_launch: how long to wait before rerouting |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--max-reminders` | integer |  | most reminders |
+| `--rate-per-run-hour` | integer |  | new actions of this type one run may ask per hour |
+| `--rate-per-space-hour` | integer |  | new actions of this type a space's agents may ask per hour |
+| `--remind-after-minutes` | integer |  | remind this long after the action was asked (0: no reminders) |
+| `--remind-every-minutes` | integer |  | repeat the reminder this often (0: once) |
+| `--requester-ended` | string |  | when the requester's run has ended: reroute or next_launch |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE); without it, the installation default |
+| `--successor-role` | string |  | reroute to a live run of this role before control |
+| `--wake-idle` | bool |  | wake an idle requester with a one-line terminal notice |
+
 ## spaceman human respond
 
 Answer a human action with an outcome.
@@ -89,4 +279,180 @@ spaceman human respond --space payments hac_01... --outcome approved --note "ok 
 | `--note` | string |  | note |
 | `--outcome` | string |  | outcome (required; one of the action type's outcomes) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human route
+
+Send a response notification no agent acknowledged to control or a running role.
+
+```sh
+spaceman human route <action> <notification> [flags]
+```
+
+API: `route-human-notification` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--to` | string |  | control, or role:NAME (a running run of that role; required) |
+
+## spaceman human type
+
+Human-action types: the catalog (list, get, create, draft, publish) and a space's enabled types.
+
+Aliases: `types`.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman human type create`](#spaceman-human-type-create) | Add a type (with a first draft) |
+| [`spaceman human type disable`](#spaceman-human-type-disable) | Stop new actions of a type in a space (outstanding ones are unaffected) |
+| [`spaceman human type draft`](#spaceman-human-type-draft) | Save the type's draft (starts one from the latest version when there is none) |
+| [`spaceman human type enable`](#spaceman-human-type-enable) | Enable a type in a space (follow the latest version, or --pin one) |
+| [`spaceman human type enabled`](#spaceman-human-type-enabled) | Custom types enabled in a space, with the version each uses |
+| [`spaceman human type get`](#spaceman-human-type-get) | A type with its versions (ID or slug) |
+| [`spaceman human type list`](#spaceman-human-type-list) | The human-action type catalog |
+| [`spaceman human type options`](#spaceman-human-type-options) | Catalog types a space can enable |
+| [`spaceman human type publish`](#spaceman-human-type-publish) | Publish the draft as the next immutable version |
+
+## spaceman human type create
+
+Add a type (with a first draft).
+
+```sh
+spaceman human type create <slug> [flags]
+```
+
+API: `create-human-type` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--default-expiry-minutes` | integer |  | default expiry |
+| `--default-priority` | string |  | low, normal, high or urgent |
+| `--description` | string |  | description |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--name` | string |  | name (required) |
+| `--notes` | string |  | change notes |
+| `--outcome` | string, repeatable |  | outcome a response may choose (replaces the list) (repeatable or comma-separated) |
+| `--request-schema-file` | string |  | JSON Schema 2020-12 of the request (JSON or YAML file) |
+| `--response-schema-file` | string |  | JSON Schema 2020-12 of the response (JSON or YAML file) |
+| `--ui-file` | string |  | form layout &#123;order, fields&#125; (JSON or YAML file) |
+
+## spaceman human type disable
+
+Stop new actions of a type in a space (outstanding ones are unaffected).
+
+```sh
+spaceman human type disable <type> [flags]
+```
+
+API: `disable-space-human-type` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human type draft
+
+Save the type's draft (starts one from the latest version when there is none).
+
+```sh
+spaceman human type draft <type> [flags]
+```
+
+API: `get-human-type`, `save-human-type-draft` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--default-expiry-minutes` | integer |  | default expiry |
+| `--default-priority` | string |  | low, normal, high or urgent |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--notes` | string |  | change notes |
+| `--outcome` | string, repeatable |  | outcome a response may choose (replaces the list) (repeatable or comma-separated) |
+| `--request-schema-file` | string |  | JSON Schema 2020-12 of the request (JSON or YAML file) |
+| `--response-schema-file` | string |  | JSON Schema 2020-12 of the response (JSON or YAML file) |
+| `--ui-file` | string |  | form layout &#123;order, fields&#125; (JSON or YAML file) |
+
+## spaceman human type enable
+
+Enable a type in a space (follow the latest version, or --pin one).
+
+```sh
+spaceman human type enable <type> [flags]
+```
+
+API: `enable-space-human-type` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--default-expiry-minutes` | integer |  | default expiry |
+| `--default-priority` | string |  | low, normal, high or urgent |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--label` | string |  | label of this variant |
+| `--pin` | string |  | published version ID to pin (default: follow the latest) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human type enabled
+
+Custom types enabled in a space, with the version each uses.
+
+```sh
+spaceman human type enabled [flags]
+```
+
+API: `list-space-human-types` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human type get
+
+A type with its versions (ID or slug).
+
+```sh
+spaceman human type get <type> [flags]
+```
+
+API: `get-human-type` ([HTTP API](../api)).
+
+## spaceman human type list
+
+The human-action type catalog.
+
+```sh
+spaceman human type list [flags]
+```
+
+Aliases: `ls`.
+
+API: `list-human-types` ([HTTP API](../api)).
+
+## spaceman human type options
+
+Catalog types a space can enable.
+
+```sh
+spaceman human type options [flags]
+```
+
+API: `list-human-type-options` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman human type publish
+
+Publish the draft as the next immutable version.
+
+```sh
+spaceman human type publish <type> [flags]
+```
+
+API: `get-human-type`, `publish-human-type` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 

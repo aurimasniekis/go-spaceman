@@ -47,6 +47,14 @@ func GenerateDocs(root *cobra.Command) map[string][]byte {
 		writeCommand(&page, c, true)
 		files[c.Name()+".md"] = page.Bytes()
 	}
+	idx.WriteString("\n## Operations without a command\n\nEvery other operation of the API has a command. These belong to the browser's sign-in flows; use the web UI.\n\n")
+	idx.WriteString("| Operation | Why |\n|---|---|\n")
+	for _, id := range ExcludedIDs() {
+		fmt.Fprintf(&idx, "| `%s` | %s |\n", id, escapeMD(Excluded[id]))
+	}
+	idx.WriteString("\nOf the raw routes outside the OpenAPI document, the live terminal stream (`GET /spaces/{space_id}/runs/{run_id}/terminal`) has no\n")
+	idx.WriteString("command: it replays a program's terminal output, escape sequences included, which belongs in the web UI's terminal viewer.\n")
+	idx.WriteString("Download the recording instead (`spaceman run recording download`).\n")
 	files["index.md"] = idx.Bytes()
 	return files
 }
@@ -110,6 +118,9 @@ func writeCommand(b *bytes.Buffer, c *cobra.Command, top bool) {
 			parts[i] = "`" + p + "`"
 		}
 		fmt.Fprintf(b, "API: %s ([HTTP API](../api)).\n\n", strings.Join(parts, ", "))
+	}
+	if raw := c.Annotations[annRaw]; raw != "" {
+		fmt.Fprintf(b, "Raw route: `%s` (outside the OpenAPI document, same authentication; see the [HTTP API](../api)).\n\n", raw)
 	}
 	if c.Example != "" {
 		fmt.Fprintf(b, "Example:\n\n```sh\n%s\n```\n\n", strings.TrimSpace(c.Example))

@@ -9,8 +9,8 @@ Aliases: `events`.
 | Subcommand | Description |
 |---|---|
 | [`spaceman event connection`](#spaceman-event-connection) | Pulse connections: list, show, add, update and delete |
-| [`spaceman event subscription`](#spaceman-event-subscription) | A space's event subscriptions: list, show, add, update, delete and replay (--space) |
-| [`spaceman event template`](#spaceman-event-template) | Event templates: list, show, create, save a draft and publish |
+| [`spaceman event subscription`](#spaceman-event-subscription) | A space's event subscriptions: list, show, add, update, delete, replay and quarantine (--space) |
+| [`spaceman event template`](#spaceman-event-template) | Event templates: list, show, create, save a draft, preview and publish |
 
 ## spaceman event connection
 
@@ -109,7 +109,7 @@ API: `get-event-connection`, `update-event-connection` ([HTTP API](../api)).
 
 ## spaceman event subscription
 
-A space's event subscriptions: list, show, add, update, delete and replay (--space).
+A space's event subscriptions: list, show, add, update, delete, replay and quarantine (--space).
 
 Aliases: `subscriptions`, `sub`.
 
@@ -120,6 +120,7 @@ Aliases: `subscriptions`, `sub`.
 | [`spaceman event subscription deliveries`](#spaceman-event-subscription-deliveries) | A subscription's recent deliveries |
 | [`spaceman event subscription get`](#spaceman-event-subscription-get) | Show a subscription |
 | [`spaceman event subscription list`](#spaceman-event-subscription-list) | A space's subscriptions |
+| [`spaceman event subscription quarantine`](#spaceman-event-subscription-quarantine) | Events a subscription quarantined: list, reprocess or discard |
 | [`spaceman event subscription replay`](#spaceman-event-subscription-replay) | Replay a subscription's events from a point (recorded with a reason) |
 | [`spaceman event subscription replays`](#spaceman-event-subscription-replays) | A subscription's replays |
 | [`spaceman event subscription update`](#spaceman-event-subscription-update) | Edit a subscription (only the flags given change) |
@@ -206,6 +207,62 @@ API: `list-subscriptions` ([HTTP API](../api)).
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman event subscription quarantine
+
+Events a subscription quarantined: list, reprocess or discard.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman event subscription quarantine discard`](#spaceman-event-subscription-quarantine-discard) | Discard a quarantined event |
+| [`spaceman event subscription quarantine list`](#spaceman-event-subscription-quarantine-list) | Quarantined events of a subscription |
+| [`spaceman event subscription quarantine reprocess`](#spaceman-event-subscription-quarantine-reprocess) | Process a quarantined event again (after fixing the template) |
+
+## spaceman event subscription quarantine discard
+
+Discard a quarantined event.
+
+```sh
+spaceman event subscription quarantine discard <subscription> <entry> [flags]
+```
+
+API: `resolve-quarantine` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--yes` | bool |  | confirm: discard the event |
+
+## spaceman event subscription quarantine list
+
+Quarantined events of a subscription.
+
+```sh
+spaceman event subscription quarantine list <subscription> [flags]
+```
+
+Aliases: `ls`.
+
+API: `list-quarantine` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--status` | string |  | open, reprocessed or discarded |
+
+## spaceman event subscription quarantine reprocess
+
+Process a quarantined event again (after fixing the template).
+
+```sh
+spaceman event subscription quarantine reprocess <subscription> <entry> [flags]
+```
+
+API: `resolve-quarantine` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
 ## spaceman event subscription replay
 
 Replay a subscription's events from a point (recorded with a reason).
@@ -271,7 +328,7 @@ API: `get-subscription`, `update-subscription` ([HTTP API](../api)).
 
 ## spaceman event template
 
-Event templates: list, show, create, save a draft and publish.
+Event templates: list, show, create, save a draft, preview and publish.
 
 Aliases: `templates`.
 
@@ -281,6 +338,7 @@ Aliases: `templates`.
 | [`spaceman event template draft`](#spaceman-event-template-draft) | Save a template's draft |
 | [`spaceman event template get`](#spaceman-event-template-get) | A template with its versions |
 | [`spaceman event template list`](#spaceman-event-template-list) | The event template catalog |
+| [`spaceman event template preview`](#spaceman-event-template-preview) | Test a template definition against a sample event (nothing is stored) |
 | [`spaceman event template publish`](#spaceman-event-template-publish) | Publish a template version (subscriptions following the latest move to it) |
 
 ## spaceman event template create
@@ -337,6 +395,29 @@ spaceman event template list [flags]
 Aliases: `ls`.
 
 API: `list-event-templates` ([HTTP API](../api)).
+
+## spaceman event template preview
+
+Test a template definition against a sample event (nothing is stored).
+
+```sh
+spaceman event template preview [flags]
+```
+
+API: `preview-event-template` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman event template preview --definition-file tpl.yaml --event-file sample.json --var repository=acme/payments
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--definition-file` | string |  | template definition (JSON or YAML file; required) |
+| `--event-file` | string |  | sample event (JSON or YAML file; required) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--var` | string, repeatable |  | template variable (key=value, repeatable) |
 
 ## spaceman event template publish
 

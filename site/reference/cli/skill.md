@@ -2,15 +2,59 @@
 
 # spaceman skill
 
-Skill catalog: list, show and publish.
+Skill catalog: list, show, create, draft and publish.
 
 Aliases: `skills`.
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman skill create`](#spaceman-skill-create) | Add a skill (with a first draft) from a directory of text files |
+| [`spaceman skill draft`](#spaceman-skill-draft) | Save the skill's draft from a directory (starts one when there is none) |
 | [`spaceman skill get`](#spaceman-skill-get) | A skill with its versions and files |
 | [`spaceman skill list`](#spaceman-skill-list) | The skill catalog |
 | [`spaceman skill publish`](#spaceman-skill-publish) | Publish the skill's draft |
+
+## spaceman skill create
+
+Add a skill (with a first draft) from a directory of text files.
+
+SKILL.md needs frontmatter naming the skill. Skills give guidance, never permission; nothing in them runs at install time.
+
+```sh
+spaceman skill create <slug> [flags]
+```
+
+API: `create-skill` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman skill create release-notes --name "Release notes" --dir ./skills/release-notes
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--description` | string |  | description |
+| `--dir` | string |  | directory with the skill's files (SKILL.md and the rest; .git is skipped) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--name` | string |  | name (required) |
+
+## spaceman skill draft
+
+Save the skill's draft from a directory (starts one when there is none).
+
+```sh
+spaceman skill draft <skill> [flags]
+```
+
+API: `get-skill`, `save-skill-draft` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dir` | string |  | directory with the skill's files (replaces every file of the draft) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--notes` | string |  | change notes |
 
 ## spaceman skill get
 

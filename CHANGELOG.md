@@ -15,6 +15,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   guide; a `kb-sessions` screenshot of a knowledge base's support sessions. `check-mermaid.mjs` now also fails on
   unquoted flowchart labels, and `check-shots.mjs` on an inventoried screenshot that no page shows. The site is **not
   published**: the Pages workflow has never run.
+- Complete remote CLI coverage (SM-API-003, ADR-0040 amendment): commands for 239 of the 248 API operations (was 132).
+  New groups `kb`, `memory`, `message`, `dream`, `approval`, `attachment` (upload, download), `oidc` (providers, group
+  mappings), `identity`, `session`, `mfa`, `password` and `watch` (the change feed, JSON Lines with `-o json`); new
+  commands for task blockers, dependencies, escalation, decisions and the queue policy, run input, usage, recordings and
+  transcripts (download to a file, delete with `--yes`), human-action creation, assignment, comments, types and policies,
+  a space's accounts and MCP servers, prompt diff, fork, rollback and draft discard, skill creation from a directory,
+  event template preview, subscription quarantine (reprocess, discard), user reset tokens, link invitations and
+  identities, and the outbox, restore, break-glass and root-token notices of `system`. One-time secrets of the new
+  commands are shown only on request (`--secret-file` or `--show-secret`); downloads go only to `--out` (new `0600`
+  file, `--force` to replace, never a terminal). The nine operations left out are browser sign-in flows, listed with
+  their reasons in the CLI guide and reference; `TestEveryOperationHasACommand` fails when a new operation has neither a
+  command nor a recorded exclusion.
 - Core NATS event subscriptions (SM-EVT-011, ADR-0042): `delivery: core` on a subscription (API, subscribe dialog, CLI
   `--delivery`, Terraform `delivery`) subscribes with plain NATS on the Pulse connection, for sources that publish
   without JetStream. Same filters, schema, quarantine and inbox items; deduplicated by `Nats-Msg-Id` or, without one, a

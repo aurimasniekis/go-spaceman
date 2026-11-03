@@ -79,7 +79,7 @@ func (a *App) spaceCmd() *cobra.Command {
 			}
 			return nil
 		}})
-	return group("space", "Spaces: create, edit, pause, archive, purge and relocate", []string{"spaces"},
+	return group("space", "Spaces: create, edit, pause, archive, purge, relocate and usage", []string{"spaces"},
 		a.cmd(opts{use: "list", short: "List the spaces you can see", op: "list-spaces", alias: []string{"ls"}, view: view{items: "items", cols: spaceCols, empty: "No spaces."}}),
 		a.cmd(opts{use: "get", short: "Show a space (ID or slug)", op: "get-space", args: spaceArg()}),
 		create,
@@ -301,7 +301,7 @@ func (a *App) waitRelocation(cmd *cobra.Command, spaceRef string, timeout time.D
 }
 
 func (a *App) runCmd() *cobra.Command {
-	return group("run", "Runs: list, show, launch and stop (--space)", []string{"runs"},
+	return group("run", "Runs: list, show, launch, stop, send input; usage, recordings and transcripts (--space)", []string{"runs"},
 		a.cmd(opts{use: "list", short: "A space's runs, newest first", op: "list-runs", alias: []string{"ls"}, scoped: true, query: []qflag{limitFlag()},
 			view: view{items: "items", cols: runCols, empty: "No runs."}}),
 		a.cmd(opts{use: "get", short: "Show a run", op: "get-run", scoped: true, args: pos("run")}),
