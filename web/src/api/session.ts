@@ -56,7 +56,8 @@ export function safeReturnTo(v: unknown): string {
   return isPublicPath(v.split('?')[0]) ? '/' : v
 }
 
-function toLogin() {
+/** Sends the browser to sign-in and back to the current page afterwards (no-op on public pages). */
+export function toLogin() {
   const here = `${window.location.pathname}${window.location.search}`
   if (!isPublicPath(window.location.pathname)) window.location.assign(loginUrl(here))
 }

@@ -203,8 +203,7 @@ func (svc *Service) ResetPassword(ctx context.Context, token, password string) e
 			ParamsVersion: int64(CurrentParams.Version), ChangedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
-		if _, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			Reason: sql.NullString{String: "password_reset", Valid: true}, UserID: opID, ExceptHash: []byte{}}); err != nil {
+		if err := svc.revokeUserSessionsTx(ctx, tx, opID, "password_reset", nil); err != nil {
 			return err
 		}
 		if r, err := tx.Q.GetUser(ctx, opID); err == nil {

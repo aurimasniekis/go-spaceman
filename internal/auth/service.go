@@ -52,6 +52,7 @@ type Service struct {
 	az    *authz.Engine
 	opts  Options
 	sem   chan struct{}
+	rev   *Revocations
 }
 
 // New returns the user authentication service. az is reloaded after every committed grant change.
@@ -77,7 +78,7 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	if o.HashConcurrency <= 0 {
 		o.HashConcurrency = 4
 	}
-	return &Service{s: s, kr: kr, audit: aw, bus: bus, az: az, opts: o, sem: make(chan struct{}, o.HashConcurrency)}
+	return &Service{s: s, kr: kr, audit: aw, bus: bus, az: az, opts: o, sem: make(chan struct{}, o.HashConcurrency), rev: NewRevocations()}
 }
 
 // Authz returns the authorization engine.
@@ -317,12 +318,14 @@ func (svc *Service) insertGrants(ctx context.Context, tx *store.Tx, subject stri
 	return nil
 }
 
-// reloadAfterCommit refreshes the authorization engine once tx commits, so grant changes apply to the next request.
+// reloadAfterCommit refreshes the authorization engine once tx commits, so grant changes apply to the next request,
+// and then has every open stream re-check its authorization (SM-AUTH-007).
 func (svc *Service) reloadAfterCommit(ctx context.Context, tx *store.Tx) {
 	tx.AfterCommit(func() {
 		if svc.az != nil {
 			_ = svc.az.Reload(context.WithoutCancel(ctx))
 		}
+		svc.rev.signal(revocation{all: true})
 		if svc.bus != nil {
 			svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicGrantsChanged})
 		}
@@ -363,8 +366,7 @@ func (svc *Service) SetGrants(ctx context.Context, actor audit.Actor, id string,
 		}
 		svc.reloadAfterCommit(ctx, tx)
 		if !sameGrants(before.Grants, after.Grants) {
-			if _, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-				Reason: sql.NullString{String: "grants_changed", Valid: true}, UserID: id, ExceptHash: []byte{}}); err != nil {
+			if err := svc.revokeUserSessionsTx(ctx, tx, id, "grants_changed", nil); err != nil {
 				return err
 			}
 		}
@@ -422,8 +424,7 @@ func (svc *Service) SetEnabled(ctx context.Context, actor audit.Actor, id string
 			return err
 		}
 		if !enabled {
-			if _, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-				Reason: sql.NullString{String: "disabled", Valid: true}, UserID: id, ExceptHash: []byte{}}); err != nil {
+			if err := svc.revokeUserSessionsTx(ctx, tx, id, "disabled", nil); err != nil {
 				return err
 			}
 		}

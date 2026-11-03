@@ -382,8 +382,7 @@ func (svc *Service) ChangePassword(ctx context.Context, p *Principal, current, n
 		if err := tx.Q.DeleteThrottle(ctx, accountKey(p.User)); err != nil {
 			return err
 		}
-		if _, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			Reason: sql.NullString{String: "password_changed", Valid: true}, UserID: p.User.ID, ExceptHash: p.tokenHash}); err != nil {
+		if err := svc.revokeUserSessionsTx(ctx, tx, p.User.ID, "password_changed", p.tokenHash); err != nil {
 			return err
 		}
 		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorUser, ID: p.User.ID}, Action: "user.password.changed",
@@ -443,8 +442,7 @@ func (svc *Service) recoveryLogin(ctx context.Context, token string, meta Sessio
 		} else if err != nil {
 			return err
 		}
-		if _, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			Reason: sql.NullString{String: "breakglass", Valid: true}, UserID: opID, ExceptHash: []byte{}}); err != nil {
+		if err := svc.revokeUserSessionsTx(ctx, tx, opID, "breakglass", nil); err != nil {
 			return err
 		}
 		n, err := tx.Q.DeleteTOTP(ctx, opID)

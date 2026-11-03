@@ -50,6 +50,8 @@ type Principal struct {
 	RootTokenID string
 	tokenHash   []byte
 	csrfSecret  []byte
+	// revGen is the revocation generation the principal was authenticated under (StreamWatch).
+	revGen uint64
 }
 
 // MFASatisfied reports whether this session completed MFA (or does not need it).
@@ -156,6 +158,7 @@ func (svc *Service) authenticate(ctx context.Context, token string, touch bool) 
 	if token == "" || len(token) > 128 {
 		return nil, ErrUnauthorized
 	}
+	gen := svc.rev.gen.Load()
 	h := hashSessionToken(token)
 	row, err := svc.s.R().GetWebSession(ctx, h)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -173,7 +176,7 @@ func (svc *Service) authenticate(ctx context.Context, token string, touch bool) 
 		return nil, ErrUnauthorized
 	}
 	p := &Principal{User: op, SessionID: row.DisplayID, Method: row.AuthMethod, Provider: row.AuthProvider, AuthAt: time.UnixMicro(row.AuthAt).UTC(),
-		ExpiresAt: time.UnixMicro(row.AbsoluteExpiresAt).UTC(), tokenHash: h, csrfSecret: row.CsrfSecret}
+		ExpiresAt: time.UnixMicro(row.AbsoluteExpiresAt).UTC(), tokenHash: h, csrfSecret: row.CsrfSecret, revGen: gen}
 	if row.MfaAt.Valid {
 		t := time.UnixMicro(row.MfaAt.Int64).UTC()
 		p.MFAAt = &t
@@ -237,8 +240,7 @@ func (svc *Service) Rotate(ctx context.Context, p *Principal, meta SessionMeta) 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Q.RevokeWebSession(ctx, db.RevokeWebSessionParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			RevokeReason: sql.NullString{String: "rotated", Valid: true}, IDHash: p.tokenHash}); err != nil {
+		if _, err := svc.revokeWebSessionTx(ctx, tx, p.tokenHash, "rotated"); err != nil {
 			return err
 		}
 		var mfa *time.Time
@@ -261,8 +263,7 @@ func (svc *Service) Rotate(ctx context.Context, p *Principal, meta SessionMeta) 
 // the given authentication times (mfaAt nil: no MFA). It fails with ErrUnauthorized when p's session was already
 // revoked, so a session can be rotated only once.
 func (svc *Service) rotateTx(ctx context.Context, tx *store.Tx, p *Principal, authAt time.Time, mfaAt *time.Time, meta SessionMeta) (string, error) {
-	n, err := tx.Q.RevokeWebSession(ctx, db.RevokeWebSessionParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-		RevokeReason: sql.NullString{String: "rotated", Valid: true}, IDHash: p.tokenHash})
+	n, err := svc.revokeWebSessionTx(ctx, tx, p.tokenHash, "rotated")
 	if err != nil {
 		return "", err
 	}
@@ -284,8 +285,7 @@ func (svc *Service) rotateTx(ctx context.Context, tx *store.Tx, p *Principal, au
 // Logout revokes the session (Hallpass HP-OIDC-015: provider logout is separate and not global).
 func (svc *Service) Logout(ctx context.Context, token string) error {
 	return svc.s.W().TxNamed(ctx, "auth.logout", func(tx *store.Tx) error {
-		_, err := tx.Q.RevokeWebSession(ctx, db.RevokeWebSessionParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			RevokeReason: sql.NullString{String: "logout", Valid: true}, IDHash: hashSessionToken(token)})
+		_, err := svc.revokeWebSessionTx(ctx, tx, hashSessionToken(token), "logout")
 		return err
 	})
 }
@@ -325,6 +325,9 @@ func (svc *Service) RevokeSession(ctx context.Context, userID, displayID, reason
 		if err == nil && n == 0 {
 			return apperr.New(apperr.CodeNotFound, "session not found")
 		}
+		if err == nil {
+			svc.revokedAfterCommit(tx, revocation{userID: userID, sessionID: displayID})
+		}
 		return err
 	})
 }
@@ -332,9 +335,7 @@ func (svc *Service) RevokeSession(ctx context.Context, userID, displayID, reason
 // RevokeAllSessions revokes every session of an user (admin action or security event).
 func (svc *Service) RevokeAllSessions(ctx context.Context, userID, reason string) error {
 	return svc.s.W().TxNamed(ctx, "auth.revoke_all", func(tx *store.Tx) error {
-		_, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			Reason: sql.NullString{String: reason, Valid: true}, UserID: userID, ExceptHash: []byte{}})
-		return err
+		return svc.revokeUserSessionsTx(ctx, tx, userID, reason, nil)
 	})
 }
 

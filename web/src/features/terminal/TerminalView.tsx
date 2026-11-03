@@ -4,6 +4,7 @@ import type { Terminal } from 'ghostty-web'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, unwrap, type RecordingRecord } from '@/api/client'
 import { API_PREFIX } from '@/api/session'
+import { endReason, sessionStillValid } from '@/api/streams'
 import { clock } from '@/lib/format'
 import { createTerminal, fitFont } from './ghostty'
 import { apply, emptySummary, indexAt, MAX_IDLE_MS, offsetMs, renderTo, type RecordingSummary } from './records'
@@ -56,12 +57,15 @@ function useTerminal() {
   return { ref, box, term, error }
 }
 
-function StatusBadges({ sum, live }: { sum: RecordingSummary; live?: 'connecting' | 'live' | 'ended' }) {
+type LiveState = 'connecting' | 'live' | 'ended' | 'denied'
+
+function StatusBadges({ sum, live }: { sum: RecordingSummary; live?: LiveState }) {
   return (
     <Group gap={6}>
       {live === 'live' && <Badge color="owlGreen" leftSection={<Box w={6} h={6} style={{ borderRadius: 3, background: 'currentColor' }} />}>Live · watch-only</Badge>}
       {live === 'connecting' && <Badge color="owlYellow">Connecting…</Badge>}
       {live === 'ended' && <Badge color="gray">Stream ended</Badge>}
+      {live === 'denied' && <Badge color="owlRed">Access lost</Badge>}
       {sum.cols > 0 && <Badge color="gray" variant="outline">{sum.cols}×{sum.rows}</Badge>}
       {sum.gaps > 0 && (
         <Tooltip label="The recorder re-attached or a viewer fell behind; output in between may be missing">
@@ -78,33 +82,55 @@ function StatusBadges({ sum, live }: { sum: RecordingSummary; live?: 'connecting
   )
 }
 
-/** The live, watch-only terminal: stored output first, then live output, over Server-Sent Events. */
+/**
+ * The live, watch-only terminal: stored output first, then live output, over Server-Sent Events. The server ends the
+ * stream when the viewer's access does (SM-AUTH-007): a removed grant shows "Access lost"; an invalid session is
+ * re-checked and either resumes (rotated session) or goes to sign-in.
+ */
 function LiveTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   const { ref, box, term, error } = useTerminal()
   const [sum, setSum] = useState<RecordingSummary>(emptySummary)
-  const [state, setState] = useState<'connecting' | 'live' | 'ended'>('connecting')
+  const [state, setState] = useState<LiveState>('connecting')
+  const [attempt, setAttempt] = useState(0)
+  // What this terminal has drawn, kept across reconnects so output is never applied twice.
+  const drawn = useRef<RecordingSummary>(emptySummary())
   useEffect(() => {
     if (!term) return
-    let s = emptySummary()
-    const es = new EventSource(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/terminal`)
+    let closed = false
+    const after = drawn.current.lastSeq
+    const es = new EventSource(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/terminal${after > 0 ? `?after=${after}` : ''}`)
     es.onopen = () => setState('live')
     es.onerror = () => setState(es.readyState === EventSource.CLOSED ? 'ended' : 'connecting')
     es.addEventListener('record', (ev) => {
       const r = JSON.parse((ev as MessageEvent<string>).data) as RecordingRecord
       // EventSource resumes after a reconnect with Last-Event-ID, so a record is never applied twice.
-      if (r.seq <= s.lastSeq) return
-      s = apply(term, s, r)
-      setSum(s)
+      if (r.seq <= drawn.current.lastSeq) return
+      drawn.current = apply(term, drawn.current, r)
+      setSum(drawn.current)
     })
-    es.addEventListener('end', () => {
+    es.addEventListener('end', (ev) => {
       es.close()
-      setState('ended')
+      const reason = endReason(ev)
+      if (reason === 'forbidden') setState('denied')
+      else if (reason !== 'unauthenticated') setState('ended')
+      else {
+        setState('connecting')
+        void sessionStillValid().then((ok) => {
+          if (closed) return
+          if (ok) setAttempt((n) => n + 1)
+          else setState('ended')
+        })
+      }
     })
-    return () => es.close()
-  }, [term, spaceId, runId])
+    return () => {
+      closed = true
+      es.close()
+    }
+  }, [term, spaceId, runId, attempt])
   return (
     <Stack gap="xs">
       <StatusBadges sum={sum} live={state} />
+      {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
       <Box ref={box} className="sm-terminal" style={{ overflow: 'auto', maxHeight: '70vh' }}>
         <div ref={ref} data-testid="terminal" aria-label="Run terminal (watch-only)" />

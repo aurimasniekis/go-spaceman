@@ -156,3 +156,17 @@ func TestOutboundEvents(t *testing.T) {
 		t.Fatalf("env: %+v %v", c2, err)
 	}
 }
+
+// SM-AUTH-007 (ADR-0033): the periodic stream re-check is bounded to 1 s … 60 s.
+func TestStreamRevalidateBounds(t *testing.T) {
+	for d, ok := range map[time.Duration]bool{time.Second: true, 30 * time.Second: true, time.Minute: true, 61 * time.Second: false, 500 * time.Millisecond: false} {
+		cfg := Default()
+		cfg.Mode = ModeDevelopment
+		cfg.PublicURL = "http://127.0.0.1:8080"
+		cfg.Auth.StreamRevalidate = Duration(d)
+		err := cfg.Validate()
+		if ok != (err == nil) || (!ok && !strings.Contains(err.Error(), "stream_revalidate")) {
+			t.Errorf("stream_revalidate %s: %v", d, err)
+		}
+	}
+}

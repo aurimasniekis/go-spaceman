@@ -2,13 +2,11 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
-	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // CreateSessionTx starts a session for a user authenticated by an external identity provider, inside the
@@ -74,8 +72,7 @@ func (svc *Service) ReauthTOTP(ctx context.Context, p *Principal, code string, m
 
 // rotateWithAuthTx revokes the current session and issues a new one with auth_at = now (same method).
 func (svc *Service) rotateWithAuthTx(ctx context.Context, tx *store.Tx, p *Principal, mfaAt *time.Time, meta SessionMeta) (string, error) {
-	n, err := tx.Q.RevokeWebSession(ctx, db.RevokeWebSessionParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-		RevokeReason: sql.NullString{String: "rotated", Valid: true}, IDHash: p.tokenHash})
+	n, err := svc.revokeWebSessionTx(ctx, tx, p.tokenHash, "rotated")
 	if err != nil {
 		return "", err
 	}

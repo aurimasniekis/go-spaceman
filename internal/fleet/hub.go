@@ -241,6 +241,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		return err
 	}
 	go h.dispatchLoop(ctx, s)
+	go h.credentialLoop(ctx, s)
 	s.kick <- struct{}{}
 
 	for {
@@ -534,6 +535,27 @@ func (h *Hub) sendReconcile(ctx context.Context, s *session) error {
 		rec.Runs = append(rec.Runs, proto.DesiredRun{RunID: r.ID, SpaceID: r.SpaceID, Generation: r.Generation, Desired: r.Desired})
 	}
 	return s.send(proto.TypeReconcile, h.svc.now(), rec)
+}
+
+// credentialLoop re-checks the connection's node credential and the node's state every CredentialRecheck and closes
+// the connection once either is no longer valid (SM-AUTH-007, ADR-0033). Disabling, revoking and re-enrolling a node
+// close the connection at once; this is the backstop for credential expiry and changes made outside this process.
+// Without central the node stops its runs after the lease and disconnect grace.
+func (h *Hub) credentialLoop(ctx context.Context, s *session) {
+	t := time.NewTicker(h.svc.opts.CredentialRecheck)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			if !h.svc.nodeCredentialValid(ctx, s.nodeID, s.credID) {
+				s.log.Info("node credential no longer valid; closing the connection")
+				s.close(websocket.StatusPolicyViolation, "node credential no longer valid")
+				return
+			}
+		}
+	}
 }
 
 // dispatchLoop delivers undelivered commands whenever kicked. Delivery is at-least-once: a command stays "sent"

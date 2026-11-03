@@ -9,6 +9,9 @@ protects and what it does not.
   like missing ones. API tokens are limited to their own grants and to their creator's.
 - **Strong sign-in.** Argon2id passwords, mandatory TOTP for privileged accounts, recovery codes, throttling, step-up for
   sensitive actions, CSRF protection and same-origin checks for browser sessions.
+- **Revocation is immediate and bounded.** Revoking a session, token or grant ends open terminals and live updates as
+  soon as the change commits; expiry is caught within `auth.stream_revalidate` (at most 60 s). See
+  [When access ends](/operators/access#when-access-ends) (ADR-0033).
 - **Secrets stay out of the runner.** herdr-core stores a terminal's environment in plain text, so harness secrets reach
   the program through a launcher that reads and deletes a mode-0600 file instead of the terminal environment
   (ADR-0009). Run credentials are scoped to one run and revoked when it ends.

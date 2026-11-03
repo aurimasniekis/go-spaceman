@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Security
+- Revocation reaches open streams at once (SM-AUTH-007, ADR-0033): signing out, revoking a session or API token,
+  rotating the root token, disabling a user, resetting a password or changing grants ends affected live terminals and
+  change-feed streams as soon as the change commits. A removed space grant hides that space's changes immediately and
+  ends its terminals with "Access lost". Expiry, idle timeout and changes made while central was stopped are caught by
+  a periodic re-check (`auth.stream_revalidate`, default 30 s), which now also re-checks node connections' credentials.
+  The web UI returns to sign-in when its session is gone and reconnects when it was only rotated.
+
+### Changed
+- `auth.stream_revalidate` accepts at most 60 s (was 5 min).
+
 ### Fixed
 - Live updates: a browser whose change-feed position is ahead of the server (after a restore from backup) now gets a gap
   and reloads instead of silently skipping changes.

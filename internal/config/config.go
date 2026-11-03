@@ -145,8 +145,10 @@ type AuthConfig struct {
 	PasswordMinLength  int      `yaml:"password_min_length"`
 	RequireTOTP        bool     `yaml:"require_totp"`
 	LocalLoginDisabled bool     `yaml:"local_login_disabled"`
-	// StreamRevalidate bounds how long an open live stream (SSE, terminal) may outlive a token or session revocation
-	// (SM-AUTH-007).
+	// StreamRevalidate is how often an open live stream (change feed, terminal) and a node connection re-check their
+	// credential and authorization. Revocations committed by central end affected streams at once; this interval
+	// bounds everything else (expiry, idle timeout, changes made while central was stopped). 1 s to 60 s, default
+	// 30 s (SM-AUTH-007, ADR-0033).
 	StreamRevalidate Duration `yaml:"stream_revalidate"`
 }
 

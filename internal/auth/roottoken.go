@@ -138,6 +138,7 @@ func (svc *Service) AuthenticateRootToken(ctx context.Context, token, ip string)
 	if !strings.HasPrefix(token, RootTokenPrefix) || len(token) != len(RootTokenPrefix)+43 {
 		return nil, ErrUnauthorized
 	}
+	gen := svc.rev.gen.Load()
 	macs, err := svc.tokenMACs(token)
 	if err != nil {
 		return nil, err
@@ -160,7 +161,7 @@ func (svc *Service) AuthenticateRootToken(ctx context.Context, token, ip string)
 					Ip: sql.NullString{String: ip, Valid: ip != ""}, ID: r.ID, Since: sql.NullInt64{Int64: tx.Now.Add(-apiTokenTouchEvery).UnixMicro(), Valid: true}})
 			})
 		}
-		return &Principal{RootTokenID: r.ID, SessionID: r.ID, Method: MethodRoot, AuthAt: now, ExpiresAt: neverExpiresAt}, nil
+		return &Principal{RootTokenID: r.ID, SessionID: r.ID, Method: MethodRoot, AuthAt: now, ExpiresAt: neverExpiresAt, revGen: gen}, nil
 	}
 	return nil, ErrUnauthorized
 }
@@ -201,6 +202,7 @@ func (svc *Service) revokeRootTokens(ctx context.Context, tx *store.Tx, actor au
 		return err
 	}
 	svc.reloadAfterCommit(ctx, tx)
+	svc.revokedAfterCommit(tx, revocation{tokenID: old.ID})
 	tx.AfterCommit(func() {
 		if svc.bus != nil {
 			svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTokenRevoked, Key: old.ID})

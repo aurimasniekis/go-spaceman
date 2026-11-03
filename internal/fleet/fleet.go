@@ -31,6 +31,10 @@ type Options struct {
 	LeaseTTL          time.Duration
 	DisconnectGrace   time.Duration
 	EnrollmentTTL     time.Duration
+	// CredentialRecheck is how often a live node connection re-checks its node credential and node state, the
+	// backstop for credential expiry and changes made outside this process; disabling, revoking and re-enrolling a
+	// node close its connection at once (SM-AUTH-007, ADR-0033). Default 30 s.
+	CredentialRecheck time.Duration
 	Clock             clock.Clock
 	Log               *slog.Logger
 	Metrics           *metrics.Metrics
@@ -79,6 +83,9 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	}
 	if o.EnrollmentTTL <= 0 {
 		o.EnrollmentTTL = 24 * time.Hour
+	}
+	if o.CredentialRecheck <= 0 {
+		o.CredentialRecheck = 30 * time.Second
 	}
 	if o.Clock == nil {
 		o.Clock = clock.System{}

@@ -59,7 +59,7 @@ func (c *Config) Validate() error {
 	v.durationRange("auth.session_idle", c.Auth.SessionIdle, time.Minute, 24*time.Hour)
 	v.durationRange("auth.session_absolute", c.Auth.SessionAbsolute, c.Auth.SessionIdle.D(), 30*24*time.Hour)
 	v.durationRange("auth.reauth_window", c.Auth.ReauthWindow, time.Minute, time.Hour)
-	v.durationRange("auth.stream_revalidate", c.Auth.StreamRevalidate, time.Second, 5*time.Minute)
+	v.durationRange("auth.stream_revalidate", c.Auth.StreamRevalidate, time.Second, time.Minute)
 	if c.Auth.PasswordMinLength < 12 && prod {
 		v.add("auth.password_min_length must be at least 12 in production")
 	}

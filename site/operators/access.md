@@ -49,6 +49,28 @@ token and its creator are allowed, so a token loses whatever its creator loses. 
 
 <Shot name="auth-tokens" alt="API tokens page listing terraform-ci and grafana-readonly with their grants" caption="Scoped API tokens" />
 
+## When access ends
+
+Every request is checked when it arrives, so a revoked session, token or grant is refused from the next request on.
+Open connections follow this policy:
+
+| Change | Open live terminals and live updates |
+|---|---|
+| Sign out, a session revoked on the **Account** page, an API token or the root token revoked or rotated, a user disabled, a password changed or reset, an authenticator changed, grants changed | End at once. The browser checks its session and returns to sign-in if it is gone. |
+| A user's grant for a space removed | That space's live updates stop at once. Its live terminals end and show **Access lost**. |
+| A session expires or idles out, an API token expires, a change made with central stopped (`spaceman admin`) | End within `auth.stream_revalidate` (default 30 s, at most 60 s). |
+| A node disabled, revoked or re-enrolled | Its connection closes at once. |
+| A node credential expires | Its connection closes within `auth.stream_revalidate`, and the node cannot reconnect with it. |
+| A run stopped or ended | Its run credential is revoked, and the run's next tool call fails. |
+
+An open stream never counts as activity, so a tab left open cannot keep an idle session alive. Each open stream
+re-checks its session or token once per interval, and once more when a matching revocation is committed.
+
+**Revocation never undoes completed actions.** Users, runs, tasks, messages and approvals created with a credential
+remain after the credential is revoked, and the audit log still attributes them to it. Runs keep running when the
+person who launched them loses access. To stop work, stop the run, pause the space or disable the node. A download
+that has already started finishes.
+
 ## Lost passwords and authenticators
 
 - **Forgotten password:** an administrator issues a single-use **password reset token** from the user's menu on the

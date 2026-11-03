@@ -231,6 +231,7 @@ func (svc *Service) RevokeAPIToken(ctx context.Context, actor audit.Actor, id st
 				return err
 			}
 			revoked := tid
+			svc.revokedAfterCommit(tx, revocation{tokenID: revoked})
 			tx.AfterCommit(func() {
 				if svc.bus != nil {
 					svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTokenRevoked, Key: revoked})
@@ -252,6 +253,7 @@ func (svc *Service) AuthenticateAPIToken(ctx context.Context, token, ip string) 
 	if !strings.HasPrefix(token, APITokenPrefix) || len(token) != len(APITokenPrefix)+43 {
 		return nil, ErrUnauthorized
 	}
+	gen := svc.rev.gen.Load()
 	macs, err := svc.tokenMACs(token)
 	if err != nil {
 		return nil, err
@@ -284,5 +286,5 @@ func (svc *Service) AuthenticateAPIToken(ctx context.Context, token, ip string) 
 		})
 	}
 	return &Principal{User: op, SessionID: row.ID, TokenID: row.ID, TokenParentID: row.ParentTokenID.String, Method: MethodToken,
-		AuthAt: now, ExpiresAt: time.UnixMicro(row.ExpiresAt)}, nil
+		AuthAt: now, ExpiresAt: time.UnixMicro(row.ExpiresAt), revGen: gen}, nil
 }

@@ -717,6 +717,67 @@
   - Real-harness evidence for waking and routing is the simulated suite plus the dev stack (stub harness); no real
     Claude Code or Codex run was exercised for this package.
 
+### ADR-0033 — Revocation reaches open streams at once, with a bounded periodic backstop (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (M4-01, SM-AUTH-007).
+- **Context:** SM-AUTH-007 asks that revocation applies to requests and to active streams under a documented bounded
+  policy. Every request is authenticated and authorized when it arrives, so requests were already covered. Long-lived
+  connections were not: the change feed (`GET /watch`) and the live terminal (`GET …/runs/{run}/terminal`) re-checked
+  their principal only every `auth.stream_revalidate` (default 30 s, accepted up to 5 min), and a node connection
+  (`/agent/v1/connect`) was checked only when it connected. The policy defines how long revoked access may continue,
+  so it is recorded as a **security-relevant change**.
+- **Inventory (before → after):**
+
+  | Credential or connection | Revoked by | Before | After |
+  |---|---|---|---|
+  | Session cookie (password, break-glass) | logout, revoking one or all sessions, rotation (step-up, MFA), password change or reset, MFA enrollment or removal, grant change, user disabled, identity unlinked | next request refused; open streams up to 30 s (5 min max) | next request refused; open streams end at once |
+  | SSO session (OIDC) | as above; SSO grants change at sign-in | as above | as above |
+  | API token | revoked (with the tokens it issued), creator disabled, creator's grants reduced | as above | as above (grant reduction: per-item filtering or `forbidden`, below) |
+  | Root token | rotated, revoked | as above | as above |
+  | Session or token expiry, session idle timeout | time | up to 30 s | up to `auth.stream_revalidate` (default 30 s, now at most 60 s) |
+  | Grant removed or reduced (space access) | user grants, SSO grants, token deleted | change feed filtered per item at once; terminal up to 30 s | change feed filtered per item at once (stream stays open while its credential is valid); terminal ends at once with `forbidden` |
+  | Node credential | node disabled or revoked, re-enrollment | connection closed at once | unchanged (closed at once) |
+  | Node credential expiry, revocation outside central | time, database change | connection kept until it dropped | connection closed within `auth.stream_revalidate` |
+  | Run credential | run stopped, ended, failed, relaunched; restore | every tool call authenticates it | unchanged (next tool call fails) |
+  | Downloads (recording, transcript, attachment) | — | authorized when the request starts | unchanged: bounded by the file, not re-checked mid-transfer |
+- **Decision:**
+  - **Event-driven revocation.** `auth.Revocations` is a small in-process notifier. Every transaction that revokes a
+    session, all of a user's sessions, an API token or the root token, or changes grants, registers a signal with
+    `tx.AfterCommit` (never inside the transaction; a rollback signals nothing; the authorization engine reloads before
+    the grant signal). Each open stream holds an `auth.StreamWatch` keyed by its user, session (token hash and display
+    ID) and token ID. A signal wakes the matching watches (a grant change wakes all), and the stream re-authorizes: it
+    resolves its principal again without marking the session active and applies its own permission check. A watch has
+    a one-slot channel, so bursts coalesce and no signal is lost. A revocation generation counter closes the race
+    between authenticating a request and registering its watch.
+  - **Periodic backstop.** Every stream also re-authorizes every `auth.stream_revalidate` (1 s to 60 s, default 30 s;
+    the maximum was 5 min). This covers expiry, idle timeout and anything changed outside this process (the offline
+    CLI). Node connections re-check their credential and node state on the same interval.
+  - **Stream endings.** A stream closed for access reasons ends with `event: end` and `{"reason":"unauthenticated"}`
+    (the credential is no longer valid) or `{"reason":"forbidden"}` (still valid, but no longer grants
+    `terminal:watch` in the space). The change feed never ends as `forbidden`: it filters each change by the current
+    grants, so a space whose grant was removed disappears from the next change on. The web UI re-checks its session on
+    `unauthenticated`: a session that is gone goes to sign-in; a session rotated by a step-up reconnects where it left
+    off. A terminal that ends as `forbidden` shows "Access lost".
+  - **Cost.** A re-check is one principal lookup on the read pool (session or token row, user, grants: about four
+    indexed reads; tokens may record their last use at most once a minute) plus an in-memory Casbin check. Each stream
+    re-checks once per interval and once per signal that matches it; a grant change re-checks every open stream once.
+    No stream polls the database more often than that. Node connections cost two indexed reads per interval.
+  - **Revocation never undoes completed actions.** Revoking a credential refuses its next request and ends its
+    streams. Operations already committed with it stay committed and audited under it: users it created, runs it
+    launched (which keep running), approvals it decided (each use still rechecks the approver, SM-APPR-003), messages,
+    tasks and events. Stopping work is a separate, explicit action (stop the run, pause the space, disable the node).
+- **Alternatives:** periodic re-checks only, as Hallpass's change feed does (the bound would be the interval for every
+  revocation); a shorter interval (more database reads for every open tab, and still not immediate); closing streams
+  from the eventbus topics (the bus may drop events for a slow subscriber, and it carried no session revocations);
+  per-stream database polling at a high frequency (cost grows with open tabs).
+- **Consequences:**
+  - Revocations made by this central end affected streams within milliseconds (tests assert under 5 s with the
+    periodic re-check at 60 s). Expiry and out-of-process changes are bounded by `auth.stream_revalidate`; a node
+    connection's bound is the same.
+  - A grant change wakes every stream for one re-check; grant changes are rare administrative actions.
+  - Configurations with `auth.stream_revalidate` above 60 s no longer validate.
+  - Not covered: a download already in progress continues to its end; data a viewer already received is not taken
+    back.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

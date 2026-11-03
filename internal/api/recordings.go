@@ -12,6 +12,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
@@ -95,7 +96,10 @@ func RecordingStreams(f *fleet.Service) []RawRoute {
 // terminalStream serves a live, watch-only terminal (SM-UI-004): stored records first (catch-up), then live records.
 // A viewer that falls behind is told about the gap and re-reads from storage; it never slows the node (SM-REC-004).
 //
-// Events: "record" (data: recording.Record JSON, id: seq), "gap", "end" (the run ended), "heartbeat".
+// Events: "record" (data: recording.Record JSON, id: seq), "gap", "heartbeat", and "end": data {} when the run ended, or
+// {"reason":"unauthenticated"|"forbidden"} when the viewer's credential stopped being valid or no longer grants
+// terminal:watch in the space. The stream guard re-authorizes at once after a committed revocation or grant change and
+// every StreamRevalidate otherwise (SM-AUTH-007, ADR-0033).
 func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.Service) {
 	ctx := r.Context()
 	spaceID, runID := r.PathValue("space_id"), r.PathValue("run_id")
@@ -113,6 +117,11 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
 		after, _ = strconv.ParseUint(v, 10, 64)
 	}
+	// Guard from the start, so a revocation committed during catch-up is not missed.
+	guard := d.guardStream(r, PrincipalFrom(ctx), func(p *auth.Principal) bool {
+		return d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), spaceID, authz.TerminalWatch)
+	})
+	defer guard.close()
 	v := f.Recordings().Subscribe(runID)
 	defer f.Recordings().Unsubscribe(v)
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -151,13 +160,6 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 	}
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
-	reval := d.StreamRevalidate
-	if reval <= 0 {
-		reval = 30 * time.Second
-	}
-	revalidate := time.NewTicker(reval)
-	defer revalidate.Stop()
-	p := PrincipalFrom(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -188,14 +190,16 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 				return
 			}
 			fl.Flush()
-		case <-revalidate.C:
-			np, ok := d.revalidate(ctx, r, p)
-			if !ok || !d.Authz.AllowedAll(np.Subjects(), spaceID, authz.TerminalWatch) {
-				_, _ = fmt.Fprint(w, "event: end\ndata: {\"reason\":\"unauthenticated\"}\n\n")
-				fl.Flush()
+		case <-guard.revoked():
+			if reason := guard.check(ctx); reason != "" {
+				endStream(w, fl, reason)
 				return
 			}
-			p = np
+		case <-guard.due():
+			if reason := guard.check(ctx); reason != "" {
+				endStream(w, fl, reason)
+				return
+			}
 		}
 	}
 }

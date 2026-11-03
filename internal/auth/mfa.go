@@ -163,8 +163,7 @@ func (svc *Service) ConfirmTOTP(ctx context.Context, p *Principal, code string, 
 		if err := tx.Q.DeleteThrottle(ctx, mfaKey(opID)); err != nil {
 			return err
 		}
-		if _, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			Reason: sql.NullString{String: "mfa_changed", Valid: true}, UserID: opID, ExceptHash: p.tokenHash}); err != nil {
+		if err := svc.revokeUserSessionsTx(ctx, tx, opID, "mfa_changed", p.tokenHash); err != nil {
 			return err
 		}
 		if !p.Limited {
@@ -236,8 +235,7 @@ func (svc *Service) DisableTOTP(ctx context.Context, p *Principal) error {
 		if err := tx.Q.DeleteRecoveryCodes(ctx, p.User.ID); err != nil {
 			return err
 		}
-		if _, err := tx.Q.RevokeUserSessions(ctx, db.RevokeUserSessionsParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-			Reason: sql.NullString{String: "mfa_changed", Valid: true}, UserID: p.User.ID, ExceptHash: p.tokenHash}); err != nil {
+		if err := svc.revokeUserSessionsTx(ctx, tx, p.User.ID, "mfa_changed", p.tokenHash); err != nil {
 			return err
 		}
 		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorUser, ID: p.User.ID}, Action: "user.mfa.disabled",

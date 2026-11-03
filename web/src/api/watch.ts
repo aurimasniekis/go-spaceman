@@ -1,8 +1,9 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { keys } from './queries'
 import { API_PREFIX } from './session'
+import { endReason, sessionStillValid } from './streams'
 
 /** One change-feed entry (internal/changefeed.Change). */
 export interface Change {
@@ -125,17 +126,24 @@ export type WatchState = 'connecting' | 'live' | 'offline'
 
 /**
  * Subscribes to the durable change feed (GET /api/v1/watch, Server-Sent Events). EventSource reconnects by itself and
- * resumes with Last-Event-ID; a "gap" (the position was pruned) refetches everything.
+ * resumes with Last-Event-ID; a "gap" (the position was pruned) refetches everything. When the server ends the stream
+ * because its session is no longer valid (SM-AUTH-007), the session is re-checked: a session that is gone goes to
+ * sign-in, a rotated one reconnects.
  */
 export function useWatch(enabled: boolean): WatchState {
   const qc = useQueryClient()
   const [state, setState] = useState<WatchState>('connecting')
+  const [attempt, setAttempt] = useState(0)
+  // The last change seen, so a reconnect after a session check resumes where the stream ended.
+  const last = useRef(0)
   useEffect(() => {
     if (!enabled || typeof EventSource === 'undefined') return
-    const es = new EventSource(`${API_PREFIX}/watch`)
+    let closed = false
+    const es = new EventSource(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : ''}`)
     es.onopen = () => setState('live')
     es.onerror = () => setState(es.readyState === EventSource.CLOSED ? 'offline' : 'connecting')
     es.addEventListener('change', (ev) => {
+      last.current = Number((ev as MessageEvent<string>).lastEventId) || last.current
       try {
         applyChange(qc, JSON.parse((ev as MessageEvent<string>).data) as Change)
       } catch {
@@ -143,7 +151,23 @@ export function useWatch(enabled: boolean): WatchState {
       }
     })
     es.addEventListener('gap', () => void qc.invalidateQueries())
-    return () => es.close()
-  }, [enabled, qc])
+    es.addEventListener('end', (ev) => {
+      es.close()
+      if (endReason(ev) !== 'unauthenticated') {
+        setState('offline')
+        return
+      }
+      setState('connecting')
+      void sessionStillValid().then((ok) => {
+        if (closed) return
+        if (ok) setAttempt((n) => n + 1)
+        else setState('offline')
+      })
+    })
+    return () => {
+      closed = true
+      es.close()
+    }
+  }, [enabled, qc, attempt])
   return state
 }

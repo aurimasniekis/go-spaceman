@@ -321,6 +321,32 @@ func (svc *Service) AuthenticateNode(ctx context.Context, cred string) (*db.Node
 	return nil, "", errBadCredential
 }
 
+// nodeCredentialValid reports whether a connected node's credential is still unrevoked and unexpired and the node
+// is neither disabled nor revoked: the periodic re-check of a live connection (SM-AUTH-007). Errors count as valid,
+// so a transient database error does not drop healthy nodes; the next check decides.
+func (svc *Service) nodeCredentialValid(ctx context.Context, nodeID, credID string) bool {
+	n, err := svc.s.R().GetNode(ctx, nodeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	} else if err != nil {
+		return true
+	}
+	if n.State == "revoked" || n.State == "disabled" {
+		return false
+	}
+	creds, err := svc.s.R().ListNodeCredentials(ctx, nodeID)
+	if err != nil {
+		return true
+	}
+	now := svc.now()
+	for _, c := range creds {
+		if c.ID == credID {
+			return !c.RevokedAt.Valid && (!c.ExpiresAt.Valid || now.Before(time.UnixMicro(c.ExpiresAt.Int64)))
+		}
+	}
+	return false
+}
+
 // RotateCredential issues a new credential for an authenticated node; the old one keeps working for CredentialOverlap.
 func (svc *Service) RotateCredential(ctx context.Context, nodeID, currentCredID string) (string, error) {
 	cred, err := randToken(NodeCredPrefix)

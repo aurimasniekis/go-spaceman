@@ -35,9 +35,10 @@ const (
 //	GET /api/v1/watch?after=<seq>   (or the Last-Event-ID header on reconnect)
 //
 // Events: "change" (data: Change JSON, id: seq), "gap" (retention pruned changes after the requested position: data
-// {"after":…, "oldest":…}; the client must re-list), "heartbeat". Each change is filtered by the subscriber's
-// permissions. The principal is re-validated every StreamRevalidate interval: a revoked session or token ends the
-// stream within that bound (SM-AUTH-007).
+// {"after":…, "oldest":…}; the client must re-list), "heartbeat", and "end" (data {"reason":"unauthenticated"}) when the
+// stream's session or token stops being valid. Each change is filtered by the subscriber's current permissions, so a
+// removed grant hides the space's changes from the next one on. The stream guard re-validates the principal at once
+// after a committed revocation and every StreamRevalidate otherwise (SM-AUTH-007, ADR-0033).
 func (d *Deps) watchHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -73,12 +74,8 @@ func (d *Deps) watchHandler() http.Handler {
 		d.Metrics.SSEClientConnected()
 		defer d.Metrics.SSEClientDisconnected()
 
-		reval := d.StreamRevalidate
-		if reval <= 0 {
-			reval = 30 * time.Second
-		}
-		revalidate := time.NewTicker(reval)
-		defer revalidate.Stop()
+		guard := d.guardStream(r, p, nil)
+		defer guard.close()
 		heartbeat := time.NewTicker(watchHeartbeat)
 		defer heartbeat.Stop()
 
@@ -109,14 +106,18 @@ func (d *Deps) watchHandler() http.Handler {
 					return
 				}
 				fl.Flush()
-			case <-revalidate.C:
-				np, ok := d.revalidate(ctx, r, p)
-				if !ok {
-					_, _ = fmt.Fprint(w, "event: end\ndata: {\"reason\":\"unauthenticated\"}\n\n")
-					fl.Flush()
+			case <-guard.revoked():
+				if reason := guard.check(ctx); reason != "" {
+					endStream(w, fl, reason)
 					return
 				}
-				p = np
+				p = guard.principal()
+			case <-guard.due():
+				if reason := guard.check(ctx); reason != "" {
+					endStream(w, fl, reason)
+					return
+				}
+				p = guard.principal()
 			}
 		}
 	})
