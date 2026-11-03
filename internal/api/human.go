@@ -34,6 +34,32 @@ var HumanRules = map[string]Rule{
 	"list-human-type-options":    InSpace(authz.SpaceConfigRead),
 	"enable-space-human-type":    InSpace(authz.SpaceConfigWrite),
 	"disable-space-human-type":   InSpace(authz.SpaceConfigWrite),
+	"route-human-notification":   InSpace(authz.HumanRespond),
+	"list-human-policies":        Global(authz.HumanTypeRead),
+	"set-human-policy":           Global(authz.HumanTypeWrite),
+	"delete-human-policy":        Global(authz.HumanTypeWrite),
+	"list-space-human-policies":  InSpace(authz.SpaceConfigRead),
+	"set-space-human-policy":     InSpace(authz.SpaceConfigWrite),
+	"delete-space-human-policy":  InSpace(authz.SpaceConfigWrite),
+}
+
+// HumanPolicies lists stored policies and the policy in force for each type.
+type HumanPolicies struct {
+	Items     []human.Policy `json:"items" doc:"Stored policies of this scope"`
+	Effective []human.Policy `json:"effective" doc:"The policy that applies to each type here, with its source"`
+}
+
+// HumanPolicyPath identifies the action type a policy names.
+type HumanPolicyPath struct {
+	ActionType string `path:"action_type" enum:"all,question,approval,todo,message,custom"`
+}
+
+// optionalVersion is the If-Match version when one is sent, else 0 (create or overwrite).
+func optionalVersion(m IfMatch) (int64, error) {
+	if m.IfMatch == "" {
+		return 0, nil
+	}
+	return m.Version()
 }
 
 // HumanTypeDraftInput is the editable content of a type version.
@@ -439,6 +465,103 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 			}) (*struct{}, error) {
 				if err := svc.DisableType(ctx, Actor(ctx), in.SpaceID, in.TypeID); err != nil {
 					return nil, d.fail(ctx, "human_types.disable", err)
+				}
+				return &struct{}{}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "route-human-notification", Method: http.MethodPost,
+			Path:    "/spaces/{space_id}/human-actions/{action_id}/notifications/{notification_id}/route",
+			Summary: "Send a response notification to control or a running role",
+			Description: "For a notification no agent has acknowledged yet, typically one that could not be delivered because the requester's run ended " +
+				"and no successor or control run could take it. The routing is recorded with its provenance.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				HumanActionPath
+				NotificationID string `path:"notification_id" maxLength:"64"`
+				Body           struct {
+					To string `json:"to" maxLength:"60" doc:"control, or role:<name> (a running run of that role)"`
+				}
+			}) (*humanOut, error) {
+				a, err := svc.RouteNotification(ctx, Actor(ctx), in.SpaceID, in.ActionID, in.NotificationID, in.Body.To)
+				if err != nil {
+					return nil, d.fail(ctx, "human.route", err)
+				}
+				return humanResult(a), nil
+			})
+		ptags := []string{"human-action-policies"}
+		listPolicies := func(ctx context.Context, op, spaceID string) (*struct{ Body HumanPolicies }, error) {
+			items, err := svc.Policies(ctx, spaceID)
+			if err != nil {
+				return nil, d.fail(ctx, op, err)
+			}
+			eff, err := svc.EffectivePolicies(ctx, spaceID)
+			if err != nil {
+				return nil, d.fail(ctx, op, err)
+			}
+			return &struct{ Body HumanPolicies }{Body: HumanPolicies{Items: items, Effective: eff}}, nil
+		}
+		huma.Register(api, huma.Operation{OperationID: "list-human-policies", Method: http.MethodGet, Path: "/human-policies",
+			Summary:     "Installation defaults for reminders, escalation, rate limits and response routing",
+			Description: "Spaces override them per type. Without a stored default, the built-in policy of the type applies.", Tags: ptags},
+			func(ctx context.Context, _ *struct{}) (*struct{ Body HumanPolicies }, error) {
+				return listPolicies(ctx, "human_policies.list", "")
+			})
+		huma.Register(api, huma.Operation{OperationID: "set-human-policy", Method: http.MethodPut, Path: "/human-policies/{action_type}",
+			Summary:     "Set the installation default for a type (all: every type)",
+			Description: "With If-Match, the stored policy must be at that version. Pending actions get their reminder and escalation times recomputed.", Tags: ptags},
+			func(ctx context.Context, in *struct {
+				HumanPolicyPath
+				IfMatch
+				Body human.PolicyFields
+			}) (*struct{ Body *human.Policy }, error) {
+				v, err := optionalVersion(in.IfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "human_policies.set", err)
+				}
+				p, err := svc.SetPolicy(ctx, Actor(ctx), "", in.ActionType, v, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "human_policies.set", err)
+				}
+				return &struct{ Body *human.Policy }{Body: p}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "delete-human-policy", Method: http.MethodDelete, Path: "/human-policies/{action_type}",
+			Summary: "Remove an installation default (the next less specific policy applies)", Tags: ptags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *HumanPolicyPath) (*struct{}, error) {
+				if err := svc.DeletePolicy(ctx, Actor(ctx), "", in.ActionType); err != nil {
+					return nil, d.fail(ctx, "human_policies.delete", err)
+				}
+				return &struct{}{}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-space-human-policies", Method: http.MethodGet, Path: "/spaces/{space_id}/human-policies",
+			Summary: "A space's human-action policies and the policy in force for each type", Tags: ptags},
+			func(ctx context.Context, in *SpacePath) (*struct{ Body HumanPolicies }, error) {
+				return listPolicies(ctx, "human_policies.space", in.SpaceID)
+			})
+		huma.Register(api, huma.Operation{OperationID: "set-space-human-policy", Method: http.MethodPut, Path: "/spaces/{space_id}/human-policies/{action_type}",
+			Summary:     "Override the policy of a type in the space (all: every type)",
+			Description: "The most specific policy applies as a whole: space and type, space and all, default and type, default and all, built-in.", Tags: ptags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				HumanPolicyPath
+				IfMatch
+				Body human.PolicyFields
+			}) (*struct{ Body *human.Policy }, error) {
+				v, err := optionalVersion(in.IfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "human_policies.space_set", err)
+				}
+				p, err := svc.SetPolicy(ctx, Actor(ctx), in.SpaceID, in.ActionType, v, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "human_policies.space_set", err)
+				}
+				return &struct{ Body *human.Policy }{Body: p}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "delete-space-human-policy", Method: http.MethodDelete, Path: "/spaces/{space_id}/human-policies/{action_type}",
+			Summary: "Remove a space override", Tags: ptags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				HumanPolicyPath
+			}) (*struct{}, error) {
+				if err := svc.DeletePolicy(ctx, Actor(ctx), in.SpaceID, in.ActionType); err != nil {
+					return nil, d.fail(ctx, "human_policies.space_delete", err)
 				}
 				return &struct{}{}, nil
 			})

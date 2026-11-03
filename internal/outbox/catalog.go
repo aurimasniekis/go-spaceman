@@ -61,6 +61,9 @@ var (
 	HumanResolvedName      = Name{"human", "action", "resolved", 1}
 	HumanCancelledName     = Name{"human", "action", "cancelled", 1}
 	HumanExpiredName       = Name{"human", "action", "expired", 1}
+	HumanRemindedName      = Name{"human", "action", "reminded", 1}
+	HumanEscalatedName     = Name{"human", "action", "escalated", 1}
+	HumanReroutedName      = Name{"human", "action", "rerouted", 1}
 	ApprovalDecidedName    = Name{"approvals", "approval", "decided", 1}
 	ApprovalExecutedName   = Name{"approvals", "approval", "executed", 1}
 	MemorySyncedName       = Name{"memory", "collection", "synced", 1}
@@ -163,6 +166,28 @@ type HumanActionCancelled struct{ HumanAction }
 // HumanActionExpired: nobody responded before the expiry.
 type HumanActionExpired struct{ HumanAction }
 
+// HumanActionReminded: people were reminded of a pending action (ReminderCount says how often so far).
+type HumanActionReminded struct {
+	HumanAction
+	ReminderCount int64 `json:"reminder_count"`
+}
+
+// HumanActionEscalated: a pending action escalated per policy (Priority is the new one).
+type HumanActionEscalated struct {
+	HumanAction
+	FromPriority string `json:"from_priority"`
+	Reassigned   bool   `json:"reassigned"`
+}
+
+// HumanActionRerouted: the notification of an outcome was routed away from the requester's run (To is run, instance,
+// control or operators; Reason a fixed code). Never the response.
+type HumanActionRerouted struct {
+	HumanAction
+	NotificationID string `json:"notification_id"`
+	To             string `json:"to"`
+	RouteReason    string `json:"route_reason"`
+}
+
 // ApprovalDecided: an enforced approval was approved, denied, expired or withdrawn (never its arguments or resource).
 type ApprovalDecided struct {
 	SpaceID       string `json:"space_id"`
@@ -214,6 +239,9 @@ func (HumanActionCreated) eventName() Name   { return HumanCreatedName }
 func (HumanActionResolved) eventName() Name  { return HumanResolvedName }
 func (HumanActionCancelled) eventName() Name { return HumanCancelledName }
 func (HumanActionExpired) eventName() Name   { return HumanExpiredName }
+func (HumanActionReminded) eventName() Name  { return HumanRemindedName }
+func (HumanActionEscalated) eventName() Name { return HumanEscalatedName }
+func (HumanActionRerouted) eventName() Name  { return HumanReroutedName }
 func (ApprovalDecided) eventName() Name      { return ApprovalDecidedName }
 func (ApprovalExecuted) eventName() Name     { return ApprovalExecutedName }
 func (MemorySynced) eventName() Name         { return MemorySyncedName }
@@ -256,7 +284,8 @@ func Catalog() []CatalogEntry {
 	run := Run{SpaceID: "spc_…", RunID: "run_…", NodeID: "nod_…", Kind: "worker", Role: "dev", Harness: "claude-code", InstanceID: "ins_…", Generation: 3}
 	task := Task{SpaceID: "spc_…", TaskID: "tsk_…", Kind: "ordinary", Priority: "normal", AssigneeRole: "dev", OriginKind: "inbox", OriginID: "inb_…"}
 	hum := HumanAction{SpaceID: "spc_…", ActionID: "hum_…", Type: "question", Status: "open", Priority: "normal", RequesterKind: "agent", TaskID: "tsk_…"}
-	res, can, exp := hum, hum, hum
+	res, can, exp, esc := hum, hum, hum, hum
+	esc.Status, esc.Priority = "in_progress", "high"
 	res.Status, res.Outcome = "resolved", "answered"
 	can.Status, exp.Status = "cancelled", "expired"
 	code := int64(0)
@@ -272,6 +301,10 @@ func Catalog() []CatalogEntry {
 		{HumanResolvedName, HumanActionResolved{res}, "A person responded."},
 		{HumanCancelledName, HumanActionCancelled{can}, "The request was withdrawn."},
 		{HumanExpiredName, HumanActionExpired{exp}, "Nobody responded in time."},
+		{HumanRemindedName, HumanActionReminded{HumanAction: hum, ReminderCount: 1}, "People were reminded of a pending action."},
+		{HumanEscalatedName, HumanActionEscalated{HumanAction: esc, FromPriority: "normal", Reassigned: true}, "A pending action escalated per policy."},
+		{HumanReroutedName, HumanActionRerouted{HumanAction: res, NotificationID: "hnt_…", To: "control", RouteReason: "requester_ended"},
+			"A response was routed away from the requester's run, which had ended."},
 		{ApprovalDecidedName, ApprovalDecided{SpaceID: "spc_…", ApprovalID: "apv_…", HumanActionID: "hum_…", Operation: "mcp.github.create_issue", State: "approved",
 			RequesterRun: "run_…", DeciderType: "user"}, "An enforced approval was decided."},
 		{ApprovalExecutedName, ApprovalExecuted{SpaceID: "spc_…", ApprovalID: "apv_…", ExecutionID: "apx_…", Operation: "mcp.github.create_issue", Result: "succeeded"},

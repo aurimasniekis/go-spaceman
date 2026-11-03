@@ -761,6 +761,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/human-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Installation defaults for reminders, escalation, rate limits and response routing
+         * @description Spaces override them per type. Without a stored default, the built-in policy of the type applies.
+         */
+        get: operations["list-human-policies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/human-policies/{action_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the installation default for a type (all: every type)
+         * @description With If-Match, the stored policy must be at that version. Pending actions get their reminder and escalation times recomputed.
+         */
+        put: operations["set-human-policy"];
+        post?: never;
+        /** Remove an installation default (the next less specific policy applies) */
+        delete: operations["delete-human-policy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/human-types": {
         parameters: {
             query?: never;
@@ -1708,6 +1749,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/human-actions/{action_id}/notifications/{notification_id}/route": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a response notification to control or a running role
+         * @description For a notification no agent has acknowledged yet, typically one that could not be delivered because the requester's run ended and no successor or control run could take it. The routing is recorded with its provenance.
+         */
+        post: operations["route-human-notification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/human-actions/{action_id}/respond": {
         parameters: {
             query?: never;
@@ -1723,6 +1784,44 @@ export interface paths {
          */
         post: operations["respond-human-action"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's human-action policies and the policy in force for each type */
+        get: operations["list-space-human-policies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/human-policies/{action_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Override the policy of a type in the space (all: every type)
+         * @description The most specific policy applies as a whole: space and type, space and all, default and type, default and all, built-in.
+         */
+        put: operations["set-space-human-policy"];
+        post?: never;
+        /** Remove a space override */
+        delete: operations["delete-space-human-policy"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4730,11 +4829,22 @@ export interface components {
             dedup_key?: string;
             /** Format: date-time */
             due_at?: string;
+            /**
+             * Format: date-time
+             * @description When the action escalates if nobody resolves it
+             */
+            escalate_at?: string;
+            /** Format: date-time */
+            escalated_at?: string;
+            /** @description The priority before escalation */
+            escalated_from?: string;
             /** Format: date-time */
             expires_at?: string;
             follow_up_of?: string;
             id: string;
             inbox_item_id?: string;
+            /** Format: date-time */
+            next_reminder_at?: string;
             notifications?: components["schemas"]["HumanNotification"][];
             /** @description answered, approved, denied, completed or acknowledged; custom types define their own */
             outcome?: string;
@@ -4742,6 +4852,13 @@ export interface components {
             priority: "low" | "normal" | "high" | "urgent";
             /** Format: int64 */
             rank: number;
+            /** Format: date-time */
+            reminded_at?: string;
+            /**
+             * Format: int64
+             * @description How often people were reminded (SM-HUM-011)
+             */
+            reminder_count: number;
             request: unknown;
             requester_id?: string;
             /** @enum {string} */
@@ -4754,6 +4871,8 @@ export interface components {
             responded_at?: string;
             responded_by?: string;
             response: unknown;
+            /** @description Agent tools: the response, comments and reason are hidden from runs the action is not related to */
+            response_hidden?: boolean;
             space_id: string;
             /** @enum {string} */
             status: "open" | "in_progress" | "resolved" | "cancelled" | "expired";
@@ -4795,16 +4914,177 @@ export interface components {
         };
         HumanNotification: {
             /** Format: date-time */
+            acknowledged_at?: string;
+            /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             delivered_at?: string;
+            /**
+             * Format: date-time
+             * @description instance: rerouted when no run of the instance starts before this
+             */
+            hold_until?: string;
             id: string;
             /** @enum {string} */
             kind: "resolved" | "cancelled" | "expired";
+            /** @description The requester's run */
+            original_run?: string;
+            /** Format: int64 */
+            route_count?: number;
+            /** @enum {string} */
+            route_reason?: "" | "requester_ended" | "run_ended" | "hold_expired" | "operator" | "too_many_routes";
+            /** Format: date-time */
+            routed_at?: string;
+            /** @description The previous target (run:<id>, instance:<id>, control, operators) */
+            routed_from?: string;
             /** @enum {string} */
             state: "pending" | "delivered" | "acknowledged";
+            target_instance?: string;
+            /**
+             * @description run: one run; instance: the next run of the requester's agent instance; control: the space's control; operators: no agent can take it (undeliverable)
+             * @enum {string}
+             */
+            target_kind: "run" | "instance" | "control" | "operators";
             target_role?: string;
             target_run?: string;
+            /** @description An idle target is woken with a terminal notice */
+            wake: boolean;
+        };
+        HumanPolicies: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanPolicies.json
+             */
+            readonly $schema?: string;
+            /** @description The policy that applies to each type here, with its source */
+            effective: components["schemas"]["HumanPolicy"][];
+            /** @description Stored policies of this scope */
+            items: components["schemas"]["HumanPolicy"][];
+        };
+        HumanPolicy: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanPolicy.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            action_type: "all" | "question" | "approval" | "todo" | "message" | "custom";
+            /**
+             * Format: int64
+             * @description Escalate this long after the action was asked; 0: never
+             */
+            escalate_after_minutes: number;
+            /** @description Assign the action to this user when it escalates */
+            escalate_assignee: string;
+            /**
+             * @description Raise the priority to this (never lowers it); the order of the queue is unchanged
+             * @enum {string}
+             */
+            escalate_priority: "" | "high" | "urgent";
+            /**
+             * Format: int64
+             * @description next_launch: how long to wait for that run before rerouting
+             */
+            hold_minutes: number;
+            id?: string;
+            /** Format: int64 */
+            max_reminders: number;
+            /**
+             * Format: int64
+             * @description New actions of this type one agent run may ask per hour
+             */
+            rate_per_run_hour: number;
+            /**
+             * Format: int64
+             * @description New actions of this type agents of one space may ask per hour
+             */
+            rate_per_space_hour: number;
+            /**
+             * Format: int64
+             * @description Remind people this long after the action was asked; 0: no reminders
+             */
+            remind_after_minutes: number;
+            /**
+             * Format: int64
+             * @description Repeat the reminder this often; 0: once
+             */
+            remind_every_minutes: number;
+            /**
+             * @description When the requester's run has ended: reroute at once, or keep it for the next run of the same agent instance
+             * @enum {string}
+             */
+            requester_ended: "reroute" | "next_launch";
+            /** @description Effective policies: where they come from (space, default or built-in, with the type it names) */
+            source?: string;
+            /** @description Empty: the installation default */
+            space_id?: string;
+            /** @description Reroute to a live run of this role before control; empty: control */
+            successor_role: string;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /** Format: int64 */
+            version?: number;
+            /** @description Wake an idle requester with a one-line terminal notice (otherwise it reads the response the next time it checks its messages) */
+            wake_idle: boolean;
+        };
+        HumanPolicyFields: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HumanPolicyFields.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Escalate this long after the action was asked; 0: never
+             */
+            escalate_after_minutes: number;
+            /** @description Assign the action to this user when it escalates */
+            escalate_assignee: string;
+            /**
+             * @description Raise the priority to this (never lowers it); the order of the queue is unchanged
+             * @enum {string}
+             */
+            escalate_priority: "" | "high" | "urgent";
+            /**
+             * Format: int64
+             * @description next_launch: how long to wait for that run before rerouting
+             */
+            hold_minutes: number;
+            /** Format: int64 */
+            max_reminders: number;
+            /**
+             * Format: int64
+             * @description New actions of this type one agent run may ask per hour
+             */
+            rate_per_run_hour: number;
+            /**
+             * Format: int64
+             * @description New actions of this type agents of one space may ask per hour
+             */
+            rate_per_space_hour: number;
+            /**
+             * Format: int64
+             * @description Remind people this long after the action was asked; 0: no reminders
+             */
+            remind_after_minutes: number;
+            /**
+             * Format: int64
+             * @description Repeat the reminder this often; 0: once
+             */
+            remind_every_minutes: number;
+            /**
+             * @description When the requester's run has ended: reroute at once, or keep it for the next run of the same agent instance
+             * @enum {string}
+             */
+            requester_ended: "reroute" | "next_launch";
+            /** @description Reroute to a live run of this role before control; empty: control */
+            successor_role: string;
+            /** @description Wake an idle requester with a one-line terminal notice (otherwise it reads the response the next time it checks its messages) */
+            wake_idle: boolean;
         };
         HumanSpaceType: {
             /** Format: int64 */
@@ -6457,6 +6737,16 @@ export interface components {
              */
             readonly $schema?: string;
             version_id: string;
+        };
+        "Route-human-notificationRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Route-human-notificationRequest.json
+             */
+            readonly $schema?: string;
+            /** @description control, or role:<name> (a running run of that role) */
+            to: string;
         };
         SampleEvent: {
             data: unknown;
@@ -8466,6 +8756,102 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PendingHumanActions"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-human-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanPolicies"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-human-policy": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                action_type: "all" | "question" | "approval" | "todo" | "message" | "custom";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HumanPolicyFields"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanPolicy"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-human-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_type: "all" | "question" | "approval" | "todo" | "message" | "custom";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {
@@ -10787,6 +11173,44 @@ export interface operations {
             };
         };
     };
+    "route-human-notification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                action_id: string;
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Route-human-notificationRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanAction"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "respond-human-action": {
         parameters: {
             query?: never;
@@ -10815,6 +11239,106 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HumanAction"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-human-policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanPolicies"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-space-human-policy": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                action_type: "all" | "question" | "approval" | "todo" | "message" | "custom";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HumanPolicyFields"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HumanPolicy"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-space-human-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                action_type: "all" | "question" | "approval" | "todo" | "message" | "custom";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

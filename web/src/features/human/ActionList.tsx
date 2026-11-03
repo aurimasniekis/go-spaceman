@@ -8,7 +8,7 @@ import { atLeast, roleIn } from '@/lib/access'
 import { ago } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { ActionDetail } from './ActionDetail'
-import { HumanStatusBadge, isPending, PriorityBadge, requesterLabel, TypeBadge, type MessageReq } from './badges'
+import { FollowUpBadges, HumanStatusBadge, isPending, PriorityBadge, requesterLabel, TypeBadge, type MessageReq } from './badges'
 
 /**
  * A list of human actions with a detail drawer. Bulk operations are limited to safe ones (SM-HUI-003): claiming, and
@@ -76,6 +76,7 @@ export function ActionList({ actions, spaceNames, empty }: { actions: HumanActio
               <TypeBadge type={a.type} slug={a.type_slug} />
               <Text size="sm" style={{ flex: 1 }} truncate>{a.title}</Text>
               <PriorityBadge priority={a.priority} />
+              {isPending(a) && <FollowUpBadges action={a} />}
               {a.type === 'message' && !(a.request as MessageReq)?.requires_ack && isPending(a) && <Badge variant="outline" color="gray">FYI</Badge>}
               {a.blocks_task && isPending(a) && <Badge variant="outline" color="owlYellow">blocking</Badge>}
               {spaceNames && <Badge variant="default">{spaceNames[a.space_id] ?? a.space_id}</Badge>}

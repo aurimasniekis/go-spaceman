@@ -55,6 +55,9 @@ UPDATE approvals SET state = 'expired', state_reason = 'the approval was not use
 WHERE state = 'approved' AND uses_left > 0 AND valid_until <= sqlc.arg(now)
 RETURNING id, space_id;
 
+-- name: NextApprovalExpiry :one
+SELECT CAST(coalesce(min(valid_until), 0) AS INTEGER) AS t FROM approvals WHERE state = 'approved' AND uses_left > 0 AND valid_until IS NOT NULL;
+
 -- name: InsertApprovalExecution :exec
 INSERT INTO approval_executions (id, approval_id, state, started_at) VALUES (?, ?, 'executing', ?);
 

@@ -4651,6 +4651,19 @@
             "format": "date-time",
             "type": "string"
           },
+          "escalate_at": {
+            "description": "When the action escalates if nobody resolves it",
+            "format": "date-time",
+            "type": "string"
+          },
+          "escalated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "escalated_from": {
+            "description": "The priority before escalation",
+            "type": "string"
+          },
           "expires_at": {
             "format": "date-time",
             "type": "string"
@@ -4662,6 +4675,10 @@
             "type": "string"
           },
           "inbox_item_id": {
+            "type": "string"
+          },
+          "next_reminder_at": {
+            "format": "date-time",
             "type": "string"
           },
           "notifications": {
@@ -4684,6 +4701,15 @@
             "type": "string"
           },
           "rank": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reminded_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reminder_count": {
+            "description": "How often people were reminded (SM-HUM-011)",
             "format": "int64",
             "type": "integer"
           },
@@ -4719,6 +4745,10 @@
             "type": "string"
           },
           "response": {},
+          "response_hidden": {
+            "description": "Agent tools: the response, comments and reason are hidden from runs the action is not related to",
+            "type": "boolean"
+          },
           "space_id": {
             "type": "string"
           },
@@ -4789,6 +4819,7 @@
           "rank",
           "status",
           "response",
+          "reminder_count",
           "created_at",
           "updated_at",
           "version"
@@ -4850,11 +4881,20 @@
       "HumanNotification": {
         "additionalProperties": false,
         "properties": {
+          "acknowledged_at": {
+            "format": "date-time",
+            "type": "string"
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "delivered_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "hold_until": {
+            "description": "instance: rerouted when no run of the instance starts before this",
             "format": "date-time",
             "type": "string"
           },
@@ -4869,6 +4909,33 @@
             ],
             "type": "string"
           },
+          "original_run": {
+            "description": "The requester's run",
+            "type": "string"
+          },
+          "route_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "route_reason": {
+            "enum": [
+              "",
+              "requester_ended",
+              "run_ended",
+              "hold_expired",
+              "operator",
+              "too_many_routes"
+            ],
+            "type": "string"
+          },
+          "routed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "routed_from": {
+            "description": "The previous target (run:\u003cid\u003e, instance:\u003cid\u003e, control, operators)",
+            "type": "string"
+          },
           "state": {
             "enum": [
               "pending",
@@ -4877,18 +4944,320 @@
             ],
             "type": "string"
           },
+          "target_instance": {
+            "type": "string"
+          },
+          "target_kind": {
+            "description": "run: one run; instance: the next run of the requester's agent instance; control: the space's control; operators: no agent can take it (undeliverable)",
+            "enum": [
+              "run",
+              "instance",
+              "control",
+              "operators"
+            ],
+            "type": "string"
+          },
           "target_role": {
             "type": "string"
           },
           "target_run": {
             "type": "string"
+          },
+          "wake": {
+            "description": "An idle target is woken with a terminal notice",
+            "type": "boolean"
           }
         },
         "required": [
           "id",
           "kind",
+          "target_kind",
+          "wake",
           "state",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "HumanPolicies": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanPolicies.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "effective": {
+            "description": "The policy that applies to each type here, with its source",
+            "items": {
+              "$ref": "#/components/schemas/HumanPolicy"
+            },
+            "type": "array"
+          },
+          "items": {
+            "description": "Stored policies of this scope",
+            "items": {
+              "$ref": "#/components/schemas/HumanPolicy"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "effective"
+        ],
+        "type": "object"
+      },
+      "HumanPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanPolicy.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "action_type": {
+            "enum": [
+              "all",
+              "question",
+              "approval",
+              "todo",
+              "message",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "escalate_after_minutes": {
+            "description": "Escalate this long after the action was asked; 0: never",
+            "format": "int64",
+            "maximum": 43200,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "escalate_assignee": {
+            "description": "Assign the action to this user when it escalates",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "escalate_priority": {
+            "description": "Raise the priority to this (never lowers it); the order of the queue is unchanged",
+            "enum": [
+              "",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "hold_minutes": {
+            "description": "next_launch: how long to wait for that run before rerouting",
+            "format": "int64",
+            "maximum": 10080,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "max_reminders": {
+            "format": "int64",
+            "maximum": 20,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "rate_per_run_hour": {
+            "description": "New actions of this type one agent run may ask per hour",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "rate_per_space_hour": {
+            "description": "New actions of this type agents of one space may ask per hour",
+            "format": "int64",
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remind_after_minutes": {
+            "description": "Remind people this long after the action was asked; 0: no reminders",
+            "format": "int64",
+            "maximum": 43200,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remind_every_minutes": {
+            "description": "Repeat the reminder this often; 0: once",
+            "format": "int64",
+            "maximum": 43200,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "requester_ended": {
+            "description": "When the requester's run has ended: reroute at once, or keep it for the next run of the same agent instance",
+            "enum": [
+              "reroute",
+              "next_launch"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "description": "Effective policies: where they come from (space, default or built-in, with the type it names)",
+            "type": "string"
+          },
+          "space_id": {
+            "description": "Empty: the installation default",
+            "type": "string"
+          },
+          "successor_role": {
+            "description": "Reroute to a live run of this role before control; empty: control",
+            "maxLength": 48,
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "wake_idle": {
+            "description": "Wake an idle requester with a one-line terminal notice (otherwise it reads the response the next time it checks its messages)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action_type",
+          "remind_after_minutes",
+          "remind_every_minutes",
+          "max_reminders",
+          "escalate_after_minutes",
+          "escalate_priority",
+          "escalate_assignee",
+          "requester_ended",
+          "hold_minutes",
+          "successor_role",
+          "wake_idle",
+          "rate_per_run_hour",
+          "rate_per_space_hour"
+        ],
+        "type": "object"
+      },
+      "HumanPolicyFields": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HumanPolicyFields.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "escalate_after_minutes": {
+            "description": "Escalate this long after the action was asked; 0: never",
+            "format": "int64",
+            "maximum": 43200,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "escalate_assignee": {
+            "description": "Assign the action to this user when it escalates",
+            "maxLength": 64,
+            "type": "string"
+          },
+          "escalate_priority": {
+            "description": "Raise the priority to this (never lowers it); the order of the queue is unchanged",
+            "enum": [
+              "",
+              "high",
+              "urgent"
+            ],
+            "type": "string"
+          },
+          "hold_minutes": {
+            "description": "next_launch: how long to wait for that run before rerouting",
+            "format": "int64",
+            "maximum": 10080,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_reminders": {
+            "format": "int64",
+            "maximum": 20,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "rate_per_run_hour": {
+            "description": "New actions of this type one agent run may ask per hour",
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "rate_per_space_hour": {
+            "description": "New actions of this type agents of one space may ask per hour",
+            "format": "int64",
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "remind_after_minutes": {
+            "description": "Remind people this long after the action was asked; 0: no reminders",
+            "format": "int64",
+            "maximum": 43200,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remind_every_minutes": {
+            "description": "Repeat the reminder this often; 0: once",
+            "format": "int64",
+            "maximum": 43200,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "requester_ended": {
+            "description": "When the requester's run has ended: reroute at once, or keep it for the next run of the same agent instance",
+            "enum": [
+              "reroute",
+              "next_launch"
+            ],
+            "type": "string"
+          },
+          "successor_role": {
+            "description": "Reroute to a live run of this role before control; empty: control",
+            "maxLength": 48,
+            "type": "string"
+          },
+          "wake_idle": {
+            "description": "Wake an idle requester with a one-line terminal notice (otherwise it reads the response the next time it checks its messages)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "remind_after_minutes",
+          "remind_every_minutes",
+          "max_reminders",
+          "escalate_after_minutes",
+          "escalate_priority",
+          "escalate_assignee",
+          "requester_ended",
+          "hold_minutes",
+          "successor_role",
+          "wake_idle",
+          "rate_per_run_hour",
+          "rate_per_space_hour"
         ],
         "type": "object"
       },
@@ -9432,6 +9801,29 @@
         ],
         "type": "object"
       },
+      "Route-human-notificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Route-human-notificationRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "to": {
+            "description": "control, or role:\u003cname\u003e (a running run of that role)",
+            "maxLength": 60,
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "type": "object"
+      },
       "SampleEvent": {
         "additionalProperties": false,
         "properties": {
@@ -12841,6 +13233,147 @@
         "summary": "Pending human actions across your spaces",
         "tags": [
           "human-actions"
+        ]
+      }
+    },
+    "/human-policies": {
+      "get": {
+        "description": "Spaces override them per type. Without a stored default, the built-in policy of the type applies.",
+        "operationId": "list-human-policies",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanPolicies"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Installation defaults for reminders, escalation, rate limits and response routing",
+        "tags": [
+          "human-action-policies"
+        ]
+      }
+    },
+    "/human-policies/{action_type}": {
+      "delete": {
+        "operationId": "delete-human-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "all",
+                "question",
+                "approval",
+                "todo",
+                "message",
+                "custom"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove an installation default (the next less specific policy applies)",
+        "tags": [
+          "human-action-policies"
+        ]
+      },
+      "put": {
+        "description": "With If-Match, the stored policy must be at that version. Pending actions get their reminder and escalation times recomputed.",
+        "operationId": "set-human-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "all",
+                "question",
+                "approval",
+                "todo",
+                "message",
+                "custom"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanPolicyFields"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanPolicy"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set the installation default for a type (all: every type)",
+        "tags": [
+          "human-action-policies"
         ]
       }
     },
@@ -16295,6 +16828,84 @@
         ]
       }
     },
+    "/spaces/{space_id}/human-actions/{action_id}/notifications/{notification_id}/route": {
+      "post": {
+        "description": "For a notification no agent has acknowledged yet, typically one that could not be delivered because the requester's run ended and no successor or control run could take it. The routing is recorded with its provenance.",
+        "operationId": "route-human-notification",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Route-human-notificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanAction"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Send a response notification to control or a running role",
+        "tags": [
+          "human-actions"
+        ]
+      }
+    },
     "/spaces/{space_id}/human-actions/{action_id}/respond": {
       "post": {
         "description": "Outcomes depend on the type: question → answered, approval → approved or denied (needs approval:decide), todo → completed, message → acknowledged. Responses are final; of concurrent responses exactly one wins.",
@@ -16370,6 +16981,175 @@
         "summary": "Respond to a human action",
         "tags": [
           "human-actions"
+        ]
+      }
+    },
+    "/spaces/{space_id}/human-policies": {
+      "get": {
+        "operationId": "list-space-human-policies",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanPolicies"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's human-action policies and the policy in force for each type",
+        "tags": [
+          "human-action-policies"
+        ]
+      }
+    },
+    "/spaces/{space_id}/human-policies/{action_type}": {
+      "delete": {
+        "operationId": "delete-space-human-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "all",
+                "question",
+                "approval",
+                "todo",
+                "message",
+                "custom"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove a space override",
+        "tags": [
+          "human-action-policies"
+        ]
+      },
+      "put": {
+        "description": "The most specific policy applies as a whole: space and type, space and all, default and type, default and all, built-in.",
+        "operationId": "set-space-human-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "all",
+                "question",
+                "approval",
+                "todo",
+                "message",
+                "custom"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanPolicyFields"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanPolicy"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Override the policy of a type in the space (all: every type)",
+        "tags": [
+          "human-action-policies"
         ]
       }
     },

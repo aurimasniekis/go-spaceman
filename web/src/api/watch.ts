@@ -97,6 +97,9 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'role_template':
       void qc.invalidateQueries({ queryKey: keys.roleTemplates })
       break
+    case 'human_policy':
+      void qc.invalidateQueries({ queryKey: ['human-policies'] })
+      break
     case 'human_action':
       if (c.space_id) void qc.invalidateQueries({ queryKey: keys.human(c.space_id) })
       void qc.invalidateQueries({ queryKey: keys.humanPending })

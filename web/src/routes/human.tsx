@@ -1,4 +1,4 @@
-import { Group, SegmentedControl } from '@mantine/core'
+import { Checkbox, Group, SegmentedControl } from '@mantine/core'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import type { HumanType } from '@/api/client'
@@ -15,17 +15,21 @@ function HumanPage() {
   const pending = useHumanPending()
   const spaces = useSpaces()
   const [type, setType] = useState<HumanType | 'all'>('all')
+  const [followUp, setFollowUp] = useState(false)
   const names = Object.fromEntries((spaces.data ?? []).map((s) => [s.id, s.name]))
-  const items = (pending.data?.items ?? []).filter((a) => type === 'all' || a.type === type)
+  const overdue = (a: { reminder_count: number; escalated_at?: string }) => a.reminder_count > 0 || !!a.escalated_at
+  const items = (pending.data?.items ?? []).filter((a) => (type === 'all' || a.type === type) && (!followUp || overdue(a)))
+  const overdueCount = (pending.data?.items ?? []).filter(overdue).length
   const count = (t: HumanType) => (pending.data?.items ?? []).filter((a) => a.type === t).length
   return (
     <>
       <PageHeader title="Needs you" description="Questions, approvals, to-dos and messages waiting for a person, oldest first, across your spaces." />
       <ErrorAlert error={pending.error} />
-      <Group mb="sm">
+      <Group mb="sm" justify="space-between">
         <SegmentedControl value={type} onChange={(v) => setType(v as HumanType | 'all')}
           data={[{ value: 'all', label: `All (${pending.data?.items.length ?? 0})` },
             ...(['question', 'approval', 'todo', 'message'] as const).map((t) => ({ value: t, label: `${typeLabel[t]} (${count(t)})` }))]} />
+        <Checkbox size="xs" label={`Only reminded or escalated (${overdueCount})`} checked={followUp} onChange={(e) => setFollowUp(e.currentTarget.checked)} />
       </Group>
       <ActionList actions={items} spaceNames={names} empty="Nothing is waiting for you." />
     </>

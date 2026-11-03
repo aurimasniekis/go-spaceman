@@ -317,3 +317,69 @@ func TestTools(t *testing.T) {
 	must(t, err)
 	code(t, call(pc, "spaceman_message_reply", map[string]any{"message_id": sys.ID, "body": "ok"}, nil), apperr.CodeInvalid)
 }
+
+// SM-HUM-009: a human response reaches only its target: the run it is routed to, or the space's control. Another run of
+// the same role, a run of another role, and control of another space never see it, cannot acknowledge it, and get no
+// notice for it. With wake off it is not typed into the terminal but can still be read.
+func TestHumanResponsesReachOnlyTheirTarget(t *testing.T) {
+	f := newFx(t)
+	const (
+		peerRun  = "run_01cccccccccccccccccccccccc"
+		otherRun = "run_01dddddddddddddddddddddddd"
+		farCtrl  = "run_01eeeeeeeeeeeeeeeeeeeeeeee"
+	)
+	f.exec(
+		`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_b', 'bbb', 'B', 'nod_1', 'active', 'b', 0, 't', 0)`,
+		`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		 VALUES ('`+peerRun+`', 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'codex', 'ins_p', 'running', 'running', 'idle', '{}', 0, 't', 0)`,
+		`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		 VALUES ('`+otherRun+`', 'spc_a', 'nod_1', 1, 'worker', 'reviewer', 'codex', 'ins_o', 'running', 'running', 'idle', '{}', 0, 't', 0)`,
+		`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		 VALUES ('`+farCtrl+`', 'spc_b', 'nod_1', 1, 'control', 'control', 'codex', 'ins_f', 'running', 'running', 'idle', '{}', 0, 't', 0)`,
+		`UPDATE runs SET status = 'idle' WHERE id = '`+ctrlRun+`'`,
+		`INSERT INTO human_actions (id, space_id, type, title, requester_kind, requester_run, requester_role, rank, status, outcome, created_at, created_by, updated_at)
+		 VALUES ('hum_1', 'spc_a', 'question', 'Which?', 'agent', '`+wrkRun+`', 'implementor', 1, 'resolved', 'answered', 0, 't', 0)`,
+		`INSERT INTO human_actions (id, space_id, type, title, requester_kind, requester_run, requester_role, rank, status, outcome, created_at, created_by, updated_at)
+		 VALUES ('hum_2', 'spc_a', 'question', 'Gone?', 'agent', 'run_gone', 'implementor', 2, 'resolved', 'answered', 0, 't', 0)`,
+		`INSERT INTO human_actions (id, space_id, type, title, requester_kind, requester_run, requester_role, rank, status, outcome, created_at, created_by, updated_at)
+		 VALUES ('hum_3', 'spc_a', 'todo', 'Quiet', 'agent', '`+otherRun+`', 'reviewer', 3, 'resolved', 'completed', 0, 't', 0)`,
+		`INSERT INTO human_notifications (id, action_id, space_id, target_kind, target_run, kind, created_at) VALUES ('hnt_1', 'hum_1', 'spc_a', 'run', '`+wrkRun+`', 'resolved', 0)`,
+		`INSERT INTO human_notifications (id, action_id, space_id, target_kind, target_run, original_run, routed_from, route_reason, kind, created_at)
+		 VALUES ('hnt_2', 'hum_2', 'spc_a', 'control', '', 'run_gone', 'run:run_gone', 'requester_ended', 'resolved', 0)`,
+		`INSERT INTO human_notifications (id, action_id, space_id, target_kind, target_run, wake, kind, created_at) VALUES ('hnt_3', 'hum_3', 'spc_a', 'run', '`+otherRun+`', 0, 'resolved', 0)`,
+		`INSERT INTO human_notifications (id, action_id, space_id, target_kind, target_run, kind, created_at) VALUES ('hnt_4', 'hum_1', 'spc_a', 'operators', '', 'resolved', 0)`,
+	)
+	ids := func(rc Recipient) (out []string) {
+		in, err := f.svc.Fetch(f.ctx, rc)
+		must(t, err)
+		for _, h := range in.Human {
+			out = append(out, h.ID)
+		}
+		return out
+	}
+	peer := Recipient{SpaceID: "spc_a", RunID: peerRun, Role: "implementor"}
+	other := Recipient{SpaceID: "spc_a", RunID: otherRun, Role: "reviewer"}
+	far := Recipient{SpaceID: "spc_b", RunID: farCtrl, Role: "control", Control: true}
+
+	must(t, f.n.Sweep(f.ctx))
+	if f.q.count(wrkRun) != 1 || f.q.count(ctrlRun) != 1 || f.q.count(peerRun) != 0 || f.q.count(otherRun) != 0 || f.q.count(farCtrl) != 0 {
+		t.Fatalf("notices %+v", f.q.notices)
+	}
+	for name, c := range map[string]struct {
+		rc   Recipient
+		want string
+	}{"requester": {wrk, "hnt_1"}, "control": {ctrl, "hnt_2"}, "same role": {peer, ""}, "quiet target": {other, "hnt_3"}, "other space control": {far, ""}} {
+		if got := strings.Join(ids(c.rc), ","); got != c.want {
+			t.Errorf("%s sees %q, want %q", name, got, c.want)
+		}
+	}
+	in, _ := f.svc.Fetch(f.ctx, ctrl)
+	if h := in.Human[0]; h.OriginalRun != "run_gone" || h.RouteReason != "requester_ended" || h.RequesterRole != "implementor" {
+		t.Fatalf("provenance %+v", h)
+	}
+	code(t, f.svc.AckRun(f.ctx, op, peer, "hnt_1"), apperr.CodeNotFound)
+	code(t, f.svc.AckRun(f.ctx, op, far, "hnt_2"), apperr.CodeNotFound)
+	code(t, f.svc.AckRun(f.ctx, op, ctrl, "hnt_4"), apperr.CodeNotFound) // undeliverable: for people, not agents
+	must(t, f.svc.AckRun(f.ctx, op, ctrl, "hnt_2"))
+	must(t, f.svc.AckRun(f.ctx, op, wrk, "hnt_1"))
+}

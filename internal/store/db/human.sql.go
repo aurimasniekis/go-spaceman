@@ -10,6 +10,40 @@ import (
 	"database/sql"
 )
 
+const countAgentHumanActionsInSpaceSince = `-- name: CountAgentHumanActionsInSpaceSince :one
+SELECT count(*) FROM human_actions WHERE space_id = ? AND requester_kind = 'agent' AND type = ? AND created_at > ?
+`
+
+type CountAgentHumanActionsInSpaceSinceParams struct {
+	SpaceID   string
+	Type      string
+	CreatedAt int64
+}
+
+func (q *Queries) CountAgentHumanActionsInSpaceSince(ctx context.Context, arg CountAgentHumanActionsInSpaceSinceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAgentHumanActionsInSpaceSince, arg.SpaceID, arg.Type, arg.CreatedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countHumanActionsByRunSince = `-- name: CountHumanActionsByRunSince :one
+SELECT count(*) FROM human_actions WHERE requester_run = ? AND type = ? AND created_at > ?
+`
+
+type CountHumanActionsByRunSinceParams struct {
+	RequesterRun string
+	Type         string
+	CreatedAt    int64
+}
+
+func (q *Queries) CountHumanActionsByRunSince(ctx context.Context, arg CountHumanActionsByRunSinceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countHumanActionsByRunSince, arg.RequesterRun, arg.Type, arg.CreatedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPendingHuman = `-- name: CountPendingHuman :many
 SELECT space_id, count(*) AS n FROM human_actions WHERE status IN ('open', 'in_progress') GROUP BY space_id
 `
@@ -42,6 +76,40 @@ func (q *Queries) CountPendingHuman(ctx context.Context) ([]CountPendingHumanRow
 	return items, nil
 }
 
+const countPendingHumanByRun = `-- name: CountPendingHumanByRun :one
+SELECT count(*) FROM human_actions WHERE requester_run = ? AND status IN ('open', 'in_progress')
+`
+
+func (q *Queries) CountPendingHumanByRun(ctx context.Context, requesterRun string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingHumanByRun, requesterRun)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWantedControlRuns = `-- name: CountWantedControlRuns :one
+SELECT count(*) FROM runs WHERE space_id = ? AND kind = 'control' AND desired = 'running'
+`
+
+func (q *Queries) CountWantedControlRuns(ctx context.Context, spaceID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countWantedControlRuns, spaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteHumanPolicy = `-- name: DeleteHumanPolicy :execrows
+DELETE FROM human_policies WHERE id = ?
+`
+
+func (q *Queries) DeleteHumanPolicy(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteHumanPolicy, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteSpaceHumanType = `-- name: DeleteSpaceHumanType :execrows
 DELETE FROM space_human_types WHERE space_id = ? AND type_id = ?
 `
@@ -59,8 +127,192 @@ func (q *Queries) DeleteSpaceHumanType(ctx context.Context, arg DeleteSpaceHuman
 	return result.RowsAffected()
 }
 
+const dueHumanEscalations = `-- name: DueHumanEscalations :many
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version, reminder_count, reminded_at, next_reminder_at, escalate_at, escalated_at, escalated_from FROM human_actions WHERE escalate_at IS NOT NULL AND escalate_at <= ? AND status IN ('open', 'in_progress')
+ORDER BY escalate_at LIMIT ?
+`
+
+type DueHumanEscalationsParams struct {
+	EscalateAt sql.NullInt64
+	Limit      int64
+}
+
+func (q *Queries) DueHumanEscalations(ctx context.Context, arg DueHumanEscalationsParams) ([]HumanAction, error) {
+	rows, err := q.db.QueryContext(ctx, dueHumanEscalations, arg.EscalateAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanAction{}
+	for rows.Next() {
+		var i HumanAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Type,
+			&i.TypeVersion,
+			&i.TypeVersionID,
+			&i.TypeSlug,
+			&i.Title,
+			&i.Body,
+			&i.RequestJson,
+			&i.RequesterKind,
+			&i.RequesterID,
+			&i.RequesterRole,
+			&i.RequesterRun,
+			&i.RequesterSession,
+			&i.RequesterLabel,
+			&i.TaskID,
+			&i.InboxItemID,
+			&i.CorrelationID,
+			&i.DedupKey,
+			&i.BlocksTask,
+			&i.Priority,
+			&i.Rank,
+			&i.DueAt,
+			&i.ExpiresAt,
+			&i.Assignee,
+			&i.Status,
+			&i.Outcome,
+			&i.ResponseJson,
+			&i.RespondedBy,
+			&i.RespondedAt,
+			&i.StatusReason,
+			&i.FollowUpOf,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.UpdatedAt,
+			&i.Version,
+			&i.ReminderCount,
+			&i.RemindedAt,
+			&i.NextReminderAt,
+			&i.EscalateAt,
+			&i.EscalatedAt,
+			&i.EscalatedFrom,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueHumanReminders = `-- name: DueHumanReminders :many
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version, reminder_count, reminded_at, next_reminder_at, escalate_at, escalated_at, escalated_from FROM human_actions WHERE next_reminder_at IS NOT NULL AND next_reminder_at <= ? AND status IN ('open', 'in_progress')
+ORDER BY next_reminder_at LIMIT ?
+`
+
+type DueHumanRemindersParams struct {
+	NextReminderAt sql.NullInt64
+	Limit          int64
+}
+
+func (q *Queries) DueHumanReminders(ctx context.Context, arg DueHumanRemindersParams) ([]HumanAction, error) {
+	rows, err := q.db.QueryContext(ctx, dueHumanReminders, arg.NextReminderAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanAction{}
+	for rows.Next() {
+		var i HumanAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Type,
+			&i.TypeVersion,
+			&i.TypeVersionID,
+			&i.TypeSlug,
+			&i.Title,
+			&i.Body,
+			&i.RequestJson,
+			&i.RequesterKind,
+			&i.RequesterID,
+			&i.RequesterRole,
+			&i.RequesterRun,
+			&i.RequesterSession,
+			&i.RequesterLabel,
+			&i.TaskID,
+			&i.InboxItemID,
+			&i.CorrelationID,
+			&i.DedupKey,
+			&i.BlocksTask,
+			&i.Priority,
+			&i.Rank,
+			&i.DueAt,
+			&i.ExpiresAt,
+			&i.Assignee,
+			&i.Status,
+			&i.Outcome,
+			&i.ResponseJson,
+			&i.RespondedBy,
+			&i.RespondedAt,
+			&i.StatusReason,
+			&i.FollowUpOf,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.UpdatedAt,
+			&i.Version,
+			&i.ReminderCount,
+			&i.RemindedAt,
+			&i.NextReminderAt,
+			&i.EscalateAt,
+			&i.EscalatedAt,
+			&i.EscalatedFrom,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const escalateHumanAction = `-- name: EscalateHumanAction :execrows
+UPDATE human_actions SET priority = ?1, assignee = ?2, status = ?3, escalated_at = ?4,
+  escalated_from = ?5, escalate_at = NULL, version = version + 1, updated_at = ?4
+WHERE id = ?6 AND version = ?7 AND status IN ('open', 'in_progress')
+`
+
+type EscalateHumanActionParams struct {
+	Priority      string
+	Assignee      string
+	Status        string
+	Now           sql.NullInt64
+	EscalatedFrom string
+	ID            string
+	Version       int64
+}
+
+func (q *Queries) EscalateHumanAction(ctx context.Context, arg EscalateHumanActionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, escalateHumanAction,
+		arg.Priority,
+		arg.Assignee,
+		arg.Status,
+		arg.Now,
+		arg.EscalatedFrom,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const expiredHumanActions = `-- name: ExpiredHumanActions :many
-SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE expires_at IS NOT NULL AND expires_at <= ? AND status IN ('open', 'in_progress')
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version, reminder_count, reminded_at, next_reminder_at, escalate_at, escalated_at, escalated_from FROM human_actions WHERE expires_at IS NOT NULL AND expires_at <= ? AND status IN ('open', 'in_progress')
 `
 
 func (q *Queries) ExpiredHumanActions(ctx context.Context, expiresAt sql.NullInt64) ([]HumanAction, error) {
@@ -109,6 +361,12 @@ func (q *Queries) ExpiredHumanActions(ctx context.Context, expiresAt sql.NullInt
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.ReminderCount,
+			&i.RemindedAt,
+			&i.NextReminderAt,
+			&i.EscalateAt,
+			&i.EscalatedAt,
+			&i.EscalatedFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -157,8 +415,40 @@ func (q *Queries) FinalizeHumanAction(ctx context.Context, arg FinalizeHumanActi
 	return result.RowsAffected()
 }
 
+const getDefaultHumanPolicy = `-- name: GetDefaultHumanPolicy :one
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id IS NULL AND action_type = ?
+`
+
+func (q *Queries) GetDefaultHumanPolicy(ctx context.Context, actionType string) (HumanPolicy, error) {
+	row := q.db.QueryRowContext(ctx, getDefaultHumanPolicy, actionType)
+	var i HumanPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.ActionType,
+		&i.RemindAfterMinutes,
+		&i.RemindEveryMinutes,
+		&i.MaxReminders,
+		&i.EscalateAfterMinutes,
+		&i.EscalatePriority,
+		&i.EscalateAssignee,
+		&i.RequesterEnded,
+		&i.HoldMinutes,
+		&i.SuccessorRole,
+		&i.WakeIdle,
+		&i.RatePerRunHour,
+		&i.RatePerSpaceHour,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getHumanAction = `-- name: GetHumanAction :one
-SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE id = ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version, reminder_count, reminded_at, next_reminder_at, escalate_at, escalated_at, escalated_from FROM human_actions WHERE id = ?
 `
 
 func (q *Queries) GetHumanAction(ctx context.Context, id string) (HumanAction, error) {
@@ -201,12 +491,18 @@ func (q *Queries) GetHumanAction(ctx context.Context, id string) (HumanAction, e
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.ReminderCount,
+		&i.RemindedAt,
+		&i.NextReminderAt,
+		&i.EscalateAt,
+		&i.EscalatedAt,
+		&i.EscalatedFrom,
 	)
 	return i, err
 }
 
 const getHumanActionByDedup = `-- name: GetHumanActionByDedup :one
-SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE space_id = ? AND dedup_key = ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version, reminder_count, reminded_at, next_reminder_at, escalate_at, escalated_at, escalated_from FROM human_actions WHERE space_id = ? AND dedup_key = ?
 `
 
 type GetHumanActionByDedupParams struct {
@@ -254,6 +550,46 @@ func (q *Queries) GetHumanActionByDedup(ctx context.Context, arg GetHumanActionB
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.ReminderCount,
+		&i.RemindedAt,
+		&i.NextReminderAt,
+		&i.EscalateAt,
+		&i.EscalatedAt,
+		&i.EscalatedFrom,
+	)
+	return i, err
+}
+
+const getHumanNotification = `-- name: GetHumanNotification :one
+SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at, target_kind, target_instance, hold_until, wake, original_run, routed_from, route_reason, routed_at, route_count FROM human_notifications WHERE id = ?
+`
+
+func (q *Queries) GetHumanNotification(ctx context.Context, id string) (HumanNotification, error) {
+	row := q.db.QueryRowContext(ctx, getHumanNotification, id)
+	var i HumanNotification
+	err := row.Scan(
+		&i.ID,
+		&i.ActionID,
+		&i.SpaceID,
+		&i.TargetRun,
+		&i.TargetSession,
+		&i.TargetRole,
+		&i.Kind,
+		&i.State,
+		&i.CreatedAt,
+		&i.DeliveredAt,
+		&i.NoticeCommand,
+		&i.NoticedAt,
+		&i.AcknowledgedAt,
+		&i.TargetKind,
+		&i.TargetInstance,
+		&i.HoldUntil,
+		&i.Wake,
+		&i.OriginalRun,
+		&i.RoutedFrom,
+		&i.RouteReason,
+		&i.RoutedAt,
+		&i.RouteCount,
 	)
 	return i, err
 }
@@ -356,6 +692,43 @@ func (q *Queries) GetHumanTypeVersion(ctx context.Context, id string) (HumanType
 	return i, err
 }
 
+const getSpaceHumanPolicy = `-- name: GetSpaceHumanPolicy :one
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id = ? AND action_type = ?
+`
+
+type GetSpaceHumanPolicyParams struct {
+	SpaceID    sql.NullString
+	ActionType string
+}
+
+func (q *Queries) GetSpaceHumanPolicy(ctx context.Context, arg GetSpaceHumanPolicyParams) (HumanPolicy, error) {
+	row := q.db.QueryRowContext(ctx, getSpaceHumanPolicy, arg.SpaceID, arg.ActionType)
+	var i HumanPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.ActionType,
+		&i.RemindAfterMinutes,
+		&i.RemindEveryMinutes,
+		&i.MaxReminders,
+		&i.EscalateAfterMinutes,
+		&i.EscalatePriority,
+		&i.EscalateAssignee,
+		&i.RequesterEnded,
+		&i.HoldMinutes,
+		&i.SuccessorRole,
+		&i.WakeIdle,
+		&i.RatePerRunHour,
+		&i.RatePerSpaceHour,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+		&i.Version,
+	)
+	return i, err
+}
+
 const getSpaceHumanType = `-- name: GetSpaceHumanType :one
 SELECT space_id, type_id, version_pin, label, default_priority, default_expiry_minutes, created_at, created_by FROM space_human_types WHERE space_id = ? AND type_id = ?
 `
@@ -384,8 +757,8 @@ func (q *Queries) GetSpaceHumanType(ctx context.Context, arg GetSpaceHumanTypePa
 const insertHumanAction = `-- name: InsertHumanAction :exec
 INSERT INTO human_actions (id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id,
   requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank,
-  due_at, expires_at, follow_up_of, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  due_at, expires_at, follow_up_of, created_at, created_by, updated_at, next_reminder_at, escalate_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertHumanActionParams struct {
@@ -417,6 +790,8 @@ type InsertHumanActionParams struct {
 	CreatedAt        int64
 	CreatedBy        string
 	UpdatedAt        int64
+	NextReminderAt   sql.NullInt64
+	EscalateAt       sql.NullInt64
 }
 
 func (q *Queries) InsertHumanAction(ctx context.Context, arg InsertHumanActionParams) error {
@@ -449,6 +824,8 @@ func (q *Queries) InsertHumanAction(ctx context.Context, arg InsertHumanActionPa
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
+		arg.NextReminderAt,
+		arg.EscalateAt,
 	)
 	return err
 }
@@ -479,18 +856,29 @@ func (q *Queries) InsertHumanComment(ctx context.Context, arg InsertHumanComment
 }
 
 const insertHumanNotification = `-- name: InsertHumanNotification :exec
-INSERT INTO human_notifications (id, action_id, space_id, target_run, target_session, target_role, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO human_notifications (id, action_id, space_id, target_run, target_session, target_role, kind, created_at, target_kind, target_instance,
+  hold_until, wake, original_run, routed_from, route_reason, routed_at, route_count)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertHumanNotificationParams struct {
-	ID            string
-	ActionID      string
-	SpaceID       string
-	TargetRun     string
-	TargetSession string
-	TargetRole    string
-	Kind          string
-	CreatedAt     int64
+	ID             string
+	ActionID       string
+	SpaceID        string
+	TargetRun      string
+	TargetSession  string
+	TargetRole     string
+	Kind           string
+	CreatedAt      int64
+	TargetKind     string
+	TargetInstance string
+	HoldUntil      sql.NullInt64
+	Wake           int64
+	OriginalRun    string
+	RoutedFrom     string
+	RouteReason    string
+	RoutedAt       sql.NullInt64
+	RouteCount     int64
 }
 
 func (q *Queries) InsertHumanNotification(ctx context.Context, arg InsertHumanNotificationParams) error {
@@ -503,6 +891,69 @@ func (q *Queries) InsertHumanNotification(ctx context.Context, arg InsertHumanNo
 		arg.TargetRole,
 		arg.Kind,
 		arg.CreatedAt,
+		arg.TargetKind,
+		arg.TargetInstance,
+		arg.HoldUntil,
+		arg.Wake,
+		arg.OriginalRun,
+		arg.RoutedFrom,
+		arg.RouteReason,
+		arg.RoutedAt,
+		arg.RouteCount,
+	)
+	return err
+}
+
+const insertHumanPolicy = `-- name: InsertHumanPolicy :exec
+INSERT INTO human_policies (id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes,
+  escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour,
+  created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertHumanPolicyParams struct {
+	ID                   string
+	SpaceID              sql.NullString
+	ActionType           string
+	RemindAfterMinutes   int64
+	RemindEveryMinutes   int64
+	MaxReminders         int64
+	EscalateAfterMinutes int64
+	EscalatePriority     string
+	EscalateAssignee     string
+	RequesterEnded       string
+	HoldMinutes          int64
+	SuccessorRole        string
+	WakeIdle             int64
+	RatePerRunHour       int64
+	RatePerSpaceHour     int64
+	CreatedAt            int64
+	CreatedBy            string
+	UpdatedAt            int64
+	UpdatedBy            string
+}
+
+func (q *Queries) InsertHumanPolicy(ctx context.Context, arg InsertHumanPolicyParams) error {
+	_, err := q.db.ExecContext(ctx, insertHumanPolicy,
+		arg.ID,
+		arg.SpaceID,
+		arg.ActionType,
+		arg.RemindAfterMinutes,
+		arg.RemindEveryMinutes,
+		arg.MaxReminders,
+		arg.EscalateAfterMinutes,
+		arg.EscalatePriority,
+		arg.EscalateAssignee,
+		arg.RequesterEnded,
+		arg.HoldMinutes,
+		arg.SuccessorRole,
+		arg.WakeIdle,
+		arg.RatePerRunHour,
+		arg.RatePerSpaceHour,
+		arg.CreatedAt,
+		arg.CreatedBy,
+		arg.UpdatedAt,
+		arg.UpdatedBy,
 	)
 	return err
 }
@@ -602,8 +1053,138 @@ func (q *Queries) LatestHumanTypeVersion(ctx context.Context, typeID string) (Hu
 	return i, err
 }
 
+const listDefaultHumanPolicies = `-- name: ListDefaultHumanPolicies :many
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id IS NULL ORDER BY action_type
+`
+
+func (q *Queries) ListDefaultHumanPolicies(ctx context.Context) ([]HumanPolicy, error) {
+	rows, err := q.db.QueryContext(ctx, listDefaultHumanPolicies)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanPolicy{}
+	for rows.Next() {
+		var i HumanPolicy
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.ActionType,
+			&i.RemindAfterMinutes,
+			&i.RemindEveryMinutes,
+			&i.MaxReminders,
+			&i.EscalateAfterMinutes,
+			&i.EscalatePriority,
+			&i.EscalateAssignee,
+			&i.RequesterEnded,
+			&i.HoldMinutes,
+			&i.SuccessorRole,
+			&i.WakeIdle,
+			&i.RatePerRunHour,
+			&i.RatePerSpaceHour,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.UpdatedAt,
+			&i.UpdatedBy,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHeldHumanNotifications = `-- name: ListHeldHumanNotifications :many
+SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at, target_kind, target_instance, hold_until, wake, original_run, routed_from, route_reason, routed_at, route_count FROM human_notifications WHERE state = 'pending' AND target_kind = 'instance' ORDER BY created_at LIMIT ?
+`
+
+func (q *Queries) ListHeldHumanNotifications(ctx context.Context, limit int64) ([]HumanNotification, error) {
+	rows, err := q.db.QueryContext(ctx, listHeldHumanNotifications, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanNotification{}
+	for rows.Next() {
+		var i HumanNotification
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActionID,
+			&i.SpaceID,
+			&i.TargetRun,
+			&i.TargetSession,
+			&i.TargetRole,
+			&i.Kind,
+			&i.State,
+			&i.CreatedAt,
+			&i.DeliveredAt,
+			&i.NoticeCommand,
+			&i.NoticedAt,
+			&i.AcknowledgedAt,
+			&i.TargetKind,
+			&i.TargetInstance,
+			&i.HoldUntil,
+			&i.Wake,
+			&i.OriginalRun,
+			&i.RoutedFrom,
+			&i.RouteReason,
+			&i.RoutedAt,
+			&i.RouteCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHumanActionIDsNotifiedTo = `-- name: ListHumanActionIDsNotifiedTo :many
+SELECT DISTINCT action_id FROM human_notifications WHERE space_id = ? AND target_run = ?
+`
+
+type ListHumanActionIDsNotifiedToParams struct {
+	SpaceID   string
+	TargetRun string
+}
+
+func (q *Queries) ListHumanActionIDsNotifiedTo(ctx context.Context, arg ListHumanActionIDsNotifiedToParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listHumanActionIDsNotifiedTo, arg.SpaceID, arg.TargetRun)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var action_id string
+		if err := rows.Scan(&action_id); err != nil {
+			return nil, err
+		}
+		items = append(items, action_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHumanActions = `-- name: ListHumanActions :many
-SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE space_id = ? ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END, rank, created_at DESC LIMIT ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version, reminder_count, reminded_at, next_reminder_at, escalate_at, escalated_at, escalated_from FROM human_actions WHERE space_id = ? ORDER BY CASE WHEN status IN ('open', 'in_progress') THEN 0 ELSE 1 END, rank, created_at DESC LIMIT ?
 `
 
 type ListHumanActionsParams struct {
@@ -657,6 +1238,12 @@ func (q *Queries) ListHumanActions(ctx context.Context, arg ListHumanActionsPara
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.ReminderCount,
+			&i.RemindedAt,
+			&i.NextReminderAt,
+			&i.EscalateAt,
+			&i.EscalatedAt,
+			&i.EscalatedFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -706,7 +1293,7 @@ func (q *Queries) ListHumanComments(ctx context.Context, actionID string) ([]Hum
 }
 
 const listHumanNotifications = `-- name: ListHumanNotifications :many
-SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at FROM human_notifications WHERE action_id = ? ORDER BY created_at
+SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at, target_kind, target_instance, hold_until, wake, original_run, routed_from, route_reason, routed_at, route_count FROM human_notifications WHERE action_id = ? ORDER BY created_at
 `
 
 func (q *Queries) ListHumanNotifications(ctx context.Context, actionID string) ([]HumanNotification, error) {
@@ -732,6 +1319,68 @@ func (q *Queries) ListHumanNotifications(ctx context.Context, actionID string) (
 			&i.NoticeCommand,
 			&i.NoticedAt,
 			&i.AcknowledgedAt,
+			&i.TargetKind,
+			&i.TargetInstance,
+			&i.HoldUntil,
+			&i.Wake,
+			&i.OriginalRun,
+			&i.RoutedFrom,
+			&i.RouteReason,
+			&i.RoutedAt,
+			&i.RouteCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHumanPoliciesFor = `-- name: ListHumanPoliciesFor :many
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE (space_id = ?1 OR space_id IS NULL) AND action_type IN (?2, 'all')
+`
+
+type ListHumanPoliciesForParams struct {
+	SpaceID    sql.NullString
+	ActionType string
+}
+
+func (q *Queries) ListHumanPoliciesFor(ctx context.Context, arg ListHumanPoliciesForParams) ([]HumanPolicy, error) {
+	rows, err := q.db.QueryContext(ctx, listHumanPoliciesFor, arg.SpaceID, arg.ActionType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanPolicy{}
+	for rows.Next() {
+		var i HumanPolicy
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.ActionType,
+			&i.RemindAfterMinutes,
+			&i.RemindEveryMinutes,
+			&i.MaxReminders,
+			&i.EscalateAfterMinutes,
+			&i.EscalatePriority,
+			&i.EscalateAssignee,
+			&i.RequesterEnded,
+			&i.HoldMinutes,
+			&i.SuccessorRole,
+			&i.WakeIdle,
+			&i.RatePerRunHour,
+			&i.RatePerSpaceHour,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.UpdatedAt,
+			&i.UpdatedBy,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -828,7 +1477,7 @@ func (q *Queries) ListHumanTypes(ctx context.Context) ([]HumanType, error) {
 }
 
 const listPendingHumanActions = `-- name: ListPendingHumanActions :many
-SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version FROM human_actions WHERE status IN ('open', 'in_progress') ORDER BY created_at LIMIT ?
+SELECT id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id, requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank, due_at, expires_at, assignee, status, outcome, response_json, responded_by, responded_at, status_reason, follow_up_of, created_at, created_by, updated_at, version, reminder_count, reminded_at, next_reminder_at, escalate_at, escalated_at, escalated_from FROM human_actions WHERE status IN ('open', 'in_progress') ORDER BY created_at LIMIT ?
 `
 
 func (q *Queries) ListPendingHumanActions(ctx context.Context, limit int64) ([]HumanAction, error) {
@@ -877,6 +1526,12 @@ func (q *Queries) ListPendingHumanActions(ctx context.Context, limit int64) ([]H
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.ReminderCount,
+			&i.RemindedAt,
+			&i.NextReminderAt,
+			&i.EscalateAt,
+			&i.EscalatedAt,
+			&i.EscalatedFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -892,7 +1547,7 @@ func (q *Queries) ListPendingHumanActions(ctx context.Context, limit int64) ([]H
 }
 
 const listPendingNotifications = `-- name: ListPendingNotifications :many
-SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at FROM human_notifications WHERE space_id = ? AND state = 'pending' ORDER BY created_at LIMIT ?
+SELECT id, action_id, space_id, target_run, target_session, target_role, kind, state, created_at, delivered_at, notice_command, noticed_at, acknowledged_at, target_kind, target_instance, hold_until, wake, original_run, routed_from, route_reason, routed_at, route_count FROM human_notifications WHERE space_id = ? AND state = 'pending' ORDER BY created_at LIMIT ?
 `
 
 type ListPendingNotificationsParams struct {
@@ -923,6 +1578,63 @@ func (q *Queries) ListPendingNotifications(ctx context.Context, arg ListPendingN
 			&i.NoticeCommand,
 			&i.NoticedAt,
 			&i.AcknowledgedAt,
+			&i.TargetKind,
+			&i.TargetInstance,
+			&i.HoldUntil,
+			&i.Wake,
+			&i.OriginalRun,
+			&i.RoutedFrom,
+			&i.RouteReason,
+			&i.RoutedAt,
+			&i.RouteCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpaceHumanPolicies = `-- name: ListSpaceHumanPolicies :many
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id = ? ORDER BY action_type
+`
+
+func (q *Queries) ListSpaceHumanPolicies(ctx context.Context, spaceID sql.NullString) ([]HumanPolicy, error) {
+	rows, err := q.db.QueryContext(ctx, listSpaceHumanPolicies, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanPolicy{}
+	for rows.Next() {
+		var i HumanPolicy
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.ActionType,
+			&i.RemindAfterMinutes,
+			&i.RemindEveryMinutes,
+			&i.MaxReminders,
+			&i.EscalateAfterMinutes,
+			&i.EscalatePriority,
+			&i.EscalateAssignee,
+			&i.RequesterEnded,
+			&i.HoldMinutes,
+			&i.SuccessorRole,
+			&i.WakeIdle,
+			&i.RatePerRunHour,
+			&i.RatePerSpaceHour,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.UpdatedAt,
+			&i.UpdatedBy,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -973,6 +1685,95 @@ func (q *Queries) ListSpaceHumanTypes(ctx context.Context, spaceID string) ([]Sp
 	return items, nil
 }
 
+const listStrandedHumanNotifications = `-- name: ListStrandedHumanNotifications :many
+SELECT n.id, n.action_id, n.space_id, n.target_run, n.target_session, n.target_role, n.kind, n.state, n.created_at, n.delivered_at, n.notice_command, n.noticed_at, n.acknowledged_at, n.target_kind, n.target_instance, n.hold_until, n.wake, n.original_run, n.routed_from, n.route_reason, n.routed_at, n.route_count FROM human_notifications n LEFT JOIN runs r ON r.id = n.target_run
+WHERE n.state IN ('pending', 'delivered') AND n.target_kind = 'run'
+  AND (r.id IS NULL OR r.space_id <> n.space_id OR r.observed IN ('exited', 'failed', 'lost') OR (r.observed = 'unknown' AND r.desired = 'stopped'))
+ORDER BY n.created_at LIMIT ?
+`
+
+func (q *Queries) ListStrandedHumanNotifications(ctx context.Context, limit int64) ([]HumanNotification, error) {
+	rows, err := q.db.QueryContext(ctx, listStrandedHumanNotifications, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HumanNotification{}
+	for rows.Next() {
+		var i HumanNotification
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActionID,
+			&i.SpaceID,
+			&i.TargetRun,
+			&i.TargetSession,
+			&i.TargetRole,
+			&i.Kind,
+			&i.State,
+			&i.CreatedAt,
+			&i.DeliveredAt,
+			&i.NoticeCommand,
+			&i.NoticedAt,
+			&i.AcknowledgedAt,
+			&i.TargetKind,
+			&i.TargetInstance,
+			&i.HoldUntil,
+			&i.Wake,
+			&i.OriginalRun,
+			&i.RoutedFrom,
+			&i.RouteReason,
+			&i.RoutedAt,
+			&i.RouteCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const liveRunOfInstance = `-- name: LiveRunOfInstance :one
+SELECT id FROM runs WHERE space_id = ? AND instance_id = ? AND desired = 'running' AND observed IN ('pending', 'starting', 'running')
+ORDER BY created_at DESC LIMIT 1
+`
+
+type LiveRunOfInstanceParams struct {
+	SpaceID    string
+	InstanceID string
+}
+
+func (q *Queries) LiveRunOfInstance(ctx context.Context, arg LiveRunOfInstanceParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, liveRunOfInstance, arg.SpaceID, arg.InstanceID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const liveRunOfRole = `-- name: LiveRunOfRole :one
+SELECT id FROM runs WHERE space_id = ?1 AND role = ?2 AND kind <> 'control' AND id <> ?3
+  AND desired = 'running' AND observed IN ('pending', 'starting', 'running')
+ORDER BY created_at DESC LIMIT 1
+`
+
+type LiveRunOfRoleParams struct {
+	SpaceID string
+	Role    string
+	NotRun  string
+}
+
+func (q *Queries) LiveRunOfRole(ctx context.Context, arg LiveRunOfRoleParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, liveRunOfRole, arg.SpaceID, arg.Role, arg.NotRun)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const markHumanNotificationDelivered = `-- name: MarkHumanNotificationDelivered :execrows
 UPDATE human_notifications SET state = 'delivered', delivered_at = ? WHERE id = ? AND state = 'pending'
 `
@@ -999,6 +1800,68 @@ func (q *Queries) MaxHumanRank(ctx context.Context, spaceID string) (int64, erro
 	var r int64
 	err := row.Scan(&r)
 	return r, err
+}
+
+const nextHumanEscalation = `-- name: NextHumanEscalation :one
+SELECT CAST(coalesce(min(escalate_at), 0) AS INTEGER) AS t FROM human_actions WHERE escalate_at IS NOT NULL AND status IN ('open', 'in_progress')
+`
+
+func (q *Queries) NextHumanEscalation(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextHumanEscalation)
+	var t int64
+	err := row.Scan(&t)
+	return t, err
+}
+
+const nextHumanExpiry = `-- name: NextHumanExpiry :one
+SELECT CAST(coalesce(min(expires_at), 0) AS INTEGER) AS t FROM human_actions WHERE expires_at IS NOT NULL AND status IN ('open', 'in_progress')
+`
+
+func (q *Queries) NextHumanExpiry(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextHumanExpiry)
+	var t int64
+	err := row.Scan(&t)
+	return t, err
+}
+
+const nextHumanHold = `-- name: NextHumanHold :one
+SELECT CAST(coalesce(min(hold_until), 0) AS INTEGER) AS t FROM human_notifications WHERE hold_until IS NOT NULL AND state = 'pending' AND target_kind = 'instance'
+`
+
+func (q *Queries) NextHumanHold(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextHumanHold)
+	var t int64
+	err := row.Scan(&t)
+	return t, err
+}
+
+const nextHumanReminder = `-- name: NextHumanReminder :one
+SELECT CAST(coalesce(min(next_reminder_at), 0) AS INTEGER) AS t FROM human_actions WHERE next_reminder_at IS NOT NULL AND status IN ('open', 'in_progress')
+`
+
+func (q *Queries) NextHumanReminder(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextHumanReminder)
+	var t int64
+	err := row.Scan(&t)
+	return t, err
+}
+
+const pinHumanNotification = `-- name: PinHumanNotification :execrows
+UPDATE human_notifications SET target_kind = 'run', target_run = ?1, hold_until = NULL
+WHERE id = ?2 AND state = 'pending' AND target_kind = 'instance'
+`
+
+type PinHumanNotificationParams struct {
+	RunID string
+	ID    string
+}
+
+func (q *Queries) PinHumanNotification(ctx context.Context, arg PinHumanNotificationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pinHumanNotification, arg.RunID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const publishHumanTypeVersion = `-- name: PublishHumanTypeVersion :execrows
@@ -1029,6 +1892,72 @@ func (q *Queries) PublishHumanTypeVersion(ctx context.Context, arg PublishHumanT
 	return result.RowsAffected()
 }
 
+const remindHumanAction = `-- name: RemindHumanAction :execrows
+UPDATE human_actions SET reminder_count = reminder_count + 1, reminded_at = ?1, next_reminder_at = ?2, updated_at = ?1
+WHERE id = ?3 AND reminder_count = ?4 AND status IN ('open', 'in_progress')
+`
+
+type RemindHumanActionParams struct {
+	Now            sql.NullInt64
+	NextReminderAt sql.NullInt64
+	ID             string
+	ReminderCount  int64
+}
+
+func (q *Queries) RemindHumanAction(ctx context.Context, arg RemindHumanActionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, remindHumanAction,
+		arg.Now,
+		arg.NextReminderAt,
+		arg.ID,
+		arg.ReminderCount,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const routeHumanNotification = `-- name: RouteHumanNotification :execrows
+UPDATE human_notifications SET target_kind = ?1, target_run = ?2, target_role = ?3,
+  target_instance = ?4, hold_until = ?5, routed_from = ?6, route_reason = ?7,
+  routed_at = ?8, route_count = route_count + 1, state = 'pending', delivered_at = NULL, notice_command = '', noticed_at = NULL
+WHERE id = ?9 AND state IN ('pending', 'delivered') AND target_kind = ?10 AND target_run = ?11
+`
+
+type RouteHumanNotificationParams struct {
+	TargetKind     string
+	TargetRun      string
+	TargetRole     string
+	TargetInstance string
+	HoldUntil      sql.NullInt64
+	RoutedFrom     string
+	RouteReason    string
+	Now            sql.NullInt64
+	ID             string
+	FromKind       string
+	FromRun        string
+}
+
+func (q *Queries) RouteHumanNotification(ctx context.Context, arg RouteHumanNotificationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, routeHumanNotification,
+		arg.TargetKind,
+		arg.TargetRun,
+		arg.TargetRole,
+		arg.TargetInstance,
+		arg.HoldUntil,
+		arg.RoutedFrom,
+		arg.RouteReason,
+		arg.Now,
+		arg.ID,
+		arg.FromKind,
+		arg.FromRun,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setHumanRank = `-- name: SetHumanRank :exec
 UPDATE human_actions SET rank = ?, updated_at = ? WHERE id = ?
 `
@@ -1041,6 +1970,21 @@ type SetHumanRankParams struct {
 
 func (q *Queries) SetHumanRank(ctx context.Context, arg SetHumanRankParams) error {
 	_, err := q.db.ExecContext(ctx, setHumanRank, arg.Rank, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const setHumanSchedule = `-- name: SetHumanSchedule :exec
+UPDATE human_actions SET next_reminder_at = ?1, escalate_at = ?2 WHERE id = ?3
+`
+
+type SetHumanScheduleParams struct {
+	NextReminderAt sql.NullInt64
+	EscalateAt     sql.NullInt64
+	ID             string
+}
+
+func (q *Queries) SetHumanSchedule(ctx context.Context, arg SetHumanScheduleParams) error {
+	_, err := q.db.ExecContext(ctx, setHumanSchedule, arg.NextReminderAt, arg.EscalateAt, arg.ID)
 	return err
 }
 
@@ -1062,6 +2006,57 @@ func (q *Queries) UpdateHumanAssignment(ctx context.Context, arg UpdateHumanAssi
 		arg.Assignee,
 		arg.Status,
 		arg.Now,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateHumanPolicy = `-- name: UpdateHumanPolicy :execrows
+UPDATE human_policies SET remind_after_minutes = ?, remind_every_minutes = ?, max_reminders = ?, escalate_after_minutes = ?, escalate_priority = ?,
+  escalate_assignee = ?, requester_ended = ?, hold_minutes = ?, successor_role = ?, wake_idle = ?, rate_per_run_hour = ?, rate_per_space_hour = ?,
+  updated_at = ?, updated_by = ?, version = version + 1
+WHERE id = ? AND version = ?
+`
+
+type UpdateHumanPolicyParams struct {
+	RemindAfterMinutes   int64
+	RemindEveryMinutes   int64
+	MaxReminders         int64
+	EscalateAfterMinutes int64
+	EscalatePriority     string
+	EscalateAssignee     string
+	RequesterEnded       string
+	HoldMinutes          int64
+	SuccessorRole        string
+	WakeIdle             int64
+	RatePerRunHour       int64
+	RatePerSpaceHour     int64
+	UpdatedAt            int64
+	UpdatedBy            string
+	ID                   string
+	Version              int64
+}
+
+func (q *Queries) UpdateHumanPolicy(ctx context.Context, arg UpdateHumanPolicyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateHumanPolicy,
+		arg.RemindAfterMinutes,
+		arg.RemindEveryMinutes,
+		arg.MaxReminders,
+		arg.EscalateAfterMinutes,
+		arg.EscalatePriority,
+		arg.EscalateAssignee,
+		arg.RequesterEnded,
+		arg.HoldMinutes,
+		arg.SuccessorRole,
+		arg.WakeIdle,
+		arg.RatePerRunHour,
+		arg.RatePerSpaceHour,
+		arg.UpdatedAt,
+		arg.UpdatedBy,
 		arg.ID,
 		arg.Version,
 	)

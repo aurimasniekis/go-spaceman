@@ -130,13 +130,14 @@ func (n *Notifier) notify(ctx context.Context, r db.ListNoticeCandidatesRow, now
 				mids = append(mids, m.ID)
 			}
 		}
-		ns, err := tx.Q.ListHumanNotificationsFor(ctx, db.ListHumanNotificationsForParams{SpaceID: r.SpaceID, RunID: r.ID, Lim: 100})
+		ns, err := tx.Q.ListHumanNotificationsFor(ctx, db.ListHumanNotificationsForParams{SpaceID: r.SpaceID, RunID: r.ID, IsControl: b2i(r.Kind == "control"), Lim: 100})
 		if err != nil {
 			return err
 		}
 		var nids []string
 		for _, x := range ns {
-			if due(x.NoticedAt, now) {
+			// wake 0: the policy says not to type into the terminal for it; the run reads it when it checks its messages.
+			if x.Wake == 1 && due(x.NoticedAt, now) {
 				nids = append(nids, x.ID)
 			}
 		}

@@ -33,17 +33,26 @@ func (q *Queries) AckMessage(ctx context.Context, arg AckMessageParams) (int64, 
 
 const ackNotification = `-- name: AckNotification :execrows
 UPDATE human_notifications SET state = 'acknowledged', acknowledged_at = ?1, delivered_at = coalesce(delivered_at, ?1)
-WHERE id = ?2 AND target_run = ?3 AND state IN ('pending', 'delivered')
+WHERE id = ?2 AND space_id = ?3 AND state IN ('pending', 'delivered')
+  AND ((target_kind = 'run' AND target_run = ?4) OR (target_kind = 'control' AND ?5 = 1))
 `
 
 type AckNotificationParams struct {
-	Now   sql.NullInt64
-	ID    string
-	RunID string
+	Now       sql.NullInt64
+	ID        string
+	SpaceID   string
+	RunID     string
+	IsControl interface{}
 }
 
 func (q *Queries) AckNotification(ctx context.Context, arg AckNotificationParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, ackNotification, arg.Now, arg.ID, arg.RunID)
+	result, err := q.db.ExecContext(ctx, ackNotification,
+		arg.Now,
+		arg.ID,
+		arg.SpaceID,
+		arg.RunID,
+		arg.IsControl,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -188,16 +197,19 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) er
 }
 
 const listHumanNotificationsFor = `-- name: ListHumanNotificationsFor :many
-SELECT n.id, n.action_id, n.kind, n.created_at, n.notice_command, n.noticed_at, a.title, a.type, a.outcome, a.status
+SELECT n.id, n.action_id, n.kind, n.created_at, n.notice_command, n.noticed_at, n.wake, n.target_kind, n.original_run, n.routed_from, n.route_reason,
+  a.title, a.type, a.outcome, a.status, a.requester_role
 FROM human_notifications n JOIN human_actions a ON a.id = n.action_id
-WHERE n.space_id = ?1 AND n.target_run = ?2 AND n.state IN ('pending', 'delivered')
-ORDER BY n.created_at LIMIT ?3
+WHERE n.space_id = ?1 AND n.state IN ('pending', 'delivered')
+  AND ((n.target_kind = 'run' AND n.target_run = ?2) OR (n.target_kind = 'control' AND ?3 = 1))
+ORDER BY n.created_at LIMIT ?4
 `
 
 type ListHumanNotificationsForParams struct {
-	SpaceID string
-	RunID   string
-	Lim     int64
+	SpaceID   string
+	RunID     string
+	IsControl interface{}
+	Lim       int64
 }
 
 type ListHumanNotificationsForRow struct {
@@ -207,14 +219,25 @@ type ListHumanNotificationsForRow struct {
 	CreatedAt     int64
 	NoticeCommand string
 	NoticedAt     sql.NullInt64
+	Wake          int64
+	TargetKind    string
+	OriginalRun   string
+	RoutedFrom    string
+	RouteReason   string
 	Title         string
 	Type          string
 	Outcome       string
 	Status        string
+	RequesterRole string
 }
 
 func (q *Queries) ListHumanNotificationsFor(ctx context.Context, arg ListHumanNotificationsForParams) ([]ListHumanNotificationsForRow, error) {
-	rows, err := q.db.QueryContext(ctx, listHumanNotificationsFor, arg.SpaceID, arg.RunID, arg.Lim)
+	rows, err := q.db.QueryContext(ctx, listHumanNotificationsFor,
+		arg.SpaceID,
+		arg.RunID,
+		arg.IsControl,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -229,10 +252,16 @@ func (q *Queries) ListHumanNotificationsFor(ctx context.Context, arg ListHumanNo
 			&i.CreatedAt,
 			&i.NoticeCommand,
 			&i.NoticedAt,
+			&i.Wake,
+			&i.TargetKind,
+			&i.OriginalRun,
+			&i.RoutedFrom,
+			&i.RouteReason,
 			&i.Title,
 			&i.Type,
 			&i.Outcome,
 			&i.Status,
+			&i.RequesterRole,
 		); err != nil {
 			return nil, err
 		}

@@ -41,9 +41,11 @@ WHERE id = sqlc.arg(id) AND state <> 'resolved';
 SELECT count(*) FROM messages WHERE space_id = ? AND to_kind = 'operators' AND state IN ('stored', 'available');
 
 -- name: ListHumanNotificationsFor :many
-SELECT n.id, n.action_id, n.kind, n.created_at, n.notice_command, n.noticed_at, a.title, a.type, a.outcome, a.status
+SELECT n.id, n.action_id, n.kind, n.created_at, n.notice_command, n.noticed_at, n.wake, n.target_kind, n.original_run, n.routed_from, n.route_reason,
+  a.title, a.type, a.outcome, a.status, a.requester_role
 FROM human_notifications n JOIN human_actions a ON a.id = n.action_id
-WHERE n.space_id = sqlc.arg(space_id) AND n.target_run = sqlc.arg(run_id) AND n.state IN ('pending', 'delivered')
+WHERE n.space_id = sqlc.arg(space_id) AND n.state IN ('pending', 'delivered')
+  AND ((n.target_kind = 'run' AND n.target_run = sqlc.arg(run_id)) OR (n.target_kind = 'control' AND sqlc.arg(is_control) = 1))
 ORDER BY n.created_at LIMIT sqlc.arg(lim);
 
 -- name: MarkNotificationsDelivered :execrows
@@ -57,7 +59,8 @@ UPDATE human_notifications SET notice_command = sqlc.arg(command), noticed_at = 
 
 -- name: AckNotification :execrows
 UPDATE human_notifications SET state = 'acknowledged', acknowledged_at = sqlc.arg(now), delivered_at = coalesce(delivered_at, sqlc.arg(now))
-WHERE id = sqlc.arg(id) AND target_run = sqlc.arg(run_id) AND state IN ('pending', 'delivered');
+WHERE id = sqlc.arg(id) AND space_id = sqlc.arg(space_id) AND state IN ('pending', 'delivered')
+  AND ((target_kind = 'run' AND target_run = sqlc.arg(run_id)) OR (target_kind = 'control' AND sqlc.arg(is_control) = 1));
 
 -- name: ListNoticeCandidates :many
 SELECT id, space_id, kind, role, harness, status FROM runs

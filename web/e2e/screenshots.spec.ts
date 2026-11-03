@@ -67,7 +67,7 @@ async function enrollmentShot(browser: Browser, email: string, pw: string) {
 }
 
 test('documentation screenshots', async ({ page, browser }) => {
-  test.setTimeout(300_000)
+  test.setTimeout(420_000)
   mkdirSync(out!, { recursive: true })
   const base = env('SM_URL')
   const root = readFileSync(env('SM_ROOT_TOKEN_FILE'), 'utf8').trim()
@@ -194,6 +194,7 @@ test('documentation screenshots', async ({ page, browser }) => {
   const reviewer = await launch(payments.id, 'worker', 'reviewer', 'codex', 'Review the open pull requests and summarise the risky ones.')
   const finished = await launch(payments.id, 'worker', 'implementor-backend', 'claude-code', 'Add the retry budget to the settlement client.\n/transcript\n' +
     '/call spaceman_kb_ask {"kb":"payments","kind":"context","question":"Are there rules about when settlement may retry?"}\n' +
+    '/call spaceman_human_ask {"type":"question","title":"Is a retry budget of 5 per batch enough for month-end settlement?"}\n' +
     '/write decisions.md # Decisions\\n\\n- 2026-11-02: settlement retries use a budget of 5 per batch, not per item.\\n- 2026-11-02: never retry inside the bank window (01:00-03:00 UTC).\\n\n' +
     '/write notes/settlement-client.md # Settlement client\\n\\nRetries live in `RetryBudget` (services/settlement/client/retry.go). The budget resets per batch.\\n')
   await launch(docs.id, 'control', 'control', 'claude-code', 'Keep the guides in step with the UI.')
@@ -243,6 +244,15 @@ test('documentation screenshots', async ({ page, browser }) => {
   await task({ title: 'Load-test the new retry budget', depends_on: [budget.id], exclusions: ['env:staging'] })
   await task({ title: 'Remove stale feature flags', priority: 'low', status: 'backlog' })
 
+  // Human-action policies: payments reminds about to-dos after a minute (so Needs you shows one reminded), and approvals
+  // are reminded, escalated and routed to reviewers when the requester is gone.
+  const policy = (type: string, p: Record<string, unknown>) => api.call('PUT', `/spaces/${payments.id}/human-policies/${type}`, {
+    remind_after_minutes: 0, remind_every_minutes: 0, max_reminders: 1, escalate_after_minutes: 0, escalate_priority: '', escalate_assignee: '',
+    requester_ended: 'reroute', hold_minutes: 60, successor_role: '', wake_idle: true, rate_per_run_hour: 30, rate_per_space_hour: 300, ...p })
+  await policy('todo', { remind_after_minutes: 1 })
+  await policy('approval', { remind_after_minutes: 30, remind_every_minutes: 120, max_reminders: 3, escalate_after_minutes: 240, escalate_priority: 'urgent',
+    successor_role: 'reviewer', rate_per_run_hour: 10 })
+
   // Human actions: one of each type (a blocking question on a task), one in another space, and an answered one.
   const human = (space: string, body: Record<string, unknown>) => api.call<T>('POST', `/spaces/${space}/human-actions`, body)
   await human(payments.id, { type: 'question', title: 'Should retries span the whole bank maintenance window?', task_id: budget.id, blocks_task: true, priority: 'high',
@@ -274,6 +284,13 @@ test('documentation screenshots', async ({ page, browser }) => {
     request: { environment: 'production', change: 'Time-based settlement retry budget', rollback: 'Redeploy v2.13.4' } })
   const answered = await human(payments.id, { type: 'question', title: 'Which currency should the refund export use?', request: { options: ['EUR', 'Original currency'] } })
   await api.call('POST', `/spaces/${payments.id}/human-actions/${answered.id}/respond`, { outcome: 'answered', answer: 'Original currency' }, { 'If-Match': `"${answered.version}"` })
+  // The stopped worker asked a question before it ended: its answer goes to control, with where it came from.
+  type HA = { id: string; version: number; title: string; requester_run?: string }
+  const workerAsked = async () => (await api.call<{ items: HA[] }>('GET', `/spaces/${payments.id}/human-actions`)).items.find((a) => a.requester_run === finished.id)
+  await expect.poll(async () => (await workerAsked())?.id ?? '', { timeout: 30_000 }).not.toBe('')
+  const asked = (await workerAsked())!
+  await api.call('POST', `/spaces/${payments.id}/human-actions/${asked.id}/respond`, { outcome: 'answered', answer: 'Yes for now; revisit after the December close.' },
+    { 'If-Match': `"${asked.version}"` })
 
   // Events: a Pulse connection (devpulse), GitHub issue subscriptions and published go-pulse-github events (one for another
   // repository, filtered), and an alerts subscription with a schema that quarantines a malformed alert.
@@ -560,9 +577,24 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByText('Runs with known usage', { exact: true }).scrollIntoViewIfNeeded()
     await expect(page.getByText('Runs with known usage', { exact: true })).toBeVisible()
   })
+  // The to-do policy reminds after a minute; the reminder is due by now (one timer, no polling).
+  await expect.poll(async () => (await api.call<{ items: { title: string; reminder_count: number }[] }>('GET', `/spaces/${payments.id}/human-actions?pending=true`))
+    .items.find((a) => a.title === "Confirm the bank's maintenance window")?.reminder_count ?? 0, { timeout: 120_000 }).toBeGreaterThan(0)
   await capture(page, 'human-global', async () => {
     await page.goto('/human')
     await expect(page.getByText('Review the wording of the refunds API reference')).toBeVisible()
+    await expect(page.getByText('reminded', { exact: true }).first()).toBeVisible()
+  })
+  await capture(page, 'human-policies', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByRole('button', { name: 'Policies' }).click()
+    await expect(page.getByText('this space · approval')).toBeVisible()
+  })
+  await capture(page, 'human-rerouted', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByLabel('Show resolved, withdrawn and expired').check()
+    await page.getByRole('listitem', { name: /Is a retry budget of 5 per batch enough/ }).click()
+    await expect(page.getByText('rerouted', { exact: true })).toBeVisible()
   })
   await capture(page, 'human-space', async () => {
     await page.goto(`/spaces/${payments.id}/human`)

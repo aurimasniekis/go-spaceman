@@ -7,6 +7,7 @@ import { api, ifMatch, unwrap, type CatalogHumanType } from '@/api/client'
 import { keys, useHumanTypes, useMe } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
+import { DefaultPoliciesCard } from '@/features/human/PoliciesPanel'
 import { SchemaForm } from '@/features/human/SchemaForm'
 import { hasGlobal } from '@/lib/access'
 import { datetime } from '@/lib/format'
@@ -45,6 +46,7 @@ function HumanTypesPage() {
         </Table>
         {types.isSuccess && types.data.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">No custom types yet. The built-in question, approval, to-do and message types are always available.</Text>}
       </Card>
+      <DefaultPoliciesCard canWrite={canWrite} />
       {creating && <NewTypeModal onClose={() => setCreating(false)} />}
       <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size="xl" title={current?.name ?? ''}>
         {current && <TypeEditor t={current} canWrite={canWrite} />}

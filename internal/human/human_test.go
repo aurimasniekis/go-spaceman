@@ -47,6 +47,9 @@ func newFx(t *testing.T) *fx {
 			`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`,
 			`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_b', 'bbb', 'B', 'nod_1', 'active', 'b', 0, 't', 0)`,
 			`INSERT INTO users (id, email, display_name, enabled, provisioned_via, mfa_required, version, created_at, created_by, updated_at) VALUES ('usr_op', 'op@example.test', 'Op', 1, 'admin', 0, 1, 0, 't', 0)`,
+			// The requester of most tests: a live worker run.
+			`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+			 VALUES ('run_1', 'spc_a', 'nod_1', 1, 'worker', 'worker', 'claude-code', 'ins_1', 'running', 'running', 'idle', '{}', 0, 't', 0)`,
 		} {
 			if _, err := tx.SQL.ExecContext(f.ctx, q); err != nil {
 				return err

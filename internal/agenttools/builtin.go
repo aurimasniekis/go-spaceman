@@ -282,7 +282,8 @@ type humanCancelIn struct {
 
 func (r *Registry) registerHuman() {
 	Add(r, "spaceman_human_ask", "Ask a person: a question, a permission approval (advisory for now), a to-do, or a message. Returns at once with a durable ID; "+
-		"do not wait in a loop. You are notified of the response; read it with spaceman_human_get.", allKinds, false,
+		"do not wait in a loop or check back. People are reminded per the space's policy, and you are notified of the response (a terminal notice when you "+
+		"are idle, and in spaceman_messages); then read it with spaceman_human_get. Asking too often is refused with rate_limited.", allKinds, false,
 		func(ctx context.Context, p *fleet.RunPrincipal, in humanAskIn) (any, error) {
 			req, err := marshalOrEmpty(in.Request)
 			if err != nil {
@@ -309,11 +310,21 @@ func (r *Registry) registerHuman() {
 		func(ctx context.Context, p *fleet.RunPrincipal, _ struct{}) (any, error) {
 			return r.d.Human.SpaceTypes(ctx, p.SpaceID)
 		})
-	Add(r, "spaceman_human_get", "Read a human action of your space: its status, outcome and the person's response.", allKinds, true,
+	Add(r, "spaceman_human_get", "Read a human action of your space: its status, outcome and, for actions you asked or that were routed to you, the "+
+		"person's response. No need to call it repeatedly: you are notified when the response arrives.", allKinds, true,
 		func(ctx context.Context, p *fleet.RunPrincipal, in humanIn) (any, error) {
-			return r.d.Human.Get(ctx, p.SpaceID, in.ActionID)
+			a, err := r.d.Human.Get(ctx, p.SpaceID, in.ActionID)
+			if err != nil {
+				return nil, err
+			}
+			l, err := r.d.Human.ForViewer(ctx, p.SpaceID, viewer(p), a)
+			if err != nil {
+				return nil, err
+			}
+			return l[0], nil
 		})
-	Add(r, "spaceman_human_list", "List human actions of your space: by default the ones your run asked.", allKinds, true,
+	Add(r, "spaceman_human_list", "List human actions of your space: by default the ones your run asked. Responses of actions other runs asked are hidden. "+
+		"Not for waiting: you are notified of responses.", allKinds, true,
 		func(ctx context.Context, p *fleet.RunPrincipal, in humanListIn) (any, error) {
 			l, err := r.d.Human.List(ctx, p.SpaceID, human.ListFilter{Pending: in.Pending})
 			if err != nil {
@@ -325,7 +336,7 @@ func (r *Registry) registerHuman() {
 					out = append(out, a)
 				}
 			}
-			return out, nil
+			return r.d.Human.ForViewer(ctx, p.SpaceID, viewer(p), out...)
 		})
 	Add(r, "spaceman_human_cancel", "Withdraw a pending human action you asked (control may withdraw any).", allKinds, false,
 		func(ctx context.Context, p *fleet.RunPrincipal, in humanCancelIn) (any, error) {
@@ -338,4 +349,8 @@ func (r *Registry) registerHuman() {
 			}
 			return r.d.Human.Cancel(ctx, actor(p), p.SpaceID, in.ActionID, a.Version, in.Reason)
 		})
+}
+
+func viewer(p *fleet.RunPrincipal) human.Viewer {
+	return human.Viewer{RunID: p.RunID, InstanceID: p.InstanceID, Control: p.Kind == KindControl}
 }

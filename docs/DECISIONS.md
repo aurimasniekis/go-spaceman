@@ -657,6 +657,66 @@
   - Nodes, users and tokens created after the backup are unknown after a restore; revocations after it are lost.
   - S3 objects are single PUTs (5 GiB each). The S3 target is tested only against the in-process fake (`s3test`).
 
+### ADR-0032 — Human-action follow-up: policies, response routing and one deadline timer (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (M4-07).
+- **Context:** SM-HUM-009 asks that a response wakes a sleeping requester per policy, notifies a busy one, survives
+  session loss, goes to control or a successor when the requester is unrecoverable, keeps provenance and never reaches
+  unrelated sessions. SM-HUM-011 adds rate limits, reminders and escalation, with no model turns spent polling. Until
+  now a notification was addressed to the requester's run only (stuck forever once that run ended), every run of a
+  space could read every response through `spaceman_human_get`, expiry ran on a once-a-minute ticker, and only pending
+  limits existed. This changes who can read a response (narrower for unrelated runs, wider for the rerouted target), so
+  it is recorded as a **security-relevant change**.
+- **Decision:**
+  - **Policies** (`human_policies`, migration `0024`) per action type (`all`, `question`, `approval`, `todo`,
+    `message`, `custom`), as installation defaults (no space) or space overrides. The most specific row applies as a
+    whole (space+type, space+all, default+type, default+all), then a built-in policy per type (reminders for questions,
+    approvals, to-dos and custom types; escalation to high for questions and approvals; none for messages). Fields:
+    reminder delay, repeat and count (≤ 20); escalation delay, priority (high/urgent, never lowers) and assignee (a
+    user); `requester_ended` `reroute` or `next_launch` with a hold (≤ 7 days); successor role; `wake_idle`; rate limits
+    per run and per space per hour (bounded 1–1,000 and 1–10,000). Changing a policy recomputes the schedule of pending
+    actions in scope; the computation is deterministic, so central also recomputes it at start.
+  - **Routing.** A notification carries a target kind: `run` (the requester's live run, a live run of its agent
+    instance, or a live successor-role run, chosen when routed), `instance` (the next run of the requester's instance,
+    held until the hold ends), `control` (whichever control run of the space reads it; at most one exists, SM-INV-006,
+    and it counts while the supervisor restarts it) or `operators` (undeliverable). A requester is unrecoverable when its
+    run exited, failed, was lost, is unknown and not wanted (after a restore) or does not exist. Order on an ended
+    requester: `next_launch` → instance (or its live run); otherwise successor-role run → control → operators. A run that
+    ends before acknowledging a routed response moves it on (`run_ended`); after five routings it goes to the operators.
+    Every routing records the original run, the previous target, the reason (`requester_ended`, `run_ended`,
+    `hold_expired`, `operator`, `too_many_routes`) and the time; it is audited (`human_action.rerouted`), published
+    (`human.action.rerouted`, metadata only) and, for `operators`, a message to the space's operators (no response text)
+    and **Send to control** in the UI (`POST …/notifications/{id}/route`, `human_action:respond`).
+  - **No unrelated sessions.** Delivery (terminal notice, `spaceman_messages`, acknowledgement) matches the target
+    exactly; there is no role broadcast. `spaceman_human_get` and `spaceman_human_list` hide the response, comments and
+    status reason from runs that are not the requester's run or instance, a run the response was routed to, or control.
+  - **Wake.** "Sleeping" is an idle program: the existing idle-gated terminal notice wakes it (`wake_idle`, default on);
+    a busy run gets it when it turns idle. SpaceMan does not relaunch an ended run to deliver a response: workers are
+    started only by control (SM-CTRL-001), and resuming a session outside its owner's decision would bypass that. The
+    honest policy values are `reroute` and `next_launch` (a resumed control, a sleeping KB session or an operator
+    relaunching the instance picks it up).
+  - **One timer.** `human.Service.Run` sets one timer to the earliest expiry, reminder, escalation or hold (indexed
+    `min()` queries) and to the earliest approval expiry (an extra deadline), capped at an hour, and is kicked after
+    every commit that may move a deadline, after a run ends and when a run turns idle. Its first round routes
+    notifications stranded while central was down. The once-a-minute expiry ticker is removed.
+  - **Reminders** increment a count and time, schedule the next one, record a change-feed update, an audit event and
+    `human.action.reminded`; they do not bump the version (a person answering is not interrupted) or move the action.
+    **Escalation** raises the priority and/or assigns, bumps the version, keeps the rank (people's ordering is never
+    changed silently), and is audited and published (`human.action.escalated`). Escalation targets a user; SpaceMan has
+    no assignee groups.
+  - **Rate limits** apply to agent requesters per type: per run and per space in a sliding hour, besides the pending
+    limits (500 per space, 25 per run, now counted by an indexed query). The `rate_limited` error tells the agent that
+    it is notified of responses, and the MCP tool descriptions say not to wait or check back.
+- **Alternatives:** broadcasting a rerouted response to every run of a role (more sessions see it, against SM-HUM-009);
+  relaunching or resuming the requester's session to deliver it (bypasses control; an unsupervised launch); a ticker per
+  job or per space (polling); merging policies field by field (harder to reason about which policy applied).
+- **Consequences:**
+  - A response for an ended worker reaches control, which can read it; a configured successor role's run can too.
+  - Pending actions created before `0024` get reminder and escalation times from the policies at the first start.
+  - Built-in reminders and escalation apply to existing installations without configuration; set an `all` default
+    with zero delays to turn them off.
+  - Real-harness evidence for waking and routing is the simulated suite plus the dev stack (stub harness); no real
+    Claude Code or Codex run was exercised for this package.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

@@ -84,10 +84,57 @@ the queue selects the next eligible task instead. Only that task is affected.
 ## Requesters and notifications
 
 The **requester** is set by SpaceMan from who is asking (an operator, an agent run, or SpaceMan itself), never from the
-request's content. When an agent asked, the response creates a durable notification for that run, so it is not lost if
-the agent is busy or asleep. Agents create and read human actions through their SpaceMan tools.
+request's content. When an agent asked, the response (or a withdrawal or expiry) creates a durable notification,
+stored in the same transaction as the response, so it survives restarts. Agents create and read human actions through
+their SpaceMan tools and never wait in a loop: they are told when a response arrives.
+
+- A **busy** requester gets a one-line terminal notice as soon as its program is idle again; an **idle** requester is
+  woken by that notice at once (unless the policy turns notices off; then it reads the response the next time it checks
+  `spaceman_messages`). The notice says only that something is waiting.
+- When the requester's run has **ended** (it exited, failed, was lost, or ends before acknowledging the response), the
+  policy decides:
+  - **On at once** (`reroute`, the default): to a running run of the policy's **successor role**, else to the space's
+    **control** (also while the supervisor restarts it), else nobody.
+  - **To its next run** (`next_launch`): kept for the next run of the same agent instance, a resumed session such as a
+    restarted control or a sleeping knowledge-base session, for the policy's hold time; then on as above.
+- If no agent can take it, the action shows the response as **undeliverable**, operators get a message, and **Send to
+  control** routes it once control runs.
+- Every routing records the original run, the previous target and the reason, in the action's drawer, in the audit log
+  and as a `human.action.rerouted` event. The run that receives a rerouted response is told whose it was.
+- A response only ever reaches its target: the requester's run or agent instance, the run it was routed to, or
+  control. Other runs of the space can read the request but not the response, comments or reason.
+
+<Shot name="human-rerouted" alt="An answered question from a worker that had stopped: the notification went to the space's control, routed from the worker's run because that run had ended" caption="A response routed to control because its requester had ended" />
+
+SpaceMan does not relaunch an ended worker to hand it a response: only control starts workers, so the response goes
+to control, which decides.
 
 Text written by an agent is untrusted: it is rendered as sanitized Markdown, never as HTML.
+
+## Reminders, escalation and policies
+
+Each action type has a **policy**. Installation defaults are under **Action types → Reminders, escalation and
+routing**; a space overrides them under **Human actions → Policies**, for one type or for every type. The most specific
+policy applies as a whole: the space's policy for the type, the space's policy for every type, the default for the
+type, the default for every type, then the built-in policy.
+
+<Shot name="human-policies" alt="A space's policies: approvals overridden in the space with reminders every two hours and escalation to urgent after four hours, to-dos reminded after a minute, and built-in policies for the other types" caption="Policies in force in a space, with where each comes from" />
+
+| Built-in | Reminders | Escalation |
+|---|---|---|
+| Question | after 4 hours, then daily, 3 at most | after a day: priority high |
+| Approval | after 1 hour, then every 8 hours, 3 at most | after 8 hours: priority high |
+| To-do and custom types | once, after a day | never |
+| Message | never | never |
+
+- A **reminder** re-surfaces a pending action: it shows *reminded* (with a count) in Needs you and the space's list,
+  and **Only reminded or escalated** narrows Needs you to those. The reminder does not change the action's version
+  or its place in the order, so someone answering it is not interrupted.
+- **Escalation** raises the priority (never lowers it) and/or assigns the action to a person, marks it *escalated* and
+  is audited. The order of the list never changes; people decide it.
+- Changing a policy recomputes the reminder and escalation times of pending actions at once.
+- Expiry, reminders, escalation and holds run on one timer set to the earliest deadline, woken by every change.
+  Nothing polls per action or per space.
 
 ## Bulk actions
 
@@ -97,4 +144,6 @@ always made one at a time, with the request visible.
 ## Limits
 
 A space holds at most 500 pending human actions, and one agent run at most 25, so a misbehaving agent cannot flood
-the list.
+the list. The policy also limits how many actions of a type agents may ask per hour: per run (built-in 30) and per
+space (built-in 300). People are never rate limited. An agent over a limit gets a `rate_limited` error that tells it
+waiting is enough, since it is notified of every response.

@@ -604,6 +604,17 @@ func (q *Queries) ListApprovalsByKey(ctx context.Context, arg ListApprovalsByKey
 	return items, nil
 }
 
+const nextApprovalExpiry = `-- name: NextApprovalExpiry :one
+SELECT CAST(coalesce(min(valid_until), 0) AS INTEGER) AS t FROM approvals WHERE state = 'approved' AND uses_left > 0 AND valid_until IS NOT NULL
+`
+
+func (q *Queries) NextApprovalExpiry(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextApprovalExpiry)
+	var t int64
+	err := row.Scan(&t)
+	return t, err
+}
+
 const setApprovalAction = `-- name: SetApprovalAction :exec
 UPDATE approvals SET human_action_id = ?, updated_at = ? WHERE id = ?
 `

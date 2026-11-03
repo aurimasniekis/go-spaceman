@@ -248,15 +248,20 @@ type Recipient struct {
 	Control              bool
 }
 
-// HumanNotice is a human-action outcome waiting for the requester.
+// HumanNotice is a human-action outcome waiting for the requester, or for the run it was routed to when the
+// requester's run had ended (then OriginalRun, RoutedFrom and RouteReason say whose it was and why it is yours).
 type HumanNotice struct {
-	ID       string    `json:"id"`
-	ActionID string    `json:"action_id"`
-	Title    string    `json:"title"`
-	Type     string    `json:"type"`
-	Kind     string    `json:"kind" doc:"resolved, cancelled or expired"`
-	Outcome  string    `json:"outcome,omitempty"`
-	At       time.Time `json:"at"`
+	ID            string    `json:"id"`
+	ActionID      string    `json:"action_id"`
+	Title         string    `json:"title"`
+	Type          string    `json:"type"`
+	Kind          string    `json:"kind" doc:"resolved, cancelled or expired"`
+	Outcome       string    `json:"outcome,omitempty"`
+	At            time.Time `json:"at"`
+	OriginalRun   string    `json:"original_run,omitempty" doc:"The run that asked"`
+	RequesterRole string    `json:"requester_role,omitempty"`
+	RoutedFrom    string    `json:"routed_from,omitempty"`
+	RouteReason   string    `json:"route_reason,omitempty" doc:"Why it reached you instead of the run that asked: requester_ended, run_ended, hold_expired, operator"`
 }
 
 // Inbox is what a run has waiting: messages (addressed to it, its role, or control) and human-action outcomes.
@@ -294,14 +299,17 @@ func (svc *Service) Fetch(ctx context.Context, rc Recipient) (*Inbox, error) {
 				}
 			}
 		}
-		ns, err := tx.Q.ListHumanNotificationsFor(ctx, db.ListHumanNotificationsForParams{SpaceID: rc.SpaceID, RunID: rc.RunID, Lim: 100})
+		ns, err := tx.Q.ListHumanNotificationsFor(ctx, db.ListHumanNotificationsForParams{SpaceID: rc.SpaceID, RunID: rc.RunID, IsControl: b2i(rc.Control), Lim: 100})
 		if err != nil {
 			return err
 		}
 		var pending []string
 		for _, n := range ns {
-			out.Human = append(out.Human, HumanNotice{ID: n.ID, ActionID: n.ActionID, Title: n.Title, Type: n.Type, Kind: n.Kind, Outcome: n.Outcome,
-				At: time.UnixMicro(n.CreatedAt).UTC()})
+			h := HumanNotice{ID: n.ID, ActionID: n.ActionID, Title: n.Title, Type: n.Type, Kind: n.Kind, Outcome: n.Outcome, At: time.UnixMicro(n.CreatedAt).UTC()}
+			if n.RouteReason != "" {
+				h.OriginalRun, h.RequesterRole, h.RoutedFrom, h.RouteReason = n.OriginalRun, n.RequesterRole, n.RoutedFrom, n.RouteReason
+			}
+			out.Human = append(out.Human, h)
 			pending = append(pending, n.ID)
 		}
 		if len(pending) > 0 {
@@ -326,7 +334,7 @@ func (svc *Service) AckRun(ctx context.Context, actor audit.Actor, rc Recipient,
 	return svc.s.W().TxNamed(ctx, "messages.ack", func(tx *store.Tx) error {
 		now := sql.NullInt64{Int64: tx.NowMicros(), Valid: true}
 		if strings.HasPrefix(id, "hnt_") {
-			n, err := tx.Q.AckNotification(ctx, db.AckNotificationParams{Now: now, ID: id, RunID: rc.RunID})
+			n, err := tx.Q.AckNotification(ctx, db.AckNotificationParams{Now: now, ID: id, SpaceID: rc.SpaceID, RunID: rc.RunID, IsControl: b2i(rc.Control)})
 			if err != nil {
 				return err
 			}

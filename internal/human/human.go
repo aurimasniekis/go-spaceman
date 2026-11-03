@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -114,6 +115,13 @@ type Action struct {
 	RespondedAt      *time.Time      `json:"responded_at,omitempty"`
 	StatusReason     string          `json:"status_reason,omitempty"`
 	FollowUpOf       string          `json:"follow_up_of,omitempty"`
+	ReminderCount    int64           `json:"reminder_count" doc:"How often people were reminded (SM-HUM-011)"`
+	RemindedAt       *time.Time      `json:"reminded_at,omitempty"`
+	NextReminderAt   *time.Time      `json:"next_reminder_at,omitempty"`
+	EscalateAt       *time.Time      `json:"escalate_at,omitempty" doc:"When the action escalates if nobody resolves it"`
+	EscalatedAt      *time.Time      `json:"escalated_at,omitempty"`
+	EscalatedFrom    string          `json:"escalated_from,omitempty" doc:"The priority before escalation"`
+	ResponseHidden   bool            `json:"response_hidden,omitempty" doc:"Agent tools: the response, comments and reason are hidden from runs the action is not related to"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 	Version          int64           `json:"version"`
@@ -132,15 +140,26 @@ type Comment struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// Notification is a durable, correlated notice of an outcome to the requester (SM-HUM-009).
+// Notification is a durable, correlated notice of an outcome to the requester (SM-HUM-009), with where it is routed
+// and why.
 type Notification struct {
-	ID         string     `json:"id"`
-	Kind       string     `json:"kind" enum:"resolved,cancelled,expired"`
-	TargetRun  string     `json:"target_run,omitempty"`
-	TargetRole string     `json:"target_role,omitempty"`
-	State      string     `json:"state" enum:"pending,delivered,acknowledged"`
-	CreatedAt  time.Time  `json:"created_at"`
-	Delivered  *time.Time `json:"delivered_at,omitempty"`
+	ID             string     `json:"id"`
+	Kind           string     `json:"kind" enum:"resolved,cancelled,expired"`
+	TargetKind     string     `json:"target_kind" enum:"run,instance,control,operators" doc:"run: one run; instance: the next run of the requester's agent instance; control: the space's control; operators: no agent can take it (undeliverable)"`
+	TargetRun      string     `json:"target_run,omitempty"`
+	TargetRole     string     `json:"target_role,omitempty"`
+	TargetInstance string     `json:"target_instance,omitempty"`
+	HoldUntil      *time.Time `json:"hold_until,omitempty" doc:"instance: rerouted when no run of the instance starts before this"`
+	OriginalRun    string     `json:"original_run,omitempty" doc:"The requester's run"`
+	RoutedFrom     string     `json:"routed_from,omitempty" doc:"The previous target (run:<id>, instance:<id>, control, operators)"`
+	RouteReason    string     `json:"route_reason,omitempty" enum:",requester_ended,run_ended,hold_expired,operator,too_many_routes"`
+	RoutedAt       *time.Time `json:"routed_at,omitempty"`
+	RouteCount     int64      `json:"route_count,omitempty"`
+	Wake           bool       `json:"wake" doc:"An idle target is woken with a terminal notice"`
+	State          string     `json:"state" enum:"pending,delivered,acknowledged"`
+	CreatedAt      time.Time  `json:"created_at"`
+	Delivered      *time.Time `json:"delivered_at,omitempty"`
+	Acknowledged   *time.Time `json:"acknowledged_at,omitempty"`
 }
 
 // Requester identifies who asked (set by the authenticated caller, never by the request body).
@@ -172,8 +191,12 @@ type Service struct {
 	audit   *audit.Writer
 	changes *changefeed.Recorder
 	clock   clock.Clock
-	// OnNotify is called after a commit that stored a notification for an agent requester (wakes the notifier).
+	// OnNotify is called after a commit that stored or routed a notification for an agent (wakes the notifier).
 	OnNotify func()
+	// Log receives the deadline loop's warnings and counts (never action content).
+	Log *slog.Logger
+	// wake kicks the deadline loop (Run).
+	wake chan struct{}
 	// OnFinalized is called inside the transaction that finalizes an action (enforced approvals record the decision).
 	OnFinalized func(ctx context.Context, tx *store.Tx, r db.HumanAction, status, outcome string, actor audit.Actor) error
 	// Outbox records lifecycle events (safe metadata only) for publication to Pulse (SM-OBS-004, SM-HUI-007). Nil:
@@ -181,15 +204,25 @@ type Service struct {
 	Outbox *outbox.Outbox
 }
 
-// event records the lifecycle event of r entering status with outcome: identifiers, type, status, outcome and
-// priority only, never the title, body, request, response, comments or reasons.
-func (svc *Service) event(ctx context.Context, tx *store.Tx, r db.HumanAction, status, outcome, causation string) error {
-	p := outbox.HumanEvent(outbox.HumanAction{SpaceID: r.SpaceID, ActionID: r.ID, Type: r.Type, TypeSlug: outbox.CleanID(r.TypeSlug),
+// meta is the safe metadata of an action for outbound events: identifiers, type, status, outcome and priority only,
+// never the title, body, request, response, comments or reasons.
+func (svc *Service) meta(r db.HumanAction, status, outcome string) outbox.HumanAction {
+	return outbox.HumanAction{SpaceID: r.SpaceID, ActionID: r.ID, Type: r.Type, TypeSlug: outbox.CleanID(r.TypeSlug),
 		TypeVersion: r.TypeVersion, Status: status, Outcome: outbox.CleanID(outcome), Priority: r.Priority, RequesterKind: r.RequesterKind,
-		TaskID: r.TaskID, BlocksTask: r.BlocksTask == 1, FollowUpOf: r.FollowUpOf})
+		TaskID: r.TaskID, BlocksTask: r.BlocksTask == 1, FollowUpOf: r.FollowUpOf}
+}
+
+// event records the lifecycle event of r entering status with outcome.
+func (svc *Service) event(ctx context.Context, tx *store.Tx, r db.HumanAction, status, outcome, causation string) error {
+	p := outbox.HumanEvent(svc.meta(r, status, outcome))
 	if p == nil {
 		return nil
 	}
+	return svc.publish(ctx, tx, p, r, causation)
+}
+
+// publish enqueues an outbound event about r, correlated by its correlation ID, task or ID.
+func (svc *Service) publish(ctx context.Context, tx *store.Tx, p outbox.Payload, r db.HumanAction, causation string) error {
 	corr := outbox.CleanID(r.CorrelationID)
 	if corr == "" {
 		corr = r.TaskID
@@ -212,12 +245,13 @@ func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, c clock.Cloc
 	if c == nil {
 		c = clock.System{}
 	}
-	return &Service{s: s, audit: aw, changes: ch, clock: c}
+	return &Service{s: s, audit: aw, changes: ch, clock: c, wake: make(chan struct{}, 1)}
 }
 
 var (
 	errNotFound   = apperr.New(apperr.CodeNotFound, "human action not found")
 	priorityNames = []string{"low", "normal", "high", "urgent"}
+	json0         = json.RawMessage(`{}`)
 )
 
 // validateRequest checks and normalizes a type's request.
@@ -295,7 +329,9 @@ func fromRow(r db.HumanAction) *Action {
 		RequesterLabel: r.RequesterLabel, TaskID: r.TaskID, InboxItemID: r.InboxItemID, CorrelationID: r.CorrelationID, DedupKey: r.DedupKey, BlocksTask: r.BlocksTask == 1,
 		Priority: r.Priority, Rank: r.Rank, DueAt: tn(r.DueAt), ExpiresAt: tn(r.ExpiresAt), Assignee: r.Assignee, Status: r.Status, Outcome: r.Outcome,
 		Response: json.RawMessage(r.ResponseJson), RespondedBy: r.RespondedBy, RespondedAt: tn(r.RespondedAt), StatusReason: r.StatusReason, FollowUpOf: r.FollowUpOf,
-		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
+		ReminderCount: r.ReminderCount, RemindedAt: tn(r.RemindedAt), NextReminderAt: tn(r.NextReminderAt), EscalateAt: tn(r.EscalateAt), EscalatedAt: tn(r.EscalatedAt),
+		EscalatedFrom: r.EscalatedFrom,
+		CreatedAt:     time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
 }
 
 // Create adds a human action. The ID is durable immediately; a dedup key that exists returns the existing action
@@ -411,26 +447,21 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 				return apperr.New(apperr.CodeRateLimited, "this space has %d pending human actions; resolve some first", p.N)
 			}
 		}
-		if in.Requester.Kind == "agent" && in.Requester.Run != "" {
-			n := 0
-			rows, err := tx.Q.ListPendingHumanActions(ctx, 5000)
-			if err != nil {
+		pol, err := policyFor(ctx, tx.Q, spaceID, in.Type)
+		if err != nil {
+			return err
+		}
+		if in.Requester.Kind == "agent" {
+			if err := svc.limit(ctx, tx, spaceID, in, pol); err != nil {
 				return err
-			}
-			for _, r := range rows {
-				if r.RequesterRun == in.Requester.Run {
-					n++
-				}
-			}
-			if n >= MaxPendingPerRequester {
-				return apperr.New(apperr.CodeRateLimited, "this run has %d pending human actions", n)
 			}
 		}
 		max, err := tx.Q.MaxHumanRank(ctx, spaceID)
 		if err != nil {
 			return err
 		}
-		if err := tx.Q.InsertHumanAction(ctx, db.InsertHumanActionParams{ID: id, SpaceID: spaceID, Type: in.Type, TypeVersion: typeVersion, TypeVersionID: typeVersionID,
+		remind, escalate := schedule(db.HumanAction{CreatedAt: tx.NowMicros()}, pol.PolicyFields)
+		if err := tx.Q.InsertHumanAction(ctx, db.InsertHumanActionParams{NextReminderAt: remind, EscalateAt: escalate, ID: id, SpaceID: spaceID, Type: in.Type, TypeVersion: typeVersion, TypeVersionID: typeVersionID,
 			TypeSlug: in.TypeSlug, Title: in.Title, Body: in.Body, RequestJson: string(req),
 			RequesterKind: in.Requester.Kind, RequesterID: in.Requester.ID, RequesterRole: in.Requester.Role, RequesterRun: in.Requester.Run,
 			RequesterSession: in.Requester.Session, RequesterLabel: in.Requester.Label, TaskID: in.TaskID, InboxItemID: in.InboxItemID, CorrelationID: in.CorrelationID,
@@ -448,6 +479,7 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			}
 		}
 		created = true
+		tx.AfterCommit(svc.Kick)
 		if err := svc.changes.Record(ctx, tx, spaceID, "human_action", id, "created", 1); err != nil {
 			return err
 		}
@@ -505,8 +537,43 @@ func (svc *Service) Get(ctx context.Context, spaceID, id string) (*Action, error
 		return nil, err
 	}
 	for _, n := range ns {
-		a.Notifications = append(a.Notifications, Notification{ID: n.ID, Kind: n.Kind, TargetRun: n.TargetRun, TargetRole: n.TargetRole, State: n.State,
-			CreatedAt: time.UnixMicro(n.CreatedAt).UTC(), Delivered: tn(n.DeliveredAt)})
+		a.Notifications = append(a.Notifications, Notification{ID: n.ID, Kind: n.Kind, TargetKind: n.TargetKind, TargetRun: n.TargetRun, TargetRole: n.TargetRole,
+			TargetInstance: n.TargetInstance, HoldUntil: tn(n.HoldUntil), OriginalRun: n.OriginalRun, RoutedFrom: n.RoutedFrom, RouteReason: n.RouteReason,
+			RoutedAt: tn(n.RoutedAt), RouteCount: n.RouteCount, Wake: n.Wake == 1, State: n.State, CreatedAt: time.UnixMicro(n.CreatedAt).UTC(),
+			Delivered: tn(n.DeliveredAt), Acknowledged: tn(n.AcknowledgedAt)})
 	}
 	return a, nil
+}
+
+// limit enforces the pending limit and the rate limits of an agent requester (SM-HUM-011). The errors tell the agent
+// that waiting is enough: it is notified of every response.
+func (svc *Service) limit(ctx context.Context, tx *store.Tx, spaceID string, in CreateInput, pol Policy) error {
+	const wait = "; you are notified when a person responds, so wait for that instead of asking again or polling"
+	since := tx.Now.Add(-rateWindow).UnixMicro()
+	if in.Requester.Run != "" {
+		n, err := tx.Q.CountPendingHumanByRun(ctx, in.Requester.Run)
+		if err != nil {
+			return err
+		}
+		if n >= MaxPendingPerRequester {
+			return apperr.New(apperr.CodeRateLimited, "this run has %d pending human actions (limit %d)%s", n, MaxPendingPerRequester, wait)
+		}
+		n, err = tx.Q.CountHumanActionsByRunSince(ctx, db.CountHumanActionsByRunSinceParams{RequesterRun: in.Requester.Run, Type: in.Type, CreatedAt: since})
+		if err != nil {
+			return err
+		}
+		if n >= pol.RatePerRunHour {
+			return apperr.New(apperr.CodeRateLimited, "this run asked %d %s actions in the last hour (limit %d, policy %s)%s", n, policyKey(in.Type),
+				pol.RatePerRunHour, pol.Source, wait)
+		}
+	}
+	n, err := tx.Q.CountAgentHumanActionsInSpaceSince(ctx, db.CountAgentHumanActionsInSpaceSinceParams{SpaceID: spaceID, Type: in.Type, CreatedAt: since})
+	if err != nil {
+		return err
+	}
+	if n >= pol.RatePerSpaceHour {
+		return apperr.New(apperr.CodeRateLimited, "agents of this space asked %d %s actions in the last hour (limit %d, policy %s)%s", n, policyKey(in.Type),
+			pol.RatePerSpaceHour, pol.Source, wait)
+	}
+	return nil
 }

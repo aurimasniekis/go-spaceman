@@ -34,7 +34,7 @@ Runs of a role granted an external MCP server also see that server's tools in th
 | `spaceman_kb_propose` | (KB sessions) Offer a commit for acceptance | | | ✓ | |
 | `spaceman_dream_report` | (Dreamers) Finish a dream: summary, changes, findings, or no change | | | dreamer | |
 | `spaceman_memory_status` | The role memory's sync state: preserved history, pending changes, conflicts | ✓ | ✓ | ✓ | ✓ |
-| `spaceman_human_get` | Read a human action and its response | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_human_get` | Read a human action, and its response when you asked it or it was routed to you | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_list` | List human actions (by default your own) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_cancel` | Withdraw a pending action you asked (control: any) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_messages` | Read waiting messages and human responses | ✓ | ✓ | ✓ | ✓ |

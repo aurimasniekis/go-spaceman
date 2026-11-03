@@ -1,8 +1,8 @@
 -- name: InsertHumanAction :exec
 INSERT INTO human_actions (id, space_id, type, type_version, type_version_id, type_slug, title, body, request_json, requester_kind, requester_id,
   requester_role, requester_run, requester_session, requester_label, task_id, inbox_item_id, correlation_id, dedup_key, blocks_task, priority, rank,
-  due_at, expires_at, follow_up_of, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  due_at, expires_at, follow_up_of, created_at, created_by, updated_at, next_reminder_at, escalate_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetHumanAction :one
 SELECT * FROM human_actions WHERE id = ?;
@@ -44,7 +44,9 @@ INSERT INTO human_comments (id, action_id, body, author, author_label, created_a
 SELECT * FROM human_comments WHERE action_id = ? ORDER BY created_at;
 
 -- name: InsertHumanNotification :exec
-INSERT INTO human_notifications (id, action_id, space_id, target_run, target_session, target_role, kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO human_notifications (id, action_id, space_id, target_run, target_session, target_role, kind, created_at, target_kind, target_instance,
+  hold_until, wake, original_run, routed_from, route_reason, routed_at, route_count)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListHumanNotifications :many
 SELECT * FROM human_notifications WHERE action_id = ? ORDER BY created_at;
@@ -108,3 +110,111 @@ SELECT * FROM space_human_types WHERE space_id = ? ORDER BY type_id;
 
 -- name: GetSpaceHumanType :one
 SELECT * FROM space_human_types WHERE space_id = ? AND type_id = ?;
+
+-- name: GetHumanNotification :one
+SELECT * FROM human_notifications WHERE id = ?;
+
+-- name: RouteHumanNotification :execrows
+UPDATE human_notifications SET target_kind = sqlc.arg(target_kind), target_run = sqlc.arg(target_run), target_role = sqlc.arg(target_role),
+  target_instance = sqlc.arg(target_instance), hold_until = sqlc.arg(hold_until), routed_from = sqlc.arg(routed_from), route_reason = sqlc.arg(route_reason),
+  routed_at = sqlc.arg(now), route_count = route_count + 1, state = 'pending', delivered_at = NULL, notice_command = '', noticed_at = NULL
+WHERE id = sqlc.arg(id) AND state IN ('pending', 'delivered') AND target_kind = sqlc.arg(from_kind) AND target_run = sqlc.arg(from_run);
+
+-- name: PinHumanNotification :execrows
+UPDATE human_notifications SET target_kind = 'run', target_run = sqlc.arg(run_id), hold_until = NULL
+WHERE id = sqlc.arg(id) AND state = 'pending' AND target_kind = 'instance';
+
+-- name: ListStrandedHumanNotifications :many
+SELECT n.* FROM human_notifications n LEFT JOIN runs r ON r.id = n.target_run
+WHERE n.state IN ('pending', 'delivered') AND n.target_kind = 'run'
+  AND (r.id IS NULL OR r.space_id <> n.space_id OR r.observed IN ('exited', 'failed', 'lost') OR (r.observed = 'unknown' AND r.desired = 'stopped'))
+ORDER BY n.created_at LIMIT ?;
+
+-- name: ListHeldHumanNotifications :many
+SELECT * FROM human_notifications WHERE state = 'pending' AND target_kind = 'instance' ORDER BY created_at LIMIT ?;
+
+-- name: ListHumanActionIDsNotifiedTo :many
+SELECT DISTINCT action_id FROM human_notifications WHERE space_id = ? AND target_run = ?;
+
+-- name: LiveRunOfInstance :one
+SELECT id FROM runs WHERE space_id = ? AND instance_id = ? AND desired = 'running' AND observed IN ('pending', 'starting', 'running')
+ORDER BY created_at DESC LIMIT 1;
+
+-- name: LiveRunOfRole :one
+SELECT id FROM runs WHERE space_id = sqlc.arg(space_id) AND role = sqlc.arg(role) AND kind <> 'control' AND id <> sqlc.arg(not_run)
+  AND desired = 'running' AND observed IN ('pending', 'starting', 'running')
+ORDER BY created_at DESC LIMIT 1;
+
+-- name: CountWantedControlRuns :one
+SELECT count(*) FROM runs WHERE space_id = ? AND kind = 'control' AND desired = 'running';
+
+-- name: CountHumanActionsByRunSince :one
+SELECT count(*) FROM human_actions WHERE requester_run = ? AND type = ? AND created_at > ?;
+
+-- name: CountAgentHumanActionsInSpaceSince :one
+SELECT count(*) FROM human_actions WHERE space_id = ? AND requester_kind = 'agent' AND type = ? AND created_at > ?;
+
+-- name: CountPendingHumanByRun :one
+SELECT count(*) FROM human_actions WHERE requester_run = ? AND status IN ('open', 'in_progress');
+
+-- name: DueHumanReminders :many
+SELECT * FROM human_actions WHERE next_reminder_at IS NOT NULL AND next_reminder_at <= ? AND status IN ('open', 'in_progress')
+ORDER BY next_reminder_at LIMIT ?;
+
+-- name: DueHumanEscalations :many
+SELECT * FROM human_actions WHERE escalate_at IS NOT NULL AND escalate_at <= ? AND status IN ('open', 'in_progress')
+ORDER BY escalate_at LIMIT ?;
+
+-- name: RemindHumanAction :execrows
+UPDATE human_actions SET reminder_count = reminder_count + 1, reminded_at = sqlc.arg(now), next_reminder_at = sqlc.arg(next_reminder_at), updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND reminder_count = sqlc.arg(reminder_count) AND status IN ('open', 'in_progress');
+
+-- name: EscalateHumanAction :execrows
+UPDATE human_actions SET priority = sqlc.arg(priority), assignee = sqlc.arg(assignee), status = sqlc.arg(status), escalated_at = sqlc.arg(now),
+  escalated_from = sqlc.arg(escalated_from), escalate_at = NULL, version = version + 1, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND status IN ('open', 'in_progress');
+
+-- name: SetHumanSchedule :exec
+UPDATE human_actions SET next_reminder_at = sqlc.arg(next_reminder_at), escalate_at = sqlc.arg(escalate_at) WHERE id = sqlc.arg(id);
+
+-- name: NextHumanExpiry :one
+SELECT CAST(coalesce(min(expires_at), 0) AS INTEGER) AS t FROM human_actions WHERE expires_at IS NOT NULL AND status IN ('open', 'in_progress');
+
+-- name: NextHumanReminder :one
+SELECT CAST(coalesce(min(next_reminder_at), 0) AS INTEGER) AS t FROM human_actions WHERE next_reminder_at IS NOT NULL AND status IN ('open', 'in_progress');
+
+-- name: NextHumanEscalation :one
+SELECT CAST(coalesce(min(escalate_at), 0) AS INTEGER) AS t FROM human_actions WHERE escalate_at IS NOT NULL AND status IN ('open', 'in_progress');
+
+-- name: NextHumanHold :one
+SELECT CAST(coalesce(min(hold_until), 0) AS INTEGER) AS t FROM human_notifications WHERE hold_until IS NOT NULL AND state = 'pending' AND target_kind = 'instance';
+
+-- name: ListHumanPoliciesFor :many
+SELECT * FROM human_policies WHERE (space_id = sqlc.arg(space_id) OR space_id IS NULL) AND action_type IN (sqlc.arg(action_type), 'all');
+
+-- name: ListDefaultHumanPolicies :many
+SELECT * FROM human_policies WHERE space_id IS NULL ORDER BY action_type;
+
+-- name: ListSpaceHumanPolicies :many
+SELECT * FROM human_policies WHERE space_id = ? ORDER BY action_type;
+
+-- name: GetDefaultHumanPolicy :one
+SELECT * FROM human_policies WHERE space_id IS NULL AND action_type = ?;
+
+-- name: GetSpaceHumanPolicy :one
+SELECT * FROM human_policies WHERE space_id = ? AND action_type = ?;
+
+-- name: InsertHumanPolicy :exec
+INSERT INTO human_policies (id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes,
+  escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour,
+  created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: UpdateHumanPolicy :execrows
+UPDATE human_policies SET remind_after_minutes = ?, remind_every_minutes = ?, max_reminders = ?, escalate_after_minutes = ?, escalate_priority = ?,
+  escalate_assignee = ?, requester_ended = ?, hold_minutes = ?, successor_role = ?, wake_idle = ?, rate_per_run_hour = ?, rate_per_space_hour = ?,
+  updated_at = ?, updated_by = ?, version = version + 1
+WHERE id = ? AND version = ?;
+
+-- name: DeleteHumanPolicy :execrows
+DELETE FROM human_policies WHERE id = ?;

@@ -366,6 +366,12 @@ type HumanAction struct {
 	CreatedBy        string
 	UpdatedAt        int64
 	Version          int64
+	ReminderCount    int64
+	RemindedAt       sql.NullInt64
+	NextReminderAt   sql.NullInt64
+	EscalateAt       sql.NullInt64
+	EscalatedAt      sql.NullInt64
+	EscalatedFrom    string
 }
 
 type HumanComment struct {
@@ -391,6 +397,38 @@ type HumanNotification struct {
 	NoticeCommand  string
 	NoticedAt      sql.NullInt64
 	AcknowledgedAt sql.NullInt64
+	TargetKind     string
+	TargetInstance string
+	HoldUntil      sql.NullInt64
+	Wake           int64
+	OriginalRun    string
+	RoutedFrom     string
+	RouteReason    string
+	RoutedAt       sql.NullInt64
+	RouteCount     int64
+}
+
+type HumanPolicy struct {
+	ID                   string
+	SpaceID              sql.NullString
+	ActionType           string
+	RemindAfterMinutes   int64
+	RemindEveryMinutes   int64
+	MaxReminders         int64
+	EscalateAfterMinutes int64
+	EscalatePriority     string
+	EscalateAssignee     string
+	RequesterEnded       string
+	HoldMinutes          int64
+	SuccessorRole        string
+	WakeIdle             int64
+	RatePerRunHour       int64
+	RatePerSpaceHour     int64
+	CreatedAt            int64
+	CreatedBy            string
+	UpdatedAt            int64
+	UpdatedBy            string
+	Version              int64
 }
 
 type HumanType struct {

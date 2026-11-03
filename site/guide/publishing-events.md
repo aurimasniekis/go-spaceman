@@ -77,6 +77,9 @@ in a way that is not purely additive gets a new type version (`.v2`).
 | `evt.spaceman.human.action.resolved` | `spaceman.human.action_resolved.v1` | the action fields and `outcome` |
 | `evt.spaceman.human.action.cancelled` | `spaceman.human.action_cancelled.v1` | the action fields |
 | `evt.spaceman.human.action.expired` | `spaceman.human.action_expired.v1` | the action fields |
+| `evt.spaceman.human.action.reminded` | `spaceman.human.action_reminded.v1` | the action fields and `reminder_count` |
+| `evt.spaceman.human.action.escalated` | `spaceman.human.action_escalated.v1` | the action fields (`priority` is the new one), `from_priority`, `reassigned` |
+| `evt.spaceman.human.action.rerouted` | `spaceman.human.action_rerouted.v1` | the action fields, `notification_id`, `to` (`run`, `instance`, `control`, `operators`), `route_reason` |
 | `evt.spaceman.approvals.approval.decided` | `spaceman.approvals.approval_decided.v1` | `space_id`, `approval_id`, `human_action_id`, `operation`, `state` (approved, denied, expired, revoked), `requester_run`, `decider_type` |
 | `evt.spaceman.approvals.approval.executed` | `spaceman.approvals.approval_executed.v1` | `space_id`, `approval_id`, `execution_id`, `operation`, `result` (succeeded, failed), `error_code` |
 | `evt.spaceman.memory.collection.synced` | `spaceman.memory.collection_synced.v1` | `space_id`, `collection_id`, `role`, `node_id`, `from_commit`, `to_commit` |

@@ -720,6 +720,15 @@ func (svc *Service) Expire(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// NextExpiry is when the earliest approved approval with uses left expires (zero: none), for the deadline timer.
+func (svc *Service) NextExpiry(ctx context.Context) (time.Time, error) {
+	t, err := svc.s.R().NextApprovalExpiry(ctx)
+	if err != nil || t == 0 {
+		return time.Time{}, err
+	}
+	return time.UnixMicro(t).UTC(), nil
+}
+
 // Recover marks executions that were running when central stopped as interrupted. Their outcome is unknown; they are
 // never retried, so a restart cannot run an approved operation twice.
 func (svc *Service) Recover(ctx context.Context) (int, error) {

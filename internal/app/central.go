@@ -208,10 +208,16 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			if c.Supervisor != nil {
 				c.Supervisor.OnRunEnded(runID)
 			}
+			if c.Human != nil {
+				c.Human.Kick() // route responses the run had not acknowledged (SM-HUM-009)
+			}
 		},
 		OnRunIdle: func(string) {
 			if c.Notifier != nil {
 				c.Notifier.Kick()
+			}
+			if c.Human != nil {
+				c.Human.Kick() // a resumed instance may take a held response
 			}
 		},
 		OnCommandAck: func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error {
@@ -254,6 +260,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Queue.Outbox = c.Outbox
 	c.Human = human.New(st, c.Audit, c.Changes, o.Clock)
 	c.Human.Outbox = c.Outbox
+	c.Human.Log = obs.Component(log, "human")
 	c.Messages = messages.New(st, c.Audit, c.Changes)
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
@@ -423,7 +430,12 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.Backups.Run(ctx)
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
-	go c.expireHumanActions(ctx)
+	if err := c.Human.Recover(ctx); err != nil {
+		return fmt.Errorf("schedule human-action reminders: %w", err)
+	}
+	// One timer for the earliest human-action deadline (expiry, reminder, escalation, notification hold) and approval
+	// expiry, woken by changes; its first round routes responses stranded while central was down (SM-HUM-009/011).
+	go c.Human.Run(ctx, human.Deadline{Name: "approvals", Next: c.Approvals.NextExpiry, Due: c.Approvals.Expire})
 	go c.Notifier.Run(ctx)
 	go c.KB.Run(ctx)
 	go c.Dreams.Run(ctx)
@@ -454,29 +466,6 @@ func (c *Central) Serve(ctx context.Context) error {
 		return runErr
 	}
 	return nil
-}
-
-// expireHumanActions finalizes human actions past their expiry once a minute (SM-HUM-011).
-func (c *Central) expireHumanActions(ctx context.Context) {
-	t := time.NewTicker(time.Minute)
-	defer t.Stop()
-	for {
-		if n, err := c.Human.Expire(ctx); err != nil && ctx.Err() == nil {
-			c.Log.Warn("expire human actions", obs.Err(err))
-		} else if n > 0 {
-			c.Log.Info("expired human actions", slog.Int("count", n))
-		}
-		if n, err := c.Approvals.Expire(ctx); err != nil && ctx.Err() == nil {
-			c.Log.Warn("expire approvals", obs.Err(err))
-		} else if n > 0 {
-			c.Log.Info("expired approvals", slog.Int("count", n))
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
 }
 
 // housekeeping purges expired sessions, one-time tokens and idempotency records hourly (one goroutine for the whole

@@ -204,6 +204,17 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/event-templates/{template_id}/draft` | `save-template-draft` | Save the template's draft version |
 | `POST` | `/event-templates/preview` | `preview-event-template` | Test a definition against a sample event |
 
+### human-action-policies
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/human-policies` | `list-human-policies` | Installation defaults for reminders, escalation, rate limits and response routing |
+| `DELETE` | `/human-policies/{action_type}` | `delete-human-policy` | Remove an installation default (the next less specific policy applies) |
+| `PUT` | `/human-policies/{action_type}` | `set-human-policy` | Set the installation default for a type (all: every type) |
+| `GET` | `/spaces/{space_id}/human-policies` | `list-space-human-policies` | A space's human-action policies and the policy in force for each type |
+| `DELETE` | `/spaces/{space_id}/human-policies/{action_type}` | `delete-space-human-policy` | Remove a space override |
+| `PUT` | `/spaces/{space_id}/human-policies/{action_type}` | `set-space-human-policy` | Override the policy of a type in the space (all: every type) |
+
 ### human-action-types
 
 | Method | Path | Operation | Summary |
@@ -230,6 +241,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/cancel` | `cancel-human-action` | Withdraw a pending human action |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/comments` | `comment-human-action` | Comment on a human action |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/move` | `move-human-action` | Reorder a pending human action |
+| `POST` | `/spaces/{space_id}/human-actions/{action_id}/notifications/{notification_id}/route` | `route-human-notification` | Send a response notification to control or a running role |
 | `POST` | `/spaces/{space_id}/human-actions/{action_id}/respond` | `respond-human-action` | Respond to a human action |
 
 ### inbox

@@ -31,9 +31,11 @@
 | `inbox-list` | The inbox | Space inbox with status filter and counts | current |
 | `inbox-composer` | The inbox | TipTap composer with formatting and an attachment | current |
 | `inbox-item` | The inbox | Inbox item with rendered Markdown, inline image and file attachment | current |
-| `human-global` | Human actions | Needs you: pending actions across spaces with the nav badge | current |
+| `human-global` | Human actions | Needs you: pending actions across spaces with the nav badge and a reminded to-do | current |
 | `human-space` | Human actions | A space's human actions, including a resolved one | current |
 | `human-form-default` | Human actions | Approval drawer with the advisory notice and distinct Approve/Deny | current |
+| `human-policies` | Human actions | A space's policies in force per type with their source (space override, built-in) | current |
+| `human-rerouted` | Human actions | An answered question whose requester run had ended, routed to control with its provenance | current |
 | `messages` | Agent messaging | A space's messages with delivery states and a request's detail | current |
 | `human-form-custom` | Human action types | A custom type's request and schema-driven response form with its outcomes | current |
 | `human-types` | Human action types | Type catalog with schema editors and a live request form preview | current |

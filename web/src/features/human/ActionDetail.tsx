@@ -2,14 +2,14 @@ import { Anchor, Badge, Button, Card, Divider, Group, Modal, Stack, Text, Textar
 import { IconHandGrab, IconUserMinus } from '@tabler/icons-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api, ifMatch, unwrap, type HumanAction } from '@/api/client'
+import { api, ifMatch, unwrap, type HumanAction, type HumanNotification } from '@/api/client'
 import { keys, useMe } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { MarkdownView } from '@/components/MarkdownView'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
-import { HumanStatusBadge, isPending, PriorityBadge, requesterLabel, TypeBadge, type Resp } from './badges'
+import { FollowUpBadges, HumanStatusBadge, isPending, notificationTarget, PriorityBadge, requesterLabel, routeReasonLabel, TypeBadge, type Resp } from './badges'
 import { EnforcedApprovalCard, useActionApproval } from './EnforcedApproval'
 import { RespondForm } from './RespondForm'
 import { DataView } from './SchemaForm'
@@ -66,12 +66,21 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
     <Stack gap="md">
       <Stack gap={4}>
         <Group gap="xs"><TypeBadge type={action.type} slug={action.type_slug} /><HumanStatusBadge action={action} /><PriorityBadge priority={action.priority} />
+          <FollowUpBadges action={action} />
           {action.blocks_task && <Badge variant="outline" color="owlYellow">blocks its task</Badge>}</Group>
         <Title order={3}>{action.title}</Title>
         <Text size="sm" c="dimmed">
           {requesterLabel(action)} · {spaceName ? `${spaceName} · ` : ''}asked {ago(action.created_at)}
           {action.due_at ? ` · due ${datetime(action.due_at)}` : ''}{action.expires_at ? ` · expires ${datetime(action.expires_at)}` : ''}
         </Text>
+        {(action.reminder_count > 0 || action.escalated_at || (pending && (action.next_reminder_at || action.escalate_at))) && (
+          <Text size="sm" c="dimmed">
+            {[action.reminder_count > 0 && `Reminded ${action.reminder_count}× (last ${ago(action.reminded_at!)})`,
+              pending && action.next_reminder_at && `next reminder ${datetime(action.next_reminder_at)}`,
+              action.escalated_at && `escalated ${ago(action.escalated_at)}${action.escalated_from && action.escalated_from !== action.priority ? ` from ${action.escalated_from}` : ''}`,
+              pending && action.escalate_at && `escalates ${datetime(action.escalate_at)}`].filter(Boolean).join(' · ')}
+          </Text>
+        )}
         {action.task_id && <Text size="sm">Task: <AnchorLink to="/spaces/$spaceId/queue" params={{ spaceId: action.space_id }} size="sm">{action.task_id}</AnchorLink></Text>}
         {action.follow_up_of && <Text size="sm">Follow-up of <span className="mono">{action.follow_up_of}</span> (the original is unchanged)</Text>}
       </Stack>
@@ -116,9 +125,9 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
         </Card>
       )}
       {enforced.data && <EnforcedApprovalCard approval={enforced.data} />}
-      {(action.notifications ?? []).length > 0 && (
-        <Text size="xs" c="dimmed">Requester notified: {action.notifications!.map((n) => `${n.kind} (${n.state})`).join(', ')}</Text>
-      )}
+      {(action.notifications ?? []).map((n) => (
+        <DeliveryCard key={n.id} action={action} n={n} canRoute={canRespond} onRouted={done} />
+      ))}
 
       <Divider label="Comments (discussion, not a response)" labelPosition="left" />
       <Stack gap={6}>
@@ -145,5 +154,45 @@ export function ActionDetail({ action: listed, spaceName, onChanged }: { action:
         </Stack>
       </Modal>
     </Stack>
+  )
+}
+
+/** Where the requester's notification of the outcome went (SM-HUM-009): its target, provenance and state. */
+function DeliveryCard({ action, n, canRoute, onRouted }: { action: HumanAction; n: HumanNotification; canRoute: boolean; onRouted: (a: HumanAction) => void }) {
+  const undeliverable = n.target_kind === 'operators'
+  const open = n.state !== 'acknowledged'
+  const route = async (to: string) => {
+    try {
+      onRouted(unwrap(await api.POST('/spaces/{space_id}/human-actions/{action_id}/notifications/{notification_id}/route', {
+        params: { path: { space_id: action.space_id, action_id: action.id, notification_id: n.id } }, body: { to } })))
+      notifyOk('Sent to control')
+    } catch (e) {
+      notifyError(e, 'Could not route the response')
+    }
+  }
+  return (
+    <Card withBorder p="xs">
+      <Group justify="space-between" wrap="nowrap" align="flex-start">
+        <Stack gap={2}>
+          <Group gap="xs">
+            <Text size="sm" fw={600}>Requester notified ({n.kind})</Text>
+            {undeliverable ? <Badge color="owlRed" variant="light">undeliverable</Badge>
+              : <Badge variant="light" color={n.state === 'acknowledged' ? 'owlGreen' : 'gray'}>{n.state}</Badge>}
+            {n.route_reason && !undeliverable && <Badge variant="outline" color="owlPurple">rerouted</Badge>}
+            {!n.wake && <Badge variant="outline" color="gray">no terminal notice</Badge>}
+          </Group>
+          <Text size="xs" c="dimmed">To {notificationTarget(n)}{n.target_kind === 'instance' && n.hold_until ? `, until ${datetime(n.hold_until)}` : ''}</Text>
+          {n.route_reason && (
+            <Text size="xs" c="dimmed">
+              Asked by run {n.original_run}{n.routed_from && n.routed_from !== `run:${n.original_run}` ? `; last routed from ${n.routed_from}` : ''}. Routed because{' '}
+              {routeReasonLabel[n.route_reason] ?? n.route_reason}{n.routed_at ? ` (${ago(n.routed_at)})` : ''}.
+            </Text>
+          )}
+        </Stack>
+        {canRoute && open && n.target_kind !== 'control' && undeliverable && (
+          <Button size="xs" variant="default" onClick={() => void route('control')}>Send to control</Button>
+        )}
+      </Group>
+    </Card>
   )
 }

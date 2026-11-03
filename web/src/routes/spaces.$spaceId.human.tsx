@@ -1,4 +1,4 @@
-import { Button, Checkbox, Group, Text } from '@mantine/core'
+import { Button, Checkbox, Group, Modal, Text } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { ActionList } from '@/features/human/ActionList'
 import { isPending } from '@/features/human/badges'
 import { NewActionModal } from '@/features/human/NewActionModal'
+import { PoliciesPanel } from '@/features/human/PoliciesPanel'
 import { SpaceTypesModal } from '@/features/human/SpaceTypesModal'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
@@ -22,16 +23,18 @@ function SpaceHumanPage() {
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
   const [creating, setCreating] = useState(false)
   const [types, setTypes] = useState(false)
+  const [policies, setPolicies] = useState(false)
   const [showFinal, setShowFinal] = useState(false)
   const all = list.data?.items ?? []
   const items = showFinal ? all : all.filter(isPending)
   return (
     <>
       <PageHeader title={space.data?.name ?? 'Space'} description="Requests for people in this space: separate from the inbox, the queue and agent messages."
-        actions={canWrite && (
+        actions={(
           <>
-            <Button variant="default" onClick={() => setTypes(true)}>Types</Button>
-            <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>
+            <Button variant="default" onClick={() => setPolicies(true)}>Policies</Button>
+            {canWrite && <Button variant="default" onClick={() => setTypes(true)}>Types</Button>}
+            {canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>}
           </>
         )} />
       <SpaceNav spaceId={spaceId} />
@@ -43,6 +46,10 @@ function SpaceHumanPage() {
       <ActionList actions={items} empty="No pending human actions in this space." />
       <NewActionModal spaceId={spaceId} opened={creating} onClose={() => setCreating(false)} />
       {types && <SpaceTypesModal spaceId={spaceId} onClose={() => setTypes(false)} />}
+      <Modal opened={policies} onClose={() => setPolicies(false)} title="Reminders, escalation and routing in this space" size="85rem">
+        <Text size="sm" c="dimmed" mb="sm">The policy in force for each type, and where it comes from. A space policy replaces the installation default for its types.</Text>
+        <PoliciesPanel spaceId={spaceId} canWrite={canWrite} />
+      </Modal>
     </>
   )
 }

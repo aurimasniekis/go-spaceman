@@ -1,6 +1,6 @@
 import { Badge } from '@mantine/core'
-import { IconChecklist, IconForms, IconHelpCircle, IconMessage, IconShieldCheck } from '@tabler/icons-react'
-import type { HumanAction, HumanType } from '@/api/client'
+import { IconBell, IconChecklist, IconForms, IconHelpCircle, IconMessage, IconShieldCheck, IconTrendingUp } from '@tabler/icons-react'
+import type { HumanAction, HumanNotification, HumanType } from '@/api/client'
 
 export const typeLabel: Record<HumanType, string> = { question: 'Question', approval: 'Approval', todo: 'To-do', message: 'Message', custom: 'Custom' }
 export const typeIcon = { question: IconHelpCircle, approval: IconShieldCheck, todo: IconChecklist, message: IconMessage, custom: IconForms } as const
@@ -24,6 +24,40 @@ export function HumanStatusBadge({ action }: { action: Pick<HumanAction, 'status
 export function PriorityBadge({ priority }: { priority: HumanAction['priority'] }) {
   if (priority === 'normal') return null
   return <Badge color={priority === 'urgent' ? 'owlRed' : priority === 'high' ? 'owlYellow' : 'gray'} variant={priority === 'urgent' ? 'filled' : 'light'}>{priority}</Badge>
+}
+
+/** Reminded and escalated markers (SM-HUM-011): reminders re-surface an action, escalation raised it. */
+export function FollowUpBadges({ action }: { action: Pick<HumanAction, 'reminder_count' | 'escalated_at' | 'escalated_from' | 'priority'> }) {
+  return (
+    <>
+      {action.reminder_count > 0 && (
+        <Badge variant="outline" color="owlYellow" leftSection={<IconBell size={12} />}>
+          reminded{action.reminder_count > 1 ? ` ×${action.reminder_count}` : ''}
+        </Badge>
+      )}
+      {action.escalated_at && (
+        <Badge variant="outline" color="owlRed" leftSection={<IconTrendingUp size={12} />}>escalated</Badge>
+      )}
+    </>
+  )
+}
+
+export const routeReasonLabel: Record<string, string> = {
+  requester_ended: 'the requester\'s run had ended',
+  run_ended: 'the run it was routed to ended',
+  hold_expired: 'no run of the requester\'s agent instance started in time',
+  operator: 'a person routed it',
+  too_many_routes: 'it was routed too many times',
+}
+
+/** Where a response notification is now, in words. */
+export function notificationTarget(n: HumanNotification): string {
+  switch (n.target_kind) {
+    case 'run': return `run ${n.target_run}${n.target_role ? ` (${n.target_role})` : ''}`
+    case 'instance': return `the next run of agent instance ${n.target_instance}`
+    case 'control': return 'the space\'s control'
+    default: return 'nobody: undeliverable'
+  }
 }
 
 export function requesterLabel(a: HumanAction): string {

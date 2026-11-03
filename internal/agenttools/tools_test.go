@@ -215,6 +215,13 @@ func TestAttachmentsAndHuman(t *testing.T) {
 	if a.Status != "cancelled" {
 		t.Fatalf("cancel %+v", a)
 	}
+	// SM-HUM-009: the requester reads the outcome; an unrelated run sees the request only.
+	var mineA, theirs human.Action
+	must(t, f.call(f.wrk, "spaceman_human_get", map[string]any{"action_id": asked.ActionID}, &mineA))
+	must(t, f.call(f.diag, "spaceman_human_get", map[string]any{"action_id": asked.ActionID}, &theirs))
+	if mineA.ResponseHidden || mineA.StatusReason != "not needed" || !theirs.ResponseHidden || theirs.StatusReason != "" {
+		t.Fatalf("visibility: requester %+v, unrelated %+v", mineA, theirs)
+	}
 	code(t, f.call(f.wrk, "spaceman_human_ask", map[string]any{"type": "poll", "title": "x"}, nil), apperr.CodeInvalid)
 }
 

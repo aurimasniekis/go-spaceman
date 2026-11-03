@@ -7,7 +7,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -144,12 +143,7 @@ func (svc *Service) finalize(ctx context.Context, tx *store.Tx, actor audit.Acto
 			}
 		}
 	}
-	if r.RequesterKind == "agent" {
-		if err := tx.Q.InsertHumanNotification(ctx, db.InsertHumanNotificationParams{ID: ids.New("hnt"), ActionID: r.ID, SpaceID: r.SpaceID,
-			TargetRun: r.RequesterRun, TargetSession: r.RequesterSession, TargetRole: r.RequesterRole, Kind: notice, CreatedAt: tx.NowMicros()}); err != nil {
-			return err
-		}
-	}
+	tx.AfterCommit(svc.Kick)
 	if svc.OnFinalized != nil {
 		if err := svc.OnFinalized(ctx, tx, r, status, outcome, actor); err != nil {
 			return err
@@ -161,9 +155,16 @@ func (svc *Service) finalize(ctx context.Context, tx *store.Tx, actor audit.Acto
 	if err := svc.event(ctx, tx, r, status, outcome, ""); err != nil {
 		return err
 	}
-	_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "human_action." + status, Target: audit.Target{Type: "human_action", ID: r.ID},
-		Details: map[string]any{"space_id": r.SpaceID, "type": r.Type, "outcome": outcome, "reason": reason, "task_id": r.TaskID}})
-	return err
+	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "human_action." + status, Target: audit.Target{Type: "human_action", ID: r.ID},
+		Details: map[string]any{"space_id": r.SpaceID, "type": r.Type, "outcome": outcome, "reason": reason, "task_id": r.TaskID}}); err != nil {
+		return err
+	}
+	if r.RequesterKind != "agent" {
+		return nil
+	}
+	final := r
+	final.Status, final.Outcome, final.Version = status, outcome, r.Version+1
+	return svc.notify(ctx, tx, final, notice)
 }
 
 // Cancel withdraws a pending action (the requester no longer needs it, or an operator removes it).
@@ -359,35 +360,6 @@ func (svc *Service) PendingCounts(ctx context.Context) (map[string]int64, error)
 		out[r.SpaceID] = r.N
 	}
 	return out, nil
-}
-
-// Expire finalizes pending actions whose expiry passed. Their tasks stay blocked and the requester is notified.
-func (svc *Service) Expire(ctx context.Context) (int, error) {
-	rows, err := svc.s.R().ExpiredHumanActions(ctx, sql.NullInt64{Int64: svc.clock.Now().UnixMicro(), Valid: true})
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	for _, r := range rows {
-		err := svc.s.W().TxNamed(ctx, "human.expire", func(tx *store.Tx) error {
-			cur, err := load(ctx, tx, r.SpaceID, r.ID, r.Version)
-			if err != nil {
-				return err
-			}
-			return svc.finalize(ctx, tx, audit.System, cur, Expired, "", "", "expired at "+tn(r.ExpiresAt).Format(time.RFC3339), "expired")
-		})
-		var ae *apperr.Error
-		if errors.As(err, &ae) && (ae.Code == apperr.CodeConflict || ae.Code == apperr.CodePrecondition) {
-			continue // answered or changed meanwhile
-		} else if err != nil {
-			return n, err
-		}
-		n++
-	}
-	if n > 0 {
-		svc.notified()
-	}
-	return n, nil
 }
 
 func invalid(field, format string, args ...any) error {

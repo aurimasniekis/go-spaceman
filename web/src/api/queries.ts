@@ -51,6 +51,8 @@ export const keys = {
   mcpGrants: (id: string) => ['mcp-grants', id] as const,
   spaceMcp: (id: string) => ['space-mcp', id] as const,
   spaceHumanTypes: (space: string) => ['space-human-types', space] as const,
+  /** Human-action policies of a space, or the installation defaults for ''. */
+  humanPolicies: (space: string) => ['human-policies', space] as const,
   signInProviders: ['sign-in-providers'] as const,
   oidcProviders: ['oidc-providers'] as const,
   oidcMappings: (id: string) => ['oidc-mappings', id] as const,

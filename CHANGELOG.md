@@ -96,6 +96,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   A restore comes up with every space paused and execution authority renewed (lease generations advanced, earlier runs
   fenced, commands cancelled, run credentials revoked), event subscriptions replaying from their oldest stored delivery,
   approvals with uses left revoked and pending ones kept, and a restore notice until the spaces are resumed.
+- Human-action follow-up: policies per action type with space overrides (Needs you shows reminded and escalated
+  actions; **Policies** on a space's Human actions tab, installation defaults on Action types) for reminders, escalation
+  (raise the priority, assign someone; the order never changes), rate limits per agent run and per space, and what
+  happens to a response when the requester's run has ended: rerouted at once to a running successor-role run, else to
+  control, else shown as undeliverable to people (with a message to operators and **Send to control**), or kept for the
+  next run of the same agent instance until a hold ends. Routing is durable across restarts and records the original
+  run, the previous target and the reason; responses are never shown to unrelated runs. Expiry, reminders, escalation,
+  holds and approval expiry share one timer for the earliest deadline (the once-a-minute expiry job is gone). New
+  outbound events `human.action.reminded`, `escalated` and `rerouted`; API under `/api/v1/human-policies`,
+  `/api/v1/spaces/{id}/human-policies` and `…/notifications/{id}/route`.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

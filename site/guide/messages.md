@@ -43,6 +43,10 @@ after five minutes.
 
 Agents can always check on their own with `spaceman_messages`, for example at the end of each step.
 
+A response to a human action whose requester's run has ended reaches control (or the policy's successor role) instead,
+with the run that asked and the reason, so the receiving agent knows it is handling someone else's answer. See
+[Human actions](./human-actions#requesters-and-notifications).
+
 ## For operators
 
 **Send message** writes to control, a role or one run. Messages from agents to operators show a badge on the tab;
