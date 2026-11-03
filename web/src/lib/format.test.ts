@@ -1,4 +1,4 @@
-import { ago, clock, isSet } from './format'
+import { ago, bytes, clock, isSet } from './format'
 
 describe('format', () => {
   const now = Date.parse('2026-11-02T12:00:00Z')
@@ -19,5 +19,11 @@ describe('format', () => {
   it('treats the Go zero time as unset', () => {
     expect(isSet('0001-01-01T00:00:00Z')).toBe(false)
     expect(isSet('2026-11-02T00:00:00Z')).toBe(true)
+  })
+  it('formats byte counts', () => {
+    expect(bytes(512)).toBe('512 B')
+    expect(bytes(1536)).toBe('1.5 KiB')
+    expect(bytes(5 * 1024 * 1024)).toBe('5.0 MiB')
+    expect(bytes(undefined)).toBe('—')
   })
 })

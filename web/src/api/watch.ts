@@ -23,6 +23,7 @@ export function applyChange(qc: QueryClient, c: Change) {
       void qc.invalidateQueries({ queryKey: keys.queue(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.space(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.spaceAccounts(c.resource_id) })
+      void qc.invalidateQueries({ queryKey: keys.restore })
       void qc.invalidateQueries({ queryKey: keys.spaceRoles(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.spaceHumanTypes(c.resource_id) })
       break
@@ -105,6 +106,12 @@ export function applyChange(qc: QueryClient, c: Change) {
       break
     case 'token':
       void qc.invalidateQueries({ queryKey: ['tokens'] })
+      break
+    case 'backup':
+      void qc.invalidateQueries({ queryKey: keys.backups })
+      break
+    case 'restore':
+      void qc.invalidateQueries({ queryKey: keys.restore })
       break
     default:
       break

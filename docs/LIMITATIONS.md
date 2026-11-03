@@ -132,6 +132,26 @@
   for it has to be repeated.
 - **Test-login previews are in memory** for ten minutes and are lost when central restarts.
 
+## Backups and restore
+- **The KEK is the single point of recovery.** Every backup file is sealed under the KEK, and the KEK is never in a
+  backup. Losing it loses every backup (SM-STORE-004, ADR-0031). The sealed format (`SMBAK1`) has not had external
+  cryptographic review.
+- **Node state is not backed up.** Dirty workspaces and worktrees, memory not yet synced to central, node credentials,
+  journals and transcripts still on nodes are outside central's backups (SM-STORE-004).
+- **A restore is a step back in time.** Nodes enrolled, users and tokens created, and revocations made after the backup
+  are not in it: re-enroll such nodes and review users and tokens. Approvals approved with uses left are revoked and
+  must be requested again (ADR-0031).
+- **Replays and duplicates after a restore.** Event subscriptions replay from their oldest stored delivery (bounded by
+  delivery retention); events that arrived after the backup create their inbox items again, and an event nak'd for
+  longer than the delivery retention before the backup could be outside the replay. Outbox events pending at backup
+  time are published again; consumers must deduplicate by event ID beyond Pulse's 2-minute window.
+- **S3 limits.** Each backup object is a single PUT (at most 5 GiB, so a database or file larger than that cannot go to
+  S3). The S3 target is tested only against an in-process fake bucket; no run against real S3 or MinIO is recorded.
+- **No download from the UI or API.** Backups are fetched from their target (directory or bucket); restore is CLI-only on
+  a stopped central.
+- **Restore needs `git`** when the backup holds role memory, and attachments outside the data directory are restored to
+  the configured `artifacts.local_dir` only.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned

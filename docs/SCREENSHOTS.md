@@ -65,4 +65,4 @@
 | `skill-detail` | Skills | A skill's files, published versions and draft editor | current |
 | `space-role-preview` | Roles and profiles | A space role's effective configuration with origins and system text | current |
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
-| `ops-backups` | Backups/operations (M4) | Operations page | todo |
+| `ops-backups` | Backups and restore | Backups page: target, schedule, retention, a verified backup, what backups include and exclude | current |

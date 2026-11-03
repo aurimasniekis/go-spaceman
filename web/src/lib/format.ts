@@ -30,3 +30,17 @@ export function clock(ms: number): string {
 export function isSet(v: string | undefined | null): v is string {
   return !!v && !v.startsWith('0001-01-01')
 }
+
+/** Formats a byte count with binary units: "512 B", "1.5 KiB", "3.2 MiB", "1.1 GiB". */
+export function bytes(n: number | undefined | null): string {
+  if (n === undefined || n === null || n < 0) return '—'
+  if (n < 1024) return `${n} B`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(1)} ${units[i]}`
+}

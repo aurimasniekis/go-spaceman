@@ -660,6 +660,19 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/audit')
     await expect(page.getByText('run.launched').first()).toBeVisible()
   })
+
+  // Backups (SM-STORE-005): one manual backup of the seeded stack, verified.
+  type Backups = { busy: boolean; items: { id: string; state: string; verify_state: string }[] }
+  const made = await api.call<{ id: string }>('POST', '/system/backups')
+  await expect.poll(async () => (await api.call<Backups>('GET', '/system/backups')).items.find((i) => i.id === made.id)?.state, { timeout: 60_000 }).toBe('succeeded')
+  await expect.poll(async () => (await api.call<Backups>('GET', '/system/backups')).busy, { timeout: 30_000 }).toBe(false)
+  await api.call('POST', `/system/backups/${made.id}/verify`)
+  await expect.poll(async () => (await api.call<Backups>('GET', '/system/backups')).items.find((i) => i.id === made.id)?.verify_state, { timeout: 60_000 }).toBe('ok')
+  await capture(page, 'ops-backups', async () => {
+    await page.goto('/backups')
+    await expect(page.getByText(made.id)).toBeVisible()
+    await expect(page.getByText(/^verified/).first()).toBeVisible()
+  })
   mkdirSync(join(process.cwd(), 'test-results'), { recursive: true })
   writeFileSync(join(process.cwd(), 'test-results', 'a11y-report.txt'), a11y.join('\n') + '\n')
   expect(a11y, `accessibility violations:\n${a11y.join('\n')}`).toEqual([])

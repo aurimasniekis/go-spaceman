@@ -169,6 +169,16 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/attachments` | `upload-attachment` | Upload an attachment |
 | `GET` | `/spaces/{space_id}/attachments/{attachment_id}` | `get-attachment` | Attachment metadata |
 
+### backups
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/system/backups` | `list-backups` | Backups and the schedule |
+| `POST` | `/system/backups` | `create-backup` | Back up now |
+| `POST` | `/system/backups/{backup_id}/verify` | `verify-backup` | Verify a backup |
+| `GET` | `/system/restore` | `get-restore-state` | Restore notice |
+| `POST` | `/system/restore/acknowledge` | `acknowledge-restore` | Dismiss the restore notice |
+
 ### dreams
 
 | Method | Path | Operation | Summary |

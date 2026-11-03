@@ -2708,6 +2708,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Backups and the schedule
+         * @description The configured target and schedule, what every backup includes and excludes, and the backups: runs made by central joined with what the target holds (CLI-made backups are listed too).
+         */
+        get: operations["list-backups"];
+        put?: never;
+        /**
+         * Back up now
+         * @description Starts a backup in the background and returns its run (state running). The change feed reports when it ends. One backup or verification runs at a time.
+         */
+        post: operations["create-backup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/backups/{backup_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify a backup
+         * @description Opens every sealed object with the key-encryption key, checks each file's size and SHA-256 against the manifest and checks the database copy (integrity check, schema, keyring, audit chain), in the background.
+         */
+        post: operations["verify-backup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/info": {
         parameters: {
             query?: never;
@@ -2739,6 +2783,46 @@ export interface paths {
         get: operations["get-outbound-events"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Restore notice
+         * @description Whether this installation was restored from a backup, what the restore paused, stopped, reset and revoked, and how many of the spaces it paused are still paused.
+         */
+        get: operations["get-restore-state"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/restore/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss the restore notice
+         * @description Records that an administrator has seen the restore. Spaces stay paused until each is resumed.
+         */
+        post: operations["acknowledge-restore"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3344,6 +3428,130 @@ export interface components {
             source: string;
             source_ref?: string;
             subject: string;
+        };
+        BackupCounts: {
+            /** Format: int64 */
+            accounts: number;
+            /** Format: int64 */
+            attachments: number;
+            /** Format: int64 */
+            catalog_versions: number;
+            /** Format: int64 */
+            memory_collections: number;
+            /** Format: int64 */
+            open_human_actions: number;
+            /** Format: int64 */
+            outbox_pending_events: number;
+            /** Format: int64 */
+            pending_approvals: number;
+            /** Format: int64 */
+            runs: number;
+            /** Format: int64 */
+            spaces: number;
+            /** Format: int64 */
+            subscriptions: number;
+        };
+        BackupItem: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/BackupItem.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Plaintext size
+             */
+            bytes: number;
+            counts?: components["schemas"]["BackupCounts"];
+            /**
+             * Format: date-time
+             * @description The snapshot time recorded in the manifest
+             */
+            created_at?: string;
+            error?: string;
+            /** Format: int64 */
+            files: number;
+            /** Format: date-time */
+            finished_at?: string;
+            id: string;
+            kek_id?: string;
+            requested_by?: string;
+            /** Format: int64 */
+            schema_version?: number;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            state: "running" | "succeeded" | "failed" | "interrupted" | "deleted";
+            stored: boolean;
+            /**
+             * Format: int64
+             * @description Sealed size in the target
+             */
+            stored_bytes: number;
+            /** @enum {string} */
+            target: "local" | "s3";
+            /** @enum {string} */
+            trigger: "manual" | "scheduled" | "cli";
+            /** Format: date-time */
+            verified_at?: string;
+            verify_error?: string;
+            /** @enum {string} */
+            verify_state: "" | "running" | "ok" | "failed";
+        };
+        BackupRestoreState: {
+            /** Format: date-time */
+            acknowledged_at?: string;
+            acknowledged_by?: string;
+            /** Format: date-time */
+            applied_at: string;
+            /** Format: int64 */
+            approvals_revoked: number;
+            /** Format: date-time */
+            backup_created_at: string;
+            backup_id: string;
+            /** Format: int64 */
+            commands_cancelled: number;
+            /** Format: int64 */
+            leases_renewed: number;
+            /** Format: int64 */
+            open_human_actions: number;
+            /** Format: int64 */
+            outbox_pending: number;
+            paused_spaces: string[];
+            /** Format: int64 */
+            pending_approvals: number;
+            /** Format: date-time */
+            restored_at: string;
+            /** Format: int64 */
+            run_credentials_revoked: number;
+            /** Format: int64 */
+            runs_unknown: number;
+            /** Format: int64 */
+            subscriptions_reset: number;
+        };
+        BackupStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/BackupStatus.json
+             */
+            readonly $schema?: string;
+            busy: boolean;
+            excluded: string[];
+            included: string[];
+            interval: string;
+            items: components["schemas"]["BackupItem"][];
+            /** Format: int64 */
+            keep_last: number;
+            location: string;
+            max_age?: string;
+            /** Format: date-time */
+            next_at?: string;
+            schedule: boolean;
+            /** @enum {string} */
+            target: "local" | "s3";
+            target_error?: string;
         };
         BindingInput: {
             account_id: string;
@@ -6200,6 +6408,18 @@ export interface components {
             note?: string;
             /** @description answered, approved, denied, completed, acknowledged, or a custom type's outcome */
             outcome: string;
+        };
+        RestoreNotice: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RestoreNotice.json
+             */
+            readonly $schema?: string;
+            restored: boolean;
+            state?: components["schemas"]["BackupRestoreState"];
+            /** Format: int64 */
+            still_paused: number;
         };
         "Revoke-approvalRequest": {
             /**
@@ -12852,6 +13072,95 @@ export interface operations {
             };
         };
     };
+    "list-backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupItem"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "verify-backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                backup_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupItem"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-system-info": {
         parameters: {
             query?: never;
@@ -12897,6 +13206,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OutboxStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-restore-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreNotice"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "acknowledge-restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreNotice"];
                 };
             };
             /** @description Error */

@@ -66,7 +66,25 @@ type Config struct {
 	Artifacts ArtifactsConfig `yaml:"artifacts"`
 	Harness   HarnessPolicy   `yaml:"harness"`
 	Events    EventsConfig    `yaml:"events"`
+	Backups   BackupsConfig   `yaml:"backups"`
 	Shutdown  ShutdownConfig  `yaml:"shutdown"`
+}
+
+// BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual
+// backups (API, UI, CLI) use the same target whether or not the schedule is enabled.
+type BackupsConfig struct {
+	// Enabled turns the schedule on: one backup every Interval, then retention.
+	Enabled  bool     `yaml:"enabled"`
+	Interval Duration `yaml:"interval"`
+	// KeepLast is how many complete backups retention keeps at least (the newest ones).
+	KeepLast int `yaml:"keep_last"`
+	// MaxAge deletes backups older than this beyond the newest one (0 keeps them, bounded by KeepLast only).
+	MaxAge Duration `yaml:"max_age"`
+	// Target is "local" (default) or "s3".
+	Target string `yaml:"target"`
+	// LocalDir is the local target directory (default <data_dir>/backups). Prefer another disk.
+	LocalDir string   `yaml:"local_dir"`
+	S3       S3Config `yaml:"s3"`
 }
 
 // EventsConfig configures SpaceMan's own outbound events. Inbound Pulse connections and subscriptions are managed
@@ -163,6 +181,10 @@ type S3Config struct {
 	SecretKeyFile   string `yaml:"secret_key_file"`
 	UsePathStyle    bool   `yaml:"use_path_style"`
 	InsecureAllowed bool   `yaml:"insecure_allowed"`
+	// AllowPrivateNetwork lets the endpoint resolve to a private, loopback or link-local address (self-hosted MinIO).
+	AllowPrivateNetwork bool `yaml:"allow_private_network"`
+	// CAFile adds trust roots (PEM) for the endpoint; verification is never disabled.
+	CAFile string `yaml:"ca_file"`
 }
 
 // ShutdownConfig bounds graceful shutdown.

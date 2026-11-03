@@ -1,9 +1,9 @@
-import { IconActivity, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
+import { IconActivity, IconDatabaseExport, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
 export interface NavItem {
-  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/account'
+  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/account'
   label: string
   icon: typeof IconBox
   group: 'Work' | 'Fleet' | 'Configuration' | 'Integrations' | 'Access'
@@ -32,6 +32,7 @@ export const nav: NavItem[] = [
   { to: '/sign-in-providers', label: 'Sign-in providers', icon: IconLogin2, group: 'Access', global: true, admin: true },
   { to: '/tokens', label: 'API tokens', icon: IconKey, group: 'Access' },
   { to: '/audit', label: 'Audit log', icon: IconListDetails, group: 'Access', global: true },
+  { to: '/backups', label: 'Backups', icon: IconDatabaseExport, group: 'Access', global: true, admin: true },
   { to: '/account', label: 'Account', icon: IconUserCircle, group: 'Access' },
 ]
 

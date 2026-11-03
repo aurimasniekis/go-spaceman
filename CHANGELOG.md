@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Fixed
+- Live updates: a browser whose change-feed position is ahead of the server (after a restore from backup) now gets a gap
+  and reloads instead of silently skipping changes.
 - A space's goals and standing instructions now reach every run's system prompt (the launch dialog already said so).
 - Accessibility (WCAG 2.1 AA): contrast of dimmed text, accent colors and badges in both themes; named close buttons,
   account menu, replay slider and task-list checkboxes; space sections are navigation links; the docs site's search
@@ -86,6 +88,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   transaction as the change and relayed after commit with stable IDs, retries with backoff, dead-lettering, retention,
   correlation, causation and origin headers. SpaceMan never re-ingests its own events. Publication status (connection,
   backlog, lag, failures) on the Events page for administrators, in the API and as Prometheus metrics.
+- Backups and restore: sealed backups (every file encrypted under the KEK, which is never included) of the database,
+  role memory (Git bundles), recordings, attachments, transcripts and the effective configuration, with a manifest
+  stating what is included and excluded, per-file SHA-256 and a sealed copy of the manifest. Local or S3-compatible
+  targets, a schedule with one timer, retention by count and age, verification that opens every file and checks the
+  database copy and audit chain, a Backups page, `/api/v1/system/backups` and `spaceman backup create|list|verify|restore`.
+  A restore comes up with every space paused and execution authority renewed (lease generations advanced, earlier runs
+  fenced, commands cancelled, run credentials revoked), event subscriptions replaying from their oldest stored delivery,
+  approvals with uses left revoked and pending ones kept, and a restore notice until the spaces are resumed.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

@@ -24,6 +24,8 @@ PACKAGES=(
   internal/memory
   internal/usage
   internal/outbox
+  internal/backup
+  internal/s3client
 )
 
 fail=0

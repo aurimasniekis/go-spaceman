@@ -14,6 +14,7 @@ import { Route as AccountRouteImport } from './routes/account'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ApprovalPoliciesRouteImport } from './routes/approval-policies'
 import { Route as AuditRouteImport } from './routes/audit'
+import { Route as BackupsRouteImport } from './routes/backups'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as HumanRouteImport } from './routes/human'
 import { Route as HumanTypesRouteImport } from './routes/human-types'
@@ -72,6 +73,11 @@ const ApprovalPoliciesRoute = ApprovalPoliciesRouteImport.update({
 const AuditRoute = AuditRouteImport.update({
   id: '/audit',
   path: '/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BackupsRoute = BackupsRouteImport.update({
+  id: '/backups',
+  path: '/backups',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EventsRoute = EventsRouteImport.update({
@@ -255,6 +261,7 @@ export interface FileRoutesByFullPath {
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/audit': typeof AuditRoute
+  '/backups': typeof BackupsRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
@@ -296,6 +303,7 @@ export interface FileRoutesByTo {
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/audit': typeof AuditRoute
+  '/backups': typeof BackupsRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -333,6 +341,7 @@ export interface FileRoutesById {
   '/accounts': typeof AccountsRoute
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/audit': typeof AuditRoute
+  '/backups': typeof BackupsRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
@@ -376,6 +385,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/approval-policies'
     | '/audit'
+    | '/backups'
     | '/events'
     | '/human'
     | '/human-types'
@@ -417,6 +427,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/approval-policies'
     | '/audit'
+    | '/backups'
     | '/human'
     | '/human-types'
     | '/login'
@@ -453,6 +464,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/approval-policies'
     | '/audit'
+    | '/backups'
     | '/events'
     | '/human'
     | '/human-types'
@@ -495,6 +507,7 @@ export interface RootRouteChildren {
   AccountsRoute: typeof AccountsRoute
   ApprovalPoliciesRoute: typeof ApprovalPoliciesRoute
   AuditRoute: typeof AuditRoute
+  BackupsRoute: typeof BackupsRoute
   EventsRoute: typeof EventsRouteWithChildren
   HumanRoute: typeof HumanRoute
   HumanTypesRoute: typeof HumanTypesRoute
@@ -549,6 +562,13 @@ declare module '@tanstack/react-router' {
       path: '/audit'
       fullPath: '/audit'
       preLoaderRoute: typeof AuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/backups': {
+      id: '/backups'
+      path: '/backups'
+      fullPath: '/backups'
+      preLoaderRoute: typeof BackupsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/events': {
@@ -879,6 +899,7 @@ const rootRouteChildren: RootRouteChildren = {
   AccountsRoute: AccountsRoute,
   ApprovalPoliciesRoute: ApprovalPoliciesRoute,
   AuditRoute: AuditRoute,
+  BackupsRoute: BackupsRoute,
   EventsRoute: EventsRouteWithChildren,
   HumanRoute: HumanRoute,
   HumanTypesRoute: HumanTypesRoute,

@@ -101,6 +101,7 @@ func (c *Config) Validate() error {
 		v.add("artifacts.backend must be \"local\" or \"s3\", got %q", c.Artifacts.Backend)
 	}
 	v.outbound(c.Events.Outbound, prod)
+	v.backups(c.Backups, prod)
 	v.durationRange("shutdown.timeout", c.Shutdown.Timeout, time.Second, 10*time.Minute)
 	return v.err()
 }
@@ -132,6 +133,38 @@ func (v *validator) outbound(o OutboundConfig, prod bool) {
 	}
 	if o.CAFile != "" && !filepath.IsAbs(o.CAFile) {
 		v.add("events.outbound.ca_file must be an absolute path")
+	}
+}
+
+func (v *validator) backups(b BackupsConfig, prod bool) {
+	v.durationRange("backups.interval", b.Interval, 15*time.Minute, 7*24*time.Hour)
+	if b.KeepLast < 1 || b.KeepLast > 1000 {
+		v.add("backups.keep_last must be within 1..1000, got %d", b.KeepLast)
+	}
+	if b.MaxAge != 0 && b.MaxAge.D() < b.Interval.D() {
+		v.add("backups.max_age must be 0 (no age limit) or at least backups.interval")
+	}
+	switch b.Target {
+	case "local":
+		if b.LocalDir != "" && !filepath.IsAbs(b.LocalDir) {
+			v.add("backups.local_dir must be an absolute path")
+		}
+	case "s3":
+		s := b.S3
+		if s.Bucket == "" || s.Endpoint == "" {
+			v.add("backups.s3.bucket and backups.s3.endpoint are required for the s3 target")
+		}
+		if !filepath.IsAbs(s.AccessKeyFile) || !filepath.IsAbs(s.SecretKeyFile) {
+			v.add("backups.s3.access_key_file and backups.s3.secret_key_file must be absolute paths")
+		}
+		if s.CAFile != "" && !filepath.IsAbs(s.CAFile) {
+			v.add("backups.s3.ca_file must be an absolute path")
+		}
+		if s.InsecureAllowed && prod {
+			v.add("backups.s3.insecure_allowed is development-only")
+		}
+	default:
+		v.add("backups.target must be \"local\" or \"s3\", got %q", b.Target)
 	}
 }
 

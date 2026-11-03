@@ -21,6 +21,8 @@ export const keys = {
   inbox: (space: string) => ['inbox', space] as const,
   connections: ['event-connections'] as const,
   outbound: ['outbound-events'] as const,
+  backups: ['backups'] as const,
+  restore: ['restore'] as const,
   templates: ['event-templates'] as const,
   template: (id: string) => ['event-template', id] as const,
   subscriptions: (space: string) => ['subscriptions', space] as const,
@@ -156,6 +158,14 @@ export const useInboxItem = (space: string, id: string) =>
 
 export const useConnections = () =>
   useQuery({ queryKey: keys.connections, queryFn: async () => unwrap(await api.GET('/event-connections')).items })
+
+/** Backups and the schedule (global admins only). The change feed refreshes it while a backup or verification runs. */
+export const useBackups = (enabled: boolean) =>
+  useQuery({ queryKey: keys.backups, queryFn: async () => unwrap(await api.GET('/system/backups')), enabled })
+
+/** The restore notice: whether this installation was restored from a backup (any signed-in principal). */
+export const useRestoreNotice = (enabled: boolean) =>
+  useQuery({ queryKey: keys.restore, queryFn: async () => unwrap(await api.GET('/system/restore')), enabled, staleTime: 60_000 })
 
 /** Outbound publication status (global admins only; the caller gates it with `enabled`). */
 export const useOutbound = (enabled: boolean) =>

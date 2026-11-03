@@ -1102,6 +1102,344 @@
         ],
         "type": "object"
       },
+      "BackupCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "accounts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "attachments": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "catalog_versions": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "memory_collections": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "open_human_actions": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "outbox_pending_events": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "pending_approvals": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "runs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "spaces": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "subscriptions": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "spaces",
+          "runs",
+          "open_human_actions",
+          "pending_approvals",
+          "subscriptions",
+          "catalog_versions",
+          "accounts",
+          "memory_collections",
+          "attachments",
+          "outbox_pending_events"
+        ],
+        "type": "object"
+      },
+      "BackupItem": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/BackupItem.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bytes": {
+            "description": "Plaintext size",
+            "format": "int64",
+            "type": "integer"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/BackupCounts"
+          },
+          "created_at": {
+            "description": "The snapshot time recorded in the manifest",
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kek_id": {
+            "type": "string"
+          },
+          "requested_by": {
+            "type": "string"
+          },
+          "schema_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "succeeded",
+              "failed",
+              "interrupted",
+              "deleted"
+            ],
+            "type": "string"
+          },
+          "stored": {
+            "type": "boolean"
+          },
+          "stored_bytes": {
+            "description": "Sealed size in the target",
+            "format": "int64",
+            "type": "integer"
+          },
+          "target": {
+            "enum": [
+              "local",
+              "s3"
+            ],
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "manual",
+              "scheduled",
+              "cli"
+            ],
+            "type": "string"
+          },
+          "verified_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "verify_error": {
+            "type": "string"
+          },
+          "verify_state": {
+            "enum": [
+              "",
+              "running",
+              "ok",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "target",
+          "trigger",
+          "state",
+          "started_at",
+          "files",
+          "bytes",
+          "stored_bytes",
+          "stored",
+          "verify_state"
+        ],
+        "type": "object"
+      },
+      "BackupRestoreState": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledged_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "acknowledged_by": {
+            "type": "string"
+          },
+          "applied_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "approvals_revoked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "backup_created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "backup_id": {
+            "type": "string"
+          },
+          "commands_cancelled": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "leases_renewed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "open_human_actions": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "outbox_pending": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "paused_spaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pending_approvals": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "restored_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "run_credentials_revoked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "runs_unknown": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "subscriptions_reset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "backup_id",
+          "backup_created_at",
+          "restored_at",
+          "applied_at",
+          "paused_spaces",
+          "leases_renewed",
+          "runs_unknown",
+          "commands_cancelled",
+          "run_credentials_revoked",
+          "subscriptions_reset",
+          "approvals_revoked",
+          "pending_approvals",
+          "open_human_actions",
+          "outbox_pending"
+        ],
+        "type": "object"
+      },
+      "BackupStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/BackupStatus.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "busy": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "included": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "interval": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BackupItem"
+            },
+            "type": "array"
+          },
+          "keep_last": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "location": {
+            "type": "string"
+          },
+          "max_age": {
+            "type": "string"
+          },
+          "next_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "schedule": {
+            "type": "boolean"
+          },
+          "target": {
+            "enum": [
+              "local",
+              "s3"
+            ],
+            "type": "string"
+          },
+          "target_error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "location",
+          "schedule",
+          "interval",
+          "keep_last",
+          "busy",
+          "included",
+          "excluded",
+          "items"
+        ],
+        "type": "object"
+      },
       "BindingInput": {
         "additionalProperties": false,
         "properties": {
@@ -8947,6 +9285,35 @@
         },
         "required": [
           "outcome"
+        ],
+        "type": "object"
+      },
+      "RestoreNotice": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RestoreNotice.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "restored": {
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BackupRestoreState"
+          },
+          "still_paused": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "restored",
+          "still_paused"
         ],
         "type": "object"
       },
@@ -19732,6 +20099,111 @@
         ]
       }
     },
+    "/system/backups": {
+      "get": {
+        "description": "The configured target and schedule, what every backup includes and excludes, and the backups: runs made by central joined with what the target holds (CLI-made backups are listed too).",
+        "operationId": "list-backups",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Backups and the schedule",
+        "tags": [
+          "backups"
+        ]
+      },
+      "post": {
+        "description": "Starts a backup in the background and returns its run (state running). The change feed reports when it ends. One backup or verification runs at a time.",
+        "operationId": "create-backup",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupItem"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Back up now",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/system/backups/{backup_id}/verify": {
+      "post": {
+        "description": "Opens every sealed object with the key-encryption key, checks each file's size and SHA-256 against the manifest and checks the database copy (integrity check, schema, keyring, audit chain), in the background.",
+        "operationId": "verify-backup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "backup_id",
+            "required": true,
+            "schema": {
+              "pattern": "^bkp_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupItem"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Verify a backup",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
     "/system/info": {
       "get": {
         "operationId": "get-system-info",
@@ -19793,6 +20265,70 @@
         "summary": "Outbound event publication status",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/system/restore": {
+      "get": {
+        "description": "Whether this installation was restored from a backup, what the restore paused, stopped, reset and revoked, and how many of the spaces it paused are still paused.",
+        "operationId": "get-restore-state",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreNotice"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Restore notice",
+        "tags": [
+          "backups"
+        ]
+      }
+    },
+    "/system/restore/acknowledge": {
+      "post": {
+        "description": "Records that an administrator has seen the restore. Spaces stay paused until each is resumed.",
+        "operationId": "acknowledge-restore",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreNotice"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Dismiss the restore notice",
+        "tags": [
+          "backups"
         ]
       }
     },

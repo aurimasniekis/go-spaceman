@@ -43,7 +43,7 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVarP(&g.configPath, "config", "c", os.Getenv("SPACEMAN_CONFIG"), "configuration file (env SPACEMAN_CONFIG)")
-	root.AddCommand(versionCmd(), serveCmd(g), adminCmd(g), keysCmd(), openapiCmd())
+	root.AddCommand(versionCmd(), serveCmd(g), adminCmd(g), keysCmd(), openapiCmd(), backupCmd(g))
 	return root
 }
 

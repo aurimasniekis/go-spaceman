@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { api, check, unwrap } from '@/api/client'
 import { useHumanPending, useMe } from '@/api/queries'
 import { useWatch } from '@/api/watch'
+import { RestoreBanner } from '@/features/backup/RestoreBanner'
 import { hasGlobal } from '@/lib/access'
 import { datetime } from '@/lib/format'
 import { visibleNav } from '@/lib/nav'
@@ -148,6 +149,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
       <AppShell.Main>
         {hasGlobal(me, 'admin') && <BreakGlassBanner />}
+        {me && <RestoreBanner canAcknowledge={hasGlobal(me, 'admin')} />}
         {children}
       </AppShell.Main>
     </AppShell>

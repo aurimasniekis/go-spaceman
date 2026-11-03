@@ -93,6 +93,7 @@ export default withMermaid(
             { text: 'Nodes and leases', link: '/operators/nodes' },
             { text: 'Accounts', link: '/operators/accounts' },
             { text: 'Terminals and recordings', link: '/operators/terminals' },
+            { text: 'Backups and restore', link: '/operators/backup' },
           ],
         },
         {

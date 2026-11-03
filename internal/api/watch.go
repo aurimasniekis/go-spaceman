@@ -82,6 +82,15 @@ func (d *Deps) watchHandler() http.Handler {
 		heartbeat := time.NewTicker(watchHeartbeat)
 		defer heartbeat.Stop()
 
+		// A position beyond the newest change comes from before a restore from backup (SM-STORE-006): the feed was
+		// rewound, so the client must re-list instead of silently skipping the changes that reuse those positions.
+		if latest, err := d.Store.R().LatestChangeSeq(ctx); err == nil && after > latest {
+			gap, _ := json.Marshal(map[string]int64{"after": after, "oldest": latest + 1})
+			if _, err := fmt.Fprintf(w, "event: gap\ndata: %s\n\n", gap); err != nil {
+				return
+			}
+			after = latest
+		}
 		if after, err = d.watchCatchUp(ctx, w, p, after); err != nil {
 			return
 		}

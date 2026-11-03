@@ -123,6 +123,24 @@ type AuditEvent struct {
 	Hash          []byte
 }
 
+type Backup struct {
+	ID          string
+	Target      string
+	Trigger     string
+	RequestedBy string
+	State       string
+	StartedAt   int64
+	FinishedAt  sql.NullInt64
+	Files       int64
+	Bytes       int64
+	StoredBytes int64
+	Error       string
+	VerifyState string
+	VerifiedAt  sql.NullInt64
+	VerifyError string
+	DeletedAt   sql.NullInt64
+}
+
 type Change struct {
 	Seq          int64
 	At           int64

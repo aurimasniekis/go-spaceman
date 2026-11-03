@@ -588,6 +588,75 @@
   - Verified against the in-process Pulse-shaped NATS server (real nats-server JetStream and the real SDK); no evidence
     against a running `pulsed` yet.
 
+### ADR-0031 — Sealed backups and a paused restore with new execution authority (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (M4-04).
+- **Context:** SM-STORE-003…006 ask for backups of the database, synced Git memory, catalog versions, subscription and
+  configuration state, outstanding human actions, uploaded artifacts, transcripts, recordings and attachments and the
+  encrypted credentials, with manifests, checksums, verification, scheduled and manual runs and retention; key recovery
+  documented separately; and a restore that comes up paused with new execution authority, reconciles consumer positions
+  conservatively and revalidates restored approvals. Central keeps recordings, transcripts, attachments and memory as
+  plaintext files on its own disk, so a backup copied elsewhere would expose them. A backup also creates new copies of
+  the keyring's wrapped keys and new egress (S3), so this is recorded as a **security-relevant change**.
+- **Decision:**
+  - **Port.** `internal/backup` is adapted from go-hallpass `internal/backup` at `bdd8329` (Apache-2.0, same author):
+    the read-only `VACUUM INTO` source, the staged-and-renamed backup directory, the manifest with per-file SHA-256 and
+    `manifest.sha256`, the verification walk (unlisted files, `integrity_check`, schema and KEK checks), the staged
+    restore under the data-directory lock with `--force` moving data aside, the `HPBAK1` sealed object format and the
+    remote layout. `internal/s3client` (and `s3test`) is ported unchanged apart from names. Hallpass's segment and anchor
+    checks do not apply (SpaceMan recordings are not keyed segments).
+  - **Everything is sealed.** Unlike Hallpass's local backups, every SpaceMan backup file is sealed (format `SMBAK1`,
+    `sealed.go`): HPBAK1 with SpaceMan labels; ChaCha20-Poly1305 in 64 KiB frames with a final-frame flag, one random
+    32-byte DEK per object wrapped by the KEK with associated data `spaceman/bak/dek/v1|<kind>|<backup_id>`, kind
+    `file:<path>` or `manifest`, payload key HKDF-SHA256(DEK, salt). Standard-library and `x/crypto` primitives only; the
+    construction has not had external review. `manifest.json` stays plaintext (metadata, no content) so backups can be
+    listed and checked without the key; `manifest.json.smbak` authenticates it.
+  - **Content.** The snapshot is read through a read-only connection (no lock, no writer blocked); then recordings,
+    attachments (`artifacts/sha256/…`, not unfinished uploads), transcripts (including `.part` uploads in progress),
+    one `git bundle --all` per central memory repository, and the effective configuration (YAML; no secret values) are
+    sealed. Files removed between snapshot and copy are warnings. The KEK, `dev-kek`, node-side state and secrets
+    referenced by path are excluded and every manifest says so.
+  - **Targets and schedule.** `backups` configuration: `target` `local` (default `<data_dir>/backups`) or `s3` (keys from
+    files, TLS verified, no redirects or proxy, private addresses refused unless allowed, objects uploaded with their
+    SHA-256 checked, `manifest.sha256` last and deleted first). One scheduler goroutine with one timer (no polling): due
+    an interval after the last success, five minutes after start when there is none, at least 15 minutes after a failure.
+    One backup or verification at a time. Retention keeps `keep_last` complete backups and deletes those older than
+    `max_age` except the newest, and incomplete leftovers after a day. Runs and verifications are recorded in `backups`
+    (migration `0023`) and audited (`backup.started`, `backup.finished`, `backup.verified`, `backup.deleted`).
+  - **Interfaces.** `GET/POST /system/backups` and `POST /system/backups/{id}/verify` (`system:read`, `backup:run`:
+    global admins only), the Backups page, and `spaceman backup create|list|verify|restore`. Restore is CLI-only, offline,
+    as in Hallpass: it needs the data-directory lock and the KEK; a backup is never restorable over the API. No download
+    endpoint: backups are fetched from their target.
+  - **Restore rules (SM-STORE-006).** Restore writes a pending marker into the restored database; the first start applies
+    it once, in one transaction, audited as `backup.restored`, and keeps the result for the restore notice:
+    - every active space is paused (`hold`);
+    - every space's lease is revoked and its generation advanced by `LeaseGenerationStep` = 1,000,000, so the next grant
+      exceeds anything the old installation could have issued after the backup; a node receiving it stops every run of
+      another generation, and central fences reports and commands of older ones;
+    - runs that were active become `unknown` with desired `stopped`; unacknowledged node commands are cancelled; every
+      run credential is revoked (no pre-restore run can call tools);
+    - every event subscription gets a new cursor that replays from its oldest stored delivery (`seq`), or from its
+      creation (`time`) when no delivery with a sequence is stored, with replay marking off: the Pulse durable consumer
+      may have been advanced by the old installation, and replaying with deduplication (inbox dedup key per
+      subscription and event ID) can only duplicate deliveries, never skip events;
+    - approvals that were approved with uses left are revoked (their use after the backup is unknown, and an approved
+      operation must not run twice); pending approvals and open human actions are kept, and every use still rechecks the
+      approver's authorization (SM-APPR-003) and the expiry; expired ones are expired by the usual job;
+    - backup runs in progress are marked interrupted (the restored one succeeded).
+    Pending outbox rows are published again with their original IDs (at least once); consumers deduplicate by event ID,
+    since the JetStream window is two minutes. A change-feed position beyond the restored feed gets a `gap`.
+- **Alternatives:** a single encrypted archive per backup (simpler upload, but no per-file verification or partial
+  checks); plaintext local backups as in Hallpass (central's payload files are not encrypted at rest, so that would put
+  terminal output and transcripts on backup disks in the clear); a passphrase-derived backup key (a second secret to
+  lose; the KEK must be kept anyway to read the restored credentials); resetting subscriptions to "new" (would drop events
+  that arrived after the backup) or disabling them for review (stalls every integration after a restore); keeping
+  approved approvals (risks a second execution).
+- **Consequences:**
+  - Losing the KEK loses every backup; key recovery is documented separately (`site/operators/backup.md`).
+  - A restore replays event history since each subscription's oldest stored delivery (bounded by delivery retention) and
+    may republish outbox events; downstream consumers see duplicates, never gaps.
+  - Nodes, users and tokens created after the backup are unknown after a restore; revocations after it are lost.
+  - S3 objects are single PUTs (5 GiB each). The S3 target is tested only against the in-process fake (`s3test`).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
@@ -25,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
+	"github.com/aurimasniekis/go-spaceman/internal/backup"
 	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
@@ -104,6 +106,10 @@ type Central struct {
 	OIDC *oidc.Service
 	// Outbox publishes SpaceMan's own events to Pulse after commit (SM-OBS-004/005, ADR-0030).
 	Outbox *outbox.Outbox
+	// Backups makes, schedules, verifies and prunes backups (SM-STORE-003…005, ADR-0031).
+	Backups *backup.Service
+	// Restored is the restore applied at this start, or nil (SM-STORE-006).
+	Restored *backup.RestoreState
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -143,6 +149,16 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return nil, err
 	}
 	c.Changes = changefeed.New(c.Bus)
+	// The first start after a restore pauses every space and renews execution authority before anything else runs.
+	if c.Restored, err = backup.ApplyPendingRestore(ctx, st, c.Audit, c.Changes); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	if rs := c.Restored; rs != nil {
+		log.Warn("restored from a backup: every space is paused and execution authority was renewed; resume spaces explicitly",
+			slog.String("backup.id", rs.BackupID), slog.Int("spaces_paused", len(rs.PausedSpaces)), slog.Int64("runs_unknown", rs.RunsUnknown),
+			slog.Int64("subscriptions_reset", rs.SubscriptionsReset), slog.Int64("approvals_revoked", rs.ApprovalsRevoked))
+	}
 	c.Auth = auth.New(st, c.Keyring, c.Audit, c.Bus, c.Authz, auth.Options{
 		PasswordMinBytes: cfg.Auth.PasswordMinLength, SessionIdle: cfg.Auth.SessionIdle.D(), SessionAbsolute: cfg.Auth.SessionAbsolute.D(),
 		ReauthWindow: cfg.Auth.ReauthWindow.D(), RequireTOTP: cfg.Auth.RequireTOTP, Clock: o.Clock, Metrics: m,
@@ -261,6 +277,15 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet.Hub().KBResult = c.KB.OnResult
 	c.Dreams = dream.New(st, c.Audit, c.Changes, c.Fleet, o.Clock, obs.Component(log, "dreamer"))
 	c.Usage = usage.New(st, c.Audit, c.Changes, st.Path("transcripts"), obs.Component(log, "usage"))
+	target, err := backup.TargetFromConfig(cfg)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	bc := cfg.Backups
+	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
+		Sources: backup.DefaultSources(st.Dir(), artifactDir, gitBin), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
+		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup")})
 	c.Fleet.Hub().Usage = c.Usage
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
@@ -304,6 +329,9 @@ func (c *Central) openKeyring(ctx context.Context, environ []string) error {
 
 // Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
+	if c.Backups != nil {
+		c.Backups.Wait()
+	}
 	if c.Fleet != nil {
 		c.Fleet.Hub().CloseAll("central shutting down")
 		c.Fleet.Recordings().Close()
@@ -328,7 +356,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -389,6 +417,10 @@ func (c *Central) Serve(ctx context.Context) error {
 	} else if n > 0 {
 		c.Log.Warn("approved executions interrupted by a restart", slog.Int("count", n))
 	}
+	if err := c.Backups.Recover(ctx); err != nil {
+		return fmt.Errorf("recover backup runs: %w", err)
+	}
+	go c.Backups.Run(ctx)
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
 	go c.expireHumanActions(ctx)
@@ -486,13 +518,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules} {
 		for k, v := range m {
 			out[k] = v
 		}
