@@ -187,6 +187,8 @@ type download struct {
 	route, param, arg string
 	// related are API operations about the same content (for the reference).
 	related []string
+	// use replaces "download <arg>" (a route without a parameter after space_id takes no argument).
+	use string
 }
 
 func (a *App) downloadCmd(o download) *cobra.Command {
@@ -194,7 +196,14 @@ func (a *App) downloadCmd(o download) *cobra.Command {
 	var force bool
 	related := o.related
 	route, param := o.route, o.param
-	cmd := &cobra.Command{Use: "download <" + o.arg + ">", Short: o.short, Long: o.long, Args: cobra.ExactArgs(1), Example: o.example,
+	use, nargs := "download <"+o.arg+">", 1
+	if param == "" {
+		use, nargs = "download", 0
+	}
+	if o.use != "" {
+		use = o.use
+	}
+	cmd := &cobra.Command{Use: use, Short: o.short, Long: o.long, Args: cobra.ExactArgs(nargs), Example: o.example,
 		Annotations: map[string]string{annRaw: "GET " + route}}
 	if len(related) > 0 {
 		cmd.Annotations[annOps] = strings.Join(related, ",")
@@ -223,7 +232,11 @@ func (a *App) downloadCmd(o download) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		resp, err := a.open(ctx, route, map[string]string{"space_id": id, param: args[0]}, nil, "*/*")
+		params := map[string]string{"space_id": id}
+		if param != "" {
+			params[param] = args[0]
+		}
+		resp, err := a.open(ctx, route, params, nil, "*/*")
 		if err != nil {
 			return err
 		}

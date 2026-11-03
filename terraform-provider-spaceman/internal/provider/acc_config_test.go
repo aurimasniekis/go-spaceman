@@ -98,7 +98,7 @@ func TestAccLimits(t *testing.T) {
 	testAccPreCheck(t)
 	slug := "tf-lim-" + suffix()
 	l1 := "  max_concurrent_runs = 4\n  support_depth = 2\n  on_lower = \"stop\""
-	l2 := "  max_concurrent_runs = 6\n  budget_warn_percent = 50\n  on_lower = \"stop\""
+	l2 := "  max_concurrent_runs = 6\n  budget_warn_percent = 50\n  retention_attachments_days = 30\n  on_lower = \"stop\""
 	q1 := "  max_top_level_tasks = 3"
 	accSteps(t,
 		resource.TestStep{
@@ -122,7 +122,7 @@ func TestAccLimits(t *testing.T) {
 			ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
 				plancheck.ExpectResourceAction("spaceman_space_limits.l", plancheck.ResourceActionUpdate)}},
 			Check: resource.ComposeAggregateTestCheckFunc(
-				expectOverrides(t, slug, map[string]int64{"max_concurrent_runs": 6, "budget_warn_percent": 50}),
+				expectOverrides(t, slug, map[string]int64{"max_concurrent_runs": 6, "budget_warn_percent": 50, "retention_attachments_days": 30}),
 				resource.TestCheckNoResourceAttr("spaceman_space_limits.l", "support_depth"),
 			),
 		},
@@ -140,7 +140,7 @@ func TestAccLimits(t *testing.T) {
 		},
 		resource.TestStep{
 			Config: limitsHCL(slug, acc.nodeA.ID, l2, q1, true),
-			Check:  expectOverrides(t, slug, map[string]int64{"max_concurrent_runs": 6, "budget_warn_percent": 50, "max_kb_sessions": 7}),
+			Check:  expectOverrides(t, slug, map[string]int64{"max_concurrent_runs": 6, "budget_warn_percent": 50, "retention_attachments_days": 30, "max_kb_sessions": 7}),
 		},
 		// Queue policy: an unconfigured field edited in the UI is not drift; a configured one is.
 		resource.TestStep{

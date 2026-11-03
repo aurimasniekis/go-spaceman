@@ -190,6 +190,11 @@ func (svc *Service) Open(ctx context.Context, spaceID, id string) (*Attachment, 
 	return a, rc, nil
 }
 
+// OpenContent returns stored content by its SHA-256 (the space export reads it for rows of its own snapshot).
+func (svc *Service) OpenContent(ctx context.Context, sha256 string) (io.ReadSeekCloser, error) {
+	return svc.blobs.Open(ctx, sha256)
+}
+
 // Reference records, inside the caller's transaction, that an item uses attachments. Every attachment must belong to the
 // item's space.
 func Reference(ctx context.Context, tx *store.Tx, spaceID, ownerKind, ownerID string, attachmentIDs []string) error {

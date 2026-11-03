@@ -785,6 +785,7 @@ type OIDCProvider struct {
 	CABundlePEM               string   `json:"ca_bundle_pem"`
 	StepUpFallback            string   `json:"stepup_fallback"`
 	ACRValues                 []string `json:"acr_values"`
+	EndSessionEnabled         bool     `json:"end_session_enabled"`
 	Enabled                   bool     `json:"enabled"`
 	Version                   int64    `json:"version"`
 }
@@ -805,6 +806,7 @@ type OIDCProviderInput struct {
 	CABundlePEM               *string   `json:"ca_bundle_pem,omitempty"`
 	StepUpFallback            *string   `json:"stepup_fallback,omitempty"`
 	ACRValues                 *[]string `json:"acr_values,omitempty"`
+	EndSessionEnabled         *bool     `json:"end_session_enabled,omitempty"`
 	Enabled                   *bool     `json:"enabled,omitempty"`
 }
 

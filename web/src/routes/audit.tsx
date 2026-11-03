@@ -1,6 +1,6 @@
-import { Badge, Button, Card, Code, Group, Popover, Table, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Button, Card, Code, Group, Popover, Table, Text, TextInput } from '@mantine/core'
 import { useDebouncedValue } from '@mantine/hooks'
-import { IconShieldCheck } from '@tabler/icons-react'
+import { IconClockHour4, IconShieldCheck } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, unwrap, type AuditRecord } from '@/api/client'
@@ -50,6 +50,15 @@ function AuditPage() {
         <TextInput placeholder="Target ID" value={target} onChange={reset(setTarget)} aria-label="Filter by target" />
       </Group>
       <ErrorAlert error={page.error} />
+      {page.data?.pruned && (
+        <Alert mb="sm" color="owlBlue" variant="light" icon={<IconClockHour4 size={16} />} title="Older events were removed by audit retention">
+          <Text size="sm">
+            {page.data.pruned.pruned.toLocaleString('en-US')} events up to sequence {page.data.pruned.through_seq} (the last recorded {datetime(page.data.pruned.through_at)})
+            {' '}were deleted by the installation's audit retention. The hash chain verifies from the next event; a consumer reading forward
+            {' '}from an older position is told about the gap.
+          </Text>
+        </Alert>
+      )}
       <Card p={0}>
         <Table>
           <Table.Thead>

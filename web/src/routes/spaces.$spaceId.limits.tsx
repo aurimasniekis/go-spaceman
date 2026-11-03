@@ -107,7 +107,7 @@ function LimitsPage() {
           </Card>
         </Stack>
       )}
-      {editing && l && <EditLimits spaceId={spaceId} l={l} onClose={() => setEditing(false)} />}
+      {editing && l && <EditLimits spaceId={spaceId} l={l} canRetain={atLeast(roleIn(me, spaceId), 'admin')} onClose={() => setEditing(false)} />}
     </>
   )
 }
@@ -146,7 +146,10 @@ function BudgetCard({ l }: { l: Limits }) {
   )
 }
 
-function EditLimits({ spaceId, l, onClose }: { spaceId: string; l: Limits; onClose: () => void }) {
+/** Retention periods delete data when shortened, so only space admins (retention:write) change them. */
+const isRetention = (x: Limit) => x.unit === 'days'
+
+function EditLimits({ spaceId, l, canRetain, onClose }: { spaceId: string; l: Limits; canRetain: boolean; onClose: () => void }) {
   const qc = useQueryClient()
   const editable = l.limits.filter((x) => x.overridable)
   const [values, setValues] = useState<Record<string, number | ''>>(() =>
@@ -171,14 +174,17 @@ function EditLimits({ spaceId, l, onClose }: { spaceId: string; l: Limits; onClo
     }
   }
   const input = (x: Limit) => (
-    <NumberInput key={x.key} label={x.label} description={`${x.scope}${x.zero_means_none ? ' (0: no limit)' : ''}`} min={x.min} max={x.max} allowDecimal={false}
+    <NumberInput key={x.key} label={x.label} disabled={isRetention(x) && !canRetain}
+      description={`${x.scope}${x.zero_means_none ? (isRetention(x) ? ' (0: keep)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
+      min={x.min} max={x.max} allowDecimal={false}
       thousandSeparator="," placeholder={`Default: ${limitValue(x.default, x.unit, x.zero_means_none)}`} value={values[x.key]}
       onChange={(v) => setValues((s) => ({ ...s, [x.key]: typeof v === 'number' ? v : '' }))} />
   )
   return (
     <Modal opened onClose={onClose} title="Edit this space's limits" size="xl">
       <Stack gap="sm">
-        <Text size="sm" c="dimmed">Leave a field empty to use the installation default. Lowering a limit refuses new work beyond it; running work continues.</Text>
+        <Text size="sm" c="dimmed">Leave a field empty to use the installation default. Lowering a limit refuses new work beyond it; running work continues.
+          {' '}Shortening a retention period is different: the next daily retention pass deletes what is older (audited; never what an open item uses).</Text>
         <SimpleGrid cols={{ base: 1, sm: 2 }}>{editable.map(input)}</SimpleGrid>
         <div>
           <Text size="sm" fw={500}>When the concurrent-runs limit is lowered</Text>

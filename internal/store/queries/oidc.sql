@@ -1,12 +1,12 @@
 -- name: InsertOIDCProvider :exec
 INSERT INTO oidc_providers (id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json,
-  allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, end_session_enabled, enabled, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateOIDCProvider :execrows
 UPDATE oidc_providers SET slug = ?, display_name = ?, issuer = ?, client_id = ?, client_secret_enc = ?, scopes_json = ?, groups_claim = ?,
   provisioning = ?, jit_json = ?, allow_private_network = ?, allow_cross_origin_endpoints = ?, ca_bundle_pem = ?, stepup_fallback = ?,
-  acr_values = ?, enabled = ?, test_login_ok_at = ?, test_login_by = ?, version = version + 1, updated_at = ?
+  acr_values = ?, end_session_enabled = ?, enabled = ?, test_login_ok_at = ?, test_login_by = ?, version = version + 1, updated_at = ?
 WHERE id = ? AND version = ?;
 
 -- name: GetOIDCProvider :one
@@ -63,3 +63,16 @@ DELETE FROM oidc_auth_states WHERE state_hash = ? RETURNING *;
 
 -- name: PurgeAuthStates :execrows
 DELETE FROM oidc_auth_states WHERE expires_at < ?;
+
+-- name: CountSSOAdmins :one
+-- Enabled users with a manual global admin grant and a linked identity on an enabled provider: the administrators who
+-- can still sign in while password sign-in is off (SSO-only enforcement, Hallpass HP-AUTH-015). SSO-mapped grants are
+-- not counted: they are re-derived at every SSO sign-in (ADR-0029).
+SELECT count(DISTINCT u.id) FROM users u
+JOIN role_grants g ON g.subject = 'user:' || u.id AND g.role = 'admin' AND g.domain = '*'
+JOIN user_identities i ON i.user_id = u.id
+JOIN oidc_providers p ON p.id = i.provider_id AND p.enabled = 1
+WHERE u.enabled = 1;
+
+-- name: CountTestedOIDCProviders :one
+SELECT count(*) FROM oidc_providers WHERE enabled = 1 AND test_login_ok_at IS NOT NULL;

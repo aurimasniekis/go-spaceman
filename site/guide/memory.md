@@ -37,7 +37,9 @@ flowchart LR
 4. **Refresh.** A new run of the role starts from the shared history.
 
 Central guarantees only **acknowledged** history. Changes not yet checkpointed, or not yet acknowledged, exist only on
-the node; the Memory section shows how many there are.
+the node; the Memory section shows how many there are. Before a backup, central asks the connected nodes to checkpoint
+and sync at once and waits briefly for them; spaces whose memory did not reach central in time are named in the backup
+as possibly stale ([Backups](../operators/backup.md#role-memory-is-flushed-first)).
 
 <Shot name="memory-files" alt="Memory of implementor-backend: central and node heads match, no unsaved files, sync ok, and decisions.md rendered from the acknowledged history" caption="A role's memory files" />
 

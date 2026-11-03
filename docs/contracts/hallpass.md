@@ -22,6 +22,17 @@
 - **Packaging:** distroless `static-debian12:nonroot` image built in three stages; `-tags embedui`; hardened systemd unit; release script
   with Syft SBOMs and SHA256SUMS; GitHub Actions pinned by SHA.
 
+- **Sign-in settings** (`internal/oidc/admin.go`, `internal/opauth/{external,service}.go`, `internal/httpapi/h_{auth,sso}.go`, inspected
+  2026-11-03): settings keys `auth.local_login_disabled` ("true" refuses password logins; break-glass unaffected) and `auth.direct_provider`
+  (a provider ID; ignored when the provider is gone or disabled). Turning password login off needs an enabled provider with a recorded
+  test login and at least one enabled administrator with a linked identity on an enabled provider (`CountSSOAdmins`); while it is on,
+  disabling or deleting providers, unlinking, and role or enabled changes that would remove the last such administrator are refused
+  (`checkSSOOnlyStillSafe`, `ssoAdminGuard`, SR-06). `/login` continues to the direct provider; `/login/password` shows every method; after
+  a sign-out the page stays put. RP-initiated logout per provider (`end_session_enabled`): `end_session_endpoint` from discovery is
+  validated like the other endpoints (optional); the logout response carries `provider_logout_url` = endpoint + `client_id` +
+  `post_logout_redirect_uri` (public URL + `/login`), no `id_token_hint` (ID tokens are not retained), offered as an extra step in the UI.
+  Ported to SpaceMan in ADR-0045 (SpaceMan counts only manual global admin grants as SSO administrators).
+
 ## Divergences (recorded as ADRs)
 - **Bootstrap:** Hallpass uses a 30-minute one-time setup token. SpaceMan's brief requires a **non-expiring, full-scope root token**, shown
   once. SpaceMan does both: `spaceman admin bootstrap` prints the root token, and the root token (or the UI setup flow) creates the first admin user.

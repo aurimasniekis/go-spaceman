@@ -519,7 +519,7 @@
     login needs `user:write` through Casbin and a full (not MFA-pending) session.
 - **Not ported (yet):** Hallpass's SSO-only enforcement (`local_login_disabled` switch and its SR-06 lockout guards),
   the "direct provider" sign-in setting and RP-initiated logout (`end_session_endpoint`). There is no switch that turns
-  password sign-in off, so the guards have nothing to protect yet.
+  password sign-in off, so the guards have nothing to protect yet. *All three were ported later in ADR-0045.*
 - **Consequences:**
   - A person's access can differ between their password session and their SSO session; the Users page shows SSO grants
     separately.
@@ -1559,6 +1559,114 @@
 - **Consequences:** a report can be minutes old; it says when it was made. ls-remote needs a reachable remote at each
   report. The first launch of an uncloned repository waits for the clone. Nodes older than protocol 1.4 keep the
   configuration but get no syncs (an explicit sync says to upgrade). Worktrees are still never removed automatically.
+
+### ADR-0045 — Retention as limits, plaintext space exports, a resumable audit log, memory flushed before backups and Hallpass sign-in parity (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (requirement gaps SM-REC-003, SM-HUI-007, SM-ATT-006, SM-SPACE-001, SM-OBS-003,
+  SM-MEM-005, SM-AUTH-001; migration 0030).
+- **Context:** Central kept recordings, transcripts, attachments and human actions until someone deleted them or the space
+  was purged, and recordings had a fixed 512 MiB bound. There was no export. The audit log could only be paged newest
+  first and was never pruned, so a consumer had no durable position and no gap signal. Backups held only the memory
+  central had acknowledged, without asking nodes to flush first. Hallpass's SSO-only enforcement, direct-provider sign-in
+  and RP-initiated logout were not ported (ADR-0029). Retention deletes data, an export takes data out of SpaceMan, and
+  SSO-only turns a sign-in path off, so this is recorded as a **security-relevant change**.
+- **Decision (retention):**
+  - Retention periods are limits in the one limits model (ADR-0036): `retention_recordings_days`,
+    `retention_transcripts_days`, `retention_attachments_days` and `retention_human_actions_days` (unit days, 0 keeps,
+    0–36,500), with installation defaults in `limits:` (all 0) and per-space overrides in `space_limits`. No separate
+    policy table. Audit retention is installation-wide only (`retention.audit_days`, 0 or 30–36,500): the hash chain is
+    one chain for the installation.
+  - Changing a space's retention override needs the new `retention:write` permission (admins only) on top of
+    `space_config:write`, because a shorter period deletes data: operators could otherwise delete recordings, which needs
+    `recording:delete` (admins).
+  - One daily pass (`internal/retention`) runs on central's shared deadline timer (`human.Deadline{Name: "retention"}`):
+    due ten minutes after the first start, then a day after the previous pass started. Nothing polls per space. A pass is
+    recorded in `retention_passes`, audited (`retention.started`, `retention.finished`) and in the change feed;
+    passes interrupted by a restart are marked `interrupted`. Administrators can run one at once (`POST /retention/run`,
+    step-up `system:write`).
+  - What it deletes, per space, once the period passed: central's copy of an ended run's recording (counted from
+    `ended_at`, marked in `runs.recording_deleted_at`); a stored transcript; an attachment whose referencing inbox items
+    are all done or rejected, unchanged for the period, and neither linked to nor the origin of an open task or human
+    action (an attachment with an owner of another kind is kept); a resolved, cancelled or expired human action (with its
+    comments and notifications) that no open task, blocker, open follow-up or open inbox item refers to and whose
+    response notifications were all acknowledged. Candidates are re-checked inside the deleting transaction. Unreferenced
+    uploads stay with the hourly collection.
+  - Every deletion is audited (`recording.deleted`, `transcript.deleted`, `attachment.deleted`, `human_action.deleted`,
+    `audit.pruned`; actor `system:retention`, details with the reason and period) and recorded in the change feed in the
+    same transaction. Files are removed before that transaction (a crash in between only leaves an unmarked row that the
+    next pass marks); attachment content is removed afterwards by the collection. No I/O in a write transaction.
+  - Nothing is deleted while a restore is not acknowledged: the pass is not scheduled and a manual pass is refused (409).
+  - Deleting a recording through the API now also needs the run to have ended and is audited and in the change feed.
+  - Audit pruning deletes events older than the period in batches, never the newest event, and records the sequence and
+    hash of the last deleted event in `audit_prune`. Verification (also of backups) starts from that hash; the backup
+    check compares the head sequence and hash instead of the event count.
+- **Decision (audit cursor):** `GET /audit?after=<seq>` lists events oldest first after a durable position;
+  `next_after` is the position to store. When retention pruned events after the position the response carries
+  `gap: {after, oldest}` like the change feed's gap event. Every page carries the pruned prefix (`pruned`), which the
+  audit page shows. Newest-first paging with `cursor` is unchanged.
+- **Decision (recording size):** `recording_quota_bytes` (1 MiB–64 GiB, default 512 MiB) is a space limit. Central sends
+  it with each launch (`LaunchPayload.recording_max_bytes`, an optional field: older agents ignore it and keep 512 MiB);
+  the node keeps it beside the run, so a recorder restarted after an agent restart applies the same bound.
+- **Decision (export):** a space export is one ZIP of JSON Lines (inbox items, tasks with dependencies and blockers,
+  human actions with requests, responses and comments, messages, attachment metadata and references), the attachment
+  files, `space.json`, `README.txt` and `manifest.json` (format `spaceman.space-export/v1`, counts, every file's size and
+  SHA-256). It is **plaintext, not sealed like backups**: an export exists to take data out of SpaceMan, and an archive
+  sealed under the KEK could only be read by SpaceMan itself. The warning is in the API summary, the archive, the UI
+  and the CLI help, and an `X-Spaceman-Export-Encrypted: false` header. It holds no credentials, tokens or sealed fields
+  (no such table is read; binary columns are left out). Only space admins export (new `space:export`); each export is
+  audited (`space.exported`). It is streamed from one read transaction (a consistent snapshot) straight to the
+  requester, so central keeps no plaintext copy; `GET /spaces/{id}/export/summary` estimates its uncompressed size, an
+  export over the space's `export_max_bytes` (default 2 GiB) is refused before it starts, and the stream stops if the
+  archive grows past it. Recordings and transcripts are not included (they have their own downloads).
+- **Decision (role memory before backups, SM-MEM-005):** node protocol minor 5 adds `memory.flush` (central → node:
+  `flush_id`, `space_ids`, `wait_seconds` ≤ 600) and `memory.flushed` (node → central: per space `flushed`,
+  `collections`, `detail`). It is not a durable command: nothing is journaled, no lease is needed, and the node does only
+  what it would do on its own (checkpoint every instance, sync each collection). Before every scheduled or manual backup,
+  before the database snapshot and outside any transaction, the backup service calls `PrepareMemory`, which asks every
+  connected node with minor ≥ 5 about its non-archived spaces and waits at most `BackupMemoryWait` (one minute) plus a
+  margin of 1–10 s. A space counts as flushed only when its node reports that every collection had no uncheckpointed
+  files, no unacknowledged commits and no sync in flight; otherwise it is recorded as possibly stale with a reason
+  (`node_disconnected`, `protocol_too_old`, `timed_out`, `not_acknowledged`). Answers from another node or for another
+  flush are ignored. The backup never waits beyond the bound and never fails because of the flush. The manifest records
+  `memory_flush` (attempted, flushed spaces, stale spaces with node and reason) inside the existing sealed, checksummed
+  manifest, adds a warning naming stale spaces, and `backup.finished` audits the counts. Offline CLI backups record that
+  no flush was attempted. Older manifests without the field still verify.
+- **Decision (sign-in parity with Hallpass, SM-AUTH-001):** ported from go-hallpass `bdd8329` (`internal/oidc/admin.go`,
+  `internal/opauth`, `internal/httpapi/h_{auth,sso}.go`); this lifts the "not ported" list of ADR-0029.
+  - *SSO-only enforcement*: the `auth.local_login_disabled` setting refuses password sign-in; recovery (break-glass)
+    logins are unaffected. It is set only through `PATCH /oidc/settings` (step-up `user:write`), never through the
+    configuration file. Turning it on requires an enabled provider with a recorded successful test login and at least
+    one enabled global administrator holding a manual admin grant with a linked identity on an enabled provider.
+    SSO-mapped admin grants do not count because they are re-derived at every SSO sign-in (ADR-0029); this deviates from
+    Hallpass, which counts every administrator role. While it is on, SpaceMan refuses, in the same transaction, any
+    change that would break that precondition: disabling, deleting or changing the issuer or client of the last tested
+    provider, unlinking the last SSO administrator's identity, removing that administrator's grant or disabling them
+    (`ErrLastSSOAdmin`, Hallpass SR-06 and HP-AUTH-015). Turning it off needs no precondition. Both changes are audited
+    (`auth.local_login.changed`). It is installation-wide, as in Hallpass; there is no per-user flag.
+  - *Direct provider*: `auth.direct_provider` names one enabled provider (audited `auth.direct_provider.changed`),
+    ignored when that provider is disabled or deleted, and exposed on the public `/system/info`. The sign-in page
+    continues to it, except at `/login?password=1` and after a sign-out, so signing out never signs straight back in.
+  - *RP-initiated logout*: per provider `end_session_enabled` (migration 0030). `end_session_endpoint` is read from
+    discovery and validated like the other endpoints (https, the issuer's site unless cross-origin endpoints are
+    allowed, private-network refusal); it is optional. Signing out of an SSO session returns `provider_logout_url` =
+    endpoint + `client_id` + `post_logout_redirect_uri` (`<public_url>/login`), and `POST /auth/logout` answers 200 with
+    that body instead of 204. No `id_token_hint` is sent, because ID tokens are not retained (Hallpass). The UI offers
+    it as an extra step and follows only https (or localhost http) URLs; it ends the session at that provider only.
+  - *Porch*: v0.3.0 ends its own session only with an `id_token_hint`; without one it only redirects to the registered
+    post-logout URI (`docs/contracts/porch.md`). Against Porch, provider sign-out therefore leaves the Porch session.
+- **Alternatives:** a separate retention policy table (a second model next to limits for the same kind of per-space
+  number with an installation default; rejected). Per-space timers (contradicts SM-ARCH-004). Sealing exports under the
+  KEK like backups (unreadable outside SpaceMan, so not an export) or with an export-specific passphrase (a new
+  construction; rejected under the crypto rule). Storing exports on central for later download (a plaintext copy at
+  rest). Keeping ID tokens to send `id_token_hint` (Hallpass does not retain them; a credential-like artifact at rest).
+- **Consequences:**
+  - Shortening a retention period deletes data at the next pass; it is admin-only, audited, and recoverable only from a
+    backup. The node's own recordings are never pruned by SpaceMan.
+  - Exports are as sensitive as the space's content and are the operator's to protect once downloaded.
+  - A SIEM can follow the audit log with a stored position and learns when retention outran it.
+  - A backup still guarantees only the history central acknowledged, but it now says which spaces might be missing
+    newer memory. Agents older than minor 5 still connect (at minor 3 or 4) and their spaces are reported stale.
+  - An installation can be made SSO-only without an administrator lockout. Provider sign-out works only with providers
+    that honour hint-less logout.
 
 ## 2. Open items and unresolved contracts
 

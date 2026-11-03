@@ -52,6 +52,7 @@ resource "spaceman_oidc_provider" "porch" {
 - `client_secret_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The client secret (write-only). Sent on create and whenever `client_secret_wo_version` changes; empty or left out then removes the stored secret (public clients).
 - `client_secret_wo_version` (Number) Change this number to send `client_secret_wo` again (rotation). Terraform never stores the write-only value, so it cannot see when the value itself changes.
 - `enabled` (Boolean) Whether the provider is offered at sign-in (default `false`).
+- `end_session_enabled` (Boolean) RP-initiated logout: signing out of an SSO session also offers the provider's `end_session_endpoint` when its discovery document advertises one (default `false`). Register `<public_url>/login` as a post-logout redirect URI at the provider.
 - `groups_claim` (String) Claim holding the user's groups; a dotted path walks nested objects (Porch: `porch.groups`).
 - `jit` (Attributes) Restrictions of just-in-time provisioning. (see [below for nested schema](#nestedatt--jit))
 - `provisioning` (String) `preprovisioned` (default: only linked users sign in) or `jit` (create users on first sign-in).

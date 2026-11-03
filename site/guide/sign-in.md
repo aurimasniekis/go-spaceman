@@ -50,6 +50,11 @@ re-authentication.
   address unless **Allow a private-network provider** is on. TLS verification is always on; **Extra CA certificates**
   only add trust, for a provider with a private CA. No proxy from the environment is used.
 - **Enabled** providers appear on the sign-in page. Run a **test login** before enabling one.
+- **Sign out at the provider too** (RP-initiated logout): after someone signs out of an SSO session through this
+  provider, the sign-in page offers **Sign out at the provider**, which opens the provider's `end_session_endpoint`
+  (when its discovery document advertises one) with SpaceMan's client ID and `<public URL>/login` as the
+  `post_logout_redirect_uri`. Register that URI at the provider as a post-logout redirect URI. It signs out of that
+  provider only; it is not a global logout. SpaceMan does not keep ID tokens, so it sends no `id_token_hint`.
 
 <Shot name="sign-in-provider-form" alt="The provider form with issuer, client ID, the write-only client secret, scopes, the porch.groups claim and provisioning mode" caption="Editing a provider: the client secret is write-only" />
 
@@ -58,6 +63,22 @@ re-authentication.
 **Test login** signs you in at the provider and shows what SpaceMan would do with that identity: its claims, the user it
 is linked to (or whether it would be created), and the grants its groups map to. No session is created. It works for
 disabled providers too, and the provider records when it last succeeded. Changing the issuer or client ID clears that.
+
+## Sign-in settings
+
+The **Sign-in settings** card on the same page (or `spaceman oidc settings`) holds two installation-wide settings,
+ported from Hallpass:
+
+- **Sign in with SSO only** turns password sign-in off. The sign-in page then offers only the providers, and password
+  sign-in through the API is refused. To protect against locking everyone out, it can be turned on only when an enabled
+  provider has a successful **test login** and at least one enabled global administrator (with an admin grant of their
+  own, not only an SSO-mapped one) has a linked identity on an enabled provider. While it is on, SpaceMan refuses any
+  change that would break either: disabling or deleting the last tested provider, changing its issuer or client ID,
+  unlinking the last such administrator's identity, or removing that administrator's grant or disabling them. Turn
+  password sign-in back on first. Break-glass recovery (`spaceman admin recover` on the central host) keeps working.
+- **Direct sign-in** makes the sign-in page continue straight to one enabled provider. `/login?password=1` still shows
+  every sign-in method (and the password form, while password sign-in is on). After signing out, the page stays put
+  instead of signing you straight back in.
 
 ## Porch
 
@@ -73,6 +94,11 @@ To use it:
    sign-in still works but carries no groups, so mappings and group JIT rules see nothing.
 3. In SpaceMan, add the provider with the tenant's issuer, the client ID and secret, the scopes
    `openid profile email groups`, and the groups claim **`porch.groups`**.
+
+For sign-out at Porch, register `<public URL>/login` among the application's `post_logout_redirect_uris`. Porch v0.3.0
+advertises `end_session_endpoint` (`<issuer>/oauth2/end_session`), but it ends its own session only when the request
+carries an `id_token_hint`, which SpaceMan does not keep; without one Porch only redirects back to SpaceMan, and the
+Porch session stays.
 
 Porch puts its own claims in a `porch` object (`porch.groups`, `porch.tenant`). A groups claim with a dot walks into
 nested objects, so `porch.groups` reads the group list. Porch's `porch.roles` is always empty at v0.3.0 and SpaceMan
@@ -129,7 +155,8 @@ Password sessions confirm with the password and code as before.
 
 ## Limits
 
-- Password sign-in cannot be switched off yet, and there is no "sign in with this provider directly" setting.
-- Signing out of SpaceMan does not sign you out of the provider.
+- Signing out at the provider is offered only by providers with **Sign out at the provider too** on, and only ends
+  the provider session at providers that do so without an `id_token_hint` (Porch v0.3.0 does not).
+- SSO-only enforcement and direct sign-in are installation-wide; there is no per-user setting.
 - SpaceMan's Porch support is tested against a real Porch v0.3.0 (sign-in, group mappings, JIT and step-up), with
   Porch's test upstream in place of Google and Porch in development mode; see [Known limitations](/reference/limitations).

@@ -110,7 +110,11 @@
 - **Restored or relocated memory is not merged automatically.** History central did not acknowledge is preserved and
   reported. A relocation flushes and syncs memory first; with an unavailable source, history central never received is
   lost (the acknowledgement says so).
-- **No flush before backups.** A backup holds the history central acknowledged.
+- **The flush before a backup is best effort.** Before each backup central asks the connected nodes to checkpoint and
+  sync role memory and waits at most a minute (ADR-0045). A space whose node is disconnected, runs an agent older than
+  protocol minor 5, does not answer in time or has history central did not acknowledge is backed up with the history
+  central acknowledged, and the manifest and the Backups page name it as possibly stale. Offline backups
+  (`spaceman backup create` with central stopped) cannot flush (SM-MEM-005).
 
 ## Space relocation
 - **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.
@@ -170,8 +174,11 @@
   (SM-HUI-001).
 - **No notification preferences**, and a task's human-action blocker and an action's requester run are shown by ID,
   not linked (SM-HUI-006).
-- **No retention or export.** Human actions are kept until their space is purged. They are in backups and the audit
-  log, but there is no retention policy and no export (SM-HUI-007).
+- **Retention deletes whole actions, daily.** A finished action is deleted with its comments and notifications once
+  its space's `retention_human_actions_days` has passed, by one daily pass; there is no archive tier and no per-type
+  period. Open actions and finished ones that open work still refers to are kept (ADR-0045, SM-HUI-007).
+- **Exports are plaintext and whole-space.** A space export holds every human action with its response; there is no
+  per-type, per-period or per-requester export, and the archive is not encrypted (ADR-0045).
 
 ## Control and repositories
 - **Repository reports follow events, not a clock.** The node reports a space's configured repositories (remote,
@@ -197,9 +204,10 @@
   (the old folder stays on the node).
 - **Older agents get no repository syncs.** Configured repositories need node protocol 1.4 (this release's agent); with
   an older agent the configuration is kept, nothing is cloned or reported, and an explicit sync says to upgrade.
-- **No per-space retention settings.** Recordings, transcripts and attachments are kept until an operator deletes them
-  or the space is purged; event deliveries and outbound events follow installation-wide retention. A space's storage
-  quota (limits) bounds new uploads but deletes nothing (SM-SPACE-001).
+- **Retention covers recordings, transcripts, attachments and finished human actions.** Each has a period per space
+  (limits, ADR-0045). Inbox items, tasks and messages themselves are kept until the space is purged (only their
+  attachments expire); event deliveries and outbound events follow installation-wide retention; audit retention is
+  installation-wide. A space's storage quota still bounds new uploads and deletes nothing (SM-SPACE-001).
 - **Restart budget is per space and hour.** Three supervisor restarts per hour; the counter is durable (runs created
   by the supervisor), not configurable yet.
 - **Repository-local Git programs are refused.** The node daemon refuses to run Git in a repository whose own
@@ -216,8 +224,10 @@
   restart), which leaves a gap.
 - **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
   node keeps its local recording. Tested: node-side only (`make test-fault`).
-- **No recording retention, and a fixed quota.** Central keeps recordings until an operator deletes them or the space
-  is purged. Each recording is capped at 512 MiB on the node; the cap cannot be configured (SM-REC-003).
+- **Retention deletes central's copy only.** `retention_recordings_days` deletes central's copy of an ended run's
+  recording; the node's local recordings are never pruned by SpaceMan (remove old `runs/<id>/recording` folders on the
+  node yourself). The recording size limit (`recording_quota_bytes`) reaches nodes at launch: an agent older than this
+  release ignores it and keeps 512 MiB, and a run keeps the size it started with (SM-REC-003).
 
 ## Web UI
 - **No single attention summary.** A space's overview shows its node, lease, active runs, accounts, roles and usage, and
@@ -243,15 +253,20 @@
 ## Attachments
 - **Only inbox items carry attachments.** Tasks, human actions, comments and messages hold Markdown text only, so files
   can be pasted, dropped or attached only when writing an inbox item, not when replying (SM-ATT-001, SM-ATT-002).
-- **No retention or export.** Attachments are in backups, are removed with their space, and unreferenced uploads are
-  collected; there is no retention policy and no export (SM-ATT-006).
+- **Attachment retention follows references, not Markdown.** An attachment expires once every item that references
+  it (an inbox item's attachment list) is finished. A `spaceman://attachment/…` link pasted into another item's text is
+  not a reference: that link breaks when the attachment expires (SM-ATT-006).
+- **Exports exclude recordings and transcripts**, and an export is not encrypted (ADR-0045). Download recordings and
+  transcripts per run.
 - **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB); they are not copied
   into the run's folder (SM-ATT-005).
 
 ## Audit and logs
-- **The audit log is read newest first.** The API pages backwards from the newest event; there is no forward cursor a
-  consumer (for example a SIEM export) can store and resume from. Audit events are never pruned, so there is no
-  retention-gap signal; `POST /audit/verify` reports a sequence gap if events were deleted (SM-OBS-003).
+- **Audit retention trusts its own checkpoint.** After `retention.audit_days` pruned events, verification starts from
+  the recorded hash of the last pruned event. Someone able to rewrite the database could also rewrite that checkpoint;
+  this is the same boundary as the whole chain (THREAT_MODEL). There is no export of the pruned events: copy the log
+  forward (`GET /audit?after=`) before they are pruned (SM-OBS-003).
+- **The audit page has no forward view.** The UI pages newest first; the forward cursor is in the API and CLI.
 - **No HTTP access log.** Central logs errors and component events, not every request; request counts and latencies
   are metrics (SM-OBS-001).
 
@@ -285,10 +300,12 @@
   Porch's sign-in button. Linking by invitation and the test login were not part of the real run.
 - **Porch must allow the `groups` scope.** A Porch application's allowed scopes default to `openid profile email
   offline_access`; unless `groups` is added, Porch drops the scope silently and SpaceMan sees no groups.
-- **Password sign-in cannot be turned off.** Hallpass's SSO-only enforcement and "sign in with this provider
-  directly" setting are not ported (ADR-0029).
-- **No provider sign-out.** Signing out ends the SpaceMan session only; RP-initiated logout at the provider is not
-  implemented.
+- **SSO-only and direct sign-in are installation-wide.** Password sign-in is turned off for everyone or no one, as in
+  Hallpass; there is no per-user SSO-only flag (ADR-0045).
+- **Provider sign-out needs no ID token, so Porch keeps its session.** RP-initiated logout sends `client_id` and
+  `post_logout_redirect_uri` but no `id_token_hint` (SpaceMan does not keep ID tokens, as in Hallpass). Porch v0.3.0
+  ends its own session only with an `id_token_hint`, so against Porch the sign-out redirects back without signing out
+  at Porch. Provider sign-out has run only against the in-process test provider (ADR-0045).
 - **SSO grants change at sign-in.** A group removed at the provider takes effect at the user's next SSO sign-in, not
   in sessions that are already open (deleting the provider or unlinking applies at once).
 - **Step-up leaves the page.** Re-authenticating an SSO session goes to the provider and back; the action that asked
@@ -340,8 +357,9 @@
 - **Accepted but unused agent settings.** `management_listen` and `harness.git_binary` in the agent configuration are
   validated but have no effect. The agent serves no health endpoint, and it looks up `git` on `PATH`.
 - **Accepted but unused central settings.** `auth.local_login_disabled` and `nodes.command_timeout` are validated but
-  have no effect: password sign-in cannot be turned off by configuration (and no API or page writes the stored
-  SSO-only setting), and node commands use fixed timeouts. `artifacts.backend: s3` passes validation, but central
+  have no effect: password sign-in is turned off at run time on the Sign-in providers page or with
+  `spaceman oidc settings set --sso-only` (which checks first that an administrator can still sign in), not by
+  configuration, and node commands use fixed timeouts. `artifacts.backend: s3` passes validation, but central
   refuses to start with it because the S3 artifact store is not implemented; recordings, attachments and transcripts
   are stored on the local disk. Backups have their own, implemented S3 target. See the
   configuration reference (`site/reference/configuration.md`).

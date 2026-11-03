@@ -89,6 +89,7 @@ export default withMermaid(
             { text: 'Events and subscriptions', link: '/guide/events' },
             { text: 'Schedules', link: '/guide/schedules' },
             { text: 'Limits and budgets', link: '/guide/limits' },
+            { text: 'Retention and export', link: '/guide/retention' },
             { text: 'Publishing SpaceMan events', link: '/guide/publishing-events' },
             { text: 'Single sign-on', link: '/guide/sign-in' },
             { text: 'Project status', link: '/guide/status' },

@@ -6,12 +6,12 @@ The audit log: list and verify the hash chain.
 
 | Subcommand | Description |
 |---|---|
-| [`spaceman audit list`](#spaceman-audit-list) | Audit records, newest first |
+| [`spaceman audit list`](#spaceman-audit-list) | Audit records, newest first (or oldest first after a stored position with --after) |
 | [`spaceman audit verify`](#spaceman-audit-verify) | Verify the audit log's hash chain (exit code 2 when it is broken) |
 
 ## spaceman audit list
 
-Audit records, newest first.
+Audit records, newest first (or oldest first after a stored position with --after).
 
 ```sh
 spaceman audit list [flags]
@@ -25,6 +25,7 @@ API: `list-audit` ([HTTP API](../api)).
 |---|---|---|---|
 | `--action` | string |  | only this action (e.g. space.created) |
 | `--actor` | string |  | only this actor ID |
+| `--after` | string |  | forward paging: records after this sequence, oldest first (0: from the start); resume from next_after |
 | `--all` | bool |  | follow next_cursor and print every page |
 | `--cursor` | string |  | continue from a previous page's next_cursor |
 | `--limit` | integer |  | maximum number of items |

@@ -207,7 +207,7 @@ func TestWatchStreamEndsOnRevocation(t *testing.T) {
 		createUser(t, root, "ben@example.com", globalViewer)
 		ben, _, _ := signIn(t, h, "ben@example.com", nil)
 		ch := sessionStream(ben)
-		expect(t, ben.do("POST", "/auth/logout", nil), 204)
+		expect(t, ben.do("POST", "/auth/logout", nil), 200)
 		ended(t, ch)
 		expect(t, ben.do("GET", "/auth/me", nil), 401)
 	})

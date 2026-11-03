@@ -104,6 +104,9 @@ func (c *Config) Validate() error {
 	v.outbound(c.Events.Outbound, prod)
 	v.backups(c.Backups, prod)
 	v.limits(c)
+	if a := c.Retention.AuditDays; a != 0 && (a < 30 || a > 36_500) {
+		v.add("retention.audit_days must be 0 (keep forever) or within 30..36500, got %d", a)
+	}
 	v.durationRange("shutdown.timeout", c.Shutdown.Timeout, time.Second, 10*time.Minute)
 	return v.err()
 }
@@ -187,6 +190,13 @@ var LimitRanges = map[string][2]int64{
 	"budget_cost_cents_24h":     {0, 100_000_000},
 	"budget_tokens_per_run":     {0, 1 << 40},
 	"budget_warn_percent":       {1, 100},
+	// Retention periods in days (0: keep) and storage bounds (ADR-0045).
+	"retention_recordings_days":    {0, 36_500},
+	"retention_transcripts_days":   {0, 36_500},
+	"retention_attachments_days":   {0, 36_500},
+	"retention_human_actions_days": {0, 36_500},
+	"recording_quota_bytes":        {1 << 20, 64 << 30},
+	"export_max_bytes":             {1 << 20, 64 << 30},
 }
 
 // LimitValues returns the installation default of every limit, keyed like LimitRanges.
@@ -197,7 +207,10 @@ func (c *Config) LimitValues() map[string]int64 {
 		"max_human_pending_per_run": l.MaxHumanPendingPerRun, "max_tool_calls_per_run": l.MaxToolCallsPerRun,
 		"ingest_per_minute": l.IngestPerMinute, "task_deadline_minutes": l.TaskDeadlineMinutes,
 		"storage_quota_bytes": c.Artifacts.SpaceQuotaBytes, "budget_tokens_24h": l.BudgetTokens24h,
-		"budget_cost_cents_24h": l.BudgetCostCents24h, "budget_tokens_per_run": l.BudgetTokensPerRun, "budget_warn_percent": l.BudgetWarnPercent}
+		"budget_cost_cents_24h": l.BudgetCostCents24h, "budget_tokens_per_run": l.BudgetTokensPerRun, "budget_warn_percent": l.BudgetWarnPercent,
+		"retention_recordings_days": l.RetentionRecordingsDays, "retention_transcripts_days": l.RetentionTranscriptsDays,
+		"retention_attachments_days": l.RetentionAttachmentsDays, "retention_human_actions_days": l.RetentionHumanActionsDays,
+		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes}
 }
 
 func (v *validator) limits(c *Config) {

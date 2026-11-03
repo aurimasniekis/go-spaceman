@@ -10,6 +10,35 @@ import (
 	"database/sql"
 )
 
+const countSSOAdmins = `-- name: CountSSOAdmins :one
+SELECT count(DISTINCT u.id) FROM users u
+JOIN role_grants g ON g.subject = 'user:' || u.id AND g.role = 'admin' AND g.domain = '*'
+JOIN user_identities i ON i.user_id = u.id
+JOIN oidc_providers p ON p.id = i.provider_id AND p.enabled = 1
+WHERE u.enabled = 1
+`
+
+// Enabled users with a manual global admin grant and a linked identity on an enabled provider: the administrators who
+// can still sign in while password sign-in is off (SSO-only enforcement, Hallpass HP-AUTH-015). SSO-mapped grants are
+// not counted: they are re-derived at every SSO sign-in (ADR-0029).
+func (q *Queries) CountSSOAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSSOAdmins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTestedOIDCProviders = `-- name: CountTestedOIDCProviders :one
+SELECT count(*) FROM oidc_providers WHERE enabled = 1 AND test_login_ok_at IS NOT NULL
+`
+
+func (q *Queries) CountTestedOIDCProviders(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTestedOIDCProviders)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUserIdentities = `-- name: CountUserIdentities :one
 SELECT count(*) FROM user_identities WHERE user_id = ?
 `
@@ -69,7 +98,7 @@ func (q *Queries) DeleteUserIdentity(ctx context.Context, arg DeleteUserIdentity
 }
 
 const getOIDCProvider = `-- name: GetOIDCProvider :one
-SELECT id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json, allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, test_login_ok_at, test_login_by, version, created_at, updated_at FROM oidc_providers WHERE id = ?
+SELECT id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json, allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, test_login_ok_at, test_login_by, version, created_at, updated_at, end_session_enabled FROM oidc_providers WHERE id = ?
 `
 
 func (q *Queries) GetOIDCProvider(ctx context.Context, id string) (OidcProvider, error) {
@@ -97,12 +126,13 @@ func (q *Queries) GetOIDCProvider(ctx context.Context, id string) (OidcProvider,
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EndSessionEnabled,
 	)
 	return i, err
 }
 
 const getOIDCProviderBySlug = `-- name: GetOIDCProviderBySlug :one
-SELECT id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json, allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, test_login_ok_at, test_login_by, version, created_at, updated_at FROM oidc_providers WHERE slug = ?
+SELECT id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json, allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, test_login_ok_at, test_login_by, version, created_at, updated_at, end_session_enabled FROM oidc_providers WHERE slug = ?
 `
 
 func (q *Queries) GetOIDCProviderBySlug(ctx context.Context, slug string) (OidcProvider, error) {
@@ -130,6 +160,7 @@ func (q *Queries) GetOIDCProviderBySlug(ctx context.Context, slug string) (OidcP
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EndSessionEnabled,
 	)
 	return i, err
 }
@@ -223,8 +254,8 @@ func (q *Queries) InsertOIDCMapping(ctx context.Context, arg InsertOIDCMappingPa
 
 const insertOIDCProvider = `-- name: InsertOIDCProvider :exec
 INSERT INTO oidc_providers (id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json,
-  allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, end_session_enabled, enabled, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertOIDCProviderParams struct {
@@ -243,6 +274,7 @@ type InsertOIDCProviderParams struct {
 	CaBundlePem               string
 	StepupFallback            string
 	AcrValues                 string
+	EndSessionEnabled         int64
 	Enabled                   int64
 	CreatedAt                 int64
 	UpdatedAt                 int64
@@ -265,6 +297,7 @@ func (q *Queries) InsertOIDCProvider(ctx context.Context, arg InsertOIDCProvider
 		arg.CaBundlePem,
 		arg.StepupFallback,
 		arg.AcrValues,
+		arg.EndSessionEnabled,
 		arg.Enabled,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -333,7 +366,7 @@ func (q *Queries) ListOIDCMappings(ctx context.Context, providerID string) ([]Oi
 }
 
 const listOIDCProviders = `-- name: ListOIDCProviders :many
-SELECT id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json, allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, test_login_ok_at, test_login_by, version, created_at, updated_at FROM oidc_providers ORDER BY display_name, id
+SELECT id, slug, display_name, issuer, client_id, client_secret_enc, scopes_json, groups_claim, provisioning, jit_json, allow_private_network, allow_cross_origin_endpoints, ca_bundle_pem, stepup_fallback, acr_values, enabled, test_login_ok_at, test_login_by, version, created_at, updated_at, end_session_enabled FROM oidc_providers ORDER BY display_name, id
 `
 
 func (q *Queries) ListOIDCProviders(ctx context.Context) ([]OidcProvider, error) {
@@ -367,6 +400,7 @@ func (q *Queries) ListOIDCProviders(ctx context.Context) ([]OidcProvider, error)
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.EndSessionEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -511,7 +545,7 @@ func (q *Queries) TouchUserIdentity(ctx context.Context, arg TouchUserIdentityPa
 const updateOIDCProvider = `-- name: UpdateOIDCProvider :execrows
 UPDATE oidc_providers SET slug = ?, display_name = ?, issuer = ?, client_id = ?, client_secret_enc = ?, scopes_json = ?, groups_claim = ?,
   provisioning = ?, jit_json = ?, allow_private_network = ?, allow_cross_origin_endpoints = ?, ca_bundle_pem = ?, stepup_fallback = ?,
-  acr_values = ?, enabled = ?, test_login_ok_at = ?, test_login_by = ?, version = version + 1, updated_at = ?
+  acr_values = ?, end_session_enabled = ?, enabled = ?, test_login_ok_at = ?, test_login_by = ?, version = version + 1, updated_at = ?
 WHERE id = ? AND version = ?
 `
 
@@ -530,6 +564,7 @@ type UpdateOIDCProviderParams struct {
 	CaBundlePem               string
 	StepupFallback            string
 	AcrValues                 string
+	EndSessionEnabled         int64
 	Enabled                   int64
 	TestLoginOkAt             sql.NullInt64
 	TestLoginBy               sql.NullString
@@ -554,6 +589,7 @@ func (q *Queries) UpdateOIDCProvider(ctx context.Context, arg UpdateOIDCProvider
 		arg.CaBundlePem,
 		arg.StepupFallback,
 		arg.AcrValues,
+		arg.EndSessionEnabled,
 		arg.Enabled,
 		arg.TestLoginOkAt,
 		arg.TestLoginBy,

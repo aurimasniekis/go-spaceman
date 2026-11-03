@@ -7,6 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/schedule"
@@ -88,6 +89,14 @@ func RegisterLimits(svc *limits.Service, sched *schedule.Service) func(api huma.
 				v, err := optionalVersion(in.IfMatch)
 				if err != nil {
 					return nil, d.fail(ctx, "limits.set", err)
+				}
+				// A retention period deletes data when it is shortened: changing one needs retention:write (admins).
+				changed, err := svc.RetentionChanged(ctx, in.SpaceID, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "limits.set", err)
+				}
+				if p := PrincipalFrom(ctx); changed && (d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.RetentionWrite)) {
+					return nil, newProblem(http.StatusForbidden, apperr.CodeForbidden, "changing a retention period needs retention:write (space admins)", nil)
 				}
 				e, err := svc.Set(ctx, Actor(ctx), in.SpaceID, v, in.Body)
 				if err != nil {

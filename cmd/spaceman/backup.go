@@ -84,7 +84,7 @@ func backupCreateCmd(g *globals) *cobra.Command {
 			id := ids.New(ids.Backup)
 			dest := filepath.Join(target.StagingDir(), id)
 			res, err := backup.Create(ctx, src, kek, dest, backup.Options{ID: id, Sources: backup.DefaultSources(cfg.DataDir, cfg.Artifacts.LocalDir, gitOrNil()),
-				Config: cfgYAML})
+				Config: cfgYAML, MemoryFlush: backup.OfflineMemoryFlush()})
 			if err != nil {
 				return err
 			}

@@ -38,6 +38,7 @@ func (a *App) oidcCmd() *cobra.Command {
 			doc("jit", "jit", "just-in-time provisioning rules (JSON or YAML file)").str("stepup-fallback", "stepup_fallback", "none or local_totp").
 			boolean("enabled", "enabled", "offer it on the sign-in page").boolean("allow-private-network", "allow_private_network", "allow a private-network issuer").
 			boolean("allow-cross-origin-endpoints", "allow_cross_origin_endpoints", "allow endpoints on another origin than the issuer").
+			boolean("end-session", "end_session_enabled", "sign out at the provider too (RP-initiated logout) when it advertises end_session_endpoint").
 			textFile("ca-bundle", "ca_bundle_pem", "PEM file of the CAs that sign the issuer's certificates")
 	}
 	var removeSecret bool
@@ -85,8 +86,27 @@ func (a *App) oidcCmd() *cobra.Command {
 			}, prepare: a.resolveDomain("domain")}),
 		a.cmd(opts{use: "delete", short: "Remove a group mapping", op: "delete-oidc-mapping", args: pos("provider", "mapping"), done: "Group mapping removed."}),
 	)
-	return group("oidc", "Single sign-on: OIDC providers and group mappings", []string{"sso"},
-		providers, mappings,
+	settings := group("settings", "Sign-in settings: SSO-only enforcement and the direct provider", nil,
+		a.cmd(opts{use: "get", short: "The sign-in settings and the preconditions of SSO-only enforcement", op: "get-sign-in-settings"}),
+		a.cmd(opts{use: "set", short: "Change the sign-in settings (only the flags given change)", op: "set-sign-in-settings",
+			long: "--sso-only turns password sign-in off. It needs an enabled provider with a successful test login and an enabled global " +
+				"administrator with a linked identity on an enabled provider; while it is on, changes that would break either are refused. " +
+				"Break-glass recovery (`spaceman admin recover`) still works. --direct-provider makes the sign-in page go straight to " +
+				"that enabled provider (\"\" turns it off).",
+			example: "spaceman oidc settings set --direct-provider porch\nspaceman oidc settings set --sso-only",
+			form: func(f *form) {
+				f.boolean("sso-only", "local_login_disabled", "turn password sign-in off (true) or back on (false)").
+					str("direct-provider", "direct_provider", "slug of the provider the sign-in page goes to directly; empty turns it off")
+			},
+			prepare: func(_ context.Context, _ *cobra.Command, _ *call, body map[string]any) error {
+				if len(body) == 0 {
+					return usageErrorf("nothing to change")
+				}
+				return nil
+			}}),
+	)
+	return group("oidc", "Single sign-on: OIDC providers, group mappings and sign-in settings", []string{"sso"},
+		providers, mappings, settings,
 		a.cmd(opts{use: "sign-in-providers", short: "Providers offered on the sign-in page (needs no token)", op: "list-sign-in-providers", anonymous: true,
 			view: view{items: "items", cols: []col{c("SLUG", "slug"), c("NAME", "display_name")}, empty: "No sign-in providers."}}),
 	)

@@ -20,6 +20,17 @@
   Step-up (`prompt=login` or `max_age`) redirects server-side to `/login/{provider}?intent=stepup` for upstream sessions
   (`internal/oidcop/continue.go`).
 
+## RP-initiated logout (inspected 2026-11-03, v0.3.0 `9014040`)
+- Discovery advertises `end_session_endpoint` = `<issuer>/oauth2/end_session` (`internal/oidcop/provider.go`, `PathEndSession`).
+- `EndSession` (`internal/oidcop/endpoints.go`): with an `id_token_hint` (signature verified, expired accepted, `iss` must match and
+  `client_id`, when given, must be in `aud`) **and** a Porch browser session of that same user, Porch revokes the session and the
+  client's refresh tokens for the user (audited `oidc.end_session`). Without a hint, or without a matching session, it only redirects
+  (logout-CSRF protection).
+- `post_logout_redirect_uri` must be registered for the client (`post_logout_redirect_uris` on the application); `state` is passed
+  through. Without a redirect URI Porch goes to `/login?logged_out=1`. There is no front- or back-channel logout at v0.3.0.
+- SpaceMan (as Hallpass) does not keep ID tokens, so it sends `client_id` and `post_logout_redirect_uri` only: against Porch the
+  sign-out redirects back to SpaceMan's `/login` and the Porch session stays (ADR-0045).
+
 ## How SpaceMan uses it (same as Hallpass)
 - Generic OIDC client (`coreos/go-oidc/v3`). Users are identified by `(issuer, sub)`.
 - `groups_claim: porch.groups` (a dotted path), mapped explicitly to SpaceMan roles and space scopes on every login.

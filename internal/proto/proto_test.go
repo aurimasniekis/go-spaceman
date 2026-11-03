@@ -65,7 +65,8 @@ func TestNegotiate(t *testing.T) {
 	if m, err := Negotiate(0, MaxMinor); err != nil || m != MaxMinor {
 		t.Fatalf("%d %v", m, err)
 	}
-	if m, err := Negotiate(0, 3); err != nil || m != 3 {
+	// An agent from before memory.flush (minor 3) still connects, at minor 3 (ADR-0045).
+	if m, err := Negotiate(0, 3); err != nil || m != 3 || MaxMinor < MinorMemoryFlush {
 		t.Fatalf("%d %v", m, err)
 	}
 	if _, err := Negotiate(MaxMinor+1, MaxMinor+2); err == nil {

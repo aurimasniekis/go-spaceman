@@ -13,7 +13,7 @@ the installation back **paused, with new execution authority**: nothing runs unt
 |---|---|
 | A consistent database snapshot (SQLite `VACUUM INTO`): spaces, runs, the queue, inbox items, messages, human actions (including open ones), approvals, every catalog version (prompts, profiles, role templates, skills, human-action types, event templates), event connections and subscriptions with their cursors, users, grants, token verifiers, the audit chain and the outbox | **The KEK** and the development KEK file (`dev-kek`) |
 | Credentials (accounts, connection credentials, MCP headers, sign-in provider secrets), still sealed by the keyring exactly as stored | Node workspaces and worktrees, including uncommitted or unpushed changes |
-| Role memory: one Git bundle per collection central has synced, with all refs (preserved conflicts too) | Role memory a node has not synced to central yet |
+| Role memory: one Git bundle per collection central has synced, with all refs (preserved conflicts too). Connected nodes are asked to checkpoint and sync first ([below](#role-memory-is-flushed-first)) | Role memory a node could not sync before the snapshot (a disconnected or older node, or a sync that did not finish in time): the manifest names those spaces |
 | Recordings, attachments and artifacts, and run transcripts stored on central | Node-local credentials, journals, leases and harness state |
 | The effective central configuration (settings and file paths, no secret values) | Native harness state not uploaded yet (transcripts still on nodes, live terminal sessions) |
 | | Secrets referenced by path in the configuration: TLS keys, Pulse `.creds` files, S3 key files |
@@ -44,6 +44,25 @@ collections, attachments, unpublished outbox events), and for each file its plai
 holds no content. Each sealed object (format `SMBAK1`, see ADR-0031) has its own data key wrapped by the KEK and bound to
 the backup ID and the file's path, so objects cannot be swapped between files or backups.
 
+### Role memory is flushed first
+
+Before every scheduled or manual backup, central asks each connected node to checkpoint every instance of its spaces'
+role memory and sync it, and waits at most one minute for the node to report that central acknowledged all of it (node
+protocol minor 5, ADR-0045). Only then is the database snapshotted and the memory bundles written, so notes a running
+agent wrote a moment ago are in the backup. Nothing is forced: a node that is not connected, runs an agent older than
+protocol minor 5, does not answer in time, or still has history central has not acknowledged (for example a sync that
+keeps failing) does not hold the backup up. The backup then holds the history central had acknowledged for that space,
+and the manifest says so:
+
+- `memory_flush.flushed_spaces` lists the spaces whose memory was flushed.
+- `memory_flush.stale` lists each space whose memory is **possibly stale** in this backup, with its node and the reason
+  (`node_disconnected`, `protocol_too_old`, `timed_out` or `not_acknowledged`), and a manifest warning names them.
+
+The Backups page marks such a backup **Memory possibly stale: …**, and the `backup.finished` audit event counts flushed
+and stale spaces. Archived spaces are not flushed (their runs ended, and runs checkpoint when they end). Backups made
+with `spaceman backup create` while central is stopped cannot reach any node; their manifest records that no flush was
+attempted.
+
 A backup is assembled in a temporary directory, fsynced and renamed into place, so a directory either holds a complete
 backup or does not exist. Backups never block central: the snapshot runs on a read-only connection and nothing else is
 held while files are sealed.
@@ -62,6 +81,11 @@ backups:
 
 The schedule uses one timer: the next backup is due one interval after the last successful one (five minutes after start
 when there is none, and no sooner than 15 minutes after a failure). Retention runs after every backup.
+
+This backup retention is about backups only. How long central keeps recordings, transcripts, attachments, finished
+human actions and audit events is set by the retention periods in the limits model, applied by a daily pass that never
+runs while a restore is unacknowledged; the Backups page shows them in its **Retention** card
+([Retention and export](/guide/retention)).
 
 ### S3-compatible storage
 

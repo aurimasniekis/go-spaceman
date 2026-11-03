@@ -38,6 +38,8 @@ var OIDCRules = map[string]Rule{
 	"link-user-identity":   StepUp(authz.UserWrite),
 	"unlink-user-identity": StepUp(authz.UserWrite),
 	"issue-link-invite":    StepUp(authz.UserWrite),
+	"get-sign-in-settings": Global(authz.UserRead),
+	"set-sign-in-settings": StepUp(authz.UserWrite),
 }
 
 // OIDCBindingCookieName is the cookie that binds a pending authorization to the browser that started it:
@@ -125,6 +127,9 @@ func ssoErrorRedirect(ctx context.Context, err error, cookies ...http.Cookie) *r
 // RegisterOIDC registers OIDC sign-in, provider administration and identity linking.
 func RegisterOIDC(svc *oidc.Service) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
+		if svc != nil {
+			d.ProviderLogoutURL = svc.LogoutURL
+		}
 		registerOIDCSignIn(api, d, svc)
 		registerOIDCAdmin(api, d, svc)
 	}
@@ -348,6 +353,33 @@ func registerOIDCAdmin(api huma.API, d *Deps, svc *oidc.Service) {
 				return nil, d.fail(ctx, "oidc.test_result", err)
 			}
 			return &struct{ Body *oidc.TestResult }{Body: r}, nil
+		})
+
+	huma.Register(api, huma.Operation{OperationID: "get-sign-in-settings", Method: http.MethodGet, Path: "/oidc/settings",
+		Summary:     "Sign-in settings: SSO-only enforcement and the direct provider",
+		Description: "Also reports the preconditions of SSO-only enforcement (a tested enabled provider and an SSO-capable global administrator).",
+		Tags:        tags},
+		func(ctx context.Context, _ *struct{}) (*struct{ Body *oidc.SignInSettings }, error) {
+			st, err := svc.SignInSettings(ctx)
+			if err != nil {
+				return nil, d.fail(ctx, "oidc.settings", err)
+			}
+			return &struct{ Body *oidc.SignInSettings }{Body: st}, nil
+		})
+	huma.Register(api, huma.Operation{OperationID: "set-sign-in-settings", Method: http.MethodPatch, Path: "/oidc/settings",
+		Summary: "Change the sign-in settings",
+		Description: "Turning password sign-in off (SSO-only) needs an enabled provider with a successful test login and at least one enabled " +
+			"global administrator with a linked identity on an enabled provider; while it is off, changes that would break either are refused. " +
+			"Break-glass recovery is unaffected. The direct provider must be enabled; omitted fields stay unchanged.",
+		Tags: tags},
+		func(ctx context.Context, in *struct {
+			Body oidc.SignInSettingsInput
+		}) (*struct{ Body *oidc.SignInSettings }, error) {
+			st, err := svc.SetSignInSettings(ctx, Actor(ctx), in.Body)
+			if err != nil {
+				return nil, d.fail(ctx, "oidc.set_settings", err)
+			}
+			return &struct{ Body *oidc.SignInSettings }{Body: st}, nil
 		})
 
 	utags := []string{"users"}

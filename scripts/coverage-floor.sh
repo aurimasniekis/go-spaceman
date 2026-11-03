@@ -27,6 +27,8 @@ PACKAGES=(
   internal/backup
   internal/s3client
   internal/limits
+  internal/retention
+  internal/spaceexport
   internal/schedule
   internal/xspace
   internal/cli

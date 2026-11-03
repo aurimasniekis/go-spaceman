@@ -27,8 +27,9 @@ const (
 	MinMinor = 0
 	// 1: agent tool calls (tool.call / tool.result); 2: memory sync, KB acceptance, dreams, usage and transcripts;
 	// 3: space relocation (space.relocate.* commands, relocation reports and transfers, ADR-0037); 4: configured space
-	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044)
-	MaxMinor = 4
+	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044); 5: memory flush
+	// before a backup (memory.flush / memory.flushed, ADR-0045)
+	MaxMinor = 5
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -53,6 +54,7 @@ const (
 	TypeRelocationUpload = "relocation.upload" // minor ≥ 3: part of an exported state file, uploaded by the source
 	TypeRelocationFetch  = "relocation.fetch"  // minor ≥ 3: the destination asks for part of a relocation file
 	TypeRepoStatus       = "repos.status"      // minor ≥ 4: the state of a space's configured repositories
+	TypeMemoryFlushed    = "memory.flushed"    // minor ≥ 5: the outcome of a memory.flush
 
 	// central → node
 	TypeWelcome             = "welcome"
@@ -66,6 +68,7 @@ const (
 	TypeTranscriptAck       = "transcript.ack"        // minor ≥ 2
 	TypeRelocationUploadAck = "relocation.upload_ack" // minor ≥ 3
 	TypeRelocationData      = "relocation.data"       // minor ≥ 3: the answer to a relocation.fetch
+	TypeMemoryFlush         = "memory.flush"          // minor ≥ 5: checkpoint and sync spaces' role memory now (backup prep)
 	TypeError               = "error"
 )
 
@@ -368,12 +371,18 @@ type LaunchPayload struct {
 	AccountRef string `json:"account_ref,omitempty"`
 	// Dream asks the node to prepare a dream workspace (minor ≥ 2, ADR-0027).
 	Dream *DreamSpec `json:"dream,omitempty"`
+	// RecordingMaxBytes bounds the run's terminal recording on the node (the space's recording_quota_bytes limit,
+	// ADR-0045). 0 (an older central) keeps the node's default of DefaultRecordingMaxBytes. Older nodes ignore it.
+	RecordingMaxBytes int64 `json:"recording_max_bytes,omitempty"`
 	// Secrets and RunToken are injected by central only into the message on the wire at dispatch time; they are
 	// never stored with the command, logged or echoed in reports. The node writes them only to the run's 0600 secret
 	// file, which the launcher shim reads and unlinks before exec (ADR-0009); they never reach the runner's env.
 	Secrets  map[string]string `json:"secrets,omitempty"`
 	RunToken string            `json:"run_token,omitempty"`
 }
+
+// DefaultRecordingMaxBytes is the recording bound a node applies when the launch names none (512 MiB).
+const DefaultRecordingMaxBytes = 512 << 20
 
 // Redacted returns a copy without secrets (for storage and logs).
 func (p LaunchPayload) Redacted() LaunchPayload {

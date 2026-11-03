@@ -417,6 +417,11 @@ func (a *Agent) session(ctx context.Context) error {
 			if err := env.Decode(&ack); err == nil {
 				go a.mem.acked(context.WithoutCancel(ctx), ack)
 			}
+		case proto.TypeMemoryFlush:
+			var req proto.MemoryFlush
+			if err := env.Decode(&req); err == nil {
+				go a.track(func() { a.memoryFlush(hbCtx, req) })
+			}
 		case proto.TypeError:
 			var e proto.Error
 			_ = env.Decode(&e)

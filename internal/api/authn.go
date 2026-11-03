@@ -168,18 +168,32 @@ func registerAuth(api huma.API, d *Deps) {
 		})
 
 	huma.Register(api, huma.Operation{OperationID: "logout", Method: http.MethodPost, Path: "/auth/logout", Summary: "Sign out (revokes this session)",
-		Tags: tags, DefaultStatus: http.StatusNoContent},
+		Description: "For an SSO session whose provider has RP-initiated logout enabled and advertises an end_session_endpoint, " +
+			"provider_logout_url is where the browser goes next to sign out at the provider too (that provider only; not a global logout).",
+		Tags: tags},
 		func(ctx context.Context, _ *struct{}) (*struct {
 			SetCookie http.Cookie `header:"Set-Cookie"`
+			Body      LogoutResult
 		}, error) {
+			out := &struct {
+				SetCookie http.Cookie `header:"Set-Cookie"`
+				Body      LogoutResult
+			}{SetCookie: d.cookie("")}
+			p := PrincipalFrom(ctx)
 			if t := sessionTokenFrom(ctx); t != "" {
 				if err := d.Auth.Logout(ctx, t); err != nil {
 					return nil, d.fail(ctx, "auth.logout", err)
 				}
 			}
-			return &struct {
-				SetCookie http.Cookie `header:"Set-Cookie"`
-			}{SetCookie: d.cookie("")}, nil
+			if p != nil && p.Provider != "" && p.TokenID == "" && d.ProviderLogoutURL != nil {
+				// The SpaceMan session is already gone; a provider that cannot be reached only loses its own logout.
+				if u, err := d.ProviderLogoutURL(ctx, p.Provider, "/login"); err == nil && u != "" {
+					out.Body.ProviderLogoutURL = &u
+				} else if err != nil {
+					d.log().Warn("provider logout url", "provider", p.Provider, "error", err.Error())
+				}
+			}
+			return out, nil
 		})
 
 	huma.Register(api, huma.Operation{OperationID: "reauth-password", Method: http.MethodPost, Path: "/auth/reauth", Summary: "Re-authenticate (step-up)",
@@ -244,4 +258,9 @@ func registerAuth(api huma.API, d *Deps) {
 			}
 			return &struct{}{}, nil
 		})
+}
+
+// LogoutResult is the outcome of signing out.
+type LogoutResult struct {
+	ProviderLogoutURL *string `json:"provider_logout_url" doc:"Where to send the browser to sign out at the SSO provider too (RP-initiated logout); null when there is none"`
 }

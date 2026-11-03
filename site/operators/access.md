@@ -91,4 +91,16 @@ that has already started finishes.
 Every security-relevant action is appended to a hash-chained audit log with actor, target, outcome and source address.
 Secret values are never recorded. **Verify chain** recomputes the chain and reports the first broken link, if any.
 
+The page and `GET /audit` list events newest first. A consumer that copies the log elsewhere (a SIEM, say) reads it
+forward instead: `GET /audit?after=0` returns the oldest events first, and each page's `next_after` is the position to
+store and pass as `after` next time (`spaceman audit list --after <seq>`). Events are never renumbered, so the position
+stays valid across restarts.
+
+The log is kept forever unless the installation sets `retention.audit_days` (at least 30). Then the daily retention
+pass deletes older events, records the sequence and hash of the last one it deleted, and appends an `audit.pruned`
+event. Verification checks the chain from the first retained event, so changes to the retained events are still
+detected. A forward reader whose position is older than the first retained event gets
+`"gap": {"after": <its position>, "oldest": <first retained sequence>}`: the events in between were deleted before it
+read them. The page shows a notice once events were pruned. See [Retention and export](/guide/retention).
+
 <Shot name="audit-log" alt="Audit log listing run launches, space creation, node enrollment and sign-in events" caption="The audit log" />

@@ -10,13 +10,14 @@ import (
 )
 
 var (
-	peerCols   = []col{c("SPACE", "space_id"), c("PEER", "peer.slug"), c("PEER ID", "peer.id"), c("IN Q/D/K", ""), c("OUT Q/D/K", ""), c("DISCLOSURE", "inbound.disclosure"), c("VERSION", "version")}
-	xreqCols   = []col{c("ID", "id"), c("SIDE", "side"), c("KIND", "kind"), c("STATE", "state"), c("FROM", "source.slug"), c("TO", "destination.slug"), c("TITLE", "title")}
-	userCols   = []col{c("ID", "id"), c("EMAIL", "email"), c("NAME", "display_name"), c("ENABLED", "enabled"), c("MFA", "mfa_enrolled"), {head: "GRANTS", fn: grantsOf}}
-	tokenCols  = []col{c("ID", "id"), c("NAME", "name"), c("USER", "user_id"), c("HINT", "hint"), {head: "GRANTS", fn: grantsOf}, c("EXPIRES", "expires_at"), c("REVOKED", "revoked_at")}
-	backupCols = []col{c("ID", "id"), c("STATE", "state"), c("TRIGGER", "trigger"), c("TARGET", "target"), c("BYTES", "bytes"), c("CREATED", "created_at"), c("VERIFIED", "verify_state")}
-	auditCols  = []col{c("SEQ", "seq"), {head: "AT", fn: microsAt("at")}, c("ACTION", "action"), c("ACTOR", "actor_type"), c("ACTOR ID", "actor_id"), c("TARGET", "target_id"), c("OUTCOME", "outcome")}
-	flagsInOut = func(side string) func(map[string]any) string {
+	peerCols      = []col{c("SPACE", "space_id"), c("PEER", "peer.slug"), c("PEER ID", "peer.id"), c("IN Q/D/K", ""), c("OUT Q/D/K", ""), c("DISCLOSURE", "inbound.disclosure"), c("VERSION", "version")}
+	xreqCols      = []col{c("ID", "id"), c("SIDE", "side"), c("KIND", "kind"), c("STATE", "state"), c("FROM", "source.slug"), c("TO", "destination.slug"), c("TITLE", "title")}
+	userCols      = []col{c("ID", "id"), c("EMAIL", "email"), c("NAME", "display_name"), c("ENABLED", "enabled"), c("MFA", "mfa_enrolled"), {head: "GRANTS", fn: grantsOf}}
+	tokenCols     = []col{c("ID", "id"), c("NAME", "name"), c("USER", "user_id"), c("HINT", "hint"), {head: "GRANTS", fn: grantsOf}, c("EXPIRES", "expires_at"), c("REVOKED", "revoked_at")}
+	backupCols    = []col{c("ID", "id"), c("STATE", "state"), c("TRIGGER", "trigger"), c("TARGET", "target"), c("BYTES", "bytes"), c("CREATED", "created_at"), c("VERIFIED", "verify_state")}
+	retentionCols = []col{c("ID", "id"), c("TRIGGER", "trigger"), c("STATE", "state"), c("STARTED", "started_at"), c("DELETED", "deleted")}
+	auditCols     = []col{c("SEQ", "seq"), {head: "AT", fn: microsAt("at")}, c("ACTION", "action"), c("ACTOR", "actor_type"), c("ACTOR ID", "actor_id"), c("TARGET", "target_id"), c("OUTCOME", "outcome")}
+	flagsInOut    = func(side string) func(map[string]any) string {
 		return func(m map[string]any) string {
 			s, _ := m[side].(map[string]any)
 			yn := func(k string) string {
@@ -253,16 +254,25 @@ func (a *App) systemCmd() *cobra.Command {
 		a.cmd(opts{use: "create", short: "Start a backup now", op: "create-backup"}),
 		a.cmd(opts{use: "verify", short: "Verify a stored backup", op: "verify-backup", args: pos("backup")}),
 	)
+	retention := group("retention", "Retention: installation defaults, audit retention and the daily pass", nil,
+		a.cmd(opts{use: "status", short: "Retention defaults, the next daily pass and recent passes", op: "get-retention",
+			view: view{items: "passes", cols: retentionCols, first: []string{"audit_days", "interval", "next_at", "blocked", "busy"}, empty: "No passes yet."}}),
+		a.cmd(opts{use: "run", short: "Run a retention pass now (deletes what is older than its retention period)", op: "run-retention",
+			confirm: "delete everything older than its retention period now",
+			view:    view{first: []string{"id", "state", "deleted", "error"}}}),
+	)
 	return group("system", "A running central: version, backups, outbox, restore and break-glass notices, root token", nil,
 		a.cmd(opts{use: "info", short: "Version, readiness and bootstrap state (needs no token)", op: "get-system-info", anonymous: true}),
 		backups,
+		retention,
 	)
 }
 
 func (a *App) auditCmd() *cobra.Command {
 	return group("audit", "The audit log: list and verify the hash chain", nil,
-		a.cmd(opts{use: "list", short: "Audit records, newest first", op: "list-audit", alias: []string{"ls"}, paged: true,
-			query: []qflag{qs("action", "action", "only this action (e.g. space.created)"), qs("target", "target_id", "only this target ID"),
+		a.cmd(opts{use: "list", short: "Audit records, newest first (or oldest first after a stored position with --after)", op: "list-audit", alias: []string{"ls"}, paged: true,
+			query: []qflag{qs("after", "after", "forward paging: records after this sequence, oldest first (0: from the start); resume from next_after"),
+				qs("action", "action", "only this action (e.g. space.created)"), qs("target", "target_id", "only this target ID"),
 				qs("actor", "actor_id", "only this actor ID"), limitFlag()},
 			view: view{items: "items", cols: auditCols, empty: "No audit records."}}),
 		a.cmd(opts{use: "verify", short: "Verify the audit log's hash chain (exit code 2 when it is broken)", op: "verify-audit-chain",

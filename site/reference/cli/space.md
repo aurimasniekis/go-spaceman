@@ -10,6 +10,7 @@ Aliases: `spaces`.
 |---|---|
 | [`spaceman space archive`](#spaceman-space-archive) | Archive a space (needs no active runs) |
 | [`spaceman space create`](#spaceman-space-create) | Create a space pinned to a node |
+| [`spaceman space export`](#spaceman-space-export) | A space's records and files as one plaintext ZIP archive (space admins only) |
 | [`spaceman space get`](#spaceman-space-get) | Show a space (ID or slug) |
 | [`spaceman space list`](#spaceman-space-list) | List the spaces you can see |
 | [`spaceman space pause`](#spaceman-space-pause) | Pause a space |
@@ -63,6 +64,55 @@ spaceman space create payments --name Payments --node build-01
 | `--node` | string |  | node ID or name the space is pinned to (required) |
 | `--standing-instructions` | string |  | standing instructions for the space's agents |
 | `--standing-instructions-file` | string |  | read --standing-instructions from a file (- reads standard input) |
+
+## spaceman space export
+
+A space's records and files as one plaintext ZIP archive (space admins only).
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman space export download`](#spaceman-space-export-download) | Download the space's export archive (ZIP of JSON Lines and attachment files) to a file |
+| [`spaceman space export summary`](#spaceman-space-export-summary) | What an export would hold now: counts, estimated size and the space's export limit |
+
+## spaceman space export download
+
+Download the space's export archive (ZIP of JSON Lines and attachment files) to a file.
+
+The archive is NOT encrypted: it holds the space's inbox items, tasks, human actions with responses, messages and attachments in plain text (no credentials or tokens). The file is created with mode 0600; handle it like the data it holds. An export over the space's export_max_bytes limit is refused.
+
+```sh
+spaceman space export download [flags]
+```
+
+API: `get-space-export` ([HTTP API](../api)).
+
+Raw route: `GET /spaces/{space_id}/export` (outside the OpenAPI document, same authentication; see the [HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman space export download --space payments --out payments-export.zip
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | bool |  | replace an existing file |
+| `--out` | string |  | file to write (mode 0600; - writes to standard output when it is not a terminal; required) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman space export summary
+
+What an export would hold now: counts, estimated size and the space's export limit.
+
+```sh
+spaceman space export summary [flags]
+```
+
+API: `get-space-export` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman space get
 

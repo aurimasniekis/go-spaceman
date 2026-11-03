@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Group, Menu, SimpleGrid, Stack, Table, Tabs, Text, Title, Tooltip } from '@mantine/core'
-import { IconArrowsExchange, IconChevronDown, IconPencil, IconPlayerPause, IconPlayerPlay, IconRocket } from '@tabler/icons-react'
+import { IconArrowsExchange, IconChevronDown, IconFileExport, IconPencil, IconPlayerPause, IconPlayerPlay, IconRocket } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -12,6 +12,7 @@ import { NodeState, RunState, SpaceState } from '@/components/StatusBadge'
 import { SpaceAccountsCard } from '@/features/accounts/SpaceAccountsCard'
 import { SpaceRolesCard } from '@/features/catalog/SpaceRolesCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
+import { ExportModal } from '@/features/spaces/ExportModal'
 import { LaunchRunModal } from '@/features/spaces/LaunchRunModal'
 import { SpaceFormModal } from '@/features/spaces/SpaceFormModal'
 import { RelocateModal } from '@/features/spaces/RelocateModal'
@@ -39,6 +40,7 @@ function SpacePage() {
   const [launching, setLaunching] = useState(false)
   const [editing, setEditing] = useState(false)
   const [relocating, setRelocating] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const role = roleIn(me, spaceId)
   // Relocation is global administration (space:relocate); the API enforces it.
   const canMove = hasGlobal(me, 'admin')
@@ -67,6 +69,7 @@ function SpacePage() {
         actions={
           <>
             {atLeast(role, 'admin') && <Button variant="default" leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>Edit</Button>}
+            {atLeast(role, 'admin') && <Button variant="default" leftSection={<IconFileExport size={14} />} onClick={() => setExporting(true)}>Export</Button>}
             {canMove && s.state !== 'archived' && !s.desired_node_id && (
               <Button variant="default" leftSection={<IconArrowsExchange size={14} />} onClick={() => setRelocating(true)}>Relocate</Button>
             )}
@@ -190,6 +193,7 @@ function SpacePage() {
       <LaunchRunModal space={s} node={node} opened={launching} onClose={() => setLaunching(false)} />
       {editing && <SpaceFormModal space={s} opened onClose={() => setEditing(false)} />}
       {relocating && <RelocateModal space={s} opened onClose={() => setRelocating(false)} />}
+      {exporting && <ExportModal spaceId={s.id} onClose={() => setExporting(false)} />}
     </>
   )
 }

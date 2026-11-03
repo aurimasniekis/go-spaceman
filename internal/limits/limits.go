@@ -4,6 +4,8 @@
 //
 // Lowering a limit never stops running work: it only refuses new work beyond it. The single exception is a space's
 // explicit on_lower=stop policy for the run concurrency limit, which stops the newest runs beyond the new limit.
+// Retention periods (retention_*_days, ADR-0045) are limits too, but shortening one deletes data in the next daily
+// retention pass (internal/retention); changing them needs retention:write.
 //
 // Budgets are usage-based: usage is reported by harnesses, late or not at all, so a budget warns and refuses new runs
 // once the reported usage passes it. It is never a hard currency limit, and unknown usage is never counted as zero.
@@ -45,7 +47,19 @@ const (
 	BudgetCost         = "budget_cost_cents_24h"
 	BudgetTokensPerRun = "budget_tokens_per_run" //nolint:gosec // G101 false positive: a limit key, not a credential
 	BudgetWarnPercent  = "budget_warn_percent"
+	// Retention periods (days; 0 keeps) and storage bounds (ADR-0045). The daily retention pass applies them.
+	RetainRecordings   = "retention_recordings_days"
+	RetainTranscripts  = "retention_transcripts_days"
+	RetainAttachments  = "retention_attachments_days"
+	RetainHumanActions = "retention_human_actions_days"
+	RecordingQuota     = "recording_quota_bytes"
+	ExportMax          = "export_max_bytes"
 )
+
+// RetentionKeys are the limits that delete data in the daily retention pass.
+var RetentionKeys = []string{RetainRecordings, RetainTranscripts, RetainAttachments, RetainHumanActions}
+
+const retentionLower = "The next daily retention pass deletes what is older than the new period; deleted data is not recovered (restore a backup)."
 
 // On-lower policies of the run concurrency limit.
 const (
@@ -64,7 +78,7 @@ const (
 type Def struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
-	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,tokens,usd_cents,percent,depth"`
+	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,days,tokens,usd_cents,percent,depth"`
 	Scope       string `json:"scope" doc:"What one limit value bounds"`
 	Min         int64  `json:"min"`
 	Max         int64  `json:"max"`
@@ -108,6 +122,18 @@ var Defs = []Def{
 		Enforced: "usage reports (warning only)", OnLower: "Never stops a run; operators are warned once per run.", Overridable: true},
 	{Key: BudgetWarnPercent, Label: "Budget warning", Unit: "percent", Scope: "share of a budget at which operators are warned",
 		Enforced: "usage reports", OnLower: "Only changes when the warning is sent.", Overridable: true},
+	{Key: RecordingQuota, Label: "Terminal recording size", Unit: "bytes", Scope: "compressed size of one run's terminal recording on the node",
+		Enforced: "the node's recorder, from the value sent at launch", OnLower: "Runs already started keep the size they started with; new runs get the new size.", Overridable: true},
+	{Key: RetainRecordings, Label: "Recording retention", Unit: "days", Scope: "days central keeps a run's terminal recording after the run ended", ZeroNone: true,
+		Enforced: "daily retention pass (never while the run is active)", OnLower: retentionLower, Overridable: true},
+	{Key: RetainTranscripts, Label: "Transcript retention", Unit: "days", Scope: "days central keeps a run's stored native transcript", ZeroNone: true,
+		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
+	{Key: RetainAttachments, Label: "Attachment retention", Unit: "days", Scope: "days an attachment is kept once every item using it is finished; never deleted while an open item uses it", ZeroNone: true,
+		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
+	{Key: RetainHumanActions, Label: "Finished human-action retention", Unit: "days", Scope: "days a resolved, cancelled or expired human action is kept; kept while an open task, follow-up or undelivered response refers to it", ZeroNone: true,
+		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
+	{Key: ExportMax, Label: "Export size", Unit: "bytes", Scope: "size of one space export archive",
+		Enforced: "space export (refused before it starts when larger)", OnLower: "Only later exports are refused.", Overridable: true},
 }
 
 func init() {
@@ -155,6 +181,8 @@ type Service struct {
 	Notify func(ctx context.Context, spaceID, subject, body, key string, toControl bool) error
 	// OnChange is called after a commit that changed limits (wakes the deadline timer).
 	OnChange func()
+	// AuditDays is the installation's audit retention (config retention.audit_days; 0 keeps), shown with the limits.
+	AuditDays int64
 }
 
 // New returns the service with the installation defaults (already validated by the configuration).
@@ -168,6 +196,28 @@ func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, defaults map
 	d := map[string]int64{}
 	maps.Copy(d, defaults)
 	return &Service{s: s, audit: aw, changes: ch, defaults: d, clock: c, log: log}
+}
+
+// RetentionChanged reports whether replacing a space's overrides with in would change one of its retention overrides
+// (set, cleared or a different value). The API requires retention:write for such a change.
+func (svc *Service) RetentionChanged(ctx context.Context, spaceID string, in Input) (bool, error) {
+	cur := map[string]int64{}
+	row, err := svc.s.R().GetSpaceLimits(ctx, spaceID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return false, err
+	default:
+		cur = parseOverrides(row.ValuesJson)
+	}
+	for _, k := range RetentionKeys {
+		a, inCur := cur[k]
+		b, inNew := in.Values[k]
+		if inCur != inNew || a != b {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Default returns a limit's installation default.
@@ -311,9 +361,14 @@ func (svc *Service) related(ctx context.Context, q *db.Queries, spaceID string) 
 	out = append(out,
 		Related{Key: "human_rates", Label: "Human-action rate limits", Value: "per action type", Source: "human-action policies", EditAt: "Human actions → Policies"},
 		Related{Key: "mcp_server_limits", Label: "MCP gateway timeouts, concurrency and result size", Value: "per MCP server", Source: "installation", EditAt: "MCP servers"},
-		Related{Key: "recording_quota", Label: "Terminal recording size", Value: "512 MiB per run", Source: "node agent", EditAt: "fixed"},
 		Related{Key: "dream_budgets", Label: "Dream time, token and evidence budgets", Value: "per dream configuration", Source: "dreams", EditAt: "Memory → Dreams"},
 	)
+	audit := "kept forever"
+	if svc.AuditDays > 0 {
+		audit = fmt.Sprintf("%d days", svc.AuditDays)
+	}
+	out = append(out, Related{Key: "audit_retention", Label: "Audit retention", Value: audit, Source: "installation",
+		EditAt: "the configuration file (retention.audit_days); the audit log is installation-wide"})
 	return out
 }
 

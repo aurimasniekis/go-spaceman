@@ -65,6 +65,7 @@ type Provider struct {
 	CABundlePEM               string     `json:"ca_bundle_pem"`
 	StepUpFallback            string     `json:"stepup_fallback" enum:"none,local_totp"`
 	ACRValues                 []string   `json:"acr_values"`
+	EndSessionEnabled         bool       `json:"end_session_enabled" doc:"Signing out of an SSO session also sends the browser to the provider's end_session_endpoint (RP-initiated logout), when it advertises one"`
 	Enabled                   bool       `json:"enabled"`
 	TestLoginOKAt             *time.Time `json:"test_login_ok_at,omitempty"`
 	TestLoginBy               string     `json:"test_login_by,omitempty"`
@@ -120,6 +121,7 @@ type ProviderInput struct {
 	CABundlePEM               *string   `json:"ca_bundle_pem,omitempty" maxLength:"65536"`
 	StepUpFallback            *string   `json:"stepup_fallback,omitempty" enum:"none,local_totp"`
 	ACRValues                 *[]string `json:"acr_values,omitempty" maxItems:"16"`
+	EndSessionEnabled         *bool     `json:"end_session_enabled,omitempty" doc:"RP-initiated logout at the provider when signing out of an SSO session"`
 	Enabled                   *bool     `json:"enabled,omitempty"`
 }
 
@@ -233,7 +235,7 @@ func providerFromRow(r db.OidcProvider) (*Provider, error) {
 	p := &Provider{ID: r.ID, Slug: r.Slug, DisplayName: r.DisplayName, Issuer: r.Issuer, ClientID: r.ClientID, HasClientSecret: len(r.ClientSecretEnc) > 0,
 		GroupsClaim: r.GroupsClaim, Provisioning: r.Provisioning, AllowPrivateNetwork: r.AllowPrivateNetwork == 1,
 		AllowCrossOriginEndpoints: r.AllowCrossOriginEndpoints == 1, CABundlePEM: r.CaBundlePem, StepUpFallback: r.StepupFallback,
-		Enabled: r.Enabled == 1, TestLoginBy: r.TestLoginBy.String, Version: r.Version, ACRValues: []string{},
+		EndSessionEnabled: r.EndSessionEnabled == 1, Enabled: r.Enabled == 1, TestLoginBy: r.TestLoginBy.String, Version: r.Version, ACRValues: []string{},
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), secretEnc: r.ClientSecretEnc}
 	if err := json.Unmarshal([]byte(r.ScopesJson), &p.Scopes); err != nil {
 		return nil, err
@@ -449,7 +451,7 @@ func apply(p *Provider, in ProviderInput) {
 		}
 	}
 	for dst, v := range map[*bool]*bool{&p.AllowPrivateNetwork: in.AllowPrivateNetwork, &p.AllowCrossOriginEndpoints: in.AllowCrossOriginEndpoints,
-		&p.Enabled: in.Enabled} {
+		&p.EndSessionEnabled: in.EndSessionEnabled, &p.Enabled: in.Enabled} {
 		if v != nil {
 			*dst = *v
 		}
@@ -486,7 +488,7 @@ func (svc *Service) CreateProvider(ctx context.Context, actor audit.Actor, in Pr
 			ClientID: p.ClientID, ClientSecretEnc: enc, ScopesJson: string(scopes), GroupsClaim: p.GroupsClaim, Provisioning: p.Provisioning,
 			JitJson: string(jit), AllowPrivateNetwork: b2i(p.AllowPrivateNetwork), AllowCrossOriginEndpoints: b2i(p.AllowCrossOriginEndpoints),
 			CaBundlePem: p.CABundlePEM, StepupFallback: p.StepUpFallback, AcrValues: strings.Join(p.ACRValues, " "),
-			Enabled: b2i(p.Enabled), CreatedAt: tx.NowMicros(), UpdatedAt: tx.NowMicros()}); err != nil {
+			EndSessionEnabled: b2i(p.EndSessionEnabled), Enabled: b2i(p.Enabled), CreatedAt: tx.NowMicros(), UpdatedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
 		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "oidc.provider.created", Target: audit.Target{Type: "oidc_provider", ID: p.ID},
@@ -501,7 +503,7 @@ func (svc *Service) CreateProvider(ctx context.Context, actor audit.Actor, in Pr
 
 func providerAudit(p *Provider, secretSet bool) map[string]any {
 	return map[string]any{"slug": p.Slug, "issuer": p.Issuer, "client_id": p.ClientID, "provisioning": p.Provisioning, "enabled": p.Enabled,
-		"allow_private_network": p.AllowPrivateNetwork, "allow_cross_origin_endpoints": p.AllowCrossOriginEndpoints, "client_secret_changed": secretSet}
+		"allow_private_network": p.AllowPrivateNetwork, "allow_cross_origin_endpoints": p.AllowCrossOriginEndpoints, "end_session_enabled": p.EndSessionEnabled, "client_secret_changed": secretSet}
 }
 
 func (svc *Service) sealSecret(id string, secret *string) ([]byte, error) {
@@ -554,13 +556,18 @@ func (svc *Service) UpdateProvider(ctx context.Context, actor audit.Actor, id st
 		n, err := tx.Q.UpdateOIDCProvider(ctx, db.UpdateOIDCProviderParams{Slug: p.Slug, DisplayName: p.DisplayName, Issuer: p.Issuer, ClientID: p.ClientID,
 			ClientSecretEnc: enc, ScopesJson: string(scopes), GroupsClaim: p.GroupsClaim, Provisioning: p.Provisioning, JitJson: string(jit),
 			AllowPrivateNetwork: b2i(p.AllowPrivateNetwork), AllowCrossOriginEndpoints: b2i(p.AllowCrossOriginEndpoints), CaBundlePem: p.CABundlePEM,
-			StepupFallback: p.StepUpFallback, AcrValues: strings.Join(p.ACRValues, " "),
+			StepupFallback: p.StepUpFallback, AcrValues: strings.Join(p.ACRValues, " "), EndSessionEnabled: b2i(p.EndSessionEnabled),
 			Enabled: b2i(p.Enabled), TestLoginOkAt: testAt, TestLoginBy: testBy, UpdatedAt: tx.NowMicros(), ID: p.ID, Version: in.Version})
 		if err != nil {
 			return err
 		}
 		if n == 0 {
 			return apperr.New(apperr.CodeConflict, "provider was modified concurrently; reload and retry")
+		}
+		// Disabling the provider or clearing its test-login evidence must not leave SSO-only enforcement without a
+		// working SSO administrator path (Hallpass HP-AUTH-015).
+		if err := checkSSOOnlyStillSafe(ctx, tx); err != nil {
+			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "oidc.provider.updated", Target: audit.Target{Type: "oidc_provider", ID: p.ID},
 			Details: providerAudit(p, in.ClientSecret != nil)})
@@ -595,6 +602,9 @@ func (svc *Service) DeleteProvider(ctx context.Context, actor audit.Actor, id st
 			if err := svc.auth.DropSSOGrantsTx(ctx, tx, uid); err != nil {
 				return err
 			}
+		}
+		if err := checkSSOOnlyStillSafe(ctx, tx); err != nil {
+			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "oidc.provider.deleted", Target: audit.Target{Type: "oidc_provider", ID: id},
 			Details: map[string]any{"unlinked_users": len(affected)}})

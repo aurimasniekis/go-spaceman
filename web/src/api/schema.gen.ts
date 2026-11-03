@@ -219,7 +219,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Audit events, newest first */
+        /**
+         * Audit events, newest first or forward from a durable position
+         * @description Without after, events are returned newest first and paged with cursor. With after (a sequence number, 0 for the start), events with a higher sequence are returned oldest first; next_after is the position to store and resume from. When audit retention deleted events after that position, gap says so (after, oldest retained sequence).
+         */
         get: operations["list-audit"];
         put?: never;
         post?: never;
@@ -293,7 +296,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Sign out (revokes this session) */
+        /**
+         * Sign out (revokes this session)
+         * @description For an SSO session whose provider has RP-initiated logout enabled and advertises an end_session_endpoint, provider_logout_url is where the browser goes next to sign out at the provider too (that provider only; not a global logout).
+         */
         post: operations["logout"];
         delete?: never;
         options?: never;
@@ -1174,6 +1180,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/oidc/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sign-in settings: SSO-only enforcement and the direct provider
+         * @description Also reports the preconditions of SSO-only enforcement (a tested enabled provider and an SSO-capable global administrator).
+         */
+        get: operations["get-sign-in-settings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change the sign-in settings
+         * @description Turning password sign-in off (SSO-only) needs an enabled provider with a successful test login and at least one enabled global administrator with a linked identity on an enabled provider; while it is off, changes that would break either are refused. Break-glass recovery is unaffected. The direct provider must be enabled; omitted fields stay unchanged.
+         */
+        patch: operations["set-sign-in-settings"];
+        trace?: never;
+    };
     "/prompt-diff": {
         parameters: {
             query?: never;
@@ -1298,6 +1328,46 @@ export interface paths {
         put?: never;
         /** Publish an earlier version's content as a new version */
         post: operations["rollback-prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Retention: installation defaults, audit retention, the next daily pass and recent passes
+         * @description Per-space retention periods are limits (retention_*_days; see a space's limits for its effective values). One daily pass deletes what is older; it never deletes what an open item uses, and it does not run while a restore is unacknowledged.
+         */
+        get: operations["get-retention"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/retention/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a retention pass now and return it when it finished
+         * @description Deletions are audited and recorded in the change feed. Refused (409) while a pass runs or a restore is unacknowledged.
+         */
+        post: operations["run-retention"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1626,6 +1696,26 @@ export interface paths {
          * @description Starts a dreamer run unless one of this configuration is still going.
          */
         post: operations["start-dream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/export/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a space export would hold now: counts, estimated size and the space's export limit
+         * @description The archive itself is GET /spaces/{space_id}/export (a ZIP of JSON Lines and attachment files). It is NOT encrypted; see warning.
+         */
+        get: operations["get-space-export"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2660,7 +2750,10 @@ export interface paths {
         get: operations["get-recording"];
         put?: never;
         post?: never;
-        /** Delete central's copy of a run's recording */
+        /**
+         * Delete central's copy of a run's recording
+         * @description The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not affected.
+         */
         delete: operations["delete-recording"];
         options?: never;
         head?: never;
@@ -3852,6 +3945,15 @@ export interface components {
             space_id: string;
             uploaded_by: string;
         };
+        AuditGap: {
+            /** Format: int64 */
+            after: number;
+            /**
+             * Format: int64
+             * @description The first retained sequence
+             */
+            oldest: number;
+        };
         AuditPage: {
             /**
              * Format: uri
@@ -3859,8 +3961,30 @@ export interface components {
              * @example /api/v1/schemas/AuditPage.json
              */
             readonly $schema?: string;
+            gap?: components["schemas"]["AuditGap"];
             items: components["schemas"]["AuditRecord"][];
+            /**
+             * Format: int64
+             * @description Forward paging (after=): the position to store and resume from
+             */
+            next_after?: number;
+            /** @description Newest-first paging: the cursor of the next (older) page */
             next_cursor: string | null;
+            pruned?: components["schemas"]["AuditPruned"];
+        };
+        AuditPruned: {
+            /**
+             * Format: int64
+             * @description Events deleted by retention so far
+             */
+            pruned: number;
+            /**
+             * Format: int64
+             * @description Unix microseconds of the last pruned event
+             */
+            through_at: number;
+            /** Format: int64 */
+            through_seq: number;
         };
         AuditRecord: {
             action: string;
@@ -3893,8 +4017,12 @@ export interface components {
             /** Format: int64 */
             events: number;
             head_hash?: string;
+            /** Format: int64 */
+            head_seq?: number;
             ok: boolean;
             problem?: string;
+            /** Format: int64 */
+            pruned_through?: number;
         };
         AuthAPIToken: {
             /**
@@ -4050,6 +4178,7 @@ export interface components {
             finished_at?: string;
             id: string;
             kek_id?: string;
+            memory_flush?: components["schemas"]["BackupMemoryFlush"];
             requested_by?: string;
             /** Format: int64 */
             schema_version?: number;
@@ -4072,6 +4201,20 @@ export interface components {
             verify_error?: string;
             /** @enum {string} */
             verify_state: "" | "running" | "ok" | "failed";
+        };
+        BackupMemoryFlush: {
+            attempted: boolean;
+            flushed_spaces: string[];
+            note?: string;
+            /**
+             * Format: double
+             * @description How long the flush took
+             */
+            seconds?: number;
+            /** @description Spaces whose role memory is possibly stale in this backup */
+            stale: components["schemas"]["BackupStaleMemory"][];
+            /** Format: date-time */
+            started_at?: string;
         };
         BackupRestoreState: {
             /** Format: date-time */
@@ -4103,6 +4246,15 @@ export interface components {
             runs_unknown: number;
             /** Format: int64 */
             subscriptions_reset: number;
+        };
+        BackupStaleMemory: {
+            detail?: string;
+            node_id?: string;
+            node_name?: string;
+            /** @enum {string} */
+            reason: "node_disconnected" | "protocol_too_old" | "timed_out" | "not_acknowledged";
+            space_id: string;
+            space_slug?: string;
         };
         BackupStatus: {
             /**
@@ -6277,7 +6429,7 @@ export interface components {
             /** @description What one limit value bounds */
             scope: string;
             /** @enum {string} */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "tokens" | "usd_cents" | "percent" | "depth";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth";
             /** @description 0 means no limit */
             zero_means_none: boolean;
         };
@@ -6359,7 +6511,7 @@ export interface components {
             /** @enum {string} */
             source: "installation" | "space" | "queue_policy";
             /** @enum {string} */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "tokens" | "usd_cents" | "percent" | "depth";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth";
             /** Format: int64 */
             value: number;
             /** @description 0 means no limit */
@@ -6706,6 +6858,16 @@ export interface components {
             email: string;
             password: string;
         };
+        LogoutResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LogoutResult.json
+             */
+            readonly $schema?: string;
+            /** @description Where to send the browser to sign out at the SSO provider too (RP-initiated logout); null when there is none */
+            provider_logout_url: string | null;
+        };
         MCPGrantBody: {
             /**
              * Format: uri
@@ -6992,6 +7154,8 @@ export interface components {
             created_at: string;
             display_name: string;
             enabled: boolean;
+            /** @description Signing out of an SSO session also sends the browser to the provider's end_session_endpoint (RP-initiated logout), when it advertises one */
+            end_session_enabled: boolean;
             /** @description Claim holding the user's groups; a dotted path walks nested objects (Porch: porch.groups) */
             groups_claim: string;
             has_client_secret: boolean;
@@ -7028,6 +7192,8 @@ export interface components {
             client_secret?: string;
             display_name?: string;
             enabled?: boolean;
+            /** @description RP-initiated logout at the provider when signing out of an SSO session */
+            end_session_enabled?: boolean;
             groups_claim?: string;
             issuer?: string;
             jit?: components["schemas"]["OidcJITRules"];
@@ -7041,6 +7207,42 @@ export interface components {
         OidcPublicProvider: {
             display_name: string;
             slug: string;
+        };
+        OidcSignInSettings: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OidcSignInSettings.json
+             */
+            readonly $schema?: string;
+            /** @description Slug of the provider the sign-in page goes to directly; empty: the page offers every sign-in method */
+            direct_provider: string;
+            /** @description SSO-only enforcement: password sign-in is refused (break-glass recovery still works) */
+            local_login_disabled: boolean;
+            /**
+             * Format: int64
+             * @description Enabled global administrators (manual grant) with a linked identity on an enabled provider
+             */
+            sso_admins: number;
+            /** @description Whether password sign-in may be turned off now */
+            sso_only_ready: boolean;
+            /**
+             * Format: int64
+             * @description Enabled providers with a recorded successful test login
+             */
+            tested_providers: number;
+        };
+        OidcSignInSettingsInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/OidcSignInSettingsInput.json
+             */
+            readonly $schema?: string;
+            /** @description Slug of an enabled provider, or empty to turn direct sign-in off */
+            direct_provider?: string;
+            /** @description Turn password sign-in off (SSO-only) or back on */
+            local_login_disabled?: boolean;
         };
         OidcTestResult: {
             /**
@@ -7987,6 +8189,62 @@ export interface components {
             /** Format: int64 */
             still_paused: number;
         };
+        RetentionDefault: {
+            /**
+             * Format: int64
+             * @description 0: kept until deleted or the space is purged
+             */
+            days: number;
+            key: string;
+            label: string;
+        };
+        RetentionPass: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RetentionPass.json
+             */
+            readonly $schema?: string;
+            /** @description Deletions by kind: recordings, transcripts, attachments, human_actions, audit_events */
+            deleted: {
+                [key: string]: number;
+            };
+            error?: string;
+            /** Format: date-time */
+            finished_at?: string;
+            id: string;
+            requested_by?: string;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            state: "running" | "succeeded" | "failed" | "interrupted";
+            /** @enum {string} */
+            trigger: "scheduled" | "manual";
+        };
+        RetentionStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/RetentionStatus.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Installation-wide audit retention (0: kept forever)
+             */
+            audit_days: number;
+            /** @description The audit log's pruned prefix, when retention deleted audit events */
+            audit_pruned?: components["schemas"]["AuditPruned"];
+            blocked?: string;
+            busy: boolean;
+            /** @description Installation defaults of the per-space retention periods (spaces override them in their limits) */
+            defaults: components["schemas"]["RetentionDefault"][];
+            interval: string;
+            /** Format: date-time */
+            next_at?: string;
+            /** @description Recent passes, newest first */
+            passes: components["schemas"]["RetentionPass"][];
+        };
         "Revoke-approvalRequest": {
             /**
              * Format: uri
@@ -8416,6 +8674,45 @@ export interface components {
             skills?: components["schemas"]["CatalogSkillRef"][];
             template_id: string;
         };
+        SpaceexportCounts: {
+            /** Format: int64 */
+            attachments: number;
+            /** Format: int64 */
+            human_actions: number;
+            /** Format: int64 */
+            human_comments: number;
+            /** Format: int64 */
+            inbox_items: number;
+            /** Format: int64 */
+            messages: number;
+            /** Format: int64 */
+            tasks: number;
+        };
+        SpaceexportSummary: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SpaceexportSummary.json
+             */
+            readonly $schema?: string;
+            counts: components["schemas"]["SpaceexportCounts"];
+            /** @description Always false: exports are plaintext */
+            encrypted: boolean;
+            /**
+             * Format: int64
+             * @description Estimated uncompressed size of the archive
+             */
+            estimated_bytes: number;
+            format: string;
+            /**
+             * Format: int64
+             * @description The space's export_max_bytes limit
+             */
+            max_bytes: number;
+            space_id: string;
+            warning: string;
+            within_limit: boolean;
+        };
         "Stop-runRequest": {
             /**
              * Format: uri
@@ -8478,6 +8775,7 @@ export interface components {
              */
             readonly $schema?: string;
             bootstrapped: boolean;
+            direct_provider: string;
             has_admin: boolean;
             local_login_disabled: boolean;
             ready: boolean;
@@ -9394,6 +9692,8 @@ export interface operations {
                 /** @description Opaque cursor from a previous response's next_cursor */
                 cursor?: string;
                 limit?: number;
+                /** @description Forward paging: return events after this sequence, oldest first (0: from the start) */
+                after?: string;
                 action?: string;
                 target_id?: string;
                 actor_id?: string;
@@ -9557,13 +9857,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description No Content */
-            204: {
+            /** @description OK */
+            200: {
                 headers: {
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["LogoutResult"];
+                };
             };
             /** @description Error */
             default: {
@@ -11586,6 +11888,68 @@ export interface operations {
             };
         };
     };
+    "get-sign-in-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcSignInSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-sign-in-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OidcSignInSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcSignInSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "diff-prompt-versions": {
         parameters: {
             query?: {
@@ -11869,6 +12233,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CatalogPromptVersion"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "run-retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetentionPass"];
                 };
             };
             /** @description Error */
@@ -12707,6 +13129,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DreamRun"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceexportSummary"];
                 };
             };
             /** @description Error */

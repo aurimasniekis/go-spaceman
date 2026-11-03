@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -304,14 +305,50 @@ type VerifyResult struct {
 	BrokenAt int64  `json:"broken_at,omitempty"`
 	Problem  string `json:"problem,omitempty"`
 	HeadHash []byte `json:"head_hash,omitempty"`
+	// HeadSeq is the sequence of the newest event (0 when there is none).
+	HeadSeq int64 `json:"head_seq,omitempty"`
+	// PrunedThrough is the last sequence deleted by retention (0: nothing pruned); verification starts after it, from
+	// the recorded hash of that last pruned event.
+	PrunedThrough int64 `json:"pruned_through,omitempty"`
 }
 
-// Verify walks the whole chain in sequence order and reports the first inconsistency (SM-OBS-003).
+// Pruned is the audit log's pruned prefix: every event up to Through was deleted by retention.
+type Pruned struct {
+	Through int64  `json:"through_seq"`
+	Hash    []byte `json:"-"`
+	At      int64  `json:"through_at" doc:"Unix microseconds of the last pruned event"`
+	Count   int64  `json:"pruned" doc:"Events deleted by retention so far"`
+}
+
+// PrunedPrefix returns the audit log's pruned prefix, or nil when nothing was pruned. A database from before audit
+// retention (no audit_prune table: an older backup) has none.
+func PrunedPrefix(ctx context.Context, q *db.Queries) (*Pruned, error) {
+	p, err := q.GetAuditPrune(ctx)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	case err != nil && strings.Contains(err.Error(), "no such table"):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	}
+	return &Pruned{Through: p.ThroughSeq, Hash: p.ThroughHash, At: p.ThroughAt, Count: p.Pruned}, nil
+}
+
+// Verify walks the whole chain in sequence order and reports the first inconsistency (SM-OBS-003). When retention
+// pruned a prefix, the walk starts at the first retained event, linked to the recorded hash of the last pruned one.
 func Verify(ctx context.Context, q *db.Queries) (VerifyResult, error) {
 	const page = 1000
 	res := VerifyResult{OK: true}
 	prev := GenesisHash
 	var after, expectSeq int64 = 0, 1
+	pr, err := PrunedPrefix(ctx, q)
+	if err != nil {
+		return res, err
+	}
+	if pr != nil {
+		prev, expectSeq, res.PrunedThrough = pr.Hash, pr.Through+1, pr.Through
+	}
 	for {
 		rows, err := q.AuditEventsFrom(ctx, db.AuditEventsFromParams{Seq: after, Limit: page})
 		if err != nil {
@@ -330,7 +367,7 @@ func Verify(ctx context.Context, q *db.Queries) (VerifyResult, error) {
 			if !bytes.Equal(want, r.Hash) {
 				return fail(res, r.Seq, "hash mismatch (event modified)"), nil
 			}
-			prev, after = r.Hash, r.Seq
+			prev, after, res.HeadSeq = r.Hash, r.Seq, r.Seq
 			expectSeq++
 		}
 		if len(rows) < page {
@@ -338,6 +375,51 @@ func Verify(ctx context.Context, q *db.Queries) (VerifyResult, error) {
 			return res, nil
 		}
 	}
+}
+
+// PruneBatch bounds the events one Prune call deletes, so that one write transaction stays short.
+const PruneBatch = 5000
+
+// Prune deletes, inside tx, up to PruneBatch of the oldest events recorded before cutoff (Unix microseconds), always
+// keeping the newest event (the chain's head), records the pruned prefix and appends an "audit.pruned" event. It
+// returns how many events it deleted and the last deleted sequence; call it again while it deletes a full batch.
+func (w *Writer) Prune(ctx context.Context, tx *store.Tx, cutoff int64, actor Actor) (deleted, through int64, err error) {
+	last, err := tx.Q.LastAuditEvent(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, nil
+	} else if err != nil {
+		return 0, 0, err
+	}
+	pr, err := PrunedPrefix(ctx, tx.Q)
+	if err != nil {
+		return 0, 0, err
+	}
+	from := int64(0)
+	if pr != nil {
+		from = pr.Through
+	}
+	b, err := tx.Q.AuditPruneBoundary(ctx, db.AuditPruneBoundaryParams{Cutoff: cutoff, MaxSeq: min(last.Seq-1, from+PruneBatch)})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, nil
+	} else if err != nil {
+		return 0, 0, err
+	}
+	if b.Seq <= from {
+		return 0, 0, nil
+	}
+	n, err := tx.Q.DeleteAuditThrough(ctx, b.Seq)
+	if err != nil || n == 0 {
+		return 0, 0, err
+	}
+	if err := tx.Q.UpsertAuditPrune(ctx, db.UpsertAuditPruneParams{ThroughSeq: b.Seq, ThroughHash: b.Hash, ThroughAt: b.At, Pruned: n,
+		UpdatedAt: tx.NowMicros()}); err != nil {
+		return 0, 0, err
+	}
+	if _, err = w.Append(ctx, tx, Event{Actor: actor, Action: "audit.pruned", Target: Target{Type: "audit", ID: strconv.FormatInt(b.Seq, 10)},
+		Details: map[string]any{"through_seq": b.Seq, "through_at": b.At, "deleted": n, "reason": "retention"}}); err != nil {
+		return 0, 0, err
+	}
+	return n, b.Seq, nil
 }
 
 func fail(res VerifyResult, seq int64, problem string) VerifyResult {

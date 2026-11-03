@@ -59,6 +59,10 @@ type Hub struct {
 	RepoStatus func(ctx context.Context, nodeID string, rep proto.RepoStatusReport)
 	// OnConnected is called (on its own goroutine) once a node's connection is set up and its leases granted.
 	OnConnected func(ctx context.Context, nodeID string)
+
+	// flushes are memory flushes waiting for a node's memory.flushed, by flush ID (ADR-0045).
+	flushMu sync.Mutex
+	flushes map[string]*pendingFlush
 }
 
 // UsageStore is central's usage and transcript storage as the hub sees it.
@@ -86,6 +90,8 @@ type session struct {
 	tools chan struct{}
 	// memory serializes this node's memory syncs (git runs outside any transaction, one at a time per node).
 	memory chan struct{}
+	// minor is the negotiated protocol minor version (set before the session is registered).
+	minor int
 }
 
 func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }
@@ -215,6 +221,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	}); err != nil {
 		return err
 	}
+	s.minor = minor
 	h.mu.Lock()
 	old := h.sessions[s.nodeID]
 	h.sessions[s.nodeID] = s
@@ -487,6 +494,13 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		go func() {
 			_ = s.send(proto.TypeRelocationUploadAck, svc.now(), svc.relocationUpload(context.WithoutCancel(ctx), s.nodeID, up))
 		}()
+		return nil
+	case proto.TypeMemoryFlushed:
+		var res proto.MemoryFlushed
+		if err := env.Decode(&res); err != nil {
+			return err
+		}
+		h.flushed(s.nodeID, res)
 		return nil
 	case proto.TypeRelocationFetch:
 		var f proto.RelocationFetch

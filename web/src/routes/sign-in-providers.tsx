@@ -9,6 +9,7 @@ import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { Mappings, roleColor } from '@/features/oidc/Mappings'
 import { ProviderModal } from '@/features/oidc/ProviderModal'
+import { SignInSettingsCard, signInSettingsKey } from '@/features/oidc/SignInSettings'
 import { ago, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { ssoStartUrl } from '@/lib/sso'
@@ -20,7 +21,8 @@ export const Route = createFileRoute('/sign-in-providers')({
 
 /**
  * OIDC sign-in providers (SM-AUTH-001/002, ADR-0029): Porch or any other OpenID Connect provider, with write-only client
- * secrets, group mappings to SpaceMan grants and a test login that previews the mapping without signing in.
+ * secrets, group mappings to SpaceMan grants and a test login that previews the mapping without signing in; and the
+ * sign-in settings (SSO only, direct provider; ADR-0045).
  */
 function SignInProvidersPage() {
   const qc = useQueryClient()
@@ -35,6 +37,7 @@ function SignInProvidersPage() {
       check(await api.DELETE('/oidc/providers/{provider_id}', { params: { path: { provider_id: p.id } } }))
       void qc.invalidateQueries({ queryKey: keys.oidcProviders })
       void qc.invalidateQueries({ queryKey: keys.signInProviders })
+      void qc.invalidateQueries({ queryKey: signInSettingsKey })
       notifyOk(`${p.display_name} deleted`)
       setDeleting(null)
     } catch (e) {
@@ -56,6 +59,7 @@ function SignInProvidersPage() {
             <Text size="xs" mt={4}>Register exactly this URI at every provider. SpaceMan always uses PKCE with S256.</Text>
           </Alert>
         )}
+        {providers.data && <SignInSettingsCard providers={providers.data.items} />}
         {(providers.data?.items ?? []).map((p) => (
           <Card key={p.id}>
             <Stack gap="sm">

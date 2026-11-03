@@ -1,9 +1,12 @@
 import { bytes } from '@/lib/format'
 
-/** A limit's value in its unit: "No limit" for 0 where 0 means none, sizes in binary units, cents as dollars. */
+/** A limit's value in its unit: "No limit" for 0 where 0 means none ("Kept" for a retention period), sizes in binary
+ * units, cents as dollars. */
 export function limitValue(value: number, unit: string, zeroMeansNone = false): string {
-  if (zeroMeansNone && value === 0) return 'No limit'
+  if (zeroMeansNone && value === 0) return unit === 'days' ? 'Kept' : 'No limit'
   switch (unit) {
+    case 'days':
+      return value === 1 ? '1 day' : `${value.toLocaleString('en-US')} days`
     case 'bytes':
       return bytes(value)
     case 'usd_cents':

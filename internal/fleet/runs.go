@@ -105,6 +105,8 @@ type LaunchInput struct {
 	// Dream prepares a dream workspace (set by the dream scheduler, not part of the API).
 	Dream      *proto.DreamSpec `json:"-"`
 	AccountRef string           `json:"account_ref,omitempty"`
+	// RecordingMaxBytes is the space's recording quota, filled by launch resolution (not part of the API).
+	RecordingMaxBytes int64 `json:"-"`
 }
 
 // LaunchRun creates a run pinned to the space's node and current lease generation and queues the launch command.
@@ -247,7 +249,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: in.SessionID,
 			Resume: in.SessionID != "", Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
-			Worktree: in.Worktree, Repository: source, Skills: in.Skills, AccountRef: in.AccountRef, Dream: in.Dream}
+			Worktree: in.Worktree, Repository: source, Skills: in.Skills, AccountRef: in.AccountRef, Dream: in.Dream, RecordingMaxBytes: in.RecordingMaxBytes}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
 		}

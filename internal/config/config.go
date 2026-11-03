@@ -73,7 +73,17 @@ type Config struct {
 	Events    EventsConfig    `yaml:"events"`
 	Backups   BackupsConfig   `yaml:"backups"`
 	Limits    LimitsConfig    `yaml:"limits"`
+	Retention RetentionConfig `yaml:"retention"`
 	Shutdown  ShutdownConfig  `yaml:"shutdown"`
+}
+
+// RetentionConfig holds the installation-wide retention that cannot be set per space (ADR-0045). Per-space retention
+// periods are limits (limits.retention_*_days, overridable per space); one daily pass applies them all.
+type RetentionConfig struct {
+	// AuditDays deletes audit events older than this many days in the daily retention pass (0: keep forever, the
+	// default; otherwise 30-36500). The hash chain keeps verifying from the first retained event, and a reader whose
+	// cursor is older is told that events were pruned. Audit is installation-wide: it cannot be set per space.
+	AuditDays int64 `yaml:"audit_days"`
 }
 
 // LimitsConfig holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Spaces override them
@@ -114,6 +124,24 @@ type LimitsConfig struct {
 	BudgetTokensPerRun int64 `yaml:"budget_tokens_per_run"`
 	// BudgetWarnPercent is when a budget warning is sent (1-100, default 80).
 	BudgetWarnPercent int64 `yaml:"budget_warn_percent"`
+	// RetentionRecordingsDays deletes central's copy of a run's terminal recording this many days after the run ended
+	// (0: keep until deleted or the space is purged, the default; at most 36500). The node's local copy is separate.
+	RetentionRecordingsDays int64 `yaml:"retention_recordings_days"`
+	// RetentionTranscriptsDays deletes a run's stored native transcript this many days after it was stored (0: keep).
+	RetentionTranscriptsDays int64 `yaml:"retention_transcripts_days"`
+	// RetentionAttachmentsDays deletes attachments older than this many days once every item that uses them is
+	// finished (done or rejected inbox items without an open task or human action). An attachment that an open item
+	// uses is never deleted (0: keep). Unreferenced uploads are collected after a day regardless.
+	RetentionAttachmentsDays int64 `yaml:"retention_attachments_days"`
+	// RetentionHumanActionsDays deletes finished human actions (resolved, cancelled, expired) this many days after
+	// they finished, with their comments and notifications, unless an open task, an open follow-up or an undelivered
+	// response still refers to them (0: keep).
+	RetentionHumanActionsDays int64 `yaml:"retention_human_actions_days"`
+	// RecordingQuotaBytes bounds one run's terminal recording on the node (1 MiB-64 GiB, default 512 MiB). When it is
+	// reached the recording ends with a truncation record; the run is unaffected.
+	RecordingQuotaBytes int64 `yaml:"recording_quota_bytes"`
+	// ExportMaxBytes bounds one space export archive (1 MiB-64 GiB, default 2 GiB): a larger export is refused.
+	ExportMaxBytes int64 `yaml:"export_max_bytes"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual
@@ -209,8 +237,9 @@ type AuthConfig struct {
 	// RequireTOTP makes TOTP mandatory for every password account. Production requires it; privileged accounts need
 	// TOTP even in development mode.
 	RequireTOTP bool `yaml:"require_totp"`
-	// LocalLoginDisabled is accepted but not read by this build: password sign-in is never disabled by configuration
-	// (docs/LIMITATIONS.md).
+	// LocalLoginDisabled is accepted but not read: password sign-in is turned off (SSO-only) at run time on the Sign-in
+	// providers page or with `spaceman oidc settings set --sso-only`, which first checks that a tested provider and an
+	// administrator who can sign in with SSO exist (ADR-0045).
 	LocalLoginDisabled bool `yaml:"local_login_disabled"`
 	// StreamRevalidate is how often an open live stream (change feed, terminal) and a node connection re-check their
 	// credential and authorization. Revocations committed by central end affected streams at once; this interval

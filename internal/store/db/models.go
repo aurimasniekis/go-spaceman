@@ -123,6 +123,15 @@ type AuditEvent struct {
 	Hash          []byte
 }
 
+type AuditPrune struct {
+	ID          int64
+	ThroughSeq  int64
+	ThroughHash []byte
+	ThroughAt   int64
+	Pruned      int64
+	UpdatedAt   int64
+}
+
 type Backup struct {
 	ID          string
 	Target      string
@@ -824,6 +833,7 @@ type OidcProvider struct {
 	Version                   int64
 	CreatedAt                 int64
 	UpdatedAt                 int64
+	EndSessionEnabled         int64
 }
 
 type OneTimeToken struct {
@@ -927,6 +937,17 @@ type Relocation struct {
 	FinishedAt       sql.NullInt64
 }
 
+type RetentionPass struct {
+	ID          string
+	Trigger     string
+	RequestedBy string
+	State       string
+	StartedAt   int64
+	FinishedAt  sql.NullInt64
+	DeletedJson string
+	Error       string
+}
+
 type RoleGrant struct {
 	Subject   string
 	Role      string
@@ -969,37 +990,38 @@ type RootToken struct {
 }
 
 type Run struct {
-	ID           string
-	SpaceID      string
-	NodeID       string
-	Generation   int64
-	Kind         string
-	Role         string
-	Harness      string
-	InstanceID   string
-	SessionID    string
-	Desired      string
-	Observed     string
-	TerminalID   string
-	CoreID       string
-	Identity     string
-	Pid          int64
-	ExitCode     sql.NullInt64
-	EndReason    string
-	Error        string
-	Status       string
-	StatusKind   string
-	Turn         int64
-	Adopted      int64
-	LaunchJson   string
-	ManifestJson string
-	Version      int64
-	CreatedAt    int64
-	CreatedBy    string
-	StartedAt    sql.NullInt64
-	EndedAt      sql.NullInt64
-	ObservedAt   sql.NullInt64
-	UpdatedAt    int64
+	ID                 string
+	SpaceID            string
+	NodeID             string
+	Generation         int64
+	Kind               string
+	Role               string
+	Harness            string
+	InstanceID         string
+	SessionID          string
+	Desired            string
+	Observed           string
+	TerminalID         string
+	CoreID             string
+	Identity           string
+	Pid                int64
+	ExitCode           sql.NullInt64
+	EndReason          string
+	Error              string
+	Status             string
+	StatusKind         string
+	Turn               int64
+	Adopted            int64
+	LaunchJson         string
+	ManifestJson       string
+	Version            int64
+	CreatedAt          int64
+	CreatedBy          string
+	StartedAt          sql.NullInt64
+	EndedAt            sql.NullInt64
+	ObservedAt         sql.NullInt64
+	UpdatedAt          int64
+	RecordingDeletedAt sql.NullInt64
 }
 
 type RunCredential struct {

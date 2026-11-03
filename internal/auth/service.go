@@ -351,7 +351,8 @@ func (svc *Service) reloadAfterCommit(ctx context.Context, tx *store.Tx) {
 	})
 }
 
-// SetGrants replaces a user's manual grants. Removing the last enabled global administrator is refused. Any change of
+// SetGrants replaces a user's manual grants. Removing the last enabled global administrator, or under SSO-only
+// enforcement the last one who can sign in with SSO, is refused (Hallpass HP-AUTH-015). Any change of
 // the effective grants revokes the user's sessions: a reduction must take effect at once and an elevation is only
 // granted to a new session (rotation on privilege change).
 func (svc *Service) SetGrants(ctx context.Context, actor audit.Actor, id string, in []GrantInput) (*User, error) {
@@ -370,6 +371,10 @@ func (svc *Service) SetGrants(ctx context.Context, actor audit.Actor, id string,
 		if err != nil {
 			return err
 		}
+		guard, err := newSSOAdminGuard(ctx, tx.Q)
+		if err != nil {
+			return err
+		}
 		if err := tx.Q.DeleteRoleGrantsBySource(ctx, db.DeleteRoleGrantsBySourceParams{Subject: UserSubject(id), Source: "manual"}); err != nil {
 			return err
 		}
@@ -377,6 +382,9 @@ func (svc *Service) SetGrants(ctx context.Context, actor audit.Actor, id string,
 			return err
 		}
 		if err := ensureAdminRemains(ctx, tx); err != nil {
+			return err
+		}
+		if err := guard.check(ctx, tx.Q); err != nil {
 			return err
 		}
 		after, err := svc.hydrate(ctx, tx.Q, row)
@@ -429,9 +437,13 @@ func ensureAdminRemains(ctx context.Context, tx *store.Tx) error {
 }
 
 // SetEnabled enables or disables a user; disabling revokes all sessions and is refused for the last enabled global
-// administrator. Disabling also stops the user's API tokens (they are checked against the user on every request).
+// administrator and, under SSO-only enforcement, for the last one who can sign in with SSO. Disabling also stops the user's API tokens (they are checked against the user on every request).
 func (svc *Service) SetEnabled(ctx context.Context, actor audit.Actor, id string, enabled bool) (*User, error) {
 	err := svc.s.W().TxNamed(ctx, "auth.set_enabled", func(tx *store.Tx) error {
+		guard, err := newSSOAdminGuard(ctx, tx.Q)
+		if err != nil {
+			return err
+		}
 		n, err := tx.Q.SetUserEnabled(ctx, db.SetUserEnabledParams{Enabled: b2i(enabled), Now: tx.NowMicros(), ID: id})
 		if err != nil || n == 0 {
 			if _, gerr := tx.Q.GetUser(ctx, id); errors.Is(gerr, sql.ErrNoRows) {
@@ -440,6 +452,9 @@ func (svc *Service) SetEnabled(ctx context.Context, actor audit.Actor, id string
 			return err
 		}
 		if err := ensureAdminRemains(ctx, tx); err != nil {
+			return err
+		}
+		if err := guard.check(ctx, tx.Q); err != nil {
 			return err
 		}
 		if !enabled {

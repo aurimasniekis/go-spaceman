@@ -16,6 +16,31 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   commands and the Terraform resource `spaceman_space_repository`. Workers' worktrees and first launches clone configured
   repositories; relocation clones configured repositories on the destination. Migration 0029 lists every knowledge
   base's folder as a repository (role kb, manual); knowledge bases are unchanged.
+- Retention (ADR-0045, SM-REC-003, SM-HUI-007, SM-ATT-006, SM-SPACE-001): retention periods for recordings, transcripts,
+  attachments of finished items and finished human actions are limits (`limits.retention_*_days`, overridable per space
+  on the Limits page, API, CLI and Terraform `spaceman_space_limits`; 0 keeps, the default), and audit retention is
+  installation-wide (`retention.audit_days`). One daily pass on the shared deadline timer deletes what is older, never
+  what an open item uses and never before a restore is acknowledged; every deletion is audited and in the change feed.
+  Status and a manual pass: Backups page **Retention** card, `GET /retention`, `POST /retention/run`,
+  `spaceman system retention status|run`. Changing a retention period needs the new `retention:write` (admins).
+- Space export (ADR-0045): `GET /spaces/{id}/export` streams a ZIP of the space's inbox items, tasks, human actions with
+  responses and comments, messages and attachments (JSON Lines plus files, with a checksummed manifest), from one
+  consistent snapshot; `GET /spaces/{id}/export/summary`, `spaceman space export summary|download`, an **Export** dialog
+  on the space overview. Admins only (`space:export`), audited, bounded by the space's `export_max_bytes` (default
+  2 GiB). The archive is **not encrypted**, and says so everywhere it is offered.
+- Configurable recording size: the space limit `recording_quota_bytes` (default 512 MiB, 1 MiB–64 GiB) is sent to the
+  node with each launch (SM-REC-003).
+- Durable forward audit cursor (SM-OBS-003): `GET /audit?after=<seq>` lists events oldest first with `next_after` to
+  resume from, and a `gap` when retention pruned events past the position; `spaceman audit list --after`. The audit page
+  shows when older events were pruned.
+- Backups flush role memory first: central asks connected nodes to checkpoint and sync (node protocol minor 5,
+  `memory.flush`), waits at most a minute, and the manifest, the Backups page and the `backup.finished` audit event name
+  spaces whose memory is possibly stale (disconnected or older nodes, timeouts, unacknowledged history) (SM-MEM-005).
+- SSO-only sign-in (password sign-in off for the installation), with a lockout precondition and guards, as in Hallpass:
+  Sign-in providers page, `PATCH /api/v1/oidc/settings`, `spaceman oidc settings set --sso-only` (SM-AUTH-001).
+- Direct sign-in through one provider (`/login?password=1` shows every method).
+- RP-initiated logout per provider (`end_session_enabled`, API, UI, CLI `--end-session`, Terraform
+  `spaceman_oidc_provider.end_session_enabled`): signing out of an SSO session offers sign-out at the provider.
 - Release readiness report (`docs/RELEASE_READINESS.md`, site: Development → Release readiness): what is implemented,
   tested and verified for real, what is not, and what a production release still needs. It makes no production-readiness
   claim.
@@ -103,6 +128,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   MFA enrollment are never managed.
 
 ### Security
+- Retention, space export and SSO-only sign-in are security-relevant changes (ADR-0045): shortening a retention period
+  (admins, `retention:write`) deletes data at the next pass; exports are plaintext and admin-only; SSO-only is guarded
+  against an administrator lockout.
 - Security review (M4-08, `docs/SECURITY_REVIEW.md`, ADR-0039). The fixes:
   - **Login and MFA throttles hold under parallel attempts.** Attempts on one account or second factor are serialized,
     so a burst can no longer try many TOTP codes in one throttle window.
@@ -140,6 +168,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   The web UI returns to sign-in when its session is gone and reconnects when it was only rotated.
 
 ### Changed
+- `POST /api/v1/auth/logout` returns 200 with `{provider_logout_url}` instead of 204.
+- Deleting central's copy of a recording (`DELETE /spaces/{id}/runs/{run}/recording`) needs the run to have ended
+  (409 otherwise) and is now audited (`recording.deleted`) and recorded in the change feed.
+- Backup verification compares the audit chain's head sequence and hash with the manifest, not the event count, so
+  backups taken after audit retention verify.
 - `auth.stream_revalidate` accepts at most 60 s (was 5 min).
 - Launches can now be refused with `rate_limited`: a space runs at most `limits.max_concurrent_runs` worker and diagnostic
   runs (default 8), and the node's reported `capacity` is enforced. Control, KB support and dreamer runs have their own pools.
@@ -148,6 +181,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   history and items they create are marked.
 
 ### Fixed
+- Relocation's flush could report success after its context was cancelled.
 - A space's lease guard no longer outlives its runs (SM-ARCH-004, ADR-0043). The node agent kept one
   `spaceman-agent lease-guard` process per space that had ever run, reading the lease file once a second while the space
   sat idle. The guard now ends with the space's last live run, and the next launch starts a new one before its run.

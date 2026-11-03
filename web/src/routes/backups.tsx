@@ -7,6 +7,7 @@ import { api, unwrap, type BackupItem, type BackupStatus, type RestoreNotice } f
 import { keys, useBackups, useMe, useRestoreNotice } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
+import { RetentionCard } from '@/features/retention/RetentionCard'
 import { hasGlobal } from '@/lib/access'
 import { ago, bytes, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
@@ -35,6 +36,29 @@ function VerifyBadge({ it }: { it: BackupItem }) {
   const color = it.verify_state === 'ok' ? 'owlGreen' : it.verify_state === 'running' ? 'owlBlue' : 'owlRed'
   const badge = <Badge color={color} variant="light">{it.verify_state === 'ok' ? `verified ${ago(it.verified_at)}` : it.verify_state}</Badge>
   return it.verify_error ? <Tooltip label={it.verify_error} multiline w={360}>{badge}</Tooltip> : badge
+}
+
+const staleReason: Record<string, string> = {
+  node_disconnected: 'node not connected',
+  protocol_too_old: 'node agent too old to flush',
+  timed_out: 'node did not answer in time',
+  not_acknowledged: 'not all memory reached central',
+}
+
+/** Role memory flushed before the snapshot (SM-MEM-005): spaces whose memory may be stale in this backup. */
+function MemoryNote({ it }: { it: BackupItem }) {
+  const f = it.memory_flush
+  if (!f) return null
+  if (!f.attempted) {
+    return f.note ? <Tooltip label={f.note} multiline w={360}><Text size="xs" c="dimmed">memory not flushed first</Text></Tooltip> : null
+  }
+  if (f.stale.length === 0) return null
+  const names = f.stale.map((s) => s.space_slug || s.space_id)
+  return (
+    <Tooltip multiline w={380} label={f.stale.map((s) => `${s.space_slug || s.space_id}: ${staleReason[s.reason] ?? s.reason}${s.detail ? ` (${s.detail})` : ''}`).join('; ')}>
+      <Badge mt={4} color="owlYellow" variant="light">Memory possibly stale: {names.join(', ')}</Badge>
+    </Tooltip>
+  )
 }
 
 function BackupsPage() {
@@ -95,6 +119,7 @@ function BackupsPage() {
                   <Table.Td>
                     <Text size="sm" className="mono">{it.id}</Text>
                     <Text size="xs" c="dimmed">{it.trigger}{it.requested_by ? ` · ${it.requested_by}` : ''}{it.stored ? '' : ' · not in the target'}</Text>
+                    <MemoryNote it={it} />
                   </Table.Td>
                   <Table.Td>
                     {it.error ? <Tooltip label={it.error} multiline w={360}><Badge color={stateColor[it.state]}>{it.state}</Badge></Tooltip>
@@ -117,6 +142,7 @@ function BackupsPage() {
           </Table>
         </Card>
       )}
+      {admin && <RetentionCard />}
       {s && <Scope s={s} />}
     </>
   )

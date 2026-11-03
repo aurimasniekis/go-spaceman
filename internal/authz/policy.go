@@ -49,6 +49,8 @@ var (
 	SpaceCreate = global("space", "create")
 	SpacePurge  = global("space", "purge")
 	SpaceMove   = global("space", "relocate")
+	// SpaceExport downloads a space's records and files as a plaintext archive (ADR-0045); only admins hold it.
+	SpaceExport = perm("space", "export")
 
 	NodeRead   = global("node", "read")
 	NodeWrite  = global("node", "write")
@@ -91,6 +93,9 @@ var (
 
 	SpaceConfigRead  = perm("space_config", "read") // roles, prompts bindings, limits, policies of a space
 	SpaceConfigWrite = perm("space_config", "write")
+	// RetentionWrite changes a space's retention periods (ADR-0045): a shorter period deletes data in the next daily
+	// pass, so it is held by admins only, like recording:delete, on top of space_config:write.
+	RetentionWrite = perm("retention", "write")
 
 	// Cross-space access (ADR-0038): a space's permissions per peer and its incoming and outgoing requests.
 	XSpaceRead  = perm("xspace", "read")

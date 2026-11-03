@@ -29,6 +29,7 @@ interface Values {
   ca_bundle_pem: string
   allow_private_network: boolean
   allow_cross_origin_endpoints: boolean
+  end_session_enabled: boolean
   enabled: boolean
 }
 
@@ -52,6 +53,7 @@ function initial(p?: OidcProvider): Values {
     ca_bundle_pem: p?.ca_bundle_pem ?? '',
     allow_private_network: p?.allow_private_network ?? false,
     allow_cross_origin_endpoints: p?.allow_cross_origin_endpoints ?? false,
+    end_session_enabled: p?.end_session_enabled ?? false,
     enabled: p?.enabled ?? false,
   }
 }
@@ -74,6 +76,7 @@ function body(v: Values, editing: boolean): OidcProviderInput {
     ca_bundle_pem: v.ca_bundle_pem,
     allow_private_network: v.allow_private_network,
     allow_cross_origin_endpoints: v.allow_cross_origin_endpoints,
+    end_session_enabled: v.end_session_enabled,
     enabled: v.enabled,
   }
 }
@@ -102,6 +105,7 @@ export function ProviderModal({ provider, redirectUri, onClose }: { provider?: O
         }
         void qc.invalidateQueries({ queryKey: keys.oidcProviders })
         void qc.invalidateQueries({ queryKey: keys.signInProviders })
+        void qc.invalidateQueries({ queryKey: ['oidc-sign-in-settings'] })
         onClose()
       } catch (e) {
         setError(errorMessage(e))
@@ -197,6 +201,9 @@ export function ProviderModal({ provider, redirectUri, onClose }: { provider?: O
               {(f) => <Switch label="Allow endpoints on another site" description="Token and key endpoints outside the issuer's domain" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
             </form.Field>
           </Group>
+          <form.Field name="end_session_enabled">
+            {(f) => <Switch label="Sign out at the provider too" description="RP-initiated logout: after signing out of an SSO session, offer the provider's end_session_endpoint (when it advertises one)" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
+          </form.Field>
           <form.Field name="enabled">
             {(f) => <Switch label="Enabled" description="Shown on the sign-in page. Run a test login first." checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
           </form.Field>

@@ -91,8 +91,12 @@ lost central uploads its local copy when it reconnects. See [terminals and recor
 
 - `too many attempts; try again later`: after three failures each delay doubles, up to 15 minutes. Counters reset after
   a day without failures. There is no permanent lockout. TOTP codes and recovery codes share one throttle.
-- `password login is disabled; sign in with SSO`: the stored SSO-only setting is on. No page, API or configuration key
-  turns it on in this build ([limitations](/reference/limitations)), so this should not appear.
+- `password login is disabled; sign in with SSO`: **Sign in with SSO only** is on (Access → Sign-in providers →
+  Sign-in settings, or `spaceman oidc settings get`). Sign in with a provider, or, if no administrator can, use
+  break-glass recovery (`spaceman admin recover` on the central host) and turn password sign-in back on
+  ([single sign-on](/guide/sign-in#sign-in-settings)).
+- A sign-in page that goes straight to a provider: **Direct sign-in** is set. Open `/login?password=1` for every
+  sign-in method.
 - A lost authenticator, a forgotten password or a full lockout: see
   [lost passwords and authenticators](./access#lost-passwords-and-authenticators). A lost root token: see
   [first administrator](./access#first-administrator).

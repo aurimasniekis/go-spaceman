@@ -175,6 +175,9 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	row, _ = a.j.getRun(ctx, c.RunID)
+	if err := a.saveRecordingQuota(c.RunID, p.RecordingMaxBytes); err != nil {
+		log.Warn("store the recording bound; the default applies", obs.Err(err))
+	}
 	labels := map[string]string{"spaceman.managed": "1", "spaceman.run": c.RunID, "spaceman.space": c.SpaceID}
 	if found, err := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); err == nil && len(found) > 0 {
 		a.observe(ctx, row, found[0], true)

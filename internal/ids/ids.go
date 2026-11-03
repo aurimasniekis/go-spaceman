@@ -77,6 +77,7 @@ const (
 	Backup         = "bkp"
 	Relocation     = "rlc"
 	Schedule       = "sch"
+	Retention      = "ret"
 	Operation      = "op" // long-running operation
 )
 

@@ -24,10 +24,17 @@ it comes from and where SpaceMan enforces it.
 | Cost budget, 24 h (`budget_cost_cents_24h`) | none | 0: none | harness cost estimates, in US cents | run launch |
 | Token budget per run (`budget_tokens_per_run`) | none | 0: none | reported tokens of one run | warning only |
 | Budget warning (`budget_warn_percent`) | 80 | 1–100 | when budget warnings are sent | usage reports |
+| Terminal recording size (`recording_quota_bytes`) | 512 MiB | 1 MiB–64 GiB | one run's recording on the node | the node's recorder, from the launch |
+| Export size (`export_max_bytes`) | 2 GiB | 1 MiB–64 GiB | one space export archive | space export |
+| Recording, transcript, attachment and finished human-action retention (`retention_*_days`) | kept (0) | 0–36,500 days | how long central keeps them | the daily retention pass ([Retention and export](/guide/retention)) |
 
 Some limits are set elsewhere and only shown here: the node's **capacity** (the node agent's `capacity` setting, shared
 by every space on the node), each knowledge base's own session limit, human-action rate limits per type
-([policies](/guide/human-actions)), the MCP gateway's limits per server, the recording size per run and dream budgets.
+([policies](/guide/human-actions)), the MCP gateway's limits per server, dream budgets and the installation-wide audit
+retention (`retention.audit_days`).
+
+Retention periods are the one kind of limit whose lowering removes something: the next daily pass deletes what is older
+than the new period. Changing them needs `retention:write` (admins); see [Retention and export](/guide/retention).
 
 A launch beyond a limit is refused with `rate_limited` and a message that names the limit; control gets the same answer
 from its tools.

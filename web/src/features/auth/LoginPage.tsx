@@ -10,7 +10,8 @@ import { safeReturnTo, setSession } from '@/api/session'
 import { errorMessage } from '@/components/ErrorAlert'
 import { QRCode } from '@/components/QRCode'
 import { fieldError, required } from '@/lib/form'
-import { ssoErrorMessage, ssoStartUrl } from '@/lib/sso'
+import { signOut } from '@/lib/signout'
+import { clearSignedOut, markSignedOut, pendingProviderLogout, ssoErrorMessage, ssoStartUrl, wasSignedOut } from '@/lib/sso'
 import { AuthLayout } from './AuthLayout'
 
 type Step = 'password' | 'enroll' | 'codes' | 'verify'
@@ -25,8 +26,12 @@ function stepFor(me: Me | null | undefined): Step | 'done' {
  * Sign-in (SM-AUTH-001/002): a button per enabled OIDC provider (Porch or any other), or password then TOTP. Accounts
  * that must use MFA and have none enroll here; enrollment never completes a sign-in by itself, so a fresh code is asked
  * for afterwards (Hallpass SR-03).
+ *
+ * Ported from Hallpass (ADR-0045): with a direct provider the page continues to it at once (`/login?password=1` always
+ * shows every sign-in method); under SSO-only enforcement the password form is not offered; after a sign-out the page
+ * stays put and offers the provider's RP-initiated logout when the server returned one.
  */
-export function LoginPage({ returnTo, ssoError }: { returnTo?: string; ssoError?: string }) {
+export function LoginPage({ returnTo, ssoError, password }: { returnTo?: string; ssoError?: string; password?: boolean }) {
   const qc = useQueryClient()
   const me = useMe()
   const system = useSystem()
@@ -34,8 +39,24 @@ export function LoginPage({ returnTo, ssoError }: { returnTo?: string; ssoError?
   const [step, setStep] = useState<Step>('password')
   const [recovery, setRecovery] = useState<string[]>([])
   const [error, setError] = useState('')
+  const [signedOut] = useState(wasSignedOut)
+  const [providerLogout, setProviderLogout] = useState(pendingProviderLogout)
+  const ssoOnly = system.data?.local_login_disabled ?? false
+  const direct = providers.find((p) => p.slug === system.data?.direct_provider)
+  // Continue to the direct provider only on a plain /login visit by someone who is not signed in and did not just sign out.
+  const continueDirect = direct !== undefined && !password && !ssoError && !signedOut && me.isFetched && !me.data && step === 'password'
+  const start = (slug: string) => {
+    clearSignedOut()
+    window.location.assign(ssoStartUrl(slug, 'login', safeReturnTo(returnTo)))
+  }
+
+  useEffect(() => {
+    if (continueDirect) start(direct.slug)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continueDirect, direct?.slug])
 
   const signedIn = (m: Me) => {
+    clearSignedOut()
     setSession(m.csrf_token, m.limited)
     qc.setQueryData(keys.me, m)
     const next = stepFor(m)
@@ -93,7 +114,17 @@ export function LoginPage({ returnTo, ssoError }: { returnTo?: string; ssoError?
     return (
       <AuthLayout title="Two-factor verification" subtitle="Enter the current code from your authenticator app, or a recovery code.">
         <CodeForm label="Code" submit="Verify" error={error} onSubmit={(code) => run(async () => signedIn(unwrap(await api.POST('/auth/mfa/verify', { body: { code } }))))} />
-        <Anchor size="xs" onClick={() => void api.POST('/auth/logout').then(() => window.location.assign('/login'))}>Use a different account</Anchor>
+        <Anchor size="xs" onClick={() => void signOut()}>Use a different account</Anchor>
+      </AuthLayout>
+    )
+  }
+
+  if (continueDirect) {
+    return (
+      <AuthLayout title="Sign in">
+        <Text size="sm">Continuing to {direct.display_name}…</Text>
+        <Button variant="default" leftSection={<IconLogin2 size={16} />} onClick={() => start(direct.slug)}>Sign in with {direct.display_name}</Button>
+        {!ssoOnly && <Anchor href="/login?password=1" size="xs">Use your password instead</Anchor>}
       </AuthLayout>
     )
   }
@@ -101,18 +132,31 @@ export function LoginPage({ returnTo, ssoError }: { returnTo?: string; ssoError?
   return (
     <AuthLayout title="Sign in">
       {ssoError && <Alert color="owlRed" title="Single sign-on failed" role="alert">{ssoErrorMessage(ssoError)}</Alert>}
+      {signedOut && !ssoError && <Alert color="owlBlue" variant="light">You are signed out.</Alert>}
+      {providerLogout && (
+        <Alert color="owlYellow" variant="light" title="Still signed in at your identity provider">
+          <Stack gap="xs">
+            <Text size="sm">Signing out of SpaceMan does not sign you out of the provider you signed in with.</Text>
+            <Group gap="xs">
+              <Button size="xs" component="a" href={providerLogout} onClick={() => markSignedOut(null)}>Sign out at the provider</Button>
+              <Button size="xs" variant="default" onClick={() => { markSignedOut(null); setProviderLogout(null) }}>Not now</Button>
+            </Group>
+          </Stack>
+        </Alert>
+      )}
       {providers.length > 0 && (
         <Stack gap="xs">
           {providers.map((p) => (
-            <Button key={p.slug} variant="default" leftSection={<IconLogin2 size={16} />} component="a" href={ssoStartUrl(p.slug, 'login', safeReturnTo(returnTo))}>
+            <Button key={p.slug} variant="default" leftSection={<IconLogin2 size={16} />} component="a" href={ssoStartUrl(p.slug, 'login', safeReturnTo(returnTo))}
+              onClick={clearSignedOut}>
               Sign in with {p.display_name}
             </Button>
           ))}
-          <Divider label="or with your password" labelPosition="center" />
+          {!ssoOnly && <Divider label="or with your password" labelPosition="center" />}
         </Stack>
       )}
-      {system.data?.local_login_disabled && <Alert color="owlYellow">Password sign-in is disabled on this server.</Alert>}
-      <form
+      {ssoOnly && <Alert color="owlYellow">Password sign-in is turned off on this server: sign in with single sign-on.</Alert>}
+      {!ssoOnly && <form
         onSubmit={(e) => {
           e.preventDefault()
           void pw.handleSubmit()
@@ -136,9 +180,9 @@ export function LoginPage({ returnTo, ssoError }: { returnTo?: string; ssoError?
             {(busy) => <Button type="submit" loading={busy}>Sign in</Button>}
           </pw.Subscribe>
         </Stack>
-      </form>
-      <Group justify="space-between">
-        <Anchor component={Link} to="/reset" size="xs">I have a password reset token</Anchor>
+      </form>}
+      <Group justify={ssoOnly ? 'flex-end' : 'space-between'}>
+        {!ssoOnly && <Anchor component={Link} to="/reset" size="xs">I have a password reset token</Anchor>}
         <Anchor component={Link} to="/recover" size="xs">Recover access</Anchor>
       </Group>
     </AuthLayout>

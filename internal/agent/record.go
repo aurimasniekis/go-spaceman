@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -19,13 +22,48 @@ import (
 // RecordingDir is a run's local recording directory.
 func (a *Agent) RecordingDir(runID string) string { return filepath.Join(a.runDir(runID), "recording") }
 
+// recordingQuotaFile keeps the recording bound central sent at launch, so a recorder restarted after an agent restart
+// applies the same bound.
+const recordingQuotaFile = "recording-quota"
+
+// Recording bounds a launch may set: the range of the recording_quota_bytes limit (ADR-0045).
+const (
+	minRecordingQuota = 1 << 20
+	maxRecordingQuota = 64 << 30
+)
+
+// saveRecordingQuota stores the run's recording bound (0: the default applies).
+func (a *Agent) saveRecordingQuota(runID string, n int64) error {
+	if n <= 0 {
+		return nil
+	}
+	n = min(max(n, minRecordingQuota), maxRecordingQuota)
+	if err := os.MkdirAll(a.runDir(runID), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(a.runDir(runID), recordingQuotaFile), []byte(strconv.FormatInt(n, 10)), 0o600)
+}
+
+// recordingQuota returns the run's recording bound: what central sent at launch, else proto.DefaultRecordingMaxBytes.
+func (a *Agent) recordingQuota(runID string) int64 {
+	b, err := os.ReadFile(filepath.Join(a.runDir(runID), recordingQuotaFile)) //nolint:gosec // a fixed name in the run's own directory
+	if err != nil {
+		return proto.DefaultRecordingMaxBytes
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil || n < minRecordingQuota || n > maxRecordingQuota {
+		return proto.DefaultRecordingMaxBytes
+	}
+	return n
+}
+
 // record attaches to a run's terminal as an observer and writes everything it outputs until the program ends. It is
 // independent of browsers (SM-REC-002): live viewers read the recording, never the other way round, so viewer
 // backpressure cannot slow the run (SM-REC-004). Interruptions (overflow, runner restart) re-attach and record a gap,
 // because herdr-core streams carry no offsets (S-3).
 func (a *Agent) record(ctx context.Context, row runRow) {
 	log := a.log.With(slog.String(obs.FieldRunID, row.RunID))
-	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: 512 << 20, Now: a.o.Clock.Now, Create: a.o.RecordingCreate})
+	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: a.recordingQuota(row.RunID), Now: a.o.Clock.Now, Create: a.o.RecordingCreate})
 	if err != nil {
 		log.Warn("open recording", obs.Err(err))
 		return

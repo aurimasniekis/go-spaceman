@@ -52,7 +52,9 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 	"github.com/aurimasniekis/go-spaceman/internal/repos"
+	"github.com/aurimasniekis/go-spaceman/internal/retention"
 	"github.com/aurimasniekis/go-spaceman/internal/schedule"
+	"github.com/aurimasniekis/go-spaceman/internal/spaceexport"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
@@ -123,6 +125,10 @@ type Central struct {
 	Schedules *schedule.Service
 	// Repos is a space's configured repositories and the node's reports of them (ADR-0044).
 	Repos *repos.Service
+	// Retention deletes what is older than its retention period in one daily pass (ADR-0045).
+	Retention *retention.Service
+	// Exports writes space export archives (ADR-0045).
+	Exports *spaceexport.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -197,6 +203,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				return nil, err
 			}
 			in.Kind, in.Harness, in.Model, in.Settings, in.SystemText = r.Kind, r.Harness, r.Model, r.Settings, r.SystemText
+			in.RecordingMaxBytes = c.Limits.Value(ctx, st.R(), spaceID, limits.RecordingQuota)
 			in.Skills = nil
 			for _, sk := range r.Skills {
 				in.Skills = append(in.Skills, proto.Skill{Name: sk.Slug, Version: sk.Number, SHA256: sk.SHA256, Files: sk.Files})
@@ -343,11 +350,23 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	bc := cfg.Backups
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
 		Sources: backup.DefaultSources(st.Dir(), artifactDir, gitBin), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
-		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup")})
+		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
+		PrepareMemory: c.prepareBackupMemory})
 	c.Fleet.Hub().Usage = usageWithBudgets{Service: c.Usage, limits: c.Limits}
 	c.Schedules = schedule.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, o.Clock, obs.Component(log, "schedule"))
 	c.Schedules.Kick = c.Human.Kick
 	c.Limits.OnChange = c.Human.Kick
+	c.Limits.AuditDays = cfg.Retention.AuditDays
+	c.Retention = retention.New(st, c.Audit, c.Changes, c.Limits, retention.Options{AuditDays: cfg.Retention.AuditDays, Clock: o.Clock,
+		Log: obs.Component(log, "retention"), DeleteRecording: c.Fleet.DeleteRecording, DeleteTranscript: c.Usage.DeleteTranscript,
+		AfterPass: func(ctx context.Context) {
+			if _, _, err := c.Attachments.GC(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("attachment garbage collection after retention", obs.Err(err))
+			}
+		}})
+	c.Exports = spaceexport.New(st, c.Audit, c.Attachments.OpenContent, func(ctx context.Context, spaceID string) int64 {
+		return c.Limits.Value(ctx, nil, spaceID, limits.ExportMax)
+	}, o.Clock)
 	c.Limits.Stop = func(ctx context.Context, actor audit.Actor, runID, reason string) error {
 		_, err := c.Fleet.StopRun(ctx, actor, runID, "interrupt", reason)
 		return err
@@ -410,6 +429,9 @@ func (c *Central) Close() error {
 	if c.Backups != nil {
 		c.Backups.Wait()
 	}
+	if c.Retention != nil {
+		c.Retention.Wait()
+	}
 	if c.Fleet != nil {
 		c.Fleet.Hub().CloseAll("central shutting down")
 		c.Fleet.Recordings().Close()
@@ -434,8 +456,8 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterRepositories(c.Repos), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace)},
-		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage))}
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterRetention(c.Retention, c.Exports)},
+		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
 }
@@ -499,6 +521,10 @@ func (c *Central) Serve(ctx context.Context) error {
 		return fmt.Errorf("recover backup runs: %w", err)
 	}
 	go c.Backups.Run(ctx)
+	if err := c.Retention.Recover(ctx); err != nil {
+		return fmt.Errorf("recover retention passes: %w", err)
+	}
+	c.Retention.Bind(ctx)
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
 	if err := c.Human.Recover(ctx); err != nil {
@@ -510,7 +536,9 @@ func (c *Central) Serve(ctx context.Context) error {
 	go c.Human.Run(ctx, human.Deadline{Name: "approvals", Next: c.Approvals.NextExpiry, Due: c.Approvals.Expire},
 		human.Deadline{Name: "schedules", Next: c.Schedules.Next, Due: c.Schedules.Due},
 		human.Deadline{Name: "task_deadlines", Next: c.Limits.NextDeadline, Due: c.Limits.Deadlines},
-		human.Deadline{Name: "xspace", Next: c.XSpace.NextDeadline, Due: c.XSpace.Expire})
+		human.Deadline{Name: "xspace", Next: c.XSpace.NextDeadline, Due: c.XSpace.Expire},
+		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
+		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
 	go c.Notifier.Run(ctx)
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)
@@ -585,13 +613,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterRepositories(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterRetention(nil, nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.RepositoryRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.RetentionRules} {
 		for k, v := range m {
 			out[k] = v
 		}

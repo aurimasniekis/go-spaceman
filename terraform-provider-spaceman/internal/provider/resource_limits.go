@@ -40,6 +40,12 @@ var spaceLimitAttrs = []limitAttr{
 	{"budget_cost_cents_24h", "Harness cost estimates of runs started in the last 24 hours, in US cents (0: no budget). Estimates, reported late."},
 	{"budget_tokens_per_run", "Reported tokens of one run (0: no budget; warning only, never stops a run)."},
 	{"budget_warn_percent", "Share of a budget at which operators are warned (1-100)."},
+	{"recording_quota_bytes", "Compressed size of one run's terminal recording on the node (1 MiB-64 GiB); new runs get the new size."},
+	{"export_max_bytes", "Size of one space export archive (1 MiB-64 GiB); a larger export is refused."},
+	{"retention_recordings_days", "Days central keeps an ended run's terminal recording (0-36500; 0: kept). Changing it needs `retention:write` (space admins); a shorter period deletes older recordings in the next daily retention pass."},
+	{"retention_transcripts_days", "Days central keeps a run's stored native transcript (0-36500; 0: kept). Needs `retention:write`."},
+	{"retention_attachments_days", "Days an attachment is kept once every item using it is finished (0-36500; 0: kept); never deleted while an open item uses it. Needs `retention:write`."},
+	{"retention_human_actions_days", "Days a resolved, cancelled or expired human action is kept (0-36500; 0: kept); kept while open work refers to it. Needs `retention:write`."},
 }
 
 // ---- space limits ----

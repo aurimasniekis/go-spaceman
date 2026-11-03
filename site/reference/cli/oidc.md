@@ -2,7 +2,7 @@
 
 # spaceman oidc
 
-Single sign-on: OIDC providers and group mappings.
+Single sign-on: OIDC providers, group mappings and sign-in settings.
 
 Aliases: `sso`.
 
@@ -10,6 +10,7 @@ Aliases: `sso`.
 |---|---|
 | [`spaceman oidc mapping`](#spaceman-oidc-mapping) | Group mappings: a groups-claim value grants a role in a domain at every SSO sign-in |
 | [`spaceman oidc provider`](#spaceman-oidc-provider) | OIDC sign-in providers: list, show, create, update, delete and the test-login preview |
+| [`spaceman oidc settings`](#spaceman-oidc-settings) | Sign-in settings: SSO-only enforcement and the direct provider |
 | [`spaceman oidc sign-in-providers`](#spaceman-oidc-sign-in-providers) | Providers offered on the sign-in page (needs no token) |
 
 ## spaceman oidc mapping
@@ -114,6 +115,7 @@ spaceman oidc provider create porch --display-name Porch --issuer https://porch.
 | `--client-secret-stdin` | bool |  | read --client-secret-file's value from standard input instead |
 | `--display-name` | string |  | name on the sign-in page |
 | `--enabled` | bool |  | offer it on the sign-in page |
+| `--end-session` | bool |  | sign out at the provider too (RP-initiated logout) when it advertises end_session_endpoint |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--groups-claim` | string |  | claim holding the user's groups |
 | `--idempotency-key` | string |  | Idempotency-Key to send (default: a fresh random key); reuse it to retry this create safely |
@@ -194,6 +196,7 @@ API: `get-oidc-provider`, `update-oidc-provider` ([HTTP API](../api)).
 | `--client-secret-stdin` | bool |  | read --client-secret-file's value from standard input instead |
 | `--display-name` | string |  | name on the sign-in page |
 | `--enabled` | bool |  | offer it on the sign-in page |
+| `--end-session` | bool |  | sign out at the provider too (RP-initiated logout) when it advertises end_session_endpoint |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--groups-claim` | string |  | claim holding the user's groups |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
@@ -203,6 +206,50 @@ API: `get-oidc-provider`, `update-oidc-provider` ([HTTP API](../api)).
 | `--remove-client-secret` | bool |  | delete the stored client secret |
 | `--scope` | string, repeatable |  | scope to request (replaces the list) (repeatable or comma-separated) |
 | `--stepup-fallback` | string |  | none or local_totp |
+
+## spaceman oidc settings
+
+Sign-in settings: SSO-only enforcement and the direct provider.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman oidc settings get`](#spaceman-oidc-settings-get) | The sign-in settings and the preconditions of SSO-only enforcement |
+| [`spaceman oidc settings set`](#spaceman-oidc-settings-set) | Change the sign-in settings (only the flags given change) |
+
+## spaceman oidc settings get
+
+The sign-in settings and the preconditions of SSO-only enforcement.
+
+```sh
+spaceman oidc settings get [flags]
+```
+
+API: `get-sign-in-settings` ([HTTP API](../api)).
+
+## spaceman oidc settings set
+
+Change the sign-in settings (only the flags given change).
+
+--sso-only turns password sign-in off. It needs an enabled provider with a successful test login and an enabled global administrator with a linked identity on an enabled provider; while it is on, changes that would break either are refused. Break-glass recovery (`spaceman admin recover`) still works. --direct-provider makes the sign-in page go straight to that enabled provider ("" turns it off).
+
+```sh
+spaceman oidc settings set [flags]
+```
+
+API: `set-sign-in-settings` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman oidc settings set --direct-provider porch
+spaceman oidc settings set --sso-only
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--direct-provider` | string |  | slug of the provider the sign-in page goes to directly; empty turns it off |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--sso-only` | bool |  | turn password sign-in off (true) or back on (false) |
 
 ## spaceman oidc sign-in-providers
 

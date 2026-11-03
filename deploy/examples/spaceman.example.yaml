@@ -55,6 +55,16 @@ backups:
 #   task_deadline_minutes: 0          # 0: no deadline (a passed deadline notifies, never stops)
 #   budget_tokens_24h: 0              # usage-based; warns and stops new runs, never a hard limit
 #   budget_warn_percent: 80
+#   recording_quota_bytes: 536870912  # one run's terminal recording on the node (512 MiB)
+#   retention_recordings_days: 0      # retention periods (site/guide/retention.md); 0 keeps
+#   retention_transcripts_days: 0
+#   retention_attachments_days: 0     # attachments of finished items only
+#   retention_human_actions_days: 0   # finished human actions only
+#   export_max_bytes: 2147483648      # one space export archive (2 GiB)
+
+# Installation-wide audit retention (0 keeps the audit log forever; otherwise 30 or more days).
+# retention:
+#   audit_days: 0
 
 shutdown:
   timeout: 30s                        # keep below TimeoutStopSec in spaceman.service (45 s)

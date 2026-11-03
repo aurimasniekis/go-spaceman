@@ -92,6 +92,16 @@ func (a *App) spaceCmd() *cobra.Command {
 		a.cmd(opts{use: "purge", short: "Permanently delete an archived space's records (never upstream repositories)", op: "purge-space",
 			args: spaceArg(), confirm: "permanently delete the space's records", done: "Space purged."}),
 		a.relocateCmd(),
+		group("export", "A space's records and files as one plaintext ZIP archive (space admins only)", nil,
+			a.cmd(opts{use: "summary", short: "What an export would hold now: counts, estimated size and the space's export limit", op: "get-space-export",
+				scoped: true, view: view{first: []string{"estimated_bytes", "max_bytes", "within_limit", "encrypted", "warning"}}}),
+			a.downloadCmd(download{short: "Download the space's export archive (ZIP of JSON Lines and attachment files) to a file",
+				route: "/spaces/{space_id}/export", related: []string{"get-space-export"},
+				long: "The archive is NOT encrypted: it holds the space's inbox items, tasks, human actions with responses, messages and " +
+					"attachments in plain text (no credentials or tokens). The file is created with mode 0600; handle it like the data it holds. " +
+					"An export over the space's export_max_bytes limit is refused.",
+				example: "spaceman space export download --space payments --out payments-export.zip"}),
+		),
 	)
 }
 

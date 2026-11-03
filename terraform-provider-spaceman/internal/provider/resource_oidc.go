@@ -49,6 +49,7 @@ type oidcProviderModel struct {
 	CABundlePEM               types.String `tfsdk:"ca_bundle_pem"`
 	StepUpFallback            types.String `tfsdk:"stepup_fallback"`
 	ACRValues                 types.List   `tfsdk:"acr_values"`
+	EndSessionEnabled         types.Bool   `tfsdk:"end_session_enabled"`
 	Enabled                   types.Bool   `tfsdk:"enabled"`
 	HasClientSecret           types.Bool   `tfsdk:"has_client_secret"`
 }
@@ -92,7 +93,9 @@ func (r *oidcProviderResource) Schema(_ context.Context, _ resource.SchemaReques
 			"ca_bundle_pem":                optString("PEM certificates trusted for the issuer's endpoints."),
 			"stepup_fallback": optString("Step-up for SSO sessions when the IdP cannot re-authenticate: `none` (default) or `local_totp`.",
 				stringvalidator.OneOf("none", "local_totp")),
-			"acr_values":        optList("ACR values requested for step-up."),
+			"acr_values": optList("ACR values requested for step-up."),
+			"end_session_enabled": optBool("RP-initiated logout: signing out of an SSO session also offers the provider's `end_session_endpoint` " +
+				"when its discovery document advertises one (default `false`). Register `<public_url>/login` as a post-logout redirect URI at the provider."),
 			"enabled":           optBool("Whether the provider is offered at sign-in (default `false`)."),
 			"has_client_secret": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether a client secret is stored."},
 		},
@@ -119,6 +122,7 @@ func (r *oidcProviderResource) toModel(p *client.OIDCProvider, m *oidcProviderMo
 	m.CABundlePEM = types.StringValue(p.CABundlePEM)
 	m.StepUpFallback = types.StringValue(p.StepUpFallback)
 	m.ACRValues = listValue(p.ACRValues)
+	m.EndSessionEnabled = types.BoolValue(p.EndSessionEnabled)
 	m.Enabled = types.BoolValue(p.Enabled)
 	m.HasClientSecret = types.BoolValue(p.HasClientSecret)
 	m.ClientSecretWO = types.StringNull()
@@ -137,7 +141,8 @@ func (r *oidcProviderResource) input(ctx context.Context, m *oidcProviderModel, 
 	in := client.OIDCProviderInput{Slug: strPtr(m.Slug), DisplayName: strPtr(m.DisplayName), Issuer: strPtr(m.Issuer), ClientID: strPtr(m.ClientID),
 		Scopes: listPtr(ctx, m.Scopes, diags), GroupsClaim: strPtr(m.GroupsClaim), Provisioning: strPtr(m.Provisioning),
 		AllowPrivateNetwork: boolPtr(m.AllowPrivateNetwork), AllowCrossOriginEndpoints: boolPtr(m.AllowCrossOriginEndpoints), CABundlePEM: strPtr(m.CABundlePEM),
-		StepUpFallback: strPtr(m.StepUpFallback), ACRValues: listPtr(ctx, m.ACRValues, diags), Enabled: boolPtr(m.Enabled)}
+		StepUpFallback: strPtr(m.StepUpFallback), ACRValues: listPtr(ctx, m.ACRValues, diags), EndSessionEnabled: boolPtr(m.EndSessionEnabled),
+		Enabled: boolPtr(m.Enabled)}
 	if !m.JIT.IsNull() && !m.JIT.IsUnknown() {
 		var j jitModel
 		diags.Append(m.JIT.As(ctx, &j, objectAsOptions)...)

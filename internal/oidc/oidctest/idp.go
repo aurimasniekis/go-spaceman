@@ -54,6 +54,8 @@ type IdP struct {
 	IssuerOverride string
 	// EndpointBase overrides the advertised endpoint base URL (cross-origin endpoint tests).
 	EndpointBase string
+	// EndSession overrides the advertised end_session_endpoint (default <base>/logout); "-" advertises none.
+	EndSession string
 	// FailDiscovery, FailJWKS and FailToken simulate an outage (HTTP 503).
 	FailDiscovery, FailJWKS, FailToken bool
 	// OmitAuthTime drops auth_time from tokens.
@@ -178,9 +180,17 @@ func (i *IdP) discovery(w http.ResponseWriter, _ *http.Request) {
 		iss = i.IssuerOverride
 	}
 	b := i.base()
-	writeJSON(w, map[string]any{"issuer": iss, "authorization_endpoint": b + "/authorize", "token_endpoint": b + "/token", "jwks_uri": b + "/jwks",
+	doc := map[string]any{"issuer": iss, "authorization_endpoint": b + "/authorize", "token_endpoint": b + "/token", "jwks_uri": b + "/jwks",
 		"end_session_endpoint": b + "/logout", "response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"RS256", "ES256", "EdDSA"}, "code_challenge_methods_supported": []string{"S256"}})
+		"id_token_signing_alg_values_supported": []string{"RS256", "ES256", "EdDSA"}, "code_challenge_methods_supported": []string{"S256"}}
+	switch i.EndSession {
+	case "":
+	case "-":
+		delete(doc, "end_session_endpoint")
+	default:
+		doc["end_session_endpoint"] = i.EndSession
+	}
+	writeJSON(w, doc)
 }
 
 func (i *IdP) jwks(w http.ResponseWriter, _ *http.Request) {

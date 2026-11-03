@@ -316,8 +316,9 @@ func checkDatabase(ctx context.Context, dbPath string, m *Manifest, rep *Report)
 		rep.problem("audit chain in the database copy: %v", err)
 	case !res.OK:
 		rep.problem("audit chain in the database copy is broken at %d: %s", res.BrokenAt, res.Problem)
-	case res.Events != m.AuditHead.Seq || (m.AuditHead.Seq > 0 && hex.EncodeToString(res.HeadHash) != m.AuditHead.Hash):
-		rep.problem("audit chain head (%d entries) differs from the manifest (seq %d)", res.Events, m.AuditHead.Seq)
+	case res.HeadSeq != m.AuditHead.Seq || (m.AuditHead.Seq > 0 && hex.EncodeToString(res.HeadHash) != m.AuditHead.Hash):
+		// Retention may have pruned the oldest events: the head (sequence and hash) is what the manifest recorded.
+		rep.problem("audit chain head (seq %d, %d entries) differs from the manifest (seq %d)", res.HeadSeq, res.Events, m.AuditHead.Seq)
 	}
 }
 

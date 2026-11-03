@@ -243,21 +243,7 @@ func (a *Agent) relocCheck(ctx context.Context, g *projectGit, spaceID string, p
 // relocFlush checkpoints and syncs the space's role memory, re-ships recordings and resumes transcript uploads, then
 // waits (bounded) until central acknowledged all of it.
 func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Duration) bool {
-	m := a.mem
-	if m.git != nil {
-		for _, k := range m.collections() {
-			if k[0] != spaceID {
-				continue
-			}
-			insts, _ := os.ReadDir(filepath.Join(m.root, spaceID, k[1], "instances"))
-			for _, i := range insts {
-				if validMemoryKey(spaceID, k[1], i.Name()) {
-					_ = m.checkpointErr(ctx, spaceID, k[1], i.Name(), "relocation")
-				}
-			}
-			m.scheduleSync(spaceID, k[1], 0)
-		}
-	}
+	a.flushSpaceMemory(ctx, spaceID, "relocation")
 	go a.catchUpRecordings(ctx)
 	if ids, err := a.j.pendingUploads(ctx); err == nil {
 		for _, id := range ids {
@@ -268,12 +254,7 @@ func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Durati
 	}
 	deadline := time.Now().Add(wait)
 	for {
-		clean := true
-		for _, st := range a.spaceMemory(ctx, spaceID) {
-			if st.Pending || st.Uncheckpointed > 0 || st.LocalCommits > 0 {
-				clean = false
-			}
-		}
+		clean, _ := a.memoryClean(ctx, spaceID)
 		if recs, trs := a.pendingUploadsOf(ctx, spaceID); len(recs) > 0 || len(trs) > 0 {
 			clean = false
 		}
@@ -286,7 +267,7 @@ func (a *Agent) relocFlush(ctx context.Context, spaceID string, wait time.Durati
 		select {
 		case <-ctx.Done():
 			return false
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(flushPoll):
 		}
 	}
 }

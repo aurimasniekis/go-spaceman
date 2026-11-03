@@ -11,6 +11,7 @@ A running central: version, backups, outbox, restore and break-glass notices, ro
 | [`spaceman system info`](#spaceman-system-info) | Version, readiness and bootstrap state (needs no token) |
 | [`spaceman system outbox`](#spaceman-system-outbox) | Outbound event publication status (pending, retrying, dead, recent failures) |
 | [`spaceman system restore`](#spaceman-system-restore) | The notice a central shows after a restore |
+| [`spaceman system retention`](#spaceman-system-retention) | Retention: installation defaults, audit retention and the daily pass |
 | [`spaceman system root-token`](#spaceman-system-root-token) | The root token: show its metadata, rotate or revoke it |
 
 ## spaceman system backup
@@ -134,6 +135,39 @@ spaceman system restore get [flags]
 ```
 
 API: `get-restore-state` ([HTTP API](../api)).
+
+## spaceman system retention
+
+Retention: installation defaults, audit retention and the daily pass.
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman system retention run`](#spaceman-system-retention-run) | Run a retention pass now (deletes what is older than its retention period) |
+| [`spaceman system retention status`](#spaceman-system-retention-status) | Retention defaults, the next daily pass and recent passes |
+
+## spaceman system retention run
+
+Run a retention pass now (deletes what is older than its retention period).
+
+```sh
+spaceman system retention run [flags]
+```
+
+API: `run-retention` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--yes` | bool |  | confirm: delete everything older than its retention period now |
+
+## spaceman system retention status
+
+Retention defaults, the next daily pass and recent passes.
+
+```sh
+spaceman system retention status [flags]
+```
+
+API: `get-retention` ([HTTP API](../api)).
 
 ## spaceman system root-token
 

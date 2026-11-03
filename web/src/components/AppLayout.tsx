@@ -12,6 +12,7 @@ import { hasGlobal } from '@/lib/access'
 import { datetime } from '@/lib/format'
 import { visibleNav } from '@/lib/nav'
 import { notifyError } from '@/lib/notify'
+import { signOut } from '@/lib/signout'
 import { Logo } from './Logo'
 
 function LiveIndicator() {
@@ -70,11 +71,7 @@ function UserMenu() {
         <Menu.Item component={Link} to="/account" leftSection={<IconUserCircle size={14} />}>Account</Menu.Item>
         <Menu.Item
           leftSection={<IconLogout size={14} />}
-          onClick={async () => {
-            await api.POST('/auth/logout')
-            qc.clear()
-            window.location.assign('/login')
-          }}
+          onClick={() => void signOut(qc)}
         >
           Sign out
         </Menu.Item>

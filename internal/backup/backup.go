@@ -139,6 +139,54 @@ type Manifest struct {
 	Bytes       int64    `json:"bytes"`
 	SealedBytes int64    `json:"sealed_bytes"`
 	Warnings    []string `json:"warnings,omitempty"`
+	// MemoryFlush records how role memory was prepared before the snapshot (SM-MEM-005, ADR-0045); absent in backups
+	// made before it existed.
+	MemoryFlush *MemoryFlush `json:"memory_flush,omitempty"`
+}
+
+// MemoryFlush is the outcome of asking the nodes to checkpoint and sync role memory before a backup. A backup holds
+// only the memory history central acknowledged; Stale names the spaces whose newest memory may be missing.
+type MemoryFlush struct {
+	// Attempted is false for offline backups (central not running), which cannot reach nodes.
+	Attempted bool       `json:"attempted"`
+	Note      string     `json:"note,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	Seconds   float64    `json:"seconds,omitempty" doc:"How long the flush took"`
+	// Flushed are the spaces whose node checkpointed and synced all their role memory before the snapshot.
+	Flushed []string      `json:"flushed_spaces"`
+	Stale   []StaleMemory `json:"stale" doc:"Spaces whose role memory is possibly stale in this backup"`
+}
+
+// StaleMemory is a space whose role memory may be newer on its node than in the backup.
+type StaleMemory struct {
+	SpaceID   string `json:"space_id"`
+	SpaceSlug string `json:"space_slug,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+	NodeName  string `json:"node_name,omitempty"`
+	Reason    string `json:"reason" enum:"node_disconnected,protocol_too_old,timed_out,not_acknowledged"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// OfflineMemoryFlush is what backups made without central running (the CLI) record: no node could be asked.
+func OfflineMemoryFlush() *MemoryFlush {
+	return &MemoryFlush{Note: "offline backup: central was not running, so no node was asked to flush role memory; " +
+		"the backup holds the memory history central had acknowledged", Flushed: []string{}, Stale: []StaleMemory{}}
+}
+
+// staleWarning is the manifest warning for spaces whose memory may be stale.
+func (f *MemoryFlush) staleWarning() string {
+	if f == nil || len(f.Stale) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(f.Stale))
+	for _, s := range f.Stale {
+		n := s.SpaceSlug
+		if n == "" {
+			n = s.SpaceID
+		}
+		names = append(names, n+" ("+s.Reason+")")
+	}
+	return "role memory possibly stale for spaces " + strings.Join(names, ", ") + ": their nodes did not confirm a flush before the snapshot"
 }
 
 // AuditHead is the last audit-chain entry in the snapshot.
@@ -210,6 +258,8 @@ type Options struct {
 	// Config is the effective configuration (YAML); nil leaves it out.
 	Config []byte
 	Clock  clock.Clock
+	// MemoryFlush is how role memory was flushed before the snapshot (recorded in the manifest; nil: not recorded).
+	MemoryFlush *MemoryFlush
 }
 
 // Result is the outcome of Create.
@@ -263,7 +313,11 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 		return nil, err
 	}
 	b := &builder{kek: kek, dir: tmp, m: &Manifest{Format: Format, Version: FormatVersion, ID: o.ID, CreatedAt: o.Clock.Now().UTC(),
-		SpaceManVersion: buildinfo.Get().Version, KEKNotice: KEKNotice, SourceDataDir: src.Dir(), Included: Included, Excluded: Excluded}}
+		SpaceManVersion: buildinfo.Get().Version, KEKNotice: KEKNotice, SourceDataDir: src.Dir(), Included: Included, Excluded: Excluded,
+		MemoryFlush: o.MemoryFlush}}
+	if w := o.MemoryFlush.staleWarning(); w != "" {
+		b.m.Warnings = append(b.m.Warnings, w)
+	}
 	if err := b.database(ctx, src); err != nil {
 		return nil, err
 	}

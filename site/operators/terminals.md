@@ -20,7 +20,10 @@ zstd-compressed JSON Lines file.
 
 <Shot name="terminal-replay" alt="Replay of a finished run with restart, play, speed selector, seek bar and download" caption="Replaying a finished run" />
 
-Reading recordings needs `recording:read` (operator and above); deleting central's copy needs `recording:delete` (admin).
+Reading recordings needs `recording:read` (operator and above); deleting central's copy needs `recording:delete` (admin)
+and is possible once the run has ended. Each recording is bounded by the space's `recording_quota_bytes` limit (default
+512 MiB), and the space's `retention_recordings_days` deletes central's copy that many days after the run ended; both
+are on the space's Limits page ([Retention and export](/guide/retention)). Deletions are audited.
 
 ## How recording works
 

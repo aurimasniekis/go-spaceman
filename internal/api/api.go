@@ -8,6 +8,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -65,6 +66,9 @@ type Deps struct {
 	Raw []RawRoute
 	// Ready reports readiness for the public system info.
 	Ready func() bool
+	// ProviderLogoutURL returns where to send the browser after signing out of an SSO session (RP-initiated logout,
+	// ADR-0045), or "". RegisterOIDC sets it; nil: signing out ends only the SpaceMan session.
+	ProviderLogoutURL func(ctx context.Context, providerSlug, postLogoutRedirect string) (string, error)
 }
 
 func (d *Deps) log() *slog.Logger {

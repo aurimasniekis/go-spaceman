@@ -657,6 +657,25 @@
         ],
         "type": "object"
       },
+      "AuditGap": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "oldest": {
+            "description": "The first retained sequence",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "after",
+          "oldest"
+        ],
+        "type": "object"
+      },
       "AuditPage": {
         "additionalProperties": false,
         "properties": {
@@ -669,22 +688,59 @@
             "readOnly": true,
             "type": "string"
           },
+          "gap": {
+            "$ref": "#/components/schemas/AuditGap"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/AuditRecord"
             },
             "type": "array"
           },
+          "next_after": {
+            "description": "Forward paging (after=): the position to store and resume from",
+            "format": "int64",
+            "type": "integer"
+          },
           "next_cursor": {
+            "description": "Newest-first paging: the cursor of the next (older) page",
             "type": [
               "string",
               "null"
             ]
+          },
+          "pruned": {
+            "$ref": "#/components/schemas/AuditPruned"
           }
         },
         "required": [
           "items",
           "next_cursor"
+        ],
+        "type": "object"
+      },
+      "AuditPruned": {
+        "additionalProperties": false,
+        "properties": {
+          "pruned": {
+            "description": "Events deleted by retention so far",
+            "format": "int64",
+            "type": "integer"
+          },
+          "through_at": {
+            "description": "Unix microseconds of the last pruned event",
+            "format": "int64",
+            "type": "integer"
+          },
+          "through_seq": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "through_seq",
+          "through_at",
+          "pruned"
         ],
         "type": "object"
       },
@@ -768,11 +824,19 @@
             "contentEncoding": "base64",
             "type": "string"
           },
+          "head_seq": {
+            "format": "int64",
+            "type": "integer"
+          },
           "ok": {
             "type": "boolean"
           },
           "problem": {
             "type": "string"
+          },
+          "pruned_through": {
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
@@ -1202,6 +1266,9 @@
           "kek_id": {
             "type": "string"
           },
+          "memory_flush": {
+            "$ref": "#/components/schemas/BackupMemoryFlush"
+          },
           "requested_by": {
             "type": "string"
           },
@@ -1274,6 +1341,45 @@
           "stored_bytes",
           "stored",
           "verify_state"
+        ],
+        "type": "object"
+      },
+      "BackupMemoryFlush": {
+        "additionalProperties": false,
+        "properties": {
+          "attempted": {
+            "type": "boolean"
+          },
+          "flushed_spaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "note": {
+            "type": "string"
+          },
+          "seconds": {
+            "description": "How long the flush took",
+            "format": "double",
+            "type": "number"
+          },
+          "stale": {
+            "description": "Spaces whose role memory is possibly stale in this backup",
+            "items": {
+              "$ref": "#/components/schemas/BackupStaleMemory"
+            },
+            "type": "array"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempted",
+          "flushed_spaces",
+          "stale"
         ],
         "type": "object"
       },
@@ -1360,6 +1466,40 @@
           "pending_approvals",
           "open_human_actions",
           "outbox_pending"
+        ],
+        "type": "object"
+      },
+      "BackupStaleMemory": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "node_disconnected",
+              "protocol_too_old",
+              "timed_out",
+              "not_acknowledged"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "space_slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "space_id",
+          "reason"
         ],
         "type": "object"
       },
@@ -7153,6 +7293,7 @@
               "bytes",
               "per_minute",
               "minutes",
+              "days",
               "tokens",
               "usd_cents",
               "percent",
@@ -7345,6 +7486,7 @@
               "bytes",
               "per_minute",
               "minutes",
+              "days",
               "tokens",
               "usd_cents",
               "percent",
@@ -8292,6 +8434,31 @@
         ],
         "type": "object"
       },
+      "LogoutResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/LogoutResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "provider_logout_url": {
+            "description": "Where to send the browser to sign out at the SSO provider too (RP-initiated logout); null when there is none",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "provider_logout_url"
+        ],
+        "type": "object"
+      },
       "MCPGrantBody": {
         "additionalProperties": false,
         "properties": {
@@ -9103,6 +9270,10 @@
           "enabled": {
             "type": "boolean"
           },
+          "end_session_enabled": {
+            "description": "Signing out of an SSO session also sends the browser to the provider's end_session_endpoint (RP-initiated logout), when it advertises one",
+            "type": "boolean"
+          },
           "groups_claim": {
             "description": "Claim holding the user's groups; a dotted path walks nested objects (Porch: porch.groups)",
             "type": "string"
@@ -9174,6 +9345,7 @@
           "ca_bundle_pem",
           "stepup_fallback",
           "acr_values",
+          "end_session_enabled",
           "enabled",
           "version",
           "created_at",
@@ -9224,6 +9396,10 @@
             "type": "string"
           },
           "enabled": {
+            "type": "boolean"
+          },
+          "end_session_enabled": {
+            "description": "RP-initiated logout at the provider when signing out of an SSO session",
             "type": "boolean"
           },
           "groups_claim": {
@@ -9279,6 +9455,74 @@
           "slug",
           "display_name"
         ],
+        "type": "object"
+      },
+      "OidcSignInSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/OidcSignInSettings.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "direct_provider": {
+            "description": "Slug of the provider the sign-in page goes to directly; empty: the page offers every sign-in method",
+            "type": "string"
+          },
+          "local_login_disabled": {
+            "description": "SSO-only enforcement: password sign-in is refused (break-glass recovery still works)",
+            "type": "boolean"
+          },
+          "sso_admins": {
+            "description": "Enabled global administrators (manual grant) with a linked identity on an enabled provider",
+            "format": "int64",
+            "type": "integer"
+          },
+          "sso_only_ready": {
+            "description": "Whether password sign-in may be turned off now",
+            "type": "boolean"
+          },
+          "tested_providers": {
+            "description": "Enabled providers with a recorded successful test login",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "local_login_disabled",
+          "direct_provider",
+          "tested_providers",
+          "sso_admins",
+          "sso_only_ready"
+        ],
+        "type": "object"
+      },
+      "OidcSignInSettingsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/OidcSignInSettingsInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "direct_provider": {
+            "description": "Slug of an enabled provider, or empty to turn direct sign-in off",
+            "maxLength": 32,
+            "type": "string"
+          },
+          "local_login_disabled": {
+            "description": "Turn password sign-in off (SSO-only) or back on",
+            "type": "boolean"
+          }
+        },
         "type": "object"
       },
       "OidcTestResult": {
@@ -11826,6 +12070,149 @@
         ],
         "type": "object"
       },
+      "RetentionDefault": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "description": "0: kept until deleted or the space is purged",
+            "format": "int64",
+            "type": "integer"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "days"
+        ],
+        "type": "object"
+      },
+      "RetentionPass": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RetentionPass.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "deleted": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "Deletions by kind: recordings, transcripts, attachments, human_actions, audit_events",
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "requested_by": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "succeeded",
+              "failed",
+              "interrupted"
+            ],
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "scheduled",
+              "manual"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "state",
+          "started_at",
+          "deleted"
+        ],
+        "type": "object"
+      },
+      "RetentionStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/RetentionStatus.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "audit_days": {
+            "description": "Installation-wide audit retention (0: kept forever)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "audit_pruned": {
+            "$ref": "#/components/schemas/AuditPruned",
+            "description": "The audit log's pruned prefix, when retention deleted audit events"
+          },
+          "blocked": {
+            "type": "string"
+          },
+          "busy": {
+            "type": "boolean"
+          },
+          "defaults": {
+            "description": "Installation defaults of the per-space retention periods (spaces override them in their limits)",
+            "items": {
+              "$ref": "#/components/schemas/RetentionDefault"
+            },
+            "type": "array"
+          },
+          "interval": {
+            "type": "string"
+          },
+          "next_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "passes": {
+            "description": "Recent passes, newest first",
+            "items": {
+              "$ref": "#/components/schemas/RetentionPass"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "interval",
+          "audit_days",
+          "defaults",
+          "busy",
+          "passes"
+        ],
+        "type": "object"
+      },
       "Revoke-approvalRequest": {
         "additionalProperties": false,
         "properties": {
@@ -12946,6 +13333,98 @@
         ],
         "type": "object"
       },
+      "SpaceexportCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "human_actions": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "human_comments": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "inbox_items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "messages": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tasks": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "inbox_items",
+          "tasks",
+          "human_actions",
+          "human_comments",
+          "messages",
+          "attachments"
+        ],
+        "type": "object"
+      },
+      "SpaceexportSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SpaceexportSummary.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/SpaceexportCounts"
+          },
+          "encrypted": {
+            "description": "Always false: exports are plaintext",
+            "type": "boolean"
+          },
+          "estimated_bytes": {
+            "description": "Estimated uncompressed size of the archive",
+            "format": "int64",
+            "type": "integer"
+          },
+          "format": {
+            "type": "string"
+          },
+          "max_bytes": {
+            "description": "The space's export_max_bytes limit",
+            "format": "int64",
+            "type": "integer"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "warning": {
+            "type": "string"
+          },
+          "within_limit": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "space_id",
+          "format",
+          "counts",
+          "estimated_bytes",
+          "max_bytes",
+          "within_limit",
+          "encrypted",
+          "warning"
+        ],
+        "type": "object"
+      },
       "Stop-runRequest": {
         "additionalProperties": false,
         "properties": {
@@ -13095,6 +13574,9 @@
           "bootstrapped": {
             "type": "boolean"
           },
+          "direct_provider": {
+            "type": "string"
+          },
           "has_admin": {
             "type": "boolean"
           },
@@ -13113,7 +13595,8 @@
           "ready",
           "bootstrapped",
           "has_admin",
-          "local_login_disabled"
+          "local_login_disabled",
+          "direct_provider"
         ],
         "type": "object"
       },
@@ -14808,6 +15291,7 @@
     },
     "/audit": {
       "get": {
+        "description": "Without after, events are returned newest first and paged with cursor. With after (a sequence number, 0 for the start), events with a higher sequence are returned oldest first; next_after is the position to store and resume from. When audit retention deleted events after that position, gap says so (after, oldest retained sequence).",
         "operationId": "list-audit",
         "parameters": [
           {
@@ -14830,6 +15314,17 @@
               "maximum": 200,
               "minimum": 1,
               "type": "integer"
+            }
+          },
+          {
+            "description": "Forward paging: return events after this sequence, oldest first (0: from the start)",
+            "explode": false,
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "description": "Forward paging: return events after this sequence, oldest first (0: from the start)",
+              "pattern": "^[0-9]{1,19}$",
+              "type": "string"
             }
           },
           {
@@ -14882,7 +15377,7 @@
             "description": "Error"
           }
         },
-        "summary": "Audit events, newest first",
+        "summary": "Audit events, newest first or forward from a durable position",
         "tags": [
           "audit"
         ]
@@ -15055,10 +15550,18 @@
     },
     "/auth/logout": {
       "post": {
+        "description": "For an SSO session whose provider has RP-initiated logout enabled and advertises an end_session_endpoint, provider_logout_url is where the browser goes next to sign out at the provider too (that provider only; not a global logout).",
         "operationId": "logout",
         "responses": {
-          "204": {
-            "description": "No Content",
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResult"
+                }
+              }
+            },
+            "description": "OK",
             "headers": {
               "Set-Cookie": {
                 "schema": {
@@ -17913,6 +18416,78 @@
         ]
       }
     },
+    "/oidc/settings": {
+      "get": {
+        "description": "Also reports the preconditions of SSO-only enforcement (a tested enabled provider and an SSO-capable global administrator).",
+        "operationId": "get-sign-in-settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcSignInSettings"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Sign-in settings: SSO-only enforcement and the direct provider",
+        "tags": [
+          "sign-in providers"
+        ]
+      },
+      "patch": {
+        "description": "Turning password sign-in off (SSO-only) needs an enabled provider with a successful test login and at least one enabled global administrator with a linked identity on an enabled provider; while it is off, changes that would break either are refused. Break-glass recovery is unaffected. The direct provider must be enabled; omitted fields stay unchanged.",
+        "operationId": "set-sign-in-settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OidcSignInSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcSignInSettings"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change the sign-in settings",
+        "tags": [
+          "sign-in providers"
+        ]
+      }
+    },
     "/prompt-diff": {
       "get": {
         "operationId": "diff-prompt-versions",
@@ -18325,6 +18900,70 @@
         "summary": "Publish an earlier version's content as a new version",
         "tags": [
           "prompts"
+        ]
+      }
+    },
+    "/retention": {
+      "get": {
+        "description": "Per-space retention periods are limits (retention_*_days; see a space's limits for its effective values). One daily pass deletes what is older; it never deletes what an open item uses, and it does not run while a restore is unacknowledged.",
+        "operationId": "get-retention",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Retention: installation defaults, audit retention, the next daily pass and recent passes",
+        "tags": [
+          "retention"
+        ]
+      }
+    },
+    "/retention/run": {
+      "post": {
+        "description": "Deletions are audited and recorded in the change feed. Refused (409) while a pass runs or a restore is unacknowledged.",
+        "operationId": "run-retention",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionPass"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Run a retention pass now and return it when it finished",
+        "tags": [
+          "retention"
         ]
       }
     },
@@ -19573,6 +20212,49 @@
         "summary": "Dream now",
         "tags": [
           "dreams"
+        ]
+      }
+    },
+    "/spaces/{space_id}/export/summary": {
+      "get": {
+        "description": "The archive itself is GET /spaces/{space_id}/export (a ZIP of JSON Lines and attachment files). It is NOT encrypted; see warning.",
+        "operationId": "get-space-export",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceexportSummary"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "What a space export would hold now: counts, estimated size and the space's export limit",
+        "tags": [
+          "spaces"
         ]
       }
     },
@@ -23457,6 +24139,7 @@
     },
     "/spaces/{space_id}/runs/{run_id}/recording": {
       "delete": {
+        "description": "The run must have ended (409 otherwise). The deletion is audited and recorded in the change feed; the node's own copy is not affected.",
         "operationId": "delete-recording",
         "parameters": [
           {

@@ -728,11 +728,19 @@ test('documentation screenshots', async ({ page, browser }) => {
 
   // Limits (SM-LIMIT-001): overrides with a token budget; Schedules (SM-LIMIT-003): a weekday review in Vilnius time and
   // an hourly task.
+  // Retention periods are limits too (ADR-0045): 90 days for attachments of finished items, 180 for finished human actions.
   await api.call('PUT', `/spaces/${payments.id}/limits`, { values: { max_concurrent_runs: 4, max_tool_calls_per_run: 2000, budget_tokens_24h: 5_000_000,
-    budget_cost_cents_24h: 5000, task_deadline_minutes: 240 }, on_lower: 'drain' })
+    budget_cost_cents_24h: 5000, task_deadline_minutes: 240, retention_attachments_days: 90, retention_human_actions_days: 180 }, on_lower: 'drain' })
   await capture(page, 'space-limits', async () => {
     await page.goto(`/spaces/${payments.id}/limits`)
     await expect(page.getByText('Not a hard currency limit', { exact: true })).toBeVisible()
+    await expect(page.getByText('Attachment retention')).toBeVisible()
+  })
+  // Space export (ADR-0045): what the archive would hold, the export limit and the plaintext warning.
+  await capture(page, 'space-export', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByRole('button', { name: 'Export', exact: true }).click()
+    await expect(page.getByText('The archive is not encrypted')).toBeVisible()
   })
   await api.call('POST', `/spaces/${payments.id}/schedules`, { name: 'weekday review', description: 'Morning look at the queue and open incidents', kind: 'cron',
     cron: '0 9 * * 1-5', timezone: 'Europe/Vilnius', missed: 'run_once', target: 'inbox', title: 'Morning review',
@@ -812,6 +820,7 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'sign-in-providers', async () => {
     await page.goto('/sign-in-providers')
     await expect(page.getByText('payments-oncall')).toBeVisible()
+    await expect(page.getByText('Sign-in settings')).toBeVisible() // SSO only and direct sign-in (ADR-0045)
   })
   await capture(page, 'sign-in-provider-form', async () => {
     await page.goto('/sign-in-providers')
@@ -826,6 +835,16 @@ test('documentation screenshots', async ({ page, browser }) => {
     await capture(anon, 'sign-in-sso', async () => {
       await anon.goto('/login')
       await expect(anon.getByRole('link', { name: 'Sign in with Porch' })).toBeVisible()
+    })
+    // After signing out of an SSO session whose provider has RP-initiated logout on (ADR-0045): the page stays put and
+    // offers the provider's sign-out. The marker is what the sign-out stores; the fictional issuer is never contacted.
+    await capture(anon, 'sign-in-signed-out', async () => {
+      await anon.evaluate(() => {
+        sessionStorage.setItem('spaceman.signed_out', '1')
+        sessionStorage.setItem('spaceman.provider_logout', 'https://id.example.com/oauth2/end_session?client_id=spaceman-acme')
+      })
+      await anon.goto('/login')
+      await expect(anon.getByRole('link', { name: 'Sign out at the provider' })).toBeVisible()
     })
     await ctx.close()
   }
@@ -849,6 +868,7 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/backups')
     await expect(page.getByText(made.id)).toBeVisible()
     await expect(page.getByText(/^verified/).first()).toBeVisible()
+    await expect(page.getByText('Next daily pass')).toBeVisible() // the retention card (ADR-0045)
   })
   mkdirSync(join(process.cwd(), 'test-results'), { recursive: true })
   writeFileSync(join(process.cwd(), 'test-results', 'a11y-report.txt'), a11y.join('\n') + '\n')

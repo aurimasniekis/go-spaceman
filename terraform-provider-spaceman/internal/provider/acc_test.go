@@ -766,6 +766,7 @@ func TestAccKnowledgeAndDreams(t *testing.T) {
 }
 
 func oidcHCL(sfx, secret string, version int, display string) string {
+	endSession := version > 1 // the second step turns RP-initiated logout on (ADR-0045)
 	return fmt.Sprintf(`
 resource "spaceman_oidc_provider" "p" {
   slug                     = "tf%[1]s"
@@ -776,6 +777,7 @@ resource "spaceman_oidc_provider" "p" {
   client_secret_wo_version = %[3]d
   groups_claim             = "groups"
   provisioning             = "jit"
+  end_session_enabled      = %[5]t
   jit = {
     email_domains = ["example.com"]
   }
@@ -787,7 +789,7 @@ resource "spaceman_oidc_group_mapping" "m" {
   role        = "admin"
   domain      = "*"
 }
-`, sfx, secret, version, display)
+`, sfx, secret, version, display, endSession)
 }
 
 // TestAccOIDC covers sign-in providers (write-only client secret) and group mappings.
@@ -801,6 +803,7 @@ func TestAccOIDC(t *testing.T) {
 				resource.TestCheckResourceAttr("spaceman_oidc_provider.p", "has_client_secret", "true"),
 				resource.TestCheckResourceAttr("spaceman_oidc_provider.p", "scopes.#", "3"),
 				resource.TestCheckResourceAttr("spaceman_oidc_provider.p", "jit.email_domains.0", "example.com"),
+				resource.TestCheckResourceAttr("spaceman_oidc_provider.p", "end_session_enabled", "false"),
 				resource.TestCheckResourceAttr("spaceman_oidc_group_mapping.m", "role", "admin"),
 			),
 		},
@@ -809,6 +812,7 @@ func TestAccOIDC(t *testing.T) {
 			Check: resource.ComposeAggregateTestCheckFunc(
 				resource.TestCheckResourceAttr("spaceman_oidc_provider.p", "has_client_secret", "false"),
 				resource.TestCheckResourceAttr("spaceman_oidc_provider.p", "display_name", "Example SSO renamed"),
+				resource.TestCheckResourceAttr("spaceman_oidc_provider.p", "end_session_enabled", "true"),
 			),
 		},
 		resource.TestStep{Config: oidcHCL(sfx, "", 2, "Example SSO renamed"), PlanOnly: true},

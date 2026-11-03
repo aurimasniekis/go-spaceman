@@ -42,6 +42,8 @@ type remote struct {
 	client   *http.Client
 	provider *gooidc.Provider
 	keys     *keySet
+	// endSession is the provider's end_session_endpoint (RP-initiated logout), "" when it advertises none.
+	endSession string
 }
 
 // denyPrivate reports whether an IP is loopback, private, link-local, CGNAT, unspecified or multicast.
@@ -118,19 +120,24 @@ func (svc *Service) discover(ctx context.Context, p *Provider) (*remote, error) 
 		return nil, ErrProviderUnavailable
 	}
 	var doc struct {
-		JWKSURI string `json:"jwks_uri"`
+		JWKSURI    string `json:"jwks_uri"`
+		EndSession string `json:"end_session_endpoint"`
 	}
 	if err := prov.Claims(&doc); err != nil {
 		return nil, ErrProviderUnavailable
 	}
 	ep := prov.Endpoint()
-	for name, u := range map[string]string{"authorization_endpoint": ep.AuthURL, "token_endpoint": ep.TokenURL, "jwks_uri": doc.JWKSURI} {
+	for name, u := range map[string]string{"authorization_endpoint": ep.AuthURL, "token_endpoint": ep.TokenURL, "jwks_uri": doc.JWKSURI,
+		"end_session_endpoint": doc.EndSession} {
+		if u == "" && name == "end_session_endpoint" {
+			continue // optional: without it, signing out ends only the SpaceMan session
+		}
 		if err := svc.checkEndpoint(p, u); err != nil {
 			svc.log.Warn("oidc endpoint rejected", "provider", p.Slug, "endpoint", name, "error", err.Error())
 			return nil, apperr.New(apperr.CodeUnavailable, "identity provider %s is not acceptable: %v", name, err)
 		}
 	}
-	r = &remote{version: p.Version, client: client, provider: prov,
+	r = &remote{version: p.Version, client: client, provider: prov, endSession: doc.EndSession,
 		keys: &keySet{url: doc.JWKSURI, client: client, minRefetch: svc.opts.JWKSMinRefetch, now: svc.opts.Clock.Now}}
 	svc.mu.Lock()
 	svc.remote[p.ID] = r

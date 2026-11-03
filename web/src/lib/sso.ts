@@ -25,3 +25,61 @@ const MESSAGES: Record<string, string> = {
 export function ssoErrorMessage(code: string): string {
   return MESSAGES[code] ?? 'Single sign-on failed. Try again.'
 }
+
+const SIGNED_OUT_KEY = 'spaceman.signed_out'
+const PROVIDER_LOGOUT_KEY = 'spaceman.provider_logout'
+
+function store(key: string, value: string | null) {
+  try {
+    if (value === null) window.sessionStorage.removeItem(key)
+    else window.sessionStorage.setItem(key, value)
+  } catch {
+    // Not persisted: the sign-in page may continue to the direct provider, and no provider sign-out is offered.
+  }
+}
+
+function load(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * After a sign-out (ported from Hallpass): the sign-in page stays put instead of continuing to the direct provider, which
+ * would sign straight back in, and offers the provider's RP-initiated logout URL when the server returned one.
+ */
+export function markSignedOut(providerLogoutUrl?: string | null) {
+  store(SIGNED_OUT_KEY, '1')
+  store(PROVIDER_LOGOUT_KEY, safeExternalUrl(providerLogoutUrl))
+}
+
+/** Clears the signed-out mark (the person chose to sign in again or left for the provider). */
+export function clearSignedOut() {
+  store(SIGNED_OUT_KEY, null)
+  store(PROVIDER_LOGOUT_KEY, null)
+}
+
+export function wasSignedOut(): boolean {
+  return load(SIGNED_OUT_KEY) === '1'
+}
+
+/** The provider logout URL to offer after a sign-out, or null. */
+export function pendingProviderLogout(): string | null {
+  return safeExternalUrl(load(PROVIDER_LOGOUT_KEY))
+}
+
+/** Only absolute https URLs (http on localhost, for development) without credentials are followed to a provider. */
+export function safeExternalUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  try {
+    const u = new URL(raw)
+    if (u.username || u.password) return null
+    if (u.protocol === 'https:') return u.toString()
+    if (u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) return u.toString()
+  } catch {
+    return null
+  }
+  return null
+}

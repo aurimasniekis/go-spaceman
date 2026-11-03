@@ -101,7 +101,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
-| `GET` | `/audit` | `list-audit` | Audit events, newest first |
+| `GET` | `/audit` | `list-audit` | Audit events, newest first or forward from a durable position |
 | `POST` | `/audit/verify` | `verify-audit-chain` | Verify the audit hash chain |
 
 ### nodes
@@ -123,6 +123,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}` | `purge-space` | Permanently delete an archived space's records (never upstream repositories) |
 | `GET` | `/spaces/{space_id}` | `get-space` | Get a space |
 | `PUT` | `/spaces/{space_id}` | `update-space` | Edit a space's profile |
+| `GET` | `/spaces/{space_id}/export/summary` | `get-space-export` | What a space export would hold now: counts, estimated size and the space's export limit |
 | `POST` | `/spaces/{space_id}/state` | `set-space-state` | Pause (hold, interrupt, emergency), resume, archive or restore a space |
 
 ### runs
@@ -389,6 +390,13 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/spaces/{space_id}/repositories/{repository_id}` | `update-space-repository` | Edit a repository |
 | `POST` | `/spaces/{space_id}/repositories/sync` | `sync-space-repositories` | Ask the node to clone, fetch and report a space's repositories |
 
+### retention
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/retention` | `get-retention` | Retention: installation defaults, audit retention, the next daily pass and recent passes |
+| `POST` | `/retention/run` | `run-retention` | Run a retention pass now and return it when it finished |
+
 ### roles
 
 | Method | Path | Operation | Summary |
@@ -430,6 +438,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/oidc/providers/{provider_id}/mappings` | `add-oidc-mapping` | Map a groups-claim value to a role in a domain |
 | `DELETE` | `/oidc/providers/{provider_id}/mappings/{mapping_id}` | `delete-oidc-mapping` | Remove a group mapping |
 | `GET` | `/oidc/providers/{provider_id}/test-login` | `get-oidc-test-login` | Your latest test login's claim-mapping preview |
+| `GET` | `/oidc/settings` | `get-sign-in-settings` | Sign-in settings: SSO-only enforcement and the direct provider |
+| `PATCH` | `/oidc/settings` | `set-sign-in-settings` | Change the sign-in settings |
 
 ### skills
 

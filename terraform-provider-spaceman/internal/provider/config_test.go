@@ -102,7 +102,7 @@ func TestLimitAttributes(t *testing.T) {
 		}
 		seen[l.key] = true
 	}
-	if len(seen) != 13 || seen["max_top_level_tasks"] {
+	if len(seen) != 19 || seen["max_top_level_tasks"] {
 		t.Fatalf("limits = %v", seen)
 	}
 }

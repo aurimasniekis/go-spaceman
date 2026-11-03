@@ -71,7 +71,7 @@ Configures operator authentication (SM-AUTH-001).
 | `auth.reauth_window` | `5m0s` | `SPACEMAN_AUTH_REAUTH_WINDOW` | How long a step-up re-authentication counts for sensitive actions (1m to 1h). |
 | `auth.password_min_length` | `12` | `SPACEMAN_AUTH_PASSWORD_MIN_LENGTH` | The shortest password accepted (at least 12 in production). |
 | `auth.require_totp` | `true` | `SPACEMAN_AUTH_REQUIRE_TOTP` | Makes TOTP mandatory for every password account. Production requires it; privileged accounts need TOTP even in development mode. |
-| `auth.local_login_disabled` | `false` | `SPACEMAN_AUTH_LOCAL_LOGIN_DISABLED` | Accepted but not read by this build: password sign-in is never disabled by configuration (docs/LIMITATIONS.md). |
+| `auth.local_login_disabled` | `false` | `SPACEMAN_AUTH_LOCAL_LOGIN_DISABLED` | Accepted but not read: password sign-in is turned off (SSO-only) at run time on the Sign-in providers page or with `spaceman oidc settings set --sso-only`, which first checks that a tested provider and an administrator who can sign in with SSO exist (ADR-0045). |
 | `auth.stream_revalidate` | `30s` | `SPACEMAN_AUTH_STREAM_REVALIDATE` | How often an open live stream (change feed, terminal) and a node connection re-check their credential and authorization. Revocations committed by central end affected streams at once; this interval bounds everything else (expiry, idle timeout, changes made while central was stopped). 1 s to 60 s, default 30 s (SM-AUTH-007, ADR-0033). |
 
 ### `nodes`
@@ -169,6 +169,20 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.budget_cost_cents_24h` | `0` | `SPACEMAN_LIMITS_BUDGET_COST_CENTS_24H` | A space's estimated-cost budget over the last 24 hours in US cents (0: none). Estimates come from the harnesses and arrive late: never a hard currency limit. |
 | `limits.budget_tokens_per_run` | `0` | `SPACEMAN_LIMITS_BUDGET_TOKENS_PER_RUN` | Warns when one run's reported tokens pass it (0: none). Runs are never stopped for it. |
 | `limits.budget_warn_percent` | `80` | `SPACEMAN_LIMITS_BUDGET_WARN_PERCENT` | When a budget warning is sent (1-100, default 80). |
+| `limits.retention_recordings_days` | `0` | `SPACEMAN_LIMITS_RETENTION_RECORDINGS_DAYS` | Deletes central's copy of a run's terminal recording this many days after the run ended (0: keep until deleted or the space is purged, the default; at most 36500). The node's local copy is separate. |
+| `limits.retention_transcripts_days` | `0` | `SPACEMAN_LIMITS_RETENTION_TRANSCRIPTS_DAYS` | Deletes a run's stored native transcript this many days after it was stored (0: keep). |
+| `limits.retention_attachments_days` | `0` | `SPACEMAN_LIMITS_RETENTION_ATTACHMENTS_DAYS` | Deletes attachments older than this many days once every item that uses them is finished (done or rejected inbox items without an open task or human action). An attachment that an open item uses is never deleted (0: keep). Unreferenced uploads are collected after a day regardless. |
+| `limits.retention_human_actions_days` | `0` | `SPACEMAN_LIMITS_RETENTION_HUMAN_ACTIONS_DAYS` | Deletes finished human actions (resolved, cancelled, expired) this many days after they finished, with their comments and notifications, unless an open task, an open follow-up or an undelivered response still refers to them (0: keep). |
+| `limits.recording_quota_bytes` | `536870912` | `SPACEMAN_LIMITS_RECORDING_QUOTA_BYTES` | Bounds one run's terminal recording on the node (1 MiB-64 GiB, default 512 MiB). When it is reached the recording ends with a truncation record; the run is unaffected. |
+| `limits.export_max_bytes` | `2147483648` | `SPACEMAN_LIMITS_EXPORT_MAX_BYTES` | Bounds one space export archive (1 MiB-64 GiB, default 2 GiB): a larger export is refused. |
+
+### `retention`
+
+Holds the installation-wide retention that cannot be set per space (ADR-0045). Per-space retention periods are limits (limits.retention_*_days, overridable per space); one daily pass applies them all.
+
+| Key | Default | Environment | Description |
+|---|---|---|---|
+| `retention.audit_days` | `0` | `SPACEMAN_RETENTION_AUDIT_DAYS` | Deletes audit events older than this many days in the daily retention pass (0: keep forever, the default; otherwise 30-36500). The hash chain keeps verifying from the first retained event, and a reader whose cursor is older is told that events were pruned. Audit is installation-wide: it cannot be set per space. |
 
 ### `shutdown`
 

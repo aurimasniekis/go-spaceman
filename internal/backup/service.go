@@ -60,8 +60,12 @@ type ServiceOptions struct {
 	MaxAge   time.Duration
 	// FirstDelay is the wait before the first scheduled backup when none succeeded yet (default 5 minutes).
 	FirstDelay time.Duration
-	Clock      clock.Clock
-	Log        *slog.Logger
+	// PrepareMemory asks the connected nodes to checkpoint and sync role memory before each backup and reports, within
+	// its own bounded wait, which spaces' memory is possibly stale (SM-MEM-005). It runs outside any transaction; nil
+	// records that no flush was attempted.
+	PrepareMemory func(ctx context.Context) *MemoryFlush
+	Clock         clock.Clock
+	Log           *slog.Logger
 }
 
 // Service makes, lists, verifies and prunes backups while central runs, and schedules them with one timer.
@@ -119,6 +123,8 @@ type Item struct {
 	VerifyState   string     `json:"verify_state" enum:",running,ok,failed"`
 	VerifiedAt    *time.Time `json:"verified_at,omitempty"`
 	VerifyError   string     `json:"verify_error,omitempty"`
+	// MemoryFlush is how role memory was flushed before the snapshot (from the manifest; absent in older backups).
+	MemoryFlush *MemoryFlush `json:"memory_flush,omitempty"`
 }
 
 // Status is the backup overview.
@@ -206,6 +212,7 @@ func annotate(it *Item, e *Entry) {
 	if m := e.Manifest; m != nil {
 		t := m.CreatedAt
 		it.CreatedAt, it.SchemaVersion, it.KEKID, it.Counts, it.Files, it.Bytes = &t, m.SchemaVersion, m.KEKID, &m.Counts, int64(len(m.Files)), m.Bytes
+		it.MemoryFlush = m.MemoryFlush
 	}
 }
 
@@ -283,6 +290,11 @@ func (s *Service) Wait() { s.wg.Wait() }
 func (s *Service) create(ctx context.Context, id string, actor audit.Actor) {
 	log := s.o.Log.With(slog.String("backup.id", id))
 	var m *Manifest
+	// Role memory first, before the database snapshot: central then holds what the nodes had (SM-MEM-005).
+	flush := s.prepareMemory(ctx)
+	if n := len(flush.Stale); n > 0 {
+		log.Warn("role memory possibly stale in this backup", slog.Int("spaces", n))
+	}
 	err := func() error {
 		staging := s.o.Target.StagingDir()
 		if err := os.MkdirAll(staging, 0o700); err != nil {
@@ -298,7 +310,7 @@ func (s *Service) create(ctx context.Context, id string, actor audit.Actor) {
 			cfg = s.o.Config()
 		}
 		dest := filepath.Join(staging, id)
-		res, err := Create(ctx, src, s.kek, dest, Options{ID: id, Sources: s.o.Sources, Config: cfg, Clock: s.o.Clock})
+		res, err := Create(ctx, src, s.kek, dest, Options{ID: id, Sources: s.o.Sources, Config: cfg, Clock: s.o.Clock, MemoryFlush: flush})
 		if err != nil {
 			return err
 		}
@@ -331,7 +343,8 @@ func (s *Service) create(ctx context.Context, id string, actor audit.Actor) {
 			outcome = audit.OutcomeFailure
 		}
 		_, err := s.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "backup.finished", Target: audit.Target{Type: "backup", ID: id}, Outcome: outcome,
-			Details: map[string]any{"files": p.Files, "bytes": p.Bytes, "stored_bytes": p.StoredBytes}})
+			Details: map[string]any{"files": p.Files, "bytes": p.Bytes, "stored_bytes": p.StoredBytes, "memory_flush_attempted": flush.Attempted,
+				"memory_flushed_spaces": len(flush.Flushed), "memory_stale_spaces": len(flush.Stale)}})
 		return err
 	})
 	if err == nil {
@@ -341,6 +354,24 @@ func (s *Service) create(ctx context.Context, id string, actor audit.Actor) {
 			log.Info("backup retention deleted old backups", slog.Int("count", n))
 		}
 	}
+}
+
+// prepareMemory runs the PrepareMemory hook, or records that none is configured.
+func (s *Service) prepareMemory(ctx context.Context) *MemoryFlush {
+	if s.o.PrepareMemory == nil {
+		return &MemoryFlush{Note: "no node connection: role memory was not flushed before the snapshot", Flushed: []string{}, Stale: []StaleMemory{}}
+	}
+	f := s.o.PrepareMemory(ctx)
+	if f == nil {
+		f = &MemoryFlush{Note: "role memory was not flushed before the snapshot", Flushed: []string{}, Stale: []StaleMemory{}}
+	}
+	if f.Flushed == nil {
+		f.Flushed = []string{}
+	}
+	if f.Stale == nil {
+		f.Stale = []StaleMemory{}
+	}
+	return f
 }
 
 // StartVerify verifies backup id in the background with the KEK (decrypting every object and checking the database

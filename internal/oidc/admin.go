@@ -119,7 +119,8 @@ var ErrLastSignInMethod = apperr.New(apperr.CodePrecondition, "this is your only
 
 // UnlinkIdentity removes a linked identity, drops the user's SSO-sourced grants (the mappings of another linked
 // provider restore them at the next SSO sign-in) and revokes the user's sessions (Hallpass). self marks a user
-// unlinking their own identity, which is refused when it is their last way to sign in.
+// unlinking their own identity, which is refused when it is their last way to sign in. Under SSO-only enforcement,
+// unlinking the last SSO administrator's identity is refused (Hallpass HP-AUTH-015).
 func (svc *Service) UnlinkIdentity(ctx context.Context, actor audit.Actor, userID, issuer, subject string, self bool) error {
 	err := svc.s.W().TxNamed(ctx, "oidc.unlink", func(tx *store.Tx) error {
 		if self {
@@ -141,6 +142,9 @@ func (svc *Service) UnlinkIdentity(ctx context.Context, actor audit.Actor, userI
 			return apperr.New(apperr.CodeNotFound, "identity not found")
 		}
 		if err := svc.auth.DropSSOGrantsTx(ctx, tx, userID); err != nil {
+			return err
+		}
+		if err := checkSSOOnlyStillSafe(ctx, tx); err != nil {
 			return err
 		}
 		svc.auth.PublishUserChangedTx(tx, userID)
