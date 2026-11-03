@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,7 +46,7 @@ func TestClaudeUsage(t *testing.T) {
 	}
 	// Codex keeps no verified usage: unknown, not zero.
 	a := memAgent(t)
-	rep := a.usageReport(runRow{RunID: "run_x", Harness: "codex"}, true)
+	rep := a.usageReport(context.Background(), runRow{RunID: "run_x", Harness: "codex"}, true)
 	if rep.Source != proto.UsageUnavailable || len(rep.Models) != 0 || rep.Note == "" {
 		t.Fatalf("codex: %+v", rep)
 	}

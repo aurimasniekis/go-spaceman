@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Group, Menu, SimpleGrid, Stack, Table, Tabs, Text, Title, Tooltip } from '@mantine/core'
-import { IconChevronDown, IconPencil, IconPlayerPause, IconPlayerPlay, IconRocket } from '@tabler/icons-react'
+import { IconArrowsExchange, IconChevronDown, IconPencil, IconPlayerPause, IconPlayerPlay, IconRocket } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -14,8 +14,10 @@ import { SpaceRolesCard } from '@/features/catalog/SpaceRolesCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
 import { LaunchRunModal } from '@/features/spaces/LaunchRunModal'
 import { SpaceFormModal } from '@/features/spaces/SpaceFormModal'
+import { RelocateModal } from '@/features/spaces/RelocateModal'
+import { RelocationCard } from '@/features/spaces/RelocationCard'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
-import { atLeast, roleIn } from '@/lib/access'
+import { atLeast, hasGlobal, roleIn } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 
@@ -36,7 +38,10 @@ function SpacePage() {
   const me = useMe().data
   const [launching, setLaunching] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [relocating, setRelocating] = useState(false)
   const role = roleIn(me, spaceId)
+  // Relocation is global administration (space:relocate); the API enforces it.
+  const canMove = hasGlobal(me, 'admin')
 
   if (space.error) return <ErrorAlert error={space.error} />
   if (!space.data) return null
@@ -62,6 +67,9 @@ function SpacePage() {
         actions={
           <>
             {atLeast(role, 'admin') && <Button variant="default" leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>Edit</Button>}
+            {canMove && s.state !== 'archived' && !s.desired_node_id && (
+              <Button variant="default" leftSection={<IconArrowsExchange size={14} />} onClick={() => setRelocating(true)}>Relocate</Button>
+            )}
             {atLeast(role, 'operator') && s.state === 'active' && (
               <Menu position="bottom-end">
                 <Menu.Target>
@@ -95,7 +103,9 @@ function SpacePage() {
             <Text fw={500}>{node?.name ?? s.node_id}</Text>
             {node && <NodeState node={node} />}
           </Group>
-          {s.desired_node_id && s.desired_node_id !== s.node_id && <Text size="xs" c="owlYellow">Relocating to {s.desired_node_id}</Text>}
+          {s.desired_node_id && s.desired_node_id !== s.node_id && (
+            <Text size="xs" c="owlYellow">Relocating to {nodes.data?.find((n) => n.id === s.desired_node_id)?.name ?? s.desired_node_id} (effective: this node)</Text>
+          )}
         </Card>
         <Card>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Execution lease</Text>
@@ -114,6 +124,7 @@ function SpacePage() {
           <Text fw={600} size="xl" mt={2}>{active.length}</Text>
         </Card>
       </SimpleGrid>
+      <RelocationCard spaceId={s.id} canMove={canMove} />
       <SpaceAccountsCard spaceId={s.id} />
       <SpaceRolesCard spaceId={s.id} />
       <SpaceUsageCard spaceId={s.id} />
@@ -178,6 +189,7 @@ function SpacePage() {
 
       <LaunchRunModal space={s} node={node} opened={launching} onClose={() => setLaunching(false)} />
       {editing && <SpaceFormModal space={s} opened onClose={() => setEditing(false)} />}
+      {relocating && <RelocateModal space={s} opened onClose={() => setRelocating(false)} />}
     </>
   )
 }

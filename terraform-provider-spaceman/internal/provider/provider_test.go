@@ -244,23 +244,21 @@ func planString(t *testing.T, m planmodifier.String, state, plan types.String) d
 	return resp.Diagnostics
 }
 
-// A node_id change is refused at plan time (no replacement) until relocation exists (SM-API-005, SM-INV-003).
-func TestRelocationRefusedAtPlanTime(t *testing.T) {
-	if d := planString(t, relocationRefusal, types.StringNull(), types.StringValue("nod_a")); d.HasError() {
+// An identifying field the API cannot change is refused at plan time, never replaced (ADR-0035).
+func TestFixedFieldRefusedAtPlanTime(t *testing.T) {
+	fixed := fixedAfterCreate("A space's slug")
+	if d := planString(t, fixed, types.StringNull(), types.StringValue("a")); d.HasError() {
 		t.Fatalf("create: %v", d)
 	}
-	if d := planString(t, relocationRefusal, types.StringValue("nod_a"), types.StringValue("nod_a")); d.HasError() {
+	if d := planString(t, fixed, types.StringValue("a"), types.StringValue("a")); d.HasError() {
 		t.Fatalf("unchanged: %v", d)
 	}
-	if d := planString(t, relocationRefusal, types.StringValue("nod_a"), types.StringUnknown()); d.HasError() {
+	if d := planString(t, fixed, types.StringValue("a"), types.StringUnknown()); d.HasError() {
 		t.Fatalf("unknown: %v", d)
 	}
-	d := planString(t, relocationRefusal, types.StringValue("nod_a"), types.StringValue("nod_b"))
-	if !d.HasError() || !strings.Contains(d[0].Summary(), "relocation is not supported") {
+	d := planString(t, fixed, types.StringValue("a"), types.StringValue("b"))
+	if !d.HasError() || !strings.Contains(d[0].Summary(), "cannot be changed") {
 		t.Fatalf("change: %v", d)
-	}
-	if !strings.Contains(d[0].Detail(), "never moves a space by destroying and recreating it") {
-		t.Fatalf("detail = %s", d[0].Detail())
 	}
 }
 

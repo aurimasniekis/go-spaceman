@@ -177,7 +177,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), ResolveAccount: accounts.Resolve,
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
 			if err != nil {
@@ -301,6 +301,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Memory = memory.New(st, c.Audit, c.Changes, st.Path("memory"), gitBin, obs.Component(log, "memory"))
 	c.Memory.Outbox = c.Outbox
 	c.Fleet.Hub().Memory = c.Memory
+	c.Fleet.MemoryExport = c.Memory
 	c.KB = kb.New(st, c.Audit, c.Changes, c.Fleet, c.Messages, o.Clock, obs.Component(log, "kb"))
 	c.KB.Outbox = c.Outbox
 	c.KB.SpaceLimits = func(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {
@@ -410,7 +411,7 @@ func (c *Central) APIDeps() *api.Deps {
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
-		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
+		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage))}
@@ -489,6 +490,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "schedules", Next: c.Schedules.Next, Due: c.Schedules.Due},
 		human.Deadline{Name: "task_deadlines", Next: c.Limits.NextDeadline, Due: c.Limits.Deadlines})
 	go c.Notifier.Run(ctx)
+	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
+	go c.Fleet.RunRelocations(ctx)
 	go c.KB.Run(ctx)
 	go c.Dreams.Run(ctx)
 	c.Supervisor.Bind(ctx)
@@ -557,7 +560,7 @@ func (c *Central) housekeeping(ctx context.Context) {
 
 // SpecDeps returns API dependencies for OpenAPI generation only: every operation group is registered, nothing runs.
 func SpecDeps() *api.Deps {
-	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRecordings(nil),
+	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
 		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil)}}
 }
@@ -565,7 +568,7 @@ func SpecDeps() *api.Deps {
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules} {
 		for k, v := range m {
 			out[k] = v
 		}

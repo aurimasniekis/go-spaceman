@@ -944,7 +944,8 @@
   - Terraform ≥ 1.11 is required. Write-only values must be fed from ephemeral variables or resources to stay out of plans.
   - A value removed from the configuration is not reset; operators must set it explicitly to change it.
   - Catalog objects destroyed by Terraform remain in SpaceMan; re-creating one with the same slug fails until it is imported.
-  - When relocation lands, `node_id` changes become in-place updates; the plan-time refusal is the only part to replace.
+  - When relocation lands, `node_id` changes become in-place updates; the plan-time refusal is the only part to replace
+    (done in ADR-0037).
   - No central API changes were needed. The provider is not published to a registry.
 
 ### ADR-0036 — One limits model, space schedules on the shared deadline timer, and replays recorded apart from retries
@@ -1029,6 +1030,93 @@
     deduplicated and recorded as redeliveries.
   - Terraform phase 2 (ADR-0035) can manage `space_limits` and schedules through these endpoints; not done here.
   - Merging note: migration 0025 rebuilds `inbox_items`; later migrations that rebuild it must keep `schedule`.
+
+### ADR-0037 — Explicit, resumable space relocation with clean-state checks and a fenced switch-over (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (M4-05).
+- **Context:** SM-INV-003 allows only explicit relocation of a stopped space (UI, API, Terraform). SM-SPACE-005 asks for
+  blocked launches, stopped runs, synced memory, code pushed or explicitly exported, uploaded artifacts, detection of
+  dirty, untracked and unpushed state, no silent loss, a prepared destination, an atomic switch, a stopped space and a
+  retained source folder; SM-SPACE-006 separates desired destination and effective assignment; SM-SPACE-007 makes
+  unavailable-source recovery explicit with an acknowledgement; SM-SPACE-008 guarantees project continuity and labels
+  native session resumption; SM-API-005 asks Terraform to relocate on a `node_id` change. Relocation moves execution
+  authority between machines, accepts node-produced files on central, lets the node run Git in agent-writable
+  repositories, and adds node commands that run without a lease, so it is recorded as a **security-relevant change**.
+- **Decision:**
+  - **State machine on central.** Table `relocations` (migration `0026`), one in progress per space (unique partial index,
+    prechecks included). Modes `clean`, `source_unavailable` and `precheck`. States `draining → checking → [blocked] →
+    [exporting] → preparing_destination → finalizing → done`, with `checked` (precheck), `failed` and `cancelled`.
+    `spaces.desired_node_id` holds the destination while `spaces.node_id` stays the effective assignment; launches,
+    resume and archive are refused and `syncLeases` revokes the source's lease. Every transition is one transaction that
+    checks the relocation's version; I/O (memory bundles, digest checks) happens before it. Steps resume after a central
+    restart: when a node connects, when a run ends, and at start (`RunRelocations`). Nothing creates a relocation except
+    `StartRelocation` (API `POST /spaces/{id}/relocation`, `space:relocate` with step-up for sessions).
+  - **Protocol minor 3** (by negotiation: both nodes must have last negotiated ≥ 3). Commands
+    `space.relocate.check|export|prepare|release` are durable `node_commands` like every other command, carry the space's
+    folder name, and are accepted by the node **without a lease** (they are not execution; the source's lease is revoked
+    and the destination has none). A repeat re-sends the stored outcome. Outcomes travel as `relocation.report` (state:
+    the node re-sends the last week's on reconnect; central applies only the one for the step it waits for, from the node
+    it expects). Exported files go up as `relocation.upload` chunks (stop-and-wait, resumable, 1 MiB, SHA-256 checked,
+    4 GiB per relocation) to `<data>/relocations/<id>/`; the destination pulls them and central's memory bundles with
+    `relocation.fetch`/`relocation.data`, only while preparing and only as the destination.
+  - **Check.** The source checkpoints and syncs the space's role memory, re-ships recordings, resumes transcript uploads and
+    waits (60 s by default) for acknowledgements, then inspects the space folder without following symlinks: each
+    repository (remotes with credentials removed, branches with commits not on their upstream or, without one, on no
+    remote-tracking ref; changed, untracked, stashes, detached commits) and its worktrees, loose files outside
+    repositories, and instance folders (reported, not carried). Git runs with the node's environment (its own
+    credentials, SM-REPO-005) but with hooks and fsmonitor disabled. Unpushed is judged against the remote-tracking refs
+    the node has (no fetch).
+  - **Policy.** Unsynced memory, pending recordings or transcripts, active runs and inspection errors block (retry). Local-
+    only Git state and loose files are refused by default (`dirty_state = refuse`, audited `relocation.refused`, outcome
+    denied) and carried only by an explicit export.
+  - **Export format.** Per repository a Git bundle of every ref (`repo-<n>.bundle`) plus temporary refs under
+    `refs/spaceman-relocation/` for snapshot commits of the main work tree and each worktree (built in a temporary index:
+    tracked changes, deletions and untracked non-ignored files on top of HEAD), detached HEADs and every stash entry; the
+    refs are removed again. Loose files are a `loose.tar.gz` (regular files and symlinks). The manifest (branches,
+    upstreams, remotes, worktrees, stashes, snapshots, blob digests) is stored with the relocation. The destination
+    restores each repository from its bundle (branches, tags, remote-tracking refs, notes), re-adds remotes and upstreams,
+    checks out the branch, applies the snapshot with `restore --worktree` (changes come back unstaged), re-stores stashes
+    oldest first, re-adds worktrees, and unpacks loose files refusing traversal, overwrites and writes through symlinks
+    (symlinks are created last).
+  - **Prepare and verify.** The destination moves an existing folder of the space aside (`retained/…-previous-…`, never
+    deleted; its own unfinished attempt is restarted), clones pushed repositories at the source's commit with their local
+    branches and worktrees, restores role memory from central's acknowledged history (bundles of `main` at the recorded
+    head; the node journal records it as acknowledged so later syncs fast-forward), and reports. Central checks every
+    repository commit and memory head against what it sent.
+  - **Finalize.** One transaction sets `node_id` to the destination, clears `desired_node_id`, moves the lease to the
+    destination at generation `max(previous) + 1` (expired, so it is granted at the destination's next sync), cancels
+    commands still queued for the source, revokes the space's run credentials, marks the source's runs lost in the
+    unavailable flow, queues the source's release and audits `space.relocated`. The space stays paused. Central now fences
+    the old node: run reports for a space assigned elsewhere are ignored and a still-running run gets a kill; memory syncs
+    are refused (ownership); a node's claimed leases are checked when it connects, before commands are delivered.
+  - **Source folder.** `recovery = retain` (default) moves the folder and the space's memory to
+    `<data>/retained/<workdir>-<id>/` with a note; `retain_days` > 0 schedules deletion (one timer for the earliest due
+    retention); `0` keeps it until `POST …/relocation/release`. `delete` removes it. Exported files on central are kept
+    until the source copy is deleted.
+  - **Unavailable source.** Allowed only while the source is not connected (offline, disabled or revoked). Requires
+    `acknowledge_loss` and an acknowledgement text (10–500 characters), audited as `relocation.loss_acknowledged` (text
+    sealed as a sensitive detail, also shown on the relocation). The loss report lists memory not acknowledged at the last
+    node report, active runs, the last inspection and the kinds of state central cannot see. The destination is prepared
+    from central's memory and operator-listed repositories (credential-free URLs) only.
+  - **Session continuity.** Project continuity (repositories, memory, task and communication state) is guaranteed. Native
+    sessions are node-local (`docs/contracts/harnesses.md`) and not carried: every relocation says "Fresh session, project
+    continuity only", and a launch that asks to resume a session that only ever ran on another node starts a fresh one,
+    recorded in the run manifest. No harness capability was added.
+  - **Terraform.** A `node_id` change is an in-place update that starts (or resumes, retrying a blocked one with the
+    configured policy) a clean relocation and waits (`relocation_dirty_state` default `refuse`, `relocation_stop_runs`,
+    `relocation_recovery`, `relocation_retain_days`, `relocation_timeout`); a refusal fails the apply with the findings.
+    The unavailable-source flow is not offered through Terraform. Replaces ADR-0035's plan-time refusal.
+- **Alternatives:** moving the folder through central as one archive (copies pushed state too and makes central a relay for
+  whole repositories); fetching on the destination from the source directly (nodes would need to reach and authenticate
+  each other); auto-committing dirty work to a branch and pushing it (violates SM-REPO-004/006); carrying native session
+  files (harness formats are not a contract and embed node paths); requiring a lease for relocation commands (the source
+  must lose it before the check, or new work could start).
+- **Consequences:**
+  - A relocation with dirty state needs an operator decision; Terraform applies fail until it is made.
+  - Exported state and memory bundles sit on central's disk in plaintext while the relocation needs them (like central's
+    other payload files).
+  - A source that never returns keeps `source_state = pending`; its folder is untouched until it reconnects.
+  - Staged-versus-unstaged distinctions and ignored files are not carried; worktrees outside the space folder and linked
+    worktrees of outside repositories block the check.
 
 ## 2. Open items and unresolved contracts
 

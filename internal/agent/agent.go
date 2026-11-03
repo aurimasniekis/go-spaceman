@@ -93,6 +93,8 @@ type Agent struct {
 	bgMu     sync.Mutex
 	bg       sync.WaitGroup
 	stopping bool
+	// reloc tracks relocation steps and transfers (ADR-0037).
+	reloc relocState
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
@@ -340,6 +342,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.mem.resume(hbCtx)
 			go a.resendKBResults(hbCtx)
 			go a.resumeTranscripts(hbCtx)
+			go a.resendRelocationReports(hbCtx)
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant
@@ -379,6 +382,16 @@ func (a *Agent) session(ctx context.Context) error {
 			var ack proto.TranscriptAck
 			if err := env.Decode(&ack); err == nil {
 				go a.transcriptAck(context.WithoutCancel(ctx), ack)
+			}
+		case proto.TypeRelocationUploadAck:
+			var ack proto.RelocationUploadAck
+			if err := env.Decode(&ack); err == nil {
+				a.relocAnswer(uploadKey(ack.RelocationID, ack.Name), env.Body)
+			}
+		case proto.TypeRelocationData:
+			var d proto.RelocationData
+			if err := env.Decode(&d); err == nil {
+				a.relocAnswer(fetchKey(d.RelocationID, d.Name, d.Offset), env.Body)
 			}
 		case proto.TypeMemoryAck:
 			var ack proto.MemoryAck

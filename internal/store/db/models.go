@@ -891,6 +891,40 @@ type RecoveryCode struct {
 	CreatedAt int64
 }
 
+type Relocation struct {
+	ID               string
+	SpaceID          string
+	SourceNodeID     string
+	DestNodeID       string
+	Mode             string
+	State            string
+	BlockedStep      string
+	DirtyPolicy      string
+	StopRuns         int64
+	Recovery         string
+	RetainDays       int64
+	Acknowledgement  string
+	ReposJson        string
+	ReportJson       string
+	IssuesJson       string
+	LossJson         string
+	ExportJson       string
+	PrepareJson      string
+	StepCommandID    string
+	ReleaseCommandID string
+	GenerationBefore int64
+	GenerationAfter  int64
+	PausedSpace      int64
+	Error            string
+	SourceState      string
+	RetainUntil      sql.NullInt64
+	Version          int64
+	CreatedAt        int64
+	CreatedBy        string
+	UpdatedAt        int64
+	FinishedAt       sql.NullInt64
+}
+
 type RoleGrant struct {
 	Subject   string
 	Role      string

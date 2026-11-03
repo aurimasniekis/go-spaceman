@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Space relocation (SM-INV-003, SM-SPACE-005…008, ADR-0037): an operator moves a stopped space to another node from the
+  space page (**Relocate**), the API (`/spaces/{id}/relocation`, with precheck, retry, cancel and release) or Terraform.
+  The source syncs role memory and uploads, and its repositories are checked; unpushed, changed, untracked and stashed
+  work is refused unless explicitly exported through central. The destination is prepared and verified, then the
+  assignment and the execution lease move in one step with a new generation that fences the source; the space stays
+  paused and the source folder is retained (or deleted). An unavailable source can be replaced from central's copies with
+  an audited acknowledgement of possible loss. Runs on the destination start fresh native sessions (project continuity
+  only). Node protocol minor 3; migration 0026.
+- Terraform: a change of `spaceman_space.node_id` now relocates the space in place (`relocation_dirty_state`,
+  `relocation_stop_runs`, `relocation_recovery`, `relocation_retain_days`, `relocation_timeout`) instead of being refused.
+
 ### Security
 - Revocation reaches open streams at once (SM-AUTH-007, ADR-0033): signing out, revoking a session or API token,
   rotating the root token, disabling a user, resetting a password or changing grants ends affected live terminals and

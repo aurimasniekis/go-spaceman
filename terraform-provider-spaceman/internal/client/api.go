@@ -74,6 +74,30 @@ func (c *Client) PurgeSpace(ctx context.Context, id string) error {
 	return c.del(ctx, "/spaces/"+esc(id))
 }
 
+// ---- relocation (ADR-0037) ----
+
+// StartRelocation is POST /spaces/{id}/relocation (with an Idempotency-Key, so a retried request never starts two).
+func (c *Client) StartRelocation(ctx context.Context, spaceID string, in StartRelocationInput) (*Relocation, error) {
+	var out Relocation
+	return &out, c.create(ctx, "/spaces/"+esc(spaceID)+"/relocation", in, &out)
+}
+
+// GetRelocation is GET /spaces/{id}/relocation: the relocation in progress, or the latest one (404: none).
+func (c *Client) GetRelocation(ctx context.Context, spaceID string) (*Relocation, error) {
+	var out Relocation
+	return &out, c.get(ctx, "/spaces/"+esc(spaceID)+"/relocation", &out)
+}
+
+// RetryRelocation is POST /spaces/{id}/relocation/retry.
+func (c *Client) RetryRelocation(ctx context.Context, spaceID, dirtyState string) (*Relocation, error) {
+	var out Relocation
+	body := map[string]string{}
+	if dirtyState != "" {
+		body["dirty_state"] = dirtyState
+	}
+	return &out, c.post(ctx, "/spaces/"+esc(spaceID)+"/relocation/retry", 0, body, &out)
+}
+
 // ---- accounts ----
 
 // GetAccount is GET /accounts/{id}.

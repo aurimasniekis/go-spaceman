@@ -234,7 +234,9 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 			s.log.Warn("apply hello report", obs.Err(err))
 		}
 	}
-	if err := h.syncLeases(ctx, s, nil); err != nil {
+	// The leases the node claims are checked at once: one it no longer holds (for example after a relocation) is
+	// revoked before any command is delivered.
+	if err := h.syncLeases(ctx, s, hello.Leases); err != nil {
 		return err
 	}
 	if err := h.sendReconcile(ctx, s); err != nil {
@@ -242,6 +244,8 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	}
 	go h.dispatchLoop(ctx, s)
 	go h.credentialLoop(ctx, s)
+	// Relocations waiting for this node resume now (for example after a central restart).
+	svc.kickNodeRelocations(ctx, s.nodeID)
 	s.kick <- struct{}{}
 
 	for {
@@ -353,6 +357,9 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		}
 		cmd, _ := svc.s.R().GetNodeCommand(ctx, a.CommandID)
 		svc.opts.Metrics.NodeCommand(metrics.CommandType(cmd.Kind), metrics.CommandResult(a.Result))
+		if proto.IsRelocation(cmd.Kind) && a.Result == proto.AckRejected && cmd.NodeID == s.nodeID {
+			go svc.relocationRejected(context.WithoutCancel(ctx), a.CommandID, truncate(a.Reason, 300))
+		}
 		return svc.s.W().TxNamed(ctx, "fleet.ack", func(tx *store.Tx) error {
 			n, err := tx.Q.AckCommand(ctx, db.AckCommandParams{State: a.Result, Reason: truncate(a.Reason, 500), AckedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 				ID: a.CommandID, NodeID: s.nodeID})
@@ -448,6 +455,31 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			_ = s.send(proto.TypeToolResult, svc.now(), proto.ToolResult{CallID: call.CallID, Error: "too many concurrent tool calls from this node; retry",
 				Code: string(apperr.CodeRateLimited)})
 		}
+		return nil
+	case proto.TypeRelocationReport:
+		var rep proto.RelocationReport
+		if err := env.Decode(&rep); err != nil {
+			return err
+		}
+		go svc.relocationReport(context.WithoutCancel(ctx), s.nodeID, rep)
+		return nil
+	case proto.TypeRelocationUpload:
+		var up proto.RelocationUpload
+		if err := env.Decode(&up); err != nil {
+			return err
+		}
+		go func() {
+			_ = s.send(proto.TypeRelocationUploadAck, svc.now(), svc.relocationUpload(context.WithoutCancel(ctx), s.nodeID, up))
+		}()
+		return nil
+	case proto.TypeRelocationFetch:
+		var f proto.RelocationFetch
+		if err := env.Decode(&f); err != nil {
+			return err
+		}
+		go func() {
+			_ = s.send(proto.TypeRelocationData, svc.now(), svc.relocationFetch(context.WithoutCancel(ctx), s.nodeID, f))
+		}()
 		return nil
 	case proto.TypeRecording:
 		var c proto.RecordingChunk

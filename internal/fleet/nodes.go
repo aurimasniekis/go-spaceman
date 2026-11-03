@@ -435,6 +435,7 @@ func (svc *Service) SetNodeState(ctx context.Context, actor audit.Actor, id, sta
 	}
 	if state != "active" {
 		svc.hub.Disconnect(id, "node "+state)
+		svc.kickNodeRelocations(ctx, id)
 	}
 	return svc.GetNode(ctx, id)
 }

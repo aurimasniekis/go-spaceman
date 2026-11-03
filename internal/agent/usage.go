@@ -29,15 +29,15 @@ const usageDebounce = 30 * time.Second
 var usageTimers sync.Map // run ID → *time.Timer
 
 // transcriptOf finds a run's native transcript (absolute path and its path under the space's instances folder).
-func (a *Agent) transcriptOf(r runRow) (string, string) {
+func (a *Agent) transcriptOf(ctx context.Context, r runRow) (string, string) {
 	if r.Harness != harness.KindClaude || r.SessionID == "" || r.InstanceID == "" {
 		return "", ""
 	}
-	l, _ := a.lease(r.SpaceID, r.Generation)
-	if l.Workdir == "" {
+	workdir := a.workdirOf(ctx, r.SpaceID)
+	if workdir == "" {
 		return "", ""
 	}
-	base := filepath.Join(a.spaceDir(l.Workdir), "instances")
+	base := filepath.Join(a.spaceDir(workdir), "instances")
 	matches, _ := filepath.Glob(filepath.Join(base, r.InstanceID, "claude", "projects", "*", r.SessionID+".jsonl"))
 	if len(matches) == 0 {
 		return "", ""
@@ -118,13 +118,13 @@ func claudeUsage(path string) ([]proto.ModelUsage, *proto.CostEstimate, error) {
 }
 
 // usageReport builds a run's report from its transcript.
-func (a *Agent) usageReport(r runRow, final bool) proto.UsageReport {
+func (a *Agent) usageReport(ctx context.Context, r runRow, final bool) proto.UsageReport {
 	rep := proto.UsageReport{RunID: r.RunID, Source: proto.UsageUnavailable, Models: []proto.ModelUsage{}, Final: final}
 	if r.Harness != harness.KindClaude {
 		rep.Note = "this harness's usage records are not verified; usage is unknown"
 		return rep
 	}
-	abs, rel := a.transcriptOf(r)
+	abs, rel := a.transcriptOf(ctx, r)
 	if abs == "" {
 		rep.Note = "no transcript found for the run's session"
 		return rep
@@ -157,7 +157,7 @@ func (a *Agent) usageKick(ctx context.Context, r runRow) {
 		usageTimers.Delete(r.RunID)
 		a.track(func() {
 			if cur, err := a.j.getRun(ctx, r.RunID); err == nil && !ended(cur.State) && a.protocolAtLeast(proto.MinorMemory) {
-				_ = a.send(ctx, proto.TypeUsage, a.usageReport(cur, false))
+				_ = a.send(ctx, proto.TypeUsage, a.usageReport(ctx, cur, false))
 			}
 		})
 	})
@@ -169,11 +169,11 @@ func (a *Agent) usageFinal(ctx context.Context, r runRow) {
 	if v, ok := usageTimers.LoadAndDelete(r.RunID); ok {
 		v.(*time.Timer).Stop()
 	}
-	rep := a.usageReport(r, true)
+	rep := a.usageReport(ctx, r, true)
 	if a.protocolAtLeast(proto.MinorMemory) {
 		_ = a.send(ctx, proto.TypeUsage, rep)
 	}
-	abs, rel := a.transcriptOf(r)
+	abs, rel := a.transcriptOf(ctx, r)
 	if abs == "" {
 		return
 	}
@@ -238,11 +238,11 @@ func (a *Agent) sendTranscriptChunk(ctx context.Context, runID string) {
 	if err != nil {
 		return
 	}
-	l, _ := a.lease(r.SpaceID, r.Generation)
-	if l.Workdir == "" {
+	workdir := a.workdirOf(ctx, r.SpaceID)
+	if workdir == "" {
 		return
 	}
-	f, err := os.Open(filepath.Join(a.spaceDir(l.Workdir), "instances", u.path)) //nolint:gosec // the run's own transcript
+	f, err := os.Open(filepath.Join(a.spaceDir(workdir), "instances", u.path)) //nolint:gosec // the run's own transcript
 	if err != nil {
 		return
 	}

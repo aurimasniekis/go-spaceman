@@ -2359,6 +2359,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/relocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The space's relocation in progress, or its latest one */
+        get: operations["get-relocation"];
+        put?: never;
+        /**
+         * Relocate a stopped space to another node, or inspect it first (precheck)
+         * @description An explicit operator action (SM-INV-003). A clean relocation checks the source (memory synced, uploads finished, repositories pushed), refuses unpushed, changed or untracked state unless dirty_state is export, prepares the destination and then moves the assignment and the execution lease in one step. source_unavailable relocates from central's copies only and requires an acknowledgement that local state may be lost. The space stays paused at the destination.
+         */
+        post: operations["start-relocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/relocation/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a relocation before it finalizes (the space stays on its source, paused) */
+        post: operations["cancel-relocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/relocation/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete the source folder the latest relocation retained */
+        post: operations["release-relocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/relocation/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume a blocked relocation, optionally exporting the reported state */
+        post: operations["retry-relocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/relocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The space's relocations, newest first */
+        get: operations["list-relocations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/role-options": {
         parameters: {
             query?: never;
@@ -4653,6 +4742,14 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        FleetContinuity: {
+            detail: string;
+            label: string;
+            /** @enum {string} */
+            native_sessions: "not_carried";
+            /** @enum {string} */
+            project: "guaranteed";
+        };
         FleetCreateNodeInput: {
             /**
              * Format: uri
@@ -4687,6 +4784,14 @@ export interface components {
             /** @description Lowercase URL-safe identifier, unique (3-48 characters) */
             slug: string;
             standing_instructions?: string;
+        };
+        FleetIssue: {
+            /** @enum {string} */
+            code: "dirty" | "untracked" | "unpushed" | "stash" | "detached" | "no_remote" | "worktree" | "loose_files" | "memory_unsynced" | "recordings_pending" | "transcripts_pending" | "active_runs" | "inspect_error";
+            detail: string;
+            /** @description An explicit export carries it; otherwise it blocks until resolved */
+            exportable: boolean;
+            path?: string;
         };
         FleetLaunchInput: {
             /**
@@ -4742,6 +4847,34 @@ export interface components {
             state: string;
             valid: boolean;
         };
+        FleetLossReport: {
+            /**
+             * Format: date-time
+             * @description When the source was last inspected for a relocation
+             */
+            last_check_at?: string;
+            /** @description What that inspection found */
+            last_issues?: components["schemas"]["FleetIssue"][];
+            memory: components["schemas"]["FleetMemoryLoss"][];
+            /** @description Runs on the source that are marked lost */
+            runs: string[];
+            /** Format: date-time */
+            source_last_seen?: string;
+            statement: string;
+            /** @description Local state central cannot see and that may be lost */
+            unknown: string[];
+        };
+        FleetMemoryLoss: {
+            central_head?: string;
+            /** Format: int64 */
+            local_commits: number;
+            pending: boolean;
+            /** Format: date-time */
+            reported_at?: string;
+            role: string;
+            /** Format: int64 */
+            uncheckpointed: number;
+        };
         FleetNode: {
             /**
              * Format: uri
@@ -4787,6 +4920,101 @@ export interface components {
             node: components["schemas"]["FleetNode"];
             /** @description Single-use; run spaceman-agent enroll with it on the node */
             token: string;
+        };
+        FleetRecovery: {
+            /**
+             * @description retain (default) moves the folder aside on the source; delete removes it
+             * @enum {string}
+             */
+            mode: "retain" | "delete";
+            /**
+             * Format: int64
+             * @description Days a retained folder is kept; 0 keeps it until it is released
+             */
+            retain_days: number;
+        };
+        FleetRelocation: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetRelocation.json
+             */
+            readonly $schema?: string;
+            /** @description The operator's acknowledgement of possibly lost local state (source_unavailable) */
+            acknowledgement?: string;
+            /**
+             * @description Where a retry resumes
+             * @enum {string}
+             */
+            blocked_step?: "" | "check" | "export" | "prepare";
+            continuity: components["schemas"]["FleetContinuity"];
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            destination_node_id: string;
+            /** @enum {string} */
+            dirty_state: "refuse" | "export";
+            error?: string;
+            /** @description State exported from the source and stored by central */
+            export?: components["schemas"]["ProtoRelocateExport"];
+            /** Format: date-time */
+            finished_at?: string;
+            /** Format: int64 */
+            generation_after?: number;
+            /** Format: int64 */
+            generation_before: number;
+            id: string;
+            /** @description What the inspection found that a clean relocation would lose */
+            issues: components["schemas"]["FleetIssue"][];
+            /** @description What may be lost when the source is unavailable */
+            loss?: components["schemas"]["FleetLossReport"];
+            /** @enum {string} */
+            mode: "clean" | "source_unavailable" | "precheck";
+            /** @description The relocation paused the space */
+            paused_space: boolean;
+            /** @description What the destination materialized and verified */
+            prepared?: components["schemas"]["ProtoPrepareResult"];
+            recovery: components["schemas"]["FleetRecovery"];
+            /** @description The source's last inspection */
+            report?: components["schemas"]["ProtoSpaceCheck"];
+            /** @description Repositories the operator listed for a source_unavailable relocation */
+            repositories?: components["schemas"]["FleetRepoSpec"][];
+            /** Format: date-time */
+            retain_until?: string;
+            source_node_id: string;
+            /**
+             * @description What happened to the source folder
+             * @enum {string}
+             */
+            source_state?: "" | "pending" | "retained" | "deleted" | "unreachable";
+            space_id: string;
+            /** @enum {string} */
+            state: "requested" | "draining" | "checking" | "blocked" | "exporting" | "preparing_destination" | "finalizing" | "done" | "checked" | "failed" | "cancelled";
+            stop_runs: boolean;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        FleetRepoSpec: {
+            branch?: string;
+            /** @description Folder relative to the space folder */
+            path: string;
+            /** @description Clone URL; the destination node's own Git authentication is used (no credentials in the URL) */
+            url: string;
+        };
+        FleetRetryRelocationInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetRetryRelocationInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Change the policy before retrying (export carries the reported state)
+             * @enum {string}
+             */
+            dirty_state?: "refuse" | "export";
         };
         FleetRun: {
             /**
@@ -4876,6 +5104,43 @@ export interface components {
             version: number;
             /** @description Managed folder name on the node */
             workdir: string;
+        };
+        FleetStartRelocationInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetStartRelocationInput.json
+             */
+            readonly $schema?: string;
+            /** @description Required with source_unavailable: local state on the source may be lost */
+            acknowledge_loss?: boolean;
+            /** @description Required with source_unavailable: the operator's own words, recorded in the audit log */
+            acknowledgement?: string;
+            /** @description The node the space moves to */
+            destination_node_id: string;
+            /**
+             * @description refuse (default) stops at unpushed, changed or untracked state; export carries it through central
+             * @enum {string}
+             */
+            dirty_state?: "refuse" | "export";
+            /** @description Only inspect the source and report; nothing changes */
+            precheck?: boolean;
+            /**
+             * @description What happens to the source folder (default retain)
+             * @enum {string}
+             */
+            recovery?: "retain" | "delete";
+            /** @description source_unavailable only: repositories to clone on the destination */
+            repositories?: components["schemas"]["FleetRepoSpec"][];
+            /**
+             * Format: int64
+             * @description With retain: days to keep it; 0 keeps it until released
+             */
+            retain_days?: number;
+            /** @description Relocate from central's copies only, because the source is offline, disabled or revoked */
+            source_unavailable?: boolean;
+            /** @description Pause the space (interrupt) and stop its runs; without it the space must be paused with no active runs */
+            stop_runs?: boolean;
         };
         FleetUpdateSpaceInput: {
             /**
@@ -6033,6 +6298,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["EventsQuarantineEntry"][];
         };
+        "List-relocationsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-relocationsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetRelocation"][];
+        };
         "List-role-templatesResponse": {
             /**
              * Format: uri
@@ -6706,6 +6980,20 @@ export interface components {
             /** Format: int64 */
             number: number;
         };
+        ProtoBranchCheck: {
+            commit: string;
+            /** @description The branch's configured upstream branch, e.g. refs/heads/main */
+            merge?: string;
+            name: string;
+            no_upstream?: boolean;
+            /** @description The branch's configured remote */
+            remote?: string;
+            /**
+             * Format: int64
+             * @description Commits not on the upstream, or on no remote-tracking ref when there is no upstream
+             */
+            unpushed: number;
+        };
         ProtoCapabilities: {
             arch: string;
             extra?: unknown;
@@ -6723,6 +7011,35 @@ export interface components {
             /** Format: double */
             usd: number;
         };
+        ProtoExportedRepo: {
+            blob: string;
+            branch?: string;
+            branches: components["schemas"]["ProtoBranchCheck"][];
+            head?: string;
+            path: string;
+            remotes: components["schemas"]["ProtoGitRemote"][];
+            /** @description Commit holding the work tree's changed and untracked files */
+            snapshot?: string;
+            stashes: components["schemas"]["ProtoExportedStash"][];
+            worktrees: components["schemas"]["ProtoExportedWorktree"][];
+        };
+        ProtoExportedStash: {
+            commit: string;
+            message: string;
+        };
+        ProtoExportedWorktree: {
+            branch?: string;
+            head: string;
+            path: string;
+            /** @description Commit holding the worktree's changed and untracked files */
+            snapshot?: string;
+        };
+        ProtoGitRemote: {
+            /** @description The URL held credentials; they were removed and are not carried */
+            credentials_removed?: boolean;
+            name: string;
+            url: string;
+        };
         ProtoHarnessInfo: {
             available: boolean;
             capabilities: string[];
@@ -6730,6 +7047,21 @@ export interface components {
             kind: string;
             path?: string;
             version?: string;
+        };
+        ProtoInstanceCheck: {
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            files: number;
+            instance_id: string;
+        };
+        ProtoLooseCheck: {
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            files: number;
+            /** @description Up to 20 of them */
+            paths?: string[];
         };
         ProtoMemoryCollectionStatus: {
             /** @description The head central last acknowledged */
@@ -6778,11 +7110,100 @@ export interface components {
             /** Format: int64 */
             requests: number;
         };
+        ProtoPrepareResult: {
+            /** Format: int64 */
+            loose_files: number;
+            memory: components["schemas"]["ProtoPreparedMemory"][];
+            /** @description Existing folders of this space moved aside on the destination */
+            moved_aside?: string[];
+            repos: components["schemas"]["ProtoPreparedRepo"][];
+        };
+        ProtoPreparedMemory: {
+            head: string;
+            role: string;
+        };
+        ProtoPreparedRepo: {
+            branch?: string;
+            /**
+             * Format: int64
+             * @description Changed tracked files after restoring
+             */
+            dirty: number;
+            /** @description Restored from the exported bundle rather than cloned */
+            exported: boolean;
+            head?: string;
+            path: string;
+            /** Format: int64 */
+            stashes: number;
+            /** Format: int64 */
+            untracked: number;
+            /** Format: int64 */
+            worktrees: number;
+        };
+        ProtoRelocateBlob: {
+            name: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+        };
+        ProtoRelocateExport: {
+            blobs: components["schemas"]["ProtoRelocateBlob"][];
+            /** @description Blob holding the loose files (tar.gz) */
+            loose?: string;
+            /** Format: int64 */
+            loose_files?: number;
+            repos: components["schemas"]["ProtoExportedRepo"][];
+        };
+        ProtoRepoCheck: {
+            /** @description Checked-out branch; empty when HEAD is detached */
+            branch?: string;
+            branches: components["schemas"]["ProtoBranchCheck"][];
+            /**
+             * Format: int64
+             * @description Commits reachable only from a detached HEAD
+             */
+            detached_unpushed: number;
+            /**
+             * Format: int64
+             * @description Changed tracked files
+             */
+            dirty: number;
+            error?: string;
+            head?: string;
+            /** @description Relative to the space folder */
+            path: string;
+            /** @description Up to 20 changed or untracked paths */
+            paths?: string[];
+            remotes: components["schemas"]["ProtoGitRemote"][];
+            /** Format: int64 */
+            stashes: number;
+            /** Format: int64 */
+            untracked: number;
+            worktrees: components["schemas"]["ProtoWorktreeCheck"][];
+        };
         ProtoRunnerInfo: {
             core_id: string;
             error?: string;
             kind: string;
             version: string;
+        };
+        ProtoSpaceCheck: {
+            /** @description Runs the node still supervises in this space */
+            active_runs: string[];
+            /** Format: date-time */
+            checked_at: string;
+            errors?: string[];
+            /** @description Memory, recordings and transcripts were flushed and acknowledged in time */
+            flushed: boolean;
+            folder_exists: boolean;
+            instances: components["schemas"]["ProtoInstanceCheck"][];
+            loose: components["schemas"]["ProtoLooseCheck"];
+            memory: components["schemas"]["ProtoMemoryCollectionStatus"][];
+            /** @description Runs whose recording central has not fully stored */
+            recordings_pending: string[];
+            repositories: components["schemas"]["ProtoRepoCheck"][];
+            /** @description Runs whose native transcript upload is unfinished */
+            transcripts_pending: string[];
         };
         ProtoToolInfo: {
             path: string;
@@ -6792,6 +7213,17 @@ export interface components {
             base?: string;
             branch: string;
             repo: string;
+        };
+        ProtoWorktreeCheck: {
+            branch?: string;
+            /** Format: int64 */
+            dirty: number;
+            error?: string;
+            head: string;
+            /** @description Relative to the space folder */
+            path: string;
+            /** Format: int64 */
+            untracked: number;
         };
         ProviderList: {
             /**
@@ -13121,6 +13553,205 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueuePolicy"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-relocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRelocation"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "start-relocation": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetStartRelocationInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRelocation"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-relocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRelocation"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "release-relocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRelocation"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "retry-relocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetRetryRelocationInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRelocation"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-relocations": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-relocationsResponse"];
                 };
             };
             /** @description Error */

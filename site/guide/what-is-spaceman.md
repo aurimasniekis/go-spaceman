@@ -26,7 +26,7 @@ It has two programs:
 ## What is coming
 
 The inbox and execution queue, Pulse event subscriptions (including GitHub), human actions and approvals, accounts and
-secrets, prompts and profiles, the MCP gateway, memory and knowledge bases, relocation, backups, SSO through Porch, and
+secrets, prompts and profiles, the MCP gateway, memory and knowledge bases, backups, SSO through Porch, and
 a Terraform provider are planned in later milestones. They are not described as features on this site until they work;
 see the [project status](/guide/status).
 

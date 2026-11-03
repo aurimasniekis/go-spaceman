@@ -278,3 +278,37 @@ func TestSyncEventsRecorded(t *testing.T) {
 		t.Fatalf("events %v", got)
 	}
 }
+
+// ADR-0037: a relocation's destination gets central's acknowledged history (and nothing newer) as one bundle per role;
+// central's own repository keeps no temporary ref.
+func TestExportBundlesForRelocation(t *testing.T) {
+	f := newFx(t)
+	h1 := f.commit("README.md", "# memory\n")
+	if ack := f.sync("", h1); ack.Result != proto.MemoryOK {
+		t.Fatalf("sync: %+v", ack)
+	}
+	f.commit("later.md", "not synced\n")
+	_, _ = f.svc.collection(f.ctx, "spc_a", "reviewer") // a collection without history is skipped
+	dir := t.TempDir()
+	mems, err := f.svc.ExportBundles(f.ctx, "spc_a", dir)
+	must(t, err)
+	if len(mems) != 1 || mems[0].Role != "implementor-backend" || mems[0].Head != h1 || mems[0].Blob != "memory-implementor-backend.bundle" {
+		t.Fatalf("export %+v", mems)
+	}
+	dest := t.TempDir()
+	must(t, f.git.InitBare(f.ctx, dest))
+	if _, err := f.git.Run(f.ctx, dest, nil, "fetch", "--quiet", filepath.Join(dir, mems[0].Blob), "+refs/relocation/main:refs/heads/main"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.git.RevParse(f.ctx, dest, "refs/heads/main"); got != h1 {
+		t.Fatalf("restored head %s, want %s", got, h1)
+	}
+	if ref := f.git.RevParse(f.ctx, f.svc.repo("spc_a", "implementor-backend"), "refs/relocation/main"); ref != "" {
+		t.Fatal("temporary ref left in central's repository")
+	}
+	// Without git, a space with history cannot be exported.
+	f.svc.git = nil
+	if _, err := f.svc.ExportBundles(f.ctx, "spc_a", dir); err == nil {
+		t.Fatal("exported without git")
+	}
+}

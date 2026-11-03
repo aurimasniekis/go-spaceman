@@ -343,6 +343,17 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/move` | `move-task` | Place a task in the queue |
 | `POST` | `/spaces/{space_id}/tasks/{task_id}/status` | `set-task-status` | Change a task's state |
 
+### relocation
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/relocation` | `get-relocation` | The space's relocation in progress, or its latest one |
+| `POST` | `/spaces/{space_id}/relocation` | `start-relocation` | Relocate a stopped space to another node, or inspect it first (precheck) |
+| `POST` | `/spaces/{space_id}/relocation/cancel` | `cancel-relocation` | Cancel a relocation before it finalizes (the space stays on its source, paused) |
+| `POST` | `/spaces/{space_id}/relocation/release` | `release-relocation` | Delete the source folder the latest relocation retained |
+| `POST` | `/spaces/{space_id}/relocation/retry` | `retry-relocation` | Resume a blocked relocation, optionally exporting the reported state |
+| `GET` | `/spaces/{space_id}/relocations` | `list-relocations` | The space's relocations, newest first |
+
 ### roles
 
 | Method | Path | Operation | Summary |

@@ -84,8 +84,28 @@
   write outside the workspace is unverified.
 - **Central needs git** to store memory, and syncs are limited to 2 MiB of new history at a time.
 - **Restored or relocated memory is not merged automatically.** History central did not acknowledge is preserved and
-  reported; relocation and restore handling arrive with M4.
-- **Flushes before relocation and backups** arrive with those features (M4).
+  reported. A relocation flushes and syncs memory first; with an unavailable source, history central never received is
+  lost (the acknowledgement says so).
+- **No flush before backups.** A backup holds the history central acknowledged.
+
+## Space relocation
+- **Only explicit and only stopped spaces.** Nothing moves a space on its own; a space with active runs needs `stop_runs`.
+- **Both nodes need protocol 1.3** (this release's agent). An older agent rejects relocation steps, which block.
+- **Unpushed is judged locally.** The source compares branches with the remote-tracking refs it has and does not fetch, so
+  a branch pushed from elsewhere after the last fetch can look unpushed (it is then refused or exported, never lost).
+- **Exports have limits.** 4 GiB per relocation; ignored files are not carried; staged and unstaged changes arrive as
+  unstaged changes; worktrees outside the space folder and linked worktrees of outside repositories block the check;
+  submodule work trees are inspected only as part of their parent's status.
+- **Credentials in remote URLs are dropped.** The destination clones with its own Git authentication; a remote that only
+  works with credentials embedded in its URL fails to clone (the relocation blocks with the error).
+- **Native sessions are not carried.** Runs on the destination start fresh harness sessions (project continuity only).
+- **Without the source, only central's copies.** The unavailable-source flow restores acknowledged memory and the
+  repositories the operator lists; everything else on the source may be lost.
+- **No CLI.** Relocation is in the UI, the API and Terraform; a `spaceman space relocate` command waits for the CLI work (M5-02).
+- **Retention by timer runs only in `spaceman serve`.** Expired retained folders are deleted by central's relocation timer;
+  the source must be connected to delete them. A source that never returns keeps its folder.
+- **Simulated evidence only.** Two in-process nodes with a fake runner and real Git; no relocation between real machines
+  is recorded.
 
 ## MCP gateway
 - **Streamable HTTP servers only.** Servers started as local processes (stdio) and the older SSE transport are not
@@ -190,10 +210,11 @@
 
 ## Terraform provider
 - **Phase 1 only, not published.** `terraform-provider-spaceman/` covers what the API supports today. Limits, schedules,
-  cross-space configuration, relocation, space repositories, the backup target and schedule, and users with their grants
+  cross-space configuration, space repositories, the backup target and schedule, and users with their grants
   are not resources yet (SM-API-004, ADR-0035). Terraform 1.11 or later is required (write-only arguments).
-- **No relocation.** A `node_id` change is refused at plan time until relocation exists; SM-API-005's "safe relocation"
-  is not met (M4-05).
+- **Relocation through Terraform is the clean flow only.** A `node_id` change runs SpaceMan's relocation and waits; a
+  refusal fails the apply. The unavailable-source flow needs an operator's acknowledgement in the UI or API. A completed
+  relocation through Terraform is tested only against a fake API (the acceptance harness runs no node agents).
 - **Removed fields keep their value.** Optional fields left out of the configuration are not owned, so removing one keeps
   the last value instead of resetting it.
 - **Some objects cannot be deleted.** Destroying a prompt, skill, event template, human-action type, harness profile or

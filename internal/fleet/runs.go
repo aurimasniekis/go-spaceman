@@ -185,6 +185,22 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				return err
 			}
 		}
+		if in.SessionID != "" {
+			// Native sessions are node-local (SM-SPACE-008): a session that only ever ran on another node (before a
+			// relocation) cannot be resumed here, so the run starts a fresh session with the project's continuity.
+			c, err := tx.Q.CountRunsWithSession(ctx, db.CountRunsWithSessionParams{NodeID: sp.NodeID, SpaceID: spaceID, SessionID: in.SessionID})
+			if err != nil {
+				return err
+			}
+			if c.Total > 0 && c.OnNode == 0 {
+				if resolved == nil {
+					resolved = map[string]any{}
+				}
+				resolved["session"] = map[string]any{"requested": in.SessionID, "resumed": false,
+					"reason": "the native session is on another node (the space was relocated); fresh session, project continuity only"}
+				in.SessionID = ""
+			}
+		}
 		if svc.opts.ResolveAccount != nil {
 			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.AccountRef); err != nil {
 				return err
@@ -472,6 +488,12 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			fenced = true
 			return nil
 		}
+		// After a relocation the space belongs to another node: whatever the old node still reports for it is fenced,
+		// and a run it still has is stopped (SM-NODE-006, ADR-0037).
+		if sp, err := tx.Q.GetSpace(ctx, r.SpaceID); err == nil && sp.NodeID != nodeID {
+			fenced = true
+			return nil
+		}
 		var exit sql.NullInt64
 		if rep.ExitCode != nil {
 			exit = sql.NullInt64{Int64: int64(*rep.ExitCode), Valid: true}
@@ -523,6 +545,9 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 	}
 	if err == nil && justEnded && svc.opts.OnRunEnded != nil {
 		svc.opts.OnRunEnded(rep.RunID)
+	}
+	if err == nil && justEnded {
+		svc.kickSpaceRelocation(ctx, rep.SpaceID)
 	}
 	if fenced {
 		svc.opts.Metrics.LeaseFenced()

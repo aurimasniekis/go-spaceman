@@ -12,7 +12,7 @@ Status: **phase 1** of work package M5-01. Not published to a registry.
 
 | Resource | API |
 |---|---|
-| `spaceman_space` | `/spaces` (archive on destroy, purge opt-in; `node_id` changes refused until relocation exists) |
+| `spaceman_space` | `/spaces` (archive on destroy, purge opt-in; a `node_id` change relocates through `/spaces/{id}/relocation`) |
 | `spaceman_space_role` | `/spaces/{id}/roles/{name}` |
 | `spaceman_space_accounts` | `/spaces/{id}/accounts` (the whole binding set) |
 | `spaceman_account` | `/accounts` (write-only `secret_wo`) |
@@ -38,8 +38,8 @@ Data sources: `spaceman_node`, `spaceman_nodes`, `spaceman_space`, `spaceman_spa
 Never managed: runtime state (runs, tasks, inbox items, messages, human-action requests and responses, approvals,
 recordings), nodes (enrolled with a one-time token) and API tokens (their secret is shown once).
 
-Not yet available (phase 2): limits and quotas, schedules, cross-space requests and space relocation (`node_id` changes),
-which SpaceMan does not implement yet; space repositories (no API yet); backup target and schedule (configuration file
+Not yet available (phase 2): limits and quotas, schedules and cross-space requests, which SpaceMan does not implement yet;
+space repositories (no API yet); backup target and schedule (configuration file
 only today); users and their role grants.
 
 ## Behaviour in brief
@@ -54,7 +54,10 @@ only today); users and their role grants.
 - **Immutable versions.** Prompts, skills, event templates and human-action types publish one new version per content
   change and never re-publish an unchanged configuration.
 - **No silent replacement.** Fields the API cannot change in place on objects it cannot delete (slugs, kinds, a prompt's
-  name, a space's node) are refused at plan time.
+  name) are refused at plan time.
+- **Relocation.** A change of a space's `node_id` is an in-place update that runs SpaceMan's safe relocation and waits for
+  it (`relocation_dirty_state`, `relocation_stop_runs`, `relocation_recovery`, `relocation_retain_days`,
+  `relocation_timeout`). Unpushed or uncommitted state is refused by default; the space stays paused on the new node.
 
 The [registry documentation](docs/index.md) has the details of every resource.
 
@@ -92,5 +95,5 @@ The acceptance harness (`internal/provider/harness_test.go`) builds `spaceman` a
 initializes a KEK and a central in a fresh temporary directory, bootstraps it (root token generated at run time, never
 printed), starts `spaceman serve` on a random loopback port, registers two nodes and runs every `TestAcc*` test: create,
 update, import, drift from direct API edits, write-only secret rotation, version publication without perpetual diffs, and
-the refused `node_id` change. It stops only its own processes and removes only its own directory (`SM_TF_KEEP=1` keeps
+a `node_id` change planned in place and sent to SpaceMan as a relocation (refused there: the harness runs no node agents). It stops only its own processes and removes only its own directory (`SM_TF_KEEP=1` keeps
 it for debugging). Nothing in the tests talks to a real model, Pulse deployment or identity provider.

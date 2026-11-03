@@ -28,6 +28,8 @@ export type Limit = Schemas['LimitsLimit']
 export type Schedule = Schemas['Schedule']
 export type ScheduleInput = Schemas['ScheduleInput']
 export type Replay = Schemas['EventsReplay']
+export type Relocation = Schemas['FleetRelocation']
+export type RelocationIssue = Schemas['FleetIssue']
 
 /** Problem details (RFC 9457) with SpaceMan's stable `code`. */
 export interface Problem {

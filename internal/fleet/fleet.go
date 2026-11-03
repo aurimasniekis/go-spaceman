@@ -56,6 +56,12 @@ type Options struct {
 	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error
 	// Outbox records run lifecycle events for publication to Pulse (SM-OBS-004). Nil: nothing is published.
 	Outbox *outbox.Outbox
+	// RelocationsDir stores files of relocations in progress: exported state and memory bundles (ADR-0037). Empty:
+	// relocations that need files are blocked with a clear error.
+	RelocationsDir string
+	// RelocationSyncWait bounds how long a source waits for central to acknowledge memory, recordings and transcripts
+	// before it reports its inspection (default 60 s).
+	RelocationSyncWait time.Duration
 	// Admit decides inside the launch transaction whether a launch may start (limits and budgets, SM-LIMIT-001); an
 	// error refuses it. Nil: every launch the space and lease allow starts.
 	Admit func(ctx context.Context, tx *store.Tx, a Admission) error
@@ -77,6 +83,9 @@ type Service struct {
 	opts    Options
 	hub     *Hub
 	rec     *Recordings
+	reloc   relocEngine
+	// MemoryExport writes central's role memory for a relocation's destination (nil: spaces with memory cannot relocate).
+	MemoryExport MemoryExporter
 }
 
 // New builds the service and its hub.
@@ -102,7 +111,7 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o}
+	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o, reloc: relocEngine{retain: make(chan struct{}, 1)}}
 	svc.hub = newHub(svc)
 	svc.rec = newRecordings(o.RecordingsDir, o.Clock.Now)
 	return svc

@@ -458,5 +458,42 @@ func (svc *Service) ResolveConflict(ctx context.Context, actor audit.Actor, spac
 	})
 }
 
+// ExportBundles writes one Git bundle of the acknowledged history (refs/heads/main at the recorded head) of every
+// collection of the space that has one, as memory-<role>.bundle in dir, for a relocation's destination (ADR-0037).
+// The destination starts from exactly what central acknowledged; history central never received is not in it.
+func (svc *Service) ExportBundles(ctx context.Context, spaceID, dir string) ([]proto.RelocateMemory, error) {
+	rows, err := svc.s.R().ListMemoryCollections(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := []proto.RelocateMemory{}
+	for _, c := range rows {
+		if c.Head == "" {
+			continue
+		}
+		if svc.git == nil {
+			return nil, errors.New("git is not installed on central")
+		}
+		if !ReRole.MatchString(c.Role) || !ValidCommit(c.Head) {
+			return nil, fmt.Errorf("collection %q has an invalid record", c.Role)
+		}
+		unlock := svc.lock(spaceID + "/" + c.Role)
+		repo := svc.repo(spaceID, c.Role)
+		name := "memory-" + c.Role + ".bundle"
+		ref := "refs/relocation/main"
+		_, err := svc.git.Run(ctx, repo, nil, "update-ref", ref, c.Head)
+		if err == nil {
+			_, err = svc.git.Run(ctx, repo, nil, "bundle", "create", "--quiet", filepath.Join(dir, name), ref)
+		}
+		_, _ = svc.git.Run(context.WithoutCancel(ctx), repo, nil, "update-ref", "-d", ref)
+		unlock()
+		if err != nil {
+			return nil, fmt.Errorf("bundle the %s memory: %w", c.Role, err)
+		}
+		out = append(out, proto.RelocateMemory{Role: c.Role, Head: c.Head, Blob: name})
+	}
+	return out, nil
+}
+
 // Available reports whether central can store memory.
 func (svc *Service) Available() bool { return svc.git != nil }

@@ -99,10 +99,34 @@ Roles pin a version with `prompt_pin = spaceman_prompt.worker.latest_version_id`
 Event subscriptions with `follow = "latest"` move to new template versions on their own, and that move does not show as a
 change.
 
+## Moving a space
+
+A space is pinned to its node. Changing `node_id` plans an in-place update; the apply runs SpaceMan's
+[relocation](/operators/relocation) and waits for it. The space must be paused with no active runs, or set
+`relocation_stop_runs = true` to pause it and stop its runs. Unpushed, changed or untracked state on the source is refused
+by default: the apply fails with the findings, the relocation stays blocked in SpaceMan, and applying again with
+`relocation_dirty_state = "export"` carries that state through central. The space stays paused on the new node.
+
+```hcl
+resource "spaceman_space" "payments" {
+  slug    = "payments"
+  name    = "Payments platform"
+  node_id = data.spaceman_node.build_02.id # was build_01
+
+  relocation_stop_runs   = true
+  relocation_dirty_state = "refuse" # or "export"
+  relocation_recovery    = "retain" # keep the old folder on the source
+  relocation_retain_days = 14
+  relocation_timeout     = "30m"
+}
+```
+
+The unavailable-source flow (the source is offline or revoked, and its local state may be lost) needs an operator's
+explicit acknowledgement and is not offered through Terraform; use the UI or the API.
+
 ## Things the provider will not do
 
-- **Move a space.** A space is pinned to its node. Changing `node_id` is refused at plan time: relocation is not
-  implemented yet, and the provider never moves a space by destroying and recreating it.
+- **Move a space by replacing it.** A `node_id` change is always a relocation, never a destroy and recreate.
 - **Silently replace what cannot be deleted.** Prompts, skills, templates, types, profiles and role templates have no delete
   API, so their identifying fields (slug, kind, a prompt's name) are refused at plan time instead of being replaced.
   Destroying such a resource removes it from Terraform's state only, with a warning.
@@ -111,6 +135,6 @@ change.
 
 ## Not yet covered
 
-Limits and quotas, schedules, cross-space requests and relocation arrive with their SpaceMan features. Space repositories,
+Limits and quotas, schedules and cross-space requests arrive with their SpaceMan features. Space repositories,
 the backup target and schedule (set in the configuration file today), and users with their role grants are planned for the
 provider's second phase.

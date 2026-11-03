@@ -9,6 +9,7 @@ export const keys = {
   spaces: ['spaces'] as const,
   space: (id: string) => ['space', id] as const,
   runs: (space: string) => ['runs', space] as const,
+  relocation: (space: string) => ['relocation', space] as const,
   run: (space: string, run: string) => ['run', space, run] as const,
   nodes: ['nodes'] as const,
   node: (id: string) => ['node', id] as const,
@@ -110,6 +111,17 @@ export const useRuns = (space: string) =>
   useQuery({
     queryKey: keys.runs(space),
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/runs', { params: { path: { space_id: space }, query: { limit: 200 } } })).items,
+  })
+
+/** The space's relocation in progress, or its latest one (null when it never had one). */
+export const useRelocation = (space: string) =>
+  useQuery({
+    queryKey: keys.relocation(space),
+    queryFn: async () => {
+      const res = await api.GET('/spaces/{space_id}/relocation', { params: { path: { space_id: space } } })
+      if (res.response.status === 404) return null
+      return unwrap(res)
+    },
   })
 
 export const useRun = (space: string, run: string) =>

@@ -238,6 +238,9 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 			return apperr.New(apperr.CodePrecondition, "stop the space's %d active run(s) before archiving (pause with interrupt or emergency)", len(active))
 		case sp.State == "archived" && state == "paused":
 			return apperr.New(apperr.CodePrecondition, "restore the space before pausing it")
+		case sp.DesiredNodeID.Valid && state != "paused":
+			// A relocating space stays stopped until the relocation ends (SM-INV-003, SM-SPACE-005).
+			return apperr.New(apperr.CodePrecondition, "the space is relocating; it stays paused until the relocation finishes or is cancelled")
 		}
 		if state == "paused" && mode != PauseHold {
 			stopMode := "interrupt"

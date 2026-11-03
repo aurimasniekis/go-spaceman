@@ -95,6 +95,7 @@ export default withMermaid(
             { text: 'Upgrade and rollback', link: '/operators/upgrade' },
             { text: 'Sign-in and access', link: '/operators/access' },
             { text: 'Nodes and leases', link: '/operators/nodes' },
+            { text: 'Relocating a space', link: '/operators/relocation' },
             { text: 'Accounts', link: '/operators/accounts' },
             { text: 'Terminals and recordings', link: '/operators/terminals' },
             { text: 'Backups and restore', link: '/operators/backup' },

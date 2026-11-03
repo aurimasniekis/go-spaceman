@@ -360,6 +360,19 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}`)
     await expect(page.getByRole('cell', { name: 'reviewer (worker)' })).toBeVisible()
   })
+  // Relocation dialog (SM-SPACE-005): a second enrolled node as the destination. It is enrolled through the API only (no
+  // second agent runs in this stack), so the dialog is shown before a precheck.
+  const spare = await api.call<{ node: { id: string }; token: string }>('POST', '/nodes', { name: 'build-02', description: 'Second workstation' })
+  const enrolled = await page.request.post(`${base}/agent/v1/enroll`, { data: { token: spare.token } })
+  expect(enrolled.ok()).toBeTruthy()
+  await capture(page, 'space-relocate', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByRole('button', { name: 'Relocate' }).click()
+    await page.getByRole('textbox', { name: 'Destination node' }).click()
+    await page.getByRole('option', { name: /build-02/ }).click()
+    await page.getByLabel(/Export it explicitly/).check()
+    await expect(page.getByRole('button', { name: 'Run precheck' })).toBeVisible()
+  })
   await capture(page, 'space-create', async () => {
     await page.goto('/spaces')
     await page.getByRole('button', { name: 'New space' }).click()

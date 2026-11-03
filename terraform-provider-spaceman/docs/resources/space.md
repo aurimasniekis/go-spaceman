@@ -33,7 +33,7 @@ resource "spaceman_space" "payments" {
 ### Required
 
 - `name` (String) Display name.
-- `node_id` (String) The node the space is pinned to (`nod_…`). A change is refused at plan time until relocation is implemented; it never destroys and recreates the space.
+- `node_id` (String) The node the space is pinned to (`nod_…`). A change is an in-place, safe relocation through SpaceMan (`POST /spaces/{id}/relocation`, SM-SPACE-005): the source is checked, unpushed or uncommitted state is refused unless `relocation_dirty_state = "export"`, the destination is prepared, and the assignment moves in one step. The space stays paused afterwards. It never destroys and recreates the space.
 - `slug` (String) Lowercase identifier, unique (3-48 characters). Fixed after creation.
 
 ### Optional
@@ -42,12 +42,17 @@ resource "spaceman_space" "payments" {
 - `disconnect_policy` (String) What the node does with runs after losing central beyond the grace: `interrupt` (default) or `kill`.
 - `goals` (String) Goals every run of the space sees.
 - `purge_on_destroy` (Boolean) On destroy, also purge the archived space's records (irreversible). Upstream repositories are never touched. Default `false`: destroy only archives.
+- `relocation_dirty_state` (String) On a `node_id` change: `refuse` (default) stops at unpushed, changed or untracked state on the source; `export` carries it through central to the destination. Not sent to SpaceMan otherwise.
+- `relocation_recovery` (String) On a `node_id` change: `retain` (default) keeps the source folder on the source node, `delete` removes it.
+- `relocation_retain_days` (Number) With `relocation_recovery = "retain"`: days to keep the source folder; `0` (default) keeps it until released.
+- `relocation_stop_runs` (Boolean) On a `node_id` change: pause the space (interrupt) and stop its runs. Default `false`: the space must already be paused with no active runs.
+- `relocation_timeout` (String) How long an apply waits for a relocation to finish (Go duration, default `30m`). A relocation that is still running continues in SpaceMan; the next apply waits for it again.
 - `standing_instructions` (String) Standing instructions every run of the space sees.
 
 ### Read-Only
 
 - `id` (String) The space ID (`spc_…`).
-- `state` (String) `active`, `paused` or `archived` (read-only: pausing is an operation, not configuration).
+- `state` (String) `active`, `paused` or `archived` (read-only: pausing is an operation, not configuration; a relocated space is paused).
 - `workdir` (String) The managed folder name on the node.
 
 ## Import

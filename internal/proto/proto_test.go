@@ -80,3 +80,23 @@ func TestLaunchPayloadRedacted(t *testing.T) {
 		t.Fatal("Redacted must not modify the original")
 	}
 }
+
+// Relocation steps (minor 3) need no run and are recognized; relocation file names are single safe path elements.
+func TestRelocationCommandsAndBlobNames(t *testing.T) {
+	c := Command{CommandID: "cmd_" + strings.Repeat("a", 26), SpaceID: "spc_" + strings.Repeat("b", 26), Generation: 1, IdempotencyKey: "k"}
+	for _, k := range []string{CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease} {
+		c.Kind = k
+		if err := c.Validate(); err != nil || !IsRelocation(k) {
+			t.Fatalf("%s: %v", k, err)
+		}
+	}
+	if IsRelocation(CmdLaunch) || MaxMinor < MinorRelocation {
+		t.Fatal("relocation detection or protocol range wrong")
+	}
+	for name, ok := range map[string]bool{"repo-0.bundle": true, "loose.tar.gz": true, "memory-control.bundle": true, "../x": false, "a/b": false,
+		"": false, ".hidden": false, "a..b": false, strings.Repeat("a", 65): false} {
+		if ValidBlobName(name) != ok {
+			t.Errorf("ValidBlobName(%q) != %v", name, ok)
+		}
+	}
+}

@@ -25,7 +25,9 @@ const (
 	// Major is the protocol major version; MinMinor..MaxMinor is the range this build accepts.
 	Major    = 1
 	MinMinor = 0
-	MaxMinor = 2 // 1: agent tool calls (tool.call / tool.result); 2: memory sync, KB acceptance, dreams, usage and transcripts
+	// 1: agent tool calls (tool.call / tool.result); 2: memory sync, KB acceptance, dreams, usage and transcripts;
+	// 3: space relocation (space.relocate.* commands, relocation reports and transfers, ADR-0037)
+	MaxMinor = 3
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -35,29 +37,34 @@ const (
 // Message types.
 const (
 	// node → central
-	TypeHello        = "hello"
-	TypeHeartbeat    = "heartbeat"
-	TypeAck          = "ack"
-	TypeRunReport    = "run.report"
-	TypeRecording    = "recording.chunk"
-	TypeToolCall     = "tool.call"        // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
-	TypeMemorySync   = "memory.sync"      // minor ≥ 2: new role-memory history, as a git bundle
-	TypeMemoryStatus = "memory.status"    // minor ≥ 2: the node's view of its memory collections
-	TypeKBResult     = "kb.result"        // minor ≥ 2: the outcome of a kb.accept command
-	TypeUsage        = "usage.report"     // minor ≥ 2: a run's usage, from its native transcript
-	TypeTranscript   = "transcript.chunk" // minor ≥ 2: part of a run's native transcript, after the run ended
+	TypeHello            = "hello"
+	TypeHeartbeat        = "heartbeat"
+	TypeAck              = "ack"
+	TypeRunReport        = "run.report"
+	TypeRecording        = "recording.chunk"
+	TypeToolCall         = "tool.call"         // minor ≥ 1: an agent's SpaceMan tool call, forwarded by the MCP bridge
+	TypeMemorySync       = "memory.sync"       // minor ≥ 2: new role-memory history, as a git bundle
+	TypeMemoryStatus     = "memory.status"     // minor ≥ 2: the node's view of its memory collections
+	TypeKBResult         = "kb.result"         // minor ≥ 2: the outcome of a kb.accept command
+	TypeUsage            = "usage.report"      // minor ≥ 2: a run's usage, from its native transcript
+	TypeTranscript       = "transcript.chunk"  // minor ≥ 2: part of a run's native transcript, after the run ended
+	TypeRelocationReport = "relocation.report" // minor ≥ 3: the outcome of a space.relocate.* command
+	TypeRelocationUpload = "relocation.upload" // minor ≥ 3: part of an exported state file, uploaded by the source
+	TypeRelocationFetch  = "relocation.fetch"  // minor ≥ 3: the destination asks for part of a relocation file
 
 	// central → node
-	TypeWelcome       = "welcome"
-	TypeLeaseGrant    = "lease.grant"
-	TypeLeaseRevoke   = "lease.revoke"
-	TypeCommand       = "command"
-	TypeReconcile     = "reconcile" // central's desired state for every run assigned to the node
-	TypeRecordingAck  = "recording.ack"
-	TypeToolResult    = "tool.result"    // minor ≥ 1
-	TypeMemoryAck     = "memory.ack"     // minor ≥ 2
-	TypeTranscriptAck = "transcript.ack" // minor ≥ 2
-	TypeError         = "error"
+	TypeWelcome             = "welcome"
+	TypeLeaseGrant          = "lease.grant"
+	TypeLeaseRevoke         = "lease.revoke"
+	TypeCommand             = "command"
+	TypeReconcile           = "reconcile" // central's desired state for every run assigned to the node
+	TypeRecordingAck        = "recording.ack"
+	TypeToolResult          = "tool.result"           // minor ≥ 1
+	TypeMemoryAck           = "memory.ack"            // minor ≥ 2
+	TypeTranscriptAck       = "transcript.ack"        // minor ≥ 2
+	TypeRelocationUploadAck = "relocation.upload_ack" // minor ≥ 3
+	TypeRelocationData      = "relocation.data"       // minor ≥ 3: the answer to a relocation.fetch
+	TypeError               = "error"
 )
 
 // Envelope is one protocol message.
@@ -207,7 +214,22 @@ const (
 	CmdPrepare   = "space.prepare"
 	CmdKBAccept  = "kb.accept"    // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
 	CmdDreamDone = "dream.commit" // minor ≥ 2: checkpoint a dream's memory, then advance its evidence positions
+	// minor ≥ 3: relocation steps (ADR-0037). They are not execution: the node accepts them without a valid lease (the
+	// source's lease is revoked while it relocates; the destination has none yet). Central is the only sender.
+	CmdRelocateCheck   = "space.relocate.check"   // source: flush memory and uploads, then inspect the space folder
+	CmdRelocateExport  = "space.relocate.export"  // source: bundle unpushed, dirty and untracked state and upload it
+	CmdRelocatePrepare = "space.relocate.prepare" // destination: materialize repositories, memory and exported state
+	CmdRelocateRelease = "space.relocate.release" // source after finalizing (retain or delete); destination after a cancel
 )
+
+// IsRelocation reports whether a command kind is a relocation step.
+func IsRelocation(kind string) bool {
+	switch kind {
+	case CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
+		return true
+	}
+	return false
+}
 
 // Skill is one skill version's files (guidance only; never executed by SpaceMan).
 type Skill struct {
@@ -389,7 +411,7 @@ func (c Command) Validate() error {
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")
 		}
-	case CmdPrepare, CmdKBAccept:
+	case CmdPrepare, CmdKBAccept, CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
 	case CmdDreamDone:
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")

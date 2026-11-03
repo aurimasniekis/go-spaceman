@@ -3738,6 +3738,36 @@
         ],
         "type": "object"
       },
+      "FleetContinuity": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "native_sessions": {
+            "enum": [
+              "not_carried"
+            ],
+            "type": "string"
+          },
+          "project": {
+            "enum": [
+              "guaranteed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "native_sessions",
+          "label",
+          "detail"
+        ],
+        "type": "object"
+      },
       "FleetCreateNodeInput": {
         "additionalProperties": false,
         "properties": {
@@ -3820,6 +3850,45 @@
           "slug",
           "name",
           "node_id"
+        ],
+        "type": "object"
+      },
+      "FleetIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "dirty",
+              "untracked",
+              "unpushed",
+              "stash",
+              "detached",
+              "no_remote",
+              "worktree",
+              "loose_files",
+              "memory_unsynced",
+              "recordings_pending",
+              "transcripts_pending",
+              "active_runs",
+              "inspect_error"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "exportable": {
+            "description": "An explicit export carries it; otherwise it blocks until resolved",
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "exportable"
         ],
         "type": "object"
       },
@@ -3961,6 +4030,90 @@
         ],
         "type": "object"
       },
+      "FleetLossReport": {
+        "additionalProperties": false,
+        "properties": {
+          "last_check_at": {
+            "description": "When the source was last inspected for a relocation",
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_issues": {
+            "description": "What that inspection found",
+            "items": {
+              "$ref": "#/components/schemas/FleetIssue"
+            },
+            "type": "array"
+          },
+          "memory": {
+            "items": {
+              "$ref": "#/components/schemas/FleetMemoryLoss"
+            },
+            "type": "array"
+          },
+          "runs": {
+            "description": "Runs on the source that are marked lost",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "source_last_seen": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "unknown": {
+            "description": "Local state central cannot see and that may be lost",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "statement",
+          "memory",
+          "runs",
+          "unknown"
+        ],
+        "type": "object"
+      },
+      "FleetMemoryLoss": {
+        "additionalProperties": false,
+        "properties": {
+          "central_head": {
+            "type": "string"
+          },
+          "local_commits": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "reported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "uncheckpointed": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "role",
+          "local_commits",
+          "uncheckpointed",
+          "pending"
+        ],
+        "type": "object"
+      },
       "FleetNode": {
         "additionalProperties": false,
         "properties": {
@@ -4079,6 +4232,252 @@
           "token",
           "expires_at"
         ],
+        "type": "object"
+      },
+      "FleetRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "description": "retain (default) moves the folder aside on the source; delete removes it",
+            "enum": [
+              "retain",
+              "delete"
+            ],
+            "type": "string"
+          },
+          "retain_days": {
+            "description": "Days a retained folder is kept; 0 keeps it until it is released",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mode",
+          "retain_days"
+        ],
+        "type": "object"
+      },
+      "FleetRelocation": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetRelocation.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "acknowledgement": {
+            "description": "The operator's acknowledgement of possibly lost local state (source_unavailable)",
+            "type": "string"
+          },
+          "blocked_step": {
+            "description": "Where a retry resumes",
+            "enum": [
+              "",
+              "check",
+              "export",
+              "prepare"
+            ],
+            "type": "string"
+          },
+          "continuity": {
+            "$ref": "#/components/schemas/FleetContinuity"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "destination_node_id": {
+            "type": "string"
+          },
+          "dirty_state": {
+            "enum": [
+              "refuse",
+              "export"
+            ],
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "export": {
+            "$ref": "#/components/schemas/ProtoRelocateExport",
+            "description": "State exported from the source and stored by central"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "generation_after": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "generation_before": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "issues": {
+            "description": "What the inspection found that a clean relocation would lose",
+            "items": {
+              "$ref": "#/components/schemas/FleetIssue"
+            },
+            "type": "array"
+          },
+          "loss": {
+            "$ref": "#/components/schemas/FleetLossReport",
+            "description": "What may be lost when the source is unavailable"
+          },
+          "mode": {
+            "enum": [
+              "clean",
+              "source_unavailable",
+              "precheck"
+            ],
+            "type": "string"
+          },
+          "paused_space": {
+            "description": "The relocation paused the space",
+            "type": "boolean"
+          },
+          "prepared": {
+            "$ref": "#/components/schemas/ProtoPrepareResult",
+            "description": "What the destination materialized and verified"
+          },
+          "recovery": {
+            "$ref": "#/components/schemas/FleetRecovery"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ProtoSpaceCheck",
+            "description": "The source's last inspection"
+          },
+          "repositories": {
+            "description": "Repositories the operator listed for a source_unavailable relocation",
+            "items": {
+              "$ref": "#/components/schemas/FleetRepoSpec"
+            },
+            "type": "array"
+          },
+          "retain_until": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "source_node_id": {
+            "type": "string"
+          },
+          "source_state": {
+            "description": "What happened to the source folder",
+            "enum": [
+              "",
+              "pending",
+              "retained",
+              "deleted",
+              "unreachable"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "requested",
+              "draining",
+              "checking",
+              "blocked",
+              "exporting",
+              "preparing_destination",
+              "finalizing",
+              "done",
+              "checked",
+              "failed",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "stop_runs": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "source_node_id",
+          "destination_node_id",
+          "mode",
+          "state",
+          "dirty_state",
+          "stop_runs",
+          "recovery",
+          "issues",
+          "continuity",
+          "generation_before",
+          "paused_space",
+          "version",
+          "created_at",
+          "created_by",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "FleetRepoSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Folder relative to the space folder",
+            "type": "string"
+          },
+          "url": {
+            "description": "Clone URL; the destination node's own Git authentication is used (no credentials in the URL)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "url"
+        ],
+        "type": "object"
+      },
+      "FleetRetryRelocationInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetRetryRelocationInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "dirty_state": {
+            "description": "Change the policy before retrying (export carries the reported state)",
+            "enum": [
+              "refuse",
+              "export"
+            ],
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "FleetRun": {
@@ -4334,6 +4733,80 @@
           "version",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "FleetStartRelocationInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetStartRelocationInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "acknowledge_loss": {
+            "description": "Required with source_unavailable: local state on the source may be lost",
+            "type": "boolean"
+          },
+          "acknowledgement": {
+            "description": "Required with source_unavailable: the operator's own words, recorded in the audit log",
+            "maxLength": 500,
+            "type": "string"
+          },
+          "destination_node_id": {
+            "description": "The node the space moves to",
+            "type": "string"
+          },
+          "dirty_state": {
+            "description": "refuse (default) stops at unpushed, changed or untracked state; export carries it through central",
+            "enum": [
+              "refuse",
+              "export"
+            ],
+            "type": "string"
+          },
+          "precheck": {
+            "description": "Only inspect the source and report; nothing changes",
+            "type": "boolean"
+          },
+          "recovery": {
+            "description": "What happens to the source folder (default retain)",
+            "enum": [
+              "retain",
+              "delete"
+            ],
+            "type": "string"
+          },
+          "repositories": {
+            "description": "source_unavailable only: repositories to clone on the destination",
+            "items": {
+              "$ref": "#/components/schemas/FleetRepoSpec"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "retain_days": {
+            "description": "With retain: days to keep it; 0 keeps it until released",
+            "format": "int64",
+            "maximum": 3650,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_unavailable": {
+            "description": "Relocate from central's copies only, because the source is offline, disabled or revoked",
+            "type": "boolean"
+          },
+          "stop_runs": {
+            "description": "Pause the space (interrupt) and stop its runs; without it the space must be paused with no active runs",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "destination_node_id"
         ],
         "type": "object"
       },
@@ -7408,6 +7881,30 @@
         ],
         "type": "object"
       },
+      "List-relocationsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-relocationsResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FleetRelocation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-role-templatesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -9241,6 +9738,39 @@
         ],
         "type": "object"
       },
+      "ProtoBranchCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "merge": {
+            "description": "The branch's configured upstream branch, e.g. refs/heads/main",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "no_upstream": {
+            "type": "boolean"
+          },
+          "remote": {
+            "description": "The branch's configured remote",
+            "type": "string"
+          },
+          "unpushed": {
+            "description": "Commits not on the upstream, or on no remote-tracking ref when there is no upstream",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "commit",
+          "unpushed"
+        ],
+        "type": "object"
+      },
       "ProtoCapabilities": {
         "additionalProperties": false,
         "properties": {
@@ -9304,6 +9834,119 @@
         ],
         "type": "object"
       },
+      "ProtoExportedRepo": {
+        "additionalProperties": false,
+        "properties": {
+          "blob": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoBranchCheck"
+            },
+            "type": "array"
+          },
+          "head": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "remotes": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoGitRemote"
+            },
+            "type": "array"
+          },
+          "snapshot": {
+            "description": "Commit holding the work tree's changed and untracked files",
+            "type": "string"
+          },
+          "stashes": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoExportedStash"
+            },
+            "type": "array"
+          },
+          "worktrees": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoExportedWorktree"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "blob",
+          "remotes",
+          "branches",
+          "worktrees",
+          "stashes"
+        ],
+        "type": "object"
+      },
+      "ProtoExportedStash": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "commit",
+          "message"
+        ],
+        "type": "object"
+      },
+      "ProtoExportedWorktree": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "snapshot": {
+            "description": "Commit holding the worktree's changed and untracked files",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "head"
+        ],
+        "type": "object"
+      },
+      "ProtoGitRemote": {
+        "additionalProperties": false,
+        "properties": {
+          "credentials_removed": {
+            "description": "The URL held credentials; they were removed and are not carried",
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "type": "object"
+      },
       "ProtoHarnessInfo": {
         "additionalProperties": false,
         "properties": {
@@ -9333,6 +9976,53 @@
           "kind",
           "available",
           "capabilities"
+        ],
+        "type": "object"
+      },
+      "ProtoInstanceCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "instance_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "files",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "ProtoLooseCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "paths": {
+            "description": "Up to 20 of them",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "files",
+          "bytes"
         ],
         "type": "object"
       },
@@ -9437,6 +10127,224 @@
         ],
         "type": "object"
       },
+      "ProtoPrepareResult": {
+        "additionalProperties": false,
+        "properties": {
+          "loose_files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "memory": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoPreparedMemory"
+            },
+            "type": "array"
+          },
+          "moved_aside": {
+            "description": "Existing folders of this space moved aside on the destination",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoPreparedRepo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "repos",
+          "memory",
+          "loose_files"
+        ],
+        "type": "object"
+      },
+      "ProtoPreparedMemory": {
+        "additionalProperties": false,
+        "properties": {
+          "head": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "head"
+        ],
+        "type": "object"
+      },
+      "ProtoPreparedRepo": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "dirty": {
+            "description": "Changed tracked files after restoring",
+            "format": "int64",
+            "type": "integer"
+          },
+          "exported": {
+            "description": "Restored from the exported bundle rather than cloned",
+            "type": "boolean"
+          },
+          "head": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "stashes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "untracked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "worktrees": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "exported",
+          "worktrees",
+          "dirty",
+          "untracked",
+          "stashes"
+        ],
+        "type": "object"
+      },
+      "ProtoRelocateBlob": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "ProtoRelocateExport": {
+        "additionalProperties": false,
+        "properties": {
+          "blobs": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoRelocateBlob"
+            },
+            "type": "array"
+          },
+          "loose": {
+            "description": "Blob holding the loose files (tar.gz)",
+            "type": "string"
+          },
+          "loose_files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "repos": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoExportedRepo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "repos",
+          "blobs"
+        ],
+        "type": "object"
+      },
+      "ProtoRepoCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "description": "Checked-out branch; empty when HEAD is detached",
+            "type": "string"
+          },
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoBranchCheck"
+            },
+            "type": "array"
+          },
+          "detached_unpushed": {
+            "description": "Commits reachable only from a detached HEAD",
+            "format": "int64",
+            "type": "integer"
+          },
+          "dirty": {
+            "description": "Changed tracked files",
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Relative to the space folder",
+            "type": "string"
+          },
+          "paths": {
+            "description": "Up to 20 changed or untracked paths",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "remotes": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoGitRemote"
+            },
+            "type": "array"
+          },
+          "stashes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "untracked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "worktrees": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoWorktreeCheck"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "remotes",
+          "branches",
+          "dirty",
+          "untracked",
+          "stashes",
+          "detached_unpushed",
+          "worktrees"
+        ],
+        "type": "object"
+      },
       "ProtoRunnerInfo": {
         "additionalProperties": false,
         "properties": {
@@ -9457,6 +10365,83 @@
           "kind",
           "version",
           "core_id"
+        ],
+        "type": "object"
+      },
+      "ProtoSpaceCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "active_runs": {
+            "description": "Runs the node still supervises in this space",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "flushed": {
+            "description": "Memory, recordings and transcripts were flushed and acknowledged in time",
+            "type": "boolean"
+          },
+          "folder_exists": {
+            "type": "boolean"
+          },
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoInstanceCheck"
+            },
+            "type": "array"
+          },
+          "loose": {
+            "$ref": "#/components/schemas/ProtoLooseCheck"
+          },
+          "memory": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoMemoryCollectionStatus"
+            },
+            "type": "array"
+          },
+          "recordings_pending": {
+            "description": "Runs whose recording central has not fully stored",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "repositories": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoRepoCheck"
+            },
+            "type": "array"
+          },
+          "transcripts_pending": {
+            "description": "Runs whose native transcript upload is unfinished",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "checked_at",
+          "folder_exists",
+          "repositories",
+          "loose",
+          "memory",
+          "recordings_pending",
+          "transcripts_pending",
+          "active_runs",
+          "instances",
+          "flushed"
         ],
         "type": "object"
       },
@@ -9492,6 +10477,39 @@
         "required": [
           "repo",
           "branch"
+        ],
+        "type": "object"
+      },
+      "ProtoWorktreeCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "dirty": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Relative to the space folder",
+            "type": "string"
+          },
+          "untracked": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "head",
+          "dirty",
+          "untracked"
         ],
         "type": "object"
       },
@@ -20159,6 +21177,298 @@
         "summary": "Set the queue policy",
         "tags": [
           "queue"
+        ]
+      }
+    },
+    "/spaces/{space_id}/relocation": {
+      "get": {
+        "operationId": "get-relocation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRelocation"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The space's relocation in progress, or its latest one",
+        "tags": [
+          "relocation"
+        ]
+      },
+      "post": {
+        "description": "An explicit operator action (SM-INV-003). A clean relocation checks the source (memory synced, uploads finished, repositories pushed), refuses unpushed, changed or untracked state unless dirty_state is export, prepares the destination and then moves the assignment and the execution lease in one step. source_unavailable relocates from central's copies only and requires an acknowledgement that local state may be lost. The space stays paused at the destination.",
+        "operationId": "start-relocation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetStartRelocationInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRelocation"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Relocate a stopped space to another node, or inspect it first (precheck)",
+        "tags": [
+          "relocation"
+        ]
+      }
+    },
+    "/spaces/{space_id}/relocation/cancel": {
+      "post": {
+        "operationId": "cancel-relocation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRelocation"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Cancel a relocation before it finalizes (the space stays on its source, paused)",
+        "tags": [
+          "relocation"
+        ]
+      }
+    },
+    "/spaces/{space_id}/relocation/release": {
+      "post": {
+        "operationId": "release-relocation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRelocation"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete the source folder the latest relocation retained",
+        "tags": [
+          "relocation"
+        ]
+      }
+    },
+    "/spaces/{space_id}/relocation/retry": {
+      "post": {
+        "operationId": "retry-relocation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetRetryRelocationInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetRelocation"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resume a blocked relocation, optionally exporting the reported state",
+        "tags": [
+          "relocation"
+        ]
+      }
+    },
+    "/spaces/{space_id}/relocations": {
+      "get": {
+        "operationId": "list-relocations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-relocationsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The space's relocations, newest first",
+        "tags": [
+          "relocation"
         ]
       }
     },

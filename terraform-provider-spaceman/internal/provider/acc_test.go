@@ -73,8 +73,8 @@ resource "spaceman_space" "s" {
 `, slug, name, goals, nodeID)
 }
 
-// TestAccSpace covers create, update, import, drift of a managed field, no drift for an unmanaged field, and the
-// refused node_id change (relocation is not implemented).
+// TestAccSpace covers create, update, import, drift of a managed field, no drift for an unmanaged field, and a node_id
+// change planned in place and sent to SpaceMan as a relocation.
 func TestAccSpace(t *testing.T) {
 	testAccPreCheck(t)
 	slug := "tf-space-" + suffix()
@@ -151,11 +151,30 @@ func TestAccSpace(t *testing.T) {
 			Config:   spaceHCL(slug, "TF space renamed", "ship it twice", acc.nodeA.ID),
 			PlanOnly: true,
 		},
-		// node_id changes are refused at plan time (never a destroy and recreate).
+		// A node_id change plans an in-place update (never a destroy and recreate) and applies as a SpaceMan relocation.
+		// This harness runs no node agents, so SpaceMan refuses it (the destination never enrolled) and the space stays
+		// where it is; relocations that complete are covered by internal/app TestRelocation* and TestRelocationOnNodeChange.
 		resource.TestStep{
-			Config:      spaceHCL(slug, "TF space renamed", "ship it twice", acc.nodeB.ID),
-			PlanOnly:    true,
-			ExpectError: regexp.MustCompile(`Space relocation is not supported yet`),
+			Config: spaceHCL(slug, "TF space renamed", "ship it twice", acc.nodeB.ID),
+			ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+				plancheck.ExpectResourceAction("spaceman_space.s", plancheck.ResourceActionUpdate)}},
+			ExpectError: regexp.MustCompile(`(?s)SpaceMan refused to relocate the space.*destination node tf-node-b is pending`),
+		},
+		resource.TestStep{
+			Config: spaceHCL(slug, "TF space renamed", "ship it twice", acc.nodeA.ID),
+			Check: apiCheck("spaceman_space.s", func(ctx context.Context, c *client.Client, id string, _ *terraform.State) error {
+				s, err := c.GetSpace(ctx, id)
+				if err != nil {
+					return err
+				}
+				if s.NodeID != acc.nodeA.ID || s.DesiredNodeID != "" {
+					return fmt.Errorf("a refused relocation moved the space: node %s desired %s", s.NodeID, s.DesiredNodeID)
+				}
+				if _, err := c.GetRelocation(ctx, id); !client.IsNotFound(err) {
+					return fmt.Errorf("a refused relocation was recorded: %v", err)
+				}
+				return nil
+			}),
 		},
 		resource.TestStep{
 			Config:      spaceHCL("tf-other-"+suffix(), "TF space renamed", "ship it twice", acc.nodeA.ID),

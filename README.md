@@ -23,7 +23,7 @@
 
 > **Status: early development.** Milestone 1 (central, nodes, spaces, runs, leases, recordings, access control and the
 > web UI) is implemented and tested. The inbox, queue, events, human actions, accounts, prompts, MCP gateway, memory,
-> relocation, backups, SSO and Terraform provider are planned. See the [project status](docs/TRACEABILITY.md).
+> backups, SSO and Terraform provider are planned. See the [project status](docs/TRACEABILITY.md).
 
 ## How it works
 

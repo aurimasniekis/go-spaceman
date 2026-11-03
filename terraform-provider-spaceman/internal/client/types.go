@@ -44,6 +44,48 @@ type Space struct {
 	Version              int64  `json:"version"`
 }
 
+// StartRelocationInput is POST /spaces/{id}/relocation (the clean flow; the unavailable-source flow is an operator act in the
+// UI or API and is not offered here).
+type StartRelocationInput struct {
+	DestinationNodeID string `json:"destination_node_id"`
+	DirtyState        string `json:"dirty_state,omitempty"`
+	StopRuns          bool   `json:"stop_runs,omitempty"`
+	Recovery          string `json:"recovery,omitempty"`
+	RetainDays        int64  `json:"retain_days,omitempty"`
+}
+
+// RelocationIssue is one finding of the source's inspection.
+type RelocationIssue struct {
+	Code       string `json:"code"`
+	Path       string `json:"path,omitempty"`
+	Detail     string `json:"detail"`
+	Exportable bool   `json:"exportable"`
+}
+
+// Relocation is a space relocation as the API shows it (the fields the provider uses).
+type Relocation struct {
+	ID                string            `json:"id"`
+	SpaceID           string            `json:"space_id"`
+	SourceNodeID      string            `json:"source_node_id"`
+	DestinationNodeID string            `json:"destination_node_id"`
+	Mode              string            `json:"mode"`
+	State             string            `json:"state"`
+	BlockedStep       string            `json:"blocked_step,omitempty"`
+	DirtyState        string            `json:"dirty_state"`
+	Issues            []RelocationIssue `json:"issues"`
+	Error             string            `json:"error,omitempty"`
+	GenerationAfter   int64             `json:"generation_after,omitempty"`
+}
+
+// Finished reports whether the relocation reached an end state.
+func (r *Relocation) Finished() bool {
+	switch r.State {
+	case "done", "checked", "failed", "cancelled":
+		return true
+	}
+	return false
+}
+
 // CreateSpaceInput is POST /spaces.
 type CreateSpaceInput struct {
 	Slug                 string `json:"slug"`

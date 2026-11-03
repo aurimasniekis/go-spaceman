@@ -39,6 +39,9 @@ func (a *Agent) grant(ctx context.Context, g proto.LeaseGrant) {
 	if err := a.j.putLease(ctx, l); err != nil {
 		a.log.Warn("journal lease", obs.Err(err))
 	}
+	if err := a.j.putWorkdir(ctx, g.SpaceID, g.Workdir); err != nil {
+		a.log.Warn("journal space folder", obs.Err(err))
+	}
 	if err := writeJSONFile(a.leaseFile(g.SpaceID), LeaseFile{SpaceID: g.SpaceID, Generation: g.Generation,
 		ValidUntil: g.ExpiresAt.Add(g.Grace + guardSlack)}); err != nil {
 		a.log.Warn("lease file", obs.Err(err))
@@ -82,6 +85,14 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 	if err != nil {
 		a.log.Warn("journal command", obs.Err(err))
 		return // no ack: central re-sends after reconnect
+	}
+	if proto.IsRelocation(c.Kind) {
+		// Relocation steps are not execution: no lease is needed (ADR-0037). A repeat re-sends the stored outcome.
+		if !fresh {
+			a.ack(ctx, c, proto.AckDuplicate, "")
+		}
+		a.handleRelocation(ctx, c, fresh)
+		return
 	}
 	if !fresh {
 		a.ack(ctx, c, proto.AckDuplicate, "")
