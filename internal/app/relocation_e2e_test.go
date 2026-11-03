@@ -512,7 +512,7 @@ func TestRelocationResumesAfterCentralRestart(t *testing.T) {
 // SM-INV-003: nothing moves a space without an explicit request. A source that is gone for many lease periods keeps
 // its spaces, no relocation is created, and launches wait for it.
 func TestRelocationNeverAutomatic(t *testing.T) {
-	e := newFleetEnv(t)
+	e := newFleetEnv(t, shortLease)
 	ctx := context.Background()
 	a, _ := e.addNode("node-a"), e.addNode("node-b")
 	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "stays-put", Name: "Stays", NodeID: a.id})

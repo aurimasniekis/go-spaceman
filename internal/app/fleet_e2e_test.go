@@ -46,7 +46,9 @@ type fleetEnv struct {
 	bridge string
 }
 
-func newFleetEnv(t *testing.T) *fleetEnv {
+// newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
+// central or the agent under the race detector never outlives a lease; tests of lease expiry pass shortLease.
+func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
@@ -54,8 +56,11 @@ func newFleetEnv(t *testing.T) *fleetEnv {
 	cfg.DataDir = filepath.Join(dir, "central")
 	cfg.KEK.File = filepath.Join(dir, "kek")
 	cfg.Nodes.HeartbeatInterval = config.Duration(300 * time.Millisecond)
-	cfg.Nodes.LeaseTTL = config.Duration(time.Second)
-	cfg.Nodes.DisconnectGrace = config.Duration(500 * time.Millisecond)
+	cfg.Nodes.LeaseTTL = config.Duration(5 * time.Second)
+	cfg.Nodes.DisconnectGrace = config.Duration(time.Second)
+	for _, o := range opts {
+		o(cfg)
+	}
 	k, _ := keyring.GenerateKEK()
 	if err := keyring.WriteKEKFile(cfg.KEK.File, k); err != nil {
 		t.Fatal(err)
@@ -78,6 +83,12 @@ func newFleetEnv(t *testing.T) *fleetEnv {
 		}
 	})
 	return e
+}
+
+// shortLease makes leases expire quickly (1 s plus a 0.5 s grace) for tests of what happens without central.
+func shortLease(cfg *config.Config) {
+	cfg.Nodes.LeaseTTL = config.Duration(time.Second)
+	cfg.Nodes.DisconnectGrace = config.Duration(500 * time.Millisecond)
 }
 
 func (e *fleetEnv) startCentral() {
@@ -286,7 +297,7 @@ func TestFleetLifecycle(t *testing.T) {
 
 // SM-NODE-007: without central, the node starts no work and stops running work after lease + grace.
 func TestDisconnectEnforcement(t *testing.T) {
-	e := newFleetEnv(t)
+	e := newFleetEnv(t, shortLease)
 	ctx := context.Background()
 	e.enroll()
 	e.startAgent()

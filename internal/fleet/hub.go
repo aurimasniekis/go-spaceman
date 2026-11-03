@@ -534,8 +534,11 @@ func (h *Hub) syncLeases(ctx context.Context, s *session, claimed []proto.LeaseS
 			grants = append(grants, g)
 			held[sp.ID] = g.Generation
 		}
+		// Only a claimed lease for a space this node no longer holds is revoked (for example after a relocation). A held
+		// space with another generation needs no revoke: its grant above supersedes the claimed generation, and an
+		// "interrupt" revoke sent after it would stop runs that are allowed to continue.
 		for _, c := range claimed {
-			if gen, ok := held[c.SpaceID]; !ok || gen != c.Generation {
+			if _, ok := held[c.SpaceID]; !ok {
 				revokes = append(revokes, proto.LeaseRevoke{SpaceID: c.SpaceID, Generation: c.Generation, Reason: "lease no longer held", Mode: "interrupt"})
 			}
 		}
