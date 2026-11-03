@@ -9,6 +9,7 @@ normal agent on the space's node, with the same tools as other agents and nothin
 1. Give the space a role whose template is of kind **dreamer**. The built-in prompt **Dream: memory consolidation**
    (`dream-consolidation` in Prompts) describes the method; use it or your own.
 2. In **Memory → Dreams → Add dream**, choose:
+   - **Dreams as** (the space role of kind dreamer),
    - **Memories to consolidate** (role names, or `*`),
    - **Transcripts it may read** (role names, or `*`; the dreamer's own transcripts are left out unless you include
      them),

@@ -6,8 +6,8 @@ Every command is bound to an operation of the [HTTP API](/reference/api) of its 
 [command-line reference](/reference/cli/) is generated from the command definitions and lists the operations each command
 calls.
 
-The local commands are unchanged: `serve` runs central, and `admin`, `keys` and `backup` work on the data directory
-directly (offline).
+The local commands work on the server itself: `serve` runs central, and `admin`, `keys` and `backup` work on the data
+directory directly (offline).
 
 ## Installation
 
@@ -109,7 +109,7 @@ spaceman space relocate start payments --to build-02 --source-unavailable --ackn
 | Code | Meaning |
 |---|---|
 | `0` | success |
-| `1` | usage: bad flags or arguments, unreadable input files |
+| `1` | usage: bad flags or arguments, unreadable input files, local failures |
 | `2` | API error, a final state you did not want (failed or blocked relocation with `--wait`, broken audit chain), or the server could not be reached |
 | `3` | conflict: `409`, `412` or `428` (the object changed since it was read, already exists, or a precondition failed) |
 | `4` | not found: `404` (a space you cannot read looks the same) |

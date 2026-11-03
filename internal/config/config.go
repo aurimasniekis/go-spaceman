@@ -55,8 +55,13 @@ func (d Duration) MarshalYAML() (any, error) { return time.Duration(d).String(),
 
 // Config is the central `spaceman` configuration.
 type Config struct {
-	Mode      Mode            `yaml:"mode"`
-	DataDir   string          `yaml:"data_dir"`
+	// Mode is "production" (default) or "development". Development mode allows plain http, disabling TOTP, shorter
+	// passwords and other relaxations that production rejects.
+	Mode Mode `yaml:"mode"`
+	// DataDir holds the database, artifacts and backups by default. Absolute, on a local filesystem (network
+	// filesystems are refused); created 0700.
+	DataDir string `yaml:"data_dir"`
+	// PublicURL is the URL browsers and nodes use to reach central (required; https in production).
 	PublicURL string          `yaml:"public_url"`
 	KEK       KEKConfig       `yaml:"kek"`
 	HTTP      HTTPConfig      `yaml:"http"`
@@ -114,12 +119,13 @@ type LimitsConfig struct {
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual
 // backups (API, UI, CLI) use the same target whether or not the schedule is enabled.
 type BackupsConfig struct {
-	// Enabled turns the schedule on: one backup every Interval, then retention.
-	Enabled  bool     `yaml:"enabled"`
+	// Enabled turns the schedule on: one backup every interval, then retention.
+	Enabled bool `yaml:"enabled"`
+	// Interval is the time between scheduled backups (15m to 168h).
 	Interval Duration `yaml:"interval"`
-	// KeepLast is how many complete backups retention keeps at least (the newest ones).
+	// KeepLast is how many complete backups retention keeps at least (the newest ones; 1-1000).
 	KeepLast int `yaml:"keep_last"`
-	// MaxAge deletes backups older than this beyond the newest one (0 keeps them, bounded by KeepLast only).
+	// MaxAge deletes backups older than this beyond the newest one (0 keeps them, bounded by keep_last only).
 	MaxAge Duration `yaml:"max_age"`
 	// Target is "local" (default) or "s3".
 	Target string `yaml:"target"`
@@ -137,6 +143,7 @@ type EventsConfig struct {
 // OutboundConfig configures publication of SpaceMan's events to Pulse through the transactional outbox
 // (SM-OBS-004, ADR-0030). It is off by default; while off, no events are recorded.
 type OutboundConfig struct {
+	// Enabled turns publication on (needs url and creds_file).
 	Enabled bool `yaml:"enabled"`
 	// URL is the Pulse NATS URL: tls://host:port (required in production) or nats://host:port.
 	URL string `yaml:"url"`
@@ -144,7 +151,7 @@ type OutboundConfig struct {
 	CredsFile string `yaml:"creds_file"`
 	// CAFile is an optional extra CA bundle (PEM) for tls:// URLs.
 	CAFile string `yaml:"ca_file"`
-	// Source is ce-source and the spaceman-origin header (default "spaceman"); give each installation its own.
+	// Source is the ce-source and the spaceman-origin header (default "spaceman"); give each installation its own.
 	Source string `yaml:"source"`
 	// Retention is how long published and dead-lettered events are kept (default 168h).
 	Retention Duration `yaml:"retention"`
@@ -161,31 +168,50 @@ type HarnessPolicy struct {
 type KEKConfig struct {
 	// Source is "file" (default) or "env" (reads base64 from SPACEMAN_KEK; discouraged).
 	Source string `yaml:"source"`
-	File   string `yaml:"file"`
+	// File is the KEK file (absolute in production). Keep it outside data_dir, readable only by central, and back it
+	// up offline apart from the backups: without it backups and secrets cannot be decrypted.
+	File string `yaml:"file"`
 }
 
 // HTTPConfig configures the web/API listener and the separate management listener (SM-OBS-002).
 type HTTPConfig struct {
+	// Listen is the host:port of the web UI, API and node connections.
 	Listen string `yaml:"listen"`
-	// ManagementListen serves /healthz, /readyz and /metrics only. It should not be exposed publicly.
-	ManagementListen string   `yaml:"management_listen"`
-	TLSCertFile      string   `yaml:"tls_cert_file"`
-	TLSKeyFile       string   `yaml:"tls_key_file"`
-	TrustedProxies   []string `yaml:"trusted_proxies"`
-	MaxBodyBytes     int64    `yaml:"max_body_bytes"`
+	// ManagementListen serves /healthz, /readyz and /metrics only (empty: disabled). It is unauthenticated: keep it
+	// private. It must differ from listen.
+	ManagementListen string `yaml:"management_listen"`
+	// TLSCertFile is the TLS certificate (PEM). With tls_key_file (set together) central terminates TLS itself;
+	// otherwise terminate it at a reverse proxy.
+	TLSCertFile string `yaml:"tls_cert_file"`
+	// TLSKeyFile is the private key for tls_cert_file.
+	TLSKeyFile string `yaml:"tls_key_file"`
+	// TrustedProxies lists the CIDR prefixes of reverse proxies whose X-Forwarded-For is trusted; other peers' headers
+	// are ignored.
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	// MaxBodyBytes bounds one API request body (attachment uploads have their own bound).
+	MaxBodyBytes int64 `yaml:"max_body_bytes"`
 	// MaxUploadBytes bounds one attachment upload (SM-ATT-002).
-	MaxUploadBytes    int64    `yaml:"max_upload_bytes"`
+	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
+	// ReadHeaderTimeout bounds how long a client may take to send request headers.
 	ReadHeaderTimeout Duration `yaml:"read_header_timeout"`
 }
 
 // AuthConfig configures operator authentication (SM-AUTH-001).
 type AuthConfig struct {
-	SessionIdle        Duration `yaml:"session_idle"`
-	SessionAbsolute    Duration `yaml:"session_absolute"`
-	ReauthWindow       Duration `yaml:"reauth_window"`
-	PasswordMinLength  int      `yaml:"password_min_length"`
-	RequireTOTP        bool     `yaml:"require_totp"`
-	LocalLoginDisabled bool     `yaml:"local_login_disabled"`
+	// SessionIdle ends a browser session after this much inactivity (1m to 24h).
+	SessionIdle Duration `yaml:"session_idle"`
+	// SessionAbsolute ends a browser session this long after sign-in, whatever its activity (session_idle to 720h).
+	SessionAbsolute Duration `yaml:"session_absolute"`
+	// ReauthWindow is how long a step-up re-authentication counts for sensitive actions (1m to 1h).
+	ReauthWindow Duration `yaml:"reauth_window"`
+	// PasswordMinLength is the shortest password accepted (at least 12 in production).
+	PasswordMinLength int `yaml:"password_min_length"`
+	// RequireTOTP makes TOTP mandatory for every password account. Production requires it; privileged accounts need
+	// TOTP even in development mode.
+	RequireTOTP bool `yaml:"require_totp"`
+	// LocalLoginDisabled is accepted but not read by this build: password sign-in is never disabled by configuration
+	// (docs/LIMITATIONS.md).
+	LocalLoginDisabled bool `yaml:"local_login_disabled"`
 	// StreamRevalidate is how often an open live stream (change feed, terminal) and a node connection re-check their
 	// credential and authorization. Revocations committed by central end affected streams at once; this interval
 	// bounds everything else (expiry, idle timeout, changes made while central was stopped). 1 s to 60 s, default
@@ -195,19 +221,25 @@ type AuthConfig struct {
 
 // NodesConfig configures node connectivity and execution leases (ADR-0006).
 type NodesConfig struct {
+	// HeartbeatInterval is how often a connected node reports in and renews its leases (1s to 1m).
 	HeartbeatInterval Duration `yaml:"heartbeat_interval"`
-	// LeaseTTL is how long one renewal of a space's execution lease is valid.
+	// LeaseTTL is how long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval).
 	LeaseTTL Duration `yaml:"lease_ttl"`
-	// DisconnectGrace is how long a node keeps runs going after losing central before stopping them (SM-NODE-007).
+	// DisconnectGrace is how long a node keeps runs going after losing central before stopping them (SM-NODE-007;
+	// 0 to 1h).
 	DisconnectGrace Duration `yaml:"disconnect_grace"`
-	EnrollmentTTL   Duration `yaml:"enrollment_ttl"`
-	CommandTimeout  Duration `yaml:"command_timeout"`
+	// EnrollmentTTL is how long a node enrollment token stays valid (1m to 720h).
+	EnrollmentTTL Duration `yaml:"enrollment_ttl"`
+	// CommandTimeout is validated (1s to 10m) but not read by this build; node commands use their own fixed timeouts.
+	CommandTimeout Duration `yaml:"command_timeout"`
 }
 
 // ArtifactsConfig selects the artifact store (SM-STORE-002).
 type ArtifactsConfig struct {
-	// Backend is "local" (default: <data_dir>/artifacts) or "s3".
-	Backend  string   `yaml:"backend"`
+	// Backend is "local" (default: <data_dir>/artifacts). "s3" passes validation but central refuses to start with it:
+	// the S3 artifact store is not implemented (backups have their own S3 target).
+	Backend string `yaml:"backend"`
+	// LocalDir is the local backend's directory (default <data_dir>/artifacts).
 	LocalDir string   `yaml:"local_dir"`
 	S3       S3Config `yaml:"s3"`
 	// SpaceQuotaBytes bounds the attachments stored per space (SM-ATT-002).
@@ -216,14 +248,22 @@ type ArtifactsConfig struct {
 
 // S3Config configures an S3-compatible bucket. Secrets come from files, never inline values.
 type S3Config struct {
-	Endpoint        string `yaml:"endpoint"`
-	Region          string `yaml:"region"`
-	Bucket          string `yaml:"bucket"`
-	Prefix          string `yaml:"prefix"`
-	AccessKeyFile   string `yaml:"access_key_file"`
-	SecretKeyFile   string `yaml:"secret_key_file"`
-	UsePathStyle    bool   `yaml:"use_path_style"`
-	InsecureAllowed bool   `yaml:"insecure_allowed"`
+	// Endpoint is the S3 API endpoint URL (required for s3).
+	Endpoint string `yaml:"endpoint"`
+	// Region is the bucket's region.
+	Region string `yaml:"region"`
+	// Bucket is the bucket name (required for s3).
+	Bucket string `yaml:"bucket"`
+	// Prefix is prepended to every object key.
+	Prefix string `yaml:"prefix"`
+	// AccessKeyFile holds the access key ID (set together with secret_key_file).
+	AccessKeyFile string `yaml:"access_key_file"`
+	// SecretKeyFile holds the secret access key.
+	SecretKeyFile string `yaml:"secret_key_file"`
+	// UsePathStyle addresses the bucket in the path instead of the host name (MinIO and most self-hosted stores).
+	UsePathStyle bool `yaml:"use_path_style"`
+	// InsecureAllowed permits a plain http endpoint (development mode only).
+	InsecureAllowed bool `yaml:"insecure_allowed"`
 	// AllowPrivateNetwork lets the endpoint resolve to a private, loopback or link-local address (self-hosted MinIO).
 	AllowPrivateNetwork bool `yaml:"allow_private_network"`
 	// CAFile adds trust roots (PEM) for the endpoint; verification is never disabled.
@@ -232,6 +272,8 @@ type S3Config struct {
 
 // ShutdownConfig bounds graceful shutdown.
 type ShutdownConfig struct {
+	// Timeout is how long central waits for requests and background work to finish on stop (1s to 10m). Keep it below
+	// the service manager's stop timeout.
 	Timeout Duration `yaml:"timeout"`
 }
 

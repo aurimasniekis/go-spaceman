@@ -11,24 +11,35 @@ It has two programs:
 - **`spaceman-agent`** runs on each node. It connects out to central over a WebSocket, launches harnesses in its own
   herdr-core core, records their terminals and enforces leases locally.
 
-## What it does today
+## What it does
 
-- **Spaces** pinned to a node, with goals and standing instructions, pause modes (hold, interrupt, emergency stop) and
-  archive.
-- **Runs** of Claude Code or Codex launched into a space, each in its own herdr-core terminal with an isolated harness
-  configuration directory, a run-scoped credential and a minimal MCP bridge.
-- **Execution leases** with fencing, disconnect enforcement and a lease-guard terminal that ends runs when the agent
-  daemon is dead.
-- **Recording** of every run's terminal, shipped to central, with a live watch-only view, replay and download.
-- **Access control**: password and TOTP sign-in, step-up re-authentication, viewer/operator/admin roles per space or
-  globally, scoped API tokens, the bootstrap root token and a hash-chained audit log.
+- **Spaces** pinned to a node, with goals and standing instructions, pause modes (hold, interrupt, emergency stop),
+  archive and [relocation](/operators/relocation) to another node.
+- **Runs** of Claude Code or Codex in their own herdr-core terminals, each with an isolated harness configuration
+  directory, a one-run credential and an MCP bridge to SpaceMan's [agent tools](./agent-tools).
+- **Execution leases** with fencing, disconnect enforcement and a lease guard that ends runs when the agent daemon dies.
+- **Coordination**: a space's [inbox](./inbox) and [execution queue](./queue), a [control agent and workers](./control)
+  with their own Git worktrees, durable [messages](./messages) and [schedules](./schedules).
+- **People in charge**: [human actions](./human-actions) (questions, approvals, to-dos, custom types) across spaces, and
+  [enforced approvals](./approvals) that gate operations SpaceMan performs.
+- **Configuration**: [accounts](/operators/accounts) with encrypted credentials, versioned [prompts, profiles and
+  roles](./roles-and-prompts), [skills](./skills) and an [MCP gateway](./mcp-gateway) to external tools.
+- **Knowledge**: per-role [memory](./memory) preserved centrally, [knowledge bases](./knowledge) with support sessions,
+  [dreams](./dreams) that consolidate memory, and [cross-space requests](./cross-space).
+- **Events**: [Pulse subscriptions](./events) (including GitHub through go-pulse-github) into the inbox, and
+  [SpaceMan's own events](./publishing-events) published through an outbox.
+- **Recording and usage**: every terminal recorded with live view and replay; [usage and transcripts](./usage).
+- **Access and operations**: passwords with TOTP, [single sign-on](./sign-in) through Porch or another OIDC provider,
+  roles per space, scoped API tokens, a hash-chained audit log, [limits and budgets](./limits),
+  [backups](/operators/backup), metrics, a [command line](/operators/cli) and a [Terraform provider](/operators/terraform).
 
-## What is coming
+## How finished it is
 
-The inbox and execution queue, Pulse event subscriptions (including GitHub), human actions and approvals, accounts and
-secrets, prompts and profiles, the MCP gateway, memory and knowledge bases, backups, SSO through Porch, and
-a Terraform provider are planned in later milestones. They are not described as features on this site until they work;
-see the [project status](/guide/status).
+Everything above is implemented and covered by automated tests, most of them **simulated** (fakes or embedded
+dependencies). Some of it has also been run against the real dependency: herdr-core, Claude Code, Porch, Pulse with
+go-pulse-github, MinIO and systemd in a container. Codex, AWS S3, a physical Linux host and amd64 under systemd have
+not. No version has been released. The [project status](/guide/status) lists the evidence for every requirement, and
+the [known limitations](/reference/limitations) list what is missing.
 
 ## What it is not
 

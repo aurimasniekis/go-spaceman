@@ -228,7 +228,7 @@ func adminCmd(g *globals) *cobra.Command {
 func printSecret(w io.Writer, what, secret, id string) error {
 	_, err := fmt.Fprintf(w, "New %s (%s). It is shown only once; store it offline.\n\n  %s\n\n"+
 		"Use it to create the first administrator (web UI /setup, or POST /api/v1/users with Authorization: Bearer).\n"+
-		"Revoke it afterwards from the Users & tokens page or with DELETE /api/v1/admin/root-token.\n", what, id, secret)
+		"Revoke it afterwards on the Account page or with DELETE /api/v1/admin/root-token.\n", what, id, secret)
 	return err
 }
 

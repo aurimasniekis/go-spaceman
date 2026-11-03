@@ -100,11 +100,14 @@ Cloudflare R2, and only with path-style addressing (docs/TRACEABILITY.md, SM-STO
 - **CLI** (on the central host; safe while central runs, needs the KEK):
 
 ```bash
-spaceman -c /etc/spaceman/central.yaml backup create
-spaceman -c /etc/spaceman/central.yaml backup list
-spaceman -c /etc/spaceman/central.yaml backup verify bkp_01m…     # or a backup directory
-spaceman -c /etc/spaceman/central.yaml backup verify --no-key DIR  # checksums only, without the KEK
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup create
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup list
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup verify bkp_01m…     # or a backup directory
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup verify --no-key DIR  # checksums only, without the KEK
 ```
+
+Run the commands as the service user (`sudo -u spaceman`): the KEK must be owned by the user reading it (or root) and
+readable by nobody else, and a restore must leave files the service can open.
 
 **Verification** recomputes the SHA-256 of every sealed object, refuses unlisted files, and, with the KEK, checks that
 the sealed manifest equals `manifest.json`, opens every object and checks its plaintext size and SHA-256, and checks the
@@ -119,9 +122,9 @@ Restoring needs central **stopped**, the KEK the backup was sealed under, and `g
 
 ```bash
 systemctl stop spaceman
-spaceman -c /etc/spaceman/central.yaml backup restore bkp_01m…           # into data_dir, which must be empty
-spaceman -c /etc/spaceman/central.yaml backup restore --data /srv/new ./bkp_01m…
-spaceman -c /etc/spaceman/central.yaml backup restore --force bkp_01m…   # move existing data aside first
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup restore bkp_01m…           # into data_dir, which must be empty
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup restore --data /srv/new ./bkp_01m…
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup restore --force bkp_01m…   # move existing data aside first
 systemctl start spaceman
 ```
 
@@ -139,12 +142,12 @@ The restored database carries a marker. The first start applies these rules once
 
 ```mermaid
 flowchart LR
-  R[restore marker] --> P[every active space paused: hold]
-  R --> L[every lease revoked, generation + 1,000,000]
-  R --> U[active runs: unknown, desired stopped]
-  R --> C[queued node commands cancelled, run credentials revoked]
-  R --> S[subscriptions replay from the oldest stored delivery]
-  R --> A[approvals with uses left revoked; pending ones kept]
+  R["restore marker"] --> P["every active space paused: hold"]
+  R --> L["every lease revoked, generation + 1,000,000"]
+  R --> U["active runs: unknown, desired stopped"]
+  R --> C["queued node commands cancelled, run credentials revoked"]
+  R --> S["subscriptions replay from the oldest stored delivery"]
+  R --> A["approvals with uses left revoked; pending ones kept"]
 ```
 
 - **Paused with new execution authority.** Every space that was active is paused (hold). Every lease is revoked and its

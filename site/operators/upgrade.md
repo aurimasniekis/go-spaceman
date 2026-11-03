@@ -27,8 +27,8 @@ been tested either.
 2. Verify the new archive with `sha256sum --check SHA256SUMS` ([installation](/operators/install#release-archives)).
 3. Take a sealed backup and verify it ([Backups and restore](/operators/backup)):
    ```sh
-   spaceman -c /etc/spaceman/spaceman.yaml backup create
-   spaceman -c /etc/spaceman/spaceman.yaml backup verify bkp_…
+   sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup create
+   sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup verify bkp_…
    ```
 4. Confirm that you have an offline copy of the KEK whose ID matches the one in the backup manifest.
 
@@ -82,7 +82,7 @@ A rollback restores state from before the upgrade. Anything written after that p
 messages, approvals, audit entries, users, tokens and node enrollments.
 
 - **Preferred: restore the backup from "Before upgrading"** with the previous binary:
-  `spaceman backup restore --force bkp_…` ([Backups and restore](/operators/backup)). The restore comes up **paused,
+  `sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml backup restore --force bkp_…` ([Backups and restore](/operators/backup)). The restore comes up **paused,
   with new execution authority**. Every space is held and every lease generation is advanced, so no node keeps running
   on authority from the newer installation. Resume each space by hand.
 - **Only when the new version never served:** for example, when a migration failed at startup. In that case you can

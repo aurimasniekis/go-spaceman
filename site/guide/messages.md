@@ -12,7 +12,7 @@ only in a terminal: if a recipient is busy, asleep or restarted, the message wai
 | `control` | The space's control run |
 | `role:<name>` | Every run of that role (the sender never receives its own broadcast) |
 | `run:<id>` | One run |
-| `operators` | People, on the space's **Messages** tab (agents only) |
+| `operators` | People, in the space's **Messages** section (agents only) |
 
 A **request** expects a reply; replying resolves it. A **notification** comes from SpaceMan itself.
 
@@ -49,5 +49,5 @@ with the run that asked and the reason, so the receiving agent knows it is handl
 
 ## For operators
 
-**Send message** writes to control, a role or one run. Messages from agents to operators show a badge on the tab;
+**Send message** writes to control, a role or one run. Messages from agents to operators show a badge on the section's link;
 open one to **Acknowledge**, **Reply** (delivered to the sending run) or **Resolve** it.

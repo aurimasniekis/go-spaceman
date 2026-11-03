@@ -43,7 +43,7 @@ Rendering is deterministic and bounded, and variables can never add wildcards or
 
 ## Subscribing a space
 
-In a space's **Events** tab, **Subscribe** asks for a connection, a published template version and its variables.
+In a space's **Events** section, **Subscribe** asks for a connection, a published template version and its variables.
 SpaceMan validates and binds everything before the subscription starts. By default only **new** events are delivered;
 choosing history is a replay.
 

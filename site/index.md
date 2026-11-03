@@ -21,17 +21,21 @@ hero:
 
 features:
   - title: Spaces pinned to your nodes
-    details: A space is a long-lived team of agents with its own goals and instructions, pinned to one machine running spaceman-agent. Nothing runs anywhere else.
+    details: A space is a long-lived team of agents with its own goals and instructions, pinned to one machine running spaceman-agent. Nothing runs anywhere else, and moving a space to another node is an explicit, audited relocation.
   - title: Leases, not hope
     details: Every run needs a renewable execution lease. A node that loses central stops new work and ends running work after a grace period; a lease-guard terminal ends runs even if the agent daemon dies.
-  - title: Restarts never duplicate work
-    details: Runs are identified by herdr-core terminal names and labels, so a restarted agent or central adopts what is running instead of starting it again.
+  - title: A coordinating control agent
+    details: Each space has an inbox, an ordered execution queue, a control agent that plans and workers in their own Git worktrees, with durable messages between them and schedules that add work.
+  - title: People stay in charge
+    details: Agents ask people through human actions (questions, approvals, to-dos, custom types) gathered across spaces. Enforced approvals gate the operations SpaceMan performs, bound to the run and the exact arguments.
+  - title: Knowledge and memory
+    details: Role memory is checkpointed on the node and preserved centrally as Git history. Knowledge bases answer agents through per-requester support sessions, and dreams consolidate memory.
+  - title: Events and tools
+    details: Pulse subscriptions (GitHub through go-pulse-github) feed the inbox, SpaceMan publishes its own events through an outbox, and one MCP gateway mediates external tools with grants and limits.
   - title: Every terminal recorded
     details: The node records each run's terminal into compressed segments and ships them to central. Watch live (read-only) or replay with seeking and speed control.
-  - title: Access you can explain
-    details: Viewer, operator and admin roles per space or globally (Casbin), mandatory TOTP for privileged accounts, step-up for sensitive actions, scoped API tokens, a hash-chained audit log.
   - title: Built to be automated
-    details: A documented HTTP API with OpenAPI 3.1, optimistic concurrency, idempotent creates and a live change feed. The web UI uses the same API.
+    details: A documented HTTP API (OpenAPI 3.1) with optimistic concurrency and idempotent creates. The web UI, the spaceman command line and the Terraform provider use the same API.
 ---
 
 <div class="sm-home">
@@ -48,6 +52,11 @@ site theme to see the Light Owl variants.
 <Shot name="terminal-replay" alt="Replay of a finished run with play, speed and seek controls" caption="Replay with seeking and speed" />
 </div>
 
-SpaceMan is under active development. The [project status](/guide/status) page lists what is implemented and tested today.
+SpaceMan has not been released. The [project status](/guide/status) page lists what is implemented and how it was
+tested (simulated or against the real dependency), and the [known limitations](/reference/limitations) page lists what
+is missing. Codex support is implemented but has not been run against a real Codex yet.
+
+This site is built from the repository (`make site`) and has **not been published**: the GitHub Pages workflow exists
+but has never run. [Publishing the site](/development/publishing) explains how to publish it.
 
 </div>

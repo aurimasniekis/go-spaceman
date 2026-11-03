@@ -2,7 +2,7 @@ package config
 
 import "time"
 
-// Default returns the central configuration defaults (docs/operator/configuration.md).
+// Default returns the central configuration defaults (site/reference/configuration.md).
 func Default() *Config {
 	return &Config{
 		Mode:      ModeProduction,

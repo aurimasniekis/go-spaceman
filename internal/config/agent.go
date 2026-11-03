@@ -4,15 +4,18 @@ import "github.com/aurimasniekis/go-spaceman/internal/obs"
 
 // AgentConfig is the node `spaceman-agent` configuration.
 type AgentConfig struct {
-	Mode    Mode          `yaml:"mode"`
+	// Mode is "production" (default) or "development" (allows a plain http central URL).
+	Mode Mode `yaml:"mode"`
+	// DataDir holds the node journal, the agent's herdr-core home, space folders and memory (absolute).
 	DataDir string        `yaml:"data_dir"`
 	Central CentralConfig `yaml:"central"`
 	Runner  RunnerConfig  `yaml:"runner"`
 	Harness HarnessConfig `yaml:"harness"`
 	Log     obs.LogConfig `yaml:"log"`
-	// ManagementListen serves /healthz, /readyz and /metrics for the node (empty: disabled).
+	// ManagementListen is validated (host:port) but not served by this build: the node agent has no management
+	// listener yet (docs/LIMITATIONS.md).
 	ManagementListen string `yaml:"management_listen"`
-	// Capacity is the maximum number of concurrent runs this node accepts (SM-LIMIT-001).
+	// Capacity is the maximum number of concurrent runs this node accepts (SM-LIMIT-001; 1-256).
 	Capacity int `yaml:"capacity"`
 }
 
@@ -24,7 +27,7 @@ type CentralConfig struct {
 	CredentialFile string `yaml:"credential_file"`
 	// CAFile optionally adds a CA certificate for the central TLS endpoint.
 	CAFile string `yaml:"ca_file"`
-	// ReconnectMax caps the reconnect backoff.
+	// ReconnectMax caps the reconnect backoff (1s to 10m).
 	ReconnectMax Duration `yaml:"reconnect_max"`
 }
 
@@ -32,7 +35,7 @@ type CentralConfig struct {
 type RunnerConfig struct {
 	// HCBinary is the herdr-core client binary ("hc").
 	HCBinary string `yaml:"hc_binary"`
-	// Session is the dedicated hc session; never the operator's "default" core.
+	// Session is the dedicated hc session (lowercase token); never the operator's "default" core.
 	Session string `yaml:"session"`
 	// Socket is the hc socket path. It must be short (macOS sun_path ≤ 103 bytes); default /run or /tmp based.
 	Socket string `yaml:"socket"`
@@ -40,9 +43,12 @@ type RunnerConfig struct {
 
 // HarnessConfig locates harness binaries on the node.
 type HarnessConfig struct {
+	// ClaudeBinary is the Claude Code executable (name on PATH or absolute path).
 	ClaudeBinary string `yaml:"claude_binary"`
-	CodexBinary  string `yaml:"codex_binary"`
-	GitBinary    string `yaml:"git_binary"`
+	// CodexBinary is the Codex executable (name on PATH or absolute path).
+	CodexBinary string `yaml:"codex_binary"`
+	// GitBinary is accepted but not read by this build: the agent runs "git" from PATH.
+	GitBinary string `yaml:"git_binary"`
 }
 
 // IsProduction reports whether the agent runs in production mode.

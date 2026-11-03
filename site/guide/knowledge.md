@@ -44,6 +44,8 @@ yet, or **not known**. They cite the files and revisions they used.
 Each requesting agent instance gets **its own session**: its own KB run, conversation and Git worktree. A requester
 keeps its context across questions, and one busy session never holds up the others.
 
+<Shot name="kb-sessions" alt="Sessions tab of the Payments knowledge base: one active session for control and one for implementor-backend, each with its instance, run link, one answered question and last activity" caption="One support session per requester" />
+
 - Sessions start when a question arrives, within the KB's **sessions at once**. Further questions **queue** until a
   session frees up. KB sessions have their own limit, separate from workers, so workers waiting for answers can't use
   up the room KB sessions need.

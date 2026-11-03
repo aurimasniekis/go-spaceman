@@ -133,7 +133,7 @@ func (s *Store) open(ctx context.Context, opts Options) error {
 	if err := s.wdb.PingContext(ctx); err != nil {
 		err = classify(fmt.Errorf("open database: %w", err))
 		if errors.Is(err, ErrCorrupt) {
-			return fmt.Errorf("%w; restore from the latest verified backup (docs/operator/storage.md)", err)
+			return fmt.Errorf("%w; restore from the latest verified backup (site/operators/backup.md)", err)
 		}
 		return err
 	}

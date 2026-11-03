@@ -55,7 +55,7 @@ export default withMermaid(
       logo: '/logo.svg',
       nav: [
         { text: 'Guide', link: '/guide/what-is-spaceman' },
-        { text: 'Operators', link: '/operators/install' },
+        { text: 'Operators', link: '/operators/overview' },
         { text: 'Reference', link: '/reference/api' },
         { text: 'Security', link: '/security/' },
         { text: 'Development', link: '/development/testing' },
@@ -66,6 +66,7 @@ export default withMermaid(
           items: [
             { text: 'What is SpaceMan?', link: '/guide/what-is-spaceman' },
             { text: 'Concepts', link: '/guide/concepts' },
+            { text: 'Architecture', link: '/guide/architecture' },
             { text: 'Try it locally', link: '/guide/try-locally' },
             { text: 'First node and space', link: '/guide/first-space' },
             { text: 'The inbox', link: '/guide/inbox' },
@@ -94,6 +95,7 @@ export default withMermaid(
         {
           text: 'Operators',
           items: [
+            { text: 'Deployment overview', link: '/operators/overview' },
             { text: 'Installation', link: '/operators/install' },
             { text: 'Containers and images', link: '/operators/containers' },
             { text: 'Upgrade and rollback', link: '/operators/upgrade' },
@@ -106,6 +108,7 @@ export default withMermaid(
             { text: 'Observability', link: '/operators/observability' },
             { text: 'Terraform', link: '/operators/terraform' },
             { text: 'Command line', link: '/operators/cli' },
+            { text: 'Troubleshooting', link: '/operators/troubleshooting' },
           ],
         },
         {
@@ -113,6 +116,7 @@ export default withMermaid(
           items: [
             { text: 'HTTP API', link: '/reference/api' },
             { text: 'Command line', link: '/reference/cli/' },
+            { text: 'Configuration', link: '/reference/configuration' },
             { text: 'Known limitations', link: '/reference/limitations' },
           ],
         },
@@ -130,6 +134,7 @@ export default withMermaid(
             { text: 'Building and testing', link: '/development/testing' },
             { text: 'Screenshots', link: '/development/screenshots' },
             { text: 'End-to-end demonstration', link: '/development/demo' },
+            { text: 'Publishing the site', link: '/development/publishing' },
             { text: 'Release notes', link: '/development/changelog' },
           ],
         },

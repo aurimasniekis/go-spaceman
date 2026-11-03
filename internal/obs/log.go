@@ -41,7 +41,9 @@ const (
 
 // LogConfig selects the log level (debug, info, warn, error) and format (json, text).
 type LogConfig struct {
-	Level  string `yaml:"level"`
+	// Level is one of debug, info, warn or error.
+	Level string `yaml:"level"`
+	// Format is one of json (ECS-aligned) or text. Logs go to stderr (the journal under systemd).
 	Format string `yaml:"format"`
 }
 

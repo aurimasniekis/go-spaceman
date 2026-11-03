@@ -69,3 +69,19 @@ therefore never start a second copy of a run.
 The agent attaches to each run's terminal as an observer and writes its output to compressed segments, then ships them
 to central once a second. Browsers read central's copy, so a slow viewer can never slow down a run. See
 [Terminals and recordings](/operators/terminals).
+
+## Coordination vocabulary
+
+| Term | Meaning | Guide |
+|---|---|---|
+| Inbox | Incoming work for a space: operator requests, events, schedules, cross-space requests, agent notes | [The inbox](./inbox) |
+| Execution queue | The space's one explicit order of tasks, with dependencies, blockers and incidents | [The execution queue](./queue) |
+| Control | The one run per space that plans and starts workers; workers do the tasks, each in its own Git worktree | [Control and workers](./control) |
+| Role | A named job in a space (`reviewer`, `implementor-backend`), bound to a role template with a prompt and profile | [Roles and prompts](./roles-and-prompts) |
+| Human action | A request that needs a person: a question, an approval, a to-do or a message | [Human actions](./human-actions) |
+| Enforced approval | A person's approval that gates one operation SpaceMan performs, bound to the run and its arguments | [Enforced approvals](./approvals) |
+| Role memory | Notes a role keeps across runs, preserved centrally as Git history | [Role memory](./memory) |
+| Knowledge base | A Git repository of project knowledge that agents ask through support sessions | [Knowledge bases](./knowledge) |
+| Subscription | A space's use of an event template to turn Pulse events into inbox items | [Events and subscriptions](./events) |
+
+[Architecture](./architecture) shows how these fit together.

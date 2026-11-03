@@ -576,6 +576,12 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByText('Payments knowledge').click()
     await expect(page.getByText('from accepted knowledge').first()).toBeVisible()
   })
+  await capture(page, 'kb-sessions', async () => {
+    await page.goto(`/spaces/${payments.id}/knowledge`)
+    await page.getByText('Payments knowledge').click()
+    await page.getByRole('tab', { name: /^Sessions/ }).click()
+    await expect(page.getByRole('columnheader', { name: 'Requester' })).toBeVisible()
+  })
   type XReq = { id: string; kind: string }
   await expect.poll(async () => (await api.call<{ items: XReq[] }>('GET', `/spaces/${payments.id}/xspace/requests`)).items.length, { timeout: 30_000 }).toBe(2)
   const delegated = (await api.call<{ items: XReq[] }>('GET', `/spaces/${payments.id}/xspace/requests`)).items.find((x) => x.kind === 'delegation')!

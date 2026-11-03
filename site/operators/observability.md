@@ -7,7 +7,7 @@ bind it to a private address and let only your monitoring reach it.
 | Path | What it answers |
 |---|---|
 | `/healthz` | The process is alive. |
-| `/readyz` | Central finished starting (storage open, keyring loaded, background services running). |
+| `/readyz` | 200 while the database is healthy and writable, also when only degraded (database busy, or the data disk below its 256 MiB / 2 % reserve); 503 otherwise. It is served once central has started, which needs the KEK. |
 | `/metrics` | Prometheus metrics in the text exposition format. Scrapes are limited in concurrency and time. |
 
 ## Labels are bounded
@@ -69,7 +69,7 @@ refused before the delivery history is read.
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `spaceman_job_runs_total` | counter | `job`, `result` (`ok`, `error`) | Background job runs. |
-| `spaceman_backup_runs_total` | counter | `result` (`succeeded`, `failed`) | Remote backup runs. |
+| `spaceman_backup_runs_total` | counter | `result` (`succeeded`, `failed`) | Backup runs made by central (schedule, Backups page, API); offline `spaceman backup` commands are not counted. |
 | `spaceman_backup_duration_seconds` | histogram | | Backup run duration. |
 | `spaceman_backup_last_success_timestamp_seconds` | gauge | | Start of the last successful backup (Unix seconds; 0 if none). |
 | `spaceman_http_requests_total` | counter | `route`, `method`, `code` | Requests by route template, method and status class. |

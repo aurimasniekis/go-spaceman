@@ -19,7 +19,7 @@ it comes from and where SpaceMan enforces it.
 | Tool calls per run (`max_tool_calls_per_run`) | 5000 | 0–1,000,000 (0: none) | SpaceMan and MCP gateway tool calls of one run | agent tool gateway |
 | Event ingestion rate (`ingest_per_minute`) | 600 | 1–60,000 | events one subscription ingests per minute | event ingestion |
 | Task deadline (`task_deadline_minutes`) | none | 0–43,200 | how long a top-level task runs before you are told | deadline timer |
-| Attachment storage (`artifacts.space_quota_bytes`) | 1 GiB | 1 MiB–1 TiB | attachment bytes stored for the space | uploads and event payloads |
+| Attachment storage (`storage_quota_bytes`; installation default `artifacts.space_quota_bytes`) | 1 GiB | 1 MiB–1 TiB | attachment bytes stored for the space | uploads and event payloads |
 | Token budget, 24 h (`budget_tokens_24h`) | none | 0: none | reported tokens of runs started in the last 24 hours | run launch |
 | Cost budget, 24 h (`budget_cost_cents_24h`) | none | 0: none | harness cost estimates, in US cents | run launch |
 | Token budget per run (`budget_tokens_per_run`) | none | 0: none | reported tokens of one run | warning only |
@@ -46,7 +46,7 @@ any knowledge base; raising the depth allows that many levels. KB sessions never
 Lowering a limit only refuses new work beyond it. Runs keep running, open human actions stay open, stored files stay,
 and a run over its tool-call limit keeps running without more tool calls.
 
-The one exception is a choice you make per space: **When concurrent runs are lowered: stop** stops the newest worker and
+The one exception is a choice you make per space: **When the concurrent-runs limit is lowered → Stop the newest runs** stops the newest worker and
 diagnostic runs beyond the new limit (interrupt, then kill after the grace), so the oldest keep running. The default,
 **drain**, lets them finish. A passed task deadline is reported to control and to the operators once; the task is never
 stopped, failed or moved.

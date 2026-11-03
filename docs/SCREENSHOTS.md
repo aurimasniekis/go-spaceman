@@ -39,7 +39,6 @@
 | `messages` | Agent messaging | A space's messages with delivery states and a request's detail | current |
 | `human-form-custom` | Human action types | A custom type's request and schema-driven response form with its outcomes | current |
 | `human-types` | Human action types | Type catalog with schema editors and a live request form preview | current |
-| `kb-sessions` | KB/support (M3) | KB support sessions | todo |
 | `events-catalog` | Events and subscriptions | Template catalog | current |
 | `events-publishing` | Publishing SpaceMan events | Outbound publication status: connection, pending, retrying, dead-lettered, lag, recent failures (global admins) | current |
 | `event-template` | Events and subscriptions | Template definition with a sample test | current |
@@ -51,7 +50,6 @@
 | `event-replay` | Events and subscriptions | After an explicit replay: deliveries with live and replay origins | current |
 | `space-limits` | Limits and budgets | A space's effective limits with sources, the budget card and its usage-reporting note | current |
 | `space-schedules` | Schedules | A space's schedules: a weekday cron in Europe/Vilnius and an hourly task schedule | current |
-| `memory-sync` | Memory/dreams (M3) | Memory collection sync state | todo |
 | `prompts-diff` | Prompts | Line diff between two published versions of a prompt | current |
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
 | `prompt-detail` | Prompts | A prompt's draft editor (with extends) and published versions | current |
@@ -62,6 +60,7 @@
 | `approval-executed` | Human actions | An approved enforced approval with its execution recorded separately | current |
 | `space-knowledge` | Space knowledge | Knowledge bases with sessions, capacity, questions and proposals | current |
 | `kb-detail` | Space knowledge | A KB's questions with answers, their basis and evidence | current |
+| `kb-sessions` | Knowledge bases | A KB's support sessions: one per requester instance, with state, answered questions and last activity | current |
 | `xspace-requests` | Cross-space requests | A space's incoming and outgoing cross-space requests with a question's detail (untrusted-content notice, disclosure) | current |
 | `xspace-access` | Cross-space requests | A space's settings and what it accepts from and may send to each peer, with the disclosure level and limits | current |
 | `xspace-admin` | Cross-space requests | Global Cross-space page: every request between spaces (source → destination) | current |

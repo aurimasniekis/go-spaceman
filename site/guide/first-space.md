@@ -33,9 +33,10 @@ page to allow it for the space. See [Accounts](/operators/accounts).
 
 ## Launch a run
 
-**Launch run** starts one harness session on the pinned node. Pick the harness (the dialog says if the node did not
-detect it), the run kind and role, and optionally an account (the space's default is used otherwise), a model, an
-initial prompt, extra system prompt text and a workspace folder inside the space's working directory. A space has at
+**Launch run** starts one harness session on the pinned node. Pick a configured **space role**, or the harness (the
+dialog says if the node did not detect it), the run kind and role, and optionally an account (the space's default is used otherwise), a model, an
+initial prompt, extra system prompt text, a workspace folder inside the space's working directory, and a **Git
+worktree of** a repository with its **Branch**. A space has at
 most one control run.
 
 <Shot name="run-launch" alt="Launch run dialog with harness, kind, role, model and prompt fields" caption="Launching a run" />
@@ -47,3 +48,21 @@ The run page opens on the live terminal. **Stop** interrupts the session (it sta
 
 **Pause** has three modes: **Hold** admits no new work and lets running agents finish, **Interrupt** also interrupts
 running agents and stops them, and **Emergency stop** also kills every run at once. **Resume** admits work again.
+
+## Archive, restore and purge
+
+A space you no longer use can be **archived**: it admits no work and leaves the Overview list. Archiving needs no
+active runs. **Restore** makes an archived space active again. **Purge** permanently deletes an archived space's
+SpaceMan records (runs, commands, its lease and grants). Purge never touches upstream repositories, and the folder on
+the node is left in place.
+
+The web UI has no archive control yet. Use the command line or the API:
+
+```sh
+spaceman space archive payments
+spaceman space restore payments
+spaceman space purge payments      # only an archived space
+```
+
+The API equivalents are `POST /api/v1/spaces/{space_id}/state` with `{"state": "archived"}` or `{"state": "active"}`,
+and `DELETE /api/v1/spaces/{space_id}` ([CLI reference](/reference/cli/space), [HTTP API](/reference/api)).

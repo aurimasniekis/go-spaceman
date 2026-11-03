@@ -31,7 +31,7 @@ nodes:
   disconnect_grace: 2m                # how long a node keeps runs going after losing central
 
 artifacts:
-  backend: local                      # local (<data_dir>/artifacts) | s3
+  backend: local                      # local (<data_dir>/artifacts); s3 is not implemented yet
 
 backups:
   enabled: true                       # the schedule; manual backups work either way (site/operators/backup.md)

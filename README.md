@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://aurimasniekis.github.io/go-spaceman/">Documentation</a> ·
-  <a href="https://aurimasniekis.github.io/go-spaceman/guide/try-locally">Try it locally</a> ·
-  <a href="https://aurimasniekis.github.io/go-spaceman/guide/status">Project status</a> ·
-  <a href="https://aurimasniekis.github.io/go-spaceman/security/">Security model</a>
+  <a href="site/">Documentation (site/)</a> ·
+  <a href="site/guide/try-locally.md">Try it locally</a> ·
+  <a href="docs/TRACEABILITY.md">Project status</a> ·
+  <a href="site/security/index.md">Security model</a>
 </p>
 
 <picture>
@@ -21,9 +21,17 @@
   <img src="site/public/screenshots/landing-overview-light.png" alt="SpaceMan overview with three spaces, three active runs and two nodes">
 </picture>
 
-> **Status: early development.** Milestone 1 (central, nodes, spaces, runs, leases, recordings, access control and the
-> web UI) is implemented and tested. The inbox, queue, events, human actions, accounts, prompts, MCP gateway, memory,
-> backups, SSO and Terraform provider are planned. See the [project status](docs/TRACEABILITY.md).
+> **Status: not released.** Central, nodes, spaces, runs, leases and recordings; the inbox, execution queue, control and
+> workers, messages and schedules; human actions and enforced approvals; accounts, prompts, profiles, skills and the MCP
+> gateway; role memory, knowledge bases, dreams and cross-space requests; Pulse events in and out; SSO, backups,
+> relocation, the CLI and the Terraform provider are implemented and tested, mostly with simulated dependencies. Real
+> evidence covers herdr-core, Claude Code, Porch, Pulse with go-pulse-github, MinIO and systemd in a container; Codex,
+> AWS S3 and a physical Linux host are not verified. See the [project status](docs/TRACEABILITY.md) and the
+> [known limitations](docs/LIMITATIONS.md).
+>
+> **The documentation site is not published.** It is built from `site/` (`make site`, then `cd site && pnpm preview`).
+> A GitHub Pages workflow (`.github/workflows/pages.yaml`) exists but has never run; links to
+> `aurimasniekis.github.io/go-spaceman` stay dead until it does. How to publish: `site/development/publishing.md`.
 
 ## How it works
 
@@ -46,7 +54,8 @@ flowchart LR
 |---|---|
 | <img src="site/public/screenshots/space-overview-dark.png" alt="Payments platform space with node, lease and runs"> | <img src="site/public/screenshots/terminal-live-dark.png" alt="Live watch-only terminal of a control run"> |
 
-Screenshots are the real UI on a demo stack with fictional data and a stub harness (`make screenshots`).
+Screenshots are the real UI on a demo stack with fictional data and a stub harness. `make screenshots` regenerates
+all of them; `docs/SCREENSHOTS.md` is the coverage inventory.
 
 ## Quick start
 
@@ -57,8 +66,7 @@ Requires Go, Node.js 24, pnpm and [herdr-core](https://github.com/herdrdev/herdr
 scripts/dev-stack.sh up            # prints a stack directory; source its env file
 ```
 
-Then follow [Try it locally](https://aurimasniekis.github.io/go-spaceman/guide/try-locally) (also in
-`site/guide/try-locally.md`). `make e2e` runs the whole first-run journey in a headless browser.
+Then follow [Try it locally](site/guide/try-locally.md). `make e2e` runs the whole first-run journey in a headless browser.
 
 ## Command line
 
@@ -79,7 +87,9 @@ reference in `site/reference/cli/`.
 
 ## Documentation
 
-- Guides and operator docs: `site/` (VitePress), published at <https://aurimasniekis.github.io/go-spaceman/>
+- Guides and operator docs: `site/` (VitePress; not published yet, see `site/development/publishing.md`). Start with
+  `site/guide/architecture.md`, `site/operators/overview.md` (deployment and recovery) and
+  `site/reference/configuration.md` (every configuration key, generated from the code)
 - Installation (Linux release archives, systemd, container images and which of them are agent-ready):
   `site/operators/install.md`, `site/operators/containers.md`, `site/operators/upgrade.md`
 - Product contract: [docs/GOAL.md](docs/GOAL.md) · plan: [docs/PLAN.md](docs/PLAN.md) · decisions: [docs/DECISIONS.md](docs/DECISIONS.md)

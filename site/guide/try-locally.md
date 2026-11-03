@@ -5,7 +5,9 @@ built in, and a node agent configuration that uses **its own herdr-core core**. 
 your herdr-core terminals.
 
 Runs in this stack use a **stub harness** that prints a banner and a counter. No model is contacted and no credential is
-needed. Real Claude Code and Codex runs need harness accounts, which arrive in a later milestone.
+needed. Real Claude Code and Codex runs need a harness account: see
+[Give the space an account](/guide/first-space#give-the-space-an-account) and [Accounts](/operators/accounts). Codex has
+not been run for real yet.
 
 ## Requirements
 
@@ -24,7 +26,8 @@ source /tmp/smdev-AbC123/env   # use the directory it printed
 cat "$SM_ROOT_TOKEN_FILE"      # the root token, needed once
 ```
 
-`up` builds the UI and both binaries, creates a key-encryption key, bootstraps a root token and starts central on
+`up` builds the UI, both binaries and the stub harness, creates a key-encryption key, bootstraps a root token, and
+starts a local Pulse-shaped NATS server (devpulse), a fake MCP server (devmcp) and central on
 <http://127.0.0.1:38180> (set `SM_DEV_PORT` and `SM_DEV_MANAGEMENT_PORT` to use other ports).
 
 ## 2. Create the first administrator
@@ -59,7 +62,7 @@ Stop the agent with Ctrl-C, then:
 scripts/dev-stack.sh down "$SM_DIR"   # KEEP=1 keeps the directory
 ```
 
-This stops central and the stack's own herdr-core core and removes the directory.
+This stops central, the agent, devpulse, devmcp and the stack's own herdr-core core, and removes the directory.
 
 ## The same journey, automated
 

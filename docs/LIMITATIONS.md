@@ -254,6 +254,12 @@
   for the harnesses' tooling (ADR-0034). It does not separate spaces on the same node from each other (SM-INV-007).
 - **Accepted but unused agent settings.** `management_listen` and `harness.git_binary` in the agent configuration are
   validated but have no effect. The agent serves no health endpoint, and it looks up `git` on `PATH`.
+- **Accepted but unused central settings.** `auth.local_login_disabled` and `nodes.command_timeout` are validated but
+  have no effect: password sign-in cannot be turned off by configuration (and no API or page writes the stored
+  SSO-only setting), and node commands use fixed timeouts. `artifacts.backend: s3` passes validation, but central
+  refuses to start with it because the S3 artifact store is not implemented; recordings, attachments and transcripts
+  are stored on the local disk. Backups have their own, implemented S3 target. See the
+  configuration reference (`site/reference/configuration.md`).
 - **Upgrades are unexercised.** No upgrade from one release to another has run. Central and nodes on different versions
   are untested.
 

@@ -45,7 +45,7 @@ A process cannot enforce its own timeout after it has died. SpaceMan therefore s
 terminal is a child of the guard, and herdr-core ends child terminals when their parent exits. When the lease file is not
 renewed in time, the guard exits and herdr-core ends the space's runs, with no agent involved.
 
-This was verified against herdr-core 0.1.16 by killing the agent with `SIGKILL` (`test/real`). It depends on the
+This was verified on macOS against herdr-core 0.1.16 by killing the agent with `SIGKILL` (`test/real`). It depends on the
 herdr-core core itself staying alive, a node operator can defeat it, and it cannot stop processes an agent started
 outside herdr-core. See [known limitations](/reference/limitations).
 

@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Documentation site completed (SM-DOCS-001…005): new **Architecture**, **Deployment overview** (topology, install paths
+  and a recovery map), **Troubleshooting** (startup errors, readiness codes, node connection, leases, recordings,
+  sign-in) and **Publishing the site** pages; a **Configuration reference** generated from `internal/config`'s types,
+  doc comments and defaults (`make config-docs`, drift test `TestConfigReferenceUpToDate` in `make check`, also checked
+  by `make site-check`); a glossary of coordination terms on Concepts; space archive, restore and purge in the first-space
+  guide; a `kb-sessions` screenshot of a knowledge base's support sessions. `check-mermaid.mjs` now also fails on
+  unquoted flowchart labels, and `check-shots.mjs` on an inventoried screenshot that no page shows. The site is **not
+  published**: the Pages workflow has never run.
 - Core NATS event subscriptions (SM-EVT-011, ADR-0042): `delivery: core` on a subscription (API, subscribe dialog, CLI
   `--delivery`, Terraform `delivery`) subscribes with plain NATS on the Pulse connection, for sources that publish
   without JetStream. Same filters, schema, quarantine and inbox items; deduplicated by `Nats-Msg-Id` or, without one, a
@@ -116,6 +124,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   history and items they create are marked.
 
 ### Fixed
+- Central no longer refuses to start (or to run `spaceman backup`) when the command-line client's (`SPACEMAN_SERVER`,
+  `SPACEMAN_TOKEN_FILE`, `SPACEMAN_OUTPUT`, `SPACEMAN_SPACE`, `SPACEMAN_ALLOW_INSECURE_HTTP`), enrollment's
+  (`SPACEMAN_ENROLL_TOKEN`) or the Terraform provider's (`SPACEMAN_ENDPOINT`) variables are set; they were rejected as
+  unknown configuration overrides. `SPACEMAN_ALLOW_NETWORK_FS=1` (development mode only) now takes effect for the same reason.
+- Documentation brought in line with the code: harness accounts exist (try-locally), inbox item sources, the
+  concurrent-runs and storage-limit names, what the dev stack starts, backups without `git` leave role memory out
+  instead of failing, what `/readyz` checks, backup and restore commands run as the service user with the systemd
+  configuration path, root-token recovery with `spaceman admin root-token rotate`, lease-guard evidence (macOS only),
+  and the Launch run and Add dream form fields. Accepted-but-unused settings (`auth.local_login_disabled`,
+  `nodes.command_timeout`, the agent's `management_listen` and `harness.git_binary`) and the unimplemented S3 artifact
+  store are stated in the configuration reference and the known limitations.
+- Stale texts: the `spaceman_human_ask` tool no longer calls approvals "advisory for now", the root-token output names
+  the Account page, and the corrupt-database error points at the backup guide.
 - Documentation: the Porch setup now says to add `groups` to the application's allowed scopes. Without it Porch drops
   the scope and SpaceMan sees no groups (found by the real Porch suite).
 - Recordings on a full disk: the run continues as before. Central's copy now ends with a `trunc` record (`disk`) and

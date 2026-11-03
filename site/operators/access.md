@@ -7,6 +7,10 @@ administrator, through **Set up SpaceMan** in the web UI or the API. It is never
 audited, and administrators can rotate or revoke it on the **Account** page. Treat it as a break-glass secret and keep
 it offline.
 
+A second `admin bootstrap` is refused once a root token was issued. If the root token is lost, run
+`spaceman admin root-token rotate` on the server with central stopped: it revokes the active root token and prints a
+new one. Once an administrator exists, `spaceman admin recover` (below) is the way back in.
+
 <Shot name="setup-bootstrap" alt="Setup page asking for the root token, name, email and password" caption="Creating the first administrator" />
 
 ## Signing in

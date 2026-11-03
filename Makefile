@@ -108,6 +108,12 @@ api:
 api-check: api
 	git diff --exit-code -- api/openapi.json web/src/api/schema.gen.ts
 
+.PHONY: config-docs
+# Regenerates the configuration reference (site/reference/configuration.md) from internal/config's types, doc comments
+# and defaults. Drift is caught by internal/config TestConfigReferenceUpToDate (make check).
+config-docs:
+	$(GO) test ./internal/config -run '^TestConfigReferenceUpToDate$$' -count=1 -update
+
 .PHONY: cli-docs
 # Regenerates the command-line reference (site/reference/cli) from the command definitions. Drift is also caught by
 # cmd/spaceman TestCLIReferenceUpToDate (make check), which notices added and removed pages too.
@@ -195,11 +201,12 @@ site:
 site-dev:
 	cd site && pnpm dev
 
-# Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, and API and CLI reference drift.
-site-check: cli-docs site
+# Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, API, CLI and configuration
+# reference drift, and an axe audit of every page in both color schemes.
+site-check: cli-docs config-docs site
 	cd site && pnpm check:mermaid
 	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
-	git diff --exit-code -- site/reference/api.md site/reference/cli
+	git diff --exit-code -- site/reference/api.md site/reference/cli site/reference/configuration.md
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).
 screenshots:

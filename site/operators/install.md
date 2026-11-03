@@ -30,8 +30,9 @@ SpaceMan ships neither herdr-core nor any harness. A node needs these installed 
 | Claude Code (`claude`), Codex (`codex`) | not used | the harnesses you want to run | **no**. Third-party products under their own licence terms |
 | `ssh` client | not used | for Git remotes over SSH | no |
 
-Without `git`, central still starts. It logs `role memory cannot be stored centrally until git is installed` and
-refuses backups and restores that contain role memory. Without `hc`, `spaceman-agent run` refuses to start.
+Without `git`, central still starts. It logs `role memory cannot be stored centrally until git is installed`;
+backups then leave role memory out (with a warning in the manifest), and restores of backups that contain role memory
+are refused. Without `hc`, `spaceman-agent run` refuses to start.
 
 ## Release archives
 
@@ -110,7 +111,8 @@ administrator with it (or `POST /api/v1/users` with `Authorization: Bearer <root
 You can rotate or revoke it later on the Account page. See [Sign-in and access](/operators/access).
 
 `admin` commands work offline: they take the data-directory lock, so run them while the service is stopped. Production
-mode refuses plain-HTTP public URLs, relative key paths and passwords shorter than 12 characters.
+mode refuses plain-HTTP public URLs, relative key paths, passwords shorter than 12 characters and
+`auth.require_totp: false`. Every key is listed in the [configuration reference](/reference/configuration).
 
 The unit runs central as `spaceman` with a strict sandbox:
 
