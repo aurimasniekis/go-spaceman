@@ -33,7 +33,11 @@ export function RelocateModal({ space, opened, onClose }: { space: Space; opened
   const [busy, setBusy] = useState(false)
   const [key] = useState(idempotencyKey)
 
-  const candidates = (nodes.data ?? []).filter((n: Node) => n.id !== space.node_id && n.state === 'active')
+  // Only active nodes can be destinations (central refuses the others); the rest are named with the reason.
+  const others = (nodes.data ?? []).filter((n: Node) => n.id !== space.node_id)
+  const candidates = others.filter((n: Node) => n.state === 'active')
+  const why = (n: Node) => (n.state === 'pending' ? 'never connected' : n.state)
+  const unavailable = others.filter((n: Node) => n.state !== 'active').map((n: Node) => `${n.name} (${why(n)})`)
   const precheck = relocation.data?.mode === 'precheck' && relocation.data.destination_node_id === dest ? relocation.data : null
 
   const start = async (dry: boolean) => {
@@ -81,6 +85,7 @@ export function RelocateModal({ space, opened, onClose }: { space: Space; opened
         <Select
           label="Destination node"
           placeholder="Choose a node"
+          description={unavailable.length > 0 ? `Not available as a destination: ${unavailable.join(', ')}` : undefined}
           data={candidates.map((n) => ({ value: n.id, label: `${n.name}${n.connected ? '' : ' (offline)'}` }))}
           value={dest}
           onChange={setDest}

@@ -67,7 +67,7 @@ async function enrollmentShot(browser: Browser, email: string, pw: string) {
 }
 
 test('documentation screenshots', async ({ page, browser }) => {
-  test.setTimeout(420_000)
+  test.setTimeout(900_000) // one journey captures every page in both themes
   mkdirSync(out!, { recursive: true })
   const base = env('SM_URL')
   const root = readFileSync(env('SM_ROOT_TOKEN_FILE'), 'utf8').trim()
@@ -371,18 +371,15 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}`)
     await expect(page.getByRole('cell', { name: 'reviewer (worker)' })).toBeVisible()
   })
-  // Relocation dialog (SM-SPACE-005): a second enrolled node as the destination. It is enrolled through the API only (no
-  // second agent runs in this stack), so the dialog is shown before a precheck.
+  // Relocation dialog (SM-SPACE-005). The second node is enrolled through the API only (no second agent runs in this
+  // stack), so it has never connected: the dialog names it as not available instead of offering it.
   const spare = await api.call<{ node: { id: string }; token: string }>('POST', '/nodes', { name: 'build-02', description: 'Second workstation' })
   const enrolled = await page.request.post(`${base}/agent/v1/enroll`, { data: { token: spare.token } })
   expect(enrolled.ok()).toBeTruthy()
   await capture(page, 'space-relocate', async () => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Relocate' }).click()
-    await page.getByRole('textbox', { name: 'Destination node' }).click()
-    await page.getByRole('option', { name: /build-02/ }).click()
-    await page.getByLabel(/Export it explicitly/).check()
-    await expect(page.getByRole('button', { name: 'Run precheck' })).toBeVisible()
+    await expect(page.getByText('Not available as a destination: build-02 (never connected)')).toBeVisible()
   })
   await capture(page, 'space-create', async () => {
     await page.goto('/spaces')
