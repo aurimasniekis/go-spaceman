@@ -93,7 +93,9 @@ func policyKey(typ string) string {
 	return TypeCustom
 }
 
-func (p PolicyFields) validate() error {
+// validatePolicy checks policy fields. It is a function, not a method: PolicyFields is embedded in Policy, and a
+// promoted method stops huma from adding the $schema link to the response type.
+func validatePolicy(p PolicyFields) error {
 	v := &apperr.Validation{}
 	in := func(field string, n, lo, hi int64) {
 		if n < lo || n > hi {
@@ -226,7 +228,7 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID, a
 	if !slices.Contains(PolicyTypes, actionType) {
 		return nil, invalid("action_type", "must be all, question, approval, todo, message or custom")
 	}
-	if err := in.validate(); err != nil {
+	if err := validatePolicy(in); err != nil {
 		return nil, err
 	}
 	sp := sql.NullString{String: spaceID, Valid: spaceID != ""}
