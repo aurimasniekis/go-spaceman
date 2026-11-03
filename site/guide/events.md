@@ -120,6 +120,8 @@ and on the subscription page; `while_paused` in the API and Terraform, `--while-
 | Keep ingesting, tell control at once | `wake` | Events become inbox items and control is told at once, as in an active space. |
 | Stop until the space resumes | `stop` | The subscription stops; its state shows **paused**. A durable subscription's events wait in the Pulse stream (its consumer keeps its position) and are ingested after the resume, so only the stream's own retention limits how much can wait. A core NATS subscription receives nothing meanwhile: those messages are lost. |
 
+<Shot name="events-subscribe-paused" alt="Subscribe dialog with While the space is paused set to Stop until the space resumes, noting that durable events wait in the stream and core NATS messages are lost" caption="Choosing what a subscription does while its space is paused" />
+
 Pausing never starts new runs, whatever the choice: launches are refused while a space is paused. The deferred
 notices go out when the space is resumed, and again at central's start for any a resume did not get to; nothing polls
 for them.

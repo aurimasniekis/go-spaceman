@@ -53,14 +53,14 @@
 | `events-catalog` | Events and subscriptions | Template catalog | current |
 | `events-publishing` | Publishing SpaceMan events | Outbound publication status: connection, pending, retrying, dead-lettered, lag, recent failures (global admins) | current |
 | `event-template` | Events and subscriptions | Template definition with a sample test | current |
-| `events-subscribe` | Events and subscriptions | Subscription form with template variables and the delivery choice | stale |
+| `events-subscribe` | Events and subscriptions | Subscription form with template variables and the delivery choice | current |
 | `events-subscribe-core` | Events and subscriptions | Subscription form with core NATS delivery and the non-durable warning | current |
 | `events-subscribe-custom` | Events and subscriptions | Subscribe dialog with a custom JSON definition and an accepted sample-event preview | current |
-| `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history with origins | stale |
+| `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history with origins | current |
 | `events-quarantine` | Events and subscriptions | Quarantined event with reprocess/discard | current |
 | `events-core-subscription` | Events and subscriptions | Core NATS subscription: non-durable badge and explanation, subscribe grant, no cursor | current |
 | `event-replay` | Events and subscriptions | After an explicit replay: deliveries with live and replay origins | current |
-| `space-limits` | Limits and budgets | A space's effective limits with sources, the budget card and its usage-reporting note, retention periods | stale |
+| `space-limits` | Limits and budgets | A space's effective limits with sources, the budget card and its usage-reporting note, retention periods | current |
 | `space-schedules` | Schedules | A space's schedules: a weekday cron in Europe/Vilnius and an hourly task schedule | current |
 | `prompts-diff` | Prompts | Line diff between two published versions of a prompt | current |
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
@@ -93,9 +93,6 @@
 | `space-repository-form` | Repositories and worktrees | Adding a repository: name, folder, clone URL without credentials, default branch, role and clone policy | current |
 | `space-export` | Retention and export | The space export dialog: what the archive holds, the not-encrypted warning, the size estimate and limit | current |
 | `sign-in-signed-out` | Single sign-on | The sign-in page after signing out of an SSO session, offering sign-out at the provider | current |
+| `events-subscribe-paused` | Events and subscriptions | Subscribe dialog with the "While the space is paused" choice set to stop until the space resumes | current |
+| `human-policy-inbox` | Human actions | A space's question policy with "Responses in the inbox" set to routed responses | current |
 
-Pending capture (spec entries exist in `web/e2e/screenshots.spec.ts`, not yet run): `events-subscribe-paused` (Events and
-subscriptions: the "While the space is paused" choice, ADR-0049) and `human-policy-inbox` (Human actions: the question policy's
-"Responses in the inbox" choice, ADR-0049). After the next `make screenshots`, add them to the table above, show them on
-`site/guide/events.md` and `site/guide/human-actions.md`, and mark the `stale` rows current again (`check-shots.mjs` refuses an
-inventoried screenshot no page shows, and a page screenshot that does not exist).

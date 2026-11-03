@@ -181,6 +181,8 @@ create or update a task, defer the item or mark it done.
 | When routed | `routed` | When a response is routed to control or to the operators because the requester's run had ended (also when a person sends it to control). |
 | Every response | `always` | Whenever an action of the type is answered, whoever asked: an agent, an operator or SpaceMan itself. |
 
+<Shot name="human-policy-inbox" alt="A space's question policy with Responses in the inbox set to also an inbox item when routed to control or the operators, noting the item never holds the response" caption="Making routed responses inbox items" />
+
 The item has the source **Human response**, the action's title and priority, and metadata: the action, its type and
 outcome, who answered, and where and why it was routed. It **never contains the response**: every run of the space can
 read the inbox, while the response stays on the action, readable only by the runs it concerns (the item links to the
