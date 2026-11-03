@@ -24,8 +24,9 @@ test:
 
 # The race detector slows SQLite transactions several-fold; as in CI, the 100 ms write-transaction guard is relaxed here
 # and enforced by the non-race coverage run.
+# internal/app's end-to-end tests take about 9 minutes under the race detector, close to go test's 10-minute default.
 race:
-	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race -count=1 ./...
+	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race -count=1 -timeout 30m ./...
 
 $(BIN)/spaceman-vet: $(shell find tools -name '*.go' -not -path '*/testdata/*')
 	cd tools && $(GO) build -o ../$(BIN)/spaceman-vet ./cmd/spaceman-vet
