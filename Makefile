@@ -138,23 +138,25 @@ site-check: site
 screenshots:
 	./scripts/screenshots.sh
 
-# ---- Packaging and release (docs/operator/install.md) ----
+# ---- Packaging and release (site/operators/install.md, site/operators/containers.md, ADR-0034) ----
 IMAGE ?= spaceman:local
 AGENT_IMAGE ?= spaceman-agent:local
 
 .PHONY: release-snapshot image image-agent image-smoke
 
-# Static release archives + SHA256SUMS for linux/amd64, linux/arm64, darwin/arm64 in dist/ (scripts/release-build.sh).
+# Static release archives (linux/amd64, linux/arm64), SPDX SBOMs when syft is installed, and SHA256SUMS in dist/
+# (scripts/release-build.sh; needs web/dist: make web-build). darwin builds only when named, labelled unsupported.
 release-snapshot:
 	VERSION=$(VERSION) ./scripts/release-build.sh -o dist
 
-# Local container images for the build platform (never pushed).
+# Local container images for the build platform (loaded into the local daemon, never pushed).
 image:
-	docker buildx build --load -t $(IMAGE) --build-arg VERSION=$(VERSION) -f Dockerfile .
+	docker buildx build --load -t $(IMAGE) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -f Dockerfile .
 
 image-agent:
-	docker buildx build --load -t $(AGENT_IMAGE) --build-arg VERSION=$(VERSION) -f Dockerfile.agent .
+	docker buildx build --load -t $(AGENT_IMAGE) --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -f Dockerfile.agent .
 
+# Runs both images (central serve, health, UI, backup; agent base image refuses to run without herdr-core).
 image-smoke:
-	./scripts/container-smoke.sh $(IMAGE)
+	./scripts/container-smoke.sh $(IMAGE) $(AGENT_IMAGE)
 # ---- end packaging ----

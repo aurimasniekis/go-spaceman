@@ -1,0 +1,104 @@
+# SpaceMan node agent. Install: site/operators/install.md (Linux only; ADR-0034).
+#
+#   /usr/local/bin/spaceman-agent           binary, root-owned 0755
+#   /etc/spaceman-agent/agent.yaml          configuration (secret-free), root:spaceman-agent 0640
+#   /var/lib/spaceman-agent                 data dir and HOME, spaceman-agent:spaceman-agent 0700 (StateDirectory):
+#                                           node credential, journal, spaces, worktrees, harness config dirs, hc state
+#   /run/spaceman-agent                     hc and MCP-bridge sockets (RuntimeDirectory, 0700)
+#   hc, git, claude, codex                  installed by the operator on PATH below (outside /home, see ProtectHome)
+#
+# Create the user first:  useradd --system --home-dir /var/lib/spaceman-agent --shell /bin/sh spaceman-agent
+# Enroll before the first start (writes the node credential, 0600):
+#   sudo -u spaceman-agent HOME=/var/lib/spaceman-agent spaceman-agent -c /etc/spaceman-agent/agent.yaml enroll --token …
+#
+# This unit is looser than spaceman.service on purpose: the agent starts herdr-core, which starts coding-agent
+# harnesses, which run arbitrary developer tooling (compilers, test runners, package managers) in the node's spaces.
+# Every relaxation is marked RELAXED below and explained in ADR-0034. The sandbox protects the rest of the host from
+# the agent's user; it does not isolate spaces from each other (docs/LIMITATIONS.md, SM-INV-007).
+# Check it on the target host with: systemd-analyze security spaceman-agent.service
+
+[Unit]
+Description=SpaceMan node agent (herdr-core runner for coding-agent harnesses)
+Documentation=https://github.com/aurimasniekis/go-spaceman/blob/main/site/operators/install.md
+After=network-online.target
+Wants=network-online.target
+# Refuse to start before enrollment (the agent refuses too; this gives a clearer status).
+AssertPathExists=/var/lib/spaceman-agent/node.credential
+
+[Service]
+Type=simple
+User=spaceman-agent
+Group=spaceman-agent
+Environment=SPACEMAN_AGENT_CONFIG=/etc/spaceman-agent/agent.yaml
+# Harnesses and git read their configuration (~/.gitconfig, ~/.ssh) from HOME: keep it inside the data directory.
+Environment=HOME=/var/lib/spaceman-agent
+# Where the operator installs hc and the harness CLIs. Adjust to your layout; keep it outside /home.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/spaceman-agent run
+Restart=on-failure
+RestartSec=5s
+# Stopping the unit ends the whole control group: the agent, its herdr-core core and every run on this node get
+# SIGTERM, then SIGKILL after TimeoutStopSec: "stop" really stops everything on the node. The cost is that
+# `systemctl restart` also ends running agents, so the agent's adoption of live runs after its own restart
+# (site/operators/nodes.md#restarts) does not apply under this unit.
+# Untested alternative (docs/LIMITATIONS.md): KillMode=process plus RuntimeDirectoryPreserve=yes stops only the agent
+# process, so the hc core and its runs survive and are adopted on the next start. Runs then keep going after
+# `systemctl stop` until the per-space lease guard ends them (when the lease file's valid_until passes), and systemd logs left-over processes on start.
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=60s
+TimeoutStartSec=120s
+LimitNOFILE=65536
+UMask=0077
+
+StateDirectory=spaceman-agent
+StateDirectoryMode=0700
+RuntimeDirectory=spaceman-agent
+RuntimeDirectoryMode=0700
+
+# ---- Sandboxing -----------------------------------------------------------------------------------------------------
+# Kept: no privilege gain (no sudo or setuid helpers from agent sessions), no capabilities, read-only OS.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/spaceman-agent
+# Kept, with a condition: harness binaries must not live under /home (installers that default to ~/.local/bin need
+# another prefix). If yours must, use ProtectHome=read-only instead (RELAXED).
+ProtectHome=yes
+PrivateTmp=yes
+# herdr-core needs pseudo terminals. PrivateDevices= keeps the PTY subsystem; the DeviceAllow= lines make that explicit.
+PrivateDevices=yes
+DevicePolicy=closed
+DeviceAllow=/dev/ptmx rw
+DeviceAllow=char-pts rw
+PrivateIPC=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+# Other users' processes stay hidden; hc and the harnesses see their own.
+ProtectProc=invisible
+# RELAXED: ProcSubset=pid is not set. Language runtimes and build tools started by harnesses read /proc/cpuinfo,
+# /proc/meminfo and similar files, which ProcSubset=pid hides.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# RELAXED: RestrictNamespaces= is not set. Harness and developer-tool sandboxes may create user, mount or network
+# namespaces (untested which ones do). Set RestrictNamespaces=yes if your harnesses and tooling work without them.
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# RELAXED: MemoryDenyWriteExecute= is not set. JIT-compiling runtimes (JavaScript engines, the JVM, and similar) that
+# harnesses and developer tooling use need writable-and-executable memory and crash under it.
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# RELAXED: @debug is not denied (unlike spaceman.service): debuggers, profilers and sanitizer test runs that agents
+# start use ptrace and perf_event_open.
+SystemCallFilter=~@privileged @mount @swap @reboot @raw-io @module @cpu-emulation @obsolete
+SystemCallErrorNumber=EPERM
+KeyringMode=private
+
+[Install]
+WantedBy=multi-user.target

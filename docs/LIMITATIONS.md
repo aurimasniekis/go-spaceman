@@ -152,6 +152,29 @@
 - **Restore needs `git`** when the backup holds role memory, and attachments outside the data directory are restored to
   the configured `artifacts.local_dir` only.
 
+## Packaging and deployment
+- **Linux only, and not yet run on a real Linux host.** The production target is Linux on amd64 and arm64 (SM-PKG-003).
+  macOS builds are labelled unsupported. Both systemd units passed `systemd-analyze verify` (systemd 257, in a Debian 13
+  container), and the binaries ran inside Linux containers. Neither unit has started a real installation under systemd.
+  The release workflow has not run, and no release has been published.
+- **No image is agent-ready.** Neither the `spaceman` nor the `spaceman-agent` image contains herdr-core or a harness.
+  SpaceMan does not bundle them, because their redistribution terms are unverified (ADR-0034). A containerized node
+  needs a runtime image that the operator builds. herdr-core, Claude Code and Codex have not been run inside a container.
+- **No images are published.** Operators build them with `make image` and `make image-agent`. Debian package versions
+  in the images are not pinned, so rebuilds are not byte-identical. The release SBOMs cover the binaries' Go modules
+  and the source tree (including the UI's npm lock), not the images' Debian packages. SBOMs are produced only when
+  `syft` is installed.
+- **The central image has a shell.** Central needs `git`, so the image is Debian slim rather than distroless (ADR-0034).
+- **Restarting the agent unit ends the node's runs.** `spaceman-agent.service` uses `KillMode=control-group`. The
+  agent's adoption of live runs after its own restart therefore does not apply under it. The alternative
+  (`KillMode=process`, documented in the unit) is untested.
+- **The agent's sandbox is looser than central's.** It allows JIT memory, namespaces, `ptrace` and the full `/proc`
+  for the harnesses' tooling (ADR-0034). It does not separate spaces on the same node from each other (SM-INV-007).
+- **Accepted but unused agent settings.** `management_listen` and `harness.git_binary` in the agent configuration are
+  validated but have no effect. The agent serves no health endpoint, and it looks up `git` on `PATH`.
+- **Upgrades are unexercised.** No upgrade from one release to another has run. Central and nodes on different versions
+  are untested.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned

@@ -778,6 +778,109 @@
   - Not covered: a download already in progress continues to its end; data a viewer already received is not taken
     back.
 
+### ADR-0034 — Packaging: what the images contain, and a looser sandbox for the node agent (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (M4-09).
+- **Context:** SM-PKG-001 asks for binaries, the embedded UI, systemd units, container images, example configuration,
+  deployment and upgrade docs, release automation, checksums, notices and SBOMs. SM-PKG-002 asks the docs to state
+  which images include Git, herdr-core and harnesses, and forbids advertising an image as agent-ready without its runtime
+  dependencies. SM-PKG-003 limits the production target to Linux. The packaging is ported from go-hallpass v0.7.0
+  (`bdd8329`, Apache-2.0, same author): `Dockerfile`, `deploy/systemd/hallpass.service`, `deploy/compose.yaml`,
+  `scripts/release-build.sh`, `scripts/container-smoke.sh` and `.github/workflows/release.yaml`. Two facts force
+  departures from it. First, central runs `git` (`internal/memory` for role memory, `internal/backup` for memory
+  bundles), so Hallpass's distroless base is not enough. Second, the node agent starts herdr-core and harnesses that run
+  arbitrary developer tooling, which Hallpass's sandbox would break. Relaxing a sandbox and choosing a base image with a
+  shell are recorded as a **security-relevant change**.
+- **Decision:**
+  - **Central image** (`Dockerfile`): Debian 13 slim, pinned by digest, with `git`, `ca-certificates` and `tini` as
+    PID 1 (it reaps orphaned git helpers). It runs as non-root 65532, with the UI embedded (`-tags embedui`), and is
+    built with `-trimpath`, an empty build ID and buildinfo ldflags. It contains no herdr-core, no harness and no
+    `spaceman-agent`. Distroless static was rejected because it has no git. Without git, central would run with role
+    memory disabled and refuse backups that contain memory, and an image should not ship a degraded central by default.
+    The cost is a shell and the Debian package database in the image. Package versions are not pinned (no
+    snapshot.debian.org), so rebuilds are not byte-identical.
+  - **Node agent base image** (`Dockerfile.agent`): Debian 13 slim (glibc, so binaries the operator adds can run) with
+    `spaceman-agent`, `git`, `openssh-client`, `ca-certificates` and `tini`. It runs as 65532 with
+    `HOME=/var/lib/spaceman-agent`. Its labels (`io.spaceman.agent-ready=false`, `contains.herdr-core=false`,
+    `contains.harnesses=false`) and the docs say it is **not agent-ready**, and `run` fails at startup without `hc`.
+    Nothing is bundled whose redistribution terms are unverified:
+    - **herdr-core.** `docs/contracts/herdr-core.md` and `docs/THIRD_PARTY.md` record Apache-2.0 from inspecting an
+      installed binary, without a source checkout or an upstream licence file. No release download location, checksum
+      source or redistribution terms have been verified.
+    - **Claude Code and Codex.** These are third-party products whose licence terms this project has not reviewed for
+      redistribution.
+
+    The extension path is `deploy/examples/agent-runtime/Dockerfile`, which the operator builds from binaries they
+    obtained themselves:
+    - it is `FROM` the base image;
+    - every file in its `bin/` must be listed in a `SHA256SUMS` the operator provides, and `hc` is required;
+    - harnesses that need a language runtime get a marked section for the vendor's documented install method;
+    - its labels say `operator-supplied` and `operator-assembled`.
+
+    SpaceMan names no download URLs.
+  - **Central unit** (`deploy/systemd/spaceman.service`): Hallpass's hardening, unchanged in substance. That means no
+    capabilities, `NoNewPrivileges`, `ProtectSystem=strict` with only the `StateDirectory` writable, `ProtectHome`,
+    private `/tmp`, `/dev` and IPC, `ProtectProc=invisible`, `ProcSubset=pid`, `RestrictNamespaces`,
+    `MemoryDenyWriteExecute`, and `@system-service` minus `@privileged @mount … @debug …`. Its
+    `AssertPathExists=/etc/spaceman/kek` matches the KEK rules (mode `0400`, owned by the service user, outside the data
+    directory).
+  - **Agent unit** (`deploy/systemd/spaceman-agent.service`). It keeps no capabilities, `NoNewPrivileges` (no `sudo` or
+    setuid from agent sessions), `RestrictSUIDSGID`, `ProtectSystem=strict` with only the data directory writable,
+    `ProtectHome`, private `/tmp` and IPC, kernel protections, `ProtectProc=invisible` and `@system-service`. These are
+    the relaxations (marked RELAXED in the unit):
+    - **`MemoryDenyWriteExecute` is not set.** JIT runtimes used by harnesses and tools need writable and executable
+      memory.
+    - **`RestrictNamespaces` is not set.** Harness and tool sandboxes may create namespaces. Which ones do is untested,
+      and the unit tells operators to set it back when their tooling works without.
+    - **`ProcSubset=pid` is not set.** Runtimes read `/proc/cpuinfo` and `/proc/meminfo`.
+    - **`@debug` is not denied.** Debuggers, profilers and sanitizers use `ptrace` and `perf_event_open`.
+    - **PTY devices are allowed.** `DeviceAllow=/dev/ptmx` and `char-pts` are explicit, because herdr-core needs pseudo
+      terminals.
+
+    `HOME` is the data directory (git and ssh configuration for SM-REPO-005). `RuntimeDirectory=spaceman-agent` holds
+    the hc and bridge sockets. `KillMode=control-group` means stopping the unit stops the agent, its herdr-core core
+    and every run on the node. The alternative was `KillMode=process` with `RuntimeDirectoryPreserve=yes`, which would
+    let runs survive an agent restart and be adopted, bounded by the lease guard (ADR-0017). It was not chosen as the
+    default: it is untested under systemd, `systemctl stop` would leave agents running until their lease file expires,
+    and systemd discourages it. The unit documents it as an untested option.
+  - **Release archives** (`scripts/release-build.sh`):
+    - `linux/amd64` and `linux/arm64` by default. A `darwin/*` build happens only when named, and is labelled
+      `_unsupported` in the file name with an `UNSUPPORTED-PLATFORM.txt` inside (SM-PKG-003).
+    - `CGO_ENABLED=0`, `-trimpath`, `-buildid=`, buildinfo ldflags, `SOURCE_DATE_EPOCH` from the commit, the UI
+      embedded, and GNU tar with sorted, numeric-owner and fixed-mtime entries for byte-reproducible archives.
+    - Each archive holds both binaries, the units, the example configs, LICENSE, NOTICE, THIRD_PARTY.md and
+      CHANGELOG.md.
+    - SPDX SBOMs come from `syft` when it is installed: one per archive and one for the source tree, including the web
+      UI's locked npm packages. `SBOM=auto` skips them with a printed notice when syft is missing; `require` fails.
+    - `SHA256SUMS` covers the archives and SBOMs.
+  - **CI** (`.github/workflows/release.yaml`, actions pinned by SHA like `ci.yaml`): runs on `v*` tags and manual
+    dispatch. The steps are:
+    1. a vet and race gate, then the UI build;
+    2. archives, SBOMs (`SBOM=require`, syft `v1.54.0`) and checksums;
+    3. both images for linux/amd64, built with `push: false` and run through `scripts/container-smoke.sh`;
+    4. for a tag only, a **draft** GitHub release with the archives, SBOMs and `SHA256SUMS`. A maintainer publishes it
+       by hand.
+
+    No image is pushed to any registry, and the release notes say images are not published.
+- **Alternatives:**
+  - A distroless central with git copied in. A dynamically linked git plus its helpers is fragile without a package
+    manager.
+  - Chainguard or Wolfi git images. These add a second distribution and its licence review.
+  - Bundling herdr-core and the harnesses. Redistribution terms are unverified.
+  - An agent image that downloads them at build time from built-in URLs. That would invent upstream facts and hide a
+    supply-chain step from the operator.
+  - Reusing the central sandbox for the agent. It is safer on paper, but JIT runtimes and pseudo terminals break.
+  - Publishing images from CI. Out of scope until a registry and its credentials are decided.
+- **Consequences:**
+  - Neither image is agent-ready. A containerized node needs an operator-built runtime image, and that combination
+    (herdr-core and harnesses inside a container) is untested.
+  - The agent's user can do more than central's: run JIT code, create namespaces and trace its own processes. The trust
+    model is unchanged, since a space was never an isolation boundary (SM-INV-007, SM-SEC-001). The sandbox still
+    protects the rest of the host: no privilege gain, a read-only OS and hidden `/home`.
+  - `systemctl restart spaceman-agent` ends runs, so node upgrades need a pause or a quiet period
+    (`site/operators/upgrade.md`).
+  - The units passed `systemd-analyze verify` on systemd 257 in a Debian 13 container, but have not run a real
+    installation on a Linux host. Release CI has not run yet.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

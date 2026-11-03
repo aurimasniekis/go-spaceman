@@ -67,7 +67,7 @@
 | M4-06 | Cross-space requests | SM-XSPACE-* | todo |
 | M4-07 | Human response failure handling, reminders, escalation | SM-HUM-009/011 | tested (simulated): policies per type with space overrides (reminders, escalation, rate limits, requester-ended routing, wake), durable routing to the successor role, control or operators with provenance, next-launch holds, responses hidden from unrelated runs, one deadline timer for expiry, reminders, escalation, holds and approval expiry (ADR-0032); no real-harness evidence; no relaunch of ended runs |
 | M4-08 | Fault tests + security review | SM-SEC-*, SM-VER-001 | todo |
-| M4-09 | Packaging: Dockerfiles, systemd, release script, SBOM, checksums | SM-PKG-* | todo |
+| M4-09 | Packaging: Dockerfiles, systemd, release script, SBOM, checksums | SM-PKG-* | implemented, checked locally (2026-11-03): central image (Debian slim + git, UI embedded), a node agent base image that is not agent-ready plus an operator-built runtime example, hardened systemd units (agent relaxations in ADR-0034), example configs, Compose (central only), reproducible release archives with SPDX SBOMs and SHA256SUMS, a tag-triggered release workflow that drafts a GitHub release, install/containers/upgrade pages; `make release-snapshot`, `make image`, `make image-agent`, `make image-smoke` and `systemd-analyze verify` (in a container) pass. Release CI not run, units not run on a real Linux host, nothing published |
 
 ### M5 — Completion
 | WP | Scope | Requirements | Status |

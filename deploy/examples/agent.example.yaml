@@ -1,0 +1,29 @@
+# SpaceMan node agent example configuration (systemd install, site/operators/install.md).
+# Secret-free: the node credential is written by `spaceman-agent enroll`, never put here. Unknown keys are rejected.
+# Every key can be overridden with SPACEMAN_AGENT_<PATH> environment variables, e.g. SPACEMAN_AGENT_CAPACITY=8.
+
+mode: production
+data_dir: /var/lib/spaceman-agent               # journal, spaces, worktrees, harness config dirs, hc state; 0700
+
+central:
+  url: https://spaceman.example.com             # placeholder: central's public_url; https in production
+  credential_file: /var/lib/spaceman-agent/node.credential   # written 0600 by `spaceman-agent enroll`
+  # ca_file: /etc/spaceman-agent/central-ca.pem # extra CA for central's TLS certificate
+  reconnect_max: 30s
+
+runner:
+  hc_binary: hc                                 # herdr-core; install it yourself (not shipped with SpaceMan)
+  session: spaceman                             # the agent's own core; never "default"
+  socket: /run/spaceman-agent/hc.sock           # RuntimeDirectory of spaceman-agent.service; at most 103 bytes
+
+harness:
+  claude_binary: claude                         # Claude Code, installed by the operator
+  codex_binary: codex                           # Codex, installed by the operator
+  # git is looked up on PATH; harness.git_binary is accepted but not used yet (docs/LIMITATIONS.md).
+
+# management_listen is accepted but the agent serves no health endpoint yet (docs/LIMITATIONS.md).
+capacity: 4                                    # concurrent runs this node accepts
+
+log:
+  level: info
+  format: json

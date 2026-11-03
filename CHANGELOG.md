@@ -117,6 +117,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   holds and approval expiry share one timer for the earliest deadline (the once-a-minute expiry job is gone). New
   outbound events `human.action.reminded`, `escalated` and `rerouted`; API under `/api/v1/human-policies`,
   `/api/v1/spaces/{id}/human-policies` and `…/notifications/{id}/route`.
+- Packaging (Linux):
+  - Reproducible release archives for linux/amd64 and linux/arm64 (`make release-snapshot`). Each holds `spaceman` with
+    the UI embedded, `spaceman-agent`, systemd units, example configs and the licence files. They come with SPDX SBOMs
+    (when syft is installed) and `SHA256SUMS`.
+  - A hardened `spaceman.service`, and a `spaceman-agent.service` whose relaxations for harnesses are explained in
+    ADR-0034.
+  - A central container image (Debian slim with git), a node agent base image that is labelled and documented as
+    **not agent-ready** (no herdr-core, no harnesses), and an example for building an agent runtime image from
+    operator-supplied binaries.
+  - A central-only Compose file, a container smoke test (`make image-smoke`), and a tag-triggered release workflow
+    that only drafts a GitHub release and pushes no images.
+  - Installation, containers (with the image matrix) and upgrade pages.
 - Documentation site (VitePress with Mermaid), real screenshots captured by `make screenshots`, a local development stack
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency

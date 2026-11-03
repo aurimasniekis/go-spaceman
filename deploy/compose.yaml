@@ -1,0 +1,75 @@
+# SpaceMan CENTRAL on Docker Compose. Single instance: exactly one central per data volume, no replicas.
+# Read site/operators/containers.md first.
+#
+# This file runs central only. It runs no agents: the node agent needs herdr-core and harness CLIs, which no SpaceMan
+# image contains (the spaceman-agent image is NOT agent-ready by itself; see containers.md for the operator-built
+# runtime image). Run nodes on their own hosts with systemd, or with an image you assembled.
+#
+# Quick start from this directory (images are not published by this project: build them first with `make image`):
+#
+#   1. Create the KEK on the Docker host, owned by the container user (UID 65532) and readable only by it:
+#        install -d -m 0700 secrets
+#        docker run --rm --user 65532:65532 -v "$PWD/secrets:/out" spaceman:local keys init-kek --out /out/spaceman.kek
+#      (the secrets directory must be writable by UID 65532 for that, e.g. `sudo chown 65532:65532 secrets` first)
+#      Back it up offline, separately from data backups. Never put it inside the data volume.
+#   2. Copy examples/spaceman.container.yaml, replace the placeholders, and point SM_CONFIG_FILE at it.
+#   3. SM_IMAGE=spaceman SM_VERSION=local docker compose up -d
+#   4. Issue the root token once (offline: stop central first, the command takes the data-directory lock):
+#        docker compose stop spaceman && docker compose run --rm spaceman admin bootstrap && docker compose start spaceman
+#
+# Interpolation variables use the SM_ prefix on purpose: spaceman rejects unknown SPACEMAN_* variables.
+#   SM_VERSION (required)  SM_IMAGE  SM_CONFIG_FILE  SM_KEK_FILE  SM_HTTP_PORT  SM_MGMT_PORT
+#
+# Compose `secrets:` with `file:` is a bind mount, so the host file's owner and mode are what the container sees:
+# SpaceMan refuses a KEK readable by group or others, or owned by a UID other than 65532 or root.
+
+name: spaceman
+
+services:
+  spaceman:
+    image: ${SM_IMAGE:-spaceman}:${SM_VERSION:?set SM_VERSION to the tag you built, e.g. local}
+    command: ["serve"]
+    user: "65532:65532"
+    restart: unless-stopped
+    # Longer than shutdown.timeout (30 s).
+    stop_grace_period: 45s
+    environment:
+      SPACEMAN_CONFIG: /etc/spaceman/spaceman.yaml
+    ports:
+      - "127.0.0.1:${SM_HTTP_PORT:-8080}:8080"     # web UI, API and node connections: expose only via a TLS reverse proxy
+      - "127.0.0.1:${SM_MGMT_PORT:-9090}:9090"     # /healthz, /readyz, /metrics: unauthenticated, keep private
+    volumes:
+      - type: volume
+        source: spaceman-data
+        target: /var/lib/spaceman
+      - type: bind
+        source: ${SM_CONFIG_FILE:-./examples/spaceman.container.yaml}
+        target: /etc/spaceman/spaceman.yaml
+        read_only: true
+    secrets:
+      - source: spaceman_kek
+        target: spaceman_kek   # -> /run/secrets/spaceman_kek (kek.file in the example config)
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    # No healthcheck: the image has no curl. Probe /readyz on the management port from outside.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  # Local named volume. Do not back it with NFS/SMB/FUSE: SpaceMan refuses network filesystems.
+  spaceman-data: {}
+
+secrets:
+  spaceman_kek:
+    file: ${SM_KEK_FILE:-./secrets/spaceman.kek}

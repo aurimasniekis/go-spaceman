@@ -1,0 +1,94 @@
+# syntax=docker/dockerfile:1.7
+#
+# SpaceMan node agent (`spaceman-agent`) BASE image. Image matrix and operator guide: site/operators/containers.md.
+#
+#   NOT AGENT-READY BY ITSELF. This image contains spaceman-agent, git, openssh-client, ca-certificates and tini.
+#   It does NOT contain herdr-core (`hc`), Claude Code or Codex, and `spaceman-agent run` fails at startup without hc.
+#
+# Why they are not bundled (ADR-0034): SpaceMan has no verified redistribution terms, release download location or
+# checksum for herdr-core (docs/contracts/herdr-core.md records only an installed binary, without a source checkout),
+# and Claude Code and Codex are third-party products with their own licence terms, which this project has not reviewed
+# for redistribution. The operator builds an agent-ready image on top of this one from binaries they obtained
+# themselves: deploy/examples/agent-runtime/Dockerfile.
+#
+#   build  : static spaceman-agent (CGO_ENABLED=0, -trimpath), cross-compiled on the build platform.
+#   final  : Debian 13 slim (glibc, so operator-added harness binaries that need it can run), non-root 65532.
+#
+# Every base image is pinned by digest (see Dockerfile for how to update). Debian package versions are not pinned.
+#
+# Runtime layout:
+#   /usr/local/bin/spaceman-agent           binary (root-owned, read-only)
+#   /etc/spaceman-agent/agent.yaml          configuration, mount read-only (SPACEMAN_AGENT_CONFIG points here)
+#   /var/lib/spaceman-agent                 data volume (0700, 65532:65532): node credential, journal, spaces,
+#                                           worktrees, harness config dirs, hc state; also HOME (git and ssh config)
+#   /run/spaceman-agent                     hc and MCP-bridge sockets (mount a tmpfs, mode 0700, owned by 65532)
+#
+# Build:  docker buildx build --load -f Dockerfile.agent --build-arg VERSION=v1.2.3 -t spaceman-agent:local .
+
+ARG GO_IMAGE=docker.io/library/golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9
+ARG RUNTIME_IMAGE=docker.io/library/debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+
+# ---------------------------------------------------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=
+ARG BUILD_DATE=
+ENV CGO_ENABLED=0 \
+    GOTOOLCHAIN=local \
+    GOFLAGS=-mod=readonly
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download && go mod verify
+COPY cmd/ cmd/
+COPY internal/ internal/
+COPY api/ api/
+COPY web/*.go web/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs=false \
+      -ldflags "-s -w -buildid= \
+        -X github.com/aurimasniekis/go-spaceman/internal/buildinfo.Version=${VERSION} \
+        -X github.com/aurimasniekis/go-spaceman/internal/buildinfo.Commit=${COMMIT} \
+        -X github.com/aurimasniekis/go-spaceman/internal/buildinfo.Date=${BUILD_DATE}" \
+      -o /out/spaceman-agent ./cmd/spaceman-agent
+
+# ---------------------------------------------------------------------------------------------------------------------
+FROM ${RUNTIME_IMAGE}
+ARG VERSION=dev
+ARG COMMIT=
+# git: repositories, worktrees, role memory and knowledge-base checks. openssh-client: git remotes over SSH, using the
+# node's own keys and config in HOME. ca-certificates: TLS to central and to git hosts. tini: PID 1 that reaps the
+# herdr-core core and holders, which `hc server start` detaches from the agent process.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates git openssh-client tini; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    groupadd --system --gid 65532 spaceman-agent; \
+    useradd --system --uid 65532 --gid 65532 --home-dir /var/lib/spaceman-agent --no-create-home \
+      --shell /bin/sh spaceman-agent; \
+    install -d -m 0700 -o 65532 -g 65532 /var/lib/spaceman-agent /run/spaceman-agent; \
+    install -d -m 0755 -o 0 -g 0 /etc/spaceman-agent
+LABEL org.opencontainers.image.title="spaceman-agent" \
+      org.opencontainers.image.description="SpaceMan node agent base image: NOT agent-ready (no herdr-core, no harnesses)" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.base.name="docker.io/library/debian:trixie-slim" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      io.spaceman.contains.git="true" \
+      io.spaceman.contains.herdr-core="false" \
+      io.spaceman.contains.harnesses="false" \
+      io.spaceman.agent-ready="false"
+COPY --chown=0:0 --chmod=0444 LICENSE NOTICE docs/THIRD_PARTY.md /usr/share/doc/spaceman-agent/
+COPY --from=build --chown=0:0 --chmod=0555 /out/spaceman-agent /usr/local/bin/spaceman-agent
+# Harnesses run as this user with this HOME; a shell is kept because agents use one.
+ENV SPACEMAN_AGENT_CONFIG=/etc/spaceman-agent/agent.yaml \
+    HOME=/var/lib/spaceman-agent
+USER 65532:65532
+WORKDIR /var/lib/spaceman-agent
+VOLUME ["/var/lib/spaceman-agent"]
+# The agent only dials out to central and listens on no port (it serves no health endpoint yet: docs/LIMITATIONS.md).
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/spaceman-agent"]
+CMD ["run"]

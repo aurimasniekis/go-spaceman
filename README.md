@@ -63,6 +63,8 @@ Then follow [Try it locally](https://aurimasniekis.github.io/go-spaceman/guide/t
 ## Documentation
 
 - Guides and operator docs: `site/` (VitePress), published at <https://aurimasniekis.github.io/go-spaceman/>
+- Installation (Linux release archives, systemd, container images and which of them are agent-ready):
+  `site/operators/install.md`, `site/operators/containers.md`, `site/operators/upgrade.md`
 - Product contract: [docs/GOAL.md](docs/GOAL.md) · plan: [docs/PLAN.md](docs/PLAN.md) · decisions: [docs/DECISIONS.md](docs/DECISIONS.md)
 - Known limitations: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) · threat model: [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 - Verified dependency contracts: [docs/contracts/](docs/contracts/)

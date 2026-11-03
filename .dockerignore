@@ -1,0 +1,37 @@
+# Build context for Dockerfile and Dockerfile.agent. Allowlist: everything is excluded unless re-included below, so
+# local secrets, databases, recordings, KEK files, node credentials and VCS metadata can never leak into an image layer
+# or the build cache.
+*
+
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!api/
+!web/
+!LICENSE
+!NOTICE
+!docs/THIRD_PARTY.md
+
+# Frontend: dependencies and build output are produced inside the build, never copied from the host.
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+web/blob-report/
+
+# Defense in depth for anything that slipped into an allowlisted directory.
+**/*.kek
+**/kek
+**/dev-kek
+**/*.credential
+**/*.creds
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.smrec.zst
+**/*.smrec.zst.partial
+**/*.smbak
+**/*_test.go
+**/testdata/
+**/.DS_Store

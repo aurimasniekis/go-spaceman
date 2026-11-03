@@ -88,7 +88,9 @@ export default withMermaid(
         {
           text: 'Operators',
           items: [
-            { text: 'Install from source', link: '/operators/install' },
+            { text: 'Installation', link: '/operators/install' },
+            { text: 'Containers and images', link: '/operators/containers' },
+            { text: 'Upgrade and rollback', link: '/operators/upgrade' },
             { text: 'Sign-in and access', link: '/operators/access' },
             { text: 'Nodes and leases', link: '/operators/nodes' },
             { text: 'Accounts', link: '/operators/accounts' },

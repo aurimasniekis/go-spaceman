@@ -1,0 +1,29 @@
+# SpaceMan central configuration for the container image (deploy/compose.yaml, site/operators/containers.md).
+# Secret-free: replace the placeholder values. The KEK is mounted separately as a secret and never lives in this
+# file or in the data volume. Every key can be overridden with SPACEMAN_<PATH> environment variables.
+
+mode: production
+data_dir: /var/lib/spaceman                 # the data volume; 0700, owned by UID 65532
+public_url: https://spaceman.example.com    # placeholder: the externally reachable https URL
+
+kek:
+  source: file
+  file: /run/secrets/spaceman_kek           # Compose secret; outside data_dir, 0400, owned by UID 65532
+
+http:
+  listen: ":8080"                           # Compose publishes it on loopback; terminate TLS at a reverse proxy
+  management_listen: "0.0.0.0:9090"         # inside the container only; Compose publishes it on loopback
+  trusted_proxies: []                       # CIDRs of that proxy, e.g. the Compose network range
+
+log:
+  level: info
+  format: json                              # stderr; collect with `docker logs` or your log driver
+
+backups:
+  enabled: true
+  interval: 24h
+  keep_last: 7
+  target: local                             # <data_dir>/backups is inside the data volume; prefer s3 or another mount
+
+shutdown:
+  timeout: 30s                              # keep below the Compose stop_grace_period (45 s)

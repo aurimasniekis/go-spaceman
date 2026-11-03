@@ -1,0 +1,51 @@
+# SpaceMan central example configuration (systemd install, site/operators/install.md).
+# Secret-free: the KEK and every credential live outside this file. Unknown keys are rejected.
+# Every key can be overridden with SPACEMAN_<PATH> environment variables, e.g. SPACEMAN_HTTP_LISTEN=":8443".
+
+mode: production                      # production (default) | development
+data_dir: /var/lib/spaceman           # local filesystem only (network filesystems are refused); created 0700
+public_url: https://spaceman.example.com   # placeholder: the URL browsers and nodes use; https in production
+
+kek:
+  source: file                        # file | env (SPACEMAN_KEK, base64; discouraged)
+  file: /etc/spaceman/kek             # spaceman:spaceman 0400, outside data_dir; back it up offline, apart from backups
+
+http:
+  listen: ":8080"                     # terminate TLS here (tls_cert_file/tls_key_file) or at a reverse proxy
+  management_listen: "127.0.0.1:9090" # /healthz, /readyz, /metrics: unauthenticated, keep it private
+  trusted_proxies: []                 # CIDRs of the reverse proxy whose X-Forwarded-For is trusted
+  # tls_cert_file: /etc/spaceman/tls/cert.pem
+  # tls_key_file: /etc/spaceman/tls/key.pem
+
+log:
+  level: info                         # debug | info | warn | error
+  format: json                        # json | text; written to stderr (the journal under systemd)
+
+auth:
+  require_totp: true                  # production requires it
+  password_min_length: 12             # at least 12 in production
+
+nodes:
+  heartbeat_interval: 10s
+  lease_ttl: 45s                      # at least 3x heartbeat_interval
+  disconnect_grace: 2m                # how long a node keeps runs going after losing central
+
+artifacts:
+  backend: local                      # local (<data_dir>/artifacts) | s3
+
+backups:
+  enabled: true                       # the schedule; manual backups work either way (site/operators/backup.md)
+  interval: 24h
+  keep_last: 7
+  target: local                       # local | s3
+  # local_dir: /srv/spaceman-backups  # default <data_dir>/backups; prefer another disk (add it to ReadWritePaths=)
+
+# Publish SpaceMan's own events to Pulse (site/guide/publishing-events.md). Off by default.
+# events:
+#   outbound:
+#     enabled: true
+#     url: tls://pulse.example.com:4222
+#     creds_file: /etc/spaceman/pulse.creds   # 0400, owned by the spaceman user
+
+shutdown:
+  timeout: 30s                        # keep below TimeoutStopSec in spaceman.service (45 s)

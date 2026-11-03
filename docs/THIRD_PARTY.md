@@ -1,6 +1,6 @@
 # Third-party components and attribution
 
-Release builds generate the full dependency list as SPDX SBOMs (`make sbom`). This file records components whose licence or
+Release builds generate the dependency list as SPDX SBOMs (`scripts/release-build.sh` with syft installed; `make release-snapshot`). This file records components whose licence or
 attribution needs specific mention.
 
 | Component | Use | Licence | Notes |
@@ -28,3 +28,5 @@ attribution needs specific mention.
 | go-hallpass OIDC (`internal/oidc` and `internal/oidc/oidctest` at `bdd8329`) | `internal/oidc` (provider, flow, admin, remote, test IdP, tests) | Apache-2.0 | Same author. Adapted (users, grants), not vendored (ADR-0029). |
 | go-hallpass event outbox (`internal/events/{events,relay}.go`, migration `0030_event_outbox`, `queries/events.sql`, and the wake pattern of `internal/outbox` at `bdd8329`) | `internal/outbox`, migration `0022_outbox`, `queries/outbox.sql` | Apache-2.0 | Same author. Adapted (catalog payloads, correlation/causation/origin headers, kick plus retry timer instead of a poll ticker, status and lag), not vendored (ADR-0030). |
 | go-hallpass backups and S3 client (`internal/backup` — backup, files, sealed, verify, restore, remote — and `internal/s3client` with `s3test` at `bdd8329`) | `internal/backup` (snapshot source, file helpers, the `SMBAK1` sealed format derived from `HPBAK1`, verification, staged restore, remote layout), `internal/s3client`, `internal/s3client/s3test` | Apache-2.0 | Same author. Backup content, sealing of every file, restore rules and targets adapted; the S3 client is copied with names changed (ADR-0031). |
+| go-hallpass packaging (`Dockerfile`, `.dockerignore`, `deploy/systemd/hallpass.service`, `deploy/compose.yaml`, `deploy/examples/*`, `scripts/release-build.sh`, `scripts/container-smoke.sh`, `.github/workflows/release.yaml` at `bdd8329`) | `Dockerfile`, `Dockerfile.agent`, `.dockerignore`, `deploy/`, `scripts/release-build.sh`, `scripts/container-smoke.sh`, `.github/workflows/release.yaml` | Apache-2.0 | Same author. Adapted: Debian base with git instead of distroless, agent image and unit, no image publication (ADR-0034). |
+| Debian 13 (trixie) slim base image and the packages `git`, `openssh-client` (agent image), `ca-certificates`, `tini` | Runtime of the `spaceman` and `spaceman-agent` container images (not of the release archives) | Debian packages under their own licences | Pulled at image build time, not vendored. Each package's licence is in `/usr/share/doc/<package>/copyright` inside the image. |
