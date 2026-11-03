@@ -260,6 +260,7 @@ type EventOutbox struct {
 	PublishedAt   sql.NullInt64
 	DeadAt        sql.NullInt64
 	LastError     sql.NullString
+	Depth         int64
 }
 
 type EventQuarantine struct {
@@ -277,6 +278,7 @@ type EventQuarantine struct {
 	CreatedAt      int64
 	ResolvedAt     sql.NullInt64
 	ResolvedBy     string
+	Depth          int64
 }
 
 type EventSubscription struct {
@@ -304,6 +306,7 @@ type EventSubscription struct {
 	CreatedBy         string
 	UpdatedAt         int64
 	Delivery          string
+	WhilePaused       string
 }
 
 type EventTemplate struct {
@@ -455,6 +458,7 @@ type HumanPolicy struct {
 	UpdatedAt            int64
 	UpdatedBy            string
 	Version              int64
+	ResponseInbox        string
 }
 
 type HumanType struct {
@@ -523,6 +527,8 @@ type InboxItem struct {
 	CreatedBy      string
 	UpdatedAt      int64
 	Version        int64
+	NoticeDeferred int64
+	Depth          int64
 }
 
 type KbProposal struct {
@@ -1328,6 +1334,7 @@ type Task struct {
 	PreemptedBy        string
 	IncidentTrigger    string
 	IncidentProposedBy string
+	Depth              int64
 }
 
 type TaskBlocker struct {

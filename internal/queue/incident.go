@@ -219,7 +219,7 @@ func (svc *Service) preemptTx(ctx context.Context, tx *store.Tx, actor audit.Act
 			return nil, err
 		}
 		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: Running, To: Ready,
-			Preempted: true}, Correlation: t.ID, Causation: incidentID}); err != nil {
+			Preempted: true}, Correlation: t.ID, Causation: incidentID, Depth: t.AutomationDepth}); err != nil {
 			return nil, err
 		}
 		if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.preempted", Target: audit.Target{Type: "task", ID: t.ID},
@@ -323,7 +323,7 @@ func (svc *Service) resumeTx(ctx context.Context, tx *store.Tx, actor audit.Acto
 			return "", err
 		}
 		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: Ready, To: Running},
-			Correlation: t.ID, Causation: incident}); err != nil {
+			Correlation: t.ID, Causation: incident, Depth: t.AutomationDepth}); err != nil {
 			return "", err
 		}
 		t.Status, t.Version = Running, t.Version+1

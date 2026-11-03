@@ -259,6 +259,14 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Human.Kick() // route responses the run had not acknowledged (SM-HUM-009)
 			}
 		},
+		OnSpaceState: func(spaceID, state string) {
+			if c.Events != nil {
+				c.Events.SpaceStateChanged() // subscriptions with while_paused stop stop or start (SM-EVT-014)
+			}
+			if c.Supervisor != nil {
+				c.Supervisor.OnSpaceState(spaceID, state) // notices deferred while paused go out on resume
+			}
+		},
 		OnRunIdle: func(string) {
 			if c.Notifier != nil {
 				c.Notifier.Kick()
@@ -316,7 +324,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
 	c.Queue.Workers = c.Fleet
 	c.Queue.Notify = c.Supervisor.Notify
+	c.Supervisor.Inbox = c.Inbox
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
+	c.Human.Inbox = c.Inbox // routed responses become inbox items when the human policy says so (SM-INBOX-001)
 	c.Queue.OnStatus = func(actor audit.Actor, t *queue.Task, from string) {
 		c.Supervisor.OnTaskStatus(actor, t, from)
 		c.Human.Kick() // a task that starts or stops running moves the earliest task deadline (ADR-0036)
@@ -402,6 +412,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
 	evOpts := events.Options{Clock: o.Clock, Metrics: m, RateFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
+	}, DepthFor: func(ctx context.Context, spaceID string) int64 {
+		return c.Limits.Value(ctx, nil, spaceID, limits.EventDepth) // bounded automation across installations (SM-EVT-016)
 	}}
 	if ob.Enabled {
 		evOpts.Origin = ob.Source // never re-ingest our own events (SM-EVT-016)
@@ -607,6 +619,8 @@ func (c *Central) Serve(ctx context.Context) error {
 	c.Repos.Bind(ctx)
 	go c.Dreams.Run(ctx)
 	c.Supervisor.Bind(ctx)
+	// Notices deferred while a space was paused that a resume did not get to send before central stopped (SM-EVT-014).
+	go c.Supervisor.FlushDeferred(ctx)
 	go events.NewManager(c.Events, c.Log).Run(ctx)
 	c.Outbox.RefreshMetrics(ctx)
 	if ob := c.Cfg.Events.Outbound; ob.Enabled {

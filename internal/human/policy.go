@@ -25,6 +25,18 @@ const (
 	EndedNextLaunch = "next_launch"
 )
 
+// Whether a final response also becomes an inbox item of the action's space (SM-INBOX-001, ADR-0049).
+const (
+	// ResponseInboxOff: responses reach agents as notifications only (the default).
+	ResponseInboxOff = "off"
+	// ResponseInboxRouted: a response routed to control or the operators (its requester's run had ended) also becomes
+	// an inbox item, so it is triaged like other inputs instead of only being acknowledged.
+	ResponseInboxRouted = "routed"
+	// ResponseInboxAlways: every response of the type becomes an inbox item, whoever asked (operators and SpaceMan
+	// itself included), so control learns of answers to questions it did not ask.
+	ResponseInboxAlways = "always"
+)
+
 // PolicyTypes are the action types a policy can name: 'all' (every type), the built-in types and 'custom' (every custom type).
 var PolicyTypes = []string{"all", TypeQuestion, TypeApproval, TypeTodo, TypeMessage, TypeCustom}
 
@@ -54,6 +66,7 @@ type PolicyFields struct {
 	WakeIdle             bool   `json:"wake_idle" doc:"Wake an idle requester with a one-line terminal notice (otherwise it reads the response the next time it checks its messages)"`
 	RatePerRunHour       int64  `json:"rate_per_run_hour" minimum:"1" maximum:"1000" doc:"New actions of this type one agent run may ask per hour"`
 	RatePerSpaceHour     int64  `json:"rate_per_space_hour" minimum:"1" maximum:"10000" doc:"New actions of this type agents of one space may ask per hour"`
+	ResponseInbox        string `json:"response_inbox,omitempty" enum:"off,routed,always" doc:"Whether a response also becomes an inbox item of the space (source human_response; metadata only, the response stays on the action): off (default), routed (when it is routed to control or the operators because the requester's run ended) or always"`
 }
 
 // Policy is a stored policy, or an effective one with its source.
@@ -72,7 +85,8 @@ var reRoleName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
 
 // Builtin is the policy that applies when no stored policy names a type.
 func Builtin(actionType string) PolicyFields {
-	p := PolicyFields{MaxReminders: 1, RequesterEnded: EndedReroute, HoldMinutes: 60, WakeIdle: true, RatePerRunHour: 30, RatePerSpaceHour: 300}
+	p := PolicyFields{MaxReminders: 1, RequesterEnded: EndedReroute, HoldMinutes: 60, WakeIdle: true, RatePerRunHour: 30, RatePerSpaceHour: 300,
+		ResponseInbox: ResponseInboxOff}
 	switch actionType {
 	case TypeQuestion:
 		p.RemindAfterMinutes, p.RemindEveryMinutes, p.MaxReminders = 4*60, 24*60, 3
@@ -118,6 +132,9 @@ func validatePolicy(p PolicyFields) error {
 	if p.RequesterEnded != EndedReroute && p.RequesterEnded != EndedNextLaunch {
 		v.Add("requester_ended", "must be reroute or next_launch")
 	}
+	if p.ResponseInbox != ResponseInboxOff && p.ResponseInbox != ResponseInboxRouted && p.ResponseInbox != ResponseInboxAlways {
+		v.Add("response_inbox", "must be off, routed or always")
+	}
 	if p.SuccessorRole != "" && !reRoleName.MatchString(p.SuccessorRole) {
 		v.Add("successor_role", "must be a role name (lowercase letters, digits and dashes)")
 	}
@@ -130,7 +147,7 @@ func policyFromRow(r db.HumanPolicy) Policy {
 		PolicyFields: PolicyFields{RemindAfterMinutes: r.RemindAfterMinutes, RemindEveryMinutes: r.RemindEveryMinutes, MaxReminders: r.MaxReminders,
 			EscalateAfterMinutes: r.EscalateAfterMinutes, EscalatePriority: r.EscalatePriority, EscalateAssignee: r.EscalateAssignee,
 			RequesterEnded: r.RequesterEnded, HoldMinutes: r.HoldMinutes, SuccessorRole: r.SuccessorRole, WakeIdle: r.WakeIdle == 1,
-			RatePerRunHour: r.RatePerRunHour, RatePerSpaceHour: r.RatePerSpaceHour}}
+			RatePerRunHour: r.RatePerRunHour, RatePerSpaceHour: r.RatePerSpaceHour, ResponseInbox: r.ResponseInbox}}
 }
 
 // effective picks the most specific policy for a type in a space: space and type, space and 'all', default and type,
@@ -228,6 +245,9 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID, a
 	if !slices.Contains(PolicyTypes, actionType) {
 		return nil, invalid("action_type", "must be all, question, approval, todo, message or custom")
 	}
+	if in.ResponseInbox == "" {
+		in.ResponseInbox = ResponseInboxOff // older clients do not send it
+	}
 	if err := validatePolicy(in); err != nil {
 		return nil, err
 	}
@@ -260,7 +280,7 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID, a
 				RemindEveryMinutes: in.RemindEveryMinutes, MaxReminders: in.MaxReminders, EscalateAfterMinutes: in.EscalateAfterMinutes,
 				EscalatePriority: in.EscalatePriority, EscalateAssignee: in.EscalateAssignee, RequesterEnded: in.RequesterEnded, HoldMinutes: in.HoldMinutes,
 				SuccessorRole: in.SuccessorRole, WakeIdle: b2i(in.WakeIdle), RatePerRunHour: in.RatePerRunHour, RatePerSpaceHour: in.RatePerSpaceHour,
-				CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros(), UpdatedBy: actor.ID}); err != nil {
+				CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros(), UpdatedBy: actor.ID, ResponseInbox: in.ResponseInbox}); err != nil {
 				return err
 			}
 		case err != nil:
@@ -273,7 +293,7 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID, a
 			n, err := tx.Q.UpdateHumanPolicy(ctx, db.UpdateHumanPolicyParams{RemindAfterMinutes: in.RemindAfterMinutes, RemindEveryMinutes: in.RemindEveryMinutes,
 				MaxReminders: in.MaxReminders, EscalateAfterMinutes: in.EscalateAfterMinutes, EscalatePriority: in.EscalatePriority,
 				EscalateAssignee: in.EscalateAssignee, RequesterEnded: in.RequesterEnded, HoldMinutes: in.HoldMinutes, SuccessorRole: in.SuccessorRole,
-				WakeIdle: b2i(in.WakeIdle), RatePerRunHour: in.RatePerRunHour, RatePerSpaceHour: in.RatePerSpaceHour, UpdatedAt: tx.NowMicros(),
+				WakeIdle: b2i(in.WakeIdle), RatePerRunHour: in.RatePerRunHour, RatePerSpaceHour: in.RatePerSpaceHour, ResponseInbox: in.ResponseInbox, UpdatedAt: tx.NowMicros(),
 				UpdatedBy: actor.ID, ID: cur.ID, Version: cur.Version})
 			if err != nil {
 				return err
@@ -293,7 +313,7 @@ func (svc *Service) SetPolicy(ctx context.Context, actor audit.Actor, spaceID, a
 			Details: map[string]any{"space_id": spaceID, "action_type": actionType, "remind_after_minutes": in.RemindAfterMinutes,
 				"escalate_after_minutes": in.EscalateAfterMinutes, "escalate_priority": in.EscalatePriority, "escalate_assignee": in.EscalateAssignee,
 				"requester_ended": in.RequesterEnded, "successor_role": in.SuccessorRole, "wake_idle": in.WakeIdle,
-				"rate_per_run_hour": in.RatePerRunHour, "rate_per_space_hour": in.RatePerSpaceHour}})
+				"rate_per_run_hour": in.RatePerRunHour, "rate_per_space_hour": in.RatePerSpaceHour, "response_inbox": in.ResponseInbox}})
 		return err
 	})
 	if err != nil {

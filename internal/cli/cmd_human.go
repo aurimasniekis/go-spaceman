@@ -180,7 +180,8 @@ func (a *App) humanPolicyCmd() *cobra.Command {
 					str("successor-role", "successor_role", "reroute to a live run of this role before control").
 					boolean("wake-idle", "wake_idle", "wake an idle requester with a one-line terminal notice").
 					integer("rate-per-run-hour", "rate_per_run_hour", "new actions of this type one run may ask per hour").
-					integer("rate-per-space-hour", "rate_per_space_hour", "new actions of this type a space's agents may ask per hour")
+					integer("rate-per-space-hour", "rate_per_space_hour", "new actions of this type a space's agents may ask per hour").
+					str("response-inbox", "response_inbox", "also make responses inbox items: off, routed (when routed to control or the operators) or always")
 			}}),
 		a.cmd(opts{use: "delete", short: "Remove a stored policy (the next less specific one applies)", op: "delete-space-human-policy",
 			global: "delete-human-policy", globalHelp: "without it, the installation default", scoped: true, args: pos("action-type"), long: atHelp,

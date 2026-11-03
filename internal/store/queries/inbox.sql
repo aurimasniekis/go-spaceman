@@ -1,7 +1,7 @@
 -- name: InsertInboxItem :execrows
 INSERT INTO inbox_items (id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id,
-  dedup_key, trusted_json, subscription_id, urgency, received_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  dedup_key, trusted_json, subscription_id, urgency, received_at, created_by, updated_at, notice_deferred, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING;
 
 -- name: GetInboxItem :one
@@ -25,3 +25,12 @@ SELECT status, count(*) AS n FROM inbox_items WHERE space_id = ? GROUP BY status
 UPDATE inbox_items SET status = sqlc.arg(status), status_reason = sqlc.arg(status_reason), defer_until = sqlc.arg(defer_until),
   linked_kind = sqlc.arg(linked_kind), linked_id = sqlc.arg(linked_id), updated_at = sqlc.arg(now), version = version + 1
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
+
+-- name: ListDeferredInboxNotices :many
+SELECT * FROM inbox_items WHERE space_id = ? AND notice_deferred = 1 ORDER BY received_at, id LIMIT ?;
+
+-- name: ListSpacesWithDeferredNotices :many
+SELECT DISTINCT i.space_id FROM inbox_items i JOIN spaces s ON s.id = i.space_id WHERE i.notice_deferred = 1 AND s.state = 'active' ORDER BY i.space_id;
+
+-- name: ClearInboxNoticeDeferred :execrows
+UPDATE inbox_items SET notice_deferred = 0 WHERE id = ? AND notice_deferred = 1;

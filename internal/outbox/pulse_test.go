@@ -84,7 +84,7 @@ func TestPublishToPulse(t *testing.T) {
 	h := m.Headers()
 	if m.Subject() != "evt.spaceman.human.action.resolved" || h.Get("Nats-Msg-Id") != id || h.Get("ce-type") != "spaceman.human.action_resolved.v1" ||
 		h.Get("ce-source") != "spaceman-test" || h.Get(HeaderCorrelation) != "tsk_1" || h.Get(HeaderCausation) != "req_42" ||
-		h.Get(HeaderOrigin) != "spaceman-test" || h.Get("content-type") != "application/json" {
+		h.Get(HeaderOrigin) != "spaceman-test" || h.Get("content-type") != "application/json" || h.Get(HeaderDepth) != "" {
 		t.Fatalf("message %s %v", m.Subject(), h)
 	}
 	if ts, err := time.Parse(time.RFC3339Nano, h.Get("ce-time")); err != nil || !ts.Equal(created) {
@@ -102,6 +102,24 @@ func TestPublishToPulse(t *testing.T) {
 	// The SDK decodes the extension headers as Extra, which the inbound side checks for its own origin.
 	if got := envelope.Decode(m.Subject(), h, m.Data()); got.Extra.Get(HeaderOrigin) != "spaceman-test" || got.ID != id {
 		t.Fatalf("decoded %+v", got)
+	}
+
+	// An event caused by an ingested one carries its automation depth (ADR-0049, SM-EVT-016).
+	if err := e.s.W().Tx(e.ctx, func(tx *store.Tx) error {
+		_, err := e.o.Enqueue(e.ctx, tx, Event{Payload: InboxItemCreated{SpaceID: "spc_a", ItemID: "inb_1", SourceKind: "event"}, Depth: 3})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _, err := e.o.Once(e.ctx, pub); err != nil || n != 1 {
+		t.Fatalf("publish the deep event %d %v", n, err)
+	}
+	m, err = cons.Next(jetstream.FetchMaxWait(5 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envelope.Decode(m.Subject(), m.Headers(), m.Data()); got.Extra.Get(HeaderDepth) != "3" || m.Subject() != "evt.spaceman.inbox.item.created" {
+		t.Fatalf("depth header %v", m.Headers())
 	}
 
 	if _, _, err := PulseDialer(PulseConfig{URL: srv.URL, CredsFile: filepath.Join(t.TempDir(), "missing.creds")}, nil)(e.ctx); err == nil {

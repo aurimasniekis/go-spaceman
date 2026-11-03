@@ -48,6 +48,9 @@ The run page opens on the live terminal. **Stop** interrupts the session (it sta
 
 **Pause** has three modes: **Hold** admits no new work and lets running agents finish, **Interrupt** also interrupts
 running agents and stops them, and **Emergency stop** also kills every run at once. **Resume** admits work again.
+A paused space keeps receiving events; each subscription decides whether control hears of them at once, when the
+space resumes (the default), or whether the subscription stops until then
+([While the space is paused](/guide/events#while-the-space-is-paused)).
 
 ## Archive, restore and purge
 

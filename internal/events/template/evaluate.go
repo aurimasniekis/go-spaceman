@@ -18,6 +18,9 @@ type Event struct {
 	ContentType string
 	Time        time.Time
 	Data        []byte
+	// Depth is the raw spaceman-depth header (ADR-0049): SpaceMan's own extension, not part of the Pulse envelope.
+	// Definitions never see it; ingestion uses it to bound automation depth.
+	Depth string
 }
 
 // Result is the outcome of applying a bound definition to an event.

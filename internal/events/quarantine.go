@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
@@ -40,6 +41,7 @@ type QuarantineEntry struct {
 	ContentType string     `json:"content_type"`
 	Payload     string     `json:"payload" doc:"The raw payload (at most 1 MiB), untrusted"`
 	Error       string     `json:"error"`
+	Depth       int64      `json:"depth" doc:"The automation depth the event carried (its spaceman-depth header; 0: none); reprocessing passes it on"`
 	Status      string     `json:"status" enum:"open,reprocessed,discarded"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
@@ -76,7 +78,7 @@ func (svc *Service) Deliveries(ctx context.Context, spaceID, subID string, limit
 
 func quarantineFromRow(r db.EventQuarantine) *QuarantineEntry {
 	q := &QuarantineEntry{ID: r.ID, EventID: r.EventID, Subject: r.Subject, Type: r.Type, Source: r.Source, EventTime: fromMicros(r.EventTime),
-		ContentType: r.ContentType, Payload: string(r.Payload), Error: r.Error, Status: r.Status, CreatedAt: fromMicros(r.CreatedAt), ResolvedBy: r.ResolvedBy}
+		ContentType: r.ContentType, Payload: string(r.Payload), Error: r.Error, Depth: r.Depth, Status: r.Status, CreatedAt: fromMicros(r.CreatedAt), ResolvedBy: r.ResolvedBy}
 	if r.ResolvedAt.Valid {
 		t := fromMicros(r.ResolvedAt.Int64)
 		q.ResolvedAt = &t
@@ -119,7 +121,7 @@ func (svc *Service) ResolveQuarantine(ctx context.Context, actor audit.Actor, sp
 	status := "discarded"
 	if reprocess {
 		perr := svc.Process(ctx, r.ID, template.Event{ID: q.EventID, Subject: q.Subject, Type: q.Type, Source: q.Source, ContentType: q.ContentType,
-			Time: fromMicros(q.EventTime), Data: q.Payload}, 0, Origin{Kind: OriginReprocess})
+			Time: fromMicros(q.EventTime), Data: q.Payload, Depth: depthHeader(q.Depth)}, 0, Origin{Kind: OriginReprocess})
 		var qe *QuarantinedError
 		if errors.As(perr, &qe) {
 			return svc.quarantineEntry(ctx, entryID) // failed again: still open, with the new error
@@ -144,6 +146,14 @@ func (svc *Service) ResolveQuarantine(ctx context.Context, actor audit.Actor, sp
 		return nil, err
 	}
 	return svc.quarantineEntry(ctx, entryID)
+}
+
+// depthHeader is a stored depth as the spaceman-depth header carried it (0: no header).
+func depthHeader(d int64) string {
+	if d <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(d, 10)
 }
 
 func (svc *Service) quarantineEntry(ctx context.Context, id string) (*QuarantineEntry, error) {

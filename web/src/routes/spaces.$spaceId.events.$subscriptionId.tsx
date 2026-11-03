@@ -1,4 +1,4 @@
-import { Alert, Anchor, Badge, Breadcrumbs, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
+import { Alert, Anchor, Badge, Breadcrumbs, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
 import { IconChevronDown, IconCopy, IconTrash } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
@@ -8,7 +8,7 @@ import { api, check, ifMatch, unwrap, type Cursor, type Delivery, type Subscript
 import { keys, useDeliveries, useMe, useQuarantine, useReplays, useSpace, useSubscription } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
-import { coreExplanation, DeliveryBadge, OutcomeBadge, SubscriptionState } from '@/features/events/badges'
+import { coreExplanation, DeliveryBadge, OutcomeBadge, SubscriptionState, whilePausedOptions } from '@/features/events/badges'
 import { DefinitionView } from '@/features/events/DefinitionView'
 import { atLeast, roleIn } from '@/lib/access'
 import { fieldError, required } from '@/lib/form'
@@ -46,7 +46,7 @@ function SubscriptionPage() {
   const s = sub.data
   const core = s.delivery === 'core'
 
-  const update = async (body: { enabled: boolean; start?: Cursor }, msg: string) => {
+  const update = async (body: { enabled: boolean; start?: Cursor; while_paused?: Subscription['while_paused'] }, msg: string) => {
     try {
       const next = unwrap(await api.PUT('/spaces/{space_id}/subscriptions/{subscription_id}', {
         params: { path: { space_id: spaceId, subscription_id: subscriptionId }, header: { 'If-Match': ifMatch(s.version) } }, body,
@@ -127,6 +127,10 @@ function SubscriptionPage() {
         </SimpleGrid>
         <Text size="xs" c="dimmed" mt="xs">{core ? 'No cursor: core NATS delivers each message once, as it arrives.'
           : <>Cursor: {s.cursor.policy}{s.cursor.replay ? ' (replay)' : ''}, generation {s.cursor.generation}{s.cursor_pending ? ' — waiting to be applied' : ''}</>}</Text>
+        <Select mt="sm" maw={420} label="While the space is paused" allowDeselect={false} disabled={!canWrite} value={s.while_paused}
+          description={whilePausedOptions.find((o) => o.value === s.while_paused)?.description}
+          onChange={(v) => { if (v && v !== s.while_paused) void update({ enabled: s.enabled, while_paused: v as Subscription['while_paused'] }, 'Paused-space policy saved') }}
+          data={whilePausedOptions.map((o) => ({ value: o.value, label: o.label }))} />
       </Card>
       <Tabs defaultValue="deliveries">
         <Tabs.List>
@@ -172,6 +176,7 @@ function SubscriptionPage() {
                     )}
                   </Group>
                   <Text size="sm" c="owlRed">{q.error}</Text>
+                  {q.depth > 0 && <Text size="xs" c="dimmed">Automation depth (spaceman-depth): {q.depth}. Reprocessing ingests it at depth {q.depth + 1}.</Text>}
                   <Code block className="mono" style={{ maxHeight: 200, overflow: 'auto' }}>{q.payload}</Code>
                 </Stack>
               </Card>

@@ -52,6 +52,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Go interfaces for the remaining adapter kinds (SM-ARCH-003, ADR-0048): `artifacts.Store` (local and S3),
   `events.Source` (Pulse durable consumers and core NATS, picked by delivery mode) and `gateway.Transport` (streamable
   HTTP). The implementations are unchanged; tests drive each through a fake.
+- Paused-space event policies (ADR-0049, SM-EVT-014): each subscription's `while_paused` is `defer` (default: keep
+  ingesting, tell control about new items when the space resumes), `wake` (tell control at once) or `stop` (stop until
+  the resume; durable events wait in the stream). Deferred notices go out on resume and at central's start, without
+  polling. Subscribe dialog and subscription page, `while_paused` in the API, `--while-paused` in the CLI; inbox items
+  show **control told on resume**; subscriptions report the state `paused` (also in `spaceman_ingest_subscriptions`).
+- Bounded automation across installations (ADR-0049, SM-EVT-016): outbound events carry the SpaceMan header
+  `spaceman-depth` (how many SpaceMan ingestions led to the change); inbox items and tasks created from them record
+  their `automation_depth`; an inbound event at or over the space's new limit `event_depth` (default 8, 1–64), or with
+  an unreadable depth, is quarantined with the reason. Reprocessing it ingests it one level deeper.
+- Routed human responses as inbox items (ADR-0049, SM-INBOX-001): the human-action policy field `response_inbox`
+  (`off` by default, `routed`, `always`) makes answers also inbox items with the source `human_response`. The item
+  names the action and its routing, never the response, which stays on the action. Policy dialog, API,
+  `--response-inbox` in the CLI.
+- Migration 0033 (`while_paused`, `notice_deferred`, depth columns, `response_inbox`).
 - Space repositories (ADR-0044, SM-REPO-001/003, SM-SPACE-001, SM-UI-002, SM-API-004): a central list per space (name,
   folder, clone URL without credentials, default branch, role code or kb, clone policy auto, on_demand or manual) with
   API CRUD under `/spaces/{id}/repositories` (If-Match, audited), a sync endpoint, the node protocol command

@@ -274,6 +274,9 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 		return nil, err
 	}
 	svc.hub.Kick(nodeID)
+	if svc.opts.OnSpaceState != nil {
+		svc.opts.OnSpaceState(id, state)
+	}
 	return svc.GetSpace(ctx, id)
 }
 

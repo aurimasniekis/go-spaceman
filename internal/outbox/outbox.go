@@ -14,7 +14,7 @@
 //
 // Payloads are the versioned catalog in catalog.go: identifiers, states and outcomes only. Correlation and causation
 // travel in SpaceMan extension headers (Pulse defines neither); spaceman-origin lets the inbound side drop SpaceMan's own
-// events instead of re-ingesting them (SM-EVT-016).
+// events instead of re-ingesting them, and spaceman-depth bounds loops through other installations (SM-EVT-016).
 package outbox
 
 import (
@@ -44,6 +44,10 @@ const (
 	HeaderCausation = "spaceman-causation-id"
 	// HeaderOrigin is the publishing SpaceMan's source name; the inbound side drops events carrying its own origin.
 	HeaderOrigin = "spaceman-origin"
+	// HeaderDepth is the automation depth of the change the event reports: how many SpaceMan ingestions led to it
+	// (ADR-0049). It is sent when it is above 0; an installation ingesting the event adds one and quarantines events
+	// at or above its limit, so a loop through several installations ends (SM-EVT-016).
+	HeaderDepth = "spaceman-depth"
 )
 
 // Defaults of the retry and retention policy (ADR-0015, ADR-0030).
@@ -142,6 +146,8 @@ type Event struct {
 	// plain identifiers are dropped. Without a causation, the API request or node command of ctx is used.
 	Correlation string
 	Causation   string
+	// Depth is the automation depth of the change (ADR-0049): sent as spaceman-depth when above 0.
+	Depth int64
 }
 
 // reHeaderID admits identifier-like header values: no spaces, controls or header-breaking characters.
@@ -185,7 +191,7 @@ func (o *Outbox) Enqueue(ctx context.Context, tx *store.Tx, ev Event) (string, e
 	id := ids.New(ids.Event)
 	now := tx.NowMicros()
 	if err := tx.Q.InsertEventOutbox(ctx, db.InsertEventOutboxParams{ID: id, Subject: n.Subject(), Type: n.Type(), SpaceID: ev.Payload.spaceID(),
-		CorrelationID: CleanID(ev.Correlation), CausationID: causation, PayloadJson: string(b), CreatedAt: now, NextAttemptAt: now}); err != nil {
+		CorrelationID: CleanID(ev.Correlation), CausationID: causation, PayloadJson: string(b), CreatedAt: now, NextAttemptAt: now, Depth: max(ev.Depth, 0)}); err != nil {
 		return "", err
 	}
 	tx.AfterCommit(o.Kick)

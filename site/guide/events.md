@@ -106,7 +106,42 @@ is the source sending it again.
 - Storage problems are retried with backoff (durable subscriptions; a core NATS message is lost).
 - Items keep the event ID, subject, type, subscription, template version, rendered instructions and correlation, and the
   raw payload as an attachment.
-- Paused spaces keep receiving events.
+- An event that has already passed through too many SpaceMan installations goes to **quarantine** with the reason
+  "automation depth" (see [Event loops between installations](#event-loops-between-installations)).
+
+## While the space is paused
+
+Each subscription says what it does while its space is paused (**While the space is paused** in the subscribe dialog
+and on the subscription page; `while_paused` in the API and `--while-paused` in the CLI):
+
+| Choice | `while_paused` | What happens while the space is paused |
+|---|---|---|
+| Keep ingesting, tell control on resume (default) | `defer` | Events become inbox items as usual, marked **control told on resume**. Control is not told about them (so a control run still running under **Hold** does not start work on them). When the space resumes, control gets the usual new-item notification for each item still new. |
+| Keep ingesting, tell control at once | `wake` | Events become inbox items and control is told at once, as in an active space. |
+| Stop until the space resumes | `stop` | The subscription stops; its state shows **paused**. A durable subscription's events wait in the Pulse stream (its consumer keeps its position) and are ingested after the resume, so only the stream's own retention limits how much can wait. A core NATS subscription receives nothing meanwhile: those messages are lost. |
+
+Pausing never starts new runs, whatever the choice: launches are refused while a space is paused. The deferred
+notices go out when the space is resumed, and again at central's start for any a resume did not get to; nothing polls
+for them.
+
+## Event loops between installations
+
+Two installations can be subscribed to each other's events (installation A publishes, B ingests the event and
+publishes about the new item, A ingests that, and so on). SpaceMan bounds such a loop with its own header
+`spaceman-depth`, the **automation depth**: how many SpaceMan ingestions led to an event.
+
+- An event from a source that is not SpaceMan has no depth; its inbox item has depth 1. An item made from an event with
+  depth *n* has depth *n* + 1, and so do the events SpaceMan publishes about it. A task created from the item (and its
+  subtasks) has the item's depth, and so do the task's events.
+- An event whose depth is at or over the space's **Event automation depth** limit (`event_depth`, default 8, on the
+  [Limits](/guide/limits) page) is quarantined with the reason, never turned into an item. So is an event whose
+  `spaceman-depth` is not a number.
+- **Reprocess** ingests a quarantined event anyway (a person's decision). The item gets the next depth, so the chain
+  continues from there and is stopped again at the next installation.
+- Each installation still drops its own events (by `spaceman-origin`, [Publishing SpaceMan events](/guide/publishing-events)).
+
+The depth follows the links SpaceMan records itself: an event, its item, tasks made from the item, and their events. A
+run, a human action or another change that control makes on its own judgement starts a new chain at depth 0.
 
 <Shot name="events-quarantine" alt="Quarantined alert missing a required field, with reprocess and discard" caption="A quarantined event" />
 

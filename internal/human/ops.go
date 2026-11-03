@@ -169,12 +169,14 @@ func (svc *Service) finalize(ctx context.Context, tx *store.Tx, actor audit.Acto
 		Details: map[string]any{"space_id": r.SpaceID, "type": r.Type, "outcome": outcome, "reason": reason, "task_id": r.TaskID}}); err != nil {
 		return err
 	}
-	if r.RequesterKind != "agent" {
-		return nil
-	}
 	final := r
-	final.Status, final.Outcome, final.Version = status, outcome, r.Version+1
-	return svc.notify(ctx, tx, final, notice)
+	final.Status, final.Outcome, final.Version, final.RespondedBy = status, outcome, r.Version+1, actor.ID
+	if r.RequesterKind == "agent" {
+		if err := svc.notify(ctx, tx, final, notice); err != nil {
+			return err
+		}
+	}
+	return svc.responseAlways(ctx, tx, final)
 }
 
 // Cancel withdraws a pending action (the requester no longer needs it, or an operator removes it).

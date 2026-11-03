@@ -1,7 +1,14 @@
 import { Badge, Tooltip } from '@mantine/core'
 import type { Delivery, Subscription } from '@/api/client'
 
-const stateColor: Record<Subscription['state'], string> = { running: 'owlGreen', stopped: 'gray', error: 'owlRed', disabled: 'gray' }
+const stateColor: Record<Subscription['state'], string> = { running: 'owlGreen', stopped: 'gray', error: 'owlRed', disabled: 'gray', paused: 'owlYellow' }
+
+/** What a subscription does while its space is paused (SM-EVT-014, ADR-0049), for selects and summaries. */
+export const whilePausedOptions: { value: Subscription['while_paused']; label: string; description: string }[] = [
+  { value: 'defer', label: 'Keep ingesting, tell control on resume', description: 'Items arrive as usual; control hears of them when the space resumes (default).' },
+  { value: 'wake', label: 'Keep ingesting, tell control at once', description: 'A control run still running under Hold is told about new items right away.' },
+  { value: 'stop', label: 'Stop until the space resumes', description: 'Durable events wait in the stream and are ingested after the resume; core NATS messages published meanwhile are lost.' },
+]
 
 export function SubscriptionState({ sub }: { sub: Subscription }) {
   const badge = <Badge color={stateColor[sub.state]}>{sub.state}{sub.cursor_pending ? ' · applying cursor' : ''}</Badge>

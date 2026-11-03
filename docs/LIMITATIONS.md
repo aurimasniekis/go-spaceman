@@ -39,9 +39,13 @@
   its `issues_opened` and `push` webhook fixtures to a real pulsed (`make test-real-pulse`). Its GitHub App
   installation lookup was answered by a local stand-in serving pulse-github's own test JSON, so the real GitHub API was
   not involved. There is no upstream pull request fixture, so the PR template has no real evidence.
-- **Paused spaces always ingest, and wakes are not deferred.** Subscriptions keep running while a space is paused
-  (there is no setting to stop them), and nothing holds back control's notification of a new item: with **Hold**,
-  a control run that is still running is notified at once. Only launches are refused while paused (SM-EVT-014).
+- **Paused-space policies cover event items only.** A subscription's `while_paused` (defer, wake or stop, ADR-0049)
+  decides about the items it creates. Other inputs of a paused space (operator items, worker messages, schedules,
+  task and run notices) still reach a control run that runs under **Hold** at once. A `stop` subscription's durable
+  events wait only as long as the Pulse stream keeps them; core NATS messages published while it is stopped are lost.
+  Deferred notices are sent for items still `new` at the resume, oldest first, at most 10,000 per resume; the rest go
+  out at the next resume or central start. The Terraform provider does not manage `while_paused` yet; its updates
+  leave the stored value as it is (SM-EVT-014).
 - **Definitions are edited as JSON.** A custom definition (in the subscribe dialog) and a template draft are written as
   JSON text, checked as you type and by the server, with a sample-event preview; there is no field-by-field visual
   editor (SM-EVT-017).
@@ -51,8 +55,12 @@
   published, and rows left pending when publication is turned off are dropped after the retention (ADR-0030).
 - **At least once, no global order.** Consumers must deduplicate on `Nats-Msg-Id`; JetStream deduplicates retries only
   within its 2-minute window. Events of different subjects can arrive in any order (SM-OBS-004).
-- **Loop guard is per installation.** An installation drops only events carrying its own `spaceman-origin`. Automation
-  depth across installations (an event creating an item, a task and another event) is not bounded yet (SM-EVT-016).
+- **Automation depth follows recorded links only.** An installation drops events carrying its own `spaceman-origin`,
+  and quarantines events whose `spaceman-depth` reaches the space's `event_depth` (default 8, ADR-0049). The depth
+  passes from an event to its inbox item, to tasks created from the item (`origin_kind` inbox_item) and their
+  subtasks, and to their events. Runs, human actions, approvals, memory and KB events carry no depth: a change control
+  makes on its own judgement after reading an item starts a new chain, bounded only by the run, tool-call and budget
+  limits. A publisher that is not SpaceMan can send any depth, including none (SM-EVT-016).
 - **No interrupted-execution event.** Approval executions marked interrupted by a central restart are not published.
 - **Real Pulse evidence is local only.** Publication ran against a real `pulsed` v0.1.3 with nats-server 2.15.1 in its
   development profile on loopback (`make test-real-pulse`), with a client granted `publish:evt.spaceman.>`. pulsed's
@@ -165,8 +173,11 @@
 - **Ended requesters are not relaunched.** A response for a run that ended is routed to a live successor run, control
   or the operators, or held for the next run of the same instance; SpaceMan never relaunches the ended run to deliver
   it (ADR-0032, SM-HUM-009).
-- **Responses never become inbox items.** A routed response reaches control as a durable notification, not as an inbox
-  item; the inbox's `human_response` source kind has no producer (SM-INBOX-001).
+- **Response items carry no response.** With a policy's `response_inbox` (`routed` or `always`, ADR-0049) a response
+  also becomes a `human_response` inbox item, but the item holds only metadata and a pointer to the action: the
+  response stays readable only by the runs it concerns. Only answers make items (not withdrawals, expiries or
+  clarification requests). The default is `off`; the Terraform provider does not manage `response_inbox` yet, so a
+  provider-managed policy is written back as `off` (SM-INBOX-001).
 - **Search is a substring match.** The search matches every word of the query as a substring of the title or the
   Markdown text, case-insensitively, over at most the space's 5,000 pending and its most recent final actions (the
   global list: the 5,000 oldest pending); there is no full-text index, ranking, stemming or search of comments and

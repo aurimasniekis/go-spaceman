@@ -10,6 +10,18 @@ import (
 	"database/sql"
 )
 
+const clearInboxNoticeDeferred = `-- name: ClearInboxNoticeDeferred :execrows
+UPDATE inbox_items SET notice_deferred = 0 WHERE id = ? AND notice_deferred = 1
+`
+
+func (q *Queries) ClearInboxNoticeDeferred(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearInboxNoticeDeferred, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countInboxByStatus = `-- name: CountInboxByStatus :many
 SELECT status, count(*) AS n FROM inbox_items WHERE space_id = ? GROUP BY status
 `
@@ -43,7 +55,7 @@ func (q *Queries) CountInboxByStatus(ctx context.Context, spaceID string) ([]Cou
 }
 
 const getInboxItem = `-- name: GetInboxItem :one
-SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version FROM inbox_items WHERE id = ?
+SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version, notice_deferred, depth FROM inbox_items WHERE id = ?
 `
 
 func (q *Queries) GetInboxItem(ctx context.Context, id string) (InboxItem, error) {
@@ -73,12 +85,14 @@ func (q *Queries) GetInboxItem(ctx context.Context, id string) (InboxItem, error
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.NoticeDeferred,
+		&i.Depth,
 	)
 	return i, err
 }
 
 const getInboxItemByDedup = `-- name: GetInboxItemByDedup :one
-SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version FROM inbox_items WHERE space_id = ? AND source_kind = ? AND dedup_key = ?
+SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version, notice_deferred, depth FROM inbox_items WHERE space_id = ? AND source_kind = ? AND dedup_key = ?
 `
 
 type GetInboxItemByDedupParams struct {
@@ -114,14 +128,16 @@ func (q *Queries) GetInboxItemByDedup(ctx context.Context, arg GetInboxItemByDed
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.NoticeDeferred,
+		&i.Depth,
 	)
 	return i, err
 }
 
 const insertInboxItem = `-- name: InsertInboxItem :execrows
 INSERT INTO inbox_items (id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id,
-  dedup_key, trusted_json, subscription_id, urgency, received_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  dedup_key, trusted_json, subscription_id, urgency, received_at, created_by, updated_at, notice_deferred, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING
 `
 
@@ -143,6 +159,8 @@ type InsertInboxItemParams struct {
 	ReceivedAt     int64
 	CreatedBy      string
 	UpdatedAt      int64
+	NoticeDeferred int64
+	Depth          int64
 }
 
 func (q *Queries) InsertInboxItem(ctx context.Context, arg InsertInboxItemParams) (int64, error) {
@@ -164,6 +182,8 @@ func (q *Queries) InsertInboxItem(ctx context.Context, arg InsertInboxItemParams
 		arg.ReceivedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
+		arg.NoticeDeferred,
+		arg.Depth,
 	)
 	if err != nil {
 		return 0, err
@@ -171,8 +191,66 @@ func (q *Queries) InsertInboxItem(ctx context.Context, arg InsertInboxItemParams
 	return result.RowsAffected()
 }
 
+const listDeferredInboxNotices = `-- name: ListDeferredInboxNotices :many
+SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version, notice_deferred, depth FROM inbox_items WHERE space_id = ? AND notice_deferred = 1 ORDER BY received_at, id LIMIT ?
+`
+
+type ListDeferredInboxNoticesParams struct {
+	SpaceID string
+	Limit   int64
+}
+
+func (q *Queries) ListDeferredInboxNotices(ctx context.Context, arg ListDeferredInboxNoticesParams) ([]InboxItem, error) {
+	rows, err := q.db.QueryContext(ctx, listDeferredInboxNotices, arg.SpaceID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InboxItem{}
+	for rows.Next() {
+		var i InboxItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.SourceKind,
+			&i.SourceID,
+			&i.SourceLabel,
+			&i.Title,
+			&i.ContentType,
+			&i.Body,
+			&i.PayloadRef,
+			&i.CorrelationID,
+			&i.DedupKey,
+			&i.TrustedJson,
+			&i.SubscriptionID,
+			&i.Urgency,
+			&i.Status,
+			&i.StatusReason,
+			&i.DeferUntil,
+			&i.LinkedKind,
+			&i.LinkedID,
+			&i.ReceivedAt,
+			&i.CreatedBy,
+			&i.UpdatedAt,
+			&i.Version,
+			&i.NoticeDeferred,
+			&i.Depth,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInboxItems = `-- name: ListInboxItems :many
-SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version FROM inbox_items
+SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version, notice_deferred, depth FROM inbox_items
 WHERE space_id = ?1
   AND (?2 = '' OR status = ?2)
   AND (?3 = 0 OR received_at < ?3 OR (received_at = ?3 AND id < ?4))
@@ -227,10 +305,39 @@ func (q *Queries) ListInboxItems(ctx context.Context, arg ListInboxItemsParams) 
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.NoticeDeferred,
+			&i.Depth,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpacesWithDeferredNotices = `-- name: ListSpacesWithDeferredNotices :many
+SELECT DISTINCT i.space_id FROM inbox_items i JOIN spaces s ON s.id = i.space_id WHERE i.notice_deferred = 1 AND s.state = 'active' ORDER BY i.space_id
+`
+
+func (q *Queries) ListSpacesWithDeferredNotices(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listSpacesWithDeferredNotices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var space_id string
+		if err := rows.Scan(&space_id); err != nil {
+			return nil, err
+		}
+		items = append(items, space_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

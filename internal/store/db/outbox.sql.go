@@ -11,7 +11,7 @@ import (
 )
 
 const dueEventOutbox = `-- name: DueEventOutbox :many
-SELECT id, subject, type, correlation_id, causation_id, payload_json, created_at, attempts
+SELECT id, subject, type, correlation_id, causation_id, payload_json, created_at, attempts, depth
 FROM event_outbox WHERE published_at IS NULL AND dead_at IS NULL AND next_attempt_at <= ?1
 ORDER BY next_attempt_at, id LIMIT ?2
 `
@@ -30,6 +30,7 @@ type DueEventOutboxRow struct {
 	PayloadJson   string
 	CreatedAt     int64
 	Attempts      int64
+	Depth         int64
 }
 
 func (q *Queries) DueEventOutbox(ctx context.Context, arg DueEventOutboxParams) ([]DueEventOutboxRow, error) {
@@ -50,6 +51,7 @@ func (q *Queries) DueEventOutbox(ctx context.Context, arg DueEventOutboxParams) 
 			&i.PayloadJson,
 			&i.CreatedAt,
 			&i.Attempts,
+			&i.Depth,
 		); err != nil {
 			return nil, err
 		}
@@ -99,7 +101,7 @@ func (q *Queries) EventOutboxStats(ctx context.Context) (EventOutboxStatsRow, er
 }
 
 const getEventOutbox = `-- name: GetEventOutbox :one
-SELECT id, subject, type, space_id, correlation_id, causation_id, payload_json, created_at, attempts, next_attempt_at, published_at, dead_at, last_error FROM event_outbox WHERE id = ?
+SELECT id, subject, type, space_id, correlation_id, causation_id, payload_json, created_at, attempts, next_attempt_at, published_at, dead_at, last_error, depth FROM event_outbox WHERE id = ?
 `
 
 func (q *Queries) GetEventOutbox(ctx context.Context, id string) (EventOutbox, error) {
@@ -119,14 +121,15 @@ func (q *Queries) GetEventOutbox(ctx context.Context, id string) (EventOutbox, e
 		&i.PublishedAt,
 		&i.DeadAt,
 		&i.LastError,
+		&i.Depth,
 	)
 	return i, err
 }
 
 const insertEventOutbox = `-- name: InsertEventOutbox :exec
 
-INSERT INTO event_outbox (id, subject, type, space_id, correlation_id, causation_id, payload_json, created_at, next_attempt_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO event_outbox (id, subject, type, space_id, correlation_id, causation_id, payload_json, created_at, next_attempt_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEventOutboxParams struct {
@@ -139,6 +142,7 @@ type InsertEventOutboxParams struct {
 	PayloadJson   string
 	CreatedAt     int64
 	NextAttemptAt int64
+	Depth         int64
 }
 
 // Outbound event outbox (internal/outbox, ADR-0030). Derived from go-hallpass queries/events.sql (Apache-2.0, same author).
@@ -153,6 +157,7 @@ func (q *Queries) InsertEventOutbox(ctx context.Context, arg InsertEventOutboxPa
 		arg.PayloadJson,
 		arg.CreatedAt,
 		arg.NextAttemptAt,
+		arg.Depth,
 	)
 	return err
 }

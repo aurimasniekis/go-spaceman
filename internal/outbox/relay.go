@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/aurimasniekis/go-pulse/pkg/pulse"
@@ -50,6 +51,9 @@ func (o *Outbox) Once(ctx context.Context, pub Publisher) (published, failed int
 		}
 		if row.CausationID != "" {
 			opts = append(opts, pulse.WithHeader(HeaderCausation, row.CausationID))
+		}
+		if row.Depth > 0 {
+			opts = append(opts, pulse.WithHeader(HeaderDepth, strconv.FormatInt(row.Depth, 10)))
 		}
 		pctx, cancel := context.WithTimeout(ctx, o.o.Timeout)
 		_, perr := safePublish(pctx, pub, row.Subject, row.Type, json.RawMessage(row.PayloadJson), opts)

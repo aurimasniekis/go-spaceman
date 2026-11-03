@@ -111,6 +111,10 @@ type LimitsConfig struct {
 	// IngestPerMinute bounds the events one subscription ingests per minute (1-60000, default 600); the rest waits in
 	// the stream.
 	IngestPerMinute int64 `yaml:"ingest_per_minute"`
+	// EventDepth bounds automation across installations (1-64, default 8): an inbound event whose spaceman-depth
+	// header says it already passed through this many SpaceMan ingestions is quarantined instead of becoming an inbox
+	// item, so an event loop between installations ends (SM-EVT-016, ADR-0049).
+	EventDepth int64 `yaml:"event_depth"`
 	// TaskDeadlineMinutes is how long a top-level task may run before control and the operators are told (0: no
 	// deadline; at most 43200). A passed deadline never stops the task.
 	TaskDeadlineMinutes int64 `yaml:"task_deadline_minutes"`

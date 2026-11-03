@@ -22,7 +22,11 @@ how agents see them.
 
 The item page shows the rendered text, its attachments (images inline, other files as downloads), where it came from and
 the **source metadata**: facts set by the authenticated source (for example the signed-in operator, the event
-subscription, the schedule, the requesting space or the agent run), never taken from the text.
+subscription, the schedule, the requesting space or the agent run), never taken from the text. Badges show when the
+item was replayed, when it is a **human response** routed to control or the operators (made by a human-action policy,
+[Responses in the inbox](/guide/human-actions#responses-in-the-inbox)), when control will be told about it only once
+the paused space resumes (**control told on resume**, [While the space is paused](/guide/events#while-the-space-is-paused)),
+and its automation **depth** when it came through other SpaceMan installations.
 
 <Shot name="inbox-item" alt="Inbox item with formatted text, a task list, an inline screenshot and a log file attachment" caption="An item with an inline screenshot and a log file" />
 

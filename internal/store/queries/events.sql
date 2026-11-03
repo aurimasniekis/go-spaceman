@@ -53,8 +53,8 @@ UPDATE event_template_versions SET status = 'published', published_at = sqlc.arg
 
 -- name: InsertEventSubscription :exec
 INSERT INTO event_subscriptions (id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json,
-  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery, while_paused)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetEventSubscription :one
 SELECT * FROM event_subscriptions WHERE id = ?;
@@ -72,8 +72,11 @@ SELECT * FROM event_subscriptions WHERE template_id = ? AND follow = 'latest';
 UPDATE event_subscriptions SET name = sqlc.arg(name), template_version_id = sqlc.arg(template_version_id), follow = sqlc.arg(follow),
   custom_json = sqlc.arg(custom_json), vars_json = sqlc.arg(vars_json), effective_subject = sqlc.arg(effective_subject), enabled = sqlc.arg(enabled),
   cursor_generation = sqlc.arg(cursor_generation), start_policy = sqlc.arg(start_policy), start_time = sqlc.arg(start_time),
-  start_seq = sqlc.arg(start_seq), replay = sqlc.arg(replay), version = version + 1, updated_at = sqlc.arg(now)
+  start_seq = sqlc.arg(start_seq), replay = sqlc.arg(replay), while_paused = sqlc.arg(while_paused), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
+
+-- name: ListPausedSpaceIDs :many
+SELECT id FROM spaces WHERE state = 'paused' ORDER BY id;
 
 -- name: MarkSubscriptionApplied :exec
 UPDATE event_subscriptions SET applied_generation = ? WHERE id = ?;
@@ -111,9 +114,9 @@ SELECT * FROM event_deliveries WHERE subscription_id = ? ORDER BY id DESC LIMIT 
 DELETE FROM event_deliveries WHERE at < ?;
 
 -- name: InsertQuarantine :execrows
-INSERT INTO event_quarantine (id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (subscription_id, event_id) DO UPDATE SET error = excluded.error, status = 'open';
+INSERT INTO event_quarantine (id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, created_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (subscription_id, event_id) DO UPDATE SET error = excluded.error, depth = excluded.depth, status = 'open';
 
 -- name: GetQuarantine :one
 SELECT * FROM event_quarantine WHERE id = ?;

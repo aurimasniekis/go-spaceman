@@ -106,6 +106,7 @@ type SubscriptionBody struct {
 	Vars              map[string]string    `json:"vars,omitempty"`
 	Start             *events.Cursor       `json:"start,omitempty" doc:"Where the consumer starts; default new (no history). Core subscriptions accept only new."`
 	Delivery          string               `json:"delivery,omitempty" enum:"durable,core" doc:"durable (default): a JetStream durable consumer, acknowledged after the inbox commit, redelivered and replayable. core: a plain NATS Core subscription for sources that publish without JetStream; NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost. Fixed at creation."`
+	WhilePaused       string               `json:"while_paused,omitempty" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)"`
 }
 
 // SubscriptionPatch updates a subscription.
@@ -117,6 +118,7 @@ type SubscriptionPatch struct {
 	Custom            *template.Definition `json:"custom,omitempty"`
 	Vars              map[string]string    `json:"vars,omitempty"`
 	Start             *events.Cursor       `json:"start,omitempty" doc:"Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor."`
+	WhilePaused       string               `json:"while_paused,omitempty" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost). Omitted: unchanged."`
 }
 
 type subOut struct {
@@ -370,7 +372,7 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 				}
 				s, err := svc.CreateSubscription(ctx, Actor(ctx), in.SpaceID, events.SubscriptionInput{Name: in.Body.Name, ConnectionID: in.Body.ConnectionID,
 					TemplateVersionID: in.Body.TemplateVersionID, Follow: in.Body.Follow, Custom: in.Body.Custom, Vars: in.Body.Vars, Start: start,
-					Delivery: in.Body.Delivery})
+					Delivery: in.Body.Delivery, WhilePaused: in.Body.WhilePaused})
 				if err != nil {
 					return nil, d.fail(ctx, "events.subscription_create", err)
 				}
@@ -394,7 +396,8 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 					}
 				}
 				s, err := svc.UpdateSubscription(ctx, Actor(ctx), in.SpaceID, in.SubscriptionID, v, events.SubscriptionUpdate{Name: in.Body.Name, Enabled: in.Body.Enabled,
-					TemplateVersionID: in.Body.TemplateVersionID, Follow: in.Body.Follow, Custom: in.Body.Custom, Vars: in.Body.Vars, Start: in.Body.Start})
+					TemplateVersionID: in.Body.TemplateVersionID, Follow: in.Body.Follow, Custom: in.Body.Custom, Vars: in.Body.Vars, Start: in.Body.Start,
+					WhilePaused: in.Body.WhilePaused})
 				if err != nil {
 					return nil, d.fail(ctx, "events.subscription_update", err)
 				}

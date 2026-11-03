@@ -41,6 +41,7 @@ const (
 	HumanPendingPerRun = "max_human_pending_per_run"
 	ToolCallsPerRun    = "max_tool_calls_per_run"
 	IngestPerMinute    = "ingest_per_minute"
+	EventDepth         = "event_depth"
 	TaskDeadline       = "task_deadline_minutes"
 	StorageQuota       = "storage_quota_bytes"
 	BudgetTokens       = "budget_tokens_24h"
@@ -110,6 +111,8 @@ var Defs = []Def{
 		Enforced: "agent tool gateway", OnLower: "The run keeps running; its further tool calls are refused.", Overridable: true},
 	{Key: IngestPerMinute, Label: "Event ingestion rate", Unit: "per_minute", Scope: "events one subscription ingests per minute; the rest waits in the stream",
 		Enforced: "event ingestion manager", OnLower: "Nothing is dropped: events wait in the durable stream.", Overridable: true},
+	{Key: EventDepth, Label: "Event automation depth", Unit: "depth", Scope: "SpaceMan ingestions an inbound event may already have passed through (its spaceman-depth header); deeper events are quarantined to stop loops between installations",
+		Enforced: "event ingestion (before the inbox item)", OnLower: "Items already created stay; deeper events from then on are quarantined, where they can be reprocessed.", Overridable: true},
 	{Key: TaskDeadline, Label: "Task deadline", Unit: "minutes", Scope: "how long a top-level task may run before control and the operators are told", ZeroNone: true,
 		Enforced: "deadline timer (notifies, never stops)", OnLower: "Tasks past the new deadline are reported; none is stopped.", Overridable: true},
 	{Key: StorageQuota, Label: "Attachment storage", Unit: "bytes", Scope: "attachment bytes stored for the space",

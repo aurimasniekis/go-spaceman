@@ -1,7 +1,7 @@
 -- name: InsertTask :exec
 INSERT INTO tasks (id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, status, exclusions_json, assignee_role,
-  workspace, origin_kind, origin_id, dedup_key, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  workspace, origin_kind, origin_id, dedup_key, created_at, created_by, updated_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetTask :one
 SELECT * FROM tasks WHERE id = ?;

@@ -46,18 +46,21 @@ Every key also has an environment override, for example `SPACEMAN_EVENTS_OUTBOUN
 ## Headers
 
 Each event is a Pulse event (`docs/contracts/pulse.md`): `Nats-Msg-Id` is the event ID (`evt_…`), `ce-type` its type,
-`ce-source` the configured source and `ce-time` when the change committed. SpaceMan adds three headers of its own; they
-are a SpaceMan extension, not part of Pulse:
+`ce-source` the configured source and `ce-time` when the change committed. SpaceMan adds headers of its own; they are
+a SpaceMan extension, not part of Pulse:
 
 | Header | Meaning |
 |---|---|
 | `spaceman-correlation-id` | The work the event belongs to: the run, the task, the approval, the human action's correlation or task, the memory collection, the KB proposal, the inbox item's correlation or the first request of a cross-space chain. |
 | `spaceman-causation-id` | What caused it, when SpaceMan knows: the Pulse event that created an inbox item, a task's origin, the human action that decided an approval, the run that used it, the node's sync or command, or the API request (`req_…`). |
 | `spaceman-origin` | The publishing installation's `source`. |
+| `spaceman-depth` | The automation depth: how many SpaceMan ingestions led to the change (a decimal number). Sent only when it is above 0: on events about an inbox item made from an event, and about tasks created from such an item. |
 
 SpaceMan never turns its own events back into inbox items: an incoming event whose `spaceman-origin` equals this
 installation's source is acknowledged and shown as **filtered** in the subscription's deliveries. Give every
-installation its own `source` so they can still receive each other's events.
+installation its own `source` so they can still receive each other's events. Loops through other installations end at
+the receiving space's `event_depth` limit: an event that deep is quarantined instead
+([Event loops between installations](/guide/events#event-loops-between-installations)).
 
 ## Event catalog
 

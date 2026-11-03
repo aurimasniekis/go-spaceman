@@ -1,11 +1,11 @@
 -- Outbound event outbox (internal/outbox, ADR-0030). Derived from go-hallpass queries/events.sql (Apache-2.0, same author).
 
 -- name: InsertEventOutbox :exec
-INSERT INTO event_outbox (id, subject, type, space_id, correlation_id, causation_id, payload_json, created_at, next_attempt_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO event_outbox (id, subject, type, space_id, correlation_id, causation_id, payload_json, created_at, next_attempt_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: DueEventOutbox :many
-SELECT id, subject, type, correlation_id, causation_id, payload_json, created_at, attempts
+SELECT id, subject, type, correlation_id, causation_id, payload_json, created_at, attempts, depth
 FROM event_outbox WHERE published_at IS NULL AND dead_at IS NULL AND next_attempt_at <= sqlc.arg(now)
 ORDER BY next_attempt_at, id LIMIT sqlc.arg(lim);
 

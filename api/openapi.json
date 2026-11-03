@@ -3846,6 +3846,11 @@
             "format": "date-time",
             "type": "string"
           },
+          "depth": {
+            "description": "The automation depth the event carried (its spaceman-depth header; 0: none); reprocessing passes it on",
+            "format": "int64",
+            "type": "integer"
+          },
           "error": {
             "type": "string"
           },
@@ -3898,6 +3903,7 @@
           "content_type",
           "payload",
           "error",
+          "depth",
           "status",
           "created_at"
         ],
@@ -4114,12 +4120,13 @@
             "type": "string"
           },
           "state": {
-            "description": "Runtime state reported by the ingestion manager",
+            "description": "Runtime state reported by the ingestion manager (paused: stopped while the space is paused, while_paused stop)",
             "enum": [
               "running",
               "stopped",
               "error",
-              "disabled"
+              "disabled",
+              "paused"
             ],
             "type": "string"
           },
@@ -4139,6 +4146,15 @@
           "version": {
             "format": "int64",
             "type": "integer"
+          },
+          "while_paused": {
+            "description": "While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)",
+            "enum": [
+              "defer",
+              "wake",
+              "stop"
+            ],
+            "type": "string"
           }
         },
         "required": [
@@ -4154,6 +4170,7 @@
           "consumer",
           "grant",
           "enabled",
+          "while_paused",
           "cursor",
           "cursor_pending",
           "quarantined",
@@ -6406,6 +6423,15 @@
             ],
             "type": "string"
           },
+          "response_inbox": {
+            "description": "Whether a response also becomes an inbox item of the space (source human_response; metadata only, the response stays on the action): off (default), routed (when it is routed to control or the operators because the requester's run ended) or always",
+            "enum": [
+              "off",
+              "routed",
+              "always"
+            ],
+            "type": "string"
+          },
           "source": {
             "description": "Effective policies: where they come from (space, default or built-in, with the type it names)",
             "type": "string"
@@ -6531,6 +6557,15 @@
             "enum": [
               "reroute",
               "next_launch"
+            ],
+            "type": "string"
+          },
+          "response_inbox": {
+            "description": "Whether a response also becomes an inbox item of the space (source human_response; metadata only, the response stays on the action): off (default), routed (when it is routed to control or the operators because the requester's run ended) or always",
+            "enum": [
+              "off",
+              "routed",
+              "always"
             ],
             "type": "string"
           },
@@ -7058,6 +7093,11 @@
             },
             "type": "array"
           },
+          "automation_depth": {
+            "description": "Automation depth: how many SpaceMan event ingestions led to this item (0: not from an event). Bounded by the limit event_depth (SM-EVT-016).",
+            "format": "int64",
+            "type": "integer"
+          },
           "body": {
             "description": "Untrusted content: Markdown (with spaceman://attachment/\u003cid\u003e references) or JSON",
             "type": "string"
@@ -7091,6 +7131,10 @@
           "linked_kind": {
             "description": "Existing work this item was associated with (task, human_action, …)",
             "type": "string"
+          },
+          "notice_deferred": {
+            "description": "Control is told about this item when the paused space resumes (its subscription's while_paused policy is defer)",
+            "type": "boolean"
           },
           "payload_ref": {
             "description": "A retained reference to a large payload",
@@ -7176,6 +7220,8 @@
           "trusted",
           "urgency",
           "status",
+          "notice_deferred",
+          "automation_depth",
           "received_at",
           "updated_at",
           "created_by",
@@ -12029,6 +12075,11 @@
             },
             "type": "array"
           },
+          "automation_depth": {
+            "description": "Automation depth: that of the inbox item it was created from (origin_kind inbox_item) or of its parent, whichever is deeper; published with its events (SM-EVT-016)",
+            "format": "int64",
+            "type": "integer"
+          },
           "blockers": {
             "items": {
               "$ref": "#/components/schemas/QueueBlocker"
@@ -12189,6 +12240,7 @@
           "status",
           "exclusions",
           "preemptions",
+          "automation_depth",
           "depends_on",
           "blockers",
           "created_at",
@@ -14482,6 +14534,15 @@
               "type": "string"
             },
             "type": "object"
+          },
+          "while_paused": {
+            "description": "While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)",
+            "enum": [
+              "defer",
+              "wake",
+              "stop"
+            ],
+            "type": "string"
           }
         },
         "required": [
@@ -14532,6 +14593,15 @@
               "type": "string"
             },
             "type": "object"
+          },
+          "while_paused": {
+            "description": "While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost). Omitted: unchanged.",
+            "enum": [
+              "defer",
+              "wake",
+              "stop"
+            ],
+            "type": "string"
           }
         },
         "required": [

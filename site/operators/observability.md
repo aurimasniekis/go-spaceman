@@ -63,7 +63,7 @@ These cover [event subscriptions](/guide/events): durable JetStream consumers an
 | `spaceman_ingest_consumer_pending` | gauge | `delivery` | Events waiting for SpaceMan, summed over subscriptions. Durable: messages the JetStream consumers have not delivered yet (consumer lag, `num_pending`). Core: messages buffered in the client. |
 | `spaceman_ingest_consumer_ack_pending` | gauge | | Events the durable consumers delivered and SpaceMan has not acknowledged yet (`num_ack_pending`). |
 | `spaceman_ingest_core_dropped_total` | counter | | Core NATS messages the client dropped because a subscription fell behind (slow consumer). They are lost. |
-| `spaceman_ingest_subscriptions` | gauge | `delivery`, `state` (`running`, `stopped`, `error`, `disabled`) | Subscriptions by runtime state. |
+| `spaceman_ingest_subscriptions` | gauge | `delivery`, `state` (`running`, `stopped`, `error`, `disabled`, `paused`) | Subscriptions by runtime state. |
 | `spaceman_ingest_connections` | gauge | `connection_kind` (`pulse`), `state` (`connected`, `reconnecting`, `error`, `disabled`) | Event connections by state. |
 | `spaceman_ingest_quarantine_open` | gauge | | Open quarantine entries over every subscription. |
 | `spaceman_ingest_replays_total` | counter | | Explicit replays recorded: replay operations and cursor changes that deliver history again. |

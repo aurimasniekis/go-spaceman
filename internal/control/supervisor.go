@@ -31,6 +31,9 @@ type Supervisor struct {
 	log   *slog.Logger
 	clock clock.Clock
 
+	// Inbox holds the items whose control notice waits for a paused space to resume (SM-EVT-014). Nil: none are.
+	Inbox *inbox.Service
+
 	MaxRestarts int64
 	Window      time.Duration
 	// base is the server's lifetime context (Bind); handlers stop with it.
@@ -81,17 +84,78 @@ func (sv *Supervisor) Notify(spaceID, dedup, subject, body string) {
 	sv.do(func(ctx context.Context) { sv.notify(ctx, spaceID, dedup, subject, body) })
 }
 
-// OnInboxItem notifies control of a new inbox item it did not add itself.
+// OnInboxItem notifies control of a new inbox item it did not add itself. An item whose notice is deferred (its
+// subscription defers while the space is paused, SM-EVT-014) is announced when the space resumes instead, and a human
+// response routed to control is not announced twice: control already has the response's own notification.
 func (sv *Supervisor) OnInboxItem(it *inbox.Item) {
+	if it.NoticeDeferred || (it.SourceKind == inbox.SourceHumanResponse && it.Trusted["routed_to"] == "control") {
+		return
+	}
 	sv.do(func(ctx context.Context) {
 		if it.SourceKind == "worker" && it.SourceID != "" {
 			if r, err := sv.fl.GetRun(ctx, it.SourceID); err == nil && r.Kind == agenttools.KindControl {
 				return
 			}
 		}
-		sv.notify(ctx, it.SpaceID, "inbox:"+it.ID, "New inbox item: "+it.Title,
-			fmt.Sprintf("Inbox item %s (%s, %s urgency). Read it with spaceman_inbox_get.", it.ID, it.SourceKind, it.Urgency))
+		sv.notifyItem(ctx, it, "")
 	})
+}
+
+func (sv *Supervisor) notifyItem(ctx context.Context, it *inbox.Item, note string) {
+	sv.notify(ctx, it.SpaceID, "inbox:"+it.ID, "New inbox item: "+it.Title,
+		fmt.Sprintf("Inbox item %s (%s, %s urgency).%s Read it with spaceman_inbox_get.", it.ID, it.SourceKind, it.Urgency, note))
+}
+
+// OnSpaceState sends the notices deferred while the space was paused once it is active again (fleet OnSpaceState).
+func (sv *Supervisor) OnSpaceState(spaceID, state string) {
+	if state != "active" || sv.Inbox == nil {
+		return
+	}
+	sv.do(func(ctx context.Context) { sv.flushDeferred(ctx, spaceID) })
+}
+
+// FlushDeferred sends the deferred notices of every active space: those of a resume central did not finish handling
+// before it stopped. Serve runs it once at start.
+func (sv *Supervisor) FlushDeferred(ctx context.Context) {
+	if sv.Inbox == nil {
+		return
+	}
+	spaces, err := sv.Inbox.SpacesWithDeferredNotices(ctx)
+	if err != nil {
+		sv.log.Warn("list deferred inbox notices", obs.Err(err))
+		return
+	}
+	for _, id := range spaces {
+		sv.flushDeferred(ctx, id)
+	}
+}
+
+// flushDeferred tells control about the items that arrived while its space was paused, oldest first. Each notice is
+// sent before its flag is cleared and deduplicated by item, so a crash in between sends it once more, never zero times.
+// Items control has already handled (it reads the inbox itself under Hold) are cleared without a notice.
+func (sv *Supervisor) flushDeferred(ctx context.Context, spaceID string) {
+	for range 20 { // at most 20 rounds of 500 items in one go; the rest waits for the next resume or start
+		items, err := sv.Inbox.DeferredNotices(ctx, spaceID)
+		if err != nil {
+			sv.log.Warn("list deferred inbox notices", obs.Err(err))
+			return
+		}
+		if len(items) == 0 {
+			return
+		}
+		if sp, err := sv.fl.GetSpace(ctx, spaceID); err != nil || sp.State != "active" {
+			return // paused again (or gone) meanwhile: the notices wait for the next resume
+		}
+		for _, it := range items {
+			if it.Status == inbox.StatusNew {
+				sv.notifyItem(ctx, it, " It arrived while the space was paused.")
+			}
+			if err := sv.Inbox.NoticeSent(ctx, it); err != nil {
+				sv.log.Warn("clear deferred inbox notice", obs.Err(err))
+				return
+			}
+		}
+	}
 }
 
 // OnTaskStatus notifies control when a task needs its decision: moved to review, blocked or failed by someone else.

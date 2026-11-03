@@ -472,7 +472,7 @@ func (q *Queries) FinalizeHumanAction(ctx context.Context, arg FinalizeHumanActi
 }
 
 const getDefaultHumanPolicy = `-- name: GetDefaultHumanPolicy :one
-SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id IS NULL AND action_type = ?
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version, response_inbox FROM human_policies WHERE space_id IS NULL AND action_type = ?
 `
 
 func (q *Queries) GetDefaultHumanPolicy(ctx context.Context, actionType string) (HumanPolicy, error) {
@@ -499,6 +499,7 @@ func (q *Queries) GetDefaultHumanPolicy(ctx context.Context, actionType string) 
 		&i.UpdatedAt,
 		&i.UpdatedBy,
 		&i.Version,
+		&i.ResponseInbox,
 	)
 	return i, err
 }
@@ -749,7 +750,7 @@ func (q *Queries) GetHumanTypeVersion(ctx context.Context, id string) (HumanType
 }
 
 const getSpaceHumanPolicy = `-- name: GetSpaceHumanPolicy :one
-SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id = ? AND action_type = ?
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version, response_inbox FROM human_policies WHERE space_id = ? AND action_type = ?
 `
 
 type GetSpaceHumanPolicyParams struct {
@@ -781,6 +782,7 @@ func (q *Queries) GetSpaceHumanPolicy(ctx context.Context, arg GetSpaceHumanPoli
 		&i.UpdatedAt,
 		&i.UpdatedBy,
 		&i.Version,
+		&i.ResponseInbox,
 	)
 	return i, err
 }
@@ -992,8 +994,8 @@ func (q *Queries) InsertHumanNotification(ctx context.Context, arg InsertHumanNo
 const insertHumanPolicy = `-- name: InsertHumanPolicy :exec
 INSERT INTO human_policies (id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes,
   escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour,
-  created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  created_at, created_by, updated_at, updated_by, response_inbox)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertHumanPolicyParams struct {
@@ -1016,6 +1018,7 @@ type InsertHumanPolicyParams struct {
 	CreatedBy            string
 	UpdatedAt            int64
 	UpdatedBy            string
+	ResponseInbox        string
 }
 
 func (q *Queries) InsertHumanPolicy(ctx context.Context, arg InsertHumanPolicyParams) error {
@@ -1039,6 +1042,7 @@ func (q *Queries) InsertHumanPolicy(ctx context.Context, arg InsertHumanPolicyPa
 		arg.CreatedBy,
 		arg.UpdatedAt,
 		arg.UpdatedBy,
+		arg.ResponseInbox,
 	)
 	return err
 }
@@ -1171,7 +1175,7 @@ func (q *Queries) LatestHumanTypeVersion(ctx context.Context, typeID string) (Hu
 }
 
 const listDefaultHumanPolicies = `-- name: ListDefaultHumanPolicies :many
-SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id IS NULL ORDER BY action_type
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version, response_inbox FROM human_policies WHERE space_id IS NULL ORDER BY action_type
 `
 
 func (q *Queries) ListDefaultHumanPolicies(ctx context.Context) ([]HumanPolicy, error) {
@@ -1204,6 +1208,7 @@ func (q *Queries) ListDefaultHumanPolicies(ctx context.Context) ([]HumanPolicy, 
 			&i.UpdatedAt,
 			&i.UpdatedBy,
 			&i.Version,
+			&i.ResponseInbox,
 		); err != nil {
 			return nil, err
 		}
@@ -1461,7 +1466,7 @@ func (q *Queries) ListHumanNotifications(ctx context.Context, actionID string) (
 }
 
 const listHumanPoliciesFor = `-- name: ListHumanPoliciesFor :many
-SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE (space_id = ?1 OR space_id IS NULL) AND action_type IN (?2, 'all')
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version, response_inbox FROM human_policies WHERE (space_id = ?1 OR space_id IS NULL) AND action_type IN (?2, 'all')
 `
 
 type ListHumanPoliciesForParams struct {
@@ -1499,6 +1504,7 @@ func (q *Queries) ListHumanPoliciesFor(ctx context.Context, arg ListHumanPolicie
 			&i.UpdatedAt,
 			&i.UpdatedBy,
 			&i.Version,
+			&i.ResponseInbox,
 		); err != nil {
 			return nil, err
 		}
@@ -1720,7 +1726,7 @@ func (q *Queries) ListPendingNotifications(ctx context.Context, arg ListPendingN
 }
 
 const listSpaceHumanPolicies = `-- name: ListSpaceHumanPolicies :many
-SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version FROM human_policies WHERE space_id = ? ORDER BY action_type
+SELECT id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes, escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour, created_at, created_by, updated_at, updated_by, version, response_inbox FROM human_policies WHERE space_id = ? ORDER BY action_type
 `
 
 func (q *Queries) ListSpaceHumanPolicies(ctx context.Context, spaceID sql.NullString) ([]HumanPolicy, error) {
@@ -1753,6 +1759,7 @@ func (q *Queries) ListSpaceHumanPolicies(ctx context.Context, spaceID sql.NullSt
 			&i.UpdatedAt,
 			&i.UpdatedBy,
 			&i.Version,
+			&i.ResponseInbox,
 		); err != nil {
 			return nil, err
 		}
@@ -2174,7 +2181,7 @@ func (q *Queries) UpdateHumanAssignment(ctx context.Context, arg UpdateHumanAssi
 const updateHumanPolicy = `-- name: UpdateHumanPolicy :execrows
 UPDATE human_policies SET remind_after_minutes = ?, remind_every_minutes = ?, max_reminders = ?, escalate_after_minutes = ?, escalate_priority = ?,
   escalate_assignee = ?, requester_ended = ?, hold_minutes = ?, successor_role = ?, wake_idle = ?, rate_per_run_hour = ?, rate_per_space_hour = ?,
-  updated_at = ?, updated_by = ?, version = version + 1
+  response_inbox = ?, updated_at = ?, updated_by = ?, version = version + 1
 WHERE id = ? AND version = ?
 `
 
@@ -2191,6 +2198,7 @@ type UpdateHumanPolicyParams struct {
 	WakeIdle             int64
 	RatePerRunHour       int64
 	RatePerSpaceHour     int64
+	ResponseInbox        string
 	UpdatedAt            int64
 	UpdatedBy            string
 	ID                   string
@@ -2211,6 +2219,7 @@ func (q *Queries) UpdateHumanPolicy(ctx context.Context, arg UpdateHumanPolicyPa
 		arg.WakeIdle,
 		arg.RatePerRunHour,
 		arg.RatePerSpaceHour,
+		arg.ResponseInbox,
 		arg.UpdatedAt,
 		arg.UpdatedBy,
 		arg.ID,

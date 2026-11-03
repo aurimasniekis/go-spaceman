@@ -40,6 +40,11 @@ const (
 	StatusDone       = "done"
 )
 
+// SourceHumanResponse is the source kind of an item that reports a final response to a human action, created when the
+// action type's human policy says so (response_inbox, ADR-0049). Its body is metadata only: the response itself stays
+// on the action, readable by the runs it concerns (SM-HUM-009).
+const SourceHumanResponse = "human_response"
+
 // OwnerKind is the attachment owner kind of inbox items.
 const OwnerKind = "inbox_item"
 
@@ -77,10 +82,15 @@ type Item struct {
 	DeferUntil    *time.Time     `json:"defer_until,omitempty"`
 	LinkedKind    string         `json:"linked_kind,omitempty" doc:"Existing work this item was associated with (task, human_action, …)"`
 	LinkedID      string         `json:"linked_id,omitempty"`
-	ReceivedAt    time.Time      `json:"received_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	CreatedBy     string         `json:"created_by"`
-	Version       int64          `json:"version"`
+	// NoticeDeferred: control has not been told about the item yet because its subscription defers notices while the
+	// space is paused; it is told when the space resumes (SM-EVT-014, ADR-0049).
+	NoticeDeferred bool `json:"notice_deferred" doc:"Control is told about this item when the paused space resumes (its subscription's while_paused policy is defer)"`
+	// AutomationDepth is how many SpaceMan event ingestions led to the item (ADR-0049).
+	AutomationDepth int64     `json:"automation_depth" doc:"Automation depth: how many SpaceMan event ingestions led to this item (0: not from an event). Bounded by the limit event_depth (SM-EVT-016)."`
+	ReceivedAt      time.Time `json:"received_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	CreatedBy       string    `json:"created_by"`
+	Version         int64     `json:"version"`
 	// Attachments is filled by Get (not by List).
 	Attachments []*attachments.Attachment `json:"attachments,omitempty"`
 }
@@ -95,6 +105,11 @@ type CreateInput struct {
 	AttachmentIDs                     []string
 	// CausationID is what caused the item (the inbound Pulse event ID); it is published as the item event's causation.
 	CausationID string
+	// AutomationDepth is the item's automation depth (ADR-0049): the inbound event's spaceman-depth plus one for an event, else 0.
+	AutomationDepth int64
+	// DeferNoticeWhilePaused holds back control's notification while the space is paused (decided in the creating
+	// transaction, against the space's state at that moment); it is sent when the space resumes (SM-EVT-014).
+	DeferNoticeWhilePaused bool
 }
 
 // Service manages inboxes.
@@ -163,6 +178,9 @@ func (in *CreateInput) normalize() error {
 	}
 	if in.Trusted == nil {
 		in.Trusted = map[string]any{}
+	}
+	if in.AutomationDepth < 0 {
+		v.Add("depth", "must not be negative")
 	}
 	return v.Err()
 }
@@ -240,10 +258,11 @@ func (svc *Service) create(ctx context.Context, tx *store.Tx, actor audit.Actor,
 	if sp.State == "archived" {
 		return "", false, apperr.New(apperr.CodePrecondition, "the space is archived")
 	}
+	deferred := in.DeferNoticeWhilePaused && sp.State == "paused"
 	n, err := tx.Q.InsertInboxItem(ctx, db.InsertInboxItemParams{ID: id, SpaceID: spaceID, SourceKind: in.SourceKind, SourceID: in.SourceID,
 		SourceLabel: in.SourceLabel, Title: in.Title, ContentType: in.ContentType, Body: in.Body, PayloadRef: in.PayloadRef,
 		CorrelationID: in.CorrelationID, DedupKey: in.DedupKey, TrustedJson: string(trusted), SubscriptionID: in.Subscription,
-		Urgency: in.Urgency, ReceivedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()})
+		Urgency: in.Urgency, ReceivedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros(), NoticeDeferred: b2i(deferred), Depth: in.AutomationDepth})
 	if err != nil {
 		return "", false, err
 	}
@@ -266,7 +285,7 @@ func (svc *Service) create(ctx context.Context, tx *store.Tx, actor audit.Actor,
 	}
 	if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.InboxItemCreated{SpaceID: spaceID, ItemID: id, SourceKind: in.SourceKind,
 		SourceID: outbox.CleanID(in.SourceID), SubscriptionID: outbox.CleanID(in.Subscription), Urgency: in.Urgency}, Correlation: corr,
-		Causation: in.CausationID}); err != nil {
+		Causation: in.CausationID, Depth: in.AutomationDepth}); err != nil {
 		return "", false, err
 	}
 	// Event ingestion (the system actor) is recorded per delivery instead; people, tokens and agents are audited.
@@ -282,7 +301,7 @@ func fromRow(r db.InboxItem) *Item {
 		ContentType: r.ContentType, Body: r.Body, PayloadRef: r.PayloadRef, CorrelationID: r.CorrelationID, DedupKey: r.DedupKey,
 		Subscription: r.SubscriptionID, Urgency: r.Urgency, Status: r.Status, StatusReason: r.StatusReason, LinkedKind: r.LinkedKind,
 		LinkedID: r.LinkedID, ReceivedAt: time.UnixMicro(r.ReceivedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), CreatedBy: r.CreatedBy,
-		Version: r.Version, Trusted: map[string]any{}}
+		Version: r.Version, Trusted: map[string]any{}, NoticeDeferred: r.NoticeDeferred == 1, AutomationDepth: r.Depth}
 	_ = json.Unmarshal([]byte(r.TrustedJson), &it.Trusted)
 	if r.DeferUntil.Valid {
 		t := time.UnixMicro(r.DeferUntil.Int64).UTC()
@@ -422,4 +441,45 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 		return nil, err
 	}
 	return svc.Get(ctx, spaceID, id)
+}
+
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// maxDeferred bounds one round of deferred notices; a space resuming with more is handled again until none is left.
+const maxDeferred = 500
+
+// DeferredNotices returns the items of a space whose control notification waits for the space to resume, oldest first.
+func (svc *Service) DeferredNotices(ctx context.Context, spaceID string) ([]*Item, error) {
+	rows, err := svc.s.R().ListDeferredInboxNotices(ctx, db.ListDeferredInboxNoticesParams{SpaceID: spaceID, Limit: maxDeferred})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Item, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fromRow(r))
+	}
+	return out, nil
+}
+
+// SpacesWithDeferredNotices lists the active spaces that still have deferred notices (a resume that central did not
+// finish handling, for example because it stopped).
+func (svc *Service) SpacesWithDeferredNotices(ctx context.Context) ([]string, error) {
+	return svc.s.R().ListSpacesWithDeferredNotices(ctx)
+}
+
+// NoticeSent clears an item's deferred notice once control was told about it. The item's version does not change: a
+// notice is not an edit, and control's status changes must not conflict with it.
+func (svc *Service) NoticeSent(ctx context.Context, it *Item) error {
+	return svc.s.W().TxNamed(ctx, "inbox.notice_sent", func(tx *store.Tx) error {
+		n, err := tx.Q.ClearInboxNoticeDeferred(ctx, it.ID)
+		if err != nil || n == 0 {
+			return err
+		}
+		return svc.changes.Record(ctx, tx, it.SpaceID, "inbox_item", it.ID, "updated", it.Version)
+	})
 }

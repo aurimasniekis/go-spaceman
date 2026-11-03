@@ -34,6 +34,28 @@ const (
 	DeliveryCore = "core"
 )
 
+// What a subscription does while its space is paused (SM-EVT-014, ADR-0049).
+const (
+	// PausedDefer keeps ingesting and holds back control's notification of new items until the space resumes (default).
+	PausedDefer = "defer"
+	// PausedWake keeps ingesting and notifies control at once, so a control run still running under Hold sees them.
+	PausedWake = "wake"
+	// PausedStop stops the subscription while the space is paused: durable events wait in the stream (core NATS
+	// messages published meanwhile are lost) and are ingested after the space resumes.
+	PausedStop = "stop"
+)
+
+func validWhilePaused(v *string) error {
+	switch *v {
+	case "":
+		*v = PausedDefer
+	case PausedDefer, PausedWake, PausedStop:
+	default:
+		return apperr.New(apperr.CodeInvalid, "while_paused must be defer, wake or stop")
+	}
+	return nil
+}
+
 // errCoreCursor refuses cursor operations on core subscriptions.
 func errCoreCursor(what string) error {
 	return apperr.New(apperr.CodePrecondition,
@@ -56,12 +78,13 @@ type Subscription struct {
 	Consumer     string               `json:"consumer" doc:"The JetStream consumer: <client_id>_<durable> (empty for core subscriptions)"`
 	Grant        string               `json:"grant" doc:"The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core"`
 	Enabled      bool                 `json:"enabled"`
+	WhilePaused  string               `json:"while_paused" enum:"defer,wake,stop" doc:"While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)"`
 	Cursor       Cursor               `json:"cursor"`
 	LastReplay   *Replay              `json:"last_replay,omitempty" doc:"The most recent explicit replay"`
 	Pending      bool                 `json:"cursor_pending" doc:"A cursor change waits to be applied by the ingestion manager"`
 	LastEventAt  *time.Time           `json:"last_event_at,omitempty"`
 	Quarantined  int64                `json:"quarantined" doc:"Open quarantine entries"`
-	State        string               `json:"state" enum:"running,stopped,error,disabled" doc:"Runtime state reported by the ingestion manager"`
+	State        string               `json:"state" enum:"running,stopped,error,disabled,paused" doc:"Runtime state reported by the ingestion manager (paused: stopped while the space is paused, while_paused stop)"`
 	LastError    string               `json:"last_error,omitempty"`
 	Version      int64                `json:"version"`
 	CreatedAt    time.Time            `json:"created_at"`
@@ -87,6 +110,8 @@ type SubscriptionInput struct {
 	Start             Cursor
 	// Delivery is DeliveryDurable (default) or DeliveryCore; it cannot change later.
 	Delivery string
+	// WhilePaused is PausedDefer (default), PausedWake or PausedStop.
+	WhilePaused string
 }
 
 // SubscriptionUpdate edits a subscription. Changing the effective subject needs an explicit cursor (Start): the
@@ -100,6 +125,8 @@ type SubscriptionUpdate struct {
 	Custom            *template.Definition
 	Vars              map[string]string
 	Start             *Cursor
+	// WhilePaused changes the paused-space policy; empty keeps it.
+	WhilePaused string
 }
 
 func durableFor(id string) string { return "sm-" + strings.ToLower(strings.TrimPrefix(id, "sub_")) }
@@ -199,6 +226,9 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 	if err := validCursor(&in.Start); err != nil {
 		return nil, err
 	}
+	if err := validWhilePaused(&in.WhilePaused); err != nil {
+		return nil, err
+	}
 	switch in.Delivery {
 	case "":
 		in.Delivery = DeliveryDurable
@@ -239,7 +269,7 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 		if err := tx.Q.InsertEventSubscription(ctx, db.InsertEventSubscriptionParams{ID: id, SpaceID: spaceID, Name: in.Name, ConnectionID: in.ConnectionID,
 			TemplateID: tmplID, TemplateVersionID: verID, Follow: in.Follow, CustomJson: custom, VarsJson: mustJSON(b.Vars), EffectiveSubject: b.Subject,
 			Durable: durableFor(id), Enabled: 1, StartPolicy: policy, StartTime: st, StartSeq: ss, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID,
-			UpdatedAt: tx.NowMicros(), Delivery: in.Delivery}); err != nil {
+			UpdatedAt: tx.NowMicros(), Delivery: in.Delivery, WhilePaused: in.WhilePaused}); err != nil {
 			if isUnique(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "this space already has a subscription named %q", in.Name)
 			}
@@ -249,7 +279,8 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_subscription.created", Target: audit.Target{Type: "event_subscription", ID: id},
-			Details: map[string]any{"space_id": spaceID, "subject": b.Subject, "durable": durableFor(id), "start": policy, "custom": custom.Valid, "delivery": in.Delivery}})
+			Details: map[string]any{"space_id": spaceID, "subject": b.Subject, "durable": durableFor(id), "start": policy, "custom": custom.Valid, "delivery": in.Delivery,
+				"while_paused": in.WhilePaused}})
 		return err
 	})
 	if err != nil {
@@ -264,6 +295,11 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, spaceID, id string, version int64, in SubscriptionUpdate) (*Subscription, error) {
 	if in.Start != nil {
 		if err := validCursor(in.Start); err != nil {
+			return nil, err
+		}
+	}
+	if in.WhilePaused != "" {
+		if err := validWhilePaused(&in.WhilePaused); err != nil {
 			return nil, err
 		}
 	}
@@ -324,9 +360,13 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		if name == "" {
 			name = cur.Name
 		}
+		whilePaused := in.WhilePaused
+		if whilePaused == "" {
+			whilePaused = cur.WhilePaused
+		}
 		if _, err := tx.Q.UpdateEventSubscription(ctx, db.UpdateEventSubscriptionParams{Name: name, TemplateVersionID: verID, Follow: follow, CustomJson: custom,
 			VarsJson: mustJSON(b.Vars), EffectiveSubject: b.Subject, Enabled: b2i(in.Enabled), CursorGeneration: gen, StartPolicy: policy, StartTime: st,
-			StartSeq: ss, Replay: replay, Now: tx.NowMicros(), ID: id, Version: version}); err != nil {
+			StartSeq: ss, Replay: replay, WhilePaused: whilePaused, Now: tx.NowMicros(), ID: id, Version: version}); err != nil {
 			if isUnique(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "this space already has a subscription named %q", name)
 			}
@@ -335,7 +375,7 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		if err := svc.changes.Record(ctx, tx, spaceID, "event_subscription", id, "updated", version+1); err != nil {
 			return err
 		}
-		details := map[string]any{"subject": b.Subject, "enabled": in.Enabled}
+		details := map[string]any{"subject": b.Subject, "enabled": in.Enabled, "while_paused": whilePaused}
 		if in.Start != nil {
 			details["cursor"] = policy
 			details["replay"] = replay == 1
@@ -391,7 +431,7 @@ func (svc *Service) DeleteSubscription(ctx context.Context, actor audit.Actor, s
 
 func (svc *Service) subFromRow(ctx context.Context, r db.EventSubscription) (*Subscription, error) {
 	s := &Subscription{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, ConnectionID: r.ConnectionID, Follow: r.Follow, Delivery: r.Delivery, Subject: r.EffectiveSubject,
-		Durable: r.Durable, Enabled: r.Enabled == 1, Version: r.Version, CreatedAt: fromMicros(r.CreatedAt), Vars: map[string]string{},
+		Durable: r.Durable, Enabled: r.Enabled == 1, WhilePaused: r.WhilePaused, Version: r.Version, CreatedAt: fromMicros(r.CreatedAt), Vars: map[string]string{},
 		// Core subscriptions have no cursor to apply.
 		Pending: r.Delivery != DeliveryCore && r.AppliedGeneration < r.CursorGeneration,
 		Cursor:  Cursor{Policy: r.StartPolicy, Replay: r.Replay == 1, Generation: r.CursorGeneration}}

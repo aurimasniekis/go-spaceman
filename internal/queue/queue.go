@@ -88,14 +88,16 @@ type Task struct {
 	IncidentProposedBy string `json:"incident_proposed_by,omitempty" doc:"An untrusted source asked for this task to be an incident; an operator confirms or dismisses it"`
 	// PreemptionLog is the task's recent preemptions and what happened to its workers (Get only).
 	PreemptionLog []Preemption `json:"preemption_log,omitempty"`
-	DependsOn     []string     `json:"depends_on"`
-	Blockers      []Blocker    `json:"blockers"`
-	Waiting       []string     `json:"waiting,omitempty" doc:"Why a ready task is not eligible now"`
-	CreatedAt     time.Time    `json:"created_at"`
-	UpdatedAt     time.Time    `json:"updated_at"`
-	StartedAt     *time.Time   `json:"started_at,omitempty"`
-	FinishedAt    *time.Time   `json:"finished_at,omitempty"`
-	Version       int64        `json:"version"`
+	// AutomationDepth is inherited from the inbox item the task was created from, or its parent (ADR-0049).
+	AutomationDepth int64      `json:"automation_depth" doc:"Automation depth: that of the inbox item it was created from (origin_kind inbox_item) or of its parent, whichever is deeper; published with its events (SM-EVT-016)"`
+	DependsOn       []string   `json:"depends_on"`
+	Blockers        []Blocker  `json:"blockers"`
+	Waiting         []string   `json:"waiting,omitempty" doc:"Why a ready task is not eligible now"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	Version         int64      `json:"version"`
 	// Attachments are files of the space the objective or acceptance references (SM-ATT-001).
 	Attachments []*attachments.Attachment `json:"attachments,omitempty"`
 }
@@ -204,7 +206,7 @@ func fromRow(r db.Task) *Task {
 		Priority: r.Priority, Manual: r.ManualPosition == 1, Status: r.Status, StatusReason: r.StatusReason, AssigneeRole: r.AssigneeRole,
 		AssigneeRun: r.AssigneeRun, Workspace: r.Workspace, OriginKind: r.OriginKind, OriginID: r.OriginID, DedupKey: r.DedupKey, Result: r.Result,
 		Preemptions: r.Preemptions, CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(),
-		StartedAt: t2(r.StartedAt), FinishedAt: t2(r.FinishedAt), Version: r.Version, DependsOn: []string{}, Blockers: []Blocker{}, Exclusions: []string{}}
+		StartedAt: t2(r.StartedAt), FinishedAt: t2(r.FinishedAt), Version: r.Version, AutomationDepth: r.Depth, DependsOn: []string{}, Blockers: []Blocker{}, Exclusions: []string{}}
 	_ = json.Unmarshal([]byte(r.ExclusionsJson), &t.Exclusions)
 	return t
 }
@@ -518,11 +520,15 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		if err != nil {
 			return err
 		}
+		depth, err := automationDepth(ctx, tx, sn, spaceID, in)
+		if err != nil {
+			return err
+		}
 		ex, _ := json.Marshal(in.Exclusions)
 		if err := tx.Q.InsertTask(ctx, db.InsertTaskParams{ID: id, SpaceID: spaceID, ParentID: sql.NullString{String: in.ParentID, Valid: in.ParentID != ""},
 			Title: in.Title, Objective: in.Objective, Acceptance: in.Acceptance, Kind: in.Kind, Priority: in.Priority, Rank: rank, Status: in.Status,
 			ExclusionsJson: string(ex), AssigneeRole: in.AssigneeRole, Workspace: in.Workspace, OriginKind: in.OriginKind, OriginID: in.OriginID,
-			DedupKey: in.DedupKey, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()}); err != nil {
+			DedupKey: in.DedupKey, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros(), Depth: depth}); err != nil {
 			return err
 		}
 		if trigger != "" || proposedBy != "" {
@@ -551,7 +557,7 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		}
 		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.TaskCreated{Task: outbox.Task{SpaceID: spaceID, TaskID: id,
 			ParentID: in.ParentID, Kind: in.Kind, Priority: in.Priority, AssigneeRole: outbox.CleanID(in.AssigneeRole), OriginKind: outbox.CleanID(in.OriginKind),
-			OriginID: outbox.CleanID(in.OriginID)}, Status: in.Status}, Correlation: id, Causation: in.OriginID}); err != nil {
+			OriginID: outbox.CleanID(in.OriginID)}, Status: in.Status}, Correlation: id, Causation: in.OriginID, Depth: depth}); err != nil {
 			return err
 		}
 		details := map[string]any{"space_id": spaceID, "kind": in.Kind, "priority": in.Priority, "origin": in.OriginKind + ":" + in.OriginID, "preempted": preempted}
@@ -583,6 +589,25 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 }
 
 // eventTask is the published metadata of a task (never its title, objective, acceptance, reason or result).
+// automationDepth is a new task's automation depth (ADR-0049): the deeper of its origin inbox item's and its parent's.
+// A task control creates on its own (no origin item) starts a new chain at 0.
+func automationDepth(ctx context.Context, tx *store.Tx, sn *snapshot, spaceID string, in CreateInput) (int64, error) {
+	var d int64
+	if p := sn.byID[in.ParentID]; p != nil {
+		d = p.AutomationDepth
+	}
+	if in.OriginKind == "inbox_item" && in.OriginID != "" {
+		it, err := tx.Q.GetInboxItem(ctx, in.OriginID)
+		switch {
+		case err == nil && it.SpaceID == spaceID:
+			d = max(d, it.Depth)
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			return 0, err
+		}
+	}
+	return d, nil
+}
+
 func eventTask(t *Task) outbox.Task {
 	return outbox.Task{SpaceID: t.SpaceID, TaskID: t.ID, ParentID: t.ParentID, Kind: t.Kind, Priority: t.Priority, AssigneeRole: outbox.CleanID(t.AssigneeRole),
 		OriginKind: outbox.CleanID(t.OriginKind), OriginID: outbox.CleanID(t.OriginID)}

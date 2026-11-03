@@ -59,6 +59,9 @@ type Options struct {
 	OnRunEnded func(runID string)
 	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.
 	OnRunIdle func(runID string)
+	// OnSpaceState is called after an operator paused, resumed, archived or restored a space (SetSpaceState), with
+	// the new state: deferred work can go out on resume, and subscriptions that stop while paused stop or start.
+	OnSpaceState func(spaceID, state string)
 	// OnCommandAck is called inside the transaction that records a node's command acknowledgement (with the command's
 	// kind and the node's reason).
 	OnCommandAck func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error

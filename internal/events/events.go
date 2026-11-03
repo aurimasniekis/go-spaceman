@@ -37,6 +37,10 @@ type Options struct {
 	// RateFor returns the ingestion rate (events per minute and subscription) of a space (the limits model,
 	// ADR-0036). Nil or 0: no rate limit.
 	RateFor func(ctx context.Context, spaceID string) int64
+	// DepthFor returns a space's automation depth limit (the limit event_depth, ADR-0049): an event whose
+	// spaceman-depth is at or above it is quarantined instead of becoming an item (SM-EVT-016). Nil or 0:
+	// DefaultMaxDepth.
+	DepthFor func(ctx context.Context, spaceID string) int64
 	// Metrics receives the ingestion metrics (bounded labels only). Nil: none.
 	Metrics *metrics.Metrics
 }
@@ -69,6 +73,10 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, ch *changefeed.R
 
 // Changed is signalled (coalesced) whenever connections or subscriptions change.
 func (svc *Service) Changed() <-chan struct{} { return svc.changed }
+
+// SpaceStateChanged wakes the ingestion manager after a space was paused or resumed, so subscriptions that stop while
+// their space is paused (while_paused stop) stop or start again at once.
+func (svc *Service) SpaceStateChanged() { svc.notify() }
 
 func (svc *Service) notify() {
 	select {

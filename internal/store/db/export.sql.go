@@ -257,7 +257,7 @@ func (q *Queries) ExportHumanStats(ctx context.Context, spaceID string) (ExportH
 }
 
 const exportInboxItems = `-- name: ExportInboxItems :many
-SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version FROM inbox_items WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
+SELECT id, space_id, source_kind, source_id, source_label, title, content_type, body, payload_ref, correlation_id, dedup_key, trusted_json, subscription_id, urgency, status, status_reason, defer_until, linked_kind, linked_id, received_at, created_by, updated_at, version, notice_deferred, depth FROM inbox_items WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
 `
 
 type ExportInboxItemsParams struct {
@@ -299,6 +299,8 @@ func (q *Queries) ExportInboxItems(ctx context.Context, arg ExportInboxItemsPara
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.NoticeDeferred,
+			&i.Depth,
 		); err != nil {
 			return nil, err
 		}
@@ -490,7 +492,7 @@ func (q *Queries) ExportTaskStats(ctx context.Context, spaceID string) (ExportTa
 }
 
 const exportTasks = `-- name: ExportTasks :many
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by, depth FROM tasks WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
 `
 
 type ExportTasksParams struct {
@@ -539,6 +541,7 @@ func (q *Queries) ExportTasks(ctx context.Context, arg ExportTasksParams) ([]Tas
 			&i.PreemptedBy,
 			&i.IncidentTrigger,
 			&i.IncidentProposedBy,
+			&i.Depth,
 		); err != nil {
 			return nil, err
 		}

@@ -37,8 +37,17 @@ export function policySummary(p: HumanPolicyFields) {
   const ended = p.requester_ended === 'next_launch'
     ? `wait ${minutes(p.hold_minutes)} for its next run, then ${p.successor_role || 'control'}`
     : `to ${p.successor_role ? `${p.successor_role}, else control` : 'control'}`
-  return { remind, escalate, ended, rate: `${p.rate_per_run_hour}/run · ${p.rate_per_space_hour}/space per hour` }
+  const inbox = p.response_inbox === 'always' ? 'every response becomes an inbox item'
+    : p.response_inbox === 'routed' ? 'routed responses become inbox items' : ''
+  return { remind, escalate, ended, inbox, rate: `${p.rate_per_run_hour}/run · ${p.rate_per_space_hour}/space per hour` }
 }
+
+/** The response_inbox choices (SM-INBOX-001, ADR-0049). */
+const responseInboxOptions = [
+  { value: 'off', label: 'Notification only' },
+  { value: 'routed', label: 'Also an inbox item when routed to control or the operators' },
+  { value: 'always', label: 'Also an inbox item for every response' },
+]
 
 /**
  * Reminders, escalation, rate limits and routing of responses (SM-HUM-009/011), per action type. Without spaceId it
@@ -81,7 +90,10 @@ export function PoliciesPanel({ spaceId, canWrite }: { spaceId?: string; canWrit
                   <Table.Td><Text size="sm" fw={500}>{typeName(p.action_type)}</Text><Text size="xs" c="dimmed">{sourceLabel(p.source)}</Text></Table.Td>
                   <Table.Td><Text size="sm">{s.remind}</Text></Table.Td>
                   <Table.Td><Text size="sm">{s.escalate}</Text></Table.Td>
-                  <Table.Td><Text size="sm">{s.ended}</Text>{!p.wake_idle && <Text size="xs" c="dimmed">no terminal notice</Text>}</Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{s.ended}</Text>{!p.wake_idle && <Text size="xs" c="dimmed">no terminal notice</Text>}
+                    {s.inbox && <Text size="xs" c="dimmed">{s.inbox}</Text>}
+                  </Table.Td>
                   <Table.Td><Text size="sm">{s.rate}</Text></Table.Td>
                   <Table.Td>{canWrite && <Button size="xs" variant="default" onClick={() => setEditing(p.action_type)}>Edit</Button>}</Table.Td>
                 </Table.Tr>
@@ -119,6 +131,7 @@ function PolicyModal({ spaceId, type, stored, start, onClose, onSaved }: {
       escalate_after_minutes: start.escalate_after_minutes, escalate_priority: start.escalate_priority, escalate_assignee: start.escalate_assignee,
       requester_ended: start.requester_ended, hold_minutes: start.hold_minutes, successor_role: start.successor_role, wake_idle: start.wake_idle,
       rate_per_run_hour: start.rate_per_run_hour, rate_per_space_hour: start.rate_per_space_hour,
+      response_inbox: start.response_inbox ?? 'off',
     } satisfies HumanPolicyFields & { scope: PolicyType },
     onSubmit: async ({ value: { scope, ...value } }) => {
       setError('')
@@ -186,6 +199,12 @@ function PolicyModal({ spaceId, type, stored, start, onClose, onSaved }: {
           </SimpleGrid>
           <form.Field name="wake_idle">
             {(f) => <Checkbox label="Wake an idle run with a one-line terminal notice" checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
+          </form.Field>
+          <form.Field name="response_inbox">
+            {(f) => <Select label="Responses in the inbox" allowDeselect={false} value={f.state.value}
+              onChange={(v) => f.handleChange((v ?? 'off') as NonNullable<HumanPolicyFields['response_inbox']>)}
+              description="An inbox item names the action and how it was routed, never the response itself, which stays on the action for the runs it concerns. Control triages it like any other input."
+              data={responseInboxOptions} />}
           </form.Field>
           <Title order={5}>Rate limits for agents</Title>
           <SimpleGrid cols={{ base: 1, sm: 2 }}>

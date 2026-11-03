@@ -367,6 +367,7 @@ spaceman human policy set --space payments all --requester-ended reroute --succe
 | `--remind-after-minutes` | integer |  | remind this long after the action was asked (0: no reminders) |
 | `--remind-every-minutes` | integer |  | repeat the reminder this often (0: once) |
 | `--requester-ended` | string |  | when the requester's run has ended: reroute or next_launch |
+| `--response-inbox` | string |  | also make responses inbox items: off, routed (when routed to control or the operators) or always |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE); without it, the installation default |
 | `--successor-role` | string |  | reroute to a live run of this role before control |
 | `--wake-idle` | bool |  | wake an idle requester with a one-line terminal notice |

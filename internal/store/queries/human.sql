@@ -210,13 +210,13 @@ SELECT * FROM human_policies WHERE space_id = ? AND action_type = ?;
 -- name: InsertHumanPolicy :exec
 INSERT INTO human_policies (id, space_id, action_type, remind_after_minutes, remind_every_minutes, max_reminders, escalate_after_minutes,
   escalate_priority, escalate_assignee, requester_ended, hold_minutes, successor_role, wake_idle, rate_per_run_hour, rate_per_space_hour,
-  created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  created_at, created_by, updated_at, updated_by, response_inbox)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateHumanPolicy :execrows
 UPDATE human_policies SET remind_after_minutes = ?, remind_every_minutes = ?, max_reminders = ?, escalate_after_minutes = ?, escalate_priority = ?,
   escalate_assignee = ?, requester_ended = ?, hold_minutes = ?, successor_role = ?, wake_idle = ?, rate_per_run_hour = ?, rate_per_space_hour = ?,
-  updated_at = ?, updated_by = ?, version = version + 1
+  response_inbox = ?, updated_at = ?, updated_by = ?, version = version + 1
 WHERE id = ? AND version = ?;
 
 -- name: DeleteHumanPolicy :execrows

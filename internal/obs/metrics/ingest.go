@@ -51,6 +51,7 @@ const (
 	IngestSubStopped  IngestSubState = "stopped"
 	IngestSubError    IngestSubState = "error"
 	IngestSubDisabled IngestSubState = "disabled"
+	IngestSubPaused   IngestSubState = "paused" // stopped while its space is paused (while_paused stop)
 )
 
 // IngestConnState is an event connection's state.
@@ -72,7 +73,7 @@ const ConnectionPulse ConnectionKind = "pulse"
 
 var (
 	ingestDeliveries = []IngestDelivery{IngestDurable, IngestCore}
-	ingestSubStates  = []IngestSubState{IngestSubRunning, IngestSubStopped, IngestSubError, IngestSubDisabled}
+	ingestSubStates  = []IngestSubState{IngestSubRunning, IngestSubStopped, IngestSubError, IngestSubDisabled, IngestSubPaused}
 	ingestConnStates = []IngestConnState{IngestConnConnected, IngestConnReconnecting, IngestConnError, IngestConnDisabled}
 	connectionKinds  = []ConnectionKind{ConnectionPulse}
 

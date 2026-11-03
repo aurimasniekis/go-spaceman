@@ -261,6 +261,32 @@ func TestTaskEventsRecorded(t *testing.T) {
 	}
 }
 
+// SM-EVT-016, ADR-0049: a task created from an inbox item inherits the item's automation depth, a subtask its parent's
+// (the deeper wins), and the task's events carry it; a task with no origin item starts at 0.
+func TestTasksInheritAutomationDepth(t *testing.T) {
+	f := newFx(t)
+	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true})
+	must(t, f.s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(f.ctx, `INSERT INTO inbox_items (id, space_id, source_kind, title, content_type, received_at, created_by, updated_at, depth)
+			VALUES ('inb_deep', 'spc_a', 'event', 'x', 'text/markdown', 0, 't', 0, 3)`)
+		return err
+	}))
+	a := f.add(CreateInput{Title: "from the item", OriginKind: "inbox_item", OriginID: "inb_deep"})
+	sub := f.add(CreateInput{Title: "sub", ParentID: a.ID})
+	plain := f.add(CreateInput{Title: "plain"})
+	foreign := f.add(CreateInput{Title: "unknown item", OriginKind: "inbox_item", OriginID: "inb_missing"})
+	if a.AutomationDepth != 3 || sub.AutomationDepth != 3 || plain.AutomationDepth != 0 || foreign.AutomationDepth != 0 {
+		t.Fatalf("depths %d %d %d %d", a.AutomationDepth, sub.AutomationDepth, plain.AutomationDepth, foreign.AutomationDepth)
+	}
+	_, err := f.svc.SetStatus(f.ctx, op, "spc_a", a.ID, a.Version, StatusInput{Status: Running})
+	must(t, err)
+	var n int
+	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM event_outbox WHERE correlation_id = ? AND depth = 3`, a.ID).Scan(&n))
+	if n != 2 {
+		t.Fatalf("%d of the task's events carry its depth, want 2 (created, status)", n)
+	}
+}
+
 // SM-LIMIT-001/002: the installation's top-level task limit applies to spaces without a queue policy; lowering the
 // limit never returns running tasks to ready, it only stops further selection until the space is below it.
 func TestTopLevelLimitDefaultAndLowering(t *testing.T) {

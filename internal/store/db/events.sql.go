@@ -98,7 +98,7 @@ func (q *Queries) GetEventConnection(ctx context.Context, id string) (EventConne
 }
 
 const getEventSubscription = `-- name: GetEventSubscription :one
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions WHERE id = ?
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused FROM event_subscriptions WHERE id = ?
 `
 
 func (q *Queries) GetEventSubscription(ctx context.Context, id string) (EventSubscription, error) {
@@ -129,6 +129,7 @@ func (q *Queries) GetEventSubscription(ctx context.Context, id string) (EventSub
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Delivery,
+		&i.WhilePaused,
 	)
 	return i, err
 }
@@ -195,7 +196,7 @@ func (q *Queries) GetEventTemplateVersion(ctx context.Context, id string) (Event
 }
 
 const getQuarantine = `-- name: GetQuarantine :one
-SELECT id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, status, created_at, resolved_at, resolved_by FROM event_quarantine WHERE id = ?
+SELECT id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, status, created_at, resolved_at, resolved_by, depth FROM event_quarantine WHERE id = ?
 `
 
 func (q *Queries) GetQuarantine(ctx context.Context, id string) (EventQuarantine, error) {
@@ -216,6 +217,7 @@ func (q *Queries) GetQuarantine(ctx context.Context, id string) (EventQuarantine
 		&i.CreatedAt,
 		&i.ResolvedAt,
 		&i.ResolvedBy,
+		&i.Depth,
 	)
 	return i, err
 }
@@ -327,8 +329,8 @@ func (q *Queries) InsertEventDelivery(ctx context.Context, arg InsertEventDelive
 
 const insertEventSubscription = `-- name: InsertEventSubscription :exec
 INSERT INTO event_subscriptions (id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json,
-  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery, while_paused)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEventSubscriptionParams struct {
@@ -351,6 +353,7 @@ type InsertEventSubscriptionParams struct {
 	CreatedBy         string
 	UpdatedAt         int64
 	Delivery          string
+	WhilePaused       string
 }
 
 func (q *Queries) InsertEventSubscription(ctx context.Context, arg InsertEventSubscriptionParams) error {
@@ -374,6 +377,7 @@ func (q *Queries) InsertEventSubscription(ctx context.Context, arg InsertEventSu
 		arg.CreatedBy,
 		arg.UpdatedAt,
 		arg.Delivery,
+		arg.WhilePaused,
 	)
 	return err
 }
@@ -440,9 +444,9 @@ func (q *Queries) InsertEventTemplateVersion(ctx context.Context, arg InsertEven
 }
 
 const insertQuarantine = `-- name: InsertQuarantine :execrows
-INSERT INTO event_quarantine (id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (subscription_id, event_id) DO UPDATE SET error = excluded.error, status = 'open'
+INSERT INTO event_quarantine (id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, created_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (subscription_id, event_id) DO UPDATE SET error = excluded.error, depth = excluded.depth, status = 'open'
 `
 
 type InsertQuarantineParams struct {
@@ -457,6 +461,7 @@ type InsertQuarantineParams struct {
 	Payload        []byte
 	Error          string
 	CreatedAt      int64
+	Depth          int64
 }
 
 func (q *Queries) InsertQuarantine(ctx context.Context, arg InsertQuarantineParams) (int64, error) {
@@ -472,6 +477,7 @@ func (q *Queries) InsertQuarantine(ctx context.Context, arg InsertQuarantinePara
 		arg.Payload,
 		arg.Error,
 		arg.CreatedAt,
+		arg.Depth,
 	)
 	if err != nil {
 		return 0, err
@@ -624,7 +630,7 @@ func (q *Queries) ListEventDeliveries(ctx context.Context, arg ListEventDeliveri
 }
 
 const listEventSubscriptions = `-- name: ListEventSubscriptions :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions ORDER BY space_id, name
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused FROM event_subscriptions ORDER BY space_id, name
 `
 
 func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscription, error) {
@@ -661,6 +667,7 @@ func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscripti
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Delivery,
+			&i.WhilePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -676,7 +683,7 @@ func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscripti
 }
 
 const listEventSubscriptionsBySpace = `-- name: ListEventSubscriptionsBySpace :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions WHERE space_id = ? ORDER BY name
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused FROM event_subscriptions WHERE space_id = ? ORDER BY name
 `
 
 func (q *Queries) ListEventSubscriptionsBySpace(ctx context.Context, spaceID string) ([]EventSubscription, error) {
@@ -713,6 +720,7 @@ func (q *Queries) ListEventSubscriptionsBySpace(ctx context.Context, spaceID str
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Delivery,
+			&i.WhilePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -801,7 +809,7 @@ func (q *Queries) ListEventTemplates(ctx context.Context) ([]EventTemplate, erro
 }
 
 const listFollowingSubscriptions = `-- name: ListFollowingSubscriptions :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions WHERE template_id = ? AND follow = 'latest'
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery, while_paused FROM event_subscriptions WHERE template_id = ? AND follow = 'latest'
 `
 
 func (q *Queries) ListFollowingSubscriptions(ctx context.Context, templateID sql.NullString) ([]EventSubscription, error) {
@@ -838,6 +846,7 @@ func (q *Queries) ListFollowingSubscriptions(ctx context.Context, templateID sql
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Delivery,
+			&i.WhilePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -852,8 +861,35 @@ func (q *Queries) ListFollowingSubscriptions(ctx context.Context, templateID sql
 	return items, nil
 }
 
+const listPausedSpaceIDs = `-- name: ListPausedSpaceIDs :many
+SELECT id FROM spaces WHERE state = 'paused' ORDER BY id
+`
+
+func (q *Queries) ListPausedSpaceIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listPausedSpaceIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQuarantine = `-- name: ListQuarantine :many
-SELECT id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, status, created_at, resolved_at, resolved_by FROM event_quarantine WHERE subscription_id = ? AND (?2 = '' OR status = ?2) ORDER BY created_at DESC LIMIT ?3
+SELECT id, subscription_id, event_id, subject, type, source, event_time, content_type, payload, error, status, created_at, resolved_at, resolved_by, depth FROM event_quarantine WHERE subscription_id = ? AND (?2 = '' OR status = ?2) ORDER BY created_at DESC LIMIT ?3
 `
 
 type ListQuarantineParams struct {
@@ -886,6 +922,7 @@ func (q *Queries) ListQuarantine(ctx context.Context, arg ListQuarantineParams) 
 			&i.CreatedAt,
 			&i.ResolvedAt,
 			&i.ResolvedBy,
+			&i.Depth,
 		); err != nil {
 			return nil, err
 		}
@@ -1126,8 +1163,8 @@ const updateEventSubscription = `-- name: UpdateEventSubscription :execrows
 UPDATE event_subscriptions SET name = ?1, template_version_id = ?2, follow = ?3,
   custom_json = ?4, vars_json = ?5, effective_subject = ?6, enabled = ?7,
   cursor_generation = ?8, start_policy = ?9, start_time = ?10,
-  start_seq = ?11, replay = ?12, version = version + 1, updated_at = ?13
-WHERE id = ?14 AND version = ?15
+  start_seq = ?11, replay = ?12, while_paused = ?13, version = version + 1, updated_at = ?14
+WHERE id = ?15 AND version = ?16
 `
 
 type UpdateEventSubscriptionParams struct {
@@ -1143,6 +1180,7 @@ type UpdateEventSubscriptionParams struct {
 	StartTime         sql.NullInt64
 	StartSeq          sql.NullInt64
 	Replay            int64
+	WhilePaused       string
 	Now               int64
 	ID                string
 	Version           int64
@@ -1162,6 +1200,7 @@ func (q *Queries) UpdateEventSubscription(ctx context.Context, arg UpdateEventSu
 		arg.StartTime,
 		arg.StartSeq,
 		arg.Replay,
+		arg.WhilePaused,
 		arg.Now,
 		arg.ID,
 		arg.Version,

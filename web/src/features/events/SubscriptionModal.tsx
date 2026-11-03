@@ -3,11 +3,11 @@ import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { api, unwrap, type Cursor, type Definition } from '@/api/client'
+import { api, unwrap, type Cursor, type Definition, type Subscription } from '@/api/client'
 import { keys, useConnections, useTemplates } from '@/api/queries'
 import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError, required } from '@/lib/form'
-import { coreExplanation } from './badges'
+import { coreExplanation, whilePausedOptions } from './badges'
 import { definitionError, definitionText, parseDefinition, starterDefinition } from './definition'
 import { PreviewPanel } from './PreviewPanel'
 import { placeholderHelp } from './TemplateEditor'
@@ -37,7 +37,7 @@ export function SubscriptionModal({ spaceId, opened, onClose }: { spaceId: strin
 
   const form = useForm({
     defaultValues: { name: '', connection: '', source: 'template' as 'template' | 'custom', version: '', custom: definitionText(starterDefinition), follow: false, vars: {} as Record<string, string>, policy: 'new' as Cursor['policy'], time: '', seq: '',
-      delivery: 'durable' as 'durable' | 'core' },
+      delivery: 'durable' as 'durable' | 'core', whilePaused: 'defer' as Subscription['while_paused'] },
     onSubmit: async ({ value }) => {
       setError('')
       try {
@@ -50,7 +50,7 @@ export function SubscriptionModal({ spaceId, opened, onClose }: { spaceId: strin
           : { template_version_id: value.version, follow: value.follow ? ('latest' as const) : ('pinned' as const) }
         const sub = unwrap(await api.POST('/spaces/{space_id}/subscriptions', {
           params: { path: { space_id: spaceId } },
-          body: { name: value.name, connection_id: value.connection, ...source, vars: value.vars, start, delivery: value.delivery },
+          body: { name: value.name, connection_id: value.connection, ...source, vars: value.vars, start, delivery: value.delivery, while_paused: value.whilePaused },
         }))
         void qc.invalidateQueries({ queryKey: keys.subscriptions(spaceId) })
         form.reset()
@@ -186,6 +186,13 @@ export function SubscriptionModal({ spaceId, opened, onClose }: { spaceId: strin
               <form.Field name="seq">{(f) => <TextInput label="Stream sequence" value={f.state.value} onChange={(e) => f.handleChange(e.target.value.replace(/\D/g, ''))} />}</form.Field>
             ) : null}
           </form.Subscribe>
+          <form.Field name="whilePaused">
+            {(f) => (
+              <Select label="While the space is paused" allowDeselect={false} value={f.state.value} onChange={(v) => f.handleChange((v ?? 'defer') as Subscription['while_paused'])}
+                description={whilePausedOptions.find((o) => o.value === f.state.value)?.description}
+                data={whilePausedOptions.map((o) => ({ value: o.value, label: o.label }))} />
+            )}
+          </form.Field>
         </Stack>
       </form>
       <Stack gap="sm" mt="sm">

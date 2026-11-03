@@ -5378,6 +5378,11 @@ export interface components {
             content_type: string;
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: int64
+             * @description The automation depth the event carried (its spaceman-depth header; 0: none); reprocessing passes it on
+             */
+            depth: number;
             error: string;
             event_id: string;
             /** Format: date-time */
@@ -5495,10 +5500,10 @@ export interface components {
             quarantined: number;
             space_id: string;
             /**
-             * @description Runtime state reported by the ingestion manager
+             * @description Runtime state reported by the ingestion manager (paused: stopped while the space is paused, while_paused stop)
              * @enum {string}
              */
-            state: "running" | "stopped" | "error" | "disabled";
+            state: "running" | "stopped" | "error" | "disabled" | "paused";
             /** @description The effective Pulse filter */
             subject: string;
             template?: components["schemas"]["EventsTemplateRef"];
@@ -5507,6 +5512,11 @@ export interface components {
             };
             /** Format: int64 */
             version: number;
+            /**
+             * @description While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)
+             * @enum {string}
+             */
+            while_paused: "defer" | "wake" | "stop";
         };
         EventsTemplate: {
             /**
@@ -6350,6 +6360,11 @@ export interface components {
              * @enum {string}
              */
             requester_ended: "reroute" | "next_launch";
+            /**
+             * @description Whether a response also becomes an inbox item of the space (source human_response; metadata only, the response stays on the action): off (default), routed (when it is routed to control or the operators because the requester's run ended) or always
+             * @enum {string}
+             */
+            response_inbox?: "off" | "routed" | "always";
             /** @description Effective policies: where they come from (space, default or built-in, with the type it names) */
             source?: string;
             /** @description Empty: the installation default */
@@ -6415,6 +6430,11 @@ export interface components {
              * @enum {string}
              */
             requester_ended: "reroute" | "next_launch";
+            /**
+             * @description Whether a response also becomes an inbox item of the space (source human_response; metadata only, the response stays on the action): off (default), routed (when it is routed to control or the operators because the requester's run ended) or always
+             * @enum {string}
+             */
+            response_inbox?: "off" | "routed" | "always";
             /** @description Reroute to a live run of this role before control; empty: control */
             successor_role: string;
             /** @description Wake an idle requester with a one-line terminal notice (otherwise it reads the response the next time it checks its messages) */
@@ -6602,6 +6622,11 @@ export interface components {
              */
             readonly $schema?: string;
             attachments?: components["schemas"]["AttachmentsAttachment"][];
+            /**
+             * Format: int64
+             * @description Automation depth: how many SpaceMan event ingestions led to this item (0: not from an event). Bounded by the limit event_depth (SM-EVT-016).
+             */
+            automation_depth: number;
             /** @description Untrusted content: Markdown (with spaceman://attachment/<id> references) or JSON */
             body: string;
             /** @enum {string} */
@@ -6615,6 +6640,8 @@ export interface components {
             linked_id?: string;
             /** @description Existing work this item was associated with (task, human_action, …) */
             linked_kind?: string;
+            /** @description Control is told about this item when the paused space resumes (its subscription's while_paused policy is defer) */
+            notice_deferred: boolean;
             /** @description A retained reference to a large payload */
             payload_ref?: string;
             /** Format: date-time */
@@ -8422,6 +8449,11 @@ export interface components {
             assignee_role?: string;
             assignee_run?: string;
             attachments?: components["schemas"]["AttachmentsAttachment"][];
+            /**
+             * Format: int64
+             * @description Automation depth: that of the inbox item it was created from (origin_kind inbox_item) or of its parent, whichever is deeper; published with its events (SM-EVT-016)
+             */
+            automation_depth: number;
             blockers: components["schemas"]["QueueBlocker"][];
             /** Format: date-time */
             created_at: string;
@@ -9378,6 +9410,11 @@ export interface components {
             vars?: {
                 [key: string]: string;
             };
+            /**
+             * @description While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost)
+             * @enum {string}
+             */
+            while_paused?: "defer" | "wake" | "stop";
         };
         SubscriptionPatch: {
             /**
@@ -9397,6 +9434,11 @@ export interface components {
             vars?: {
                 [key: string]: string;
             };
+            /**
+             * @description While the space is paused: defer (default) keeps ingesting and tells control about new items when the space resumes; wake keeps ingesting and tells control at once; stop stops the subscription until the space resumes (durable events wait in the stream; core NATS messages published meanwhile are lost). Omitted: unchanged.
+             * @enum {string}
+             */
+            while_paused?: "defer" | "wake" | "stop";
         };
         SystemInfo: {
             /**

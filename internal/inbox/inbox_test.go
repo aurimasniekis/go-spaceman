@@ -54,6 +54,63 @@ func newFx(t *testing.T) *fx {
 	return f
 }
 
+// SM-EVT-014, ADR-0049: a deferred notice is decided against the space's state in the creating transaction (only in a
+// paused space), listed until it is sent, and clearing it does not change the item's version.
+func TestDeferredNotices(t *testing.T) {
+	f := newFx(t)
+	exec := func(q string) {
+		t.Helper()
+		if err := f.s.W().TxNamed(f.ctx, "test.state", func(tx *store.Tx) error {
+			_, err := tx.SQL.ExecContext(f.ctx, q)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`UPDATE spaces SET state = 'paused' WHERE id = 'spc_b'`)
+	in := func(key string) CreateInput {
+		c := operator("event " + key)
+		c.SourceKind, c.DedupKey, c.DeferNoticeWhilePaused, c.AutomationDepth = "event", key, true, 2
+		return c
+	}
+	ok := func(it *Item, _ bool, err error) *Item {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return it
+	}
+	active := ok(f.svc.Create(f.ctx, op, "spc_a", in("a")))
+	paused := ok(f.svc.Create(f.ctx, op, "spc_b", in("b")))
+	plain := ok(f.svc.Create(f.ctx, op, "spc_b", operator("an operator item")))
+	if active.NoticeDeferred || !paused.NoticeDeferred || plain.NoticeDeferred || paused.AutomationDepth != 2 {
+		t.Fatalf("deferred: active %v paused %v plain %v depth %d", active.NoticeDeferred, paused.NoticeDeferred, plain.NoticeDeferred, paused.AutomationDepth)
+	}
+	l, err := f.svc.DeferredNotices(f.ctx, "spc_b")
+	if err != nil || len(l) != 1 || l[0].ID != paused.ID {
+		t.Fatalf("deferred %+v %v", l, err)
+	}
+	if sp, _ := f.svc.SpacesWithDeferredNotices(f.ctx); len(sp) != 0 {
+		t.Fatalf("a paused space listed for flushing: %v", sp)
+	}
+	exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_b'`)
+	if sp, _ := f.svc.SpacesWithDeferredNotices(f.ctx); len(sp) != 1 || sp[0] != "spc_b" {
+		t.Fatalf("spaces to flush %v", sp)
+	}
+	for range 2 { // idempotent
+		if err := f.svc.NoticeSent(f.ctx, l[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := f.svc.Get(f.ctx, "spc_b", paused.ID)
+	if err != nil || got.NoticeDeferred || got.Version != paused.Version {
+		t.Fatalf("after the notice %+v %v", got, err)
+	}
+	if _, _, err := f.svc.Create(f.ctx, op, "spc_a", CreateInput{SourceKind: "event", Body: "x", AutomationDepth: -1}); err == nil {
+		t.Fatal("negative depth accepted")
+	}
+}
+
 func operator(body string) CreateInput {
 	return CreateInput{SourceKind: "operator", SourceID: op.ID, SourceLabel: "Ada", Body: body}
 }

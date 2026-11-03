@@ -169,6 +169,25 @@ their SpaceMan tools and never wait in a loop: they are told when a response arr
 SpaceMan does not relaunch an ended worker to hand it a response: only control starts workers, so the response goes
 to control, which decides.
 
+### Responses in the inbox
+
+A policy can also make responses **inbox items** of the space (**Responses in the inbox** in the policy dialog,
+`response_inbox` in the API, `--response-inbox` in the CLI), so control triages them like any other input: reply,
+create or update a task, defer the item or mark it done.
+
+| Choice | `response_inbox` | When an item is added |
+|---|---|---|
+| Notification only (default) | `off` | Never: agents get the notification described above. |
+| When routed | `routed` | When a response is routed to control or to the operators because the requester's run had ended (also when a person sends it to control). |
+| Every response | `always` | Whenever an action of the type is answered, whoever asked: an agent, an operator or SpaceMan itself. |
+
+The item has the source **Human response**, the action's title and priority, and metadata: the action, its type and
+outcome, who answered, and where and why it was routed. It **never contains the response**: every run of the space can
+read the inbox, while the response stays on the action, readable only by the runs it concerns (the item links to the
+action). An action adds at most one item, however often its response is routed; withdrawals, expiries and
+clarification requests add none. When the response was routed to control, control is not told about the item
+separately: it already has the response's notification.
+
 Text written by an agent is untrusted: it is rendered as sanitized Markdown, never as HTML.
 
 ## Reminders, escalation and policies

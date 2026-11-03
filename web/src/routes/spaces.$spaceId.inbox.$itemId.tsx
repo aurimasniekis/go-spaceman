@@ -64,6 +64,9 @@ function ItemPage() {
           </Text>
           {it.status_reason && <Text size="sm">Reason: {it.status_reason}</Text>}
           {it.linked_kind && <Text size="sm">Associated with {it.linked_kind} <span className="mono">{it.linked_id}</span></Text>}
+          {it.source_kind === 'human_response' && it.source_id && (
+            <Text size="sm">The response stays on the action: <AnchorLink to="/spaces/$spaceId/human" params={{ spaceId }} search={{ action: it.source_id }} size="sm">open the human action</AnchorLink></Text>
+          )}
         </Stack>
         {canWrite && (
           <Group gap="xs" wrap="nowrap">

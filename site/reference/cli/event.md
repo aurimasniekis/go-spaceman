@@ -147,6 +147,7 @@ API: `create-subscription` ([HTTP API](../api)).
 | `--start-file` | string |  | start cursor (JSON or YAML file) |
 | `--template-version` | string |  | template version ID |
 | `--var` | string, repeatable |  | template variable (key=value, repeatable) |
+| `--while-paused` | string |  | while the space is paused: defer (default: ingest, tell control on resume), wake (ingest, tell control at once) or stop (stop until resume) |
 
 ## spaceman event subscription delete
 
@@ -325,6 +326,7 @@ API: `get-subscription`, `update-subscription` ([HTTP API](../api)).
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--template-version` | string |  | template version ID |
 | `--var` | string, repeatable |  | template variable (replaces the variables) (key=value, repeatable) |
+| `--while-paused` | string |  | while the space is paused: defer (default: ingest, tell control on resume), wake (ingest, tell control at once) or stop (stop until resume) |
 
 ## spaceman event template
 

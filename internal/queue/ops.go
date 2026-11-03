@@ -223,7 +223,7 @@ func (svc *Service) SetStatus(ctx context.Context, actor audit.Actor, spaceID, i
 		if err := svc.changes.Record(ctx, tx, spaceID, "task", t.ID, "updated", t.Version+1); err != nil {
 			return err
 		}
-		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: from, To: in.Status,
+		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Depth: t.AutomationDepth, Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: from, To: in.Status,
 			Preempted: preempted == 1}, Correlation: t.ID}); err != nil {
 			return err
 		}

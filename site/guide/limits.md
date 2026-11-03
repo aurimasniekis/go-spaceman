@@ -18,6 +18,7 @@ it comes from and where SpaceMan enforces it.
 | Pending human actions per run (`max_human_pending_per_run`) | 25 | 1–500 | open human actions one agent run asked | human-action creation |
 | Tool calls per run (`max_tool_calls_per_run`) | 5000 | 0–1,000,000 (0: none) | SpaceMan and MCP gateway tool calls of one run | agent tool gateway |
 | Event ingestion rate (`ingest_per_minute`) | 600 | 1–60,000 | events one subscription ingests per minute | event ingestion |
+| Event automation depth (`event_depth`) | 8 | 1–64 | SpaceMan ingestions an inbound event may already have passed through; deeper events are quarantined ([event loops](/guide/events#event-loops-between-installations)) | event ingestion |
 | Task deadline (`task_deadline_minutes`) | none | 0–43,200 | how long a top-level task runs before you are told | deadline timer |
 | Attachment storage (`storage_quota_bytes`; installation default `artifacts.space_quota_bytes`) | 1 GiB | 1 MiB–1 TiB | attachment bytes stored for the space | uploads and event payloads |
 | Token budget, 24 h (`budget_tokens_24h`) | none | 0: none | reported tokens of runs started in the last 24 hours | run launch |

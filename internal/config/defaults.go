@@ -37,7 +37,7 @@ func Default() *Config {
 		Events:    EventsConfig{Outbound: OutboundConfig{Source: "spaceman", Retention: Duration(7 * 24 * time.Hour)}},
 		Backups:   BackupsConfig{Interval: Duration(24 * time.Hour), KeepLast: 7, Target: "local"},
 		Limits: LimitsConfig{MaxConcurrentRuns: 8, MaxTopLevelTasks: 1, MaxKBSessions: 8, SupportDepth: 1, MaxHumanPending: 500,
-			MaxHumanPendingPerRun: 25, MaxToolCallsPerRun: 5000, IngestPerMinute: 600, BudgetWarnPercent: 80, RecordingQuotaBytes: 512 << 20,
+			MaxHumanPendingPerRun: 25, MaxToolCallsPerRun: 5000, IngestPerMinute: 600, EventDepth: 8, BudgetWarnPercent: 80, RecordingQuotaBytes: 512 << 20,
 			ExportMaxBytes: 2 << 30},
 		Shutdown: ShutdownConfig{Timeout: Duration(30 * time.Second)},
 	}

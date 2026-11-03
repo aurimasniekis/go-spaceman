@@ -263,7 +263,7 @@ func (svc *Service) Publish(ctx context.Context, actor audit.Actor, versionID st
 			}
 			if _, err := tx.Q.UpdateEventSubscription(ctx, db.UpdateEventSubscriptionParams{Name: s.Name, TemplateVersionID: sql.NullString{String: versionID, Valid: true},
 				Follow: s.Follow, CustomJson: s.CustomJson, VarsJson: s.VarsJson, EffectiveSubject: s.EffectiveSubject, Enabled: s.Enabled,
-				CursorGeneration: s.CursorGeneration, StartPolicy: s.StartPolicy, StartTime: s.StartTime, StartSeq: s.StartSeq, Replay: s.Replay,
+				CursorGeneration: s.CursorGeneration, StartPolicy: s.StartPolicy, StartTime: s.StartTime, StartSeq: s.StartSeq, Replay: s.Replay, WhilePaused: s.WhilePaused,
 				Now: tx.NowMicros(), ID: s.ID, Version: s.Version}); err != nil {
 				return err
 			}

@@ -66,7 +66,7 @@ func (q *Queries) GetQueuePolicy(ctx context.Context, spaceID string) (QueuePoli
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE id = ?
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by, depth FROM tasks WHERE id = ?
 `
 
 func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
@@ -103,12 +103,13 @@ func (q *Queries) GetTask(ctx context.Context, id string) (Task, error) {
 		&i.PreemptedBy,
 		&i.IncidentTrigger,
 		&i.IncidentProposedBy,
+		&i.Depth,
 	)
 	return i, err
 }
 
 const getTaskByDedup = `-- name: GetTaskByDedup :one
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE space_id = ? AND dedup_key = ?
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by, depth FROM tasks WHERE space_id = ? AND dedup_key = ?
 `
 
 type GetTaskByDedupParams struct {
@@ -150,6 +151,7 @@ func (q *Queries) GetTaskByDedup(ctx context.Context, arg GetTaskByDedupParams) 
 		&i.PreemptedBy,
 		&i.IncidentTrigger,
 		&i.IncidentProposedBy,
+		&i.Depth,
 	)
 	return i, err
 }
@@ -179,8 +181,8 @@ func (q *Queries) InsertQueueDecision(ctx context.Context, arg InsertQueueDecisi
 
 const insertTask = `-- name: InsertTask :exec
 INSERT INTO tasks (id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, status, exclusions_json, assignee_role,
-  workspace, origin_kind, origin_id, dedup_key, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  workspace, origin_kind, origin_id, dedup_key, created_at, created_by, updated_at, depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertTaskParams struct {
@@ -203,6 +205,7 @@ type InsertTaskParams struct {
 	CreatedAt      int64
 	CreatedBy      string
 	UpdatedAt      int64
+	Depth          int64
 }
 
 func (q *Queries) InsertTask(ctx context.Context, arg InsertTaskParams) error {
@@ -226,6 +229,7 @@ func (q *Queries) InsertTask(ctx context.Context, arg InsertTaskParams) error {
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
+		arg.Depth,
 	)
 	return err
 }
@@ -516,7 +520,7 @@ func (q *Queries) ListTaskPreemptions(ctx context.Context, taskID string) ([]Tas
 }
 
 const listTasks = `-- name: ListTasks :many
-SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by FROM tasks WHERE space_id = ? ORDER BY rank, created_at
+SELECT id, space_id, parent_id, title, objective, acceptance, kind, priority, rank, manual_position, status, status_reason, exclusions_json, assignee_role, assignee_run, workspace, origin_kind, origin_id, dedup_key, result, preemptions, created_at, created_by, updated_at, started_at, finished_at, version, preempted_by, incident_trigger, incident_proposed_by, depth FROM tasks WHERE space_id = ? ORDER BY rank, created_at
 `
 
 func (q *Queries) ListTasks(ctx context.Context, spaceID string) ([]Task, error) {
@@ -559,6 +563,7 @@ func (q *Queries) ListTasks(ctx context.Context, spaceID string) ([]Task, error)
 			&i.PreemptedBy,
 			&i.IncidentTrigger,
 			&i.IncidentProposedBy,
+			&i.Depth,
 		); err != nil {
 			return nil, err
 		}

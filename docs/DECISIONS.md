@@ -584,7 +584,8 @@
 - **Consequences:**
   - Consumers must deduplicate on `Nats-Msg-Id`; ordering between subjects is not guaranteed.
   - Events of a period with publication off are never published. Automation depth across installations (event →
-    item → task → event) is not bounded yet; only an installation's own events are dropped.
+    item → task → event) is not bounded yet; only an installation's own events are dropped. (ADR-0049 bounds it with
+    `spaceman-depth`.)
   - Verified against the in-process Pulse-shaped NATS server (real nats-server JetStream and the real SDK); no evidence
     against a running `pulsed` yet.
 
@@ -1831,6 +1832,90 @@
   an archived recording reads its last segment from the bucket under the recordings lock. Evidence: the in-process
   fake bucket (`s3test`, which now serves ranges and modification times) and the opt-in MinIO suite
   (`TestRealS3Artifacts`); AWS S3 and R2 are unverified.
+
+### ADR-0049 — Paused-space event policies, bounded automation depth across installations, routed responses as inbox items (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (gap closure: SM-EVT-014, SM-EVT-016, SM-INBOX-001).
+- **Context:** Three requirements were partial. SM-EVT-014: a paused space always ingested, and with **Hold** a control
+  run still running was told about new event items at once, so work was not deferred; GOAL asks that paused spaces keep
+  ingesting by default but defer wakes and work according to policy. SM-EVT-016: the loop guard (ADR-0030) dropped only
+  an installation's own events, so a loop through another installation (A publishes, B ingests and publishes, A ingests)
+  was unbounded. SM-INBOX-001 lists routed human responses among the inbox's inputs, but the `human_response` source
+  kind had no producer: routed responses were notifications only (ADR-0032). Putting responses into the inbox changes
+  who can see what (every run of a space reads the inbox), and the depth bound drops inbound events, so this is recorded
+  as a **security-relevant change**.
+- **Decision:**
+  - **Paused-space policy per subscription.** Migration `0035` adds `event_subscriptions.while_paused`: `defer`
+    (default), `wake` or `stop`, in the API (`while_paused` on create and update; omitted on update keeps it), the CLI
+    (`--while-paused`) and the UI (subscribe dialog and subscription page). A per-subscription setting was chosen over a
+    per-space one because the right answer differs by source (an incident feed should wake a held control; a backlog
+    feed should wait), and subscriptions already carry the error and consumer policy (SM-EVT-005).
+    - `defer`: the event becomes an item as usual; whether its control notice is deferred is decided in the item's own
+      transaction from the space's state at that moment (`inbox_items.notice_deferred`), so a pause or resume racing an
+      ingestion cannot lose the notice. The supervisor does not notify control about a deferred item. When an operator
+      resumes the space (fleet `OnSpaceState`), the supervisor sends each still-`new` item's ordinary control notice
+      (the same message the notifier delivers for any new item, deduplicated per item) and then clears the flag, oldest
+      first; a crash between the two sends it once more, never zero times. Clearing the flag changes no version.
+      Central's start sends the notices of active spaces that a resume did not finish. Nothing polls.
+    - `wake`: the item's notice goes to control at once (the behaviour before this ADR).
+    - `stop`: the ingestion manager stops the subscription while its space is paused (state `paused`; the manager is
+      woken by the pause and the resume). A durable consumer keeps its position on the server (go-pulse v0.1.3
+      `Subscription.Stop`), so its events are ingested after the resume; a core NATS subscription receives nothing
+      meanwhile. Events delivered before the stop took effect are treated as `defer`.
+    - Launches stay refused while paused (SM-SPACE-003), so "work" is deferred by not telling control; other inputs of a
+      paused space (operator items, messages, schedules) are not covered.
+  - **Automation depth (`spaceman-depth`).** A new SpaceMan extension header, beside `spaceman-origin`,
+    `spaceman-causation-id` and `spaceman-correlation-id` (ADR-0030); no Pulse envelope field is used or invented.
+    - An item made from an inbound event gets depth = the event's `spaceman-depth` + 1 (no header: 0, so an event from a
+      non-SpaceMan source makes a depth-1 item); `inbox_items.depth`. A task created from an inbox item
+      (`origin_kind` `inbox_item`) or under a parent gets the deeper of their depths (`tasks.depth`). The outbox stores
+      the depth of each event (`event_outbox.depth`) from the item or task it reports, and the relay sends
+      `spaceman-depth` when it is above 0.
+    - The inbound side checks the depth after the definition accepted the event (so filtered events are not
+      quarantined for depth): at or over the space's limit `event_depth` (limits model, ADR-0036; default 8, 1–64,
+      `limits.event_depth`, space override on the Limits page, API and CLI), or a header that is not a plain decimal
+      number of at most 1,000,000, the event is **quarantined** with the reason and terminated (never redelivered), and
+      its depth is kept (`event_quarantine.depth`). Quarantine rather than a silent drop: the loop is visible (the
+      quarantine count, the Attention page) and an operator can **reprocess** it, which ingests it without the depth
+      check at depth + 1, so the next installation stops it again.
+    - The depth follows only links SpaceMan records. Runs, human actions, approvals, memory and KB events carry none:
+      a change control makes on its own judgement after reading an item starts a new chain, as a person's would, and is
+      bounded by the run, tool-call and budget limits. Pulse does not authenticate the header; a non-SpaceMan publisher
+      can send any value, which only affects its own events.
+  - **Routed responses as inbox items (decision for SM-INBOX-001).** The kind is kept and given a producer, not
+    removed: GOAL lists routed responses among the inbox's inputs, and an answer whose asker is gone is exactly the
+    kind of input control should triage (reply, task, defer, associate) instead of only acknowledging. Migration `0035`
+    adds `human_policies.response_inbox`: `off` (default and built-in), `routed` (a response routed to control or the
+    operators because the requester's run ended, or sent to control by a person) or `always` (every answered action of
+    the type, whoever asked: an agent, an operator or SpaceMan). In the API (`response_inbox` in the policy fields;
+    omitted is `off`), the CLI (`--response-inbox`) and the policy dialog.
+    - The item is created in the routing (or finalizing) transaction through `inbox.CreateTx`, with source kind
+      `human_response`, source ID the action, the action's title (as `Response: <title>`) and priority, correlation the
+      action's, and dedup key `response:<action>`: at most one item per action however often it is routed. Only answers
+      (`resolved`) make items; withdrawals, expiries and clarification requests stay notifications.
+    - **The item never contains the response.** Its body and trusted metadata name the action, type, outcome, who
+      answered, the requester and the routing (target, reason, notification); the body tells control to read the
+      response with `spaceman_human_get`, which keeps the ADR-0032 rule that only related runs and control see
+      responses. Every run of a space can read the inbox, so copying the response would widen who sees it.
+    - A response routed to control already reaches control as its notification, so the supervisor does not send a
+      second "new inbox item" notice for that item.
+  - Node protocol: unchanged (no minor bump).
+- **Alternatives:** a per-space paused policy (one answer for every source); deferring every control notice of a paused
+  space (also hides operators' own requests from a held control, which they may want it to see); polling paused spaces
+  for resumption (forbidden, SM-ARCH-004). A hop list of origins instead of a depth counter (detects exact cycles but
+  grows without bound and leaks installation names into every event); dropping over-deep events as `filtered` (no
+  inspection or override). Removing `human_response` with a migration (drops a GOAL input); copying the response into
+  the item (discloses it to every run of the space).
+- **Consequences:**
+  - New subscriptions defer by default: a control run kept running under Hold no longer hears of event items until the
+    space resumes, unless the subscription says `wake`. Existing subscriptions get `defer` too.
+  - An event loop between installations ends after `event_depth` ingestions in quarantine; legitimate chains longer
+    than the limit need a higher limit or a reprocess.
+  - With `response_inbox` set, control sees an inbox item and, for responses routed to control, its notification;
+    operators see items for undeliverable responses in the inbox.
+  - The Terraform provider (separate repository, ADR-0047) does not manage `while_paused` (its updates keep it) or
+    `response_inbox` (its writes store `off`) yet.
+  - Evidence is simulated: the in-process Pulse-shaped server with the real go-pulse SDK, including two centrals in
+    one test; no real pulsed and no real harness ran these paths.
 
 ### ADR-0050 — Incident policy (trusted triggers, worker handling, resumption), run:diagnose, human-action type permissions and user profile edits (security-relevant change)
 - **Status:** Accepted, 2026-11-03 (gap closure for SM-QUEUE-009, SM-CTRL-004, SM-HUI-008 and the user part of SM-API-004;

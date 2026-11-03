@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,7 +45,45 @@ const MaxQuarantinePayload = 1 << 20
 var ingestActor = audit.Actor{Type: audit.ActorSystem, ID: "event-ingest"}
 
 func fromPulse(e pulse.Event) template.Event {
-	return template.Event{ID: e.ID, Subject: e.Subject, Type: e.Type, Source: e.Source, ContentType: e.ContentType, Time: e.Time, Data: e.Data}
+	return template.Event{ID: e.ID, Subject: e.Subject, Type: e.Type, Source: e.Source, ContentType: e.ContentType, Time: e.Time, Data: e.Data,
+		Depth: e.Extra.Get(outbox.HeaderDepth)}
+}
+
+// DefaultMaxDepth is the automation depth limit when none is configured (the limit event_depth's default).
+const DefaultMaxDepth = 8
+
+// maxHeaderDepth bounds a spaceman-depth value that is accepted as a number at all.
+const maxHeaderDepth = 1_000_000
+
+// parseDepth reads a spaceman-depth header: absent is 0 (an event from a source that is not SpaceMan); anything but a
+// plain non-negative decimal number is invalid.
+func parseDepth(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	if len(s) > 7 || strings.TrimLeft(s, "0123456789") != "" {
+		return 0, fmt.Errorf("the spaceman-depth header %q is not a number", truncate(s, 32))
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n > maxHeaderDepth {
+		return 0, fmt.Errorf("the spaceman-depth header %q is out of range", s)
+	}
+	return n, nil
+}
+
+func (svc *Service) depthLimit(ctx context.Context, spaceID string) int64 {
+	if svc.o.DepthFor != nil {
+		if n := svc.o.DepthFor(ctx, spaceID); n > 0 {
+			return n
+		}
+	}
+	return DefaultMaxDepth
+}
+
+// errTooDeep explains a quarantine for automation depth (SM-EVT-016).
+func errTooDeep(depth, limit int64) error {
+	return fmt.Errorf("automation depth: this event already passed through %d SpaceMan ingestions (spaceman-depth %d), at or over this space's "+
+		"event_depth limit of %d; quarantined to stop an event loop between installations. Reprocess it to ingest it anyway", depth, depth, limit)
 }
 
 // Process handles one delivered event for a subscription and says how to acknowledge it (SM-EVT-011/013):
@@ -94,6 +134,15 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 		outcome = OutcomeFiltered
 		return svc.deliver(ctx, r, e, seq, o, OutcomeFiltered, "", res.SkipReason)
 	}
+	// Bounded automation (SM-EVT-016, ADR-0049): an event that already went through too many SpaceMan ingestions is
+	// quarantined, not turned into an item. Reprocessing it is an operator's decision and is not checked again.
+	depth, err := parseDepth(e.Depth)
+	if err != nil {
+		return svc.quarantine(ctx, r, e, seq, o, err)
+	}
+	if limit := svc.depthLimit(ctx, r.SpaceID); depth >= limit && o.Kind != OriginReprocess {
+		return svc.quarantine(ctx, r, e, seq, o, errTooDeep(depth, limit))
+	}
 	trusted := map[string]any{"event_id": e.ID, "subject": e.Subject, "type": e.Type, "source": e.Source, "time": e.Time.UTC().Format(time.RFC3339Nano),
 		"stream_seq": seq, "subscription_id": r.ID, "subscription": r.Name, "connection_id": r.ConnectionID, "instructions": res.Instructions}
 	if ref != nil {
@@ -110,7 +159,10 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 		}
 	}
 	in := inbox.CreateInput{SourceKind: "event", SourceID: r.ID, SourceLabel: r.Name, Title: res.Title, ContentType: inbox.Markdown, Body: res.Body,
-		CorrelationID: res.Correlation, DedupKey: dedup, Subscription: r.ID, Urgency: res.Urgency, Trusted: trusted, CausationID: e.ID}
+		CorrelationID: res.Correlation, DedupKey: dedup, Subscription: r.ID, Urgency: res.Urgency, Trusted: trusted, CausationID: e.ID,
+		// While the space is paused, control hears of the item when it resumes unless the subscription says wake
+		// (SM-EVT-014). A stop subscription's stragglers (delivered before its consumer stopped) are deferred too.
+		AutomationDepth: depth + 1, DeferNoticeWhilePaused: r.WhilePaused != PausedWake}
 	// The raw payload is retained as an attachment of the item (SM-INBOX-002, SM-EVT-008).
 	if len(e.Data) > 0 && svc.att != nil {
 		name := "event-" + e.ID + ".json"
@@ -200,10 +252,11 @@ func (svc *Service) quarantine(ctx context.Context, r db.EventSubscription, e te
 	if len(payload) > MaxQuarantinePayload {
 		payload = payload[:MaxQuarantinePayload]
 	}
+	depth, _ := parseDepth(e.Depth) // an unreadable header is kept as 0: reprocessing then starts a new chain
 	err := svc.s.W().TxNamed(ctx, "events.quarantine", func(tx *store.Tx) error {
 		if _, err := tx.Q.InsertQuarantine(ctx, db.InsertQuarantineParams{ID: ids.New(ids.Quarantine), SubscriptionID: r.ID, EventID: e.ID, Subject: e.Subject,
 			Type: e.Type, Source: e.Source, EventTime: e.Time.UnixMicro(), ContentType: e.ContentType, Payload: append([]byte{}, payload...),
-			Error: truncate(cause.Error(), 2000), CreatedAt: tx.NowMicros()}); err != nil {
+			Error: truncate(cause.Error(), 2000), CreatedAt: tx.NowMicros(), Depth: depth}); err != nil {
 			return err
 		}
 		if err := tx.Q.InsertEventDelivery(ctx, db.InsertEventDeliveryParams{SubscriptionID: r.ID, EventID: e.ID, Subject: e.Subject, Type: e.Type,
@@ -429,10 +482,25 @@ func (m *Manager) reconcile(ctx context.Context) {
 		m.log.Warn("list subscriptions", obs.Err(err))
 		return
 	}
+	pausedIDs, err := m.svc.s.R().ListPausedSpaceIDs(ctx)
+	if err != nil {
+		m.log.Warn("list paused spaces", obs.Err(err))
+		return
+	}
+	paused := map[string]bool{}
+	for _, id := range pausedIDs {
+		paused[id] = true
+	}
 	want := map[string]bool{}
 	for _, s := range subs {
 		c := m.conns[s.ConnectionID]
 		if s.Enabled == 0 || c == nil || c.row.Enabled == 0 {
+			continue
+		}
+		if s.WhilePaused == PausedStop && paused[s.SpaceID] {
+			// Stopped until the space resumes (SM-EVT-014); a durable consumer keeps its position on the server.
+			m.stopSub(s.ID)
+			m.svc.setState(s.ID, "paused", "")
 			continue
 		}
 		key := fmt.Sprintf("%d|%s|%d|%d", c.version, s.EffectiveSubject, s.CursorGeneration, s.Version)

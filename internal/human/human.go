@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/schemautil"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -225,6 +226,9 @@ type Service struct {
 	// PendingLimits returns a space's effective pending limits (per space, per requesting run) inside the creating
 	// transaction (the limits model, ADR-0036). Nil: MaxPendingPerSpace and MaxPendingPerRequester.
 	PendingLimits func(ctx context.Context, q *db.Queries, spaceID string) (perSpace, perRun int64)
+	// Inbox receives the inbox items of responses when a policy's response_inbox asks for them (SM-INBOX-001,
+	// ADR-0049). Nil: responses are notifications only.
+	Inbox *inbox.Service
 }
 
 func (svc *Service) pendingLimits(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {

@@ -690,6 +690,15 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByRole('button', { name: 'Policies' }).click()
     await expect(page.getByText('this space · approval')).toBeVisible()
   })
+  // Routed responses as inbox items (SM-INBOX-001, ADR-0049): the question policy's "Responses in the inbox" choice.
+  await capture(page, 'human-policy-inbox', async () => {
+    await page.goto(`/spaces/${payments.id}/human`)
+    await page.getByRole('button', { name: 'Policies' }).click()
+    await page.getByRole('row', { name: /^Question/ }).getByRole('button', { name: 'Edit' }).click()
+    await page.getByRole('textbox', { name: 'Responses in the inbox' }).click()
+    await page.getByRole('option', { name: 'Also an inbox item when routed to control or the operators' }).click()
+    await expect(page.getByText('never the response itself')).toBeVisible()
+  })
   await capture(page, 'human-rerouted', async () => {
     await page.goto(`/spaces/${payments.id}/human`)
     await page.getByLabel('Show resolved, withdrawn and expired').check()
@@ -750,6 +759,21 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByRole('option', { name: 'GitHub pull requests · v1' }).click()
     await page.getByLabel('account_key').fill('example-org')
     await page.getByLabel('repository').fill('example-org/docs')
+  })
+  // What the subscription does while its space is paused (SM-EVT-014, ADR-0049): here, stop until the space resumes.
+  await capture(page, 'events-subscribe-paused', async () => {
+    await page.goto(`/spaces/${docs.id}/events`)
+    await page.getByRole('button', { name: 'Subscribe' }).click()
+    await page.getByLabel('Name').fill('docs pull requests')
+    await page.getByRole('textbox', { name: 'Connection' }).click()
+    await page.getByRole('option', { name: 'pulse-prod' }).click()
+    await page.getByRole('textbox', { name: 'Template' }).click()
+    await page.getByRole('option', { name: 'GitHub pull requests · v1' }).click()
+    await page.getByLabel('account_key').fill('example-org')
+    await page.getByLabel('repository').fill('example-org/docs')
+    await page.getByRole('textbox', { name: 'While the space is paused' }).click()
+    await page.getByRole('option', { name: 'Stop until the space resumes' }).click()
+    await expect(page.getByText('Durable events wait in the stream')).toBeVisible()
   })
   // The same form for a source without JetStream: core NATS delivery, labelled non-durable, with no start position.
   await capture(page, 'events-subscribe-core', async () => {

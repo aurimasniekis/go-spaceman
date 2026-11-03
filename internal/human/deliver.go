@@ -160,6 +160,10 @@ func (svc *Service) rerouted(ctx context.Context, tx *store.Tx, actor audit.Acto
 			return err
 		}
 	}
+	// The response also becomes an inbox item when the type's policy asks for it (SM-INBOX-001, ADR-0049).
+	if err := svc.responseRouted(ctx, tx, a, nid, kind, rt, reason); err != nil {
+		return err
+	}
 	tx.AfterCommit(svc.notified)
 	_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "human_action.rerouted", Target: audit.Target{Type: "human_action", ID: a.ID},
 		Details: map[string]any{"space_id": a.SpaceID, "notification_id": nid, "original_run": a.RequesterRun, "from": from, "to": rt.String(), "reason": reason}})

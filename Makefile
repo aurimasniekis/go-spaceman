@@ -169,12 +169,13 @@ test-real-systemd:
 	./scripts/systemd-smoke.sh
 
 # Pulse/NATS integration against an embedded nats-server (internal/events/pulsetest, operator/JWT mode, JetStream) and
-# the real go-pulse SDK: ingestion (durable consumers, dedup, fan-out, quarantine, cursors, replay, loop guard), outbox
+# the real go-pulse SDK: ingestion (durable consumers, dedup, fan-out, quarantine, cursors, replay, loop guard, paused-space
+# policies, automation depth between two centrals), outbox
 # publication, and the central end-to-end paths. These tests also run in `make test`; this target runs just them,
 # uncached. Simulated evidence: a real pulsed deployment is not involved (docs/TEST_STRATEGY.md).
 test-pulse:
 	$(GO) test -count=1 -timeout 10m ./internal/events/... ./internal/outbox/
-	$(GO) test -count=1 -timeout 10m -run '^(TestEventsOverHTTP|TestCoreSubscriptionEndToEnd|TestOutboundEventsOverHTTP|TestRunLifecycleEvents|TestBackupRestoreEndToEnd)$$' ./internal/app/
+	$(GO) test -count=1 -timeout 10m -run '^(TestEventsOverHTTP|TestCoreSubscriptionEndToEnd|TestOutboundEventsOverHTTP|TestRunLifecycleEvents|TestBackupRestoreEndToEnd|TestPausedSpaceEventPolicies|TestEventLoopBetweenInstallationsIsBounded)$$' ./internal/app/
 
 # ---- Docs site and screenshots ----
 .PHONY: site site-dev site-check screenshots
