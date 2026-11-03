@@ -24,7 +24,7 @@ export default withMermaid(
   defineConfig({
     title: 'SpaceMan',
     description:
-      'Self-hosted control plane for persistent teams of coding agents: Claude Code and Codex in herdr-core terminals on your own nodes, with leases, recordings and audit.',
+      'Run Claude Code and Codex on your own machines: self-hosted orchestration for teams of coding agents in herdr-core terminals.',
     lang: 'en-US',
     // GitHub Pages project site: https://aurimasniekis.github.io/go-spaceman/
     base: '/go-spaceman/',

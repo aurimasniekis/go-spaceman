@@ -5,8 +5,8 @@
 <h1 align="center">SpaceMan</h1>
 
 <p align="center">
-  <strong>A self-hosted control plane for persistent teams of coding agents.</strong><br>
-  Claude Code and Codex run in herdr-core terminals on your own machines, under leases you control, with every terminal recorded and every action audited.
+  <strong>Run Claude Code and Codex on your own machines.</strong><br>
+  Self-hosted orchestration for teams of coding agents in herdr-core terminals: plan and queue their work, keep people in the loop, and see everything they do.
 </p>
 
 <p align="center">

@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: SpaceMan
-  text: A control plane for persistent teams of coding agents
-  tagline: Run Claude Code and Codex on your own machines, in herdr-core terminals, under leases you control, with every terminal recorded and every action audited.
+  text: Run Claude Code and Codex on your own machines
+  tagline: Self-hosted orchestration for teams of coding agents in herdr-core terminals. Plan and queue their work, keep people in the loop, and see everything they do.
   image:
     src: /logo.svg
     alt: SpaceMan logo
@@ -20,22 +20,22 @@ hero:
       link: /guide/status
 
 features:
-  - title: Spaces pinned to your nodes
-    details: A space is a long-lived team of agents with its own goals and instructions, pinned to one machine running spaceman-agent. Nothing runs anywhere else, and moving a space to another node is an explicit, audited relocation.
-  - title: Leases, not hope
-    details: Every run needs a renewable execution lease. A node that loses central stops new work and ends running work after a grace period; a lease-guard terminal ends runs even if the agent daemon dies.
-  - title: A coordinating control agent
-    details: Each space has an inbox, an ordered execution queue, a control agent that plans and workers in their own Git worktrees, with durable messages between them and schedules that add work.
-  - title: People stay in charge
-    details: Agents ask people through human actions (questions, approvals, to-dos, custom types) gathered across spaces. Enforced approvals gate the operations SpaceMan performs, bound to the run and the exact arguments.
-  - title: Knowledge and memory
-    details: Role memory is checkpointed on the node and preserved centrally as Git history. Knowledge bases answer agents through per-requester support sessions, and dreams consolidate memory.
-  - title: Events and tools
-    details: Pulse subscriptions (GitHub through go-pulse-github) feed the inbox, SpaceMan publishes its own events through an outbox, and one MCP gateway mediates external tools with grants and limits.
-  - title: Every terminal recorded
-    details: The node records each run's terminal into compressed segments and ships them to central. Watch live (read-only) or replay with seeking and speed control.
-  - title: Built to be automated
-    details: A documented HTTP API (OpenAPI 3.1) with optimistic concurrency and idempotent creates. The web UI, the spaceman command line and the Terraform provider use the same API.
+  - title: Self-hosted by design
+    details: Agents run only on machines you enroll. Each space is pinned to one node and moves only through an explicit, audited relocation.
+  - title: Safe when things fail
+    details: Every run holds a renewable lease. If a node loses contact with central, its work stops within a bounded time, even when the agent daemon crashes.
+  - title: Coordinated teams
+    details: A control agent plans from each space's inbox and queue and hands tasks to workers, each in its own Git worktree.
+  - title: People in the loop
+    details: Agents ask questions and request approvals that people answer from one place. An approval covers the exact operation it was asked for.
+  - title: Memory that lasts
+    details: Each role keeps Git-backed memory that survives restarts and relocation. Knowledge bases answer questions with cited evidence.
+  - title: Connected to your tools
+    details: Subscribe spaces to GitHub and other events through Pulse, and give agents MCP tools through one gateway with per-role access.
+  - title: Full visibility
+    details: Every terminal is recorded for live viewing and replay, and every change lands in a tamper-evident audit log.
+  - title: Built for automation
+    details: One OpenAPI 3.1 API powers the web UI, the spaceman CLI and the Terraform provider.
 ---
 
 <div class="sm-home">
