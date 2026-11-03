@@ -14,7 +14,7 @@
   - a local central for Terraform.
 
   Simulated evidence shows that SpaceMan behaves correctly against the model. It does not show that the model matches the dependency.
-- **Real** means a run against the real dependency: herdr-core, Claude Code, Codex, Pulse, an identity provider, S3, Linux/systemd, containers, browsers. These suites are opt-in. Credentialed ones need `SPACEMAN_REAL=1`, are budget-bounded and clean up only what they create (SM-VER-002). Each real result is recorded with the date, the versions and the platform in TRACEABILITY.md.
+- **Real** means a run against the real dependency: herdr-core, Claude Code, Codex, Pulse, an identity provider, S3, Linux/systemd, containers, browsers. These suites are opt-in (build tag `real` plus a variable per dependency: `SPACEMAN_REAL_CLAUDE`, `SPACEMAN_REAL_PORCH`, `SPACEMAN_REAL_PULSE`, `SPACEMAN_REAL_S3`). Credentialed ones are budget-bounded and clean up only what they create (SM-VER-002). Each real result is recorded with the date, the versions and the platform in TRACEABILITY.md.
 
 ## Suites
 
@@ -23,11 +23,16 @@
 | `make test` / `make race` (in `make check`) | Unit and in-process end-to-end tests of every package, including `internal/app`: central on a real HTTP server, a node agent with the in-memory runner, real Git, real SQLite | simulated |
 | `make test-fault` | `test/fault` (build tag `fault`): crashes, a full disk, interrupted recordings, disconnects, partitions, corrupted state, database contention (below) | simulated; central's crash is a real `SIGKILL` of a child process |
 | `make test-pulse` | Pulse/NATS integration: `internal/events/...` and `internal/outbox`, plus the central end-to-end event paths, against an embedded nats-server with the real go-pulse SDK | simulated; no `pulsed` |
-| `make test-real` | Build tag `real`: an isolated herdr-core core (`internal/runner/hc`, `test/real`). With `SPACEMAN_REAL=1`, also Claude Code and Codex runs on the local logins | real |
+| `make test-real` | Build tag `real`: an isolated herdr-core core (`internal/runner/hc`, `test/real`). With `SPACEMAN_REAL_CLAUDE=1` and `CLAUDE_CODE_OAUTH_TOKEN`, also budget-bounded Claude Code runs (Haiku). The suites below are part of it and skip without their own variables | real |
+| `make test-real-porch` | `TestRealPorchOIDC`: go-porch built from the sibling checkout (`PORCH_SRC`) into a temp dir, with Porch's fake Google fixture upstream; SpaceMan registered as a Porch client; sign-in, `porch.groups` mapping, group JIT and step-up through a scripted browser | real Porch (development mode); fake upstream |
+| `make test-real-pulse` | `TestRealPulseGitHub`: pulsed and nats-server (`PULSE_SRC`) and the `pulse-github` service (`PULSE_GITHUB_SRC`) publishing its own webhook fixtures; ingestion into two spaces, dedup, replay, quarantine, loop guard, outbound publication read back with go-pulse | real pulsed, nats-server and go-pulse-github; GitHub App lookup stubbed with pulse-github's test JSON |
+| `make test-real-s3` | `TestRealS3BackupRestore`: a throwaway MinIO container (pinned digest, random port, TLS with a test CA, generated credentials); client calls, API and CLI backups, list, verify, tamper detection, offline restore and comparison | real MinIO |
+| `make test-real-systemd` | `scripts/systemd-smoke.sh`: the linux release archive installed in a Debian 13 container with systemd as PID 1 (`--cgroupns=private --cap-add SYS_ADMIN`); `spaceman.service` health, readiness, stop/start/restart, KEK assertion, `systemd-analyze security`; `spaceman-agent.service` refusing cleanly without enrollment or herdr-core | real systemd 257 (container, linux/arm64) |
 | `make tf-test`, `make tf-acc` | Terraform provider unit tests. Acceptance tests run the Terraform binary against a throwaway local central | simulated (local central), real Terraform |
 | `make web-check` | UI typecheck, vitest unit tests (Markdown sanitizer, contrast, forms) and the production build | simulated |
 | `make e2e` | Playwright in Chromium against a fresh local stack: real central, a real `spaceman-agent`, an isolated herdr-core core, a stub harness | real browser, real hc; stub harness |
 | `make demo` | `test/demo` (build tag `demo`): the brief's §41 demonstration, thirty steps in order against a real central with the UI, two real agents with their own herdr-core cores, devpulse and devmcp, through the browser, the API and the CLI; one evidence line per step ([DEMO.md](DEMO.md)) | real processes, browser and hc; stub harness (simulated steps marked per step); `SPACEMAN_DEMO_REAL=1` adds a real Claude Code worker |
+| `make e2e-browsers` | The same journey in Firefox and WebKit (Playwright's builds, `SM_E2E_BROWSERS`), each on its own fresh stack | real browsers, real hc; stub harness |
 | `make screenshots` | Seeded demo instance. Every captured page is audited with axe (WCAG 2.1 A/AA) in both themes | real browser |
 | `make site-check` | Site build with a dead-link check, screenshot references, Mermaid parsing, API-reference drift, and axe on every site page | real browser |
 | `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` | simulated |
@@ -56,13 +61,13 @@
 | 5 | Memory conflicts and sync | `TestMemoryInstancesShareAndPreserve`, `TestApplyRefusesAndPreserves`, `TestApplyFastForwardsAndServes`, `TestMemorySyncedToCentral`, `TestRunRefusesUnsafeRepositoryConfig` | — |
 | 6 | Prompt and template provenance | `internal/catalog` `TestPromptLifecycle`, `TestResolution` (layers, origins, policy ceilings, manifests); `TestTemplatesAndConnections` (immutable template versions, follow-latest) | — |
 | 7 | MCP isolation, authorization and failures | `internal/gateway` `TestGatewayCalls`, `TestEgressPolicy`, `TestUpstreamRouting`; `TestGatewayOverBridge`, `TestGatedGatewayCall`, `TestAgentToolsOverBridge` | `TestRealClaudeUsesGatewayTool`, `TestRealClaudeUsesSpaceManTools` (Claude Code, Haiku) |
-| 8 | Auth, bootstrap, OIDC, revocation | `TestBootstrapAndForcedEnrollment`, `TestAPIBootstrapLoginAndConventions`, `TestLoginThrottlingAndEnumeration`, `TestMFAThrottleHoldsUnderConcurrency`, `TestLoginThrottleHoldsUnderConcurrency`, `TestIDTokenValidation`, `TestOIDCSignInOverHTTP`, `TestWatchStreamEndsOnRevocation`, `TestTerminalStreamEndsOnRevocation`, `TestPurgeSpaceForgetsItsGrants` | `make e2e` (setup, sign-in with TOTP, password reset); no real identity provider (Porch) |
-| 9 | Secrets | `TestCreateIsWriteOnly`, `TestLaunchPayloadRedacted`, `TestRedactionNeverLeaks`, `TestScrubEnv`, `TestSealBindsContext`, `TestClientSecretWriteOnly`, `TestFaultCorruptNodeState` (partial secrets file) | `TestRealClaudeRun` (secrets file unlinked; token absent from hc state), `TestRealClaudeUsesSpaceManTools` |
+| 8 | Auth, bootstrap, OIDC, revocation | `TestBootstrapAndForcedEnrollment`, `TestAPIBootstrapLoginAndConventions`, `TestLoginThrottlingAndEnumeration`, `TestMFAThrottleHoldsUnderConcurrency`, `TestLoginThrottleHoldsUnderConcurrency`, `TestIDTokenValidation`, `TestOIDCSignInOverHTTP`, `TestWatchStreamEndsOnRevocation`, `TestTerminalStreamEndsOnRevocation`, `TestPurgeSpaceForgetsItsGrants` | `make e2e` (setup, sign-in with TOTP, password reset); `TestRealPorchOIDC` (real Porch v0.3.0: PKCE S256, RFC 9207 `iss`, `porch.groups` mapping, group JIT, replay refused, step-up, group removal) |
+| 9 | Secrets | `TestCreateIsWriteOnly`, `TestLaunchPayloadRedacted`, `TestRedactionNeverLeaks`, `TestScrubEnv`, `TestSealBindsContext`, `TestClientSecretWriteOnly`, `TestFaultCorruptNodeState` (partial secrets file) | `TestRealClaudeRun` (secrets file unlinked; token absent from hc state), `TestRealClaudeUsesSpaceManTools`; `TestRealS3BackupRestore` (no plaintext secret in any bucket object; credentials generated at runtime) |
 | 10 | Event schema, variable and wildcard validation | `TestValidateDefinition`, `TestBindRejectsWidening`, `TestInputSchemaAndFilters`, `TestInstructionsSeeOnlyVariables`; `TestEventsOverHTTP` (wildcard variable refused) | — |
-| 11 | Durable acknowledgement, dedup, fan-out | `TestIngestFanOutAndProvenance`, `internal/inbox` `TestDedup`, `TestDurableRoundTrip`, `TestAcknowledge`, `TestMessagesDeliveredToIdleRuns` | — (embedded NATS with the real SDK only) |
-| 12 | Subscription edits, replay, quarantine | `TestCursorSemantics`, `TestQuarantineAndReprocess`, `TestReplayIsExplicitAndDistinctFromRetry`, `TestEventsOverHTTP`; core NATS refuses cursors: `TestCoreSubscriptionRefusesCursors`, `TestCoreSubscriptionEndToEnd` | — |
+| 11 | Durable acknowledgement, dedup, fan-out | `TestIngestFanOutAndProvenance`, `internal/inbox` `TestDedup`, `TestDurableRoundTrip`, `TestAcknowledge`, `TestMessagesDeliveredToIdleRuns` | `TestRealPulseGitHub` (real pulsed + go-pulse-github: durables under exact grants, two spaces one item each, webhook redelivery, same-ID re-publish and replay deduplicated) |
+| 12 | Subscription edits, replay, quarantine | `TestCursorSemantics`, `TestQuarantineAndReprocess`, `TestReplayIsExplicitAndDistinctFromRetry`, `TestEventsOverHTTP`; core NATS refuses cursors: `TestCoreSubscriptionRefusesCursors`, `TestCoreSubscriptionEndToEnd` | `TestRealPulseGitHub` (schema edit with `If-Match`, quarantine and reprocess, explicit replay recreating the consumer on real pulsed) |
 | 13 | Restore cursor reconciliation | `TestApplyPendingRestore` (subscriptions replay from the oldest stored delivery), `TestBackupRestoreEndToEnd` | — |
-| 14 | Feedback-loop prevention | `TestOwnEventsAreNotReingested`, `TestDepthLoopsAndQuotas` (cross-space chains) | — |
+| 14 | Feedback-loop prevention | `TestOwnEventsAreNotReingested`, `TestDepthLoopsAndQuotas` (cross-space chains) | `TestRealPulseGitHub` (own outbound events subscribed back are filtered) |
 | 15 | KB allocation, reuse, continuity, busy handling | `TestKBSupportSessions` (one session per requester, reuse, queuing at capacity, evidence), `TestKnowledgeRoutedToSupportSession` | — |
 | 16 | KB capacity without deadlock | `TestAdmissionPoolsAndCapacity` (KB support has its own pool), `TestKBSupportSessions` (requests queue at capacity and complete) | — |
 | 17 | Mixed-harness communication, concurrent edits | `TestMessagesDeliveredToIdleRuns` (Claude/Claude, Claude control with a Codex worker, Codex control with a Claude worker), `TestControlLaunchesWorkersInWorktrees` (separate worktrees), `TestMemoryInstancesShareAndPreserve` (concurrent memory edits merge or are preserved) | — (no real Codex run yet, K-9) |
@@ -75,10 +80,26 @@
 | 24 | Approval versus execution outcomes | `TestApproveExecuteOnce`, `TestRecoverInterrupted` (an interrupted execution is never retried), `TestApprovalEventsRecorded` | — |
 | 25 | Acknowledgement not granting permission | `internal/messages` `TestAcknowledge`, `TestTools` (only recipients acknowledge, reply or resolve), `TestCustomActions` (a custom "approved" outcome grants nothing), `TestRevocationDoesNotUndoCompletedActions` | — |
 | 26 | Recording interruption and disk exhaustion | `TestTornSegmentRecovers`, `TestQuotaTruncates`, `TestDiskFullTruncates`, `TestFaultRecordingDiskFull`, `TestFaultInterruptedRecordingAndUpload`, `TestRecordingShippedReplayedAndStreamed` | `TestRealNodeEndToEnd` (recording through the real agent and hc); `make e2e` (live and replayed run) |
-| 27 | Backup and restore | `internal/backup` `TestRoundTrip`, `TestVerifyDetectsTampering`, `TestVerifyDatabaseCopy`, `TestServiceS3` (fake S3); `TestBackupRestoreEndToEnd` | — (no real S3) |
+| 27 | Backup and restore | `internal/backup` `TestRoundTrip`, `TestVerifyDetectsTampering`, `TestVerifyDatabaseCopy`, `TestServiceS3` (fake S3); `TestBackupRestoreEndToEnd` | `TestRealS3BackupRestore` (MinIO over TLS: API and CLI backups, list, verify, tamper detection, offline restore from the bucket, records compared); MinIO only |
 | 28 | Dirty relocation refusal | `TestRelocationDirtyRefusedThenExported`, `TestRelocationInspectExportRestore`, `TestAddWorktreesRefusesEscapes`, `TestReadLooseRefusesChainedAndReservedLinks` | — (no relocation between real machines) |
 | 29 | Terraform drift, import, secrets | `make tf-test` (`TestNoSecretsStored`, `TestVersionInPrivateState`, `TestSplitImportID`, `TestDocsUpToDate`) | `make tf-acc` (`TestAcc*`: Terraform 1.17 against a local central) |
-| 30 | UI and accessibility | `make web-check` (vitest, including contrast tests) | `make e2e`, `make screenshots` (axe in both themes, Chromium) |
+| 30 | UI and accessibility | `make web-check` (vitest, including contrast tests) | `make e2e`, `make screenshots` (axe in both themes, Chromium); `make e2e-browsers` (Firefox, WebKit) |
 | 31 | Site, screenshots, links, Mermaid | — | `make site-check` (dead links, screenshot references, Mermaid, API drift, axe on every page) |
 
-A topic marked "—" under Real has no real-environment evidence yet. LIMITATIONS.md and TRACEABILITY.md record what is missing (for example a real `pulsed`, a real identity provider, real S3, real Codex runs and Linux hosts). Fakes are never presented as working integrations.
+A topic marked "—" under Real has no real-environment evidence yet. LIMITATIONS.md and TRACEABILITY.md record what is missing (for example real Codex runs, AWS S3, a physical Linux host and amd64 under systemd, and Google and GitHub behind Porch and go-pulse-github). Fakes are never presented as working integrations.
+
+## Real-evidence run (2026-11-03, SM-VER-002)
+
+macOS (Darwin 24.6), Docker 29.8.2 (linux/arm64 VM), hc 0.1.16, Claude Code 2.1.317, nats-server 2.15.1, Playwright 1.64.1.
+
+| Dependency | Suite | Result |
+|---|---|---|
+| herdr-core | `go test -tags real ./internal/runner/hc/`; `TestRealNodeEndToEnd`, `TestRealDisconnectEnforcement` | PASS (isolated cores; `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE` unset) |
+| Claude Code | `TestRealClaudeRun`, `TestRealClaudeUsesSpaceManTools`, `TestRealClaudeUsesGatewayTool` (Haiku) | PASS |
+| Codex | — | not run: no credential |
+| Porch OIDC | `make test-real-porch` (go-porch v0.3.0) | PASS |
+| Pulse, NATS, go-pulse-github | `make test-real-pulse` (pulsed v0.1.3, go-pulse-github v0.1.0) | PASS |
+| S3 | `make test-real-s3` (MinIO RELEASE.2026-10-23T20-06-51Z) | PASS |
+| Linux/systemd | `make test-real-systemd` (Debian 13, systemd 257.13, linux/arm64) | PASS; amd64 not run |
+| Containers | `make image-smoke` | PASS |
+| Browsers | `make e2e-browsers` (Firefox, WebKit) | PASS |

@@ -28,6 +28,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Stub harness (development only): it now finds the SpaceMan MCP server when it stands in for Codex (`-c mcp_servers.…`
   overrides), and understands `/await-human [n]`, `/kb-delay <seconds>` and `/dream`; KB answers cite the working
   tree's revision.
+- Real-dependency suites (SM-VER-002), opt-in behind the `real` build tag and a variable each, each removing only what
+  it created: `make test-real-porch` (SpaceMan signs in through a real go-porch built from the sibling checkout:
+  `porch.groups` mapping, group JIT, replay refusal, step-up), `make test-real-pulse` (real pulsed, nats-server and the
+  go-pulse-github service with its own fixtures: fan-out to two spaces, dedup, replay, quarantine, loop guard, outbound
+  publication), `make test-real-s3` (a throwaway MinIO container pinned by digest: backups, list, verify, tamper
+  detection, offline restore), `make test-real-systemd` (`scripts/systemd-smoke.sh`: the linux release archive under
+  systemd in a Debian 13 container, both units), and `make e2e-browsers` (the browser journey in Firefox and WebKit).
+  Results from 2026-11-03 are in `docs/TRACEABILITY.md` and `docs/TEST_STRATEGY.md`. Codex, AWS S3 and a physical Linux
+  host remain unverified (`docs/LIMITATIONS.md`).
 - Remote command line (SM-API-003, ADR-0040): `spaceman` is now also a client for a running central's API
   (`--server`/`SPACEMAN_SERVER`, an API token from `--token-file`, `SPACEMAN_TOKEN_FILE` or `SPACEMAN_TOKEN`,
   `-o table|json|yaml`). Commands for nodes, spaces (including `space relocate precheck|start|status|retry|cancel|release`
@@ -107,6 +116,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   history and items they create are marked.
 
 ### Fixed
+- Documentation: the Porch setup now says to add `groups` to the application's allowed scopes. Without it Porch drops
+  the scope and SpaceMan sees no groups (found by the real Porch suite).
 - Recordings on a full disk: the run continues as before. Central's copy now ends with a `trunc` record (`disk`) and
   the run's close record instead of stopping silently. A quota truncation also reaches central's copy, and a recording
   resumed after a local loss continues above central's sequence numbers.

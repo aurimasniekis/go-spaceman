@@ -137,6 +137,13 @@ e2e:
 demo:
 	scripts/demo.sh
 
+.PHONY: e2e-browsers
+# The same journey in Firefox and WebKit (Playwright's builds: cd web && pnpm exec playwright install firefox webkit).
+# The journey is a first run (setup with the root token), so each engine gets its own fresh stack.
+e2e-browsers:
+	SM_E2E_BROWSERS=firefox,webkit scripts/e2e.sh --reporter=list --project=firefox
+	SM_E2E_BROWSERS=firefox,webkit scripts/e2e.sh --reporter=list --project=webkit
+
 .PHONY: test-fault test-real test-pulse
 # Fault-injection suite (crashes, disk full, interrupted recordings, disconnects); Go only.
 test-fault:
@@ -146,6 +153,31 @@ test-fault:
 # Codex runs using the local logins. Never touches the default hc core. See docs/TEST_STRATEGY.md.
 test-real:
 	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE $(GO) test -tags real -count=1 -timeout 30m ./...
+
+# Sibling checkouts (../porch, ../pulse, ../pulse-github), found from the main checkout so worktrees work too. They are
+# only read and built into temp dirs, never modified.
+SIBLINGS ?= $(abspath $(shell git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/../..)
+PORCH_SRC ?= $(SIBLINGS)/porch
+PULSE_SRC ?= $(SIBLINGS)/pulse
+PULSE_GITHUB_SRC ?= $(SIBLINGS)/pulse-github
+
+.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-systemd
+# Real Porch (built from PORCH_SRC into a temp dir, with Porch's own fake Google upstream): SpaceMan OIDC sign-in.
+test-real-porch:
+	SPACEMAN_REAL_PORCH=1 SPACEMAN_PORCH_SRC=$(PORCH_SRC) $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealPorch' -v ./test/real/
+
+# Real pulsed + nats-server (built from PULSE_SRC) and go-pulse-github's publisher and fixtures (PULSE_GITHUB_SRC).
+test-real-pulse:
+	SPACEMAN_REAL_PULSE=1 SPACEMAN_PULSE_SRC=$(PULSE_SRC) SPACEMAN_PULSE_GITHUB_SRC=$(PULSE_GITHUB_SRC) \
+	  $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealPulse' -v ./test/real/
+
+# Real S3: a throwaway MinIO container (pinned digest, random port, removed afterwards).
+test-real-s3:
+	SPACEMAN_REAL_S3=1 $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealS3' -v ./test/real/
+
+# Linux/systemd: a Debian 13 container with systemd as PID 1 running the linux release binary and the shipped units.
+test-real-systemd:
+	./scripts/systemd-smoke.sh
 
 # Pulse/NATS integration against an embedded nats-server (internal/events/pulsetest, operator/JWT mode, JetStream) and
 # the real go-pulse SDK: ingestion (durable consumers, dedup, fan-out, quarantine, cursors, replay, loop guard), outbox

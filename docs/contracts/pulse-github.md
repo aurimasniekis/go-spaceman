@@ -43,5 +43,9 @@ type Payload struct {
   - variables `account_key` (validated against the regex above) and `repository` (`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`);
   - subject `evt.github.{{account_key}}.webhook.issues.*` or `…pull_request.*`;
   - payload filter `repository.full_name == {{repository}}`.
+- Observed from a running `pulse-github run` (v0.1.0, `TestRealPulseGitHub`, 2026-11-03): the `issues_opened.json` webhook publishes
+  on `evt.github.<acct>.webhook.issues.opened` with the headers above, and `push.json` on `….webhook.push.none`. The publication also
+  carries `account.github_id` and `github.payload_sha256`, which SpaceMan's derived sample
+  (`internal/events/template/testdata/pulse-github-issues-opened.json`) lacks; no seed template reads them.
 - Sample-event tests use `issues_opened.json`. **There is no upstream pull_request fixture.** The PR template's sample is synthetic and
   labeled as such, until a real PR event is captured from a live pulse-github.

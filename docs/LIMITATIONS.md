@@ -30,9 +30,10 @@
   (`durable:<subject>:<durable>`, or `subscribe:<subject>` for core NATS). A missing durable grant shows up as a timeout
   in the subscription's error, not as a clear permission error (go-pulse v0.1.3 behaviour); a missing subscribe grant
   is reported as such. The in-process test server models only subscribe permissions, not Pulse's grants.
-- **No live go-pulse-github evidence yet.** The GitHub templates are tested against the event go-pulse-github builds for its
-  `issues_opened` fixture (derived from its code), not against a running pulse-github. There is no upstream pull request
-  fixture.
+- **Live go-pulse-github evidence uses its own fixtures and no GitHub account.** A running pulse-github v0.1.0 published
+  its `issues_opened` and `push` webhook fixtures to a real pulsed (`make test-real-pulse`). Its GitHub App
+  installation lookup was answered by a local stand-in serving pulse-github's own test JSON, so the real GitHub API was
+  not involved. There is no upstream pull request fixture, so the PR template has no real evidence.
 
 ## Event publication
 - **Off by default; nothing is back-filled.** Events of a period with `events.outbound.enabled: false` are never
@@ -42,12 +43,14 @@
 - **Loop guard is per installation.** An installation drops only events carrying its own `spaceman-origin`. Automation
   depth across installations (an event creating an item, a task and another event) is not bounded yet (SM-EVT-016).
 - **No interrupted-execution event.** Approval executions marked interrupted by a central restart are not published.
-- **No real Pulse evidence yet.** Publication is tested against the in-process Pulse-shaped NATS server (real JetStream,
-  real go-pulse SDK), not against a running `pulsed`. Grants (`publish:evt.spaceman.>`) are not modelled by that server.
+- **Real Pulse evidence is local only.** Publication ran against a real `pulsed` v0.1.3 with nats-server 2.15.1 in its
+  development profile on loopback (`make test-real-pulse`), with a client granted `publish:evt.spaceman.>`. pulsed's
+  production profile (TLS behind a proxy) has not been run.
 
 ## Accounts
 - **No Codex ChatGPT login.** Codex runs use an OpenAI API key; ChatGPT-plan logins (`auth.json`) are not supported yet (K-9).
-- **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence.
+- **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence. codex-cli
+  0.166.0 is installed on the development machine, but there is no Codex or OpenAI credential to run it with.
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
@@ -191,9 +194,12 @@
   (`spaceman_space_xspace_settings`, `spaceman_xspace_peer`, ADR-0041), tested against the simulated suite only.
 
 ## Sign-in (OIDC)
-- **No real Porch evidence yet.** OIDC sign-in, group mappings, linking and step-up are tested against an in-process
-  provider that follows the Porch contract (`porch.groups`, RFC 9207 `iss`, PKCE S256), not against a running Porch
-  (SM-AUTH-002).
+- **Real Porch evidence is local, in development mode.** Sign-in, `porch.groups` mappings, group JIT and step-up ran
+  against a real Porch v0.3.0 (`make test-real-porch`, SM-AUTH-002), but Porch ran on `http://localhost` without TLS,
+  its upstream was Porch's fake Google test fixture rather than Google, and a scripted browser followed the link behind
+  Porch's sign-in button. Linking by invitation and the test login were not part of the real run.
+- **Porch must allow the `groups` scope.** A Porch application's allowed scopes default to `openid profile email
+  offline_access`; unless `groups` is added, Porch drops the scope silently and SpaceMan sees no groups.
 - **Password sign-in cannot be turned off.** Hallpass's SSO-only enforcement and "sign in with this provider
   directly" setting are not ported (ADR-0029).
 - **No provider sign-out.** Signing out ends the SpaceMan session only; RP-initiated logout at the provider is not
@@ -218,17 +224,21 @@
   longer than the delivery retention before the backup could be outside the replay. Outbox events pending at backup
   time are published again; consumers must deduplicate by event ID beyond Pulse's 2-minute window.
 - **S3 limits.** Each backup object is a single PUT (at most 5 GiB, so a database or file larger than that cannot go to
-  S3). The S3 target is tested only against an in-process fake bucket; no run against real S3 or MinIO is recorded.
+  S3). The S3 target is verified against MinIO only (`make test-real-s3`: backup, list, verify, tamper detection and
+  offline restore over TLS, path-style). AWS S3 and Cloudflare R2, virtual-hosted addressing, listings past 1000 keys,
+  and scheduled runs and retention against a real bucket are unverified.
 - **No download from the UI or API.** Backups are fetched from their target (directory or bucket); restore is CLI-only on
   a stopped central.
 - **Restore needs `git`** when the backup holds role memory, and attachments outside the data directory are restored to
   the configured `artifacts.local_dir` only.
 
 ## Packaging and deployment
-- **Linux only, and not yet run on a real Linux host.** The production target is Linux on amd64 and arm64 (SM-PKG-003).
-  macOS builds are labelled unsupported. Both systemd units passed `systemd-analyze verify` (systemd 257, in a Debian 13
-  container), and the binaries ran inside Linux containers. Neither unit has started a real installation under systemd.
-  The release workflow has not run, and no release has been published.
+- **Linux only, and not yet run on a physical or cloud Linux host.** The production target is Linux on amd64 and arm64
+  (SM-PKG-003). macOS builds are labelled unsupported. Both units ran a real installation of the linux/arm64 archive under
+  systemd 257 in a Debian 13 container (`make test-real-systemd`, Docker Desktop's VM). linux/amd64 has not run under
+  systemd, because systemd's own services fail under Docker Desktop's amd64 emulation. The agent unit has not run
+  enrolled with herdr-core. Under `Restart=on-failure` an agent that fails at start (for example, hc missing) is
+  restarted every 5 s until stopped. The release workflow has not run, and no release has been published.
 - **No image is agent-ready.** Neither the `spaceman` nor the `spaceman-agent` image contains herdr-core or a harness.
   SpaceMan does not bundle them, because their redistribution terms are unverified (ADR-0034). A containerized node
   needs a runtime image that the operator builds. herdr-core, Claude Code and Codex have not been run inside a container.
@@ -269,12 +279,20 @@
   `purge_on_destroy` is set. Recreating such an object with the same slug (or a user with the same email) fails until it
   is imported.
 - **Write-only rotation is explicit.** Terraform cannot see a changed write-only secret: bump its `_wo_version`.
-- **Tested against a local central only** (simulated, `make tf-acc`); no run against a production deployment, a real
-  identity provider or a real Pulse deployment is recorded.
+- **Tested against a local central only** (simulated, `make tf-acc`); no Terraform run against a production
+  deployment, a real identity provider or a real Pulse deployment is recorded.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned
   outside hc have stopped (SM-NODE-008). Verified end to end on macOS with hc 0.1.16 (`test/real` `TestRealNodeEndToEnd`:
-  a `SIGKILL`ed agent's run is ended by the guard); not yet verified on Linux.
+  a `SIGKILL`ed agent's run is ended by the guard; rerun 2026-11-03); not yet verified on Linux, because no herdr-core is
+  installed in the Linux container the systemd suite uses (ADR-0034).
+- **External integrations still without real evidence** (SM-VER-002, re-checked 2026-11-03):
+  - a real Codex run: no Codex or OpenAI credential on the development machine;
+  - AWS S3 and Cloudflare R2: no account (MinIO only);
+  - a physical or cloud Linux host, and linux/amd64 under systemd (Docker Desktop's amd64 emulation breaks systemd);
+  - Google behind Porch and the GitHub API behind go-pulse-github: no accounts (Porch's fake Google fixture and a local
+    GitHub App stand-in serving pulse-github's own test JSON were used);
+  - TLS and production profiles of Porch and pulsed: both ran in development mode on loopback.
 - **Terminal byte stream has no sequence numbers** (herdr-core 0.1.16). After the node reattaches, SpaceMan records an explicit gap and the new screen repaint. It cannot recover output that was emitted while it was detached.

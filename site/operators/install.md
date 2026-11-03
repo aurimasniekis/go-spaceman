@@ -5,8 +5,9 @@ SpaceMan has two programs: **`spaceman`**, the central control plane with the we
 
 ::: warning Supported platform
 The production target is **Linux** on amd64 and arm64 (SM-PKG-003). macOS builds exist for development and are
-labelled *unsupported*. The systemd units below passed `systemd-analyze verify` (systemd 257) but have not yet run a real
-installation on a Linux host. See [known limitations](/reference/limitations).
+labelled *unsupported*. The systemd units below ran a real installation of the linux/arm64 archive under systemd 257 in a
+Debian 13 container, but not yet on a physical or cloud Linux host or on amd64. See
+[known limitations](/reference/limitations).
 :::
 
 You can install SpaceMan in three ways:

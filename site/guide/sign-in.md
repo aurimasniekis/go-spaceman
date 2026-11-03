@@ -67,8 +67,10 @@ To use it:
 1. Register SpaceMan as an **application** in your Porch tenant (in the Porch UI, with
    `POST /api/v1/tenants/{tenant}/applications`, or Terraform's `porch_application`). Use SpaceMan's redirect URI
    exactly; Porch matches redirect URIs exactly. Copy the client secret: Porch shows it once.
-2. Turn on the application's **group disclosure** if you want group mappings. Porch sends a user's groups only when the
-   application discloses them **and** the `groups` scope is requested.
+2. Turn on the application's **group disclosure** if you want group mappings, and add `groups` to the client's
+   **allowed scopes** (Porch's default is `openid profile email offline_access`). Porch sends a user's groups only when
+   the application discloses them, the scope is allowed **and** SpaceMan requests it. Without the allowed scope the
+   sign-in still works but carries no groups, so mappings and group JIT rules see nothing.
 3. In SpaceMan, add the provider with the tenant's issuer, the client ID and secret, the scopes
    `openid profile email groups`, and the groups claim **`porch.groups`**.
 
@@ -129,5 +131,5 @@ Password sessions confirm with the password and code as before.
 
 - Password sign-in cannot be switched off yet, and there is no "sign in with this provider directly" setting.
 - Signing out of SpaceMan does not sign you out of the provider.
-- SpaceMan's Porch support is tested against an in-process provider that behaves like Porch; see
-  [Known limitations](/reference/limitations).
+- SpaceMan's Porch support is tested against a real Porch v0.3.0 (sign-in, group mappings, JIT and step-up), with
+  Porch's test upstream in place of Google and Porch in development mode; see [Known limitations](/reference/limitations).

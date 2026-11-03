@@ -85,9 +85,9 @@ service, and `manifest.sha256` is uploaded last. Only ciphertext and the plainte
 TLS is required (plain HTTP only in development), the client follows no redirects and uses no proxy, and private
 addresses are refused unless allowed. One object is at most 5 GiB (single-request upload).
 
-::: warning Simulated only
-The S3 target is tested against an in-process fake bucket. It has not been run against a real S3 service in this
-project's evidence yet (docs/TRACEABILITY.md, SM-STORE-002).
+::: warning Verified against MinIO only
+The S3 target has been run against MinIO (backup, list, verify and offline restore over TLS), not yet against AWS S3 or
+Cloudflare R2, and only with path-style addressing (docs/TRACEABILITY.md, SM-STORE-002).
 :::
 
 ## Making and checking backups

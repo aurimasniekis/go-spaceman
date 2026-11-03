@@ -13,6 +13,12 @@
   app's `disclosure.groups` is true **and** the `groups` scope is requested.
 - Clients are registered with `POST /api/v1/tenants/{tenant}/applications` or Terraform `porch_application`. Redirect URIs must match
   exactly, and the client secret is shown once.
+- A client's `allowed_scopes` default to `openid profile email offline_access` (`internal/apps/apps.go`, known scopes add `groups`).
+  `groups` must be allowed explicitly; a requested but unallowed `groups` scope is dropped without an error and the token has no
+  `porch.groups` (observed with `TestRealPorchOIDC`, 2026-11-03).
+- Porch's `/login` page is an SPA. Its provider buttons link to `{login_url}?return_to=…` (`/login/{provider}`, `web/src/routes/login.tsx`).
+  Step-up (`prompt=login` or `max_age`) redirects server-side to `/login/{provider}?intent=stepup` for upstream sessions
+  (`internal/oidcop/continue.go`).
 
 ## How SpaceMan uses it (same as Hallpass)
 - Generic OIDC client (`coreos/go-oidc/v3`). Users are identified by `(issuer, sub)`.

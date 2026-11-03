@@ -1,5 +1,11 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const engines: Record<string, string> = { firefox: 'Desktop Firefox', webkit: 'Desktop Safari' }
+const extraBrowsers = (process.env.SM_E2E_BROWSERS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s) => s in engines)
+
 // Runs against a stack from `scripts/dev-stack.sh up` (SM_URL and friends come from its env file).
 export default defineConfig({
   testDir: './e2e',
@@ -22,5 +28,10 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
     colorScheme: 'dark',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
+    // Opt-in engines (`make e2e-browsers`, SM_E2E_BROWSERS=firefox,webkit): the default runs, screenshots and the site
+    // audit stay on Chromium only.
+    ...extraBrowsers.map((name) => ({ name, use: { ...devices[engines[name]], viewport: { width: 1440, height: 900 } } })),
+  ],
 })
