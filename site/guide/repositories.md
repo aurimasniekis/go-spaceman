@@ -6,6 +6,8 @@ clones them, writer runs get their own worktrees of them, and the space's **Repo
 reported about each: the remote, the default branch locally and on the remote, the last fetch, changed and untracked
 files, unpushed commits and every worktree with the run that owns it.
 
+<Shot name="space-repositories" alt="A space's Repositories page: each configured repository with its remote, default branch, state, changes, unpushed commits, worktrees and last fetch" caption="A space's repositories as the node reports them" />
+
 SpaceMan never merges, pushes, resets or deletes anything in a repository. Agents open pull requests with their own
 tools; removing a repository from the list leaves its folder on the node, and deleting a space never touches the
 upstream repositories.
@@ -48,6 +50,8 @@ paths are allowed for local remotes. Agents use the same node setup inside their
 A folder that already exists but is not a Git repository is never overwritten; the report says so. The first launch of
 a repository that is still being cloned waits for the clone.
 
+<Shot name="space-repository-form" alt="The Add repository dialog: name, folder, clone URL, default branch, role and clone policy" caption="Adding a repository" />
+
 ## Worktrees for writers
 
 Control launches a worker for a task with `spaceman_worker_launch` and names a repository by its name or folder
@@ -61,6 +65,8 @@ lists them as **unlisted** so they can be added.
 
 The node reports after every change it is asked for and after events: a repository added or edited, the node
 connecting, a run of the space ending, and **Sync now**. Nothing polls idle spaces. For each repository:
+
+<Shot name="space-repository-detail" alt="A repository's detail: branches with unpushed commits, and worktrees with the runs that own them" caption="A repository's branches and worktrees" />
 
 - **State**: present, missing (not cloned yet) or error, with the reason (unreachable remote, a folder in the way, a
   repository configuration that would run a program).

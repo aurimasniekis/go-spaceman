@@ -15,7 +15,7 @@
 | `setup-node-enroll` | First node and space, Nodes and leases | Nodes | current |
 | `space-create` | First node and space | Space create form | current |
 | `space-purge` | First node and space | Purge confirmation of an archived space with the slug typed | current |
-| `space-overview` | Site landing, First node and space | Space overview with lease and runs (now with the Export action) | stale |
+| `space-overview` | Site landing, First node and space | Space overview with lease and runs with the Export and lifecycle actions | current |
 | `attention` | Observability | Attention page: what needs a person across spaces (human actions, tasks, quarantine, runs, budgets, nodes, outbox, backups, storage) | current |
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
@@ -28,8 +28,8 @@
 | `account-notifications` | Human actions | Notification preferences on the Account page | current |
 | `audit-log` | Sign-in and access | Audit log | current |
 | `sign-in-sso` | Single sign-on | Sign-in page with a provider button above the password form | current |
-| `sign-in-providers` | Single sign-on | Sign-in providers: redirect URI, providers, group mappings to grants | stale |
-| `sign-in-provider-form` | Single sign-on | Provider form with the write-only client secret and the porch.groups claim | stale |
+| `sign-in-providers` | Single sign-on | Sign-in providers: redirect URI, providers, group mappings to grants | current |
+| `sign-in-provider-form` | Single sign-on | Provider form with the write-only client secret and the porch.groups claim | current |
 | `queue` | The execution queue | Queue with running, ready, demoted incident, blocked, dependent and backlog tasks | current |
 | `queue-task` | The execution queue | Task drawer: eligibility reasons, state, dependencies, blockers | current |
 | `queue-reassign` | The execution queue | Task drawer's Assignee form: role and run chosen | current |
@@ -56,7 +56,7 @@
 | `events-quarantine` | Events and subscriptions | Quarantined event with reprocess/discard | current |
 | `events-core-subscription` | Events and subscriptions | Core NATS subscription: non-durable badge and explanation, subscribe grant, no cursor | current |
 | `event-replay` | Events and subscriptions | After an explicit replay: deliveries with live and replay origins | current |
-| `space-limits` | Limits and budgets | A space's effective limits with sources, the budget card and its usage-reporting note, retention periods | stale |
+| `space-limits` | Limits and budgets | A space's effective limits with sources, the budget card and its usage-reporting note, retention periods | current |
 | `space-schedules` | Schedules | A space's schedules: a weekday cron in Europe/Vilnius and an hourly task schedule | current |
 | `prompts-diff` | Prompts | Line diff between two published versions of a prompt | current |
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
@@ -83,9 +83,9 @@
 | `space-role-preview` | Roles and profiles | A space role's effective configuration with origins and system text | current |
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
 | `space-relocate` | Relocating a space | Relocate dialog: destination (a never-connected node is named as not available), dirty-state policy, stop runs, source folder retention | current |
-| `ops-backups` | Backups and restore | Backups page: target, schedule, retention, a verified backup, what backups include and exclude, the data retention card | stale |
-
-Pending capture (spec entries exist in `web/e2e/screenshots.spec.ts`, not yet run): `space-repositories`, `space-repository-detail` and
-`space-repository-form` (Repositories and worktrees, ADR-0044). After the next `make screenshots`, add them to the table above and
-show them on `site/guide/repositories.md` (`check-shots.mjs` refuses an inventoried screenshot no page shows, and a page
-screenshot that does not exist).
+| `ops-backups` | Backups and restore | Backups page: target, schedule, retention, a verified backup, what backups include and exclude, the data retention card | current |
+| `space-repositories` | Repositories and worktrees | A space's configured repositories with the node's report: remote, default branch, state, changes, unpushed commits, worktrees, last fetch | current |
+| `space-repository-detail` | Repositories and worktrees | A repository's detail: branches with unpushed commits and its worktrees with the runs that own them | current |
+| `space-repository-form` | Repositories and worktrees | Adding a repository: name, folder, clone URL without credentials, default branch, role and clone policy | current |
+| `space-export` | Retention and export | The space export dialog: what the archive holds, the not-encrypted warning, the size estimate and limit | current |
+| `sign-in-signed-out` | Single sign-on | The sign-in page after signing out of an SSO session, offering sign-out at the provider | current |

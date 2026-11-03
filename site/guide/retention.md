@@ -62,6 +62,8 @@ Space admins export a space from the **Export** button on its overview, with the
 (`spaceman space export download --space payments --out payments.zip`), or with `GET /spaces/{id}/export`. The archive
 is a ZIP file:
 
+<Shot name="space-export" alt="The Export this space dialog: what the archive holds, a warning that it is not encrypted, the size estimate and the space's export limit" caption="Exporting a space" />
+
 | File | Holds |
 |---|---|
 | `manifest.json` | the format (`spaceman.space-export/v1`), who exported it and when, counts, and every file with its size and SHA-256 |

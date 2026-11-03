@@ -80,6 +80,8 @@ ported from Hallpass:
   every sign-in method (and the password form, while password sign-in is on). After signing out, the page stays put
   instead of signing you straight back in.
 
+<Shot name="sign-in-signed-out" alt="The sign-in page after signing out of an SSO session, with a link to sign out at the provider" caption="Signed out, with sign-out at the provider offered" />
+
 ## Porch
 
 [Porch](https://github.com/aurimasniekis/go-porch) is an OpenID Connect provider with tenants, applications and groups.
