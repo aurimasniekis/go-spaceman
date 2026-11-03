@@ -42,4 +42,4 @@ overwritten; SpaceMan's copy is skipped instead.
 | Harness | Skills |
 |---|---|
 | Claude Code | Written to `$CLAUDE_CONFIG_DIR/skills/<name>/`. Loading verified with Claude Code 2.1.316. |
-| Codex | Not installed yet: Codex's skill loading has not been verified, so the node logs a warning and starts the run without them. |
+| Codex | Written to `$CODEX_HOME/skills/<name>/`. Loading verified with codex-cli 0.166.0 (the skill is listed in the model's prompt input). |

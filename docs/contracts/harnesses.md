@@ -58,6 +58,20 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
 - **Auth:**
   - `codex login --with-api-key` (key on stdin, stored in `$CODEX_HOME/auth.json`) and `--with-access-token` (`CODEX_ACCESS_TOKEN`).
   - ChatGPT login writes `auth.json` with `auth_mode: chatgpt`, `tokens`, `last_refresh`.
+- **Verified with codex-cli 0.166.0 (2026-11-03, isolated `CODEX_HOME` and `HOME`, no credential, no model call):**
+  - **Skills:** `$CODEX_HOME/skills/<name>/SKILL.md` is listed in the model's prompt input (`codex debug prompt-input`:
+    "refunds-runbook: … (file: r0/refunds-runbook/SKILL.md)", root `r0` = `$CODEX_HOME/skills`). Codex installs its own
+    skills in `$CODEX_HOME/skills/.system`.
+  - **Login storage:** `cli_auth_credentials_store` defaults to `"file"`; `codex login --with-api-key` writes
+    `$CODEX_HOME/auth.json` (0600, `{"auth_mode":"apikey","OPENAI_API_KEY":…}`) and `auth.lock`; `codex login status`
+    reads it.
+  - **Links:** with `auth.json` and `auth.lock` as symlinks to a shared folder, a login rewrites the shared file
+    through the link and the links stay; a second `CODEX_HOME` linked to the same file sees the change.
+  - **Refresh tokens are single-use:** the binary's messages include "your refresh token was already used" and "Skipping
+    token refresh because auth changed after guarded reload". Copies of one ChatGPT login would break each other.
+  - `CODEX_ACCESS_TOKEN` (`codex login --with-access-token`) is "Agent Identity" authentication, not a ChatGPT login;
+    SpaceMan does not use it.
+  - Not verified: a real ChatGPT login (no account) and a real model turn.
   - Env `OPENAI_API_KEY` and `CODEX_API_KEY` (strings-verified).
 - **Notify hook:** `notify = [argv…]` in config.toml, called at turn end.
 - **Status:** OSC 7501 emitter present.

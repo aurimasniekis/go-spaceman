@@ -294,6 +294,10 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	} else if len(p.Skills) > 0 {
 		log.Warn("this harness's skill loading is not verified; skills were not materialized", slog.Int("skills", len(p.Skills)))
 	}
+	if err := a.linkLogin(built.Login, built.LoginLinks); err != nil {
+		fail("write login", err)
+		return
+	}
 	a.rememberRunToken(c.RunID, p.RunToken)
 	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
 		fail("write secret file", err)

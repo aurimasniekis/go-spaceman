@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -217,4 +218,49 @@ func TestSecretEnvAndRotation(t *testing.T) {
 	if bs, _ := f.svc.Bindings(f.ctx, "spc_a"); len(bs) != 0 {
 		t.Fatalf("bindings survive deletion: %+v", bs)
 	}
+}
+
+// SM-ACCT-002, ADR-0053: a Codex ChatGPT login is the auth.json `codex login` writes. Only a ChatGPT-mode file with
+// its tokens is accepted (an API-key file belongs to the openai_api_key kind), it is stored compacted, a rotation is
+// checked the same way, and it reaches a launch under CODEX_AUTH_JSON, never as an environment variable.
+func TestCodexChatGPTLogin(t *testing.T) {
+	f := newFx(t)
+	login := "{\n  \"auth_mode\": \"chatgpt\",\n  \"tokens\": {\"access_token\": \"a1\", \"refresh_token\": \"r1\"},\n  \"last_refresh\": \"2026-11-03T10:00:00Z\"\n}\n"
+	for _, bad := range []string{
+		"",
+		"not json",
+		`{"auth_mode": "apikey", "OPENAI_API_KEY": "sk-x"}`,
+		`{"auth_mode": "chatgpt"}`,
+		`{"auth_mode": "chatgpt", "tokens": {}}`,
+		`["auth_mode", "chatgpt"]`,
+		`{"auth_mode": "chatgpt", "tokens": {"a": "` + strings.Repeat("x", 70_000) + `"}}`,
+	} {
+		_, err := f.svc.Create(f.ctx, admin, Input{Name: "codex-bad", Kind: KindCodexChatGPT, Secret: bad, Enabled: true})
+		code(t, err, apperr.CodeInvalid)
+	}
+	if CodexAuthKey != harness.CodexAuthKey {
+		t.Fatalf("payload key %q, the Codex harness reads %q", CodexAuthKey, harness.CodexAuthKey)
+	}
+	a := f.add("codex-plan", KindCodexChatGPT, login)
+	if a.Harness != "codex" {
+		t.Fatalf("harness %q", a.Harness)
+	}
+	_, err := f.svc.SetBindings(f.ctx, admin, "spc_a", []Binding{{AccountID: a.ID, Default: true}})
+	must(t, err)
+	env, err := f.svc.SecretEnv(f.ctx, "spc_a", "codex", a.ID)
+	must(t, err)
+	if len(env) != 1 || env[CodexAuthKey] != `{"auth_mode":"chatgpt","tokens":{"access_token":"a1","refresh_token":"r1"},"last_refresh":"2026-11-03T10:00:00Z"}` {
+		t.Fatalf("secret env %v", env)
+	}
+	// A rotation is checked like a new login; a one-line token is not a login.
+	_, err = f.svc.Update(f.ctx, admin, a.ID, a.Version, Input{Name: "codex-plan", Secret: "sk-plain-token", Enabled: true})
+	code(t, err, apperr.CodeInvalid)
+	rot, err := f.svc.Update(f.ctx, admin, a.ID, a.Version, Input{Name: "codex-plan", Secret: strings.ReplaceAll(login, "r1", "r2"), Enabled: true})
+	must(t, err)
+	if env, _ := f.svc.SecretEnv(f.ctx, "spc_a", "codex", a.ID); !strings.Contains(env[CodexAuthKey], `"refresh_token":"r2"`) || rot.SecretVersion != 2 {
+		t.Fatalf("after rotation %v %+v", env, rot)
+	}
+	// The other kinds keep their one-line rule.
+	_, err = f.svc.Create(f.ctx, admin, Input{Name: "key-json", Kind: "openai_api_key", Secret: login, Enabled: true})
+	code(t, err, apperr.CodeInvalid)
 }

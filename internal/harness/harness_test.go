@@ -100,6 +100,26 @@ func TestCodexBuild(t *testing.T) {
 	if l.Env["CODEX_HOME"] != "/data/spaces/spc_a/instances/ins_1/codex" || len(l.SecretEnv) != 1 || l.SecretEnv["OPENAI_API_KEY"] != "sk" {
 		t.Fatalf("env %v secrets %v", l.Env, l.SecretEnv)
 	}
+	// Skills load from $CODEX_HOME/skills (codex-cli 0.166.0); an API-key launch has no login but still names where a
+	// login would be linked, so links left by an earlier ChatGPT login are removed.
+	if l.SkillsRoot != "/data/spaces/spc_a/instances/ins_1/codex/skills" || l.Login != nil ||
+		l.LoginLinks["/data/spaces/spc_a/instances/ins_1/codex/auth.json"] != "auth.json" || l.LoginLinks["/data/spaces/spc_a/instances/ins_1/codex/auth.lock"] != "auth.lock" {
+		t.Fatalf("skills %q login %+v links %v", l.SkillsRoot, l.Login, l.LoginLinks)
+	}
+	// A ChatGPT login (ADR-0053) becomes the node's shared login file, never an environment variable.
+	cl := ctxFor(proto.LaunchPayload{AccountRef: "acc_plan", Secrets: map[string]string{CodexAuthKey: `{"auth_mode":"chatgpt"}`}})
+	cl.Binary = "codex"
+	l, err = Codex{}.Build(cl)
+	if err != nil || l.Login == nil || l.Login.Account != "acc_plan" || string(l.Login.Seed) != `{"auth_mode":"chatgpt"}` || len(l.SecretEnv) != 0 {
+		t.Fatalf("ChatGPT login %+v secrets %v %v", l.Login, l.SecretEnv, err)
+	}
+	if _, err := (Codex{}).Build(func() Context {
+		c := ctxFor(proto.LaunchPayload{Secrets: map[string]string{CodexAuthKey: "{}"}})
+		c.Binary = "codex"
+		return c
+	}()); err == nil {
+		t.Fatal("a login without its account was accepted")
+	}
 	l, err = Codex{}.Build(func() Context {
 		c := ctxFor(proto.LaunchPayload{Resume: true, SessionID: "019a2b3c-4d5e-7f00"})
 		c.Binary = "codex"
@@ -144,7 +164,7 @@ func TestCapabilitiesAreExplicit(t *testing.T) {
 	}
 	want := map[string][]string{
 		KindClaude: {CapFixedSessionID, CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapSystemPrompt, CapTranscripts, CapSkills},
-		KindCodex:  {CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapTranscripts},
+		KindCodex:  {CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapTranscripts, CapSkills},
 	}
 	for kind, caps := range want {
 		h, err := Get(kind)

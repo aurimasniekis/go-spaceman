@@ -32,7 +32,7 @@ func countOf(key string) func(map[string]any) string {
 
 func (a *App) accountCmd() *cobra.Command {
 	acct := func(f *form) {
-		f.str("name", "name", "name").str("kind", "kind", "claude_oauth_token, anthropic_api_key or openai_api_key").
+		f.str("name", "name", "name").str("kind", "kind", "claude_oauth_token, anthropic_api_key, openai_api_key or codex_chatgpt_login").
 			str("description", "description", "description").boolean("enabled", "enabled", "enabled").kv("meta", "metadata", "metadata").
 			secret("secret", "secret", "the credential")
 	}
@@ -42,7 +42,8 @@ func (a *App) accountCmd() *cobra.Command {
 		a.cmd(opts{use: "get", short: "Show an account", op: "get-account", args: pos("account")}),
 		a.cmd(opts{use: "create", short: "Add an account; the secret comes from a file or standard input", op: "create-account", idem: true, form: acct,
 			example: "spaceman account create --name ci-claude --kind claude_oauth_token --secret-file ~/.config/claude-token\n" +
-				"pass show claude | spaceman account create --name ci --kind anthropic_api_key --secret-stdin"}),
+				"pass show claude | spaceman account create --name ci --kind anthropic_api_key --secret-stdin\n" +
+				"spaceman account create --name codex-plan --kind codex_chatgpt_login --secret-file ~/.codex/auth.json"}),
 		a.cmd(opts{use: "update", short: "Edit an account; give --secret-file or --secret-stdin to rotate the secret", op: "update-account",
 			get: "get-account", merge: true, args: pos("account"), form: acct}),
 		a.cmd(opts{use: "delete", short: "Delete an account no space uses", op: "delete-account", args: pos("account"), done: "Account deleted."}),

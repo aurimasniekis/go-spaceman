@@ -38,7 +38,7 @@ const (
 	CapNativeTeam     = "messaging.native_team"    // native team messaging (not across standalone runs)
 	CapTranscripts    = "transcripts.jsonl"
 	CapSystemPrompt   = "prompt.append_system"
-	CapSkills         = "skills.files" // loads <config>/skills/<name>/SKILL.md (verified for Claude Code 2.1.316)
+	CapSkills         = "skills.files" // loads <config>/skills/<name>/SKILL.md (verified for Claude Code 2.1.316 and codex-cli 0.166.0)
 )
 
 // Context is everything a harness needs to build one launch.
@@ -75,9 +75,28 @@ type Launch struct {
 	SkillsRoot string
 	// SecretEnv is passed to the launcher shim only.
 	SecretEnv map[string]string
+	// Login is a login file the harness reads and rewrites itself (a Codex ChatGPT login, ADR-0053); nil otherwise.
+	Login *Login
+	// LoginLinks are where the harness looks for a login file, as paths in its config dir mapped to file names in the
+	// node's shared login folder. With Login they are linked to the account's live copy; without it, links left from
+	// an earlier login are removed (a regular file there is the harness's own and is kept).
+	LoginLinks map[string]string
 	// SessionID is the conversation ID when the harness lets SpaceMan choose it.
 	SessionID string
 }
+
+// Login is a credential the node keeps as one live file per account, shared by every instance that uses the account:
+// the harness refreshes it in place, and a refresh token works only once, so instances must not hold copies.
+type Login struct {
+	// Account is the account ID (one live copy per account and node).
+	Account string
+	// Seed is the login as central holds it. It replaces the live copy only when it differs from the seed the live
+	// copy started from (the operator rotated it); otherwise the live copy, possibly refreshed, is kept.
+	Seed []byte
+}
+
+// CodexAuthKey is the launch-payload key of a Codex ChatGPT login (internal/accounts.CodexAuthKey); never an env var.
+const CodexAuthKey = "CODEX_AUTH_JSON"
 
 // Harness builds launches for one harness kind.
 type Harness interface {

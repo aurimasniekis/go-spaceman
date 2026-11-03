@@ -32,6 +32,7 @@ Example:
 ```sh
 spaceman account create --name ci-claude --kind claude_oauth_token --secret-file ~/.config/claude-token
 pass show claude | spaceman account create --name ci --kind anthropic_api_key --secret-stdin
+spaceman account create --name codex-plan --kind codex_chatgpt_login --secret-file ~/.codex/auth.json
 ```
 
 | Flag | Type | Default | Description |
@@ -40,7 +41,7 @@ pass show claude | spaceman account create --name ci --kind anthropic_api_key --
 | `--enabled` | bool |  | enabled |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--idempotency-key` | string |  | Idempotency-Key to send (default: a fresh random key); reuse it to retry this create safely |
-| `--kind` | string |  | claude_oauth_token, anthropic_api_key or openai_api_key |
+| `--kind` | string |  | claude_oauth_token, anthropic_api_key, openai_api_key or codex_chatgpt_login |
 | `--meta` | string, repeatable |  | metadata (key=value, repeatable) |
 | `--name` | string |  | name |
 | `--secret-file` | string |  | the credential (read from this file; never pass secrets as flag values) |
@@ -141,7 +142,7 @@ API: `get-account`, `update-account` ([HTTP API](../api)).
 | `--enabled` | bool |  | enabled |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
-| `--kind` | string |  | claude_oauth_token, anthropic_api_key or openai_api_key |
+| `--kind` | string |  | claude_oauth_token, anthropic_api_key, openai_api_key or codex_chatgpt_login |
 | `--meta` | string, repeatable |  | metadata (key=value, repeatable) |
 | `--name` | string |  | name |
 | `--secret-file` | string |  | the credential (read from this file; never pass secrets as flag values) |

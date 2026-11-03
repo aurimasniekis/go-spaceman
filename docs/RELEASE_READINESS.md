@@ -9,7 +9,7 @@
 
 | Question | Answer |
 |---|---|
-| Is every requirement implemented? | 215 of 219 requirements are `implemented`, 3 are `partial` with a stated gap, 1 is `n/a` ([TRACEABILITY.md](TRACEABILITY.md)). None is left `todo`. |
+| Is every requirement implemented? | 218 of 220 requirements are `implemented`, 1 is `partial` with a stated gap, 1 is `n/a` ([TRACEABILITY.md](TRACEABILITY.md)). None is left `todo`. |
 | Is it tested? | Yes. Every gate below passes on the final tree, including the race-enabled suite, the fault-injection suite, the browser journey in three engines, the Terraform acceptance tests and the scripted 30-step demonstration. |
 | Is it verified against real dependencies? | Partly. herdr-core, Claude Code, Porch, Pulse with go-pulse-github, an S3-compatible store (MinIO), Linux with systemd (in a container), container images and three browsers have real evidence. Codex, AWS S3, a physical Linux host, amd64 under systemd and real Google or GitHub accounts do not. |
 | Is it ready for production? | **No claim is made.** It is ready for evaluation by a trusted team on macOS or Linux, with the limitations below. Before a production release: run it on a physical Linux host, verify Codex, run the release workflow, publish the site, and close the open security findings. |
@@ -48,7 +48,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 
 ## 3. Architecture decisions
 
-50 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
+53 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
 
 | ADR | Decision |
 |---|---|
@@ -70,6 +70,9 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0048 | Artifacts on local disk or in an S3 bucket behind one store interface; backups still copy S3 artifacts; interfaces for inbound event sources and MCP transports. |
 | 0049 | Paused-space event policies (`while_paused`: defer, wake, stop), automation depth carried between installations and bounded by `event_depth`, and responses as metadata-only inbox items (`response_inbox`). |
 | 0050 | Trusted incident triggers with proposal or refusal for the rest, handling and resumption of preempted work, `run:diagnose`, per-type human-action permissions and user profile edits. |
+| 0051 | Starter roles: example profiles, prompts and role templates added once, given to spaces on request, editable and deletable. |
+| 0052 | Notices to programs that finished their turn, a 160×48 terminal size, a web terminal that survives reopening, one change-feed stream per browser. |
+| 0053 | Codex ChatGPT logins as one live file per account on the node, shared by its instances; Codex skills in `$CODEX_HOME/skills`. |
 
 ## 4. Commits
 
@@ -125,10 +128,11 @@ The full list is [LIMITATIONS.md](LIMITATIONS.md). The ones an evaluator should 
 - **Trusted teams only.** SpaceMan is not a hostile multi-tenancy boundary; folder grouping is not isolation, shell access
   can bypass MCP mediation, and privileged nodes can read runtime secrets ([THREAT_MODEL.md](THREAT_MODEL.md)).
 - **Single central, no HA.** Recovery is restore from backup, which comes up paused.
-- **Codex is unverified** for real, and skills are materialized for Claude Code only.
-- **3 partial requirements**, each with its gap in [TRACEABILITY.md](TRACEABILITY.md). Each involves Codex, which has
-  never run for real: its ChatGPT-plan login, its skills (materialized for Claude Code only), and the real-dependency
-  verification, which also lacks AWS S3/R2, a physical Linux host, and real Google and GitHub accounts.
+- **Codex has never run a real turn.** Its skills and its login layout are verified against codex-cli 0.166.0 without
+  a credential; a real ChatGPT login and a real model turn are not.
+- **1 partial requirement**, SM-VER-002 (real-dependency verification), with its gap in
+  [TRACEABILITY.md](TRACEABILITY.md): no real Codex run, AWS S3/R2, physical Linux host, or real Google and GitHub
+  accounts.
 - **Open security findings**: the review fixed all 4 medium and 7 of 14 low findings; 6 low and 5 informational
   findings are open with follow-ups and 3 are accepted with a rationale ([SECURITY_REVIEW.md](SECURITY_REVIEW.md)). There
   were no high findings. The review was a code reading, not an external audit or penetration test.
@@ -164,9 +168,9 @@ real model output.
 
 ## 11. Requirement traceability
 
-[TRACEABILITY.md](TRACEABILITY.md): 219 requirements, each with its work package, status, named tests, real evidence and
+[TRACEABILITY.md](TRACEABILITY.md): 220 requirements, each with its work package, status, named tests, real evidence and
 notes; `make traceability` checks that every requirement is listed and that the SM-SEC-001 boundaries are documented.
-Status: 215 implemented, 3 partial, 1 n/a. The brief's §40 verification topics are mapped to tests in
+Status: 218 implemented, 1 partial, 1 n/a. The brief's §40 verification topics are mapped to tests in
 [TEST_STRATEGY.md](TEST_STRATEGY.md); the §41 demonstration is [DEMO.md](DEMO.md).
 
 ## 12. Before a production release
@@ -176,5 +180,4 @@ Status: 215 implemented, 3 partial, 1 n/a. The brief's §40 verification topics 
 2. Verify Codex with a real credential, including skills (or record that Codex has none).
 3. Close or accept the open security findings, ideally with an external review.
 4. Push to a remote, run the release workflow, publish images, SBOMs and checksums, and publish the site.
-5. Decide on the remaining partial requirements that matter for the first users and either implement them or state
-   them in the release notes.
+5. Collect the missing real evidence (SM-VER-002), at least a real Codex run, or state the gaps in the release notes.

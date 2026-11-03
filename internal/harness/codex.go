@@ -17,8 +17,9 @@ import (
 //   - MCP: -c mcp_servers.spaceman.command=… -c mcp_servers.spaceman.args=[…] (TOML overrides)
 //   - session: Codex chooses its own session ID; resume is `codex resume <id>` (the ID is discovered from
 //     $CODEX_HOME/sessions after launch — not a fixed-ID capability)
-//   - auth: OPENAI_API_KEY / CODEX_API_KEY through the launcher shim only. ChatGPT-login auth.json materialization is
-//     not implemented (open item K-9).
+//   - auth: OPENAI_API_KEY / CODEX_API_KEY through the launcher shim, or a ChatGPT login: $CODEX_HOME/auth.json and
+//     auth.lock linked to the node's live copy of the account's login, which Codex refreshes in place (ADR-0053)
+//   - skills: $CODEX_HOME/skills/<name>/SKILL.md (verified with codex-cli 0.166.0 `debug prompt-input`)
 type Codex struct{}
 
 // Kind implements Harness.
@@ -26,7 +27,7 @@ func (Codex) Kind() string { return KindCodex }
 
 // Detect implements Harness.
 func (Codex) Detect(ctx context.Context, binary string) proto.HarnessInfo {
-	return detect(ctx, KindCodex, binary, []string{CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapTranscripts})
+	return detect(ctx, KindCodex, binary, []string{CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapTranscripts, CapSkills})
 }
 
 var reCodexSession = regexp.MustCompile(`^[0-9A-Za-z-]{8,64}$`)
@@ -80,11 +81,20 @@ func (Codex) Build(c Context) (Launch, error) {
 	}
 	env := commonEnv(c)
 	env["CODEX_HOME"] = home
-	return Launch{
-		Argv:      argv,
-		Env:       env,
-		Files:     map[string][]byte{},
-		SecretEnv: secretEnv(p.Secrets, "OPENAI_API_KEY", "CODEX_API_KEY"),
-		SessionID: p.SessionID,
-	}, nil
+	l := Launch{
+		Argv:       argv,
+		Env:        env,
+		Files:      map[string][]byte{},
+		SkillsRoot: filepath.Join(home, "skills"),
+		SecretEnv:  secretEnv(p.Secrets, "OPENAI_API_KEY", "CODEX_API_KEY"),
+		SessionID:  p.SessionID,
+		LoginLinks: map[string]string{filepath.Join(home, "auth.json"): "auth.json", filepath.Join(home, "auth.lock"): "auth.lock"},
+	}
+	if seed := p.Secrets[CodexAuthKey]; seed != "" {
+		if p.AccountRef == "" {
+			return Launch{}, errors.New("codex: a ChatGPT login needs its account")
+		}
+		l.Login = &Login{Account: p.AccountRef, Seed: []byte(seed)}
+	}
+	return l, nil
 }

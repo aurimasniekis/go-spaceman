@@ -3988,12 +3988,12 @@ export interface components {
              * @description Required on create; never changes
              * @enum {string}
              */
-            kind?: "claude_oauth_token" | "anthropic_api_key" | "openai_api_key";
+            kind?: "claude_oauth_token" | "anthropic_api_key" | "openai_api_key" | "codex_chatgpt_login";
             metadata?: {
                 [key: string]: string;
             };
             name: string;
-            /** @description The credential. Required on create; on an edit, a value rotates it and empty keeps it. Never returned. */
+            /** @description The credential: a token or API key (one line, at most 8192 bytes), or for codex_chatgpt_login the auth.json a ChatGPT login wrote (at most 64 KiB). Required on create; on an edit, a value rotates it and empty keeps it. Never returned. */
             secret?: string;
         };
         AccountList: {
@@ -4020,7 +4020,7 @@ export interface components {
             harness: "claude-code" | "codex";
             id: string;
             /** @enum {string} */
-            kind: "claude_oauth_token" | "anthropic_api_key" | "openai_api_key";
+            kind: "claude_oauth_token" | "anthropic_api_key" | "openai_api_key" | "codex_chatgpt_login";
             metadata: {
                 [key: string]: string;
             };
@@ -4055,6 +4055,8 @@ export interface components {
             name?: string;
         };
         AccountsKind: {
+            /** @enum {string} */
+            delivery: "env" | "file";
             env: string;
             /** @enum {string} */
             harness: "claude-code" | "codex";

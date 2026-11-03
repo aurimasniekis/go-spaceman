@@ -28,7 +28,7 @@ Once the node renews its next heartbeat, the space shows a valid **execution lea
 ## Give the space an account
 
 Runs need a credential for their harness. An administrator adds it once under **Accounts** (a Claude subscription
-token from `claude setup-token`, an Anthropic API key or an OpenAI API key), then uses **Choose accounts** on the space
+token from `claude setup-token`, an Anthropic API key, an OpenAI API key or a ChatGPT login for Codex), then uses **Choose accounts** on the space
 page to allow it for the space. See [Accounts](/operators/accounts).
 
 ## Launch a run

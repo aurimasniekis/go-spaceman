@@ -2076,6 +2076,34 @@
   - Existing runs keep 200×120 until relaunched; an agent restart applies the new size to later launches.
   - ghostty-web's `onRender` is declared but never fired in 0.4.0; the view follows `onCursorMove` and resizes.
 
+### ADR-0053 — Codex ChatGPT logins as one live file per account on the node, and Codex skills (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (closes SM-ACCT-002 and SM-MCP-004; migration 0036, no node protocol change).
+- **Context:** Codex runs used only an OpenAI API key (K-9), and got no skills because Codex's skill loading was
+  unverified. A spike against codex-cli 0.166.0, with an isolated `CODEX_HOME` and no credential, settled both
+  (docs/contracts/harnesses.md): skills in `$CODEX_HOME/skills/<name>/SKILL.md` reach the model's prompt input; logins
+  are stored in `$CODEX_HOME/auth.json` by default; a symlinked `auth.json` is rewritten through the link; and a
+  ChatGPT login's refresh token works only once ("your refresh token was already used").
+- **Decision:**
+  - **Skills.** The Codex adapter materializes skills into `$CODEX_HOME/skills`, like Claude Code's, and advertises
+    `skills.files`. Codex's own `.system` skills are left alone (they carry no SpaceMan marker).
+  - **ChatGPT login kind.** `codex_chatgpt_login` holds the `auth.json` `codex login` writes: a JSON object with
+    `auth_mode: chatgpt` and a non-empty `tokens` object, at most 64 KiB, stored compacted and sealed like every
+    secret (migration 0036 rebuilds `accounts` to allow the kind). It reaches a launch under the payload key
+    `CODEX_AUTH_JSON`, never as an environment variable and never in the launcher's secret file.
+  - **One live copy per account and node.** The node keeps the login in `<data>/logins/<sha256(account)[:32]>/auth.json`
+    (0600, folder 0700) with `auth.lock` beside it, and links every instance's `$CODEX_HOME/auth.json` and `auth.lock`
+    there, so refreshes by any run are what the next run reads, and concurrent refreshes share one lock. The seed from
+    central replaces the live copy only when it differs from the seed the copy started from (`seed.sha256`): a
+    rotation applies, a refresh is never undone. An instance launched with an API key loses links left by a login; a
+    regular `auth.json` of its own is kept.
+- **Consequences:**
+  - **Security-relevant:** unlike other credentials, a ChatGPT login stays on the node's disk between runs (the agent's
+    user and root can read it), and it is not removed when the account is deleted in SpaceMan.
+  - One ChatGPT login should be used on one node: two nodes refresh separate copies, and the first refresh breaks the
+    other (single-use refresh tokens). This is documented, not enforced.
+  - A real ChatGPT login and a real Codex turn remain unverified (no account or credential); the layout is verified
+    with an API-key file (`TestRealCodexReadsNodeLayout`, codex-cli 0.166.0).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -2088,6 +2116,6 @@
 | K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | ~~llm-knowledge-base-template layout and licence; Piebald dream prompts licence.~~ **Resolved 2026-11-02:** KB template in `docs/contracts/kb-template.md`. Piebald-AI/claude-code-system-prompts is MIT, but its files are extracted Claude Code prompts whose text the repository licence may not cover; SpaceMan's dream prompt is written from the brief's principles and copies none of it (ADR-0027). | — | done |
-| K-9 | Codex ChatGPT-login token materialization (`auth.json`) vs API key. | SM-ACCT-002 | Inspect Codex docs/behaviour; support API key first, document ChatGPT auth handling. |
+| K-9 | ~~Codex ChatGPT-login token materialization (`auth.json`) vs API key.~~ **Resolved 2026-11-03:** the `codex_chatgpt_login` kind, one live copy per account linked into each `CODEX_HOME` (ADR-0053); a real ChatGPT login is not verified (no account). | SM-ACCT-002 | done |
 | K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |

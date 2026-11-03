@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/accounts"
 	"github.com/aurimasniekis/go-spaceman/internal/agent"
 	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -497,5 +498,105 @@ func TestLateReportDoesNotReopenEndedRun(t *testing.T) {
 	}
 	if got := e.run1(r.ID); got.Observed != ended.Observed || got.Version != ended.Version {
 		t.Fatalf("late report reopened the run: %s v%d (was %s v%d)", got.Observed, got.Version, ended.Observed, ended.Version)
+	}
+}
+
+// A Codex ChatGPT login (ADR-0053, SM-ACCT-002) lives on the node as one live file per account that every instance
+// links to: Codex refreshes it in place and a refresh token works only once, so instances must not hold copies. A
+// refreshed login survives later launches; a rotation in central replaces it. The login never reaches the launcher
+// shim's file, the runner's environment or its argv.
+func TestCodexChatGPTLoginIsSharedByInstances(t *testing.T) {
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "chatgpt", Name: "ChatGPT login", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const seed = `{
+  "auth_mode": "chatgpt",
+  "tokens": {"id_token": "stub-id", "access_token": "stub-access-1", "refresh_token": "stub-refresh-1", "account_id": "acct-stub"},
+  "last_refresh": "2026-11-03T10:00:00Z"
+}`
+	acc, err := e.c.Accounts.Create(ctx, admin, accounts.Input{Name: "codex-plan", Kind: accounts.KindCodexChatGPT, Secret: seed, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Accounts.SetBindings(ctx, admin, sp.ID, []accounts.Binding{{AccountID: acc.ID, Default: true}}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	launch := func(role string) *fleet.Run {
+		t.Helper()
+		r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: role, Harness: hns.KindCodex, Prompt: "go"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, role+" running", func() bool { return e.run1(r.ID).Observed == "running" })
+		return e.run1(r.ID)
+	}
+	home := func(r *fleet.Run) string {
+		return filepath.Join(e.agentDir, "spaces", sp.Workdir, "instances", r.InstanceID, "codex")
+	}
+	a, b := launch("dev"), launch("qa")
+	if a.InstanceID == b.InstanceID {
+		t.Fatal("two roles share an instance")
+	}
+	ta, errA := os.Readlink(filepath.Join(home(a), "auth.json"))
+	tb, errB := os.Readlink(filepath.Join(home(b), "auth.json"))
+	if errA != nil || errB != nil || ta != tb {
+		t.Fatalf("auth.json links %q %v, %q %v: want one shared target", ta, errA, tb, errB)
+	}
+	if la, err := os.Readlink(filepath.Join(home(a), "auth.lock")); err != nil || filepath.Dir(la) != filepath.Dir(ta) {
+		t.Fatalf("auth.lock link %q %v", la, err)
+	}
+	live, err := os.ReadFile(ta)
+	if err != nil || !strings.Contains(string(live), `"refresh_token":"stub-refresh-1"`) || strings.Contains(string(live), "\n") {
+		t.Fatalf("live login %s %v: want the compacted seed", live, err)
+	}
+	if fi, err := os.Stat(ta); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("live login mode %v %v", fi, err)
+	}
+	for _, r := range []*fleet.Run{a, b} {
+		sec, err := os.ReadFile(filepath.Join(e.agentDir, "runs", r.ID, agent.SecretsFile))
+		if err != nil || strings.Contains(string(sec), "stub-refresh") || strings.Contains(string(sec), "stub-access") {
+			t.Fatalf("secrets file of %s: %s %v", r.ID, sec, err)
+		}
+	}
+	for _, spec := range e.run.Specs {
+		all := strings.Join(spec.Argv, " ")
+		for _, v := range spec.Env {
+			all += " " + v
+		}
+		if strings.Contains(all, "stub-refresh") || strings.Contains(all, "stub-access") {
+			t.Fatal("the login reached the runner's environment or argv")
+		}
+	}
+
+	// Codex refreshes the login in place; the next launch keeps the refreshed copy.
+	refreshed := `{"auth_mode":"chatgpt","tokens":{"access_token":"stub-access-2","refresh_token":"stub-refresh-2"}}`
+	if err := os.WriteFile(ta, []byte(refreshed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launch("ops")
+	if got, _ := os.ReadFile(ta); string(got) != refreshed {
+		t.Fatalf("a launch overwrote the refreshed login: %s", got)
+	}
+
+	// A rotation in central replaces the live copy at the next launch.
+	cur, err := e.c.Accounts.Get(ctx, acc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated := strings.ReplaceAll(seed, "stub-refresh-1", "stub-refresh-3")
+	if _, err := e.c.Accounts.Update(ctx, admin, acc.ID, cur.Version, accounts.Input{Name: cur.Name, Secret: rotated, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	launch("docs")
+	if got, _ := os.ReadFile(ta); !strings.Contains(string(got), `"refresh_token":"stub-refresh-3"`) {
+		t.Fatalf("the rotated login did not replace the live copy: %s", got)
 	}
 }

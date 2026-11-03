@@ -68,6 +68,7 @@ type Agent struct {
 	log *slog.Logger
 
 	mu        sync.Mutex
+	loginMu   sync.Mutex // shared harness logins (login.go)
 	conn      *websocket.Conn
 	connected bool
 	leases    map[string]leaseRow

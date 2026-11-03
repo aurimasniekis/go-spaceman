@@ -31,10 +31,10 @@ type AccountPath struct {
 // AccountBody creates or edits an account. The secret is write-only.
 type AccountBody struct {
 	Name        string            `json:"name" maxLength:"63"`
-	Kind        string            `json:"kind,omitempty" enum:"claude_oauth_token,anthropic_api_key,openai_api_key" doc:"Required on create; never changes"`
+	Kind        string            `json:"kind,omitempty" enum:"claude_oauth_token,anthropic_api_key,openai_api_key,codex_chatgpt_login" doc:"Required on create; never changes"`
 	Description string            `json:"description,omitempty" maxLength:"2000"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
-	Secret      string            `json:"secret,omitempty" maxLength:"8192" writeOnly:"true" doc:"The credential. Required on create; on an edit, a value rotates it and empty keeps it. Never returned."`
+	Secret      string            `json:"secret,omitempty" maxLength:"65536" writeOnly:"true" doc:"The credential: a token or API key (one line, at most 8192 bytes), or for codex_chatgpt_login the auth.json a ChatGPT login wrote (at most 64 KiB). Required on create; on an edit, a value rotates it and empty keeps it. Never returned."`
 	Enabled     *bool             `json:"enabled,omitempty" doc:"Default true"`
 }
 

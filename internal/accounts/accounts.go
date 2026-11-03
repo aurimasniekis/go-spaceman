@@ -5,6 +5,7 @@
 package accounts
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -29,15 +30,29 @@ type Kind struct {
 	Name    string `json:"name"`
 	Label   string `json:"label"`
 	Harness string `json:"harness" enum:"claude-code,codex"`
-	// Env is the variable the launcher shim sets for the harness.
+	// Env is the variable the launcher shim sets for the harness; for a file credential, the key the secret travels
+	// under in the launch payload (never an environment variable).
 	Env string `json:"env"`
+	// Delivery is env (the launcher shim sets Env) or file (the node keeps the credential in a file the harness reads
+	// and rewrites, ADR-0053).
+	Delivery string `json:"delivery" enum:"env,file"`
 }
 
-// Kinds are the supported credential mechanisms. Codex ChatGPT logins (auth.json) are not supported yet (K-9).
+// KindCodexChatGPT is a Codex ChatGPT-plan login: the auth.json `codex login` writes (ADR-0053).
+const KindCodexChatGPT = "codex_chatgpt_login"
+
+// CodexAuthKey is the launch-payload key of a Codex ChatGPT login (internal/harness reads it; not an env var).
+const CodexAuthKey = "CODEX_AUTH_JSON"
+
+// maxAuthJSON bounds a ChatGPT login file.
+const maxAuthJSON = 64 << 10
+
+// Kinds are the supported credential mechanisms.
 var Kinds = []Kind{
-	{Name: "claude_oauth_token", Label: "Claude subscription token (claude setup-token)", Harness: "claude-code", Env: "CLAUDE_CODE_OAUTH_TOKEN"},
-	{Name: "anthropic_api_key", Label: "Anthropic API key", Harness: "claude-code", Env: "ANTHROPIC_API_KEY"},
-	{Name: "openai_api_key", Label: "OpenAI API key", Harness: "codex", Env: "OPENAI_API_KEY"},
+	{Name: "claude_oauth_token", Label: "Claude subscription token (claude setup-token)", Harness: "claude-code", Env: "CLAUDE_CODE_OAUTH_TOKEN", Delivery: "env"},
+	{Name: "anthropic_api_key", Label: "Anthropic API key", Harness: "claude-code", Env: "ANTHROPIC_API_KEY", Delivery: "env"},
+	{Name: "openai_api_key", Label: "OpenAI API key", Harness: "codex", Env: "OPENAI_API_KEY", Delivery: "env"},
+	{Name: KindCodexChatGPT, Label: "ChatGPT login for Codex (auth.json from codex login)", Harness: "codex", Env: CodexAuthKey, Delivery: "file"},
 }
 
 // KindOf returns a kind by name.
@@ -53,7 +68,7 @@ func KindOf(name string) (Kind, bool) {
 type Account struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
-	Kind            string            `json:"kind" enum:"claude_oauth_token,anthropic_api_key,openai_api_key"`
+	Kind            string            `json:"kind" enum:"claude_oauth_token,anthropic_api_key,openai_api_key,codex_chatgpt_login"`
 	Harness         string            `json:"harness" enum:"claude-code,codex"`
 	Description     string            `json:"description,omitempty"`
 	Metadata        map[string]string `json:"metadata"`
@@ -112,7 +127,33 @@ func validSecret(s string) bool {
 	return !strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 }
 
-func (in *Input) validate(create bool) error {
+// normalizeAuthJSON checks a ChatGPT login file and compacts it: a JSON object in ChatGPT mode (`auth_mode: chatgpt`
+// with a `tokens` object, docs/contracts/harnesses.md). The rest of the file is Codex's and kept as it is.
+func normalizeAuthJSON(s string) (string, bool) {
+	if s == "" || len(s) > maxAuthJSON {
+		return "", false
+	}
+	var f map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &f); err != nil {
+		return "", false
+	}
+	var mode string
+	if err := json.Unmarshal(f["auth_mode"], &mode); err != nil || mode != "chatgpt" {
+		return "", false
+	}
+	var tokens map[string]json.RawMessage
+	if err := json.Unmarshal(f["tokens"], &tokens); err != nil || len(tokens) == 0 {
+		return "", false
+	}
+	var b bytes.Buffer
+	if err := json.Compact(&b, []byte(s)); err != nil {
+		return "", false
+	}
+	return b.String(), true
+}
+
+// validate checks an input; kind is the account's kind (the input's on create, the stored one on an edit).
+func (in *Input) validate(create bool, kind string) error {
 	v := &apperr.Validation{}
 	in.Name = strings.TrimSpace(in.Name)
 	if !reName.MatchString(in.Name) {
@@ -120,10 +161,18 @@ func (in *Input) validate(create bool) error {
 	}
 	if create {
 		if _, ok := KindOf(in.Kind); !ok {
-			v.Add("kind", "must be claude_oauth_token, anthropic_api_key or openai_api_key")
+			v.Add("kind", "must be claude_oauth_token, anthropic_api_key, openai_api_key or codex_chatgpt_login")
 		}
 	}
-	if (create || in.Secret != "") && !validSecret(in.Secret) {
+	switch {
+	case !create && in.Secret == "":
+	case kind == KindCodexChatGPT:
+		if norm, ok := normalizeAuthJSON(in.Secret); ok {
+			in.Secret = norm
+		} else {
+			v.Add("secret", "must be the auth.json of a ChatGPT login (codex login): a JSON object with auth_mode chatgpt and its tokens, at most 64 KiB")
+		}
+	case !validSecret(in.Secret):
 		v.Add("secret", "is required: one line, no spaces, at most 8192 bytes")
 	}
 	if len(in.Description) > 2000 {
@@ -159,7 +208,7 @@ func b2i(b bool) int64 {
 
 // Create stores an account with its sealed secret.
 func (svc *Service) Create(ctx context.Context, actor audit.Actor, in Input) (*Account, error) {
-	if err := in.validate(true); err != nil {
+	if err := in.validate(true, in.Kind); err != nil {
 		return nil, err
 	}
 	id := ids.New(ids.Account)
@@ -231,7 +280,13 @@ func (svc *Service) List(ctx context.Context) ([]*Account, error) {
 // Update edits an account. A non-empty secret rotates it: later launches use the new one, running harnesses keep the
 // credential they started with (SM-ACCT-006). The kind never changes.
 func (svc *Service) Update(ctx context.Context, actor audit.Actor, id string, version int64, in Input) (*Account, error) {
-	if err := in.validate(false); err != nil {
+	cur, err := svc.s.R().GetAccount(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	if err := in.validate(false, cur.Kind); err != nil {
 		return nil, err
 	}
 	var sealed []byte
@@ -242,7 +297,7 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, id string, ve
 		}
 	}
 	md, _ := json.Marshal(nonNil(in.Metadata))
-	err := svc.s.W().TxNamed(ctx, "accounts.update", func(tx *store.Tx) error {
+	err = svc.s.W().TxNamed(ctx, "accounts.update", func(tx *store.Tx) error {
 		cur, err := tx.Q.GetAccount(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return errNotFound

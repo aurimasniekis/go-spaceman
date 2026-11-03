@@ -12,8 +12,11 @@ spaces to use it. Runs never use credentials from the node's own environment or 
 | Claude subscription token | Claude Code | `claude setup-token` (needs a Claude subscription) |
 | Anthropic API key | Claude Code | The Anthropic console |
 | OpenAI API key | Codex | The OpenAI platform |
+| ChatGPT login for Codex | Codex | The `auth.json` that `codex login` writes after you sign in with a ChatGPT plan (in `~/.codex`, or `$CODEX_HOME`) |
 
-Codex ChatGPT logins (`auth.json`) are not supported yet.
+For a ChatGPT login, paste the whole `auth.json` file (or `spaceman account create --kind codex_chatgpt_login
+--secret-file ~/.codex/auth.json`). SpaceMan accepts only a ChatGPT-mode file with its tokens; an API-key file belongs
+to the OpenAI API key kind.
 
 ## Adding and rotating
 
@@ -51,6 +54,19 @@ with the credential in its environment. It is never part of herdr-core's saved t
 
 Before starting Claude Code, SpaceMan also marks the per-space configuration as set up and trusts exactly the run's
 working directory, so an unattended run does not stop at the first-run screens.
+
+### ChatGPT logins live on the node
+
+Codex refreshes a ChatGPT login itself, and its refresh token works only once. So a ChatGPT login is not handed over
+through the launcher's file. The node keeps **one live copy per account**, in a 0600 file in its data folder, and every
+Codex instance on that node links its `auth.json` (and its lock file) to it. When Codex refreshes the login, every
+later run on the node uses the refreshed one.
+
+- Rotating the account in SpaceMan replaces the node's copy at the next launch. Otherwise the node keeps its copy, so a
+  refresh is never undone.
+- **Use one ChatGPT login on one node.** Two nodes would each refresh their own copy, and the first refresh makes the
+  other copy stop working. Add a separate login (sign in again in another `CODEX_HOME`) for each node.
+- The copy stays on the node after the account is deleted in SpaceMan; remove the node's `logins` folder to delete it.
 
 ::: warning Credentials are visible on the node
 A running harness needs its credential. Anyone with root, or the agent's operating-system user, on that node can read

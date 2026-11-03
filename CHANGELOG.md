@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acceptance tests build central from a SpaceMan checkout (`SPACEMAN_SRC`, or `../spaceman`).
 
 ### Added
+- Codex ChatGPT logins (SM-ACCT-002, ADR-0053, migration 0036): the account kind `codex_chatgpt_login` takes the
+  `auth.json` that `codex login` writes. The node keeps one live copy per account, which every Codex instance there
+  links to, so Codex's own refreshes survive later launches; a rotation replaces it. Use one login on one node.
+- Codex runs get their skills in `$CODEX_HOME/skills` (SM-MCP-004; loading verified with codex-cli 0.166.0).
 - Starter roles (SM-PROMPT-005, ADR-0051): a new installation gets example harness profiles, prompts and role templates
   for control, planner, implementor, reviewer, kb and dreamer, added once and editable or deletable. A space gets
   ready-to-launch roles from them with **Add starter roles**, `spaceman role add-starters`, `POST

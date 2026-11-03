@@ -26,7 +26,8 @@
             "enum": [
               "claude_oauth_token",
               "anthropic_api_key",
-              "openai_api_key"
+              "openai_api_key",
+              "codex_chatgpt_login"
             ],
             "type": "string"
           },
@@ -41,8 +42,8 @@
             "type": "string"
           },
           "secret": {
-            "description": "The credential. Required on create; on an edit, a value rotates it and empty keeps it. Never returned.",
-            "maxLength": 8192,
+            "description": "The credential: a token or API key (one line, at most 8192 bytes), or for codex_chatgpt_login the auth.json a ChatGPT login wrote (at most 64 KiB). Required on create; on an edit, a value rotates it and empty keeps it. Never returned.",
+            "maxLength": 65536,
             "type": "string",
             "writeOnly": true
           }
@@ -112,7 +113,8 @@
             "enum": [
               "claude_oauth_token",
               "anthropic_api_key",
-              "openai_api_key"
+              "openai_api_key",
+              "codex_chatgpt_login"
             ],
             "type": "string"
           },
@@ -199,6 +201,13 @@
       "AccountsKind": {
         "additionalProperties": false,
         "properties": {
+          "delivery": {
+            "enum": [
+              "env",
+              "file"
+            ],
+            "type": "string"
+          },
           "env": {
             "type": "string"
           },
@@ -220,7 +229,8 @@
           "name",
           "label",
           "harness",
-          "env"
+          "env",
+          "delivery"
         ],
         "type": "object"
       },

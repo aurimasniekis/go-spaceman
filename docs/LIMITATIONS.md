@@ -66,7 +66,11 @@
   production profile (TLS behind a proxy) has not been run.
 
 ## Accounts
-- **No Codex ChatGPT login.** Codex runs use an OpenAI API key; ChatGPT-plan logins (`auth.json`) are not supported yet (K-9).
+- **A Codex ChatGPT login belongs to one node.** The node keeps one live copy of each ChatGPT login, which Codex
+  refreshes in place; a refresh token works once, so the same login used on two nodes stops working on one of them
+  after the first refresh. The copy stays on the node (0600, readable by the agent's user and root) and is not removed
+  when the account is deleted. A real ChatGPT login has not been used: the layout was verified with codex-cli 0.166.0
+  using an API-key file (ADR-0053, SM-ACCT-002).
 - **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence. codex-cli
   0.166.0 is installed on the development machine, but there is no Codex or OpenAI credential to run it with.
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
@@ -155,8 +159,9 @@
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
 ## Skills
-- **Codex runs get no skills.** Codex's skill loading has not been verified, so the node logs a warning and starts the
-  run without them. Claude Code runs get them in `$CLAUDE_CONFIG_DIR/skills`.
+- **Skill loading is verified, not a skill's use.** Codex runs get skills in `$CODEX_HOME/skills` (listed in the model's
+  prompt input with codex-cli 0.166.0, no model call), Claude Code runs in `$CLAUDE_CONFIG_DIR/skills`; whether a model
+  follows a skill is up to the model. Codex also lists its own built-in skills (`.system`), which SpaceMan leaves alone.
 - **Skills follow their latest version.** The UI assigns skills following the latest published version; pinning a
   version is available only through the API.
 - **Built-in skills are seeded once.** A newer SpaceMan with an updated HallPass skill does not change the catalog
