@@ -1,9 +1,9 @@
-import { IconActivity, IconDatabaseExport, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
+import { IconActivity, IconArrowsExchange, IconDatabaseExport, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
 export interface NavItem {
-  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/account'
+  to: '/' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/cross-space' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/account'
   label: string
   icon: typeof IconBox
   group: 'Work' | 'Fleet' | 'Configuration' | 'Integrations' | 'Access'
@@ -25,6 +25,7 @@ export const nav: NavItem[] = [
   { to: '/skills', label: 'Skills', icon: IconSparkles, group: 'Configuration', global: true },
   { to: '/approval-policies', label: 'Approval policies', icon: IconShieldCheck, group: 'Configuration', global: true },
   { to: '/human-types', label: 'Action types', icon: IconForms, group: 'Configuration', global: true },
+  { to: '/cross-space', label: 'Cross-space', icon: IconArrowsExchange, group: 'Configuration', global: true },
   { to: '/events', label: 'Events', icon: IconBolt, group: 'Integrations' },
   { to: '/mcp-servers', label: 'MCP servers', icon: IconPlugConnected, group: 'Integrations', global: true },
   { to: '/accounts', label: 'Accounts', icon: IconCreditCard, group: 'Integrations', global: true, admin: true },

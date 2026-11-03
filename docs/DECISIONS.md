@@ -1118,6 +1118,84 @@
   - Staged-versus-unstaged distinctions and ignored files are not carried; worktrees outside the space folder and linked
     worktrees of outside repositories block the check.
 
+### ADR-0038 — Cross-space requests: two-sided grants, destination-owned execution, disclosure on the reply (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (M4-06).
+- **Context:** SM-XSPACE-001…003, SM-INV-008 and SM-SPACE-001 ask for collaboration between spaces through authorized
+  SpaceMan operations only: separate discovery, question, delegation, disclosure and knowledge permissions; the
+  destination's control accepts or declines and owns its execution, with no remote worker creation; correlation,
+  deadlines, cancellation, depth, quotas and loop protection; KB access only through explicit authorized requests. Until
+  now no data crossed a space boundary at all. This opens a channel between spaces, so it is recorded as a
+  **security-relevant change**.
+- **Decision:**
+  - **Grants per ordered pair, on both sides** (`xspace_peers`, migration `0027`). A space configures, per peer space,
+    what it accepts (inbound: `discover`, `questions`, `delegation`, `knowledge` with an optional KB list, `disclosure`,
+    `max_per_hour` 1–1,000, `max_pending` 1–100) and what its own control may send (outbound: `questions`,
+    `delegation`, `knowledge`). Every flag is off unless set; a missing row allows nothing. A request of kind *k* from S
+    to D needs D's inbound *k* **and** S's outbound *k*. The brief's "optionally the source" is tightened to "the source
+    must also allow it": a request carries the source's information out of the source, so the source's operators decide
+    too. Each space edits only its own row (`xspace:write` in that space, held by operators); there is no way to grant
+    another space's side. Changes are versioned, audited (`xspace.peer_created/updated/deleted`) and in the change feed.
+  - **Discovery is separate and not needed to ask.** With `discover`, the peer's control lists the space with its profile
+    (`xspace_settings.profile`), what it may send, the KBs it may ask, the disclosure level and the limits. Without
+    `discover` and without the requested grant, a request answers `not_found` exactly as for a space that does not
+    exist, so existence is not disclosed; with `discover` but not the grant it answers `forbidden`.
+  - **Only control asks or answers.** The eight tools (`spaceman_xspace_discover`, `_request`, `_get`, `_list`,
+    `_accept`, `_decline`, `_reply`, `_cancel`) are registered for the control kind only and the service refuses any
+    other kind as well. Control is the space's one accountable identity (SM-INV-006, SM-CTRL-001 "handles … cross-space
+    requests"); letting workers, KB sessions or dreamers speak for a space would let any prompt-injected run move data
+    out of it. Operators can withdraw outgoing and decline incoming requests through the API and UI; they do not answer
+    for control.
+  - **Destination-owned execution.** A question or delegation is stored together with an inbox item in the destination
+    (source kind `cross_space`, the source's text marked as untrusted content) in one transaction; the supervisor's
+    existing inbox notification wakes the destination's control through the idle-gated notice. Its control accepts
+    (optionally creating its own task, origin `xspace_request`), declines, or replies (`completed` / `failed`). No tool
+    of the source creates tasks, runs or messages in the destination; the destination's task, inbox item and deciding run
+    are never shown to the source.
+  - **Knowledge goes to the KB scheduler, not to control.** A `knowledge` request names a KB slug and kind; in the same
+    transaction it becomes a KB request of the destination (`kb_requests.xspace_request_id`) on a support session whose
+    requester key is `space:<source>/run:<run>` (one session per source run, a `kb` run in the destination's own KB
+    pool). The KB's allowed roles are for its own space's agents; the cross-space grant (with its KB list) is the
+    admission. The source never reads the KB repository; the KB session answers with `spaceman_kb_answer` as for local
+    requesters and the outcome is reported to the source instead of as a local message.
+  - **Disclosure applies to what crosses back.** The destination's level for that peer, read when the reply is given:
+    `none` — the outcome only (no reply text, no decline or failure reason); `summary` — reply text up to 2,000
+    characters and the KB basis, no evidence; `detailed` — reply text up to 20,000 characters and KB evidence (paths
+    and revisions). The reply is reduced before it is stored; what is cut is not kept anywhere. Attachments never cross.
+    Notifications to the source carry no reply text: the source reads it with `spaceman_xspace_get`.
+  - **Chains.** Every request records its correlation (the first request's ID), `caused_by`, depth and the spaces its
+    chain visited. A request is caused by the incoming request named in `caused_by`; without it, by the only open
+    incoming request of the source; with several open, the caller must name one or declare `independent` (audited).
+    Depth above the destination's `max_depth` (default 3, at most 8) is refused, and so is any destination already in
+    the chain (A→B→A, A→B→C→A). Omitting causation cannot reset a chain by accident, and evading it on purpose takes an
+    explicit, audited claim; quotas bound the rest.
+  - **Quotas.** Per pair per hour and open at once (the destination's row), and per source per hour to all peers
+    (`max_outgoing_per_hour`, default 60). Refusals are `rate_limited` with text telling the agent it is notified, and
+    every refusal (`not_found`, `forbidden`, `rate_limited`, depth, loop) is audited with outcome `denied`.
+  - **Lifecycle and delivery.** States `pending` → `accepted` → `completed` / `failed`; `pending` → `declined`;
+    open → `cancelled` (by the source) or `expired` (deadline 5 minutes to 7 days, default a day). The source is told of
+    every outcome by a durable message to the requesting run while it lives, else to the space's control with the
+    provenance (`requester_ended`), as for human responses (ADR-0032). The destination's control is told of
+    cancellations and expiries; what it started stays its decision. Deadlines join the human-action timer as an extra
+    deadline (one timer, kicked after commits; its first round after a start expires what passed while central was
+    down). Everything is in SQLite; nothing polls.
+  - **Events.** `xspace.request.created` and `xspace.request.state_changed` (metadata only: IDs, kind, state, depth,
+    correlation) are published once for each of the two spaces with `side` `source` or `destination`.
+- **Alternatives:** grants on the destination only (the source's operators could not stop their control from sending
+  their data out); one combined "trust" flag (against SM-XSPACE-001); letting workers ask (any prompt-injected worker
+  could exfiltrate); a source tool that creates tasks in the destination (SM-XSPACE-002 forbids it); KB requests routed
+  through the destination's control (adds a model turn to an operator-preauthorized read; KB sessions already cannot
+  orchestrate, SM-INV-013); filtering replies when read instead of when stored (the unfiltered text would sit in the
+  shared record); copying attachments across spaces (no per-file disclosure model yet).
+- **Consequences:**
+  - The destination sees the source's request text and the requesting run's ID and role; that is what the source's
+    outbound grant authorizes.
+  - A disclosure level lowered after a reply was given does not change that stored reply (it was disclosed already).
+  - Removing a peer row stops new requests at once; requests already open stay open, and when it was the destination's
+    row, replies to them disclose nothing.
+  - Purging either space deletes the requests between them.
+  - No Terraform resources yet (M5-01 phase 2); no real-harness evidence: the simulated suite and the dev stack (stub
+    harness) only.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

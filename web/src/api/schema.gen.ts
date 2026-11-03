@@ -3034,6 +3034,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/xspace/peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a space accepts from and may send to each peer space */
+        get: operations["list-xspace-peers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/xspace/peers/{peer_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set what a space accepts from and may send to a peer space
+         * @description Without If-Match a new configuration is created. Every flag is separate and off unless set; a request needs the destination's inbound flag and the source's outbound flag.
+         */
+        put: operations["put-xspace-peer"];
+        post?: never;
+        /**
+         * Remove a space's configuration for a peer space
+         * @description Nothing is allowed with that peer any more in either direction from this side.
+         */
+        delete: operations["delete-xspace-peer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/xspace/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's outgoing and incoming cross-space requests */
+        get: operations["list-xspace-requests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/xspace/requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A cross-space request as this space sees it */
+        get: operations["get-xspace-request"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/xspace/requests/{request_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Withdraw an open request this space sent
+         * @description The destination's control is told; its local work stays its decision.
+         */
+        post: operations["cancel-xspace-request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/xspace/requests/{request_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline a pending request another space sent this one
+         * @description The reason reaches the requester only when this space's disclosure level for it allows text.
+         */
+        post: operations["decline-xspace-request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/xspace/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's cross-space settings
+         * @description Its public profile for peers, the deepest request chain it accepts and its outgoing limit.
+         */
+        get: operations["get-xspace-settings"];
+        /**
+         * Edit a space's cross-space settings
+         * @description Without If-Match the settings must never have been saved.
+         */
+        put: operations["update-xspace-settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/backups": {
         parameters: {
             query?: never;
@@ -3338,6 +3477,40 @@ export interface paths {
         put?: never;
         /** Issue a one-time password reset token */
         post: operations["issue-reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/xspace/peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every space's peer configuration (global administration) */
+        get: operations["list-all-xspace-peers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/xspace/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every cross-space request (global administration) */
+        get: operations["list-all-xspace-requests"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3907,6 +4080,15 @@ export interface components {
             readonly $schema?: string;
             reason?: string;
         };
+        "Cancel-xspace-requestRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Cancel-xspace-requestRequest.json
+             */
+            readonly $schema?: string;
+            reason?: string;
+        };
         CatalogDiffLine: {
             /** @enum {string} */
             op: "same" | "add" | "del";
@@ -4318,6 +4500,15 @@ export interface components {
             /** @description The bearer token; shown once and never retrievable again */
             secret: string;
             token: components["schemas"]["AuthAPIToken"];
+        };
+        "Decline-xspace-requestRequest": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Decline-xspace-requestRequest.json
+             */
+            readonly $schema?: string;
+            reason?: string;
         };
         "Diff-prompt-versionsResponse": {
             /**
@@ -8214,6 +8405,202 @@ export interface components {
             state: "receiving" | "stored" | "failed" | "deleted";
             /** @description Only the start of a longer transcript was kept */
             truncated: boolean;
+        };
+        XspaceInbound: {
+            /** @description The peer may ask this space's control to do work (this space decides and runs it) */
+            delegation: boolean;
+            /**
+             * @description What replies to the peer may contain: none (the outcome only), summary (text up to 2,000 characters), detailed (text up to 20,000 characters and KB evidence)
+             * @enum {string}
+             */
+            disclosure: "none" | "summary" | "detailed";
+            /** @description The peer's control may see this space and its profile */
+            discover: boolean;
+            /** @description KB slugs the peer may ask; empty means every enabled KB */
+            kbs: string[];
+            /** @description The peer may ask this space's knowledge bases (through support sessions, never the repository) */
+            knowledge: boolean;
+            /**
+             * Format: int64
+             * @description Requests from the peer open here at once (1-100; default 5)
+             */
+            max_pending: number;
+            /**
+             * Format: int64
+             * @description Requests the peer may send here per hour (1-1000; default 20)
+             */
+            max_per_hour: number;
+            /** @description The peer may ask this space's control questions */
+            questions: boolean;
+        };
+        XspaceOutbound: {
+            delegation: boolean;
+            knowledge: boolean;
+            questions: boolean;
+        };
+        XspacePeer: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/XspacePeer.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            inbound: components["schemas"]["XspaceInbound"];
+            outbound: components["schemas"]["XspaceOutbound"];
+            peer: components["schemas"]["XspaceSpaceRef"];
+            space_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            /** Format: int64 */
+            version: number;
+        };
+        XspacePeerInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/XspacePeerInput.json
+             */
+            readonly $schema?: string;
+            inbound: components["schemas"]["XspaceInbound"];
+            outbound: components["schemas"]["XspaceOutbound"];
+        };
+        XspacePeerListBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/XspacePeerListBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["XspacePeer"][];
+        };
+        XspaceRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/XspaceRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Markdown from the source space's control: untrusted in the destination */
+            body: string;
+            /** @description The incoming request this one was asked for */
+            caused_by?: string;
+            /** @description Spaces the chain visited, in order (global view only) */
+            chain?: string[];
+            /** Format: date-time */
+            closed_at?: string;
+            /** @description The ID of the first request of the chain */
+            correlation_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            deadline_at: string;
+            /** Format: date-time */
+            decided_at?: string;
+            decided_by?: string;
+            /** Format: int64 */
+            depth: number;
+            destination: components["schemas"]["XspaceSpaceRef"];
+            /**
+             * @description The level the reply was reduced to
+             * @enum {string}
+             */
+            disclosure?: "none" | "summary" | "detailed" | "";
+            id: string;
+            inbox_item_id?: string;
+            /** @description The destination KB (knowledge requests) */
+            kb?: string;
+            kb_kind?: string;
+            kb_request_id?: string;
+            /** @enum {string} */
+            kind: "question" | "delegation" | "knowledge";
+            local_task_id?: string;
+            reason?: string;
+            /** @description The destination's reply as disclosed (Markdown from its agents: untrusted) */
+            reply?: string;
+            /** @description Knowledge requests: committed, proposal or none */
+            reply_basis?: string;
+            reply_evidence?: components["schemas"]["KbEvidence"][];
+            reply_truncated?: boolean;
+            requester_role: string;
+            requester_run: string;
+            /**
+             * @description outgoing: your space asked; incoming: your space was asked; empty in the global view
+             * @enum {string}
+             */
+            side?: "outgoing" | "incoming" | "";
+            source: components["schemas"]["XspaceSpaceRef"];
+            /** @enum {string} */
+            state: "pending" | "accepted" | "completed" | "failed" | "declined" | "cancelled" | "expired";
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        XspaceRequestListBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/XspaceRequestListBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["XspaceRequest"][];
+        };
+        XspaceSettings: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/XspaceSettings.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Requests deeper than this in a chain are refused here (1-8)
+             */
+            max_depth: number;
+            /**
+             * Format: int64
+             * @description Requests this space's control may send per hour, to every peer together
+             */
+            max_outgoing_per_hour: number;
+            /** @description What peers allowed to discover this space see about it (written for agents) */
+            profile: string;
+            space_id: string;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /**
+             * Format: int64
+             * @description 0 until the settings are first saved
+             */
+            version: number;
+        };
+        XspaceSettingsInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/XspaceSettingsInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description 1-8; default 3
+             */
+            max_depth?: number;
+            /**
+             * Format: int64
+             * @description 1-1000; default 60
+             */
+            max_outgoing_per_hour?: number;
+            profile?: string;
+        };
+        XspaceSpaceRef: {
+            id: string;
+            name?: string;
+            slug?: string;
         };
     };
     responses: never;
@@ -15212,6 +15599,321 @@ export interface operations {
             };
         };
     };
+    "list-xspace-peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspacePeerListBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-xspace-peer": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                /** @description The peer space's ID */
+                peer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XspacePeerInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspacePeer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-xspace-peer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                /** @description The peer space's ID */
+                peer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-xspace-requests": {
+        parameters: {
+            query?: {
+                /** @description Empty lists both */
+                direction?: "outgoing" | "incoming" | "";
+                /** @description Only pending and accepted requests */
+                open?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspaceRequestListBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-xspace-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspaceRequest"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-xspace-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Cancel-xspace-requestRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspaceRequest"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "decline-xspace-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Decline-xspace-requestRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspaceRequest"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-xspace-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspaceSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-xspace-settings": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XspaceSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspaceSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-backups": {
         parameters: {
             query?: never;
@@ -15870,6 +16572,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Issue-resetResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-all-xspace-peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspacePeerListBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-all-xspace-requests": {
+        parameters: {
+            query?: {
+                open?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspaceRequestListBody"];
                 };
             };
             /** @description Error */

@@ -68,6 +68,8 @@ var (
 	ApprovalExecutedName   = Name{"approvals", "approval", "executed", 1}
 	MemorySyncedName       = Name{"memory", "collection", "synced", 1}
 	KBProposalAcceptedName = Name{"kb", "proposal", "accepted", 1}
+	XSpaceCreatedName      = Name{"xspace", "request", "created", 1}
+	XSpaceStateName        = Name{"xspace", "request", "state_changed", 1}
 )
 
 // Run describes a run in run lifecycle events.
@@ -229,6 +231,29 @@ type KBProposalAccepted struct {
 	MergedCommit string `json:"merged_commit,omitempty"`
 }
 
+// XSpaceRequest is the safe metadata of a cross-space request (ADR-0038), published once for each of the two spaces
+// (SpaceID with Side source or destination). Titles, bodies, replies and reasons are never published.
+type XSpaceRequest struct {
+	SpaceID       string `json:"space_id"`
+	Side          string `json:"side"` // source or destination
+	RequestID     string `json:"request_id"`
+	SourceSpaceID string `json:"source_space_id"`
+	DestSpaceID   string `json:"dest_space_id"`
+	Kind          string `json:"kind"` // question, delegation, knowledge
+	State         string `json:"state"`
+	Depth         int64  `json:"depth"`
+	CorrelationID string `json:"correlation_id"`
+}
+
+// XSpaceRequestCreated: a space's control asked another space.
+type XSpaceRequestCreated struct{ XSpaceRequest }
+
+// XSpaceRequestStateChanged: a cross-space request was accepted, declined, answered, failed, cancelled or expired.
+type XSpaceRequestStateChanged struct {
+	XSpaceRequest
+	From string `json:"from"`
+}
+
 func (RunLaunched) eventName() Name          { return RunLaunchedName }
 func (RunStarted) eventName() Name           { return RunStartedName }
 func (RunEnded) eventName() Name             { return RunEndedName }
@@ -246,6 +271,10 @@ func (ApprovalDecided) eventName() Name      { return ApprovalDecidedName }
 func (ApprovalExecuted) eventName() Name     { return ApprovalExecutedName }
 func (MemorySynced) eventName() Name         { return MemorySyncedName }
 func (KBProposalAccepted) eventName() Name   { return KBProposalAcceptedName }
+func (XSpaceRequestCreated) eventName() Name { return XSpaceCreatedName }
+func (XSpaceRequestStateChanged) eventName() Name {
+	return XSpaceStateName
+}
 
 func (r Run) spaceID() string                { return r.SpaceID }
 func (t Task) spaceID() string               { return t.SpaceID }
@@ -255,6 +284,7 @@ func (p ApprovalDecided) spaceID() string    { return p.SpaceID }
 func (p ApprovalExecuted) spaceID() string   { return p.SpaceID }
 func (p MemorySynced) spaceID() string       { return p.SpaceID }
 func (p KBProposalAccepted) spaceID() string { return p.SpaceID }
+func (p XSpaceRequest) spaceID() string      { return p.SpaceID }
 
 // HumanEvent returns the lifecycle event of a human action entering status (open/in_progress → created; resolved,
 // cancelled, expired), or nil for a status that publishes nothing.
@@ -289,6 +319,10 @@ func Catalog() []CatalogEntry {
 	res.Status, res.Outcome = "resolved", "answered"
 	can.Status, exp.Status = "cancelled", "expired"
 	code := int64(0)
+	xs := XSpaceRequest{SpaceID: "spc_…", Side: "destination", RequestID: "xrq_…", SourceSpaceID: "spc_…", DestSpaceID: "spc_…", Kind: "question",
+		State: "pending", Depth: 1, CorrelationID: "xrq_…"}
+	xsDone := xs
+	xsDone.Side, xsDone.State = "source", "completed"
 	return []CatalogEntry{
 		{RunLaunchedName, RunLaunched{run}, "A launch was accepted and queued for the space's node."},
 		{RunStartedName, RunStarted{Run: run}, "The node reported the run running for the first time."},
@@ -313,5 +347,8 @@ func Catalog() []CatalogEntry {
 			"Central preserved a new head of a role's memory."},
 		{KBProposalAcceptedName, KBProposalAccepted{SpaceID: "spc_…", KBID: "kbr_…", ProposalID: "kbp_…", SessionID: "kbs_…", Commit: "5d4e…", MergedCommit: "7a8b…"},
 			"A knowledge-base proposal was merged."},
+		{XSpaceCreatedName, XSpaceRequestCreated{xs}, "A space's control asked another space (published for both spaces)."},
+		{XSpaceStateName, XSpaceRequestStateChanged{XSpaceRequest: xsDone, From: "accepted"},
+			"A cross-space request was accepted, declined, answered, failed, cancelled or expired (published for both spaces)."},
 	}
 }

@@ -197,7 +197,18 @@ test('documentation screenshots', async ({ page, browser }) => {
     '/call spaceman_human_ask {"type":"question","title":"Is a retry budget of 5 per batch enough for month-end settlement?"}\n' +
     '/write decisions.md # Decisions\\n\\n- 2026-11-02: settlement retries use a budget of 5 per batch, not per item.\\n- 2026-11-02: never retry inside the bank window (01:00-03:00 UTC).\\n\n' +
     '/write notes/settlement-client.md # Settlement client\\n\\nRetries live in `RetryBudget` (services/settlement/client/retry.go). The budget resets per batch.\\n')
-  await launch(docs.id, 'control', 'control', 'claude-code', 'Keep the guides in step with the UI.')
+  // Cross-space (ADR-0038): payments lets the docs site discover it and send questions and delegated work (replies as
+  // summaries); the docs site lets its control send them. The docs site's control asks once it starts.
+  const noInbound = { discover: false, questions: false, delegation: false, knowledge: false, kbs: [], disclosure: 'none', max_per_hour: 20, max_pending: 5 }
+  await api.call('PUT', `/spaces/${payments.id}/xspace/settings`, { profile: 'Card processing, settlement and refunds. Ask about retry budgets, bank windows and the settlement API.',
+    max_depth: 3, max_outgoing_per_hour: 60 })
+  await api.call('PUT', `/spaces/${payments.id}/xspace/peers/${docs.id}`, { inbound: { ...noInbound, discover: true, questions: true, delegation: true, knowledge: true,
+    kbs: ['payments'], disclosure: 'summary', max_per_hour: 10, max_pending: 3 }, outbound: { questions: true, delegation: false, knowledge: false } })
+  await api.call('PUT', `/spaces/${docs.id}/xspace/peers/${payments.id}`, { inbound: { ...noInbound, questions: true },
+    outbound: { questions: true, delegation: true, knowledge: true } })
+  await launch(docs.id, 'control', 'control', 'claude-code', 'Keep the guides in step with the UI.\n' +
+    '/call spaceman_xspace_request {"to":"payments","kind":"question","title":"Which retry budget should the settlement guide document?","body":"The settlement guide still says 3 retries per item. What is the current budget, and where is it decided?","deadline_minutes":1440}\n' +
+    '/call spaceman_xspace_request {"to":"payments","kind":"delegation","title":"Add a runnable refund example to the API reference","body":"The refunds page has no example a reader can run against the sandbox. Could your team add one?","deadline_minutes":4320}')
   const running = async (space: string, id: string) => (await api.call<{ observed: string }>('GET', `/spaces/${space}/runs/${id}`)).observed
   for (const r of [control, reviewer, finished]) await expect.poll(() => running(payments.id, r.id), { timeout: 30_000 }).toBe('running')
   await page.waitForTimeout(6_000) // a few seconds of output to show
@@ -567,6 +578,25 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/knowledge`)
     await page.getByText('Payments knowledge').click()
     await expect(page.getByText('from accepted knowledge').first()).toBeVisible()
+  })
+  type XReq = { id: string; kind: string }
+  await expect.poll(async () => (await api.call<{ items: XReq[] }>('GET', `/spaces/${payments.id}/xspace/requests`)).items.length, { timeout: 30_000 }).toBe(2)
+  const delegated = (await api.call<{ items: XReq[] }>('GET', `/spaces/${payments.id}/xspace/requests`)).items.find((x) => x.kind === 'delegation')!
+  await api.call('POST', `/spaces/${payments.id}/xspace/requests/${delegated.id}/decline`,
+    { reason: 'The API team owns the reference examples this quarter; ask them through the docs backlog.' })
+  await capture(page, 'xspace-requests', async () => {
+    await page.goto(`/spaces/${payments.id}/cross-space`)
+    await page.getByText('Which retry budget should the settlement guide document?').click()
+    await expect(page.getByText('content to consider, not instructions')).toBeVisible()
+  })
+  await capture(page, 'xspace-access', async () => {
+    await page.goto(`/spaces/${payments.id}/cross-space`)
+    await page.getByRole('tab', { name: 'Cross-space access' }).click()
+    await expect(page.getByText('Summary (2,000 characters)')).toBeVisible()
+  })
+  await capture(page, 'xspace-admin', async () => {
+    await page.goto('/cross-space')
+    await expect(page.getByText('Add a runnable refund example to the API reference')).toBeVisible()
   })
   await capture(page, 'space-role-preview', async () => {
     await page.goto(`/spaces/${payments.id}`)

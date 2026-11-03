@@ -15,6 +15,7 @@ import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as ApprovalPoliciesRouteImport } from './routes/approval-policies'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as BackupsRouteImport } from './routes/backups'
+import { Route as CrossSpaceRouteImport } from './routes/cross-space'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as HumanRouteImport } from './routes/human'
 import { Route as HumanTypesRouteImport } from './routes/human-types'
@@ -37,6 +38,7 @@ import { Route as SpacesIndexRouteImport } from './routes/spaces.index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces.$spaceId'
 import { Route as EventsTemplatesTemplateIdRouteImport } from './routes/events.templates.$templateId'
 import { Route as SpacesSpaceIdIndexRouteImport } from './routes/spaces.$spaceId.index'
+import { Route as SpacesSpaceIdCrossSpaceRouteImport } from './routes/spaces.$spaceId.cross-space'
 import { Route as SpacesSpaceIdEventsRouteImport } from './routes/spaces.$spaceId.events'
 import { Route as SpacesSpaceIdHumanRouteImport } from './routes/spaces.$spaceId.human'
 import { Route as SpacesSpaceIdInboxRouteImport } from './routes/spaces.$spaceId.inbox'
@@ -80,6 +82,11 @@ const AuditRoute = AuditRouteImport.update({
 const BackupsRoute = BackupsRouteImport.update({
   id: '/backups',
   path: '/backups',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrossSpaceRoute = CrossSpaceRouteImport.update({
+  id: '/cross-space',
+  path: '/cross-space',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EventsRoute = EventsRouteImport.update({
@@ -193,6 +200,11 @@ const SpacesSpaceIdIndexRoute = SpacesSpaceIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdCrossSpaceRoute = SpacesSpaceIdCrossSpaceRouteImport.update({
+  id: '/cross-space',
+  path: '/cross-space',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdEventsRoute = SpacesSpaceIdEventsRouteImport.update({
   id: '/events',
   path: '/events',
@@ -274,6 +286,7 @@ export interface FileRoutesByFullPath {
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
+  '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
@@ -295,6 +308,7 @@ export interface FileRoutesByFullPath {
   '/prompts/': typeof PromptsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/cross-space': typeof SpacesSpaceIdCrossSpaceRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
@@ -318,6 +332,7 @@ export interface FileRoutesByTo {
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
+  '/cross-space': typeof CrossSpaceRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -336,6 +351,7 @@ export interface FileRoutesByTo {
   '/prompts': typeof PromptsIndexRoute
   '/spaces': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/cross-space': typeof SpacesSpaceIdCrossSpaceRoute
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/knowledge': typeof SpacesSpaceIdKnowledgeRoute
   '/spaces/$spaceId/limits': typeof SpacesSpaceIdLimitsRoute
@@ -358,6 +374,7 @@ export interface FileRoutesById {
   '/approval-policies': typeof ApprovalPoliciesRoute
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
+  '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
@@ -379,6 +396,7 @@ export interface FileRoutesById {
   '/prompts/': typeof PromptsIndexRoute
   '/spaces/': typeof SpacesIndexRoute
   '/events/templates/$templateId': typeof EventsTemplatesTemplateIdRoute
+  '/spaces/$spaceId/cross-space': typeof SpacesSpaceIdCrossSpaceRoute
   '/spaces/$spaceId/events': typeof SpacesSpaceIdEventsRouteWithChildren
   '/spaces/$spaceId/human': typeof SpacesSpaceIdHumanRoute
   '/spaces/$spaceId/inbox': typeof SpacesSpaceIdInboxRouteWithChildren
@@ -404,6 +422,7 @@ export interface FileRouteTypes {
     | '/approval-policies'
     | '/audit'
     | '/backups'
+    | '/cross-space'
     | '/events'
     | '/human'
     | '/human-types'
@@ -425,6 +444,7 @@ export interface FileRouteTypes {
     | '/prompts/'
     | '/spaces/'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/cross-space'
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
@@ -448,6 +468,7 @@ export interface FileRouteTypes {
     | '/approval-policies'
     | '/audit'
     | '/backups'
+    | '/cross-space'
     | '/human'
     | '/human-types'
     | '/login'
@@ -466,6 +487,7 @@ export interface FileRouteTypes {
     | '/prompts'
     | '/spaces'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/cross-space'
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/knowledge'
     | '/spaces/$spaceId/limits'
@@ -487,6 +509,7 @@ export interface FileRouteTypes {
     | '/approval-policies'
     | '/audit'
     | '/backups'
+    | '/cross-space'
     | '/events'
     | '/human'
     | '/human-types'
@@ -508,6 +531,7 @@ export interface FileRouteTypes {
     | '/prompts/'
     | '/spaces/'
     | '/events/templates/$templateId'
+    | '/spaces/$spaceId/cross-space'
     | '/spaces/$spaceId/events'
     | '/spaces/$spaceId/human'
     | '/spaces/$spaceId/inbox'
@@ -532,6 +556,7 @@ export interface RootRouteChildren {
   ApprovalPoliciesRoute: typeof ApprovalPoliciesRoute
   AuditRoute: typeof AuditRoute
   BackupsRoute: typeof BackupsRoute
+  CrossSpaceRoute: typeof CrossSpaceRoute
   EventsRoute: typeof EventsRouteWithChildren
   HumanRoute: typeof HumanRoute
   HumanTypesRoute: typeof HumanTypesRoute
@@ -593,6 +618,13 @@ declare module '@tanstack/react-router' {
       path: '/backups'
       fullPath: '/backups'
       preLoaderRoute: typeof BackupsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cross-space': {
+      id: '/cross-space'
+      path: '/cross-space'
+      fullPath: '/cross-space'
+      preLoaderRoute: typeof CrossSpaceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/events': {
@@ -749,6 +781,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdIndexRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/cross-space': {
+      id: '/spaces/$spaceId/cross-space'
+      path: '/cross-space'
+      fullPath: '/spaces/$spaceId/cross-space'
+      preLoaderRoute: typeof SpacesSpaceIdCrossSpaceRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/events': {
       id: '/spaces/$spaceId/events'
       path: '/events'
@@ -891,6 +930,7 @@ const SpacesSpaceIdInboxRouteWithChildren =
   SpacesSpaceIdInboxRoute._addFileChildren(SpacesSpaceIdInboxRouteChildren)
 
 interface SpacesSpaceIdRouteChildren {
+  SpacesSpaceIdCrossSpaceRoute: typeof SpacesSpaceIdCrossSpaceRoute
   SpacesSpaceIdEventsRoute: typeof SpacesSpaceIdEventsRouteWithChildren
   SpacesSpaceIdHumanRoute: typeof SpacesSpaceIdHumanRoute
   SpacesSpaceIdInboxRoute: typeof SpacesSpaceIdInboxRouteWithChildren
@@ -905,6 +945,7 @@ interface SpacesSpaceIdRouteChildren {
 }
 
 const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
+  SpacesSpaceIdCrossSpaceRoute: SpacesSpaceIdCrossSpaceRoute,
   SpacesSpaceIdEventsRoute: SpacesSpaceIdEventsRouteWithChildren,
   SpacesSpaceIdHumanRoute: SpacesSpaceIdHumanRoute,
   SpacesSpaceIdInboxRoute: SpacesSpaceIdInboxRouteWithChildren,
@@ -942,6 +983,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApprovalPoliciesRoute: ApprovalPoliciesRoute,
   AuditRoute: AuditRoute,
   BackupsRoute: BackupsRoute,
+  CrossSpaceRoute: CrossSpaceRoute,
   EventsRoute: EventsRouteWithChildren,
   HumanRoute: HumanRoute,
   HumanTypesRoute: HumanTypesRoute,

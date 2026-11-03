@@ -60,6 +60,9 @@
 | `approval-executed` | Human actions | An approved enforced approval with its execution recorded separately | current |
 | `space-knowledge` | Space knowledge | Knowledge bases with sessions, capacity, questions and proposals | current |
 | `kb-detail` | Space knowledge | A KB's questions with answers, their basis and evidence | current |
+| `xspace-requests` | Cross-space requests | A space's incoming and outgoing cross-space requests with a question's detail (untrusted-content notice, disclosure) | todo |
+| `xspace-access` | Cross-space requests | A space's settings and what it accepts from and may send to each peer, with the disclosure level and limits | todo |
+| `xspace-admin` | Cross-space requests | Global Cross-space page: every request between spaces (source → destination) | todo |
 | `space-memory` | Space memory | Dreams and role memory collections with central's head and the node's sync state | current |
 | `dream-runs` | Space memory | A dream configuration's recent dreams with summaries and findings | current |
 | `run-usage` | Run | A run's token usage from its native transcript and the stored transcript | current |

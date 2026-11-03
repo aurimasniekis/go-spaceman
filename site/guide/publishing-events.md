@@ -51,7 +51,7 @@ are a SpaceMan extension, not part of Pulse:
 
 | Header | Meaning |
 |---|---|
-| `spaceman-correlation-id` | The work the event belongs to: the run, the task, the approval, the human action's correlation or task, the memory collection, the KB proposal or the inbox item's correlation. |
+| `spaceman-correlation-id` | The work the event belongs to: the run, the task, the approval, the human action's correlation or task, the memory collection, the KB proposal, the inbox item's correlation or the first request of a cross-space chain. |
 | `spaceman-causation-id` | What caused it, when SpaceMan knows: the Pulse event that created an inbox item, a task's origin, the human action that decided an approval, the run that used it, the node's sync or command, or the API request (`req_…`). |
 | `spaceman-origin` | The publishing installation's `source`. |
 
@@ -84,6 +84,8 @@ in a way that is not purely additive gets a new type version (`.v2`).
 | `evt.spaceman.approvals.approval.executed` | `spaceman.approvals.approval_executed.v1` | `space_id`, `approval_id`, `execution_id`, `operation`, `result` (succeeded, failed), `error_code` |
 | `evt.spaceman.memory.collection.synced` | `spaceman.memory.collection_synced.v1` | `space_id`, `collection_id`, `role`, `node_id`, `from_commit`, `to_commit` |
 | `evt.spaceman.kb.proposal.accepted` | `spaceman.kb.proposal_accepted.v1` | `space_id`, `kb_id`, `proposal_id`, `session_id`, `commit`, `merged_commit` |
+| `evt.spaceman.xspace.request.created` | `spaceman.xspace.request_created.v1` | `space_id`, `side` (`source` or `destination`: one event for each of the two spaces), `request_id`, `source_space_id`, `dest_space_id`, `kind`, `state`, `depth`, `correlation_id` |
+| `evt.spaceman.xspace.request.state_changed` | `spaceman.xspace.request_state_changed.v1` | the request fields (`state` is the new one) and `from` |
 
 For example, a resolved question:
 

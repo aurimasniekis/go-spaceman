@@ -191,6 +191,8 @@ type Service struct {
 	// SpaceLimits returns a space's effective KB limits (the limits model, ADR-0036): active support sessions across
 	// its knowledge bases, and how deep support may nest. Nil: 8 sessions, depth 1.
 	SpaceLimits func(ctx context.Context, q *db.Queries, spaceID string) (maxSessions, depth int64)
+	// OnCrossSpace is told (after commit) that a KB request asked for another space finished (ADR-0038).
+	OnCrossSpace func(ctx context.Context, kbRequestID string)
 	// base is the context of Run; hooks without a caller context use it.
 	base context.Context
 }
@@ -630,8 +632,111 @@ func (svc *Service) Cancel(ctx context.Context, actor audit.Actor, p *fleet.RunP
 	if err := svc.end(ctx, actor, r, "cancelled", "cancelled"); err != nil {
 		return err
 	}
+	if r.XspaceRequestID != "" && svc.OnCrossSpace != nil {
+		svc.OnCrossSpace(ctx, r.ID) // an operator withdrew it in the destination: the source learns it failed
+	}
 	svc.Kick()
 	return nil
+}
+
+// CrossSpaceAsk is a question asked on behalf of another space's cross-space request (ADR-0038). The cross-space
+// permission is the admission (the KB's allowed roles are for its own space's agents); the requester identity is the
+// source run, "space:<id>/run:<id>", so each source run gets its own support session.
+type CrossSpaceAsk struct {
+	XSpaceRequestID string
+	RequesterKey    string
+	RequesterLabel  string
+	RequesterRun    string
+	Kind, Question  string
+}
+
+// AskCrossSpaceTx queues a cross-space question for a KB of spaceID inside the caller's transaction and returns the
+// KB request's ID. Its outcome is reported through OnCrossSpace, never as a message to a local requester.
+func (svc *Service) AskCrossSpaceTx(ctx context.Context, tx *store.Tx, spaceID, slug string, in CrossSpaceAsk) (string, error) {
+	if !slices.Contains(Kinds, in.Kind) {
+		return "", apperr.New(apperr.CodeInvalid, "kb_kind must be one of %s", strings.Join(Kinds, ", "))
+	}
+	k, err := tx.Q.GetKBBySlug(ctx, db.GetKBBySlugParams{SpaceID: spaceID, Slug: slug})
+	if err != nil {
+		return "", errNotFound
+	}
+	if k.Enabled != 1 {
+		return "", apperr.New(apperr.CodePrecondition, "the knowledge base %s is disabled", k.Slug)
+	}
+	now := tx.NowMicros()
+	sess, err := tx.Q.GetKBSessionByRequester(ctx, db.GetKBSessionByRequesterParams{KbID: k.ID, RequesterKey: in.RequesterKey})
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && sess.State == "closed") {
+		if err == nil {
+			if _, err := tx.SQL.ExecContext(ctx, `DELETE FROM kb_sessions WHERE id = ?`, sess.ID); err != nil {
+				return "", err
+			}
+		}
+		sid := ids.New(ids.KBSession)
+		sess = db.KbSession{ID: sid}
+		if err := tx.Q.InsertKBSession(ctx, db.InsertKBSessionParams{ID: sid, KbID: k.ID, SpaceID: k.SpaceID, RequesterKey: in.RequesterKey,
+			RequesterRole: "cross-space", RequesterLabel: in.RequesterLabel, InstanceID: ids.New(ids.Instance), Branch: "kb/" + k.Slug + "/" + sid,
+			LastActiveAt: now, CreatedAt: now, UpdatedAt: now}); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	reqID := ids.New("kbq")
+	if err := tx.Q.InsertKBRequest(ctx, db.InsertKBRequestParams{ID: reqID, KbID: k.ID, SpaceID: k.SpaceID, SessionID: sess.ID, RequesterRun: in.RequesterRun,
+		RequesterInstance: in.RequesterKey, RequesterRole: "cross-space", Kind: in.Kind, Question: in.Question,
+		DeadlineAt: now + k.RequestTimeoutSeconds*1_000_000, CreatedAt: now, UpdatedAt: now}); err != nil {
+		return "", err
+	}
+	if err := tx.Q.SetKBRequestXSpace(ctx, db.SetKBRequestXSpaceParams{XspaceRequestID: in.XSpaceRequestID, ID: reqID}); err != nil {
+		return "", err
+	}
+	if err := svc.changes.Record(ctx, tx, k.SpaceID, "kb", k.ID, "updated", 0); err != nil {
+		return "", err
+	}
+	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: system, Action: "kb.asked", Target: audit.Target{Type: "kb", ID: k.ID},
+		Details: map[string]any{"space_id": k.SpaceID, "request": reqID, "kind": in.Kind, "xspace_request": in.XSpaceRequestID}}); err != nil {
+		return "", err
+	}
+	tx.AfterCommit(svc.Kick)
+	return reqID, nil
+}
+
+// EndCrossSpaceTx withdraws a cross-space KB request inside the caller's transaction (the source cancelled it or its
+// deadline passed). A request that already finished is left as it is.
+func (svc *Service) EndCrossSpaceTx(ctx context.Context, tx *store.Tx, kbRequestID, state, reason string) error {
+	r, err := tx.Q.GetKBRequest(ctx, kbRequestID)
+	if err != nil {
+		return ignoreNoRows(err)
+	}
+	n, err := tx.Q.EndKBRequest(ctx, db.EndKBRequestParams{State: state, Error: reason, Now: tx.NowMicros(), ID: r.ID})
+	if err != nil || n == 0 {
+		return err
+	}
+	tx.AfterCommit(svc.Kick)
+	return svc.changes.Record(ctx, tx, r.SpaceID, "kb", r.KbID, "updated", 0)
+}
+
+func ignoreNoRows(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+// CrossSpaceResult is a finished cross-space KB request as the cross-space service reads it.
+type CrossSpaceResult struct {
+	State, Answer, Basis, Error string
+	Evidence                    []Evidence
+}
+
+// CrossSpaceOutcome reads a KB request's outcome (for OnCrossSpace).
+func (svc *Service) CrossSpaceOutcome(ctx context.Context, kbRequestID string) (*CrossSpaceResult, error) {
+	r, err := svc.s.R().GetKBRequest(ctx, kbRequestID)
+	if err != nil {
+		return nil, err
+	}
+	out := requestOut(r)
+	return &CrossSpaceResult{State: out.State, Answer: out.Answer, Basis: out.Basis, Error: out.Error, Evidence: out.Evidence}, nil
 }
 
 func (svc *Service) end(ctx context.Context, actor audit.Actor, r db.KbRequest, state, msg string) error {
@@ -760,6 +865,13 @@ func (svc *Service) ownRequest(ctx context.Context, p *fleet.RunPrincipal, id st
 
 // notifyRequester tells the requester (its run, or its role when the run ended) that a request finished.
 func (svc *Service) notifyRequester(ctx context.Context, r db.KbRequest, what, excerpt string) {
+	if r.XspaceRequestID != "" {
+		// Asked for another space: the cross-space service reports it to the source, within its disclosure level.
+		if svc.OnCrossSpace != nil {
+			svc.OnCrossSpace(ctx, r.ID)
+		}
+		return
+	}
 	k, err := svc.s.R().GetKB(ctx, r.KbID)
 	if err != nil {
 		return

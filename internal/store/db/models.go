@@ -580,6 +580,7 @@ type KbRequest struct {
 	DispatchedAt      sql.NullInt64
 	AnsweredAt        sql.NullInt64
 	UpdatedAt         int64
+	XspaceRequestID   string
 }
 
 type KbSession struct {
@@ -1309,4 +1310,70 @@ type WebSession struct {
 	RevokedAt         sql.NullInt64
 	RevokeReason      sql.NullString
 	DisplayID         string
+}
+
+type XspacePeer struct {
+	SpaceID       string
+	PeerSpaceID   string
+	InDiscover    int64
+	InQuestions   int64
+	InDelegation  int64
+	InKnowledge   int64
+	InKbsJson     string
+	Disclosure    string
+	MaxPerHour    int64
+	MaxPending    int64
+	OutQuestions  int64
+	OutDelegation int64
+	OutKnowledge  int64
+	Version       int64
+	CreatedAt     int64
+	CreatedBy     string
+	UpdatedAt     int64
+	UpdatedBy     string
+}
+
+type XspaceRequest struct {
+	ID                string
+	SourceSpaceID     string
+	DestSpaceID       string
+	Kind              string
+	Title             string
+	Body              string
+	KbSlug            string
+	KbKind            string
+	RequesterRun      string
+	RequesterRole     string
+	CorrelationID     string
+	CausedBy          string
+	ChainJson         string
+	Depth             int64
+	State             string
+	DeadlineAt        int64
+	InboxItemID       string
+	KbRequestID       string
+	LocalTaskID       string
+	Disclosure        string
+	Reply             string
+	ReplyTruncated    int64
+	ReplyBasis        string
+	ReplyEvidenceJson string
+	Reason            string
+	DecidedBy         string
+	DecidedAt         sql.NullInt64
+	ClosedAt          sql.NullInt64
+	DedupKey          string
+	CreatedAt         int64
+	UpdatedAt         int64
+	Version           int64
+}
+
+type XspaceSetting struct {
+	SpaceID            string
+	Profile            string
+	MaxDepth           int64
+	MaxOutgoingPerHour int64
+	Version            int64
+	UpdatedAt          int64
+	UpdatedBy          string
 }

@@ -1502,6 +1502,25 @@
         },
         "type": "object"
       },
+      "Cancel-xspace-requestRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Cancel-xspace-requestRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "CatalogDiffLine": {
         "additionalProperties": false,
         "properties": {
@@ -2659,6 +2678,25 @@
           "token",
           "secret"
         ],
+        "type": "object"
+      },
+      "Decline-xspace-requestRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Decline-xspace-requestRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "Diff-prompt-versionsResponse": {
@@ -13181,6 +13219,483 @@
           "size",
           "received",
           "truncated"
+        ],
+        "type": "object"
+      },
+      "XspaceInbound": {
+        "additionalProperties": false,
+        "properties": {
+          "delegation": {
+            "description": "The peer may ask this space's control to do work (this space decides and runs it)",
+            "type": "boolean"
+          },
+          "disclosure": {
+            "description": "What replies to the peer may contain: none (the outcome only), summary (text up to 2,000 characters), detailed (text up to 20,000 characters and KB evidence)",
+            "enum": [
+              "none",
+              "summary",
+              "detailed"
+            ],
+            "type": "string"
+          },
+          "discover": {
+            "description": "The peer's control may see this space and its profile",
+            "type": "boolean"
+          },
+          "kbs": {
+            "description": "KB slugs the peer may ask; empty means every enabled KB",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "knowledge": {
+            "description": "The peer may ask this space's knowledge bases (through support sessions, never the repository)",
+            "type": "boolean"
+          },
+          "max_pending": {
+            "description": "Requests from the peer open here at once (1-100; default 5)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_per_hour": {
+            "description": "Requests the peer may send here per hour (1-1000; default 20)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "questions": {
+            "description": "The peer may ask this space's control questions",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "discover",
+          "questions",
+          "delegation",
+          "knowledge",
+          "kbs",
+          "disclosure",
+          "max_per_hour",
+          "max_pending"
+        ],
+        "type": "object"
+      },
+      "XspaceOutbound": {
+        "additionalProperties": false,
+        "properties": {
+          "delegation": {
+            "type": "boolean"
+          },
+          "knowledge": {
+            "type": "boolean"
+          },
+          "questions": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "questions",
+          "delegation",
+          "knowledge"
+        ],
+        "type": "object"
+      },
+      "XspacePeer": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/XspacePeer.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "inbound": {
+            "$ref": "#/components/schemas/XspaceInbound"
+          },
+          "outbound": {
+            "$ref": "#/components/schemas/XspaceOutbound"
+          },
+          "peer": {
+            "$ref": "#/components/schemas/XspaceSpaceRef"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "space_id",
+          "peer",
+          "inbound",
+          "outbound",
+          "version",
+          "created_at",
+          "updated_at",
+          "updated_by"
+        ],
+        "type": "object"
+      },
+      "XspacePeerInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/XspacePeerInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "inbound": {
+            "$ref": "#/components/schemas/XspaceInbound"
+          },
+          "outbound": {
+            "$ref": "#/components/schemas/XspaceOutbound"
+          }
+        },
+        "required": [
+          "inbound",
+          "outbound"
+        ],
+        "type": "object"
+      },
+      "XspacePeerListBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/XspacePeerListBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/XspacePeer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "XspaceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/XspaceRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "body": {
+            "description": "Markdown from the source space's control: untrusted in the destination",
+            "type": "string"
+          },
+          "caused_by": {
+            "description": "The incoming request this one was asked for",
+            "type": "string"
+          },
+          "chain": {
+            "description": "Spaces the chain visited, in order (global view only)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "closed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "correlation_id": {
+            "description": "The ID of the first request of the chain",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deadline_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "depth": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/XspaceSpaceRef"
+          },
+          "disclosure": {
+            "description": "The level the reply was reduced to",
+            "enum": [
+              "none",
+              "summary",
+              "detailed",
+              ""
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "inbox_item_id": {
+            "type": "string"
+          },
+          "kb": {
+            "description": "The destination KB (knowledge requests)",
+            "type": "string"
+          },
+          "kb_kind": {
+            "type": "string"
+          },
+          "kb_request_id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "question",
+              "delegation",
+              "knowledge"
+            ],
+            "type": "string"
+          },
+          "local_task_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reply": {
+            "description": "The destination's reply as disclosed (Markdown from its agents: untrusted)",
+            "type": "string"
+          },
+          "reply_basis": {
+            "description": "Knowledge requests: committed, proposal or none",
+            "type": "string"
+          },
+          "reply_evidence": {
+            "items": {
+              "$ref": "#/components/schemas/KbEvidence"
+            },
+            "type": "array"
+          },
+          "reply_truncated": {
+            "type": "boolean"
+          },
+          "requester_role": {
+            "type": "string"
+          },
+          "requester_run": {
+            "type": "string"
+          },
+          "side": {
+            "description": "outgoing: your space asked; incoming: your space was asked; empty in the global view",
+            "enum": [
+              "outgoing",
+              "incoming",
+              ""
+            ],
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/XspaceSpaceRef"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "accepted",
+              "completed",
+              "failed",
+              "declined",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "destination",
+          "kind",
+          "title",
+          "body",
+          "requester_run",
+          "requester_role",
+          "correlation_id",
+          "depth",
+          "state",
+          "deadline_at",
+          "created_at",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "XspaceRequestListBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/XspaceRequestListBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/XspaceRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "XspaceSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/XspaceSettings.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "max_depth": {
+            "description": "Requests deeper than this in a chain are refused here (1-8)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_outgoing_per_hour": {
+            "description": "Requests this space's control may send per hour, to every peer together",
+            "format": "int64",
+            "type": "integer"
+          },
+          "profile": {
+            "description": "What peers allowed to discover this space see about it (written for agents)",
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "version": {
+            "description": "0 until the settings are first saved",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "space_id",
+          "profile",
+          "max_depth",
+          "max_outgoing_per_hour",
+          "version"
+        ],
+        "type": "object"
+      },
+      "XspaceSettingsInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/XspaceSettingsInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "max_depth": {
+            "description": "1-8; default 3",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_outgoing_per_hour": {
+            "description": "1-1000; default 60",
+            "format": "int64",
+            "type": "integer"
+          },
+          "profile": {
+            "maxLength": 2000,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "XspaceSpaceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ],
         "type": "object"
       }
@@ -23902,6 +24417,543 @@
         ]
       }
     },
+    "/spaces/{space_id}/xspace/peers": {
+      "get": {
+        "operationId": "list-xspace-peers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspacePeerListBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "What a space accepts from and may send to each peer space",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
+    "/spaces/{space_id}/xspace/peers/{peer_id}": {
+      "delete": {
+        "description": "Nothing is allowed with that peer any more in either direction from this side.",
+        "operationId": "delete-xspace-peer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The peer space's ID",
+            "in": "path",
+            "name": "peer_id",
+            "required": true,
+            "schema": {
+              "description": "The peer space's ID",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove a space's configuration for a peer space",
+        "tags": [
+          "cross-space"
+        ]
+      },
+      "put": {
+        "description": "Without If-Match a new configuration is created. Every flag is separate and off unless set; a request needs the destination's inbound flag and the source's outbound flag.",
+        "operationId": "put-xspace-peer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The peer space's ID",
+            "in": "path",
+            "name": "peer_id",
+            "required": true,
+            "schema": {
+              "description": "The peer space's ID",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/XspacePeerInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspacePeer"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set what a space accepts from and may send to a peer space",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
+    "/spaces/{space_id}/xspace/requests": {
+      "get": {
+        "operationId": "list-xspace-requests",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Empty lists both",
+            "explode": false,
+            "in": "query",
+            "name": "direction",
+            "schema": {
+              "description": "Empty lists both",
+              "enum": [
+                "outgoing",
+                "incoming",
+                ""
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only pending and accepted requests",
+            "explode": false,
+            "in": "query",
+            "name": "open",
+            "schema": {
+              "description": "Only pending and accepted requests",
+              "type": "boolean"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int64",
+              "maximum": 500,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspaceRequestListBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's outgoing and incoming cross-space requests",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
+    "/spaces/{space_id}/xspace/requests/{request_id}": {
+      "get": {
+        "operationId": "get-xspace-request",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspaceRequest"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A cross-space request as this space sees it",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
+    "/spaces/{space_id}/xspace/requests/{request_id}/cancel": {
+      "post": {
+        "description": "The destination's control is told; its local work stays its decision.",
+        "operationId": "cancel-xspace-request",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Cancel-xspace-requestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspaceRequest"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Withdraw an open request this space sent",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
+    "/spaces/{space_id}/xspace/requests/{request_id}/decline": {
+      "post": {
+        "description": "The reason reaches the requester only when this space's disclosure level for it allows text.",
+        "operationId": "decline-xspace-request",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Decline-xspace-requestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspaceRequest"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Decline a pending request another space sent this one",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
+    "/spaces/{space_id}/xspace/settings": {
+      "get": {
+        "description": "Its public profile for peers, the deepest request chain it accepts and its outgoing limit.",
+        "operationId": "get-xspace-settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspaceSettings"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's cross-space settings",
+        "tags": [
+          "cross-space"
+        ]
+      },
+      "put": {
+        "description": "Without If-Match the settings must never have been saved.",
+        "operationId": "update-xspace-settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/XspaceSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspaceSettings"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Edit a space's cross-space settings",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
     "/system/backups": {
       "get": {
         "description": "The configured target and schedule, what every backup includes and excludes, and the backups: runs made by central joined with what the target holds (CLI-made backups are listed too).",
@@ -24818,6 +25870,89 @@
         "summary": "Issue a one-time password reset token",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/xspace/peers": {
+      "get": {
+        "operationId": "list-all-xspace-peers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspacePeerListBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Every space's peer configuration (global administration)",
+        "tags": [
+          "cross-space"
+        ]
+      }
+    },
+    "/xspace/requests": {
+      "get": {
+        "operationId": "list-all-xspace-requests",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "open",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int64",
+              "maximum": 500,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspaceRequestListBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Every cross-space request (global administration)",
+        "tags": [
+          "cross-space"
         ]
       }
     }

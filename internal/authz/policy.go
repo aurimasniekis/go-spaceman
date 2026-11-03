@@ -92,6 +92,10 @@ var (
 	SpaceConfigRead  = perm("space_config", "read") // roles, prompts bindings, limits, policies of a space
 	SpaceConfigWrite = perm("space_config", "write")
 
+	// Cross-space access (ADR-0038): a space's permissions per peer and its incoming and outgoing requests.
+	XSpaceRead  = perm("xspace", "read")
+	XSpaceWrite = perm("xspace", "write")
+
 	SecretWrite = perm("secret", "write") // write-only: secrets are never readable through any permission
 
 	TemplateRead    = perm("template", "read")
@@ -122,11 +126,11 @@ var (
 var rolePermissions = map[Role][]Permission{
 	RoleViewer: {
 		SpaceRead, RunRead, InboxRead, QueueRead, MessageRead, HumanRead, AttachmentRead, SubscriptionRead, KBRead,
-		MemoryRead, SpaceConfigRead, TemplateRead, HumanTypeRead, PromptRead, MCPRead, SkillRead, NodeRead, ApprovalPolicyRead,
+		MemoryRead, SpaceConfigRead, TemplateRead, HumanTypeRead, PromptRead, MCPRead, SkillRead, NodeRead, ApprovalPolicyRead, XSpaceRead,
 	},
 	RoleOperator: {
 		SpaceWrite, RunControl, TerminalWatch, RecordingRead, InboxWrite, QueueWrite, MessageWrite, HumanRespond, ApprovalDecide,
-		AttachmentWrite, SubscriptionWrite, ReplayExecute, KBWrite, MemoryWrite, SpaceConfigWrite, ConnectionRead,
+		AttachmentWrite, SubscriptionWrite, ReplayExecute, KBWrite, MemoryWrite, SpaceConfigWrite, ConnectionRead, XSpaceWrite,
 	},
 	// Admins hold every permission ("*"), including terminal takeover, diagnostics, recording deletion, secrets and,
 	// in the "*" domain, global administration.

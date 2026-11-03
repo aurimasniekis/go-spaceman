@@ -19,6 +19,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `relocation_stop_runs`, `relocation_recovery`, `relocation_retain_days`, `relocation_timeout`) instead of being refused.
 
 ### Security
+- Cross-space requests (SM-XSPACE-001…003, ADR-0038): a space's control can ask another space a question, delegate
+  work to it or ask one of its knowledge bases, only as far as both spaces allow. Each space sets, per peer, what it
+  accepts (discovery, questions, delegation, knowledge per KB, what its replies disclose, quotas) and what its own control
+  may send; everything is off by default. Questions and delegation land in the destination's inbox for its control,
+  which accepts (optionally creating its own task), declines or replies; knowledge requests go to a support session of
+  the destination's KB. Replies are reduced to the destination's disclosure level before they are stored. Requests carry
+  correlation, deadlines, cancellation, depth and the spaces their chain visited (loops and over-deep chains are
+  refused) and are bounded per pair and per source. Only control runs have the eight `spaceman_xspace_*` tools. New
+  **Cross-space** section per space (requests and access per peer) and a global **Cross-space** page; `xspace:read` /
+  `xspace:write` permissions; events `xspace.request.created` and `xspace.request.state_changed` (metadata only).
 - Revocation reaches open streams at once (SM-AUTH-007, ADR-0033): signing out, revoking a session or API token,
   rotating the root token, disabling a user, resetting a password or changing grants ends affected live terminals and
   change-feed streams as soon as the change commits. A removed space grant hides that space's changes immediately and

@@ -244,7 +244,7 @@ func (q *Queries) GetKBProposal(ctx context.Context, id string) (KbProposal, err
 }
 
 const getKBRequest = `-- name: GetKBRequest :one
-SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at FROM kb_requests WHERE id = ?
+SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at, xspace_request_id FROM kb_requests WHERE id = ?
 `
 
 func (q *Queries) GetKBRequest(ctx context.Context, id string) (KbRequest, error) {
@@ -273,6 +273,7 @@ func (q *Queries) GetKBRequest(ctx context.Context, id string) (KbRequest, error
 		&i.DispatchedAt,
 		&i.AnsweredAt,
 		&i.UpdatedAt,
+		&i.XspaceRequestID,
 	)
 	return i, err
 }
@@ -636,7 +637,7 @@ func (q *Queries) ListKBProposals(ctx context.Context, kbID string) ([]KbProposa
 }
 
 const listKBRequests = `-- name: ListKBRequests :many
-SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at FROM kb_requests WHERE kb_id = ? ORDER BY created_at DESC LIMIT ?
+SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at, xspace_request_id FROM kb_requests WHERE kb_id = ? ORDER BY created_at DESC LIMIT ?
 `
 
 type ListKBRequestsParams struct {
@@ -676,6 +677,7 @@ func (q *Queries) ListKBRequests(ctx context.Context, arg ListKBRequestsParams) 
 			&i.DispatchedAt,
 			&i.AnsweredAt,
 			&i.UpdatedAt,
+			&i.XspaceRequestID,
 		); err != nil {
 			return nil, err
 		}
@@ -786,7 +788,7 @@ func (q *Queries) ListKBs(ctx context.Context, spaceID string) ([]KbRepo, error)
 }
 
 const listOpenKBRequests = `-- name: ListOpenKBRequests :many
-SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at FROM kb_requests WHERE state IN ('queued', 'dispatched') ORDER BY created_at
+SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at, xspace_request_id FROM kb_requests WHERE state IN ('queued', 'dispatched') ORDER BY created_at
 `
 
 func (q *Queries) ListOpenKBRequests(ctx context.Context) ([]KbRequest, error) {
@@ -821,6 +823,7 @@ func (q *Queries) ListOpenKBRequests(ctx context.Context) ([]KbRequest, error) {
 			&i.DispatchedAt,
 			&i.AnsweredAt,
 			&i.UpdatedAt,
+			&i.XspaceRequestID,
 		); err != nil {
 			return nil, err
 		}
@@ -836,7 +839,7 @@ func (q *Queries) ListOpenKBRequests(ctx context.Context) ([]KbRequest, error) {
 }
 
 const listSessionRequests = `-- name: ListSessionRequests :many
-SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at FROM kb_requests WHERE session_id = ? AND state IN ('queued', 'dispatched') ORDER BY created_at
+SELECT id, kb_id, space_id, session_id, requester_run, requester_instance, requester_role, kind, question, task_id, state, message_id, answer, basis, evidence_json, attempts, error, deadline_at, created_at, dispatched_at, answered_at, updated_at, xspace_request_id FROM kb_requests WHERE session_id = ? AND state IN ('queued', 'dispatched') ORDER BY created_at
 `
 
 func (q *Queries) ListSessionRequests(ctx context.Context, sessionID string) ([]KbRequest, error) {
@@ -871,6 +874,7 @@ func (q *Queries) ListSessionRequests(ctx context.Context, sessionID string) ([]
 			&i.DispatchedAt,
 			&i.AnsweredAt,
 			&i.UpdatedAt,
+			&i.XspaceRequestID,
 		); err != nil {
 			return nil, err
 		}

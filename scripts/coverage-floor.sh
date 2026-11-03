@@ -28,6 +28,7 @@ PACKAGES=(
   internal/s3client
   internal/limits
   internal/schedule
+  internal/xspace
 )
 
 fail=0

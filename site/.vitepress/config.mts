@@ -74,6 +74,7 @@ export default withMermaid(
             { text: 'Control and workers', link: '/guide/control' },
             { text: 'Roles and prompts', link: '/guide/roles-and-prompts' },
             { text: 'Knowledge bases', link: '/guide/knowledge' },
+            { text: 'Cross-space requests', link: '/guide/cross-space' },
             { text: 'Role memory', link: '/guide/memory' },
             { text: 'Dreams', link: '/guide/dreams' },
             { text: 'Usage and transcripts', link: '/guide/usage' },

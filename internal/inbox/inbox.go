@@ -190,59 +190,11 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 	if err := in.normalize(); err != nil {
 		return nil, false, err
 	}
-	trusted, err := json.Marshal(in.Trusted)
-	if err != nil {
-		return nil, false, err
-	}
-	id := ids.New(ids.InboxItem)
+	var id string
 	created := false
-	err = svc.s.W().TxNamed(ctx, "inbox.create", func(tx *store.Tx) error {
-		created = false
-		sp, err := tx.Q.GetSpace(ctx, spaceID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return apperr.New(apperr.CodeNotFound, "space not found")
-		} else if err != nil {
-			return err
-		}
-		if sp.State == "archived" {
-			return apperr.New(apperr.CodePrecondition, "the space is archived")
-		}
-		n, err := tx.Q.InsertInboxItem(ctx, db.InsertInboxItemParams{ID: id, SpaceID: spaceID, SourceKind: in.SourceKind, SourceID: in.SourceID,
-			SourceLabel: in.SourceLabel, Title: in.Title, ContentType: in.ContentType, Body: in.Body, PayloadRef: in.PayloadRef,
-			CorrelationID: in.CorrelationID, DedupKey: in.DedupKey, TrustedJson: string(trusted), SubscriptionID: in.Subscription,
-			Urgency: in.Urgency, ReceivedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()})
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			existing, err := tx.Q.GetInboxItemByDedup(ctx, db.GetInboxItemByDedupParams{SpaceID: spaceID, SourceKind: in.SourceKind, DedupKey: in.DedupKey})
-			if err != nil {
-				return err
-			}
-			id = existing.ID
-			return nil
-		}
-		created = true
-		if err := attachments.Reference(ctx, tx, spaceID, OwnerKind, id, in.AttachmentIDs); err != nil {
-			return err
-		}
-		if err := svc.changes.Record(ctx, tx, spaceID, "inbox_item", id, "created", 1); err != nil {
-			return err
-		}
-		corr := outbox.CleanID(in.CorrelationID)
-		if corr == "" {
-			corr = id
-		}
-		if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.InboxItemCreated{SpaceID: spaceID, ItemID: id, SourceKind: in.SourceKind,
-			SourceID: outbox.CleanID(in.SourceID), SubscriptionID: outbox.CleanID(in.Subscription), Urgency: in.Urgency}, Correlation: corr,
-			Causation: in.CausationID}); err != nil {
-			return err
-		}
-		// Event ingestion (the system actor) is recorded per delivery instead; people, tokens and agents are audited.
-		if actor.Type != audit.ActorSystem {
-			_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "inbox.item_created", Target: audit.Target{Type: "inbox_item", ID: id},
-				Details: map[string]any{"space_id": spaceID, "source_kind": in.SourceKind, "content_type": in.ContentType, "attachments": len(in.AttachmentIDs)}})
-		}
+	err := svc.s.W().TxNamed(ctx, "inbox.create", func(tx *store.Tx) error {
+		var err error
+		id, created, err = svc.create(ctx, tx, actor, spaceID, in)
 		return err
 	})
 	if err != nil {
@@ -253,6 +205,76 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		svc.OnCreated(it)
 	}
 	return it, created, err
+}
+
+// CreateTx adds an item inside the caller's transaction (another service's change that must land together with the
+// item, such as a cross-space request). OnCreated runs after the commit.
+func (svc *Service) CreateTx(ctx context.Context, tx *store.Tx, actor audit.Actor, spaceID string, in CreateInput) (string, bool, error) {
+	if err := in.normalize(); err != nil {
+		return "", false, err
+	}
+	id, created, err := svc.create(ctx, tx, actor, spaceID, in)
+	if err == nil && created && svc.OnCreated != nil {
+		base := context.WithoutCancel(ctx)
+		tx.AfterCommit(func() {
+			if it, err := svc.Get(base, spaceID, id); err == nil {
+				svc.OnCreated(it)
+			}
+		})
+	}
+	return id, created, err
+}
+
+func (svc *Service) create(ctx context.Context, tx *store.Tx, actor audit.Actor, spaceID string, in CreateInput) (string, bool, error) {
+	trusted, err := json.Marshal(in.Trusted)
+	if err != nil {
+		return "", false, err
+	}
+	id := ids.New(ids.InboxItem)
+	sp, err := tx.Q.GetSpace(ctx, spaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, apperr.New(apperr.CodeNotFound, "space not found")
+	} else if err != nil {
+		return "", false, err
+	}
+	if sp.State == "archived" {
+		return "", false, apperr.New(apperr.CodePrecondition, "the space is archived")
+	}
+	n, err := tx.Q.InsertInboxItem(ctx, db.InsertInboxItemParams{ID: id, SpaceID: spaceID, SourceKind: in.SourceKind, SourceID: in.SourceID,
+		SourceLabel: in.SourceLabel, Title: in.Title, ContentType: in.ContentType, Body: in.Body, PayloadRef: in.PayloadRef,
+		CorrelationID: in.CorrelationID, DedupKey: in.DedupKey, TrustedJson: string(trusted), SubscriptionID: in.Subscription,
+		Urgency: in.Urgency, ReceivedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()})
+	if err != nil {
+		return "", false, err
+	}
+	if n == 0 {
+		existing, err := tx.Q.GetInboxItemByDedup(ctx, db.GetInboxItemByDedupParams{SpaceID: spaceID, SourceKind: in.SourceKind, DedupKey: in.DedupKey})
+		if err != nil {
+			return "", false, err
+		}
+		return existing.ID, false, nil
+	}
+	if err := attachments.Reference(ctx, tx, spaceID, OwnerKind, id, in.AttachmentIDs); err != nil {
+		return "", false, err
+	}
+	if err := svc.changes.Record(ctx, tx, spaceID, "inbox_item", id, "created", 1); err != nil {
+		return "", false, err
+	}
+	corr := outbox.CleanID(in.CorrelationID)
+	if corr == "" {
+		corr = id
+	}
+	if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Payload: outbox.InboxItemCreated{SpaceID: spaceID, ItemID: id, SourceKind: in.SourceKind,
+		SourceID: outbox.CleanID(in.SourceID), SubscriptionID: outbox.CleanID(in.Subscription), Urgency: in.Urgency}, Correlation: corr,
+		Causation: in.CausationID}); err != nil {
+		return "", false, err
+	}
+	// Event ingestion (the system actor) is recorded per delivery instead; people, tokens and agents are audited.
+	if actor.Type != audit.ActorSystem {
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "inbox.item_created", Target: audit.Target{Type: "inbox_item", ID: id},
+			Details: map[string]any{"space_id": spaceID, "source_kind": in.SourceKind, "content_type": in.ContentType, "attachments": len(in.AttachmentIDs)}})
+	}
+	return id, true, err
 }
 
 func fromRow(r db.InboxItem) *Item {

@@ -151,6 +151,20 @@
 - **Schema forms cover common fields.** Strings (with formats and enums), numbers, booleans and string lists render as
   fields; nested objects and other arrays use the JSON editor.
 
+## Cross-space requests
+- **Text only.** Attachments, artifacts and files never cross between spaces; a reply is Markdown text (at most 20,000
+  characters at the detailed level) and, for knowledge requests, the KB's evidence paths.
+- **Disclosure is a size and field limit, not a content filter.** SpaceMan cuts the reply to the level's length and drops
+  evidence or reasons, but it cannot tell whether the text itself reveals something; the destination's control writes it,
+  and the tool description tells it not to paste secrets.
+- **Causation is declared.** Depth and loop protection follow `caused_by` (or the only open incoming request). A control
+  that declares a request `independent` starts a new chain; that is audited, and quotas still bound it.
+- **Only control asks and answers.** Operators can withdraw outgoing and decline incoming requests, but not create or
+  answer them from the UI.
+- **Peers are configured by ID.** The UI offers the spaces the operator can see; there is no directory of spaces an
+  operator cannot read.
+- **No Terraform resources yet** for cross-space settings and peers (M5-01 phase 2), and no real-harness evidence.
+
 ## Sign-in (OIDC)
 - **No real Porch evidence yet.** OIDC sign-in, group mappings, linking and step-up are tested against an in-process
   provider that follows the Porch contract (`porch.groups`, RFC 9207 `iss`, PKCE S256), not against a running Porch

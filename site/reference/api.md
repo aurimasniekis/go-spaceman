@@ -179,6 +179,22 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/system/restore` | `get-restore-state` | Restore notice |
 | `POST` | `/system/restore/acknowledge` | `acknowledge-restore` | Dismiss the restore notice |
 
+### cross-space
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/xspace/peers` | `list-xspace-peers` | What a space accepts from and may send to each peer space |
+| `DELETE` | `/spaces/{space_id}/xspace/peers/{peer_id}` | `delete-xspace-peer` | Remove a space's configuration for a peer space |
+| `PUT` | `/spaces/{space_id}/xspace/peers/{peer_id}` | `put-xspace-peer` | Set what a space accepts from and may send to a peer space |
+| `GET` | `/spaces/{space_id}/xspace/requests` | `list-xspace-requests` | A space's outgoing and incoming cross-space requests |
+| `GET` | `/spaces/{space_id}/xspace/requests/{request_id}` | `get-xspace-request` | A cross-space request as this space sees it |
+| `POST` | `/spaces/{space_id}/xspace/requests/{request_id}/cancel` | `cancel-xspace-request` | Withdraw an open request this space sent |
+| `POST` | `/spaces/{space_id}/xspace/requests/{request_id}/decline` | `decline-xspace-request` | Decline a pending request another space sent this one |
+| `GET` | `/spaces/{space_id}/xspace/settings` | `get-xspace-settings` | A space's cross-space settings |
+| `PUT` | `/spaces/{space_id}/xspace/settings` | `update-xspace-settings` | Edit a space's cross-space settings |
+| `GET` | `/xspace/peers` | `list-all-xspace-peers` | Every space's peer configuration (global administration) |
+| `GET` | `/xspace/requests` | `list-all-xspace-requests` | Every cross-space request (global administration) |
+
 ### dreams
 
 | Method | Path | Operation | Summary |

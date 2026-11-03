@@ -45,6 +45,14 @@ Runs of a role granted an external MCP server also see that server's tools in th
 | `spaceman_runs_list` | Active runs with role, status and task | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_worker_launch` | Start a worker for a ready, eligible task (optionally in its own git worktree) | ✓ | | | |
 | `spaceman_worker_stop` | Stop a worker, KB, dreamer or diagnostic run | ✓ | | | |
+| `spaceman_xspace_discover` | Spaces that let yours discover them, with what you may send ([Cross-space requests](./cross-space)) | ✓ | | | |
+| `spaceman_xspace_request` | Ask another space: a question, delegated work or a KB question; returns at once, outcomes arrive as notices | ✓ | | | |
+| `spaceman_xspace_get` | Read a request your space sent or received (replies as the other space discloses them) | ✓ | | | |
+| `spaceman_xspace_list` | Your space's open (or all) outgoing and incoming requests | ✓ | | | |
+| `spaceman_xspace_accept` | Accept a request another space sent, optionally creating your own task | ✓ | | | |
+| `spaceman_xspace_decline` | Decline a pending request another space sent | ✓ | | | |
+| `spaceman_xspace_reply` | Answer, or report the outcome (completed or failed); reduced to your disclosure level | ✓ | | | |
+| `spaceman_xspace_cancel` | Withdraw an open request your space sent | ✓ | | | |
 
 Rules that apply to every tool:
 

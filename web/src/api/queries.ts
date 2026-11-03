@@ -48,6 +48,10 @@ export const keys = {
   approvalPolicies: ['approval-policies'] as const,
   memory: (spaceId: string) => ['memory', spaceId] as const,
   kbs: (spaceId: string) => ['kbs', spaceId] as const,
+  xspaceRequests: (space: string) => ['xspace-requests', space] as const,
+  xspacePeers: (space: string) => ['xspace-peers', space] as const,
+  xspaceSettings: (space: string) => ['xspace-settings', space] as const,
+  xspaceAll: ['xspace-all'] as const,
   dreams: (spaceId: string) => ['dreams', spaceId] as const,
   mcpGrants: (id: string) => ['mcp-grants', id] as const,
   spaceMcp: (id: string) => ['space-mcp', id] as const,
@@ -340,3 +344,22 @@ export const useUserIdentities = (id: string) =>
     queryKey: keys.userIdentities(id),
     queryFn: async () => unwrap(await api.GET('/users/{user_id}/identities', { params: { path: { user_id: id } } })).items,
   })
+
+/** A space's cross-space requests, outgoing and incoming (ADR-0038). */
+export const useXSpaceRequests = (spaceId: string) =>
+  useQuery({ queryKey: keys.xspaceRequests(spaceId),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/xspace/requests', { params: { path: { space_id: spaceId }, query: { limit: 200 } } })).items })
+/** What a space accepts from and may send to each peer. */
+export const useXSpacePeers = (spaceId: string) =>
+  useQuery({ queryKey: keys.xspacePeers(spaceId),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/xspace/peers', { params: { path: { space_id: spaceId } } })).items })
+export const useXSpaceSettings = (spaceId: string) =>
+  useQuery({ queryKey: keys.xspaceSettings(spaceId),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/xspace/settings', { params: { path: { space_id: spaceId } } })) })
+/** Every cross-space request and peer configuration (global administrators). */
+export const useAllXSpace = (enabled: boolean) =>
+  useQuery({ queryKey: keys.xspaceAll, enabled,
+    queryFn: async () => {
+      const [requests, peers] = await Promise.all([api.GET('/xspace/requests', { params: { query: { limit: 200 } } }), api.GET('/xspace/peers')])
+      return { requests: unwrap(requests).items, peers: unwrap(peers).items }
+    } })
