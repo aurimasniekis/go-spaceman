@@ -218,7 +218,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		if err := tx.Q.InsertRun(ctx, db.InsertRunParams{ID: runID, SpaceID: spaceID, NodeID: sp.NodeID, Generation: lease.Generation, Kind: in.Kind,
 			Role: in.Role, Harness: in.Harness, InstanceID: in.InstanceID, SessionID: in.SessionID, LaunchJson: string(specJSON), ManifestJson: string(manifest),
 			CreatedAt: tx.NowMicros(), CreatedBy: actorRef(actor), UpdatedAt: tx.NowMicros()}); err != nil {
-			if errors.Is(err, store.ErrConstraint) && in.Kind == "control" {
+			if store.IsConstraint(err) && in.Kind == "control" {
 				return apperr.New(apperr.CodeConflict, "the space already has an authoritative control run")
 			}
 			return err

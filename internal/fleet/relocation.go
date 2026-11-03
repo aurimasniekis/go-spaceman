@@ -374,7 +374,7 @@ func (svc *Service) StartRelocation(ctx context.Context, actor audit.Actor, spac
 			Mode: mode, State: state, DirtyPolicy: in.DirtyState, StopRuns: b2i(in.StopRuns), Recovery: in.Recovery, RetainDays: int64(in.RetainDays),
 			Acknowledgement: in.Acknowledgement, ReposJson: string(repos), LossJson: loss, GenerationBefore: gen, PausedSpace: b2i(paused),
 			CreatedAt: tx.NowMicros(), CreatedBy: actorRef(actor), UpdatedAt: tx.NowMicros()}); err != nil {
-			if errors.Is(err, store.ErrConstraint) {
+			if store.IsConstraint(err) {
 				return apperr.New(apperr.CodeConflict, "the space already has a relocation in progress")
 			}
 			return err
