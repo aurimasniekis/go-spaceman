@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/approvals"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 )
@@ -14,6 +15,7 @@ import (
 // need a person, so changing them is global administration; deciding happens on the human action (approval:decide).
 var ApprovalRules = map[string]Rule{
 	"list-approval-policies": Global(authz.ApprovalPolicyRead),
+	"get-approval-policy":    Global(authz.ApprovalPolicyRead),
 	"create-approval-policy": Global(authz.ApprovalPolicyWrite),
 	"delete-approval-policy": Global(authz.ApprovalPolicyWrite),
 	"list-approvals":         InSpace(authz.HumanRead),
@@ -44,6 +46,22 @@ func RegisterApprovals(svc *approvals.Service) func(api huma.API, d *Deps) {
 				}{}
 				out.Body.Items = l
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-approval-policy", Method: http.MethodGet, Path: "/approval-policies/{policy_id}",
+			Summary: "One approval policy", Tags: tags},
+			func(ctx context.Context, in *struct {
+				PolicyID string `path:"policy_id" maxLength:"64"`
+			}) (*struct{ Body *approvals.Policy }, error) {
+				l, err := svc.Policies(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "approvals.policy_get", err)
+				}
+				for _, p := range l {
+					if p.ID == in.PolicyID {
+						return &struct{ Body *approvals.Policy }{Body: p}, nil
+					}
+				}
+				return nil, d.fail(ctx, "approvals.policy_get", apperr.New(apperr.CodeNotFound, "approval policy not found"))
 			})
 		huma.Register(api, huma.Operation{OperationID: "create-approval-policy", Method: http.MethodPost, Path: "/approval-policies",
 			Summary: "Make an operation need approval", Description: "Operations are spaceman.<tool> (built-in agent tools) or mcp.<server>.<tool> (gateway tools); a prefix ending in .* covers several.",

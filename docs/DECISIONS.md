@@ -1317,6 +1317,66 @@
   - Concurrent logins to one account wait for each other (each verification takes one Argon2id hash).
   - The open low and info findings, with their follow-ups, are listed in SECURITY_REVIEW.md.
 
+### ADR-0040 — Remote CLI bound to the build's OpenAPI document by operation ID; secrets never as flag values
+- **Status:** Accepted, 2026-11-03 (M5-02).
+- **Context:** SM-API-003 asks for a CLI and a generated, documented contract; SM-API-001/002 for one administrative
+  application layer with typed versioned schemas, If-Match, idempotency, pagination and RFC 9457 errors. `spaceman` had
+  only local commands (`serve`, offline `admin`, `keys`, `backup`, `openapi`); operators had the UI, the raw API and
+  Terraform. The API has ~240 operations and 300 schemas, all with `additionalProperties: false`.
+- **Decision:**
+  - **One binary, a remote client package.** `internal/cli` adds 22 remote command groups to `spaceman` (nodes, spaces with
+    relocation, runs, inbox, tasks, human actions, schedules, limits, accounts, prompts, skills, harness profiles, roles
+    and role templates, events, MCP servers and grants, approval policies, cross-space, users, tokens, audit, system
+    with backups, `whoami`). They only call `/api/v1`; nothing bypasses the API, so authorization, audit and rate limits
+    are the UI's (SM-API-001).
+  - **Hand client, contract by operation ID instead of generated Go types.** Every command names the operation IDs it
+    calls; method, path, path parameters, accepted headers and request-body properties come at run time from the
+    OpenAPI document of the same build (built in process, as `spaceman openapi` prints it). Updates read the object,
+    project it onto the operation's request schema (dropping read-only fields, filling required ones that a GET omits)
+    and change only the flags given. A test fails when a command names an operation the document lacks, offers
+    `--idempotency-key` where the operation takes none (or omits it where it does), or offers `--if-match` where the
+    operation takes no If-Match. The client itself is small (~250 lines over `net/http` and JSON). Generating a typed
+    client (oapi-codegen or ogen pinned in `tools/`) was rejected: tens of thousands of generated lines for 300 schemas,
+    a network-fetched generator, and the commands would still need hand-written semantics (merging, version selection,
+    secrets); the same reasoning as ADR-0035 for the Terraform client.
+  - **Conventions.** `Idempotency-Key` (random, or `--idempotency-key`) on every create whose operation accepts one;
+    those creates and GETs are retried on transport errors and 502/503/504, other mutations never. `If-Match` is the
+    version read just before the change, or `--if-match` from an earlier read (a stale one is a conflict, never an
+    overwrite). `--all` follows `next_cursor`. Problems are printed with code, field errors, operation and request ID.
+    Exit codes: 0 ok, 1 usage, 2 API error / transport / unwanted final state, 3 conflict (409, 412, 428), 4 not found,
+    5 authentication or authorization (401, 403, no token). `--yes` guards `node revoke`, `space purge` and
+    `space relocate release`.
+  - **Secrets (security).** The brief's `--token` flag is not provided: flag values are visible in the process list. The
+    token comes from `--token-file` (refused when group- or world-readable), `SPACEMAN_TOKEN_FILE` or `SPACEMAN_TOKEN`.
+    Every secret input (account secrets, passwords, Pulse `.creds`, MCP headers) is `--…-file` or `--…-stdin`; a test
+    fails when any command has a value flag named after a secret. One-time secrets the server returns (enrollment and
+    API tokens) are printed once, or written to a new `0600` file (`O_EXCL`) with `--secret-file` and removed from the
+    output. The client logs nothing and never prints request bodies.
+  - **Transport rules as in the Terraform provider.** Plain `http://` only to loopback hosts unless
+    `--allow-insecure-http` (opt-in, documented as sending the token in clear text); redirects are never followed.
+  - **Generated reference.** `spaceman docs cli --out site/reference/cli` (`make cli-docs`) renders one VitePress page
+    per top-level command from the cobra tree, with each command's API operations; `TestCLIReferenceUpToDate`
+    (`make check`) and `make site-check` fail when it is stale.
+  - **API gaps closed.** Read operations that the CLI (and Terraform imports) need were missing for resources that had
+    only a list: `get-event-connection`, `get-harness-profile` and `get-role-template` (ID or slug), `get-space-role`,
+    `get-approval-policy` and `get-xspace-peer` (with ETag). They reuse the list operations' permissions. The raw routes
+    outside the OpenAPI document (attachment content, transcript download) are now described in the API reference.
+  - **Backups.** `spaceman system backup list|create|verify` calls a running central; the existing offline
+    `spaceman backup` commands (and offline restore) are unchanged.
+- **Alternatives:** a generated typed client (above); a separate `spacemanctl` binary (a second artifact to version and
+  ship for no isolation benefit: the client holds no more than the token); a `--token` flag "for convenience" (leaks
+  through `ps` and shell history); following redirects within the same host (still lets a proxy move the token to
+  another path or scheme); retrying every create (could create duplicates where the API has no idempotency key).
+- **Consequences:**
+  - The CLI must come from the same release as the server; an older client may name operations a newer server renamed
+    (the API is versioned under `/api/v1`, so this is a compatibility break the API itself would have).
+  - Each remote invocation builds the OpenAPI document in process (~60 ms).
+  - Commands cover the operator surface (132 of the 248 operations), not every operation: KB requests and
+    proposals, memory and its conflicts, messages, dreams, OIDC providers and mappings, human-action types and policies,
+    quarantine, sessions, MFA and the root token have no command yet and stay reachable through the API, the UI or
+    Terraform. Listed in PLAN.md M5-02.
+  - API tokens are shown once by `token create` unless `--secret-file` is given; the root token cannot create them.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Remote command line (SM-API-003, ADR-0040): `spaceman` is now also a client for a running central's API
+  (`--server`/`SPACEMAN_SERVER`, an API token from `--token-file`, `SPACEMAN_TOKEN_FILE` or `SPACEMAN_TOKEN`,
+  `-o table|json|yaml`). Commands for nodes, spaces (including `space relocate precheck|start|status|retry|cancel|release`
+  and the unavailable-source flow with an explicit acknowledgement), runs, inbox, tasks, human actions, schedules,
+  limits, accounts, prompts, skills, harness profiles, roles and role templates, event connections, templates and
+  subscriptions (with replays), MCP servers and grants, approval policies, cross-space peers, requests and settings,
+  users, API tokens, audit and backups (`system backup`). Updates send `If-Match` with the version read (or
+  `--if-match`), creates send an `Idempotency-Key`, `--all` follows cursors, problems are printed with their code,
+  fields and request ID, and exit codes are documented (0 ok, 1 usage, 2 API error, 3 conflict, 4 not found, 5 auth).
+  Generated reference in `site/reference/cli/` (`make cli-docs`, drift-checked), guide in `site/operators/cli.md`.
+- API: read operations for objects that only had a list: `GET /event-connections/{id}`, `/harness-profiles/{id}`,
+  `/role-templates/{id}` (ID or slug), `/spaces/{id}/roles/{name}`, `/approval-policies/{id}` and
+  `/spaces/{id}/xspace/peers/{peer_id}`. The API reference now also describes the attachment-content and transcript
+  downloads.
 - Space relocation (SM-INV-003, SM-SPACE-005…008, ADR-0037): an operator moves a stopped space to another node from the
   space page (**Relocate**), the API (`/spaces/{id}/relocation`, with precheck, retry, cancel and release) or Terraform.
   The source syncs role memory and uploads, and its repositories are checked; unpushed, changed, untracked and stashed

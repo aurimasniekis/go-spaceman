@@ -22,6 +22,11 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
   filtered by your permissions and resumable with `Last-Event-ID`.
 - **Terminals**: `GET /api/v1/spaces/{space_id}/runs/{run_id}/terminal` streams a run's recording as Server-Sent Events
   (stored records, then live ones); `…/recording/download` returns the zstd-compressed JSONL recording.
+- **Raw content** (outside the OpenAPI document, same authentication and permissions):
+  `GET /api/v1/spaces/{space_id}/attachments/{attachment_id}/content` serves an attachment's bytes (raster images inline,
+  everything else as a download, always sandboxed), and `GET /api/v1/spaces/{space_id}/runs/{run_id}/transcript` downloads a
+  run's stored native transcript (`recording:read`; it may contain secrets and is never rendered).
+- **Command line**: `spaceman` is a client for these operations ([CLI reference](./cli/)); each command names the operations it calls.
 
 ## Operations
 
@@ -157,6 +162,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/approval-policies` | `list-approval-policies` | Operations that need a person's approval |
 | `POST` | `/approval-policies` | `create-approval-policy` | Make an operation need approval |
 | `DELETE` | `/approval-policies/{policy_id}` | `delete-approval-policy` | Remove a policy |
+| `GET` | `/approval-policies/{policy_id}` | `get-approval-policy` | One approval policy |
 | `GET` | `/spaces/{space_id}/approvals` | `list-approvals` | A space's enforced approvals with their executions |
 | `GET` | `/spaces/{space_id}/approvals/{approval_id}` | `get-approval` | An enforced approval |
 | `POST` | `/spaces/{space_id}/approvals/{approval_id}/revoke` | `revoke-approval` | Revoke an approval before (further) execution |
@@ -185,6 +191,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 |---|---|---|---|
 | `GET` | `/spaces/{space_id}/xspace/peers` | `list-xspace-peers` | What a space accepts from and may send to each peer space |
 | `DELETE` | `/spaces/{space_id}/xspace/peers/{peer_id}` | `delete-xspace-peer` | Remove a space's configuration for a peer space |
+| `GET` | `/spaces/{space_id}/xspace/peers/{peer_id}` | `get-xspace-peer` | What a space accepts from and may send to one peer space |
 | `PUT` | `/spaces/{space_id}/xspace/peers/{peer_id}` | `put-xspace-peer` | Set what a space accepts from and may send to a peer space |
 | `GET` | `/spaces/{space_id}/xspace/requests` | `list-xspace-requests` | A space's outgoing and incoming cross-space requests |
 | `GET` | `/spaces/{space_id}/xspace/requests/{request_id}` | `get-xspace-request` | A cross-space request as this space sees it |
@@ -212,6 +219,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/event-connections` | `list-event-connections` | List Pulse connections |
 | `POST` | `/event-connections` | `create-event-connection` | Add a Pulse connection |
 | `DELETE` | `/event-connections/{connection_id}` | `delete-event-connection` | Delete an unused Pulse connection |
+| `GET` | `/event-connections/{connection_id}` | `get-event-connection` | A Pulse connection (never its credentials) |
 | `PUT` | `/event-connections/{connection_id}` | `update-event-connection` | Update a Pulse connection |
 | `POST` | `/event-template-versions/{version_id}/publish` | `publish-template` | Publish a draft (it becomes immutable) |
 | `GET` | `/event-templates` | `list-event-templates` | The event template catalog |
@@ -375,12 +383,15 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
 | `GET` | `/harness-profiles` | `list-harness-profiles` | Harness profiles |
+| `GET` | `/harness-profiles/{profile_id}` | `get-harness-profile` | A harness profile (by ID or slug) |
 | `PUT` | `/harness-profiles/{profile_id}` | `save-harness-profile` | Create (profile_id "new") or update a harness profile |
 | `GET` | `/role-templates` | `list-role-templates` | Role templates |
+| `GET` | `/role-templates/{template_id}` | `get-role-template` | A role template (by ID or slug) |
 | `PUT` | `/role-templates/{template_id}` | `save-role-template` | Create (template_id "new") or update a role template |
 | `GET` | `/spaces/{space_id}/role-options` | `list-role-options` | Templates, profiles and prompts a space role can use (names only) |
 | `GET` | `/spaces/{space_id}/roles` | `list-space-roles` | A space's roles |
 | `DELETE` | `/spaces/{space_id}/roles/{name}` | `delete-space-role` | Remove a role from the space |
+| `GET` | `/spaces/{space_id}/roles/{name}` | `get-space-role` | One of a space's roles |
 | `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
 | `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
 

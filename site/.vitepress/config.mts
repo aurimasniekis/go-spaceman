@@ -103,12 +103,14 @@ export default withMermaid(
             { text: 'Terminals and recordings', link: '/operators/terminals' },
             { text: 'Backups and restore', link: '/operators/backup' },
             { text: 'Terraform', link: '/operators/terraform' },
+            { text: 'Command line', link: '/operators/cli' },
           ],
         },
         {
           text: 'Reference',
           items: [
             { text: 'HTTP API', link: '/reference/api' },
+            { text: 'Command line', link: '/reference/cli/' },
             { text: 'Known limitations', link: '/reference/limitations' },
           ],
         },

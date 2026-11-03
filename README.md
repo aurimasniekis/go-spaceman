@@ -60,6 +60,23 @@ scripts/dev-stack.sh up            # prints a stack directory; source its env fi
 Then follow [Try it locally](https://aurimasniekis.github.io/go-spaceman/guide/try-locally) (also in
 `site/guide/try-locally.md`). `make e2e` runs the whole first-run journey in a headless browser.
 
+## Command line
+
+The `spaceman` binary is also a client for a running central's API, with an API token from a file or the environment
+(never a flag value):
+
+```sh
+export SPACEMAN_SERVER=https://spaceman.example.com SPACEMAN_TOKEN_FILE=~/.config/spaceman/token
+spaceman space list
+spaceman inbox create --space payments --title "Rotate the signing key" --body-file note.md
+spaceman space relocate start payments --to build-02 --stop-runs --wait
+spaceman audit list --all -o json
+```
+
+Updates send `If-Match` with the version they read, creates send an `Idempotency-Key`, and exit codes tell usage (1),
+API errors (2), conflicts (3), not found (4) and authentication (5) apart. See `site/operators/cli.md` and the generated
+reference in `site/reference/cli/`.
+
 ## Documentation
 
 - Guides and operator docs: `site/` (VitePress), published at <https://aurimasniekis.github.io/go-spaceman/>

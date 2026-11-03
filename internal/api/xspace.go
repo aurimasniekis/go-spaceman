@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/xspace"
 )
@@ -16,6 +17,7 @@ var XSpaceRules = map[string]Rule{
 	"get-xspace-settings":      InSpace(authz.XSpaceRead),
 	"update-xspace-settings":   InSpace(authz.XSpaceWrite),
 	"list-xspace-peers":        InSpace(authz.XSpaceRead),
+	"get-xspace-peer":          InSpace(authz.XSpaceRead),
 	"put-xspace-peer":          InSpace(authz.XSpaceWrite),
 	"delete-xspace-peer":       InSpace(authz.XSpaceWrite),
 	"list-xspace-requests":     InSpace(authz.XSpaceRead),
@@ -100,6 +102,20 @@ func RegisterXSpace(svc *xspace.Service) func(api huma.API, d *Deps) {
 				out := &xspacePeerList{}
 				out.Body.Items = l
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-xspace-peer", Method: http.MethodGet, Path: "/spaces/{space_id}/xspace/peers/{peer_id}",
+			Summary: "What a space accepts from and may send to one peer space", Tags: tags},
+			func(ctx context.Context, in *XSpacePeerPath) (*xspacePeerOut, error) {
+				l, err := svc.ListPeers(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "xspace.peer_get", err)
+				}
+				for _, p := range l {
+					if p.Peer.ID == in.PeerID {
+						return &xspacePeerOut{ETag: ETag(p.Version), Body: p}, nil
+					}
+				}
+				return nil, d.fail(ctx, "xspace.peer_get", apperr.New(apperr.CodeNotFound, "no configuration for that peer space"))
 			})
 		huma.Register(api, huma.Operation{OperationID: "put-xspace-peer", Method: http.MethodPut, Path: "/spaces/{space_id}/xspace/peers/{peer_id}",
 			Summary: "Set what a space accepts from and may send to a peer space",

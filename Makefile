@@ -108,6 +108,12 @@ api:
 api-check: api
 	git diff --exit-code -- api/openapi.json web/src/api/schema.gen.ts
 
+.PHONY: cli-docs
+# Regenerates the command-line reference (site/reference/cli) from the command definitions. Drift is also caught by
+# cmd/spaceman TestCLIReferenceUpToDate (make check), which notices added and removed pages too.
+cli-docs:
+	$(GO) run ./cmd/spaceman docs cli --out site/reference/cli
+
 .PHONY: web-install web-build
 web-install:
 	cd web && pnpm install --frozen-lockfile
@@ -150,11 +156,11 @@ site:
 site-dev:
 	cd site && pnpm dev
 
-# Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, and API reference drift.
-site-check: site
+# Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, and API and CLI reference drift.
+site-check: cli-docs site
 	cd site && pnpm check:mermaid
 	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
-	git diff --exit-code -- site/reference/api.md
+	git diff --exit-code -- site/reference/api.md site/reference/cli
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).
 screenshots:

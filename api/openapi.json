@@ -14308,6 +14308,46 @@
         "tags": [
           "approvals"
         ]
+      },
+      "get": {
+        "operationId": "get-approval-policy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalsPolicy"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "One approval policy",
+        "tags": [
+          "approvals"
+        ]
       }
     },
     "/audit": {
@@ -15422,6 +15462,46 @@
           "events"
         ]
       },
+      "get": {
+        "operationId": "get-event-connection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsConnection"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A Pulse connection (never its credentials)",
+        "tags": [
+          "events"
+        ]
+      },
       "put": {
         "operationId": "update-event-connection",
         "parameters": [
@@ -15763,6 +15843,46 @@
       }
     },
     "/harness-profiles/{profile_id}": {
+      "get": {
+        "operationId": "get-harness-profile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogProfile"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A harness profile (by ID or slug)",
+        "tags": [
+          "roles"
+        ]
+      },
       "put": {
         "description": "An update bumps the revision; it applies to later launches.",
         "operationId": "save-harness-profile",
@@ -17784,6 +17904,46 @@
       }
     },
     "/role-templates/{template_id}": {
+      "get": {
+        "operationId": "get-role-template",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogRoleTemplate"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A role template (by ID or slug)",
+        "tags": [
+          "roles"
+        ]
+      },
       "put": {
         "operationId": "save-role-template",
         "parameters": [
@@ -22114,6 +22274,55 @@
           "roles"
         ]
       },
+      "get": {
+        "operationId": "get-space-role",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 48,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSpaceRole"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "One of a space's roles",
+        "tags": [
+          "roles"
+        ]
+      },
       "put": {
         "description": "Non-empty fields override the role template's; changes apply to later launches.",
         "operationId": "save-space-role",
@@ -24501,6 +24710,64 @@
           }
         },
         "summary": "Remove a space's configuration for a peer space",
+        "tags": [
+          "cross-space"
+        ]
+      },
+      "get": {
+        "operationId": "get-xspace-peer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The peer space's ID",
+            "in": "path",
+            "name": "peer_id",
+            "required": true,
+            "schema": {
+              "description": "The peer space's ID",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XspacePeer"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "What a space accepts from and may send to one peer space",
         "tags": [
           "cross-space"
         ]

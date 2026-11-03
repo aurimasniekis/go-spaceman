@@ -198,7 +198,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** One approval policy */
+        get: operations["get-approval-policy"];
         put?: never;
         post?: never;
         /**
@@ -601,7 +602,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** A Pulse connection (never its credentials) */
+        get: operations["get-event-connection"];
         /** Update a Pulse connection */
         put: operations["update-event-connection"];
         post?: never;
@@ -728,7 +730,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** A harness profile (by ID or slug) */
+        get: operations["get-harness-profile"];
         /**
          * Create (profile_id "new") or update a harness profile
          * @description An update bumps the revision; it applies to later launches.
@@ -1325,7 +1328,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** A role template (by ID or slug) */
+        get: operations["get-role-template"];
         /** Create (template_id "new") or update a role template */
         put: operations["save-role-template"];
         post?: never;
@@ -2489,7 +2493,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** One of a space's roles */
+        get: operations["get-space-role"];
         /**
          * Configure a role in the space
          * @description Non-empty fields override the role template's; changes apply to later launches.
@@ -3058,7 +3063,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** What a space accepts from and may send to one peer space */
+        get: operations["get-xspace-peer"];
         /**
          * Set what a space accepts from and may send to a peer space
          * @description Without If-Match a new configuration is created. Every flag is separate and off unless set; a request needs the destination's inbound flag and the source's outbound flag.
@@ -9069,6 +9075,37 @@ export interface operations {
             };
         };
     };
+    "get-approval-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                policy_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalsPolicy"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "delete-approval-policy": {
         parameters: {
             query?: never;
@@ -9838,6 +9875,37 @@ export interface operations {
             };
         };
     };
+    "get-event-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsConnection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "update-event-connection": {
         parameters: {
             query?: never;
@@ -10113,6 +10181,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-harness-profilesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-harness-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogProfile"];
                 };
             };
             /** @description Error */
@@ -11546,6 +11645,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-role-templatesResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-role-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogRoleTemplate"];
                 };
             };
             /** @description Error */
@@ -14214,6 +14344,38 @@ export interface operations {
             };
         };
     };
+    "get-space-role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSpaceRole"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "save-space-role": {
         parameters: {
             query?: never;
@@ -15617,6 +15779,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["XspacePeerListBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-xspace-peer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                /** @description The peer space's ID */
+                peer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["XspacePeer"];
                 };
             };
             /** @description Error */

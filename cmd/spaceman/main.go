@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
+	"github.com/aurimasniekis/go-spaceman/internal/cli"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -26,25 +27,76 @@ import (
 )
 
 func main() {
-	if err := newRoot().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "spaceman:", err)
-		os.Exit(1)
+	if err := newRoot(nil).Execute(); err != nil {
+		cli.PrintError(os.Stderr, err)
+		os.Exit(cli.ExitCode(err))
 	}
 }
 
 type globals struct{ configPath string }
 
-func newRoot() *cobra.Command {
+// config returns --config, else SPACEMAN_CONFIG.
+func (g *globals) config() string {
+	if g.configPath != "" {
+		return g.configPath
+	}
+	return os.Getenv("SPACEMAN_CONFIG")
+}
+
+// newRoot builds the command tree; remote (nil in production) configures the remote client (tests inject transports).
+func newRoot(remote *cli.App) *cobra.Command {
 	g := &globals{}
 	root := &cobra.Command{
-		Use:           "spaceman",
-		Short:         "Self-hosted control plane for persistent teams of coding agents",
+		Use:   "spaceman",
+		Short: "Self-hosted control plane for persistent teams of coding agents",
+		Long: "spaceman runs the SpaceMan control plane (serve) and its offline administration (admin, keys, backup), and is a\n" +
+			"remote client for a running central's administrative API (--server and an API token).",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVarP(&g.configPath, "config", "c", os.Getenv("SPACEMAN_CONFIG"), "configuration file (env SPACEMAN_CONFIG)")
-	root.AddCommand(versionCmd(), serveCmd(g), adminCmd(g), keysCmd(), openapiCmd(), backupCmd(g))
+	root.PersistentFlags().StringVarP(&g.configPath, "config", "c", "", "configuration file of serve and the offline commands (env SPACEMAN_CONFIG)")
+	if remote == nil {
+		remote = &cli.App{}
+	}
+	if remote.SpecSource == nil {
+		remote.SpecSource = specDocument
+	}
+	if remote.UserAgent == "" {
+		remote.UserAgent = "spaceman-cli/" + buildinfo.Version
+	}
+	remote.BindFlags(root)
+	root.AddGroup(&cobra.Group{ID: "local", Title: "Control plane and offline administration:"},
+		&cobra.Group{ID: cli.GroupID, Title: "Remote commands (a running central's API; --server and an API token):"})
+	for _, c := range []*cobra.Command{versionCmd(), serveCmd(g), adminCmd(g), keysCmd(), openapiCmd(), backupCmd(g), docsCmd(root)} {
+		c.GroupID = "local"
+		root.AddCommand(c)
+	}
+	root.AddCommand(remote.Commands()...)
 	return root
+}
+
+// specDocument is the OpenAPI document of this build, which binds every remote command to its operation.
+func specDocument() ([]byte, error) {
+	a := api.Register(http.NewServeMux(), app.SpecDeps())
+	return json.Marshal(a.OpenAPI())
+}
+
+func docsCmd(root *cobra.Command) *cobra.Command {
+	cmd := &cobra.Command{Use: "docs", Short: "Generate documentation"}
+	var out string
+	gen := &cobra.Command{
+		Use:   "cli",
+		Short: "Write the command-line reference (Markdown for the site) into a directory",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if out == "" {
+				return fmt.Errorf("--out is required")
+			}
+			return cli.WriteDocs(root, out)
+		},
+	}
+	gen.Flags().StringVar(&out, "out", "", "output directory (site/reference/cli)")
+	cmd.AddCommand(gen)
+	return cmd
 }
 
 func versionCmd() *cobra.Command {
@@ -61,7 +113,7 @@ func versionCmd() *cobra.Command {
 }
 
 func (g *globals) load() (*config.Config, *slog.Logger, error) {
-	cfg, err := config.Load(g.configPath, os.Environ())
+	cfg, err := config.Load(g.config(), os.Environ())
 	if err != nil {
 		return nil, nil, err
 	}

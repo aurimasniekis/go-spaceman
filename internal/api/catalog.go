@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -23,11 +24,14 @@ var CatalogRules = map[string]Rule{
 	"fork-prompt":           Global(authz.PromptWrite),
 	"diff-prompt-versions":  Global(authz.PromptRead),
 	"list-harness-profiles": Global(authz.PromptRead),
+	"get-harness-profile":   Global(authz.PromptRead),
 	"save-harness-profile":  Global(authz.PromptWrite),
 	"list-role-templates":   Global(authz.PromptRead),
+	"get-role-template":     Global(authz.PromptRead),
 	"save-role-template":    Global(authz.PromptWrite),
 	"list-role-options":     InSpace(authz.SpaceConfigRead),
 	"list-space-roles":      InSpace(authz.SpaceConfigRead),
+	"get-space-role":        InSpace(authz.SpaceConfigRead),
 	"save-space-role":       InSpace(authz.SpaceConfigWrite),
 	"delete-space-role":     InSpace(authz.SpaceConfigWrite),
 	"preview-space-role":    InSpace(authz.SpaceConfigRead),
@@ -367,6 +371,22 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				out.Body.Items = l
 				return out, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "get-harness-profile", Method: http.MethodGet, Path: "/harness-profiles/{profile_id}",
+			Summary: "A harness profile (by ID or slug)", Tags: tags},
+			func(ctx context.Context, in *struct {
+				ProfileID string `path:"profile_id" maxLength:"64"`
+			}) (*struct{ Body *catalog.Profile }, error) {
+				l, err := svc.ListProfiles(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "profiles.get", err)
+				}
+				for _, p := range l {
+					if p.ID == in.ProfileID || p.Slug == in.ProfileID {
+						return &struct{ Body *catalog.Profile }{Body: p}, nil
+					}
+				}
+				return nil, d.fail(ctx, "profiles.get", apperr.New(apperr.CodeNotFound, "harness profile not found"))
+			})
 		huma.Register(api, huma.Operation{OperationID: "save-harness-profile", Method: http.MethodPut, Path: "/harness-profiles/{profile_id}",
 			Summary: "Create (profile_id \"new\") or update a harness profile", Description: "An update bumps the revision; it applies to later launches.", Tags: tags},
 			func(ctx context.Context, in *struct {
@@ -408,6 +428,22 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}{}
 				out.Body.Items = l
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-role-template", Method: http.MethodGet, Path: "/role-templates/{template_id}",
+			Summary: "A role template (by ID or slug)", Tags: tags},
+			func(ctx context.Context, in *struct {
+				TemplateID string `path:"template_id" maxLength:"64"`
+			}) (*struct{ Body *catalog.RoleTemplate }, error) {
+				l, err := svc.ListTemplates(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "templates.get", err)
+				}
+				for _, t := range l {
+					if t.ID == in.TemplateID || t.Slug == in.TemplateID {
+						return &struct{ Body *catalog.RoleTemplate }{Body: t}, nil
+					}
+				}
+				return nil, d.fail(ctx, "templates.get", apperr.New(apperr.CodeNotFound, "role template not found"))
 			})
 		huma.Register(api, huma.Operation{OperationID: "save-role-template", Method: http.MethodPut, Path: "/role-templates/{template_id}",
 			Summary: "Create (template_id \"new\") or update a role template", Tags: tags},
@@ -500,6 +536,23 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}{}
 				out.Body.Items = l
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-space-role", Method: http.MethodGet, Path: "/spaces/{space_id}/roles/{name}",
+			Summary: "One of a space's roles", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				Name string `path:"name" maxLength:"48"`
+			}) (*struct{ Body *catalog.SpaceRole }, error) {
+				l, err := svc.ListSpaceRoles(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.get", err)
+				}
+				for _, r := range l {
+					if r.Name == in.Name {
+						return &struct{ Body *catalog.SpaceRole }{Body: r}, nil
+					}
+				}
+				return nil, d.fail(ctx, "roles.get", apperr.New(apperr.CodeNotFound, "role not found in this space"))
 			})
 		huma.Register(api, huma.Operation{OperationID: "save-space-role", Method: http.MethodPut, Path: "/spaces/{space_id}/roles/{name}",
 			Summary: "Configure a role in the space", Description: "Non-empty fields override the role template's; changes apply to later launches.", Tags: tags},

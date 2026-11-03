@@ -29,6 +29,7 @@ PACKAGES=(
   internal/limits
   internal/schedule
   internal/xspace
+  internal/cli
 )
 
 fail=0

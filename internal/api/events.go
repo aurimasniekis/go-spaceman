@@ -18,6 +18,7 @@ import (
 var EventRules = map[string]Rule{
 	// Any signed-in person can see which connections exist (never their credentials) and read the catalog.
 	"list-event-connections":  {Session: true},
+	"get-event-connection":    {Session: true},
 	"create-event-connection": StepUp(authz.ConnectionWrite),
 	"update-event-connection": StepUp(authz.ConnectionWrite),
 	"delete-event-connection": StepUp(authz.ConnectionWrite),
@@ -168,6 +169,15 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 				}{}
 				out.Body.Items = l
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-event-connection", Method: http.MethodGet, Path: "/event-connections/{connection_id}",
+			Summary: "A Pulse connection (never its credentials)", Tags: tags},
+			func(ctx context.Context, in *ConnectionPath) (*struct{ Body *events.Connection }, error) {
+				c, err := svc.GetConnection(ctx, in.ConnectionID)
+				if err != nil {
+					return nil, d.fail(ctx, "events.connection_get", err)
+				}
+				return &struct{ Body *events.Connection }{Body: c}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "create-event-connection", Method: http.MethodPost, Path: "/event-connections", Summary: "Add a Pulse connection",
 			Tags: tags, DefaultStatus: http.StatusCreated},

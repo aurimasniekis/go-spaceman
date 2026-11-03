@@ -31,7 +31,7 @@ func backupCmd(g *globals) *cobra.Command {
 }
 
 func (g *globals) backupEnv() (*config.Config, backup.Target, *keyring.LocalKEK, error) {
-	cfg, err := config.Load(g.configPath, os.Environ())
+	cfg, err := config.Load(g.config(), os.Environ())
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -120,7 +120,7 @@ func backupListCmd(g *globals) *cobra.Command {
 		Use:   "list",
 		Short: "List the backups in the configured target, newest first",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.Load(g.configPath, os.Environ())
+			cfg, err := config.Load(g.config(), os.Environ())
 			if err != nil {
 				return err
 			}
@@ -172,7 +172,7 @@ func backupVerifyCmd(g *globals) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			cfg, err := config.Load(g.configPath, os.Environ())
+			cfg, err := config.Load(g.config(), os.Environ())
 			if err != nil {
 				return err
 			}
@@ -248,7 +248,7 @@ func backupRestoreCmd(g *globals) *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			cfg, err := config.Load(g.configPath, os.Environ())
+			cfg, err := config.Load(g.config(), os.Environ())
 			if err != nil {
 				return err
 			}

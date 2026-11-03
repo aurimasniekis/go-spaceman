@@ -45,6 +45,11 @@ ${(spec.info?.description ?? '').trim()}
   filtered by your permissions and resumable with \`Last-Event-ID\`.
 - **Terminals**: \`GET /api/v1/spaces/{space_id}/runs/{run_id}/terminal\` streams a run's recording as Server-Sent Events
   (stored records, then live ones); \`…/recording/download\` returns the zstd-compressed JSONL recording.
+- **Raw content** (outside the OpenAPI document, same authentication and permissions):
+  \`GET /api/v1/spaces/{space_id}/attachments/{attachment_id}/content\` serves an attachment's bytes (raster images inline,
+  everything else as a download, always sandboxed), and \`GET /api/v1/spaces/{space_id}/runs/{run_id}/transcript\` downloads a
+  run's stored native transcript (\`recording:read\`; it may contain secrets and is never rendered).
+- **Command line**: \`spaceman\` is a client for these operations ([CLI reference](./cli/)); each command names the operations it calls.
 
 ## Operations
 
