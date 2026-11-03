@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -36,6 +37,8 @@ type fx struct {
 	pub   *pulse.Client
 	conn  *Connection
 	issue *Template
+	m     *Manager
+	mt    *metrics.Metrics
 }
 
 func newFx(t *testing.T) *fx {
@@ -46,7 +49,8 @@ func newFx(t *testing.T) *fx {
 	ch := changefeed.New(nil)
 	att := attachments.New(s, attachments.NewLocal(t.TempDir()), aw, attachments.Options{})
 	ib := inbox.New(s, aw, ch, att)
-	f := &fx{t: t, ctx: context.Background(), s: s, inbox: ib, svc: New(s, kr, aw, ch, ib, att, Options{}), nats: pulsetest.Start(t)}
+	mt := metrics.New()
+	f := &fx{t: t, ctx: context.Background(), s: s, inbox: ib, svc: New(s, kr, aw, ch, ib, att, Options{Metrics: mt}), nats: pulsetest.Start(t), mt: mt}
 	must(t, s.W().TxNamed(f.ctx, "seed", func(tx *store.Tx) error {
 		for _, q := range []string{
 			`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`,
@@ -76,6 +80,7 @@ func newFx(t *testing.T) *fx {
 	ctx, cancel := context.WithCancel(f.ctx)
 	m := NewManager(f.svc, nil)
 	m.retry = 200 * time.Millisecond
+	f.m = m
 	done := make(chan struct{})
 	go func() { m.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })

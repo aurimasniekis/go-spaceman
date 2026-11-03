@@ -1377,6 +1377,55 @@
     Terraform. Listed in PLAN.md M5-02.
   - API tokens are shown once by `token create` unless `--secret-file` is given; the root token cannot create them.
 
+### ADR-0042 — Core NATS subscriptions as a fixed, non-durable delivery mode; ingestion metrics with fixed-enum labels
+- **Status:** Accepted, 2026-11-03 (M2-03).
+- **Context:** SM-EVT-011 asks for JetStream durability where supported and for NATS Core ingestion "labeled
+  non-durable"; SM-EVT-013 and SM-OBS-002 ask for lag and error metrics with bounded labels. Some sources publish plain
+  NATS messages that no stream captures. go-pulse v0.1.3 has no core subscription call; its contract (and Pulse's
+  `subscribe` grant) points to `Client.Conn()` with subscribe grants (`docs/contracts/pulse.md`). The SDK's
+  `Subscription` exposes no pending counts.
+- **Decision:**
+  - **A subscription property, not a connection kind.** `delivery` is `durable` (default, unchanged behaviour) or
+    `core`, set at creation and immutable (a changed mode would change what the history and the cursor mean). Both use
+    the same Pulse connection and credentials; a core subscription subscribes on `pulse.Client.Conn()` and needs
+    `subscribe:<subject>` instead of a durable grant. A separate `nats` connection kind (credentials without the Pulse
+    client tag) was not added: nothing needs it yet, and Pulse issues every credential.
+  - **The same path.** Core messages are decoded with `envelope.DecodeMsg` and go through the loop guard, the rate
+    limit, `Process` (binding, filters, schema, quarantine, rendering, inbox dedup on `<subscription>:<event id>`) and the
+    delivery history unchanged. Subjects keep the same validation (under `evt.>`, no variable wildcards, SM-EVT-010).
+  - **Identity without an ID.** A well-formed `Nats-Msg-Id` (`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`) is the event ID;
+    otherwise `sha256-` + the first 128 bits of a SHA-256 over the length-prefixed subject, `ce-type`, `ce-source`,
+    `ce-time` and payload. `ce-time` is included so that a source re-sending a message deduplicates while repeated alerts
+    with their own time stamps do not; identical messages with no ID and no time are one event (documented). A missing
+    `ce-time` is replaced by the receipt time.
+  - **Honest failure modes.** Nothing is acknowledged. A transient failure, a slow-consumer drop, a disconnection or a
+    message over the ingestion rate loses the message; the subscription's last error says so, a warning is logged (IDs
+    only) and the metrics count it. Every core delivery has origin `live` (core NATS never redelivers; a repeated ID is
+    the source sending again, recorded as a duplicate). Replay, start-now and any `start` on update are refused with
+    `precondition_failed`; creation accepts only `start.policy = new`; a subject change resubscribes without a cursor.
+  - **Refused subscriptions are visible.** A permission violation is not an error of `Subscribe`; the manager flushes
+    after subscribing and checks for a new `Permissions Violation for Subscription to "<subject>"`, and a connection error
+    handler catches late ones. Either marks the subscription `error` with the grant it needs and retries it on the next
+    round (not at once, to avoid a tight loop while the grant is missing).
+  - **Labelled everywhere.** The API schema documents `delivery` as non-durable for `core`; the UI shows a
+    "core NATS · non-durable" badge with the explanation on the subscribe form, the subscription list and page (where
+    the cursor menu is disabled); the guide has a durable-versus-core table.
+  - **Metrics.** `spaceman_ingest_*` families with labels from fixed enums only (`delivery`, `origin`, `result`,
+    `state`, `connection_kind`); never subscription, space or event IDs or subjects. Lag comes from the JetStream API
+    (`JetStream().Consumer(...).CachedInfo()`: `NumPending`, `NumAckPending`), summed over subscriptions, refreshed with
+    the ingestion manager's rounds (changes and every 30 s); core pending and drops come from nats.go `Pending()` and
+    `Dropped()`. Catalog in `site/operators/observability.md`, pinned by `TestCatalogGolden`.
+- **Not a security relaxation.** The default stays durable, and GOAL SM-EVT-011 already provides for labelled
+  non-durable NATS Core ingestion; nothing about authorization, credentials or authority changes (event content stays
+  untrusted, and the grant needed is narrower than a durable one).
+- **Alternatives:** an ephemeral (ordered) JetStream consumer for "core" sources (needs the stream, which such sources do
+  not use); a `nats` connection kind (above); in-process retries for core messages (would hold the subscription's single
+  handler goroutine and grow the client buffer under a storage outage, turning one lost message into many); per-
+  subscription lag gauges (unbounded labels).
+- **Consequences:** core subscriptions lose messages by design and say so; content-hash dedup can merge genuinely
+  repeated identical messages without an ID or time; the durable lag gauge costs one consumer-info request per
+  subscription and round; rate-limited events are counted with origin `live`.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

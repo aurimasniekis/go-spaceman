@@ -127,12 +127,28 @@ func (s *Server) Creds(clientID string) []byte {
 }
 
 // CredsFor returns .creds content for a Pulse client ID: a user of the PULSE account tagged pulse-client:<id>.
-func (s *Server) CredsFor(clientID string) ([]byte, error) {
+func (s *Server) CredsFor(clientID string) ([]byte, error) { return s.credsFor(clientID, nil) }
+
+// SubscribeOnlyCreds returns .creds content for a client that may subscribe (core NATS) only to the given subjects,
+// as a Pulse subscribe grant allows; for testing refused subscriptions. Publishing stays unrestricted.
+func (s *Server) SubscribeOnlyCreds(clientID string, subjects ...string) []byte {
+	s.t.Helper()
+	c, err := s.credsFor(clientID, subjects)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return c
+}
+
+func (s *Server) credsFor(clientID string, subscribe []string) ([]byte, error) {
 	ukp, _ := nkeys.CreateUser()
 	upub, _ := ukp.PublicKey()
 	uc := jwt.NewUserClaims(upub)
 	uc.Name = clientID
 	uc.Tags.Add("pulse-client:" + clientID)
+	if subscribe != nil {
+		uc.Sub.Allow.Add(subscribe...)
+	}
 	ujwt, err := uc.Encode(s.akp)
 	if err != nil {
 		return nil, err

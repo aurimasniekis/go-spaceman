@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countAllOpenQuarantine = `-- name: CountAllOpenQuarantine :one
+SELECT count(*) FROM event_quarantine WHERE status = 'open'
+`
+
+func (q *Queries) CountAllOpenQuarantine(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAllOpenQuarantine)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countEventDeliveriesOf = `-- name: CountEventDeliveriesOf :one
 SELECT COUNT(*) FROM event_deliveries WHERE subscription_id = ? AND event_id = ?
 `
@@ -87,7 +98,7 @@ func (q *Queries) GetEventConnection(ctx context.Context, id string) (EventConne
 }
 
 const getEventSubscription = `-- name: GetEventSubscription :one
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at FROM event_subscriptions WHERE id = ?
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions WHERE id = ?
 `
 
 func (q *Queries) GetEventSubscription(ctx context.Context, id string) (EventSubscription, error) {
@@ -117,6 +128,7 @@ func (q *Queries) GetEventSubscription(ctx context.Context, id string) (EventSub
 		&i.CreatedAt,
 		&i.CreatedBy,
 		&i.UpdatedAt,
+		&i.Delivery,
 	)
 	return i, err
 }
@@ -315,8 +327,8 @@ func (q *Queries) InsertEventDelivery(ctx context.Context, arg InsertEventDelive
 
 const insertEventSubscription = `-- name: InsertEventSubscription :exec
 INSERT INTO event_subscriptions (id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json,
-  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEventSubscriptionParams struct {
@@ -338,6 +350,7 @@ type InsertEventSubscriptionParams struct {
 	CreatedAt         int64
 	CreatedBy         string
 	UpdatedAt         int64
+	Delivery          string
 }
 
 func (q *Queries) InsertEventSubscription(ctx context.Context, arg InsertEventSubscriptionParams) error {
@@ -360,6 +373,7 @@ func (q *Queries) InsertEventSubscription(ctx context.Context, arg InsertEventSu
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
+		arg.Delivery,
 	)
 	return err
 }
@@ -610,7 +624,7 @@ func (q *Queries) ListEventDeliveries(ctx context.Context, arg ListEventDeliveri
 }
 
 const listEventSubscriptions = `-- name: ListEventSubscriptions :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at FROM event_subscriptions ORDER BY space_id, name
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions ORDER BY space_id, name
 `
 
 func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscription, error) {
@@ -646,6 +660,7 @@ func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscripti
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.UpdatedAt,
+			&i.Delivery,
 		); err != nil {
 			return nil, err
 		}
@@ -661,7 +676,7 @@ func (q *Queries) ListEventSubscriptions(ctx context.Context) ([]EventSubscripti
 }
 
 const listEventSubscriptionsBySpace = `-- name: ListEventSubscriptionsBySpace :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at FROM event_subscriptions WHERE space_id = ? ORDER BY name
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions WHERE space_id = ? ORDER BY name
 `
 
 func (q *Queries) ListEventSubscriptionsBySpace(ctx context.Context, spaceID string) ([]EventSubscription, error) {
@@ -697,6 +712,7 @@ func (q *Queries) ListEventSubscriptionsBySpace(ctx context.Context, spaceID str
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.UpdatedAt,
+			&i.Delivery,
 		); err != nil {
 			return nil, err
 		}
@@ -785,7 +801,7 @@ func (q *Queries) ListEventTemplates(ctx context.Context) ([]EventTemplate, erro
 }
 
 const listFollowingSubscriptions = `-- name: ListFollowingSubscriptions :many
-SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at FROM event_subscriptions WHERE template_id = ? AND follow = 'latest'
+SELECT id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json, effective_subject, durable, enabled, cursor_generation, applied_generation, start_policy, start_time, start_seq, replay, last_event_at, version, created_at, created_by, updated_at, delivery FROM event_subscriptions WHERE template_id = ? AND follow = 'latest'
 `
 
 func (q *Queries) ListFollowingSubscriptions(ctx context.Context, templateID sql.NullString) ([]EventSubscription, error) {
@@ -821,6 +837,7 @@ func (q *Queries) ListFollowingSubscriptions(ctx context.Context, templateID sql
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.UpdatedAt,
+			&i.Delivery,
 		); err != nil {
 			return nil, err
 		}

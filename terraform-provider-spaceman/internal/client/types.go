@@ -535,6 +535,7 @@ type Subscription struct {
 	ConnectionID string              `json:"connection_id"`
 	Template     *TemplateRef        `json:"template,omitempty"`
 	Follow       string              `json:"follow"`
+	Delivery     string              `json:"delivery"`
 	Custom       *TemplateDefinition `json:"custom,omitempty"`
 	Vars         map[string]string   `json:"vars"`
 	Subject      string              `json:"subject"`
@@ -555,6 +556,7 @@ type CreateSubscriptionInput struct {
 	Custom            *TemplateDefinition `json:"custom,omitempty"`
 	Vars              map[string]string   `json:"vars,omitempty"`
 	Start             *Cursor             `json:"start,omitempty"`
+	Delivery          string              `json:"delivery,omitempty"`
 }
 
 // UpdateSubscriptionInput is PUT /spaces/{id}/subscriptions/{sub}.

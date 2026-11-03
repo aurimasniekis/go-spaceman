@@ -15,7 +15,7 @@ var (
 	roleCols     = []col{c("NAME", "name"), c("TEMPLATE", "template_id"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("MODEL", "model"), c("REVISION", "revision")}
 	connCols     = []col{c("ID", "id"), c("NAME", "name"), c("URL", "url"), c("STREAM", "stream"), c("CLIENT", "client_id"), c("ENABLED", "enabled")}
 	etplCols     = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("BUILTIN", "builtin"), {head: "VERSIONS", fn: countOf("versions")}}
-	subCols      = []col{c("ID", "id"), c("NAME", "name"), c("STATE", "state"), c("ENABLED", "enabled"), c("FOLLOW", "follow"), c("SUBJECT", "subject"), c("LAST EVENT", "last_event_at")}
+	subCols      = []col{c("ID", "id"), c("NAME", "name"), c("STATE", "state"), c("ENABLED", "enabled"), c("DELIVERY", "delivery"), c("FOLLOW", "follow"), c("SUBJECT", "subject"), c("LAST EVENT", "last_event_at")}
 	replayCols   = []col{c("ID", "id"), c("POLICY", "policy"), c("APPLIED", "applied"), c("REASON", "reason"), c("BY", "requested_by"), c("AT", "requested_at")}
 	mcpCols      = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("URL", "url"), c("ENABLED", "enabled"), c("GRANTS", "grants"), c("HEADERS V", "headers_version")}
 	grantCols    = []col{c("ID", "id"), c("SPACE", "space_id"), c("ROLE", "role"), c("TOOLS", "tools"), c("CREATED", "created_at")}
@@ -202,7 +202,8 @@ func (a *App) eventCmd() *cobra.Command {
 				f.str("name", "name", "name (required)").str("connection", "connection_id", "connection ID (required)").
 					str("template-version", "template_version_id", "template version ID").str("follow", "follow", "pinned or latest").
 					kv("var", "vars", "template variable").doc("custom", "custom", "custom template definition (JSON or YAML file)").
-					doc("start", "start", "start cursor (JSON or YAML file)")
+					doc("start", "start", "start cursor (JSON or YAML file)").
+					str("delivery", "delivery", "durable (default, a JetStream durable) or core (plain NATS Core: non-durable, no replay or redelivery)")
 			}}),
 		a.cmd(opts{use: "update", short: "Edit a subscription (only the flags given change)", op: "update-subscription", get: "get-subscription",
 			merge: true, drop: []string{"custom", "start"}, scoped: true, args: pos("subscription"),

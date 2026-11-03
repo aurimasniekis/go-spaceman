@@ -44,6 +44,27 @@ func Terminal(err error) error
 - Correlation and causation are SpaceMan extension headers, never claimed as Pulse contract.
 - For plain NATS Core (no JetStream), use `c.Conn()` with subscribe grants. Ingestion is labeled **non-durable**.
 
+## Core NATS subscriptions (ADR-0042)
+Inspected 2026-11-03: go-pulse v0.1.3 (`pkg/pulse/client.go`, `pkg/pulse/envelope/envelope.go`), Pulse
+`internal/natsauth/grants.go` at `9aba53b`, nats.go v1.55.0 (`nats.go`), nats-server v2.15.1 (`server/client.go`).
+- **Grant:** `subscribe` "allows core subscriptions on Subject and replay through filtered consumers on Stream"
+  (`ActSubscribe`); the CLI form is `action[:subject[:name]]`, so a core subscription needs `subscribe:<subject>`.
+- **Decoding:** `envelope.DecodeMsg(*nats.Msg) Event` decodes a core message like a JetStream one; `Nats-Msg-Id` is read
+  into `Event.ID` (it may be absent: nothing assigns an ID to a plain `nats pub`), `Nats-*` headers are dropped from `Extra`.
+- **nats.go calls used:** `(*nats.Conn).Subscribe(subject, handler)` (asynchronous; handlers of one subscription run in
+  order on one goroutine), `FlushTimeout`, `LastError`, `IsConnected`, `(*nats.Subscription).Pending()`, `Dropped()`
+  and `Unsubscribe()`, and the `nats.ErrorHandler` option (through `pulse.WithNATSOptions`).
+- **A refused subscription** is not an error of `Subscribe`: the server answers `-ERR 'Permissions Violation for
+  Subscription to "<subject>"'` before the flush's PONG; nats.go records it as the connection's last error and calls the
+  error handler with `nats.ErrPermissionViolation` and no subscription. The connection stays up.
+- **Slow consumer:** past the subscription's pending limits (nats.go defaults: 500,000 messages, 64 MiB) the client drops
+  messages, counts them in `Dropped()` and calls the error handler with `nats.ErrSlowConsumer` and the subscription.
+- **Reconnects:** `pulse.Connect` sets `MaxReconnects(-1)`; nats.go resubscribes after a reconnect. Messages published
+  while disconnected are not delivered.
+- **JetStream consumer info** for lag: `jetstream.JetStream.Consumer(ctx, stream, name)` returns the consumer with fresh
+  `CachedInfo()` (`NumPending`, `NumAckPending`); the durable grant allows its INFO request. `pulse.Subscription.Consumer()`
+  names the consumer. The SDK itself exposes no pending counts.
+
 ## What SpaceMan publishes (ADR-0015, ADR-0030)
 SpaceMan's outbound side (`internal/outbox`, config `events.outbound`, off by default) uses only the SDK calls above:
 `pulse.Connect(url, WithCredsFile, WithSource(source), WithName("spaceman-publisher"), WithCAFile?)` and

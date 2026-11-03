@@ -53,8 +53,8 @@ UPDATE event_template_versions SET status = 'published', published_at = sqlc.arg
 
 -- name: InsertEventSubscription :exec
 INSERT INTO event_subscriptions (id, space_id, name, connection_id, template_id, template_version_id, follow, custom_json, vars_json,
-  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  effective_subject, durable, enabled, start_policy, start_time, start_seq, created_at, created_by, updated_at, delivery)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetEventSubscription :one
 SELECT * FROM event_subscriptions WHERE id = ?;
@@ -126,6 +126,9 @@ UPDATE event_quarantine SET status = sqlc.arg(status), resolved_at = sqlc.arg(no
 
 -- name: CountOpenQuarantine :one
 SELECT count(*) FROM event_quarantine WHERE subscription_id = ? AND status = 'open';
+
+-- name: CountAllOpenQuarantine :one
+SELECT count(*) FROM event_quarantine WHERE status = 'open';
 
 -- name: SetSubscriptionCursor :execrows
 UPDATE event_subscriptions SET cursor_generation = sqlc.arg(cursor_generation), start_policy = sqlc.arg(start_policy), start_time = sqlc.arg(start_time),

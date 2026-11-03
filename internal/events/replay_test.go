@@ -128,24 +128,24 @@ func TestIngestionRateLimit(t *testing.T) {
 	f := newFx(t)
 	m := NewManager(f.svc, nil)
 	f.svc.o.RateFor = func(context.Context, string) int64 { return 6 } // one per 10 s, burst 1
-	if err := m.throttle(f.ctx, "sub_x", "spc_a"); err != nil {
+	if err := m.throttle(f.ctx, "sub_x", "spc_a", false); err != nil {
 		t.Fatalf("first event: %v", err)
 	}
 	short, cancel := context.WithTimeout(f.ctx, 100*time.Millisecond)
 	defer cancel()
-	if err := m.throttle(short, "sub_x", "spc_a"); !errors.Is(err, errThrottled) {
+	if err := m.throttle(short, "sub_x", "spc_a", false); !errors.Is(err, errThrottled) {
 		t.Fatalf("second event within the burst: %v", err)
 	}
 	// Another subscription has its own budget, and a raised rate applies at once.
-	if err := m.throttle(f.ctx, "sub_y", "spc_a"); err != nil {
+	if err := m.throttle(f.ctx, "sub_y", "spc_a", false); err != nil {
 		t.Fatalf("other subscription: %v", err)
 	}
 	f.svc.o.RateFor = func(context.Context, string) int64 { return 60_000 }
-	if err := m.throttle(f.ctx, "sub_x", "spc_a"); err != nil {
+	if err := m.throttle(f.ctx, "sub_x", "spc_a", false); err != nil {
 		t.Fatalf("raised rate: %v", err)
 	}
 	f.svc.o.RateFor = nil
-	if err := m.throttle(f.ctx, "sub_x", "spc_a"); err != nil {
+	if err := m.throttle(f.ctx, "sub_x", "spc_a", false); err != nil {
 		t.Fatalf("no rate: %v", err)
 	}
 	// End to end: a generous rate admits every event.

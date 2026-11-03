@@ -146,7 +146,7 @@ test-real:
 # uncached. Simulated evidence: a real pulsed deployment is not involved (docs/TEST_STRATEGY.md).
 test-pulse:
 	$(GO) test -count=1 -timeout 10m ./internal/events/... ./internal/outbox/
-	$(GO) test -count=1 -timeout 10m -run '^(TestEventsOverHTTP|TestOutboundEventsOverHTTP|TestRunLifecycleEvents|TestBackupRestoreEndToEnd)$$' ./internal/app/
+	$(GO) test -count=1 -timeout 10m -run '^(TestEventsOverHTTP|TestCoreSubscriptionEndToEnd|TestOutboundEventsOverHTTP|TestRunLifecycleEvents|TestBackupRestoreEndToEnd)$$' ./internal/app/
 
 # ---- Docs site and screenshots ----
 .PHONY: site site-dev site-check screenshots

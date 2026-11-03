@@ -1,4 +1,4 @@
-import { Anchor, Badge, Breadcrumbs, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
+import { Alert, Anchor, Badge, Breadcrumbs, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
 import { IconChevronDown, IconCopy, IconTrash } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
@@ -7,7 +7,7 @@ import { api, check, ifMatch, unwrap, type Cursor, type Delivery, type Subscript
 import { keys, useDeliveries, useMe, useQuarantine, useReplays, useSpace, useSubscription } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
-import { OutcomeBadge, SubscriptionState } from '@/features/events/badges'
+import { coreExplanation, DeliveryBadge, OutcomeBadge, SubscriptionState } from '@/features/events/badges'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
@@ -41,6 +41,7 @@ function SubscriptionPage() {
   if (sub.error) return <ErrorAlert error={sub.error} />
   if (!sub.data) return null
   const s = sub.data
+  const core = s.delivery === 'core'
 
   const update = async (body: { enabled: boolean; start?: Cursor }, msg: string) => {
     try {
@@ -84,33 +85,45 @@ function SubscriptionPage() {
       </Breadcrumbs>
       <Group justify="space-between" align="flex-start">
         <Stack gap={2}>
-          <Group gap="xs"><Title order={3}>{s.name}</Title><SubscriptionState sub={s} /></Group>
+          <Group gap="xs"><Title order={3}>{s.name}</Title><SubscriptionState sub={s} /><DeliveryBadge sub={s} /></Group>
           <Text size="sm" c="dimmed">{s.template ? `${s.template.template_slug} v${s.template.version}${s.follow === 'latest' ? ' (following new versions)' : ''}` : 'Custom definition'}
             {s.last_event_at ? ` · last event ${ago(s.last_event_at)}` : ''}</Text>
         </Stack>
         {canWrite && (
           <Group gap="xs">
             <Switch label="Enabled" checked={s.enabled} onChange={(e) => void update({ enabled: e.currentTarget.checked }, e.currentTarget.checked ? 'Enabled' : 'Disabled')} />
-            <Menu position="bottom-end">
-              <Menu.Target><Button variant="default" rightSection={<IconChevronDown size={12} />}>Cursor</Button></Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item onClick={() => void update({ enabled: s.enabled, start: { policy: 'new', replay: false, generation: 0 } }, 'Starting from new events')}>Start now (skip anything pending)</Menu.Item>
-                <Menu.Item onClick={() => setCursorOpen(true)}>Replay…</Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
+            {core ? (
+              <Tooltip label="Core NATS keeps no history: there is nothing to replay and no cursor to move." multiline w={280}>
+                <Button variant="default" disabled rightSection={<IconChevronDown size={12} />}>Cursor</Button>
+              </Tooltip>
+            ) : (
+              <Menu position="bottom-end">
+                <Menu.Target><Button variant="default" rightSection={<IconChevronDown size={12} />}>Cursor</Button></Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item onClick={() => void update({ enabled: s.enabled, start: { policy: 'new', replay: false, generation: 0 } }, 'Starting from new events')}>Start now (skip anything pending)</Menu.Item>
+                  <Menu.Item onClick={() => setCursorOpen(true)}>Replay…</Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            )}
             <Button variant="light" color="owlRed" leftSection={<IconTrash size={14} />} onClick={() => void remove()}>Delete</Button>
           </Group>
         )}
       </Group>
       {s.last_error && <ErrorAlert error={new Error(s.last_error)} title="Last error" />}
+      {core && (
+        <Alert color="owlYellow" title="Non-durable subscription (core NATS)">
+          {coreExplanation} Messages are deduplicated by their Nats-Msg-Id header or, without one, by a hash of their subject, type, source, time and payload.
+        </Alert>
+      )}
       <Card>
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <Info label="Subject" value={s.subject} />
           <Info label="Variables" value={Object.entries(s.vars).map(([k, v]) => `${k}=${v}`).join('  ')} />
-          <Info label="Durable / consumer" value={`${s.durable}  (${s.consumer})`} />
+          {core ? <Info label="Delivery" value="core NATS subscription (no durable consumer)" /> : <Info label="Durable / consumer" value={`${s.durable}  (${s.consumer})`} />}
           <Info label="Pulse grant to add" value={s.grant} copy />
         </SimpleGrid>
-        <Text size="xs" c="dimmed" mt="xs">Cursor: {s.cursor.policy}{s.cursor.replay ? ' (replay)' : ''}, generation {s.cursor.generation}{s.cursor_pending ? ' — waiting to be applied' : ''}</Text>
+        <Text size="xs" c="dimmed" mt="xs">{core ? 'No cursor: core NATS delivers each message once, as it arrives.'
+          : <>Cursor: {s.cursor.policy}{s.cursor.replay ? ' (replay)' : ''}, generation {s.cursor.generation}{s.cursor_pending ? ' — waiting to be applied' : ''}</>}</Text>
       </Card>
       <Tabs defaultValue="deliveries">
         <Tabs.List>
@@ -163,7 +176,8 @@ function SubscriptionPage() {
           </Stack>
         </Tabs.Panel>
         <Tabs.Panel value="replays" pt="sm">
-          <Text size="xs" c="dimmed" mb="xs">Every replay is an explicit, audited operation with a reason. Deliveries it causes show the origin Replay; the stream's own retries show Retry.</Text>
+          <Text size="xs" c="dimmed" mb="xs">{core ? 'Core NATS subscriptions cannot be replayed: nothing keeps their messages.'
+            : "Every replay is an explicit, audited operation with a reason. Deliveries it causes show the origin Replay; the stream's own retries show Retry."}</Text>
           <Card p={0}>
             <Table>
               <Table.Thead><Table.Tr><Table.Th>Requested</Table.Th><Table.Th>From</Table.Th><Table.Th>Reason</Table.Th><Table.Th>Items</Table.Th><Table.Th>State</Table.Th></Table.Tr></Table.Thead>

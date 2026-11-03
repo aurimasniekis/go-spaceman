@@ -54,13 +54,45 @@ The subscription page shows the exact **Pulse grant** it needs; the Pulse operat
 
 <Shot name="events-subscription" alt="Subscription page with its subject, durable, grant and three deliveries, one filtered" caption="Deliveries: accepted and filtered events" />
 
+## Durable or core NATS delivery
+
+A subscription receives its events in one of two ways, chosen when it is created (**Delivery** in the subscribe
+dialog, `delivery` in the API and Terraform). It cannot be changed later; delete and subscribe again instead.
+
+| | Durable (JetStream), the default | Core NATS (non-durable) |
+|---|---|---|
+| For | Events published to Pulse's JetStream stream | Sources that publish plain NATS messages without JetStream |
+| Pulse grant | `durable:<subject>:<durable>` | `subscribe:<subject>` |
+| Acknowledgement | after the inbox item or disposition is stored | none |
+| A storage failure | the event is redelivered with backoff | the message is **lost** (the subscription shows the error) |
+| While SpaceMan is down or disconnected | events wait in the stream | messages are **lost** |
+| Faster than SpaceMan stores them | events wait in the stream | the client drops messages once its buffer is full (slow consumer); they are **lost** |
+| Over the ingestion rate | events wait in the stream | messages are **dropped** |
+| Start position, Start now, Replay | yes | no: only new messages, and cursor operations are refused |
+| Deduplication | `Nats-Msg-Id` (the Pulse event ID) | `Nats-Msg-Id` when the message carries a well-formed one (letters, digits, `.`, `_`, `:`, `-`; at most 128 characters), otherwise a content hash |
+| Filtering, schema, quarantine, inbox items | the same | the same |
+
+Core NATS subscriptions are labelled **core NATS · non-durable** wherever they appear, and their page explains what they
+give up. Use them only when the source cannot publish to JetStream.
+
+<Shot name="events-subscribe-core" alt="Subscribe dialog with Core NATS delivery selected and the non-durable warning" caption="Choosing core NATS delivery" />
+
+A message without a usable `Nats-Msg-Id` gets the ID `sha256-` followed by 32 hexadecimal characters: the first 128 bits
+of a SHA-256 over its subject, `ce-type`, `ce-source` and `ce-time` headers and its payload. A source that re-sends the
+same message is therefore deduplicated, but two identical messages without an ID or a time stamp also count as one: give
+repeated messages an ID or a `ce-time` header if each must become an item. Messages without `ce-time` are dated when
+SpaceMan received them. Every core delivery has the origin **live**: core NATS never redelivers, so a repeated message
+is the source sending it again.
+
+<Shot name="events-core-subscription" alt="Core NATS subscription page with the non-durable badge and explanation, a subscribe grant and a disabled cursor" caption="A core NATS subscription" />
+
 ## Delivery and failures
 
-- An event is acknowledged only after its inbox item is stored, or after it was recorded as **filtered** (a filter did
-  not match) or as a **duplicate** (the same event was delivered before).
+- A durable subscription acknowledges an event only after its inbox item is stored, or after it was recorded as
+  **filtered** (a filter did not match) or as a **duplicate** (the same event was delivered before).
 - An event that fails the template's schema goes to **quarantine** and is never redelivered. Fix the template and
   **Reprocess** it, or **Discard** it.
-- Storage problems are retried with backoff.
+- Storage problems are retried with backoff (durable subscriptions; a core NATS message is lost).
 - Items keep the event ID, subject, type, subscription, template version, rendered instructions and correlation, and the
   raw payload as an attachment.
 - Paused spaces keep receiving events.
@@ -69,7 +101,8 @@ The subscription page shows the exact **Pulse grant** it needs; the Pulse operat
 
 ## Cursor: continue, start now, replay
 
-Editing a subscription never replays anything by itself. **Cursor → Start now** skips whatever is pending. Changing a
+This applies to durable subscriptions; core NATS subscriptions have no cursor. Editing a subscription never replays
+anything by itself. **Cursor → Start now** skips whatever is pending. Changing a
 subscription's subject (for example another account) always asks where the new consumer starts.
 
 **Cursor → Replay…** delivers events again from a time, a stream sequence or everything Pulse still keeps. A replay is an
@@ -93,7 +126,12 @@ one new item per replayed event instead (once per replay), for example after fix
 <Shot name="event-replay" alt="A subscription after an explicit replay: deliveries with live and replay origins in the Origin column, and the Replays tab" caption="Replays and retries, told apart" />
 
 Each subscription ingests at most its space's **event ingestion rate** (600 events per minute by default, see
-[Limits](/guide/limits)); events beyond it wait in Pulse's durable stream and are never dropped.
+[Limits](/guide/limits)); events beyond it wait in Pulse's durable stream and are never dropped. Core NATS messages
+beyond it are dropped.
+
+Operators can watch ingestion on the management listener's `/metrics` (handled events by result, processing latency,
+pending events, subscriptions and connections by state, quarantine size, replays); see
+[Observability](/operators/observability).
 
 A subscription that **follows** its template moves to newly published versions only when they keep the same subject;
 otherwise it stays on its version, because a new subject needs a new Pulse grant.

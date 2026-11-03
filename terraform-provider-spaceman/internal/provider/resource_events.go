@@ -388,6 +388,7 @@ type subscriptionModel struct {
 	Vars              types.Map    `tfsdk:"vars"`
 	Enabled           types.Bool   `tfsdk:"enabled"`
 	Start             types.Object `tfsdk:"start"`
+	Delivery          types.String `tfsdk:"delivery"`
 	TemplateID        types.String `tfsdk:"template_id"`
 	Subject           types.String `tfsdk:"subject"`
 	Durable           types.String `tfsdk:"durable"`
@@ -431,6 +432,12 @@ func (r *subscriptionResource) Schema(_ context.Context, _ resource.SchemaReques
 					"time": schema.StringAttribute{Optional: true, MarkdownDescription: "RFC 3339 time for `time`."},
 					"seq":  schema.Int64Attribute{Optional: true, MarkdownDescription: "Stream sequence for `seq`."},
 				}},
+			"delivery": schema.StringAttribute{Optional: true, Computed: true, Default: stringDefault("durable"),
+				Validators:    []validatorString{stringvalidator.OneOf("durable", "core")},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				MarkdownDescription: "`durable` (default): a JetStream durable consumer, acknowledged after the inbox commit, redelivered and replayable. " +
+					"`core`: a plain NATS Core subscription for sources that publish without JetStream. **Non-durable**: no replay, no redelivery, " +
+					"no cursor (leave `start` out), and messages published while SpaceMan is disconnected are lost. Changing it replaces the subscription."},
 			"template_id": computedString("The template of `template_version_id`."),
 			"subject":     schema.StringAttribute{Computed: true, MarkdownDescription: "The effective Pulse filter."},
 			"durable":     computedString("The durable name the Pulse operator must grant."),
@@ -466,6 +473,10 @@ func (r *subscriptionResource) toModel(s *client.Subscription, m *subscriptionMo
 	m.Name = types.StringValue(s.Name)
 	m.ConnectionID = types.StringValue(s.ConnectionID)
 	m.Follow = types.StringValue(s.Follow)
+	m.Delivery = types.StringValue(s.Delivery)
+	if s.Delivery == "" { // a central from before delivery modes
+		m.Delivery = types.StringValue("durable")
+	}
 	m.Enabled = types.BoolValue(s.Enabled)
 	m.Subject = types.StringValue(s.Subject)
 	m.Durable = types.StringValue(s.Durable)
@@ -505,7 +516,8 @@ func (r *subscriptionResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 	in := client.CreateSubscriptionInput{Name: m.Name.ValueString(), ConnectionID: m.ConnectionID.ValueString(), TemplateVersionID: strOrEmpty(m.TemplateVersionID),
-		Follow: strOrEmpty(m.Follow), Vars: stringMap(ctx, m.Vars, &resp.Diagnostics), Start: r.cursor(ctx, m.Start, &resp.Diagnostics)}
+		Follow: strOrEmpty(m.Follow), Vars: stringMap(ctx, m.Vars, &resp.Diagnostics), Start: r.cursor(ctx, m.Start, &resp.Diagnostics),
+		Delivery: strOrEmpty(m.Delivery)}
 	if c := strOrEmpty(m.Custom); c != "" {
 		def, err := parseDefinition(c)
 		if err != nil {

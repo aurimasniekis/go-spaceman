@@ -43,9 +43,11 @@
 | `events-catalog` | Events and subscriptions | Template catalog | current |
 | `events-publishing` | Publishing SpaceMan events | Outbound publication status: connection, pending, retrying, dead-lettered, lag, recent failures (global admins) | current |
 | `event-template` | Events and subscriptions | Template definition with a sample test | current |
-| `events-subscribe` | Events and subscriptions | Subscription form with template variables | current |
+| `events-subscribe` | Events and subscriptions | Subscription form with template variables and the delivery choice | current |
+| `events-subscribe-core` | Events and subscriptions | Subscription form with core NATS delivery and the non-durable warning | current |
 | `events-subscription` | Events and subscriptions | Subscription with grant, cursor and delivery history with origins | current |
 | `events-quarantine` | Events and subscriptions | Quarantined event with reprocess/discard | current |
+| `events-core-subscription` | Events and subscriptions | Core NATS subscription: non-durable badge and explanation, subscribe grant, no cursor | current |
 | `event-replay` | Events and subscriptions | After an explicit replay: deliveries with live and replay origins | current |
 | `space-limits` | Limits and budgets | A space's effective limits with sources, the budget card and its usage-reporting note | current |
 | `space-schedules` | Schedules | A space's schedules: a weekday cron in Europe/Vilnius and an hourly task schedule | current |

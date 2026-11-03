@@ -2,7 +2,10 @@
 // templates (a versioned central catalog) say how to select and present events, and subscriptions bind a template
 // version (or a custom definition) to a space with variable values and a cursor. The ingestion manager runs one durable
 // consumer per subscription, so every subscribed space receives its own copy of an event (SM-EVT-012), and acknowledges
-// an event only after its inbox item is committed or its disposition recorded (SM-EVT-011).
+// an event only after its inbox item is committed or its disposition recorded (SM-EVT-011). A subscription can instead
+// use a plain NATS Core subscription (delivery "core", ADR-0042) for sources that publish without JetStream: the same
+// filtering, deduplication, quarantine and inbox path, but non-durable (no acknowledgement, redelivery or replay, and
+// messages published while SpaceMan is not connected are lost).
 package events
 
 import (
@@ -18,6 +21,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -33,6 +37,8 @@ type Options struct {
 	// RateFor returns the ingestion rate (events per minute and subscription) of a space (the limits model,
 	// ADR-0036). Nil or 0: no rate limit.
 	RateFor func(ctx context.Context, spaceID string) int64
+	// Metrics receives the ingestion metrics (bounded labels only). Nil: none.
+	Metrics *metrics.Metrics
 }
 
 // Service manages connections, templates and subscriptions, and processes delivered events.

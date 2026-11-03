@@ -1,4 +1,4 @@
-// Package metrics defines the SpaceMan Prometheus metric catalog (SM-OBS-002, docs/operator/observability.md).
+// Package metrics defines the SpaceMan Prometheus metric catalog (SM-OBS-002, site/operators/observability.md).
 //
 // Every metric lives on a dedicated registry (never the global default). Callers record events through small
 // typed methods; label values are normalized against allowlists or bounded sets, so no call can create an
@@ -72,6 +72,7 @@ type Metrics struct {
 	runsActive      *prometheus.GaugeVec
 	runsStarted     *prometheus.CounterVec
 	runsEnded       *prometheus.CounterVec
+	ingest          ingestMetrics
 	fs              *fsCollector
 	handlerTimeout  time.Duration
 	handlerInFlight int
@@ -130,6 +131,7 @@ func New() *Metrics {
 	m.runsActive = f.gaugeVec("runs_active", "Runs currently observed live, by harness.", "harness")
 	m.runsStarted = f.counterVec("runs_started_total", "Run launches by harness and result.", "harness", "result")
 	m.runsEnded = f.counterVec("runs_ended_total", "Runs ended by harness and reason.", "harness", "reason")
+	m.ingest = newIngestMetrics(f)
 
 	reg.MustRegister(
 		collectors.NewGoCollector(),

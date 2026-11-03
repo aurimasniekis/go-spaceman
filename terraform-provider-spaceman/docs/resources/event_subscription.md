@@ -38,6 +38,7 @@ resource "spaceman_event_subscription" "issues" {
 ### Optional
 
 - `custom` (String) A custom definition as JSON instead of a template version (cannot follow).
+- `delivery` (String) `durable` (default): a JetStream durable consumer, acknowledged after the inbox commit, redelivered and replayable. `core`: a plain NATS Core subscription for sources that publish without JetStream. **Non-durable**: no replay, no redelivery, no cursor (leave `start` out), and messages published while SpaceMan is disconnected are lost. Changing it replaces the subscription.
 - `enabled` (Boolean) Whether the subscription consumes (default `true`).
 - `follow` (String) `pinned` (default) or `latest` (move to newly published versions that keep the subject).
 - `start` (Attributes) Where the consumer starts: applied on create, and on an update whenever this value changes (recreating the consumer; required when the subject changes). Anything but `new` replays history. Left out: `new` (no history). (see [below for nested schema](#nestedatt--start))

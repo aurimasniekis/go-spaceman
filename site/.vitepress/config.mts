@@ -102,6 +102,7 @@ export default withMermaid(
             { text: 'Accounts', link: '/operators/accounts' },
             { text: 'Terminals and recordings', link: '/operators/terminals' },
             { text: 'Backups and restore', link: '/operators/backup' },
+            { text: 'Observability', link: '/operators/observability' },
             { text: 'Terraform', link: '/operators/terraform' },
             { text: 'Command line', link: '/operators/cli' },
           ],

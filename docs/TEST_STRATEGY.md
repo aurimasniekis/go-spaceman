@@ -59,7 +59,7 @@
 | 9 | Secrets | `TestCreateIsWriteOnly`, `TestLaunchPayloadRedacted`, `TestRedactionNeverLeaks`, `TestScrubEnv`, `TestSealBindsContext`, `TestClientSecretWriteOnly`, `TestFaultCorruptNodeState` (partial secrets file) | `TestRealClaudeRun` (secrets file unlinked; token absent from hc state), `TestRealClaudeUsesSpaceManTools` |
 | 10 | Event schema, variable and wildcard validation | `TestValidateDefinition`, `TestBindRejectsWidening`, `TestInputSchemaAndFilters`, `TestInstructionsSeeOnlyVariables`; `TestEventsOverHTTP` (wildcard variable refused) | — |
 | 11 | Durable acknowledgement, dedup, fan-out | `TestIngestFanOutAndProvenance`, `internal/inbox` `TestDedup`, `TestDurableRoundTrip`, `TestAcknowledge`, `TestMessagesDeliveredToIdleRuns` | — (embedded NATS with the real SDK only) |
-| 12 | Subscription edits, replay, quarantine | `TestCursorSemantics`, `TestQuarantineAndReprocess`, `TestReplayIsExplicitAndDistinctFromRetry`, `TestEventsOverHTTP` | — |
+| 12 | Subscription edits, replay, quarantine | `TestCursorSemantics`, `TestQuarantineAndReprocess`, `TestReplayIsExplicitAndDistinctFromRetry`, `TestEventsOverHTTP`; core NATS refuses cursors: `TestCoreSubscriptionRefusesCursors`, `TestCoreSubscriptionEndToEnd` | — |
 | 13 | Restore cursor reconciliation | `TestApplyPendingRestore` (subscriptions replay from the oldest stored delivery), `TestBackupRestoreEndToEnd` | — |
 | 14 | Feedback-loop prevention | `TestOwnEventsAreNotReingested`, `TestDepthLoopsAndQuotas` (cross-space chains) | — |
 | 15 | KB allocation, reuse, continuity, busy handling | `TestKBSupportSessions` (one session per requester, reuse, queuing at capacity, evidence), `TestKnowledgeRoutedToSupportSession` | — |

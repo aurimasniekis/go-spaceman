@@ -123,6 +123,9 @@ func (svc *Service) Replay(ctx context.Context, actor audit.Actor, spaceID, subI
 		if cur.Version != version {
 			return apperr.New(apperr.CodePrecondition, "the subscription changed since version %d", version)
 		}
+		if cur.Delivery == DeliveryCore {
+			return errCoreCursor("a replay")
+		}
 		gen := cur.CursorGeneration + 1
 		policy, st, ss := cursorCols(c)
 		n, err := tx.Q.SetSubscriptionCursor(ctx, db.SetSubscriptionCursorParams{CursorGeneration: gen, StartPolicy: policy, StartTime: st, StartSeq: ss,
@@ -153,6 +156,7 @@ func (svc *Service) Replay(ctx context.Context, actor audit.Actor, spaceID, subI
 	if err != nil {
 		return nil, err
 	}
+	svc.o.Metrics.IngestReplay()
 	svc.notify()
 	return svc.getReplay(ctx, subID, replayID)
 }

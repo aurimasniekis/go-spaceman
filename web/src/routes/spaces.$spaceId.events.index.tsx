@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Table, Text, Tooltip } from '@mantine/core'
+import { Badge, Button, Card, Group, Table, Text, Tooltip } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
@@ -6,7 +6,7 @@ import { useMe, useSpace, useSubscriptions } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
-import { SubscriptionState } from '@/features/events/badges'
+import { DeliveryBadge, SubscriptionState } from '@/features/events/badges'
 import { SubscriptionModal } from '@/features/events/SubscriptionModal'
 import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
@@ -22,7 +22,7 @@ function SpaceEventsPage() {
   const [creating, setCreating] = useState(false)
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="Event subscriptions: each delivers matching Pulse events into this space's inbox through its own durable consumer."
+      <PageHeader title={space.data?.name ?? 'Space'} description="Event subscriptions: each delivers matching Pulse events into this space's inbox through its own durable consumer (or a non-durable core NATS subscription)."
         actions={atLeast(roleIn(me, spaceId), 'operator') && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>Subscribe</Button>} />
       <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={subs.error} />
@@ -37,7 +37,7 @@ function SpaceEventsPage() {
                 <Table.Td><AnchorLink to="/spaces/$spaceId/events/$subscriptionId" params={{ spaceId, subscriptionId: s.id }} size="sm" fw={500}>{s.name}</AnchorLink></Table.Td>
                 <Table.Td><Text size="xs">{s.template ? `${s.template.template_slug} v${s.template.version}${s.follow === 'latest' ? ' · following' : ''}` : 'custom'}</Text></Table.Td>
                 <Table.Td><Text size="xs" className="mono">{s.subject}</Text></Table.Td>
-                <Table.Td><SubscriptionState sub={s} /></Table.Td>
+                <Table.Td><Group gap={4} wrap="nowrap"><SubscriptionState sub={s} /><DeliveryBadge sub={s} /></Group></Table.Td>
                 <Table.Td><Tooltip label={s.last_event_at ? datetime(s.last_event_at) : 'none yet'}><Text size="xs" c="dimmed">{s.last_event_at ? ago(s.last_event_at) : '—'}</Text></Tooltip></Table.Td>
                 <Table.Td>{s.quarantined > 0 ? <Badge color="owlRed">{s.quarantined} open</Badge> : <Text size="xs" c="dimmed">—</Text>}</Table.Td>
               </Table.Tr>

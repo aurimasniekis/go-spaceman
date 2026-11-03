@@ -11,16 +11,25 @@
   or the agent's OS user on the node can read them (SM-ACCT-005).
 - **No approval interception of arbitrary commands.** Enforced approvals cover only operations SpaceMan itself performs (MCP gateway
   tools and built-in privileged operations). Harness permission prompts that SpaceMan does not integrate stay in the terminal or need a takeover (SM-APPR-005).
-- **At-least-once events.** Event ingestion is at-least-once, with deduplication on the event ID. Plain NATS Core subscriptions are not durable (SM-EVT-011).
+- **At-least-once events.** Durable event ingestion is at-least-once, with deduplication on the event ID. Core NATS subscriptions are at-most-once and non-durable (SM-EVT-011, ADR-0042).
 - **No hard currency limits.** Usage data may be delayed or missing. Unknown usage is shown as unknown (SM-REC-005, SM-LIMIT-003).
 - **Single active central instance.** No high availability. Recovery is restore-from-backup (ADR-0001).
 
 ## Event ingestion
-- **Pulse (JetStream) only.** Connections use the go-pulse SDK with `.creds`. Plain NATS Core subscriptions (non-durable) are
-  not implemented yet; direct GitHub webhooks are not implemented (SM-EVT-019).
+- **Pulse connections only.** Connections use the go-pulse SDK with Pulse `.creds` (a client tag is required), also for
+  core NATS subscriptions; a plain NATS server without Pulse-issued credentials cannot be connected. Direct GitHub
+  webhooks are not implemented (SM-EVT-019).
+- **Core NATS subscriptions lose messages by design.** No replay, redelivery or cursor; messages are lost while SpaceMan
+  is down or disconnected, after a storage failure, when the client drops them as a slow consumer, and over the
+  ingestion rate. Subjects must still be Pulse subjects under `evt.`. Without a `Nats-Msg-Id`, messages are
+  deduplicated by a content hash, so identical messages without an ID or `ce-time` count once (ADR-0042).
+- **Lag is pending counts, not time.** `spaceman_ingest_consumer_pending` is the number of messages a JetStream consumer
+  has not delivered, summed over subscriptions and refreshed every 30 seconds; there is no per-subscription or
+  age-of-oldest lag metric (labels stay bounded).
 - **Grants are the Pulse operator's job.** Each subscription needs exactly the durable grant its page shows
-  (`durable:<subject>:<durable>`). A missing grant shows up as a timeout in the subscription's error, not as a clear
-  permission error (go-pulse v0.1.3 behaviour). The in-process test server does not model grants.
+  (`durable:<subject>:<durable>`, or `subscribe:<subject>` for core NATS). A missing durable grant shows up as a timeout
+  in the subscription's error, not as a clear permission error (go-pulse v0.1.3 behaviour); a missing subscribe grant
+  is reported as such. The in-process test server models only subscribe permissions, not Pulse's grants.
 - **No live go-pulse-github evidence yet.** The GitHub templates are tested against the event go-pulse-github builds for its
   `issues_opened` fixture (derived from its code), not against a running pulse-github. There is no upstream pull request
   fixture.

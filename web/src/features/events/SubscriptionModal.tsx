@@ -7,10 +7,12 @@ import { api, unwrap, type Cursor } from '@/api/client'
 import { keys, useConnections, useTemplates } from '@/api/queries'
 import { errorMessage } from '@/components/ErrorAlert'
 import { fieldError, required } from '@/lib/form'
+import { coreExplanation } from './badges'
 
 /**
  * Subscribes a space to a published template version (SM-EVT-005). Variable fields come from the template; the server
- * binds and validates everything before the subscription starts. By default only new events are delivered.
+ * binds and validates everything before the subscription starts. By default only new events are delivered. Delivery is
+ * a JetStream durable or, for sources that publish without JetStream, a non-durable core NATS subscription (ADR-0042).
  */
 export function SubscriptionModal({ spaceId, opened, onClose }: { spaceId: string; opened: boolean; onClose: () => void }) {
   const qc = useQueryClient()
@@ -21,16 +23,19 @@ export function SubscriptionModal({ spaceId, opened, onClose }: { spaceId: strin
   const published = (templates.data ?? []).flatMap((t) => t.versions.filter((v) => v.status === 'published').map((v) => ({ t, v })))
 
   const form = useForm({
-    defaultValues: { name: '', connection: '', version: '', follow: false, vars: {} as Record<string, string>, policy: 'new' as Cursor['policy'], time: '', seq: '' },
+    defaultValues: { name: '', connection: '', version: '', follow: false, vars: {} as Record<string, string>, policy: 'new' as Cursor['policy'], time: '', seq: '',
+      delivery: 'durable' as 'durable' | 'core' },
     onSubmit: async ({ value }) => {
       setError('')
       try {
-        const start: Cursor = { policy: value.policy, replay: false, generation: 0 }
-        if (value.policy === 'time') start.time = new Date(value.time).toISOString()
-        if (value.policy === 'seq') start.seq = Number(value.seq)
+        const core = value.delivery === 'core'
+        const start: Cursor = { policy: core ? 'new' : value.policy, replay: false, generation: 0 }
+        if (!core && value.policy === 'time') start.time = new Date(value.time).toISOString()
+        if (!core && value.policy === 'seq') start.seq = Number(value.seq)
         const sub = unwrap(await api.POST('/spaces/{space_id}/subscriptions', {
           params: { path: { space_id: spaceId } },
-          body: { name: value.name, connection_id: value.connection, template_version_id: value.version, follow: value.follow ? 'latest' : 'pinned', vars: value.vars, start },
+          body: { name: value.name, connection_id: value.connection, template_version_id: value.version, follow: value.follow ? 'latest' : 'pinned', vars: value.vars, start,
+            delivery: value.delivery },
         }))
         void qc.invalidateQueries({ queryKey: keys.subscriptions(spaceId) })
         form.reset()
@@ -86,17 +91,33 @@ export function SubscriptionModal({ spaceId, opened, onClose }: { spaceId: strin
               )
             }}
           </form.Subscribe>
-          <form.Field name="policy">
+          <form.Field name="delivery">
             {(f) => (
               <Stack gap={4}>
-                <Text size="sm" fw={500}>Start with</Text>
-                <SegmentedControl value={f.state.value} onChange={(v) => f.handleChange(v as Cursor['policy'])} aria-label="Start with"
-                  data={[{ value: 'new', label: 'New events only' }, { value: 'all', label: 'Everything retained' }, { value: 'time', label: 'From a time' }, { value: 'seq', label: 'From a sequence' }]} />
-                {f.state.value !== 'new' && <Text size="xs" c="owlYellow">Delivering history is a replay: it is audited and needs the replay permission.</Text>}
+                <Text size="sm" fw={500}>Delivery</Text>
+                <SegmentedControl value={f.state.value} onChange={(v) => f.handleChange(v as 'durable' | 'core')} aria-label="Delivery"
+                  data={[{ value: 'durable', label: 'Durable (JetStream)' }, { value: 'core', label: 'Core NATS (non-durable)' }]} />
+                {f.state.value === 'core'
+                  ? <Alert color="owlYellow" title="Non-durable subscription">{coreExplanation} Use it only for sources that publish without JetStream. It needs the Pulse grant subscribe:&lt;subject&gt; and receives new messages only.</Alert>
+                  : <Text size="xs" c="dimmed">Its own JetStream durable consumer: an event is acknowledged only after its item is stored, redelivered after failures, and can be replayed.</Text>}
               </Stack>
             )}
           </form.Field>
-          <form.Subscribe selector={(s) => s.values.policy}>
+          <form.Subscribe selector={(s) => s.values.delivery}>
+            {(delivery) => delivery === 'core' ? null : (
+              <form.Field name="policy">
+                {(f) => (
+                  <Stack gap={4}>
+                    <Text size="sm" fw={500}>Start with</Text>
+                    <SegmentedControl value={f.state.value} onChange={(v) => f.handleChange(v as Cursor['policy'])} aria-label="Start with"
+                      data={[{ value: 'new', label: 'New events only' }, { value: 'all', label: 'Everything retained' }, { value: 'time', label: 'From a time' }, { value: 'seq', label: 'From a sequence' }]} />
+                    {f.state.value !== 'new' && <Text size="xs" c="owlYellow">Delivering history is a replay: it is audited and needs the replay permission.</Text>}
+                  </Stack>
+                )}
+              </form.Field>
+            )}
+          </form.Subscribe>
+          <form.Subscribe selector={(s) => (s.values.delivery === 'core' ? 'new' : s.values.policy)}>
             {(p) => p === 'time' ? (
               <form.Field name="time">{(f) => <TextInput type="datetime-local" label="From" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
             ) : p === 'seq' ? (

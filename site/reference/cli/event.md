@@ -138,6 +138,7 @@ API: `create-subscription` ([HTTP API](../api)).
 |---|---|---|---|
 | `--connection` | string |  | connection ID (required) |
 | `--custom-file` | string |  | custom template definition (JSON or YAML file) |
+| `--delivery` | string |  | durable (default, a JetStream durable) or core (plain NATS Core: non-durable, no replay or redelivery) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--follow` | string |  | pinned or latest |
 | `--name` | string |  | name (required) |

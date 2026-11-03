@@ -24,6 +24,22 @@ const (
 	StartSeq  = "seq"  // from a stream sequence
 )
 
+// Delivery modes (SM-EVT-011, ADR-0042).
+const (
+	// DeliveryDurable is a JetStream durable consumer: acknowledged after the inbox commit, redelivered, replayable.
+	DeliveryDurable = "durable"
+	// DeliveryCore is a plain NATS Core subscription, for sources that publish without JetStream. It is non-durable:
+	// nothing is acknowledged or redelivered, there is no cursor to replay or reset, and messages published while
+	// SpaceMan is not connected are lost.
+	DeliveryCore = "core"
+)
+
+// errCoreCursor refuses cursor operations on core subscriptions.
+func errCoreCursor(what string) error {
+	return apperr.New(apperr.CodePrecondition,
+		"%s is not possible: this subscription uses core NATS (non-durable), which keeps no history and has no cursor; only new messages are received", what)
+}
+
 // Subscription binds a template version (or a custom definition) to a space (SM-EVT-005).
 type Subscription struct {
 	ID           string               `json:"id"`
@@ -32,12 +48,13 @@ type Subscription struct {
 	ConnectionID string               `json:"connection_id"`
 	Template     *TemplateRef         `json:"template,omitempty"`
 	Follow       string               `json:"follow" enum:"pinned,latest" doc:"latest moves to newly published versions that keep the same subject"`
+	Delivery     string               `json:"delivery" enum:"durable,core" doc:"durable: a JetStream durable consumer (acknowledged after the inbox commit, redelivered, replayable). core: a plain NATS Core subscription, NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost"`
 	Custom       *template.Definition `json:"custom,omitempty"`
 	Vars         map[string]string    `json:"vars"`
 	Subject      string               `json:"subject" doc:"The effective Pulse filter"`
-	Durable      string               `json:"durable" doc:"The durable name the Pulse operator must grant"`
-	Consumer     string               `json:"consumer" doc:"The JetStream consumer: <client_id>_<durable>"`
-	Grant        string               `json:"grant" doc:"The Pulse grant this subscription needs (durable:<subject>:<durable>)"`
+	Durable      string               `json:"durable" doc:"The durable name the Pulse operator must grant (empty for core subscriptions)"`
+	Consumer     string               `json:"consumer" doc:"The JetStream consumer: <client_id>_<durable> (empty for core subscriptions)"`
+	Grant        string               `json:"grant" doc:"The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core"`
 	Enabled      bool                 `json:"enabled"`
 	Cursor       Cursor               `json:"cursor"`
 	LastReplay   *Replay              `json:"last_replay,omitempty" doc:"The most recent explicit replay"`
@@ -68,10 +85,13 @@ type SubscriptionInput struct {
 	Custom            *template.Definition
 	Vars              map[string]string
 	Start             Cursor
+	// Delivery is DeliveryDurable (default) or DeliveryCore; it cannot change later.
+	Delivery string
 }
 
 // SubscriptionUpdate edits a subscription. Changing the effective subject needs an explicit cursor (Start): the
-// consumer must be recreated, so "continue" is impossible.
+// consumer must be recreated, so "continue" is impossible. Core subscriptions have no cursor: Start is refused and a
+// subject change simply resubscribes.
 type SubscriptionUpdate struct {
 	Name              string
 	Enabled           bool
@@ -179,6 +199,17 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 	if err := validCursor(&in.Start); err != nil {
 		return nil, err
 	}
+	switch in.Delivery {
+	case "":
+		in.Delivery = DeliveryDurable
+	case DeliveryDurable:
+	case DeliveryCore:
+		if in.Start.Policy != StartNew {
+			return nil, apperr.New(apperr.CodeInvalid, "core NATS subscriptions are non-durable and keep no history: start.policy must be new")
+		}
+	default:
+		return nil, apperr.New(apperr.CodeInvalid, "delivery must be durable or core")
+	}
 	id := ids.New(ids.Subscription)
 	err := svc.s.W().TxNamed(ctx, "events.subscription_create", func(tx *store.Tx) error {
 		sp, err := tx.Q.GetSpace(ctx, spaceID)
@@ -208,7 +239,7 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 		if err := tx.Q.InsertEventSubscription(ctx, db.InsertEventSubscriptionParams{ID: id, SpaceID: spaceID, Name: in.Name, ConnectionID: in.ConnectionID,
 			TemplateID: tmplID, TemplateVersionID: verID, Follow: in.Follow, CustomJson: custom, VarsJson: mustJSON(b.Vars), EffectiveSubject: b.Subject,
 			Durable: durableFor(id), Enabled: 1, StartPolicy: policy, StartTime: st, StartSeq: ss, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID,
-			UpdatedAt: tx.NowMicros()}); err != nil {
+			UpdatedAt: tx.NowMicros(), Delivery: in.Delivery}); err != nil {
 			if isUnique(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "this space already has a subscription named %q", in.Name)
 			}
@@ -218,7 +249,7 @@ func (svc *Service) CreateSubscription(ctx context.Context, actor audit.Actor, s
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_subscription.created", Target: audit.Target{Type: "event_subscription", ID: id},
-			Details: map[string]any{"space_id": spaceID, "subject": b.Subject, "durable": durableFor(id), "start": policy, "custom": custom.Valid}})
+			Details: map[string]any{"space_id": spaceID, "subject": b.Subject, "durable": durableFor(id), "start": policy, "custom": custom.Valid, "delivery": in.Delivery}})
 		return err
 	})
 	if err != nil {
@@ -236,6 +267,7 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 			return nil, err
 		}
 	}
+	replayed := false
 	err := svc.s.W().TxNamed(ctx, "events.subscription_update", func(tx *store.Tx) error {
 		cur, err := tx.Q.GetEventSubscription(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && cur.SpaceID != spaceID) {
@@ -245,6 +277,10 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		}
 		if cur.Version != version {
 			return apperr.New(apperr.CodePrecondition, "the subscription changed since version %d", version)
+		}
+		core := cur.Delivery == DeliveryCore
+		if core && in.Start != nil {
+			return errCoreCursor("setting a cursor (start now or replay)")
 		}
 		versionID := in.TemplateVersionID
 		if versionID == "" && in.Custom == nil {
@@ -276,7 +312,7 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 		}
 		gen, replay := cur.CursorGeneration, cur.Replay
 		policy, st, ss := cur.StartPolicy, cur.StartTime, cur.StartSeq
-		if b.Subject != cur.EffectiveSubject && in.Start == nil {
+		if b.Subject != cur.EffectiveSubject && in.Start == nil && !core {
 			return apperr.New(apperr.CodeInvalid, "the subject changes from %s to %s: choose where the new consumer starts (start.policy)", cur.EffectiveSubject, b.Subject)
 		}
 		if in.Start != nil {
@@ -310,6 +346,7 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 					return err
 				}
 				details["replay_id"] = rid
+				replayed = true
 			}
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_subscription.updated", Target: audit.Target{Type: "event_subscription", ID: id},
@@ -318,6 +355,9 @@ func (svc *Service) UpdateSubscription(ctx context.Context, actor audit.Actor, s
 	})
 	if err != nil {
 		return nil, err
+	}
+	if replayed {
+		svc.o.Metrics.IngestReplay()
 	}
 	svc.notify()
 	return svc.GetSubscription(ctx, spaceID, id)
@@ -350,9 +390,11 @@ func (svc *Service) DeleteSubscription(ctx context.Context, actor audit.Actor, s
 }
 
 func (svc *Service) subFromRow(ctx context.Context, r db.EventSubscription) (*Subscription, error) {
-	s := &Subscription{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, ConnectionID: r.ConnectionID, Follow: r.Follow, Subject: r.EffectiveSubject,
+	s := &Subscription{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, ConnectionID: r.ConnectionID, Follow: r.Follow, Delivery: r.Delivery, Subject: r.EffectiveSubject,
 		Durable: r.Durable, Enabled: r.Enabled == 1, Version: r.Version, CreatedAt: fromMicros(r.CreatedAt), Vars: map[string]string{},
-		Pending: r.AppliedGeneration < r.CursorGeneration, Cursor: Cursor{Policy: r.StartPolicy, Replay: r.Replay == 1, Generation: r.CursorGeneration}}
+		// Core subscriptions have no cursor to apply.
+		Pending: r.Delivery != DeliveryCore && r.AppliedGeneration < r.CursorGeneration,
+		Cursor:  Cursor{Policy: r.StartPolicy, Replay: r.Replay == 1, Generation: r.CursorGeneration}}
 	_ = json.Unmarshal([]byte(r.VarsJson), &s.Vars)
 	if r.StartTime.Valid {
 		t := fromMicros(r.StartTime.Int64)
@@ -374,10 +416,15 @@ func (svc *Service) subFromRow(ctx context.Context, r db.EventSubscription) (*Su
 	} else {
 		s.Custom = def
 	}
-	if c, err := svc.s.R().GetEventConnection(ctx, r.ConnectionID); err == nil {
-		s.Consumer = c.ClientID + "_" + r.Durable
+	if r.Delivery == DeliveryCore {
+		// No consumer: a plain subscription, which Pulse's subscribe grant allows (docs/contracts/pulse.md).
+		s.Durable, s.Grant = "", "subscribe:"+r.EffectiveSubject
+	} else {
+		if c, err := svc.s.R().GetEventConnection(ctx, r.ConnectionID); err == nil {
+			s.Consumer = c.ClientID + "_" + r.Durable
+		}
+		s.Grant = "durable:" + r.EffectiveSubject + ":" + r.Durable
 	}
-	s.Grant = "durable:" + r.EffectiveSubject + ":" + r.Durable
 	if s.Quarantined, err = svc.s.R().CountOpenQuarantine(ctx, r.ID); err != nil {
 		return nil, err
 	}

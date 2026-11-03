@@ -672,6 +672,20 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByLabel('account_key').fill('example-org')
     await page.getByLabel('repository').fill('example-org/docs')
   })
+  // The same form for a source without JetStream: core NATS delivery, labelled non-durable, with no start position.
+  await capture(page, 'events-subscribe-core', async () => {
+    await page.goto(`/spaces/${docs.id}/events`)
+    await page.getByRole('button', { name: 'Subscribe' }).click()
+    await page.getByLabel('Name').fill('docs build pings')
+    await page.getByRole('textbox', { name: 'Connection' }).click()
+    await page.getByRole('option', { name: 'pulse-prod' }).click()
+    await page.getByRole('textbox', { name: 'Template' }).click()
+    await page.getByRole('option', { name: 'GitHub pull requests · v1' }).click()
+    await page.getByLabel('account_key').fill('example-org')
+    await page.getByLabel('repository').fill('example-org/docs')
+    await page.getByText('Core NATS (non-durable)').click()
+    await expect(page.getByText('Non-durable subscription', { exact: true })).toBeVisible()
+  })
   await capture(page, 'events-subscription', async () => {
     await page.goto(`/spaces/${payments.id}/events/${issues.id}`)
     await expect(page.getByText('filtered', { exact: true })).toBeVisible()
@@ -691,6 +705,19 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'event-replay', async () => {
     await page.goto(`/spaces/${payments.id}/events/${issues.id}`)
     await expect(page.getByText('Replay', { exact: true }).first()).toBeVisible()
+  })
+  // Core NATS (ADR-0042): a non-durable subscription for a source that publishes without JetStream. Its page carries the
+  // non-durable badge and explanation, and has no cursor.
+  const heartbeats = await api.call<{ id: string }>('POST', `/spaces/${payments.id}/subscriptions`, { name: 'ledger heartbeats', connection_id: conn.id,
+    delivery: 'core', custom: { subject: 'evt.ops.heartbeat.ledger', variables: [], filters: [], title: 'Ledger heartbeat: {{data.status}}',
+      body: 'The ledger service reported **{{data.status}}**.' } })
+  await expect.poll(async () => (await api.call<{ state: string }>('GET', `/spaces/${payments.id}/subscriptions/${heartbeats.id}`)).state, { timeout: 30_000 }).toBe('running')
+  publish('evt.ops.heartbeat.ledger', 'ops.heartbeat.v1', { status: 'degraded' })
+  await expect.poll(async () => (await api.call<{ items: unknown[] }>('GET', `/spaces/${payments.id}/subscriptions/${heartbeats.id}/deliveries`)).items.length,
+    { timeout: 30_000 }).toBe(1)
+  await capture(page, 'events-core-subscription', async () => {
+    await page.goto(`/spaces/${payments.id}/events/${heartbeats.id}`)
+    await expect(page.getByText('Non-durable subscription (core NATS)')).toBeVisible()
   })
 
   // Limits (SM-LIMIT-001): overrides with a token budget; Schedules (SM-LIMIT-003): a weekday review in Vilnius time and

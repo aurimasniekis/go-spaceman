@@ -294,6 +294,7 @@ type EventSubscription struct {
 	CreatedAt         int64
 	CreatedBy         string
 	UpdatedAt         int64
+	Delivery          string
 }
 
 type EventTemplate struct {

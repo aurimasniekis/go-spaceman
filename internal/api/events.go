@@ -104,7 +104,8 @@ type SubscriptionBody struct {
 	Follow            string               `json:"follow,omitempty" enum:"pinned,latest"`
 	Custom            *template.Definition `json:"custom,omitempty"`
 	Vars              map[string]string    `json:"vars,omitempty"`
-	Start             *events.Cursor       `json:"start,omitempty" doc:"Where the consumer starts; default new (no history)"`
+	Start             *events.Cursor       `json:"start,omitempty" doc:"Where the consumer starts; default new (no history). Core subscriptions accept only new."`
+	Delivery          string               `json:"delivery,omitempty" enum:"durable,core" doc:"durable (default): a JetStream durable consumer, acknowledged after the inbox commit, redelivered and replayable. core: a plain NATS Core subscription for sources that publish without JetStream; NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost. Fixed at creation."`
 }
 
 // SubscriptionPatch updates a subscription.
@@ -115,7 +116,7 @@ type SubscriptionPatch struct {
 	Follow            string               `json:"follow,omitempty" enum:"pinned,latest"`
 	Custom            *template.Definition `json:"custom,omitempty"`
 	Vars              map[string]string    `json:"vars,omitempty"`
-	Start             *events.Cursor       `json:"start,omitempty" doc:"Recreate the consumer at this position (required when the subject changes). Anything but new is a replay."`
+	Start             *events.Cursor       `json:"start,omitempty" doc:"Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor."`
 }
 
 type subOut struct {
@@ -368,7 +369,8 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 					}
 				}
 				s, err := svc.CreateSubscription(ctx, Actor(ctx), in.SpaceID, events.SubscriptionInput{Name: in.Body.Name, ConnectionID: in.Body.ConnectionID,
-					TemplateVersionID: in.Body.TemplateVersionID, Follow: in.Body.Follow, Custom: in.Body.Custom, Vars: in.Body.Vars, Start: start})
+					TemplateVersionID: in.Body.TemplateVersionID, Follow: in.Body.Follow, Custom: in.Body.Custom, Vars: in.Body.Vars, Start: start,
+					Delivery: in.Body.Delivery})
 				if err != nil {
 					return nil, d.fail(ctx, "events.subscription_create", err)
 				}
@@ -431,7 +433,7 @@ func RegisterEvents(svc *events.Service) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "replay-subscription", Method: http.MethodPost, Path: "/spaces/{space_id}/subscriptions/{subscription_id}/replay",
 			Summary: "Replay a subscription from a position",
 			Description: "An explicit, audited replay (needs replay:execute): the consumer is recreated at the position and events stored before that moment are " +
-				"delivered with origin replay, never as retries. Inbox deduplication still applies unless fresh_items is set.",
+				"delivered with origin replay, never as retries. Inbox deduplication still applies unless fresh_items is set. Refused (precondition_failed) for core subscriptions, which keep no history.",
 			Tags: subTags, DefaultStatus: http.StatusAccepted},
 			func(ctx context.Context, in *struct {
 				SubscriptionPath

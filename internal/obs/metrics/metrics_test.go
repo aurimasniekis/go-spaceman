@@ -42,6 +42,13 @@ func exercise(m *Metrics) {
 	m.SetRunsActive(HarnessClaude, 2)
 	m.RunStarted(HarnessCodex, RunAdopted)
 	m.RunEnded(HarnessClaude, RunLeaseExpired)
+	m.IngestProcessed(IngestCore, IngestLive, IngestCreated, time.Millisecond)
+	m.SetIngestPending(map[IngestDelivery]int64{IngestDurable: 3}, 1)
+	m.IngestCoreDropped(2)
+	m.SetIngestSubscriptions(map[IngestDelivery]map[IngestSubState]int{IngestDurable: {IngestSubRunning: 2}})
+	m.SetIngestConnections(map[ConnectionKind]map[IngestConnState]int{ConnectionPulse: {IngestConnConnected: 1}})
+	m.SetIngestQuarantine(4)
+	m.IngestReplay()
 }
 
 func gather(t *testing.T, m *Metrics) map[string]*dto.MetricFamily {
@@ -70,7 +77,7 @@ func labelNames(f *dto.MetricFamily) string {
 }
 
 // TestCatalogGolden pins the metric catalog (names, types and label names) documented in
-// docs/operator/observability.md. Changing it is a documented, reviewed change.
+// site/operators/observability.md. Changing it is a documented, reviewed change.
 func TestCatalogGolden(t *testing.T) {
 	m := New()
 	m.ObserveFilesystem(VolumeData, t.TempDir())
@@ -109,6 +116,15 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_runs_ended_total":                      "counter:harness,reason",
 		"spaceman_storage_filesystem_size_bytes":         "gauge:volume",
 		"spaceman_storage_filesystem_avail_bytes":        "gauge:volume",
+		"spaceman_ingest_deliveries_total":               "counter:delivery,origin,result",
+		"spaceman_ingest_processing_duration_seconds":    "histogram:delivery",
+		"spaceman_ingest_consumer_pending":               "gauge:delivery",
+		"spaceman_ingest_consumer_ack_pending":           "gauge:",
+		"spaceman_ingest_core_dropped_total":             "counter:",
+		"spaceman_ingest_subscriptions":                  "gauge:delivery,state",
+		"spaceman_ingest_connections":                    "gauge:connection_kind,state",
+		"spaceman_ingest_quarantine_open":                "gauge:",
+		"spaceman_ingest_replays_total":                  "counter:",
 	}
 	fams := gather(t, m)
 	got := map[string]string{}
@@ -124,7 +140,7 @@ func TestCatalogGolden(t *testing.T) {
 	}
 	for name := range got {
 		if _, ok := want[name]; !ok {
-			t.Errorf("undocumented metric %s (add it to the golden list and docs/operator/observability.md)", name)
+			t.Errorf("undocumented metric %s (add it to the golden list and site/operators/observability.md)", name)
 		}
 	}
 	for _, std := range []string{"go_goroutines", "go_memstats_alloc_bytes"} {
@@ -172,9 +188,17 @@ func TestEnumLabelsNormalized(t *testing.T) {
 	m.OIDCLogin(planted, LoginOutcome(planted))
 	m.UserLogin(LoginMethod(planted), LoginOutcome(planted))
 	m.HTTPRequest("GET /a/"+planted, "BREW", 999, 0)
+	m.IngestProcessed(IngestDelivery(planted), IngestOrigin(planted), IngestResult(planted), 0)
+	m.IngestProcessed(IngestDurable, IngestRedelivery, IngestDuplicate, 0)
 
 	if got := seriesValues(t, m, "spaceman_node_connects_total", "result"); !slices.Equal(got, []string{"other", "revoked"}) {
 		t.Errorf("node connect results = %v", got)
+	}
+	if got := seriesValues(t, m, "spaceman_ingest_deliveries_total", "result"); !slices.Equal(got, []string{"duplicate", "other"}) {
+		t.Errorf("ingest results = %v", got)
+	}
+	if got := seriesValues(t, m, "spaceman_ingest_deliveries_total", "delivery"); !slices.Equal(got, []string{"durable", "other"}) {
+		t.Errorf("ingest delivery modes = %v", got)
 	}
 	if got := seriesValues(t, m, "spaceman_http_requests_total", "method"); !slices.Equal(got, []string{"other"}) {
 		t.Errorf("methods = %v", got)
@@ -294,6 +318,14 @@ func TestHandlerExposition(t *testing.T) {
 		`spaceman_http_requests_total{code="2xx",method="GET",route="/api/v1/spaces/{id}"} 1`,
 		`spaceman_outbox_dead 1`,
 		`spaceman_execution_lease_fenced_total 1`,
+		`spaceman_ingest_deliveries_total{delivery="core",origin="live",result="created"} 1`,
+		`spaceman_ingest_consumer_pending{delivery="durable"} 3`,
+		`spaceman_ingest_consumer_pending{delivery="core"} 0`,
+		`spaceman_ingest_subscriptions{delivery="core",state="error"} 0`,
+		`spaceman_ingest_subscriptions{delivery="durable",state="running"} 2`,
+		`spaceman_ingest_connections{connection_kind="pulse",state="connected"} 1`,
+		`spaceman_ingest_quarantine_open 4`,
+		`spaceman_ingest_core_dropped_total 2`,
 		"go_goroutines",
 	} {
 		if !strings.Contains(body, want) {

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-pulse/pkg/pulse"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"golang.org/x/time/rate"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -49,14 +52,17 @@ func fromPulse(e pulse.Event) template.Event {
 //   - any other error: transient (storage): nak, the SDK backs off and redelivers.
 //
 // The origin says why the event is handled; every delivery records it with its attempt number, so a replay is never
-// confused with a retry (SM-EVT-015).
-func (svc *Service) Process(ctx context.Context, subID string, e template.Event, seq uint64, o Origin) error {
+// confused with a retry (SM-EVT-015). Core NATS subscriptions (DeliveryCore) use the same path; nothing acknowledges
+// their messages, so a transient error loses the message.
+func (svc *Service) Process(ctx context.Context, subID string, e template.Event, seq uint64, o Origin) (err error) {
 	r, err := svc.s.R().GetEventSubscription(ctx, subID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // deleted while consuming
 	} else if err != nil {
 		return err
 	}
+	start, outcome := time.Now(), ""
+	defer func() { svc.observe(r.Delivery, o.Kind, outcome, err, time.Since(start)) }()
 	prior, err := svc.s.R().CountEventDeliveriesOf(ctx, db.CountEventDeliveriesOfParams{SubscriptionID: subID, EventID: e.ID})
 	if err != nil {
 		return err
@@ -85,6 +91,7 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 		return err
 	}
 	if !res.Accepted {
+		outcome = OutcomeFiltered
 		return svc.deliver(ctx, r, e, seq, o, OutcomeFiltered, "", res.SkipReason)
 	}
 	trusted := map[string]any{"event_id": e.ID, "subject": e.Subject, "type": e.Type, "source": e.Source, "time": e.Time.UTC().Format(time.RFC3339Nano),
@@ -118,7 +125,7 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 	if err != nil {
 		return err
 	}
-	outcome := OutcomeAccepted
+	outcome = OutcomeAccepted
 	switch {
 	case !created:
 		outcome = OutcomeDuplicate
@@ -144,7 +151,37 @@ func (svc *Service) skipOwn(ctx context.Context, subID string, e template.Event,
 	} else if err != nil {
 		return err
 	}
-	return svc.deliver(ctx, r, e, seq, Origin{Kind: OriginLive, attempt: 1}, OutcomeFiltered, "", OwnOriginDetail)
+	start := time.Now()
+	err = svc.deliver(ctx, r, e, seq, Origin{Kind: OriginLive, attempt: 1}, OutcomeFiltered, "", OwnOriginDetail)
+	svc.observe(r.Delivery, OriginLive, OutcomeFiltered, err, time.Since(start))
+	return err
+}
+
+// observe records one handled event in the ingestion metrics: the delivery mode, the origin and what came of it
+// (an error wins over the outcome: the delivery was not recorded). took < 0 skips the latency histogram.
+func (svc *Service) observe(delivery, origin, outcome string, err error, took time.Duration) {
+	if svc.o.Metrics == nil {
+		return
+	}
+	var qe *QuarantinedError
+	res := metrics.IngestError
+	switch {
+	case errors.As(err, &qe):
+		res = metrics.IngestQuarantined
+	case errors.Is(err, errThrottled):
+		res = metrics.IngestRateLimited
+	case err != nil:
+	case outcome == OutcomeAccepted || outcome == OutcomeReplayed:
+		res = metrics.IngestCreated
+	case outcome == OutcomeDuplicate:
+		res = metrics.IngestDuplicate
+	case outcome == OutcomeFiltered:
+		res = metrics.IngestFiltered
+	}
+	if origin == "" {
+		origin = OriginLive
+	}
+	svc.o.Metrics.IngestProcessed(metrics.IngestDelivery(delivery), metrics.IngestOrigin(origin), res, took)
 }
 
 func (svc *Service) deliver(ctx context.Context, r db.EventSubscription, e template.Event, seq uint64, o Origin, outcome, itemID, detail string) error {
@@ -220,8 +257,9 @@ func (svc *Service) runtimeState(subID string, enabled bool) (string, string) {
 	return st.state, st.err
 }
 
-// Manager runs the durable consumers of every enabled subscription (one goroutine set for the process; SDK consumers
-// are push-driven, nothing polls). Configuration changes wake it; failed connections are retried periodically.
+// Manager runs the durable consumers and core NATS subscriptions of every enabled subscription (one goroutine set for
+// the process; SDK consumers are push-driven, nothing polls). Configuration changes wake it; failed connections and
+// subscriptions are retried periodically, and every round refreshes the ingestion gauges.
 type Manager struct {
 	svc   *Service
 	log   *slog.Logger
@@ -230,6 +268,9 @@ type Manager struct {
 	subs  map[string]*subRun
 	limMu sync.Mutex
 	lims  map[string]*limiter
+	// coreMu guards core, the running core subscriptions by their NATS subscription (read by NATS's error callback).
+	coreMu sync.Mutex
+	core   map[*nats.Subscription]*subRun
 }
 
 type limiter struct {
@@ -241,9 +282,10 @@ type limiter struct {
 // stream (negative acknowledgement, redelivered later): well below the stream's acknowledgement timeout.
 const throttleWait = 10 * time.Second
 
-// throttle holds an event until the subscription's ingestion rate allows it (limits model, ADR-0036). Nothing is
-// dropped: an event that cannot be admitted within throttleWait stays in the durable stream.
-func (m *Manager) throttle(ctx context.Context, subID, spaceID string) error {
+// throttle holds an event until the subscription's ingestion rate allows it (limits model, ADR-0036). For a durable
+// subscription nothing is dropped: an event that cannot be admitted within throttleWait stays in the stream. A core
+// NATS message that cannot be admitted is dropped (nothing could redeliver it).
+func (m *Manager) throttle(ctx context.Context, subID, spaceID string, core bool) error {
 	if m.svc.o.RateFor == nil {
 		return nil
 	}
@@ -261,7 +303,11 @@ func (m *Manager) throttle(ctx context.Context, subID, spaceID string) error {
 	wctx, cancel := context.WithTimeout(ctx, throttleWait)
 	defer cancel()
 	if err := lim.l.Wait(wctx); err != nil {
-		m.svc.setState(subID, "running", fmt.Sprintf("throttled: over the ingestion rate of %d events per minute; events wait in the stream", n))
+		msg := fmt.Sprintf("throttled: over the ingestion rate of %d events per minute; events wait in the stream", n)
+		if core {
+			msg = fmt.Sprintf("throttled: over the ingestion rate of %d events per minute; core NATS messages over it are dropped", n)
+		}
+		m.svc.setState(subID, "running", msg)
 		return errThrottled
 	}
 	return nil
@@ -276,10 +322,32 @@ type connRun struct {
 	err     error
 }
 
+// subRun is a running subscription: a durable consumer (sub) or a core NATS subscription (nsub).
 type subRun struct {
-	key  string
-	sub  *pulse.Subscription
-	stop context.CancelFunc
+	key     string
+	id      string
+	subject string
+	stop    context.CancelFunc
+	// Durable.
+	sub    *pulse.Subscription
+	js     jetstream.JetStream
+	stream string
+	// Core.
+	nsub    *nats.Subscription
+	nc      *nats.Conn
+	dropped int
+	// failed is set (by NATS's error callback) when the server refused the core subscription; the next round retries it.
+	failed atomic.Bool
+}
+
+func (r *subRun) halt() {
+	r.stop()
+	if r.sub != nil {
+		r.sub.Stop()
+	}
+	if r.nsub != nil {
+		_ = r.nsub.Unsubscribe() // fails harmlessly when the connection was already closed
+	}
 }
 
 // NewManager returns the ingestion manager.
@@ -288,7 +356,7 @@ func NewManager(svc *Service, log *slog.Logger) *Manager {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Manager{svc: svc, log: obs.Component(log, "events"), retry: 30 * time.Second, conns: map[string]*connRun{}, subs: map[string]*subRun{},
-		lims: map[string]*limiter{}}
+		lims: map[string]*limiter{}, core: map[*nats.Subscription]*subRun{}}
 }
 
 // Run reconciles consumers until ctx ends.
@@ -308,10 +376,8 @@ func (m *Manager) Run(ctx context.Context) {
 }
 
 func (m *Manager) stopAll() {
-	for id, s := range m.subs {
-		s.stop()
-		s.sub.Stop()
-		delete(m.subs, id)
+	for id := range m.subs {
+		m.stopSub(id)
 	}
 	for id, c := range m.conns {
 		if c.client != nil {
@@ -371,11 +437,15 @@ func (m *Manager) reconcile(ctx context.Context) {
 			continue
 		}
 		want[s.ID] = true
-		if cur := m.subs[s.ID]; cur != nil && cur.key == key {
+		if cur := m.subs[s.ID]; cur != nil && cur.key == key && !cur.failed.Load() {
 			continue
 		}
 		m.stopSub(s.ID)
-		if err := m.start(ctx, c, s, key); err != nil {
+		start := m.start
+		if s.Delivery == DeliveryCore {
+			start = m.startCore
+		}
+		if err := start(ctx, c, s, key); err != nil {
 			m.svc.setState(s.ID, "error", err.Error())
 			m.log.Warn("event subscription failed", slog.String("subscription", s.ID), obs.Err(err))
 			continue
@@ -388,6 +458,7 @@ func (m *Manager) reconcile(ctx context.Context) {
 			m.svc.setState(id, "stopped", "")
 		}
 	}
+	m.refreshMetrics(ctx, subs)
 }
 
 func errText(err error) string {
@@ -399,9 +470,13 @@ func errText(err error) string {
 
 func (m *Manager) stopSub(id string) {
 	if s := m.subs[id]; s != nil {
-		s.stop()
-		s.sub.Stop()
+		s.halt()
 		delete(m.subs, id)
+		if s.nsub != nil {
+			m.coreMu.Lock()
+			delete(m.core, s.nsub)
+			m.coreMu.Unlock()
+		}
 	}
 }
 
@@ -410,7 +485,8 @@ func (m *Manager) connect(c db.EventConnection) (*pulse.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := []pulse.Option{pulse.WithCreds(creds), pulse.WithStream(c.Stream), pulse.WithName("spaceman")}
+	opts := []pulse.Option{pulse.WithCreds(creds), pulse.WithStream(c.Stream), pulse.WithName("spaceman"),
+		pulse.WithNATSOptions(nats.ErrorHandler(m.natsError))}
 	if c.CaPem != "" {
 		opts = append(opts, pulse.WithCA([]byte(c.CaPem)))
 	}
@@ -471,7 +547,8 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		if m.svc.ownEvent(e) {
 			return m.svc.skipOwn(hctx, subID, fromPulse(e), e.Sequence)
 		}
-		if err := m.throttle(hctx, subID, spaceID); err != nil {
+		if err := m.throttle(hctx, subID, spaceID, false); err != nil {
+			m.svc.observe(DeliveryDurable, OriginLive, "", err, -1)
 			return err // left in the stream: redelivered after a backoff
 		}
 		o := Origin{}
@@ -499,6 +576,6 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 			return err
 		}
 	}
-	m.subs[s.ID] = &subRun{key: key, sub: sub, stop: stop}
+	m.subs[s.ID] = &subRun{key: key, id: s.ID, subject: s.EffectiveSubject, sub: sub, stop: stop, js: c.client.JetStream(), stream: c.row.Stream}
 	return nil
 }

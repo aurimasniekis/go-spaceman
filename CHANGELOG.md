@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Core NATS event subscriptions (SM-EVT-011, ADR-0042): `delivery: core` on a subscription (API, subscribe dialog, CLI
+  `--delivery`, Terraform `delivery`) subscribes with plain NATS on the Pulse connection, for sources that publish
+  without JetStream. Same filters, schema, quarantine and inbox items; deduplicated by `Nats-Msg-Id` or, without one, a
+  content hash. Clearly labelled **non-durable** (API schema, a badge and explanation in the UI, the events guide): no
+  replay, no redelivery, no cursor, and messages are lost while disconnected. Replay and start-now are refused; a missing
+  `subscribe:<subject>` grant is reported on the subscription. Migration 0028.
+- Ingestion metrics on the management listener's `/metrics` (SM-EVT-013, SM-OBS-002): `spaceman_ingest_deliveries_total`
+  (delivery mode, origin, result: created, duplicate, filtered, quarantined, error, rate_limited),
+  `spaceman_ingest_processing_duration_seconds`, `spaceman_ingest_consumer_pending` and `_ack_pending` (JetStream
+  consumer lag), `spaceman_ingest_core_dropped_total`, `spaceman_ingest_subscriptions` and `spaceman_ingest_connections`
+  by state, `spaceman_ingest_quarantine_open` and `spaceman_ingest_replays_total`. Labels are fixed enums only. New
+  operators' page **Observability** with the full metric catalog and suggested alerts.
 - Remote command line (SM-API-003, ADR-0040): `spaceman` is now also a client for a running central's API
   (`--server`/`SPACEMAN_SERVER`, an API token from `--token-file`, `SPACEMAN_TOKEN_FILE` or `SPACEMAN_TOKEN`,
   `-o table|json|yaml`). Commands for nodes, spaces (including `space relocate precheck|start|status|retry|cancel|release`

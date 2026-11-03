@@ -2837,7 +2837,7 @@ export interface paths {
         put?: never;
         /**
          * Replay a subscription from a position
-         * @description An explicit, audited replay (needs replay:execute): the consumer is recreated at the position and events stored before that moment are delivered with origin replay, never as retries. Inbox deduplication still applies unless fresh_items is set.
+         * @description An explicit, audited replay (needs replay:execute): the consumer is recreated at the position and events stored before that moment are delivered with origin replay, never as retries. Inbox deduplication still applies unless fresh_items is set. Refused (precondition_failed) for core subscriptions, which keep no history.
          */
         post: operations["replay-subscription"];
         delete?: never;
@@ -4850,7 +4850,7 @@ export interface components {
              */
             readonly $schema?: string;
             connection_id: string;
-            /** @description The JetStream consumer: <client_id>_<durable> */
+            /** @description The JetStream consumer: <client_id>_<durable> (empty for core subscriptions) */
             consumer: string;
             /** Format: date-time */
             created_at: string;
@@ -4858,7 +4858,12 @@ export interface components {
             /** @description A cursor change waits to be applied by the ingestion manager */
             cursor_pending: boolean;
             custom?: components["schemas"]["TemplateDefinition"];
-            /** @description The durable name the Pulse operator must grant */
+            /**
+             * @description durable: a JetStream durable consumer (acknowledged after the inbox commit, redelivered, replayable). core: a plain NATS Core subscription, NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost
+             * @enum {string}
+             */
+            delivery: "durable" | "core";
+            /** @description The durable name the Pulse operator must grant (empty for core subscriptions) */
             durable: string;
             enabled: boolean;
             /**
@@ -4866,7 +4871,7 @@ export interface components {
              * @enum {string}
              */
             follow: "pinned" | "latest";
-            /** @description The Pulse grant this subscription needs (durable:<subject>:<durable>) */
+            /** @description The Pulse grant this subscription needs: durable:<subject>:<durable>, or subscribe:<subject> for core */
             grant: string;
             id: string;
             last_error?: string;
@@ -8188,10 +8193,15 @@ export interface components {
             readonly $schema?: string;
             connection_id: string;
             custom?: components["schemas"]["TemplateDefinition"];
+            /**
+             * @description durable (default): a JetStream durable consumer, acknowledged after the inbox commit, redelivered and replayable. core: a plain NATS Core subscription for sources that publish without JetStream; NON-DURABLE: no replay, no redelivery, no cursor, and messages published while SpaceMan is disconnected are lost. Fixed at creation.
+             * @enum {string}
+             */
+            delivery?: "durable" | "core";
             /** @enum {string} */
             follow?: "pinned" | "latest";
             name: string;
-            /** @description Where the consumer starts; default new (no history) */
+            /** @description Where the consumer starts; default new (no history). Core subscriptions accept only new. */
             start?: components["schemas"]["EventsCursor"];
             template_version_id?: string;
             vars?: {
@@ -8210,7 +8220,7 @@ export interface components {
             /** @enum {string} */
             follow?: "pinned" | "latest";
             name?: string;
-            /** @description Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. */
+            /** @description Recreate the consumer at this position (required when the subject changes). Anything but new is a replay. Refused for core subscriptions, which have no cursor. */
             start?: components["schemas"]["EventsCursor"];
             template_version_id?: string;
             vars?: {
