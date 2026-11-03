@@ -1,2 +1,0 @@
-# <provider_id>/<mapping_id>
-terraform import spaceman_oidc_group_mapping.admins oidc_01j0000000000000000000000/ogm_01j0000000000000000000000

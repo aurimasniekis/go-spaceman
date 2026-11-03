@@ -1,14 +1,18 @@
 # Terraform
 
-SpaceMan's durable configuration can be managed with Terraform. The provider lives in this repository
-(`terraform-provider-spaceman/`, a nested Go module) and talks to the same administrative API as the web UI. It covers
-everything the API supports today and is not published to a registry yet.
+SpaceMan's durable configuration can be managed with Terraform. The provider lives in its own repository,
+[terraform-provider-spaceman](https://github.com/aurimasniekis/terraform-provider-spaceman) (Go module
+`github.com/aurimasniekis/terraform-provider-spaceman`), and talks to the same administrative API as the web UI. It
+covers everything the API supports today and is not published to a registry yet. Its unit and acceptance tests
+(`make test`, `make acc`) run in that repository; the acceptance tests build central from a SpaceMan checkout
+(`SPACEMAN_SRC`, or `../spaceman` next to it).
 
 ## Setup
 
 Build the provider and point Terraform at it with a development override:
 
 ```sh
+git clone https://github.com/aurimasniekis/terraform-provider-spaceman.git
 cd terraform-provider-spaceman
 go build -o "$HOME/.terraform.d/spaceman-dev/terraform-provider-spaceman" .
 cat > "$HOME/.terraformrc-spaceman" <<EOF

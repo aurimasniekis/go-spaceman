@@ -41,13 +41,14 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
   that comes up paused with new execution authority; explicit, fenced space relocation; cross-space requests with
   two-sided grants; human-action reminders, escalation and response routing; a fault-injection suite and a security
   review; packaging (images, systemd units, release builds with SBOMs and checksums).
-- **Completion (M5).** A Terraform provider (29 resources, 7 data sources); a remote CLI covering 239 of 248 API
+- **Completion (M5).** A Terraform provider (30 resources, 7 data sources), in its own repository
+  `terraform-provider-spaceman` (ADR-0047); a remote CLI covering 239 of 248 API
   operations; the documentation site with architecture, operator, reference and development pages; the scripted §41
   demonstration; real-dependency suites.
 
 ## 3. Architecture decisions
 
-46 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
+47 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
 
 | ADR | Decision |
 |---|---|
@@ -60,7 +61,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0030, 0042 | Outbound events via a transactional outbox; core NATS as a labelled non-durable delivery mode. |
 | 0031, 0037 | Sealed backups with a paused restore; explicit, resumable, fenced relocation. |
 | 0034 | What the container images contain, and the node agent's looser sandbox. |
-| 0035, 0040, 0041 | Terraform and CLI as clients of the same API; secrets never as flag values; Terraform owns only what it configures. |
+| 0035, 0040, 0041, 0047 | Terraform and CLI as clients of the same API; secrets never as flag values; Terraform owns only what it configures; the provider lives in its own repository. |
 | 0038 | Cross-space requests: two-sided grants, destination-owned execution, disclosure applied to replies. |
 | 0039 | Security review fixes, including Git in the node daemon running no repository-supplied programs. |
 | 0044 | Configured space repositories: a central list, cloned, fetched and reported by the node with its own Git authentication; no Git credentials stored. |
@@ -80,7 +81,7 @@ last code change (`5381ffb`); the other rows ran earlier the same day, on the co
 
 | Gate | What it runs | Where | Result |
 |---|---|---|---|
-| `make check` | vet, the custom `txscope` analyzer, golangci-lint, the race-enabled test suite, analyzer tests, coverage floors (≥ 80% for every listed package), traceability check, Terraform provider unit tests | final tree | pass |
+| `make check` | vet, the custom `txscope` analyzer, golangci-lint, the race-enabled test suite, analyzer tests, coverage floors (≥ 80% for every listed package), traceability check | final tree | pass |
 | `make web-check` | typecheck, vitest, production build, dist check | `4445a03` | pass |
 | `make e2e` | the browser journey against a real central, agent and isolated herdr-core core | `4445a03` | pass |
 | `make e2e-browsers` | the same journey in Firefox and WebKit | `261553a` | pass |
@@ -88,7 +89,7 @@ last code change (`5381ffb`); the other rows ran earlier the same day, on the co
 | `make site-check` | site build with dead-link check, screenshot inventory, Mermaid, the site's axe audit, API/CLI/config reference drift | final tree | pass |
 | `make test-fault` | disk full, interrupted recording and upload, killed agent, central killed mid-write, disconnect past lease and grace, partition during a command, corrupt node state, busy database | `4445a03` | pass |
 | `make test-pulse` | ingestion and outbox against an embedded NATS server with the real go-pulse SDK | `c87ba00` | pass |
-| `make tf-acc` | 14 Terraform acceptance tests (Terraform 1.17) against a local central | `4445a03` | pass |
+| provider `make check`, `make acc` | in the provider repository: unit tests, lint, and the acceptance tests (Terraform 1.17) against a central built from this checkout | provider repository against `35fa6a6` | pass |
 | `make demo` | the brief's 30-step demonstration (31 with setup), stub harness | `4445a03` | 31/31 pass |
 | `SPACEMAN_DEMO_REAL=1 make demo` | the same with a real Claude Code worker | `3baa1d9` | 31/31 pass |
 | real suites | `make test-real`, `test-real-porch`, `test-real-pulse`, `test-real-s3`, `test-real-systemd` | `261553a`; node suites again at `4122671` | pass (opt-in; see §6) |

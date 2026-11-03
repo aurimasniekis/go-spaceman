@@ -1,1 +1,0 @@
-terraform import spaceman_human_action_type.design_review hty_01j0000000000000000000000

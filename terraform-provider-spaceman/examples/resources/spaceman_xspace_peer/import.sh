@@ -1,2 +1,0 @@
-# <space_id>/<peer_id>
-terraform import spaceman_xspace_peer.payments_from_platform spc_01j0000000000000000000000/spc_01j0000000000000000000001

@@ -1,2 +1,0 @@
-# <space_id>/<type_id>
-terraform import spaceman_space_human_action_type.review spc_01j0000000000000000000000/hty_01j0000000000000000000000

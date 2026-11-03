@@ -375,7 +375,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-API-004 Terraform manages durable spaces, assignments, repos, profiles, roles, prompt bindings, account refs, MCP/skills/grants, event
   definitions and subscriptions, human-action types and policies, KB config, limits, schedules, cross-space and auth config. Never runtime state.
 - SM-API-005 UI edits produce normal drift. Terraform owns only the fields it represents. A `node_id` change triggers safe relocation.
-  Secret versioning and immutable publication avoid perpetual plans. The provider lives in this repo (no separate repo assumed).
+  Secret versioning and immutable publication avoid perpetual plans. The provider lives in its own repository, `terraform-provider-spaceman`, next to this one (operator decision 2026-11-03, §9).
 
 ### SM-DOCS — Documentation and website
 - SM-DOCS-001 Full docs and a polished VitePress site following Hallpass's structure, with SpaceMan branding and the Night Owl identity, covering
@@ -446,3 +446,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-02 | Authorization uses Casbin, not a hand-written matrix. | SM-AUTH-003 (ADR-0004) |
 | 2026-11-02 | Real Claude Code and Codex runs are permitted for evidence, budget-bounded, against local logins and an isolated hc core. | SM-VER-002 |
 | 2026-11-02 | UI component base follows the sibling projects (Pulse, Porch, Deed): Mantine 8. | SM-UI-001 (ADR-0005) |
+| 2026-11-03 | The Terraform provider lives in its own repository (`../terraform-provider-spaceman`, module `github.com/aurimasniekis/terraform-provider-spaceman`), not in this one; this repository's build does not depend on it. | SM-API-004/005 (ADR-0047) |

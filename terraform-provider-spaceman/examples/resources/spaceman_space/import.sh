@@ -1,1 +1,0 @@
-terraform import spaceman_space.payments spc_01j0000000000000000000000

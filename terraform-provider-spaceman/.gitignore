@@ -1,7 +1,0 @@
-# Provider binary and local Terraform working files
-/terraform-provider-spaceman
-.terraform/
-.terraform.lock.hcl
-*.tfstate
-*.tfstate.*
-crash.log

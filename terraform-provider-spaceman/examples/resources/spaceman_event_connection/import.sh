@@ -1,1 +1,0 @@
-terraform import spaceman_event_connection.pulse ecn_01j0000000000000000000000

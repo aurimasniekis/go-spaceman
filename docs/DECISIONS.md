@@ -890,7 +890,8 @@
   has optimistic concurrency, idempotency keys and RFC 9457 problems; several catalog objects have no delete, and
   relocation (M4-05), limits and schedules (M4-02) and cross-space requests (M4-06) are not built.
 - **Decision:**
-  - **Layout.** A nested Go module `terraform-provider-spaceman/` in this repository (no separate repository) on HashiCorp
+  - **Layout.** *(Superseded by ADR-0047: the provider now lives in its own repository.)* A nested Go module
+    `terraform-provider-spaceman/` in this repository (no separate repository) on HashiCorp
     terraform-plugin-framework v1.19.0 (protocol 6), framework-validators v0.19.0 and terraform-plugin-testing v1.16.0.
     It has its own small typed client over the API's JSON (`internal/client`) and imports nothing from the central
     module (whose packages are `internal/` anyway). Root `make check` runs its unit tests (`tf-test`); `make tf-acc` runs
@@ -1720,6 +1721,25 @@
   `TestHumanSearchClarifyAttachmentsAndPrefsOverHTTP`, `internal/human` `TestClarificationRequest`,
   `TestSearchFiltersAndSorts`, `TestActionAttachments`; real `TestRealTakeover` and `TestRealTakeoverTypesAndDetaches`
   (hc 0.1.16).
+
+### ADR-0047 — The Terraform provider lives in its own repository
+- **Status:** Accepted, 2026-11-03 (operator decision; supersedes the layout part of ADR-0035).
+- **Context:** ADR-0035 put the provider in this repository as the nested module `terraform-provider-spaceman/`, with
+  its unit tests in `make check` and `tf-*` Makefile targets. The operator decided the provider belongs in its own
+  repository next to this one. Keeping Makefile targets that point at a sibling checkout would break `make` for anyone
+  who checks out this repository alone.
+- **Decision:**
+  - The provider is the repository `terraform-provider-spaceman` (checked out as `../terraform-provider-spaceman` beside
+    this one), Go module `github.com/aurimasniekis/terraform-provider-spaceman`. Its history was carried over with
+    `git subtree split`, so its commits keep their messages and dates.
+  - This repository no longer contains or refers to it in its build: no `tf-*` targets, nothing in `make check`, no CI
+    step. The provider repository has its own Makefile (`test`, `lint`, `acc`, `docs`), lint configuration and CI.
+  - The provider's acceptance tests build `spaceman` and `devpulse` from a SpaceMan checkout: `SPACEMAN_SRC`, or
+    `../spaceman` next to the provider repository. A provider change that needs a new SpaceMan API needs the matching
+    SpaceMan checkout; the API contract remains this repository's `api/openapi.json`.
+- **Consequences:** a change to the administrative API is no longer caught by this repository's `make check` if it
+  breaks the provider; run the provider's `make acc` against the change. Traceability rows that cite provider tests
+  name tests in that repository.
 
 ## 2. Open items and unresolved contracts
 

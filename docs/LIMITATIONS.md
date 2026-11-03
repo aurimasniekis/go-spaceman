@@ -374,7 +374,7 @@
   are untested.
 
 ## Terraform provider
-- **Phases 1 and 2, not published.** `terraform-provider-spaceman/` covers what the API supports today (ADR-0035,
+- **Phases 1 and 2, not published.** The provider (its own repository, `terraform-provider-spaceman`, ADR-0047) covers what the API supports today (ADR-0035,
   ADR-0041) and space repositories (ADR-0044). The backup target and schedule (configuration file only), type permissions
   beyond space enablement (no API) and editing a user's email, display name or `mfa_required` (no API) are not managed
   (SM-API-004). Terraform 1.11 or later is required (write-only arguments).
@@ -395,7 +395,7 @@
   `purge_on_destroy` is set. Recreating such an object with the same slug (or a user with the same email) fails until it
   is imported.
 - **Write-only rotation is explicit.** Terraform cannot see a changed write-only secret: bump its `_wo_version`.
-- **Tested against a local central only** (simulated, `make tf-acc`); no Terraform run against a production
+- **Tested against a local central only** (simulated, `make acc` in the provider repository); no Terraform run against a production
   deployment, a real identity provider or a real Pulse deployment is recorded.
 
 ## Extension points
