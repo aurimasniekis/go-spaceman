@@ -12,6 +12,7 @@ const docPages: Record<string, string> = {
   THREAT_MODEL: '/security/threat-model',
   DECISIONS: '/security/decisions',
   SCREENSHOTS: '/development/screenshots',
+  DEMO: '/development/demo',
   GOAL: repo + '/blob/main/docs/GOAL.md',
   PLAN: repo + '/blob/main/docs/PLAN.md',
   SECURITY_REVIEW: repo + '/blob/main/docs/SECURITY_REVIEW.md',
@@ -128,6 +129,7 @@ export default withMermaid(
           items: [
             { text: 'Building and testing', link: '/development/testing' },
             { text: 'Screenshots', link: '/development/screenshots' },
+            { text: 'End-to-end demonstration', link: '/development/demo' },
             { text: 'Release notes', link: '/development/changelog' },
           ],
         },

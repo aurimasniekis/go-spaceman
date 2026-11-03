@@ -19,6 +19,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   consumer lag), `spaceman_ingest_core_dropped_total`, `spaceman_ingest_subscriptions` and `spaceman_ingest_connections`
   by state, `spaceman_ingest_quarantine_open` and `spaceman_ingest_replays_total`. Labels are fixed enums only. New
   operators' page **Observability** with the full metric catalog and suggested alerts.
+- Scripted end-to-end demonstration (SM-VER-003): `make demo` (`scripts/demo.sh`, driver `test/demo` behind the
+  `demo` build tag, browser steps `web/e2e/demo.spec.ts`) runs the thirty steps of the demonstration in order against a
+  real central with the embedded UI, two real agents with their own herdr-core cores, devpulse and devmcp, through the
+  browser, the API and the CLI, and writes one evidence line per step (outside the repository) plus a summary table. Stub
+  harness by default; `SPACEMAN_DEMO_REAL=1` with `SPACEMAN_DEMO_CLAUDE_TOKEN` makes the Claude Code worker a real,
+  budget-bounded run. Guide: `docs/DEMO.md`, site page Development → End-to-end demonstration.
+- Stub harness (development only): it now finds the SpaceMan MCP server when it stands in for Codex (`-c mcp_servers.…`
+  overrides), and understands `/await-human [n]`, `/kb-delay <seconds>` and `/dream`; KB answers cite the working
+  tree's revision.
 - Remote command line (SM-API-003, ADR-0040): `spaceman` is now also a client for a running central's API
   (`--server`/`SPACEMAN_SERVER`, an API token from `--token-file`, `SPACEMAN_TOKEN_FILE` or `SPACEMAN_TOKEN`,
   `-o table|json|yaml`). Commands for nodes, spaces (including `space relocate precheck|start|status|retry|cancel|release`

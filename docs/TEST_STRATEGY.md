@@ -27,6 +27,7 @@
 | `make tf-test`, `make tf-acc` | Terraform provider unit tests. Acceptance tests run the Terraform binary against a throwaway local central | simulated (local central), real Terraform |
 | `make web-check` | UI typecheck, vitest unit tests (Markdown sanitizer, contrast, forms) and the production build | simulated |
 | `make e2e` | Playwright in Chromium against a fresh local stack: real central, a real `spaceman-agent`, an isolated herdr-core core, a stub harness | real browser, real hc; stub harness |
+| `make demo` | `test/demo` (build tag `demo`): the brief's §41 demonstration, thirty steps in order against a real central with the UI, two real agents with their own herdr-core cores, devpulse and devmcp, through the browser, the API and the CLI; one evidence line per step ([DEMO.md](DEMO.md)) | real processes, browser and hc; stub harness (simulated steps marked per step); `SPACEMAN_DEMO_REAL=1` adds a real Claude Code worker |
 | `make screenshots` | Seeded demo instance. Every captured page is audited with axe (WCAG 2.1 A/AA) in both themes | real browser |
 | `make site-check` | Site build with a dead-link check, screenshot references, Mermaid parsing, API-reference drift, and axe on every site page | real browser |
 | `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` | simulated |

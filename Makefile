@@ -130,6 +130,13 @@ web-check:
 e2e:
 	scripts/e2e.sh --reporter=list
 
+.PHONY: demo
+# The scripted end-to-end demonstration of the brief's §41 (SM-VER-003, docs/DEMO.md): a real central with the UI, two
+# real agents with their own herdr-core cores, devpulse and devmcp, driven through the browser, the API and the CLI.
+# Stub harness by default; SPACEMAN_DEMO_REAL=1 with SPACEMAN_DEMO_CLAUDE_TOKEN makes the Claude Code worker real.
+demo:
+	scripts/demo.sh
+
 .PHONY: test-fault test-real test-pulse
 # Fault-injection suite (crashes, disk full, interrupted recordings, disconnects); Go only.
 test-fault:
