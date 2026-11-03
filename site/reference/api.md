@@ -378,6 +378,17 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/relocation/retry` | `retry-relocation` | Resume a blocked relocation, optionally exporting the reported state |
 | `GET` | `/spaces/{space_id}/relocations` | `list-relocations` | The space's relocations, newest first |
 
+### repositories
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/spaces/{space_id}/repositories` | `list-space-repositories` | A space's repositories with the node's latest report |
+| `POST` | `/spaces/{space_id}/repositories` | `create-space-repository` | Add a repository to a space |
+| `DELETE` | `/spaces/{space_id}/repositories/{repository_id}` | `delete-space-repository` | Remove a repository from a space |
+| `GET` | `/spaces/{space_id}/repositories/{repository_id}` | `get-space-repository` | A repository with the node's latest report |
+| `PUT` | `/spaces/{space_id}/repositories/{repository_id}` | `update-space-repository` | Edit a repository |
+| `POST` | `/spaces/{space_id}/repositories/sync` | `sync-space-repositories` | Ask the node to clone, fetch and report a space's repositories |
+
 ### roles
 
 | Method | Path | Operation | Summary |

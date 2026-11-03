@@ -62,7 +62,10 @@ func TestCommandValidate(t *testing.T) {
 }
 
 func TestNegotiate(t *testing.T) {
-	if m, err := Negotiate(0, 3); err != nil || m != MaxMinor {
+	if m, err := Negotiate(0, MaxMinor); err != nil || m != MaxMinor {
+		t.Fatalf("%d %v", m, err)
+	}
+	if m, err := Negotiate(0, 3); err != nil || m != 3 {
 		t.Fatalf("%d %v", m, err)
 	}
 	if _, err := Negotiate(MaxMinor+1, MaxMinor+2); err == nil {
@@ -78,6 +81,14 @@ func TestLaunchPayloadRedacted(t *testing.T) {
 	}
 	if p.Secrets == nil {
 		t.Fatal("Redacted must not modify the original")
+	}
+}
+
+// The repository sync (minor 4) is a space-level command without a run, and not a relocation step.
+func TestReposSyncCommand(t *testing.T) {
+	c := Command{CommandID: "cmd_" + strings.Repeat("a", 26), SpaceID: "spc_" + strings.Repeat("b", 26), Generation: 1, IdempotencyKey: "k", Kind: CmdReposSync}
+	if err := c.Validate(); err != nil || IsRelocation(CmdReposSync) || MaxMinor < MinorRepositories {
+		t.Fatalf("repos sync: %v", err)
 	}
 }
 

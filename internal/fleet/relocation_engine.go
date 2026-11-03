@@ -489,6 +489,22 @@ func (svc *Service) preparePayload(ctx context.Context, r db.Relocation) (proto.
 			}
 			p.Repos = append(p.Repos, rr)
 		}
+		// Configured repositories the source never cloned are cloned on the destination when their policy is auto
+		// (ADR-0044): the destination gets the space's configured list, not only what the source had.
+		inspected := map[string]bool{}
+		for _, repo := range c.Repositories {
+			inspected[repo.Path] = true
+		}
+		configured, err := svc.s.R().ListSpaceRepositories(ctx, r.SpaceID)
+		if err != nil {
+			return p, err
+		}
+		for _, cr := range configured {
+			if cr.ClonePolicy == proto.CloneAuto && cr.Url != "" && !inspected[cr.Path] && !exported[cr.Path] && localSpacePath(cr.Path) {
+				p.Repos = append(p.Repos, proto.RelocateRepo{Path: cr.Path, Remotes: []proto.GitRemote{{Name: "origin", URL: cr.Url}}, Branch: cr.DefaultBranch,
+					Branches: []proto.BranchCheck{}, Worktrees: []proto.ExportedWorktree{}})
+			}
+		}
 	case RelocSourceUnavailable:
 		var specs []RepoSpec
 		_ = json.Unmarshal([]byte(r.ReposJson), &specs)

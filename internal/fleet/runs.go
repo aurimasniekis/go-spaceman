@@ -206,6 +206,28 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				return err
 			}
 		}
+		// A worktree of a configured repository (named by its folder or its name) carries the repository, so the node can
+		// clone it at its first use (ADR-0044). Folders that are not configured still work as they are.
+		var source *proto.RepoSource
+		if in.Worktree != nil {
+			r, err := tx.Q.GetSpaceRepositoryByPath(ctx, db.GetSpaceRepositoryByPathParams{SpaceID: spaceID, Path: in.Worktree.Repo})
+			if errors.Is(err, sql.ErrNoRows) {
+				r, err = tx.Q.GetSpaceRepositoryByName(ctx, db.GetSpaceRepositoryByNameParams{SpaceID: spaceID, Name: in.Worktree.Repo})
+			}
+			switch {
+			case err == nil:
+				wt := *in.Worktree
+				wt.Repo = r.Path
+				in.Worktree = &wt
+				source = &proto.RepoSource{ID: r.ID, Name: r.Name, Path: r.Path, URL: r.Url, DefaultBranch: r.DefaultBranch, ClonePolicy: r.ClonePolicy}
+				if resolved == nil {
+					resolved = map[string]any{}
+				}
+				resolved["repository"] = map[string]any{"id": r.ID, "name": r.Name, "path": r.Path, "url": r.Url, "default_branch": r.DefaultBranch}
+			case !errors.Is(err, sql.ErrNoRows):
+				return err
+			}
+		}
 		spec := LaunchSpec{Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace, Worktree: in.Worktree,
 			AccountRef: in.AccountRef}
 		specJSON, _ := json.Marshal(spec)
@@ -225,7 +247,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: in.SessionID,
 			Resume: in.SessionID != "", Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
-			Worktree: in.Worktree, Skills: in.Skills, AccountRef: in.AccountRef, Dream: in.Dream}
+			Worktree: in.Worktree, Repository: source, Skills: in.Skills, AccountRef: in.AccountRef, Dream: in.Dream}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
 		}

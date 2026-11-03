@@ -55,6 +55,10 @@ type Hub struct {
 	KBResult func(ctx context.Context, nodeID string, res proto.KBResult)
 	// Usage stores runs' usage and transcripts (ADR-0028); nil drops them.
 	Usage UsageStore
+	// RepoStatus receives the node's reports of a space's configured repositories (ADR-0044); nil drops them.
+	RepoStatus func(ctx context.Context, nodeID string, rep proto.RepoStatusReport)
+	// OnConnected is called (on its own goroutine) once a node's connection is set up and its leases granted.
+	OnConnected func(ctx context.Context, nodeID string)
 }
 
 // UsageStore is central's usage and transcript storage as the hub sees it.
@@ -246,6 +250,9 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	go h.credentialLoop(ctx, s)
 	// Relocations waiting for this node resume now (for example after a central restart).
 	svc.kickNodeRelocations(ctx, s.nodeID)
+	if h.OnConnected != nil {
+		go h.OnConnected(context.WithoutCancel(ctx), s.nodeID)
+	}
 	s.kick <- struct{}{}
 
 	for {
@@ -429,6 +436,15 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		}
 		if h.KBResult != nil {
 			go h.KBResult(context.WithoutCancel(ctx), s.nodeID, res)
+		}
+		return nil
+	case proto.TypeRepoStatus:
+		var rep proto.RepoStatusReport
+		if err := env.Decode(&rep); err != nil {
+			return err
+		}
+		if h.RepoStatus != nil {
+			go h.RepoStatus(context.WithoutCancel(ctx), s.nodeID, rep)
 		}
 		return nil
 	case proto.TypeMemoryStatus:

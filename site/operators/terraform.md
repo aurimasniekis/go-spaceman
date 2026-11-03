@@ -47,7 +47,7 @@ redirect with the token.
 
 | Area | Resources |
 |---|---|
-| Spaces | `spaceman_space`, `spaceman_space_role`, `spaceman_space_accounts` |
+| Spaces | `spaceman_space`, `spaceman_space_role`, `spaceman_space_accounts`, `spaceman_space_repository` |
 | Credentials | `spaceman_account` |
 | Roles and prompts | `spaceman_harness_profile`, `spaceman_role_template`, `spaceman_prompt`, `spaceman_skill` |
 | MCP gateway | `spaceman_mcp_server`, `spaceman_mcp_grant`, `spaceman_approval_policy` |
@@ -62,7 +62,8 @@ Data sources read nodes (`spaceman_node`, `spaceman_nodes`), spaces (`spaceman_s
 templates such as the built-in GitHub presets (`spaceman_event_template`), a space's effective limits
 (`spaceman_space_limits`) and users (`spaceman_user`). Every resource can be imported.
 
-Terraform never manages runtime state: runs, tasks, inbox items, messages, schedule occurrences, cross-space requests,
+Terraform never manages runtime state: runs, tasks, inbox items, messages, schedule occurrences, the node's repository
+reports and syncs, cross-space requests,
 human-action requests and responses, approvals and recordings stay in SpaceMan. Nodes are enrolled with a one-time token
 (see [Nodes and leases](./nodes)) and read with the node data sources. API tokens, password reset tokens and SSO link
 invitations are shown once and are never handled by Terraform, and neither are passwords or MFA enrollment.

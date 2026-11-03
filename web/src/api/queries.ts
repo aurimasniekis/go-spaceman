@@ -65,6 +65,7 @@ export const keys = {
   limits: (space: string) => ['limits', space] as const,
   schedules: (space: string) => ['schedules', space] as const,
   schedule: (space: string, id: string) => ['schedules', space, id] as const,
+  repositories: (space: string) => ['repositories', space] as const,
   userIdentities: (id: string) => ['identities', id] as const,
 }
 
@@ -245,6 +246,13 @@ export const useSchedule = (space: string, id: string | null) =>
     queryKey: keys.schedule(space, id ?? ''),
     enabled: !!id,
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/schedules/{schedule_id}', { params: { path: { space_id: space, schedule_id: id! } } })),
+  })
+
+/** A space's configured repositories with the node's latest report (ADR-0044). */
+export const useRepositories = (space: string) =>
+  useQuery({
+    queryKey: keys.repositories(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/repositories', { params: { path: { space_id: space } } })),
   })
 
 export const useQuarantine = (space: string, id: string) =>

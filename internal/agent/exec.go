@@ -95,6 +95,11 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		a.handleRelocation(ctx, c, fresh)
 		return
 	}
+	if !fresh && c.Kind == proto.CmdReposSync {
+		a.ack(ctx, c, proto.AckDuplicate, "")
+		a.resendReposSync(ctx, c)
+		return
+	}
 	if !fresh {
 		a.ack(ctx, c, proto.AckDuplicate, "")
 		if r, err := a.j.getRun(ctx, c.RunID); err == nil {
@@ -123,6 +128,9 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 		_ = json.Unmarshal(c.Payload, &p)
 		a.ack(ctx, c, proto.AckAccepted, "")
 		go a.stop(context.WithoutCancel(ctx), c.RunID, p.Mode, time.Duration(p.Grace)*time.Second, p.Reason)
+	case proto.CmdReposSync:
+		a.handleReposSync(ctx, c)
+		return // the sync journals its own outcome (its report) when it finishes
 	case proto.CmdKBAccept:
 		a.handleKBAccept(ctx, c)
 	case proto.CmdDreamDone:
@@ -205,6 +213,13 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	work := filepath.Join(space, "work")
 	if p.Workspace != "" {
 		work = filepath.Join(space, filepath.Clean("/"+p.Workspace))
+	}
+	if p.Worktree != nil && p.Repository != nil && p.Repository.Path == p.Worktree.Repo {
+		// A configured repository is cloned at its first use when its policy allows it (ADR-0044).
+		if err := a.ensureRepo(ctx, c.SpaceID, space, *p.Repository); err != nil {
+			fail("clone the repository", err)
+			return
+		}
 	}
 	if p.Worktree != nil {
 		dir, err := prepareWorktree(ctx, space, *p.Worktree)

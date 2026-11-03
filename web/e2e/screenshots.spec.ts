@@ -743,6 +743,49 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/schedules`)
     await expect(page.getByText('reconcile ledgers')).toBeVisible()
   })
+
+  // Repositories (ADR-0044): a local bare repository stands in for the settlement service's remote (development mode
+  // allows file URLs). The node clones it, a worker gets a worktree with an unpushed commit and an untracked file, and a
+  // sync reports it all; the knowledge base's folder is listed too (role kb, manual).
+  const remote = join(env('SM_DIR'), 'remotes', 'settlement.git')
+  const seedDir = join(env('SM_DIR'), 'remotes', 'settlement-seed')
+  mkdirSync(seedDir, { recursive: true })
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { env: gitEnv })
+  writeFileSync(join(seedDir, 'README.md'), '# Settlement service\n\nBatches card settlements and talks to the acquiring bank.\n')
+  for (const args of [['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'Settlement service skeleton'], ['remote', 'add', 'origin', remote], ['push', '-q', 'origin', 'main']])
+    execFileSync('git', ['-C', seedDir, ...args], { env: gitEnv })
+  await api.call('POST', `/spaces/${payments.id}/repositories`, { name: 'settlement', path: 'repos/settlement', url: `file://${remote}`,
+    default_branch: 'main', description: 'Settlement batching service' })
+  type Repos = { items: { name: string; status?: { state: string; worktrees: unknown[]; untracked: number } }[]; sync_pending: boolean }
+  const repoState = async (name: string) => (await api.call<Repos>('GET', `/spaces/${payments.id}/repositories`)).items.find((r) => r.name === name)?.status
+  await expect.poll(async () => (await repoState('settlement'))?.state, { timeout: 30_000 }).toBe('present')
+  const wtRun = await api.call<Run>('POST', `/spaces/${payments.id}/runs`, { kind: 'worker', role: 'implementor-backend', harness: 'claude-code',
+    prompt: 'Add the retry budget to the settlement batcher.', worktree: { repo: 'settlement', branch: 'spaceman/retry-budget' } })
+  await expect.poll(() => running(payments.id, wtRun.id), { timeout: 30_000 }).toBe('running')
+  const wtDir = join(env('SM_DIR'), 'agent', 'spaces', payments.workdir, 'worktrees', 'spaceman-retry-budget')
+  writeFileSync(join(wtDir, 'retry.go'), 'package settlement\n\n// RetryBudget is the number of retries per batch.\nconst RetryBudget = 5\n')
+  for (const args of [['add', 'retry.go'], ['commit', '-q', '-m', 'Add the retry budget']]) execFileSync('git', ['-C', wtDir, ...args], { env: gitEnv })
+  writeFileSync(join(wtDir, 'NOTES.md'), 'Check the bank window before merging.\n')
+  await api.call('POST', `/spaces/${payments.id}/repositories/sync`, {})
+  await expect.poll(async () => {
+    const r = await api.call<Repos>('GET', `/spaces/${payments.id}/repositories`)
+    const st = r.items.find((x) => x.name === 'settlement')?.status
+    return !r.sync_pending && (st?.worktrees.length ?? 0) === 1 && st?.untracked === 0
+  }, { timeout: 30_000 }).toBe(true)
+  await capture(page, 'space-repositories', async () => {
+    await page.goto(`/spaces/${payments.id}/repositories`)
+    await expect(page.getByText('repos/settlement')).toBeVisible()
+  })
+  await capture(page, 'space-repository-detail', async () => {
+    await page.goto(`/spaces/${payments.id}/repositories`)
+    await page.getByText('repos/settlement').click()
+    await expect(page.getByText('spaceman/retry-budget').first()).toBeVisible()
+  })
+  await capture(page, 'space-repository-form', async () => {
+    await page.goto(`/spaces/${payments.id}/repositories`)
+    await page.getByRole('button', { name: 'Add repository' }).click()
+    await expect(page.getByLabel('Clone URL')).toBeVisible()
+  })
   await capture(page, 'setup-node-enroll', async () => {
     await page.goto('/nodes')
     await expect(page.getByText('connected', { exact: true })).toBeVisible()

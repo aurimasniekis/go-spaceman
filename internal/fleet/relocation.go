@@ -71,7 +71,7 @@ type Relocation struct {
 	StopRuns          bool                  `json:"stop_runs"`
 	Recovery          Recovery              `json:"recovery"`
 	Acknowledgement   string                `json:"acknowledgement,omitempty" doc:"The operator's acknowledgement of possibly lost local state (source_unavailable)"`
-	Repositories      []RepoSpec            `json:"repositories,omitempty" doc:"Repositories the operator listed for a source_unavailable relocation"`
+	Repositories      []RepoSpec            `json:"repositories,omitempty" doc:"Repositories cloned on the destination of a source_unavailable relocation: the operator's list and the configured repositories with a URL"`
 	Report            *proto.SpaceCheck     `json:"report,omitempty" doc:"The source's last inspection"`
 	Issues            []Issue               `json:"issues" doc:"What the inspection found that a clean relocation would lose"`
 	Loss              *LossReport           `json:"loss,omitempty" doc:"What may be lost when the source is unavailable"`
@@ -97,7 +97,8 @@ type Recovery struct {
 	RetainDays int    `json:"retain_days" doc:"Days a retained folder is kept; 0 keeps it until it is released"`
 }
 
-// RepoSpec is a repository the operator names for a source_unavailable relocation (central keeps no repository list).
+// RepoSpec is a repository the operator names for a source_unavailable relocation, besides the space's configured
+// repositories with a URL (ADR-0044).
 type RepoSpec struct {
 	Path   string `json:"path" doc:"Folder relative to the space folder"`
 	URL    string `json:"url" doc:"Clone URL; the destination node's own Git authentication is used (no credentials in the URL)"`
@@ -157,7 +158,7 @@ type StartRelocationInput struct {
 	SourceUnavailable bool       `json:"source_unavailable,omitempty" doc:"Relocate from central's copies only, because the source is offline, disabled or revoked"`
 	AcknowledgeLoss   bool       `json:"acknowledge_loss,omitempty" doc:"Required with source_unavailable: local state on the source may be lost"`
 	Acknowledgement   string     `json:"acknowledgement,omitempty" maxLength:"500" doc:"Required with source_unavailable: the operator's own words, recorded in the audit log"`
-	Repositories      []RepoSpec `json:"repositories,omitempty" maxItems:"50" doc:"source_unavailable only: repositories to clone on the destination"`
+	Repositories      []RepoSpec `json:"repositories,omitempty" maxItems:"50" doc:"source_unavailable only: repositories to clone on the destination, besides the configured ones with a URL (a listed folder overrides the configured repository there)"`
 }
 
 // RetryRelocationInput resumes a blocked relocation.
@@ -242,6 +243,10 @@ func validRepoSpec(r RepoSpec) string {
 		return "url must not contain credentials; the destination node's own Git authentication is used"
 	case strings.ContainsAny(r.URL, " \n\r\t"):
 		return "url must not contain whitespace"
+	}
+	// The repository URL rules (ADR-0044); local URLs stay allowed here, as relocation always allowed them.
+	if err := proto.ValidateRepoURL(r.URL, true); err != nil {
+		return "url " + err.Error()
 	}
 	if r.Branch != "" && (!reBranch.MatchString(r.Branch) || strings.Contains(r.Branch, "..")) {
 		return "branch must be a plain branch name"
@@ -366,6 +371,23 @@ func (svc *Service) StartRelocation(ctx context.Context, actor audit.Actor, spac
 				loss = string(b)
 				if _, err := tx.Q.RevokeLease(ctx, db.RevokeLeaseParams{Now: tx.NowMicros(), SpaceID: spaceID}); err != nil {
 					return err
+				}
+			}
+		}
+		if mode == RelocSourceUnavailable {
+			// The space's configured repositories with a URL are cloned on the destination too (ADR-0044); a folder the
+			// operator listed keeps the operator's URL and branch.
+			listed := map[string]bool{}
+			for _, r := range in.Repositories {
+				listed[r.Path] = true
+			}
+			configured, err := tx.Q.ListSpaceRepositories(ctx, spaceID)
+			if err != nil {
+				return err
+			}
+			for _, r := range configured {
+				if r.Url != "" && !listed[r.Path] {
+					in.Repositories = append(in.Repositories, RepoSpec{Path: r.Path, URL: r.Url, Branch: r.DefaultBranch})
 				}
 			}
 		}

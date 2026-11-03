@@ -28,7 +28,7 @@ API: `create-kb` ([HTTP API](../api)).
 Example:
 
 ```sh
-spaceman kb create --space payments runbooks --name Runbooks --repo https://git.example.com/runbooks.git --role kb --write-policy review
+spaceman kb create --space payments runbooks --name Runbooks --repo repos/runbooks --role kb --write-policy review
 ```
 
 | Flag | Type | Default | Description |
@@ -43,7 +43,7 @@ spaceman kb create --space payments runbooks --name Runbooks --repo https://git.
 | `--idle-sleep-seconds` | integer |  | idle time before a session sleeps |
 | `--max-sessions` | integer |  | concurrent sessions, 1-16 |
 | `--name` | string |  | name (required) |
-| `--repo` | string |  | repository URL of the knowledge base (required) |
+| `--repo` | string |  | repository folder in the space, e.g. repos/kb (required; added to the space's repositories when new) |
 | `--request-timeout-seconds` | integer |  | how long a request may take |
 | `--role` | string |  | space role that answers requests (required) |
 | `--session-ttl-seconds` | integer |  | how long a session lives |
@@ -169,7 +169,7 @@ API: `get-kb`, `update-kb` ([HTTP API](../api)).
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--max-sessions` | integer |  | concurrent sessions, 1-16 |
 | `--name` | string |  | name (required) |
-| `--repo` | string |  | repository URL of the knowledge base (required) |
+| `--repo` | string |  | repository folder in the space, e.g. repos/kb (required; added to the space's repositories when new) |
 | `--request-timeout-seconds` | integer |  | how long a request may take |
 | `--role` | string |  | space role that answers requests (required) |
 | `--session-ttl-seconds` | integer |  | how long a session lives |

@@ -64,7 +64,7 @@ type KB struct {
 	Slug              string    `json:"slug"`
 	Name              string    `json:"name"`
 	Description       string    `json:"description,omitempty"`
-	Repo              string    `json:"repo" doc:"Repository folder inside the space"`
+	Repo              string    `json:"repo" doc:"Repository folder inside the space (a configured space repository)"`
 	BaseBranch        string    `json:"base_branch" doc:"Where accepted knowledge lives"`
 	SpaceRole         string    `json:"space_role" doc:"The configured space role (kind kb) sessions run as"`
 	EntryInstructions string    `json:"entry_instructions,omitempty"`
@@ -97,7 +97,7 @@ type Input struct {
 	Slug              string   `json:"slug,omitempty" maxLength:"31" doc:"Fixed after creation"`
 	Name              string   `json:"name" maxLength:"120"`
 	Description       string   `json:"description,omitempty" maxLength:"2000"`
-	Repo              string   `json:"repo" maxLength:"256"`
+	Repo              string   `json:"repo" maxLength:"256" doc:"The folder of a configured space repository, or another folder inside the space, which is then added to the space's repositories (role kb, clone policy manual)"`
 	BaseBranch        string   `json:"base_branch,omitempty" maxLength:"100"`
 	SpaceRole         string   `json:"space_role" maxLength:"48"`
 	EntryInstructions string   `json:"entry_instructions,omitempty" maxLength:"20000"`
@@ -193,6 +193,10 @@ type Service struct {
 	SpaceLimits func(ctx context.Context, q *db.Queries, spaceID string) (maxSessions, depth int64)
 	// OnCrossSpace is told (after commit) that a KB request asked for another space finished (ADR-0038).
 	OnCrossSpace func(ctx context.Context, kbRequestID string)
+	// ResolveRepo resolves a KB's repository folder inside the create or update transaction (ADR-0044): a configured
+	// space repository at that folder, or the folder registered as a new manual kb repository. It returns the folder.
+	// Nil: the folder is used as given.
+	ResolveRepo func(ctx context.Context, tx *store.Tx, actor audit.Actor, spaceID, repo, baseBranch string) (string, error)
 	// base is the context of Run; hooks without a caller context use it.
 	base context.Context
 }
@@ -335,6 +339,12 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		if _, err := tx.Q.GetKBBySlug(ctx, db.GetKBBySlugParams{SpaceID: spaceID, Slug: in.Slug}); err == nil {
 			return apperr.New(apperr.CodeAlreadyExists, "a knowledge base %q exists in this space", in.Slug)
 		}
+		if svc.ResolveRepo != nil {
+			var err error
+			if in.Repo, err = svc.ResolveRepo(ctx, tx, actor, spaceID, in.Repo, in.BaseBranch); err != nil {
+				return err
+			}
+		}
 		if err := tx.Q.InsertKB(ctx, db.InsertKBParams{ID: id, SpaceID: spaceID, Slug: in.Slug, Name: in.Name, Description: in.Description, Repo: in.Repo,
 			BaseBranch: in.BaseBranch, SpaceRole: in.SpaceRole, EntryInstructions: in.EntryInstructions, ValidatorJson: listJSON(in.Validator),
 			WritePolicy: in.WritePolicy, AllowedRolesJson: listJSON(in.AllowedRoles), MaxSessions: in.MaxSessions, IdleSleepSeconds: in.IdleSleepSeconds,
@@ -368,6 +378,11 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, spaceID, id s
 		en := cur.Enabled == 1
 		if in.Enabled != nil {
 			en = *in.Enabled
+		}
+		if svc.ResolveRepo != nil {
+			if in.Repo, err = svc.ResolveRepo(ctx, tx, actor, spaceID, in.Repo, in.BaseBranch); err != nil {
+				return err
+			}
 		}
 		n, err := tx.Q.UpdateKB(ctx, db.UpdateKBParams{Name: in.Name, Description: in.Description, Repo: in.Repo, BaseBranch: in.BaseBranch, SpaceRole: in.SpaceRole,
 			EntryInstructions: in.EntryInstructions, ValidatorJson: listJSON(in.Validator), WritePolicy: in.WritePolicy, AllowedRolesJson: listJSON(in.AllowedRoles),

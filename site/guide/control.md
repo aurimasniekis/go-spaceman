@@ -25,7 +25,9 @@ automatically: control or an operator moves the task to done.
 
 When control starts a worker with a repository (`repo`), the worker gets its **own git worktree** of that repository
 in the space folder, on its own branch (by default `spaceman/<task id>`, created from the repository's HEAD). Two
-writers never share a working tree. Operators can do the same from **Launch run** with **Git worktree of**.
+writers never share a working tree. Operators can do the same from **Launch run** with **Git worktree of**. `repo` is a
+[configured repository](./repositories) (its name or folder) or another folder in the space; a configured repository
+that is not cloned yet is cloned first when its clone policy allows it.
 
 SpaceMan never resets, deletes, commits, pushes or merges anything:
 

@@ -43,7 +43,8 @@ Runs of a role granted an external MCP server also see that server's tools in th
 | `spaceman_message_ack` | Acknowledge a message or human response | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_message_resolve` | Close a request you sent or received | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_runs_list` | Active runs with role, status and task | ✓ | ✓ | ✓ | ✓ |
-| `spaceman_worker_launch` | Start a worker for a ready, eligible task (optionally in its own git worktree) | ✓ | | | |
+| `spaceman_repos_list` | The space's configured repositories with the node's last report: remote, default branch, last fetch, changes, unpushed commits, worktrees and their runs; read only ([Repositories and worktrees](./repositories)) | ✓ | ✓ | KB | ✓ |
+| `spaceman_worker_launch` | Start a worker for a ready, eligible task (optionally in its own git worktree of a repository, by name or folder) | ✓ | | | |
 | `spaceman_worker_stop` | Stop a worker, KB, dreamer or diagnostic run | ✓ | | | |
 | `spaceman_xspace_discover` | Spaces that let yours discover them, with what you may send ([Cross-space requests](./cross-space)) | ✓ | | | |
 | `spaceman_xspace_request` | Ask another space: a question, delegated work or a KB question; returns at once, outcomes arrive as notices | ✓ | | | |

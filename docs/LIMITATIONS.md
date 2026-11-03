@@ -123,8 +123,9 @@
 - **Credentials in remote URLs are dropped.** The destination clones with its own Git authentication; a remote that only
   works with credentials embedded in its URL fails to clone (the relocation blocks with the error).
 - **Native sessions are not carried.** Runs on the destination start fresh harness sessions (project continuity only).
-- **Without the source, only central's copies.** The unavailable-source flow restores acknowledged memory and the
-  repositories the operator lists; everything else on the source may be lost.
+- **Without the source, only central's copies.** The unavailable-source flow restores acknowledged memory, the
+  space's configured repositories that have a URL and the repositories the operator lists; everything else on the
+  source may be lost.
 - **Retention by timer runs only in `spaceman serve`.** Expired retained folders are deleted by central's relocation timer;
   the source must be connected to delete them. A source that never returns keeps its folder.
 - **Simulated evidence only.** Two in-process nodes with a fake runner and real Git; no relocation between real machines
@@ -173,20 +174,29 @@
   log, but there is no retention policy and no export (SM-HUI-007).
 
 ## Control and repositories
-- **Repository state is inspected only for relocation.** SpaceMan records each worker's branch and worktree. Remotes,
-  dirty state and unpushed commits are inspected when a space is relocated, but not tracked or shown otherwise
-  (SM-REPO-003). Worktrees are never cleaned up automatically; remove them with git when done.
+- **Repository reports follow events, not a clock.** The node reports a space's configured repositories (remote,
+  default branch, last fetch, changes, unpushed commits, worktrees) when a repository is added or edited, when the node
+  connects, when a run of the space ends and on **Sync now**; nothing polls idle spaces (SM-ARCH-004). A report can be
+  minutes old and says when it was made; work an agent is doing right now shows after its run ends or the next sync
+  (SM-REPO-003). Each report asks every remote for its default branch (`git ls-remote`, 30 s each), so an unreachable
+  remote slows the report down. Worktrees are never cleaned up automatically; remove them with git when done.
 - **Reassigning a task is API-only.** A task's `assignee_run` and `assignee_role` can be changed through the API (the
   CLI sets the role only); the UI has no reassign control (SM-CTRL-004).
 - **The incident policy is partial.** It sets insertion, preemption (running tasks return to ready), the number of
   active top-level tasks and whether escalation reorders. It does not define which triggers may raise incidents
   (operators and control create incident tasks), what happens to a preempted task's workers (they keep running, and
   control is not told), or how preempted work resumes (SM-QUEUE-009).
-- **Repositories are not configured centrally.** A space can hold any number of Git repositories, but only as folders
-  in its folder on the node: operators or agents clone them there, control names one per worker launch (`repo`), and
-  relocation inspects every repository it finds. Central keeps no list of a space's repositories; only knowledge-base
-  repositories are configured (one per knowledge base, any number per space). There is no repository API, page or
-  Terraform resource (SM-REPO-001, SM-SPACE-001).
+- **Repository credentials stay on the node.** Configured repositories are cloned and fetched with the node's own Git
+  authentication (SSH keys, credential helpers, Hallpass Git roles). SpaceMan stores no Git credentials and refuses
+  URLs that carry them, so a remote that needs a token in its URL cannot be configured; set up the node's Git instead
+  (SM-REPO-005, ADR-0044). Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
+  `file://` and local paths need development mode.
+- **Unlisted folders still work.** Workers may still use a repository folder that is not in the space's list; such a
+  folder is reported as unlisted but not tracked, and a relocation carries it only as the source has it. A space has at
+  most 50 repositories. A repository's name and folder are fixed; changing the folder means adding another repository
+  (the old folder stays on the node).
+- **Older agents get no repository syncs.** Configured repositories need node protocol 1.4 (this release's agent); with
+  an older agent the configuration is kept, nothing is cloned or reported, and an explicit sync says to upgrade.
 - **No per-space retention settings.** Recordings, transcripts and attachments are kept until an operator deletes them
   or the space is purged; event deliveries and outbound events follow installation-wide retention. A space's storage
   quota (limits) bounds new uploads but deletes nothing (SM-SPACE-001).
@@ -221,8 +231,6 @@
   with the CLI or the API (SM-SPACE-002).
 - **No terminal takeover.** Terminals are watch-only. The `terminal:takeover` permission exists, but no API or page
   takes over a terminal; operators give input through **Message the agent** (SM-UI-004).
-- **No repositories or workspaces area.** Repositories are folders on the node (SM-REPO-001), and runs and tasks do not
-  show their worktree (SM-UI-002).
 - **TanStack Table and Store are not used.** They are dependencies, but tables are Mantine tables and state is React
   state and TanStack Query (SM-UI-001).
 - **Not every form uses TanStack Form.** Sign-in, setup, reset and recovery, account, spaces, runs, nodes, users,
@@ -342,7 +350,7 @@
 
 ## Terraform provider
 - **Phases 1 and 2, not published.** `terraform-provider-spaceman/` covers what the API supports today (ADR-0035,
-  ADR-0041). Space repositories (no API), the backup target and schedule (configuration file only), type permissions
+  ADR-0041) and space repositories (ADR-0044). The backup target and schedule (configuration file only), type permissions
   beyond space enablement (no API) and editing a user's email, display name or `mfa_required` (no API) are not managed
   (SM-API-004). Terraform 1.11 or later is required (write-only arguments).
 - **No server-side precondition for two resources.** The queue policy API has no version and a user's grant changes do

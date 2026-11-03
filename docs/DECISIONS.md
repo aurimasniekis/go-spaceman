@@ -1495,6 +1495,71 @@
   (`internal/app` `TestIdleSpaceKeepsNoLeaseGuard`). The real herdr-core suite still covers the guard ending a dead
   agent's runs (`TestRealNodeEndToEnd`), but it does not cover retiring the guard.
 
+### ADR-0044 — Configured space repositories: a central list, node-side materialization and reports, node-owned Git authentication
+- **Status:** Accepted, 2026-11-03 (gap closure for SM-REPO-001/003, SM-SPACE-001, SM-UI-002, SM-API-004; migration 0029,
+  node protocol minor 4).
+- **Context:** repositories were implicit folders in a space folder on the node. Central kept no list, so there was no
+  repository API, page or Terraform resource; remotes, dirty state and unpushed commits were inspected only during a
+  relocation; and only knowledge bases named a repository folder (`kb_repos.repo`). SM-REPO-005 says Git authentication
+  is the node's and SpaceMan never requires managed Git credentials.
+- **Decision:**
+  - **A central list per space** (`space_repositories`): name (unique, fixed), folder (`path`, unique, fixed, relative,
+    outside `instances/`, `worktrees/`, `work/`, `dreams/`), clone URL, default branch, role (`code` or `kb`) and clone
+    policy (`auto`, `on_demand`, `manual`; a repository without a URL must be `manual`). At most 50 per space. API CRUD
+    under `/spaces/{id}/repositories` with `If-Match` on updates (optional on delete), audited as
+    `space_repository.*`, recorded in the change feed; reads need `space_config:read`, changes and syncs
+    `space_config:write` (repositories are space configuration; no new permission object).
+  - **No credentials, anywhere.** URLs with user information over http(s), with a password over ssh, Git's
+    remote-helper syntax (`<transport>::…`, e.g. `ext::`), option-like values and whitespace are refused. Production
+    accepts `https://`, `ssh://` and scp-like addresses; development mode also `http://`, `git://`, `file://` and
+    absolute paths (local remotes for tests). The same validator (`proto.ValidateRepoURL`, local allowed) now also checks
+    relocation repository URLs. Clones and fetches run with the node's own Git configuration and credentials (SSH,
+    credential helpers, Hallpass Git roles), as worktrees and relocation already did. Account- or secret-backed Git
+    credentials are deliberately not offered: they would make SpaceMan a Git credential store, which SM-REPO-005 excludes.
+  - **The node materializes.** A new space-level command `space.repos.sync` (lease required) carries the space's list,
+    which repositories to clone when missing and which to fetch. The node clones
+    (`git clone --origin origin [--branch <default>]`, then one fetch), fetches from the configured URL into the matching
+    remote's tracking refs
+    (`+refs/heads/*:refs/remotes/<remote>/*`, no prune, no tags), asks the remote for its default branch (`git ls-remote`,
+    30 s), and inspects every repository with relocation's inspection (remotes redacted, branches with unpushed commits,
+    changes, untracked files, stashes, worktrees). It reports `repos.status`, journaled with the command so a repeated
+    delivery re-sends it. A launch whose worktree names a configured repository carries it (`LaunchPayload.Repository`),
+    so the node clones it first when missing (first use). Git runs as for relocation: node environment without
+    repository-redirecting variables, hooks and fsmonitor off, `protocol.ext.allow=never` (added to all daemon project
+    Git), no Git at all in a repository whose own configuration would run a program (`memory.UnsafeConfig`). A folder in
+    the way is never overwritten; nothing is reset, merged, pushed or deleted (SM-REPO-006).
+  - **Reports follow events, not a clock** (SM-ARCH-004): a repository created or edited (clone of `auto` ones), the node
+    connecting (after its leases are granted), a run of the space ending (debounced 30 s while unanswered) and an
+    explicit sync (`POST …/repositories/sync`, which also clones `on_demand` ones and fetches). Central keeps the latest
+    report per space apart from the configuration (it never changes a repository's version), accepts it only from the
+    space's current node, keeps only configured repositories, bounds branches, orders reports by the node's check time,
+    and marks a report from an earlier node as stale. Worktree ownership is the latest run SpaceMan launched in that
+    worktree folder.
+  - **Worktrees and knowledge bases use the list.** A worker's `repo` may be a configured repository's folder or name;
+    unlisted folders keep working (the report lists them as unlisted). A knowledge base keeps naming a folder; any folder
+    no repository uses is registered as a `kb`, `manual` repository in the same transaction, and migration 0029 does the
+    same for existing knowledge bases (one repository per space and folder, a name suffix on collision), so existing KB
+    configuration keeps working. A repository a knowledge base uses cannot be removed. Knowledge bases do not accept a
+    repository's name, so what Terraform configures is what is stored.
+  - **Relocation reads the list.** A clean relocation's destination also clones configured `auto` repositories the
+    source never cloned; a relocation from an unavailable source clones every configured repository with a URL besides
+    the operator's list (a listed folder wins).
+  - **Surfaces.** A space **Repositories** page (list, report, worktrees with their runs, unlisted folders, add, edit,
+    remove, sync), worktree links on runs and tasks, a read-only agent tool `spaceman_repos_list` (control, worker, KB,
+    diagnostic), `spaceman repo list|get|create|update|delete|sync`, and the Terraform resource
+    `spaceman_space_repository` (configuration only; reports and syncs are runtime state).
+- **Not a security relaxation.** No credential is stored or accepted; URL validation is new and stricter for relocation;
+  Git hardening is extended (`protocol.ext.allow=never`). The node now runs network Git (clone, fetch, ls-remote) for
+  configured repositories with the node's credentials. Operators with `space_config:write` can therefore make the node
+  clone a URL its credentials reach; agents on that node already have the same credentials in their terminals
+  (SM-REPO-005), and repository content stays untrusted.
+- **Alternatives:** repositories as a field of the space (no per-repository versions, worse Terraform ergonomics);
+  periodic polling of every space's repositories (SM-ARCH-004); credentials as SpaceMan accounts (SM-REPO-005); making
+  knowledge bases reference a repository ID (a breaking API and Terraform change, and a table rebuild).
+- **Consequences:** a report can be minutes old; it says when it was made. ls-remote needs a reachable remote at each
+  report. The first launch of an uncloned repository waits for the clone. Nodes older than protocol 1.4 keep the
+  configuration but get no syncs (an explicit sync says to upgrade). Worktrees are still never removed automatically.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

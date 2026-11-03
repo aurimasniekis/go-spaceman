@@ -77,6 +77,7 @@ export default withMermaid(
             { text: 'Agent tools', link: '/guide/agent-tools' },
             { text: 'Messages', link: '/guide/messages' },
             { text: 'Control and workers', link: '/guide/control' },
+            { text: 'Repositories and worktrees', link: '/guide/repositories' },
             { text: 'Roles and prompts', link: '/guide/roles-and-prompts' },
             { text: 'Knowledge bases', link: '/guide/knowledge' },
             { text: 'Cross-space requests', link: '/guide/cross-space' },

@@ -129,6 +129,10 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'schedule':
       if (c.space_id) void qc.invalidateQueries({ queryKey: keys.schedules(c.space_id) })
       break
+    case 'space_repository':
+    case 'space_repository_status':
+      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.repositories(c.space_id) })
+      break
     case 'xspace_request':
       void qc.invalidateQueries({ queryKey: ['xspace-requests'] })
       void qc.invalidateQueries({ queryKey: keys.xspaceAll })

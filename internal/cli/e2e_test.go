@@ -141,6 +141,23 @@ func TestCLIAgainstCentral(t *testing.T) {
 	e.ok(t, "schedule", "delete", "--space", "payments", str(sc, "id"))
 	e.code(t, ExitNotFound, "schedule", "get", "--space", "payments", str(sc, "id"))
 
+	// Repositories (ADR-0044): add, edit by name (If-Match read first), list, remove. The node never connected here (no repository protocol), so
+	// a sync is refused with a clear status and nothing is cloned.
+	rp := e.obj(t, "repo", "create", "--space", "payments", "api", "--url", "https://git.example.com/acme/api.git", "--path", "repos/api")
+	if str(rp, "clone_policy") != "auto" || str(rp, "path") != "repos/api" {
+		t.Fatalf("repo create %v", rp)
+	}
+	if r := e.obj(t, "repo", "update", "--space", "payments", "api", "--default-branch", "trunk"); str(r, "default_branch") != "trunk" || str(r, "url") != str(rp, "url") {
+		t.Fatalf("repo update %v", r)
+	}
+	if out := e.ok(t, "repo", "list", "--space", "payments"); !strings.Contains(out, "repos/api") {
+		t.Fatalf("repo list %s", out)
+	}
+	e.code(t, ExitAPI, "repo", "create", "--space", "payments", "bad", "--url", "https://u:p@git.example.com/x.git")
+	e.code(t, ExitConflict, "repo", "sync", "--space", "payments")
+	e.ok(t, "repo", "delete", "--space", "payments", "api")
+	e.code(t, ExitNotFound, "repo", "get", "--space", "payments", "api")
+
 	// Limits: If-Match is optional for the first save and required afterwards (the CLI reads it).
 	e.ok(t, "limits", "set", "--space", "payments", "--set", "max_concurrent_runs=2")
 	lim := e.obj(t, "limits", "set", "--space", "payments", "--set", "ingest_per_minute=30")

@@ -51,7 +51,8 @@ stateDiagram-v2
 4. **Export** (only when chosen). The source writes, per repository, a Git bundle of every ref plus snapshot commits of
    uncommitted work and every stash, and an archive of loose files, and uploads them to central. It does not reset,
    commit to a branch, push or delete anything in the source folder.
-5. **Prepare.** The destination clones pushed repositories (with its own Git authentication), restores exported ones,
+5. **Prepare.** The destination clones pushed repositories (with its own Git authentication) and the space's configured
+   `auto` repositories the source never cloned ([Repositories and worktrees](../guide/repositories)), restores exported ones,
    restores role memory from central, and reports what it has. Central compares every repository's commit and every
    memory head with what it sent. A folder of the same space already on the destination is moved aside, never deleted.
 6. **Finalize.** In one database transaction the space's node becomes the destination and its execution lease moves there
@@ -78,8 +79,9 @@ to the unavailable-source flow (`source_unavailable: true`), which:
   `acknowledgement`); both are recorded in the audit log (`relocation.loss_acknowledged`);
 - shows what may be lost, from what central knows: role memory the source had not synced at its last report, runs that
   were active on it, the last inspection if there was one, and the kinds of state central cannot see;
-- prepares the destination only from central's copies: role memory as acknowledged and the repositories you list (folder,
-  clone URL, branch), since SpaceMan keeps no repository list;
+- prepares the destination only from central's copies: role memory as acknowledged, the space's
+  [configured repositories](../guide/repositories) that have a URL, and the repositories you list (folder, clone URL,
+  branch; a folder you list overrides the configured repository at that folder);
 - marks the source's runs lost. If the source comes back it gets no lease, its old runs are stopped, and its folder is
   retained or deleted as chosen.
 

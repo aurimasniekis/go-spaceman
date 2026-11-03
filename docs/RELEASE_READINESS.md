@@ -47,7 +47,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 
 ## 3. Architecture decisions
 
-43 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
+44 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
 
 | ADR | Decision |
 |---|---|
@@ -63,6 +63,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0035, 0040, 0041 | Terraform and CLI as clients of the same API; secrets never as flag values; Terraform owns only what it configures. |
 | 0038 | Cross-space requests: two-sided grants, destination-owned execution, disclosure applied to replies. |
 | 0039 | Security review fixes, including Git in the node daemon running no repository-supplied programs. |
+| 0044 | Configured space repositories: a central list, cloned, fetched and reported by the node with its own Git authentication; no Git credentials stored. |
 
 ## 4. Commits
 
@@ -119,8 +120,7 @@ The full list is [LIMITATIONS.md](LIMITATIONS.md). The ones an evaluator should 
   can bypass MCP mediation, and privileged nodes can read runtime secrets ([THREAT_MODEL.md](THREAT_MODEL.md)).
 - **Single central, no HA.** Recovery is restore from backup, which comes up paused.
 - **Codex is unverified** for real, and skills are materialized for Claude Code only.
-- **33 partial requirements**, each with its gap in [TRACEABILITY.md](TRACEABILITY.md). Examples: repositories are
-  configured only implicitly (no repository API, UI or Terraform resource); there is no per-space retention for
+- **30 partial requirements**, each with its gap in [TRACEABILITY.md](TRACEABILITY.md). Examples: there is no per-space retention for
   recordings, attachments or human actions; the UI has no single attention summary and cannot archive a space;
   artifacts are stored on central's local disk only (S3 is a backup target, not an artifact backend).
 - **Open security findings**: the review fixed all 4 medium and 7 of 14 low findings; 6 low and 5 informational
@@ -170,5 +170,5 @@ Status: 185 implemented, 33 partial, 1 n/a. The brief's §40 verification topics
 2. Verify Codex with a real credential, including skills (or record that Codex has none).
 3. Close or accept the open security findings, ideally with an external review.
 4. Push to a remote, run the release workflow, publish images, SBOMs and checksums, and publish the site.
-5. Decide on the partial requirements that matter for the first users (repositories as configuration, retention, the
-   attention summary) and either implement them or state them in the release notes.
+5. Decide on the partial requirements that matter for the first users (retention, the attention
+   summary) and either implement them or state them in the release notes.

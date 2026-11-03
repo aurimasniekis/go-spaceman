@@ -96,7 +96,7 @@ export function RelocateModal({ space, opened, onClose }: { space: Space; opened
             <Stack gap="xs">
               <Text size="sm">
                 {source?.name} is {source?.state !== 'active' ? source?.state : 'offline'}. The destination will be prepared only from central's copies: role
-                memory as central acknowledged it and the repositories you list below. Unpushed or uncommitted work, files outside repositories, unsynced
+                memory as central acknowledged it, the space's configured repositories that have a URL, and the repositories you list below. Unpushed or uncommitted work, files outside repositories, unsynced
                 memory and native sessions on the source may be lost. The source's runs are marked lost and fenced if it ever returns.
               </Text>
               {repos.map((r, i) => (

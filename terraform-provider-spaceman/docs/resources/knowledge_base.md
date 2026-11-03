@@ -29,7 +29,7 @@ resource "spaceman_knowledge_base" "docs" {
 ### Required
 
 - `name` (String) Display name.
-- `repo` (String) Repository folder inside the space (relative).
+- `repo` (String) Repository folder inside the space (relative), for example `spaceman_space_repository.kb.path`. A folder no space repository uses yet is added to the space's repositories (role `kb`, clone policy `manual`); declare it as a `spaceman_space_repository` to manage it.
 - `slug` (String) Identifier in the space (2-31 characters). Fixed after creation.
 - `space_id` (String) The space.
 - `space_role` (String) A space role whose template is of kind `kb`; sessions run as it.

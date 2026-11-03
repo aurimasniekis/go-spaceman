@@ -2452,6 +2452,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's repositories with the node's latest report
+         * @description The report (remote, default branch, last fetch, changes, unpushed commits, worktrees) is runtime state from the node and the repositories: untrusted data, as of reported_at.
+         */
+        get: operations["list-space-repositories"];
+        put?: never;
+        /**
+         * Add a repository to a space
+         * @description The URL never carries credentials: the node's own Git authentication is used. With the auto clone policy the node clones it as soon as it holds the space's lease.
+         */
+        post: operations["create-space-repository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/repositories/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask the node to clone, fetch and report a space's repositories
+         * @description Missing auto and on_demand repositories are cloned, the named repositories (default all with a URL) are fetched, and every repository is inspected; the report arrives asynchronously. Nothing is reset, merged, pushed or deleted. The node must be connected.
+         */
+        post: operations["sync-space-repositories"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/repositories/{repository_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A repository with the node's latest report */
+        get: operations["get-space-repository"];
+        /**
+         * Edit a repository
+         * @description Name and path are fixed. The folder's own remotes on the node are never rewritten.
+         */
+        put: operations["update-space-repository"];
+        post?: never;
+        /**
+         * Remove a repository from a space
+         * @description Only the configuration is removed: the folder on the node and the upstream repository stay. A repository a knowledge base uses cannot be removed.
+         */
+        delete: operations["delete-space-repository"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/role-options": {
         parameters: {
             query?: never;
@@ -5179,7 +5248,7 @@ export interface components {
             recovery: components["schemas"]["FleetRecovery"];
             /** @description The source's last inspection */
             report?: components["schemas"]["ProtoSpaceCheck"];
-            /** @description Repositories the operator listed for a source_unavailable relocation */
+            /** @description Repositories cloned on the destination of a source_unavailable relocation: the operator's list and the configured repositories with a URL */
             repositories?: components["schemas"]["FleetRepoSpec"][];
             /** Format: date-time */
             retain_until?: string;
@@ -5332,7 +5401,7 @@ export interface components {
              * @enum {string}
              */
             recovery?: "retain" | "delete";
-            /** @description source_unavailable only: repositories to clone on the destination */
+            /** @description source_unavailable only: repositories to clone on the destination, besides the configured ones with a URL (a listed folder overrides the configured repository there) */
             repositories?: components["schemas"]["FleetRepoSpec"][];
             /**
              * Format: int64
@@ -5992,6 +6061,7 @@ export interface components {
              */
             max_sessions?: number;
             name: string;
+            /** @description The folder of a configured space repository, or another folder inside the space, which is then added to the space's repositories (role kb, clone policy manual) */
             repo: string;
             /**
              * Format: int64
@@ -6035,7 +6105,7 @@ export interface components {
              */
             max_sessions: number;
             name: string;
-            /** @description Repository folder inside the space */
+            /** @description Repository folder inside the space (a configured space repository) */
             repo: string;
             /** Format: int64 */
             request_timeout_seconds: number;
@@ -7383,6 +7453,14 @@ export interface components {
             untracked: number;
             worktrees: components["schemas"]["ProtoWorktreeCheck"][];
         };
+        ProtoRepoRemoteState: {
+            error?: string;
+            /** @description The default branch's commit on the remote */
+            head?: string;
+            reachable: boolean;
+            /** @description Without user information */
+            url?: string;
+        };
         ProtoRunnerInfo: {
             core_id: string;
             error?: string;
@@ -7683,6 +7761,171 @@ export interface components {
              */
             readonly $schema?: string;
             body: string;
+        };
+        ReposInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReposInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description Default auto with a URL, manual without
+             * @enum {string}
+             */
+            clone_policy?: "auto" | "on_demand" | "manual";
+            /** @description Default main */
+            default_branch?: string;
+            description?: string;
+            /** @description Required on create: lowercase letters, digits, . _ -; fixed after creation */
+            name?: string;
+            /** @description Folder in the space folder (default the name); fixed after creation */
+            path?: string;
+            /**
+             * @description Default code
+             * @enum {string}
+             */
+            role?: "code" | "kb";
+            /** @description https:// or ssh:// URL or scp-like address, without credentials; required unless clone_policy is manual */
+            url?: string;
+        };
+        ReposOverview: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReposOverview.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["Repository"][];
+            report_node_id?: string;
+            /** Format: date-time */
+            reported_at?: string;
+            /** Format: date-time */
+            requested_at?: string;
+            /** @description The report is from an earlier node of the space */
+            stale: boolean;
+            /** @description A sync was requested after the last report */
+            sync_pending: boolean;
+            /** @description Repositories the node found in the space folder that are not configured */
+            unlisted: string[];
+        };
+        ReposStatus: {
+            /** @description The main folder's checked-out branch */
+            branch?: string;
+            branches: components["schemas"]["ProtoBranchCheck"][];
+            /** @description The last sync cloned it */
+            cloned?: boolean;
+            default_head?: string;
+            /**
+             * Format: int64
+             * @description Changed tracked files in the main folder
+             */
+            dirty: number;
+            error?: string;
+            /** @description The last sync fetched it */
+            fetched?: boolean;
+            head?: string;
+            /** Format: date-time */
+            last_fetch_at?: string;
+            remote?: components["schemas"]["ProtoRepoRemoteState"];
+            /** Format: date-time */
+            reported_at: string;
+            /** @description The report is from an earlier node of the space (before a relocation) */
+            stale: boolean;
+            /** Format: int64 */
+            stashes: number;
+            /**
+             * @description present: the folder holds a Git repository; missing: not cloned (yet); error: see error
+             * @enum {string}
+             */
+            state: "present" | "missing" | "error";
+            tracking_head?: string;
+            /** Format: int64 */
+            unpushed: number;
+            /** Format: int64 */
+            untracked: number;
+            worktrees: components["schemas"]["ReposWorktree"][];
+        };
+        ReposSyncInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReposSyncInput.json
+             */
+            readonly $schema?: string;
+            /** @description Fetch from the remotes (default true); false only clones what is missing and refreshes the report */
+            fetch?: boolean;
+            /** @description Names or IDs to fetch; empty fetches every repository with a URL */
+            repositories?: string[];
+        };
+        ReposSyncResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/ReposSyncResult.json
+             */
+            readonly $schema?: string;
+            /** @description Repositories the node clones when missing */
+            clone: string[];
+            command_id: string;
+            /** @description Repositories the node fetches */
+            fetch: string[];
+            /** Format: date-time */
+            requested_at: string;
+        };
+        ReposWorktree: {
+            branch?: string;
+            /** Format: int64 */
+            dirty: number;
+            error?: string;
+            head: string;
+            path: string;
+            /** @description The latest run SpaceMan launched in this worktree */
+            run_id?: string;
+            /**
+             * Format: int64
+             * @description Commits on the worktree's branch that no remote has
+             */
+            unpushed: number;
+            /** Format: int64 */
+            untracked: number;
+        };
+        Repository: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Repository.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description auto: cloned while the node holds the space's lease; on_demand: cloned when a run needs it or on a sync; manual: never cloned by SpaceMan
+             * @enum {string}
+             */
+            clone_policy: "auto" | "on_demand" | "manual";
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            default_branch: string;
+            description: string;
+            id: string;
+            /** @description Slugs of knowledge bases that use this repository */
+            knowledge_bases: string[];
+            /** @description Unique in the space; fixed after creation */
+            name: string;
+            /** @description Folder relative to the space folder on the node; fixed after creation */
+            path: string;
+            /** @enum {string} */
+            role: "code" | "kb";
+            space_id: string;
+            /** @description The node's latest report (runtime state, untrusted: it comes from the node and the repository) */
+            status?: components["schemas"]["ReposStatus"];
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            /** @description Clone URL without credentials (the node's own Git authentication is used); empty for a manual repository */
+            url: string;
+            /** Format: int64 */
+            version: number;
         };
         "Reset-passwordRequest": {
             /**
@@ -14280,6 +14523,217 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["List-relocationsResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReposOverview"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-space-repository": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReposInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "sync-space-repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReposSyncInput"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReposSyncResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-repository": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                /** @description The repository's ID or name */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-space-repository": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                /** @description The repository's ID or name */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReposInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-space-repository": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                /** @description The repository's ID or name */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

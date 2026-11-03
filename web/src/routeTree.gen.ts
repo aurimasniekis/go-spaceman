@@ -47,6 +47,7 @@ import { Route as SpacesSpaceIdLimitsRouteImport } from './routes/spaces.$spaceI
 import { Route as SpacesSpaceIdMemoryRouteImport } from './routes/spaces.$spaceId.memory'
 import { Route as SpacesSpaceIdMessagesRouteImport } from './routes/spaces.$spaceId.messages'
 import { Route as SpacesSpaceIdQueueRouteImport } from './routes/spaces.$spaceId.queue'
+import { Route as SpacesSpaceIdRepositoriesRouteImport } from './routes/spaces.$spaceId.repositories'
 import { Route as SpacesSpaceIdSchedulesRouteImport } from './routes/spaces.$spaceId.schedules'
 import { Route as SpacesSpaceIdEventsIndexRouteImport } from './routes/spaces.$spaceId.events.index'
 import { Route as SpacesSpaceIdEventsSubscriptionIdRouteImport } from './routes/spaces.$spaceId.events.$subscriptionId'
@@ -245,6 +246,12 @@ const SpacesSpaceIdQueueRoute = SpacesSpaceIdQueueRouteImport.update({
   path: '/queue',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdRepositoriesRoute =
+  SpacesSpaceIdRepositoriesRouteImport.update({
+    id: '/repositories',
+    path: '/repositories',
+    getParentRoute: () => SpacesSpaceIdRoute,
+  } as any)
 const SpacesSpaceIdSchedulesRoute = SpacesSpaceIdSchedulesRouteImport.update({
   id: '/schedules',
   path: '/schedules',
@@ -317,6 +324,7 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
+  '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
@@ -358,6 +366,7 @@ export interface FileRoutesByTo {
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
+  '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
@@ -405,6 +414,7 @@ export interface FileRoutesById {
   '/spaces/$spaceId/memory': typeof SpacesSpaceIdMemoryRoute
   '/spaces/$spaceId/messages': typeof SpacesSpaceIdMessagesRoute
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
+  '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
@@ -453,6 +463,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
+    | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
@@ -494,6 +505,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
+    | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId'
     | '/spaces/$spaceId/events/$subscriptionId'
@@ -540,6 +552,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/memory'
     | '/spaces/$spaceId/messages'
     | '/spaces/$spaceId/queue'
+    | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
@@ -844,6 +857,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdQueueRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/repositories': {
+      id: '/spaces/$spaceId/repositories'
+      path: '/repositories'
+      fullPath: '/spaces/$spaceId/repositories'
+      preLoaderRoute: typeof SpacesSpaceIdRepositoriesRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/schedules': {
       id: '/spaces/$spaceId/schedules'
       path: '/schedules'
@@ -939,6 +959,7 @@ interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdMemoryRoute: typeof SpacesSpaceIdMemoryRoute
   SpacesSpaceIdMessagesRoute: typeof SpacesSpaceIdMessagesRoute
   SpacesSpaceIdQueueRoute: typeof SpacesSpaceIdQueueRoute
+  SpacesSpaceIdRepositoriesRoute: typeof SpacesSpaceIdRepositoriesRoute
   SpacesSpaceIdSchedulesRoute: typeof SpacesSpaceIdSchedulesRoute
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
@@ -954,6 +975,7 @@ const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdMemoryRoute: SpacesSpaceIdMemoryRoute,
   SpacesSpaceIdMessagesRoute: SpacesSpaceIdMessagesRoute,
   SpacesSpaceIdQueueRoute: SpacesSpaceIdQueueRoute,
+  SpacesSpaceIdRepositoriesRoute: SpacesSpaceIdRepositoriesRoute,
   SpacesSpaceIdSchedulesRoute: SpacesSpaceIdSchedulesRoute,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,

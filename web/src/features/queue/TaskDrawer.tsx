@@ -105,6 +105,12 @@ export function TaskDrawer({ spaceId, task, tasks, canWrite, onClose }: { spaceI
         </Stack>
         <Text size="xs" c="dimmed">Created {datetime(t.created_at)}{t.started_at ? ` · started ${datetime(t.started_at)}` : ''}{t.finished_at ? ` · finished ${datetime(t.finished_at)}` : ''}</Text>
         {t.exclusions.length > 0 && <Text size="xs">Exclusive resources: <span className="mono">{t.exclusions.join(', ')}</span></Text>}
+        {(t.assignee_run || t.workspace) && (
+          <Text size="xs">
+            {t.assignee_run && <>Worker <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId: t.assignee_run }} size="xs" className="mono">{t.assignee_run}</AnchorLink></>}
+            {t.workspace && <> in <AnchorLink to="/spaces/$spaceId/repositories" params={{ spaceId }} size="xs" className="mono">{t.workspace}</AnchorLink></>}
+          </Text>
+        )}
       </Stack>
     </Drawer>
   )

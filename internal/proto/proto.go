@@ -26,8 +26,9 @@ const (
 	Major    = 1
 	MinMinor = 0
 	// 1: agent tool calls (tool.call / tool.result); 2: memory sync, KB acceptance, dreams, usage and transcripts;
-	// 3: space relocation (space.relocate.* commands, relocation reports and transfers, ADR-0037)
-	MaxMinor = 3
+	// 3: space relocation (space.relocate.* commands, relocation reports and transfers, ADR-0037); 4: configured space
+	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044)
+	MaxMinor = 4
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -51,6 +52,7 @@ const (
 	TypeRelocationReport = "relocation.report" // minor ≥ 3: the outcome of a space.relocate.* command
 	TypeRelocationUpload = "relocation.upload" // minor ≥ 3: part of an exported state file, uploaded by the source
 	TypeRelocationFetch  = "relocation.fetch"  // minor ≥ 3: the destination asks for part of a relocation file
+	TypeRepoStatus       = "repos.status"      // minor ≥ 4: the state of a space's configured repositories
 
 	// central → node
 	TypeWelcome             = "welcome"
@@ -212,8 +214,9 @@ const (
 	CmdInterrupt = "run.interrupt"
 	CmdInput     = "run.input"
 	CmdPrepare   = "space.prepare"
-	CmdKBAccept  = "kb.accept"    // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
-	CmdDreamDone = "dream.commit" // minor ≥ 2: checkpoint a dream's memory, then advance its evidence positions
+	CmdKBAccept  = "kb.accept"        // minor ≥ 2: merge an accepted KB proposal into the KB's base branch
+	CmdDreamDone = "dream.commit"     // minor ≥ 2: checkpoint a dream's memory, then advance its evidence positions
+	CmdReposSync = "space.repos.sync" // minor ≥ 4: clone and fetch configured repositories, then report their state
 	// minor ≥ 3: relocation steps (ADR-0037). They are not execution: the node accepts them without a valid lease (the
 	// source's lease is revoked while it relocates; the destination has none yet). Central is the only sender.
 	CmdRelocateCheck   = "space.relocate.check"   // source: flush memory and uploads, then inspect the space folder
@@ -356,6 +359,9 @@ type LaunchPayload struct {
 	Workspace  string            `json:"workspace,omitempty"` // relative to the space folder
 	// Worktree asks the node to run in a git worktree of a repository in the space folder (SM-REPO-002).
 	Worktree *Worktree `json:"worktree,omitempty"`
+	// Repository is the worktree's configured repository (minor ≥ 4, ADR-0044): the node clones it first when its
+	// folder is missing and its clone policy is not manual.
+	Repository *RepoSource `json:"repository,omitempty"`
 	// Skills are materialized into the harness's own skills folder when the harness supports it (SM-MCP-004).
 	Skills []Skill `json:"skills,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
@@ -411,7 +417,7 @@ func (c Command) Validate() error {
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")
 		}
-	case CmdPrepare, CmdKBAccept, CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
+	case CmdPrepare, CmdKBAccept, CmdReposSync, CmdRelocateCheck, CmdRelocateExport, CmdRelocatePrepare, CmdRelocateRelease:
 	case CmdDreamDone:
 		if !reRun.MatchString(c.RunID) {
 			return errors.New("invalid run_id")

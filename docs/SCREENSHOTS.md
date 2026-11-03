@@ -76,3 +76,8 @@
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
 | `space-relocate` | Relocating a space | Relocate dialog: destination (a never-connected node is named as not available), dirty-state policy, stop runs, source folder retention | current |
 | `ops-backups` | Backups and restore | Backups page: target, schedule, retention, a verified backup, what backups include and exclude | current |
+
+Pending capture (spec entries exist in `web/e2e/screenshots.spec.ts`, not yet run): `space-repositories`, `space-repository-detail` and
+`space-repository-form` (Repositories and worktrees, ADR-0044). After the next `make screenshots`, add them to the table above and
+show them on `site/guide/repositories.md` (`check-shots.mjs` refuses an inventoried screenshot no page shows, and a page
+screenshot that does not exist).

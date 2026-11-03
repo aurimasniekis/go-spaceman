@@ -32,7 +32,9 @@ import (
 const exportRefs = "refs/spaceman-relocation/"
 
 var safeGitOpts = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "advice.detachedHead=false",
-	"-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false", "-c", "core.autocrlf=false", "-c", "init.defaultBranch=main"}
+	"-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false", "-c", "core.autocrlf=false", "-c", "init.defaultBranch=main",
+	// The ext transport runs a program named in the URL; a remote an agent wrote into .git/config must never reach it.
+	"-c", "protocol.ext.allow=never"}
 
 // projectGit runs git for a space's repositories.
 type projectGit struct{ bin string }

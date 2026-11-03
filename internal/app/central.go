@@ -51,6 +51,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
+	"github.com/aurimasniekis/go-spaceman/internal/repos"
 	"github.com/aurimasniekis/go-spaceman/internal/schedule"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -120,6 +121,8 @@ type Central struct {
 	Limits *limits.Service
 	// Schedules create inbox items and tasks at cron or interval occurrences (SM-LIMIT-003, ADR-0036).
 	Schedules *schedule.Service
+	// Repos is a space's configured repositories and the node's reports of them (ADR-0044).
+	Repos *repos.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -215,6 +218,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			if c.KB != nil {
 				c.KB.OnRunEnded(runID)
+			}
+			if c.Repos != nil {
+				c.Repos.OnRunEnded(runID)
 			}
 			if c.Dreams != nil {
 				c.Dreams.OnRunEnded(runID)
@@ -318,6 +324,10 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return v.Get(limits.KBSessions), v.Get(limits.SupportDepth)
 	}
 	c.Fleet.Hub().KBResult = c.KB.OnResult
+	c.Repos = repos.New(st, c.Audit, c.Changes, c.Fleet, repos.Options{AllowLocalURLs: !cfg.IsProduction(), Clock: o.Clock, Log: obs.Component(log, "repos")})
+	c.KB.ResolveRepo = c.Repos.ForKB
+	c.Fleet.Hub().RepoStatus = c.Repos.OnStatus
+	c.Fleet.Hub().OnConnected = c.Repos.OnNodeConnected
 	c.XSpace = xspace.New(st, c.Audit, c.Changes, c.Inbox, c.Queue, c.KB, o.Clock, obs.Component(log, "xspace"))
 	c.XSpace.Outbox = c.Outbox
 	c.XSpace.Notified = c.Notifier.Kick
@@ -355,7 +365,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Gateway.Gate = c.Approvals
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
-		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
+		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
 	evOpts := events.Options{Clock: o.Clock, Metrics: m, RateFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
@@ -424,7 +434,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterRepositories(c.Repos), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace)},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -505,6 +515,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)
 	go c.KB.Run(ctx)
+	c.Repos.Bind(ctx)
 	go c.Dreams.Run(ctx)
 	c.Supervisor.Bind(ctx)
 	go events.NewManager(c.Events, c.Log).Run(ctx)
@@ -574,13 +585,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterRepositories(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.RepositoryRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules} {
 		for k, v := range m {
 			out[k] = v
 		}

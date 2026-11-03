@@ -61,6 +61,7 @@ Every command accepts these.
 | [`spaceman password`](./password) | Your password: change it (passwords come from files or standard input) |
 | [`spaceman profile`](./profile) | Harness profiles: list, show, create and update |
 | [`spaceman prompt`](./prompt) | Prompt catalog: list, show, create, draft, publish, diff, fork and roll back |
+| [`spaceman repo`](./repo) | A space's repositories: list, show, add, edit, remove and sync (--space) |
 | [`spaceman role`](./role) | Roles of a space (--space), their options, and role templates |
 | [`spaceman run`](./run) | Runs: list, show, launch, stop, send input; usage, recordings and transcripts (--space) |
 | [`spaceman schedule`](./schedule) | A space's schedules: list, show, create, update and delete (--space) |

@@ -15,7 +15,7 @@ is a good starting point, but SpaceMan needs no particular layout.
 
 | Field | Meaning |
 |---|---|
-| Repository | A Git repository folder inside the space, e.g. `repos/payments-kb` |
+| Repository | A Git repository folder inside the space, e.g. `repos/payments-kb`. It is one of the space's [repositories](./repositories): a folder not listed yet is added (role kb, never cloned by SpaceMan); give that repository a URL to have the node clone it. |
 | Knowledge branch | Where accepted knowledge lives. It must not be checked out anywhere, so SpaceMan can move it. |
 | Sessions run as | A space role whose template is of kind **kb** (its profile, prompt and model apply) |
 | Entry instructions | What a session reads first, e.g. "Follow AGENTS.md. You are a consumer: answer and propose, never accept." |

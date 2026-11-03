@@ -4407,7 +4407,7 @@
             "description": "The source's last inspection"
           },
           "repositories": {
-            "description": "Repositories the operator listed for a source_unavailable relocation",
+            "description": "Repositories cloned on the destination of a source_unavailable relocation: the operator's list and the configured repositories with a URL",
             "items": {
               "$ref": "#/components/schemas/FleetRepoSpec"
             },
@@ -4829,7 +4829,7 @@
             "type": "string"
           },
           "repositories": {
-            "description": "source_unavailable only: repositories to clone on the destination",
+            "description": "source_unavailable only: repositories to clone on the destination, besides the configured ones with a URL (a listed folder overrides the configured repository there)",
             "items": {
               "$ref": "#/components/schemas/FleetRepoSpec"
             },
@@ -6585,6 +6585,7 @@
             "type": "string"
           },
           "repo": {
+            "description": "The folder of a configured space repository, or another folder inside the space, which is then added to the space's repositories (role kb, clone policy manual)",
             "maxLength": 256,
             "type": "string"
           },
@@ -6682,7 +6683,7 @@
             "type": "string"
           },
           "repo": {
-            "description": "Repository folder inside the space",
+            "description": "Repository folder inside the space (a configured space repository)",
             "type": "string"
           },
           "request_timeout_seconds": {
@@ -10392,6 +10393,29 @@
         ],
         "type": "object"
       },
+      "ProtoRepoRemoteState": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "head": {
+            "description": "The default branch's commit on the remote",
+            "type": "string"
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "url": {
+            "description": "Without user information",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reachable"
+        ],
+        "type": "object"
+      },
       "ProtoRunnerInfo": {
         "additionalProperties": false,
         "properties": {
@@ -11233,6 +11257,421 @@
         },
         "required": [
           "body"
+        ],
+        "type": "object"
+      },
+      "ReposInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ReposInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "clone_policy": {
+            "description": "Default auto with a URL, manual without",
+            "enum": [
+              "auto",
+              "on_demand",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "default_branch": {
+            "description": "Default main",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "name": {
+            "description": "Required on create: lowercase letters, digits, . _ -; fixed after creation",
+            "maxLength": 63,
+            "type": "string"
+          },
+          "path": {
+            "description": "Folder in the space folder (default the name); fixed after creation",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "role": {
+            "description": "Default code",
+            "enum": [
+              "code",
+              "kb"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "description": "https:// or ssh:// URL or scp-like address, without credentials; required unless clone_policy is manual",
+            "maxLength": 2000,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ReposOverview": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ReposOverview.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Repository"
+            },
+            "type": "array"
+          },
+          "report_node_id": {
+            "type": "string"
+          },
+          "reported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "stale": {
+            "description": "The report is from an earlier node of the space",
+            "type": "boolean"
+          },
+          "sync_pending": {
+            "description": "A sync was requested after the last report",
+            "type": "boolean"
+          },
+          "unlisted": {
+            "description": "Repositories the node found in the space folder that are not configured",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "unlisted",
+          "stale",
+          "sync_pending"
+        ],
+        "type": "object"
+      },
+      "ReposStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "description": "The main folder's checked-out branch",
+            "type": "string"
+          },
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoBranchCheck"
+            },
+            "type": "array"
+          },
+          "cloned": {
+            "description": "The last sync cloned it",
+            "type": "boolean"
+          },
+          "default_head": {
+            "type": "string"
+          },
+          "dirty": {
+            "description": "Changed tracked files in the main folder",
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "fetched": {
+            "description": "The last sync fetched it",
+            "type": "boolean"
+          },
+          "head": {
+            "type": "string"
+          },
+          "last_fetch_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "remote": {
+            "$ref": "#/components/schemas/ProtoRepoRemoteState"
+          },
+          "reported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "stale": {
+            "description": "The report is from an earlier node of the space (before a relocation)",
+            "type": "boolean"
+          },
+          "stashes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "description": "present: the folder holds a Git repository; missing: not cloned (yet); error: see error",
+            "enum": [
+              "present",
+              "missing",
+              "error"
+            ],
+            "type": "string"
+          },
+          "tracking_head": {
+            "type": "string"
+          },
+          "unpushed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "untracked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "worktrees": {
+            "items": {
+              "$ref": "#/components/schemas/ReposWorktree"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "state",
+          "stale",
+          "reported_at",
+          "dirty",
+          "untracked",
+          "stashes",
+          "unpushed",
+          "branches",
+          "worktrees"
+        ],
+        "type": "object"
+      },
+      "ReposSyncInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ReposSyncInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "fetch": {
+            "description": "Fetch from the remotes (default true); false only clones what is missing and refreshes the report",
+            "type": "boolean"
+          },
+          "repositories": {
+            "description": "Names or IDs to fetch; empty fetches every repository with a URL",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ReposSyncResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/ReposSyncResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "clone": {
+            "description": "Repositories the node clones when missing",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "command_id": {
+            "type": "string"
+          },
+          "fetch": {
+            "description": "Repositories the node fetches",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "requested_at",
+          "clone",
+          "fetch"
+        ],
+        "type": "object"
+      },
+      "ReposWorktree": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "dirty": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "run_id": {
+            "description": "The latest run SpaceMan launched in this worktree",
+            "type": "string"
+          },
+          "unpushed": {
+            "description": "Commits on the worktree's branch that no remote has",
+            "format": "int64",
+            "type": "integer"
+          },
+          "untracked": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "head",
+          "dirty",
+          "untracked",
+          "unpushed"
+        ],
+        "type": "object"
+      },
+      "Repository": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Repository.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "clone_policy": {
+            "description": "auto: cloned while the node holds the space's lease; on_demand: cloned when a run needs it or on a sync; manual: never cloned by SpaceMan",
+            "enum": [
+              "auto",
+              "on_demand",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "default_branch": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "knowledge_bases": {
+            "description": "Slugs of knowledge bases that use this repository",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Unique in the space; fixed after creation",
+            "type": "string"
+          },
+          "path": {
+            "description": "Folder relative to the space folder on the node; fixed after creation",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "code",
+              "kb"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReposStatus",
+            "description": "The node's latest report (runtime state, untrusted: it comes from the node and the repository)"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "url": {
+            "description": "Clone URL without credentials (the node's own Git authentication is used); empty for a manual repository",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "space_id",
+          "name",
+          "path",
+          "description",
+          "url",
+          "default_branch",
+          "role",
+          "clone_policy",
+          "knowledge_bases",
+          "version",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by"
         ],
         "type": "object"
       },
@@ -22161,6 +22600,352 @@
         "summary": "The space's relocations, newest first",
         "tags": [
           "relocation"
+        ]
+      }
+    },
+    "/spaces/{space_id}/repositories": {
+      "get": {
+        "description": "The report (remote, default branch, last fetch, changes, unpushed commits, worktrees) is runtime state from the node and the repositories: untrusted data, as of reported_at.",
+        "operationId": "list-space-repositories",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReposOverview"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's repositories with the node's latest report",
+        "tags": [
+          "repositories"
+        ]
+      },
+      "post": {
+        "description": "The URL never carries credentials: the node's own Git authentication is used. With the auto clone policy the node clones it as soon as it holds the space's lease.",
+        "operationId": "create-space-repository",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReposInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Repository"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a repository to a space",
+        "tags": [
+          "repositories"
+        ]
+      }
+    },
+    "/spaces/{space_id}/repositories/sync": {
+      "post": {
+        "description": "Missing auto and on_demand repositories are cloned, the named repositories (default all with a URL) are fetched, and every repository is inspected; the report arrives asynchronously. Nothing is reset, merged, pushed or deleted. The node must be connected.",
+        "operationId": "sync-space-repositories",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReposSyncInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReposSyncResult"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Ask the node to clone, fetch and report a space's repositories",
+        "tags": [
+          "repositories"
+        ]
+      }
+    },
+    "/spaces/{space_id}/repositories/{repository_id}": {
+      "delete": {
+        "description": "Only the configuration is removed: the folder on the node and the upstream repository stay. A repository a knowledge base uses cannot be removed.",
+        "operationId": "delete-space-repository",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The repository's ID or name",
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "description": "The repository's ID or name",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove a repository from a space",
+        "tags": [
+          "repositories"
+        ]
+      },
+      "get": {
+        "operationId": "get-space-repository",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The repository's ID or name",
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "description": "The repository's ID or name",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Repository"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A repository with the node's latest report",
+        "tags": [
+          "repositories"
+        ]
+      },
+      "put": {
+        "description": "Name and path are fixed. The folder's own remotes on the node are never rewritten.",
+        "operationId": "update-space-repository",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The repository's ID or name",
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "description": "The repository's ID or name",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReposInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Repository"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Edit a repository",
+        "tags": [
+          "repositories"
         ]
       }
     },

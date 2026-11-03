@@ -162,9 +162,11 @@ func (r *knowledgeBaseResource) Schema(_ context.Context, _ resource.SchemaReque
 			"space_id": requiredReplace("The space."),
 			"slug": schema.StringAttribute{Required: true, MarkdownDescription: "Identifier in the space (2-31 characters). Fixed after creation.",
 				PlanModifiers: []planmodifier.String{fixedAfterCreate("A knowledge base's slug")}},
-			"name":               schema.StringAttribute{Required: true, MarkdownDescription: "Display name."},
-			"description":        optString("Description."),
-			"repo":               schema.StringAttribute{Required: true, MarkdownDescription: "Repository folder inside the space (relative)."},
+			"name":        schema.StringAttribute{Required: true, MarkdownDescription: "Display name."},
+			"description": optString("Description."),
+			"repo": schema.StringAttribute{Required: true, MarkdownDescription: "Repository folder inside the space (relative), for example " +
+				"`spaceman_space_repository.kb.path`. A folder no space repository uses yet is added to the space's repositories (role `kb`, " +
+				"clone policy `manual`); declare it as a `spaceman_space_repository` to manage it."},
 			"base_branch":        optString("Where accepted knowledge lives (default `main`)."),
 			"space_role":         schema.StringAttribute{Required: true, MarkdownDescription: "A space role whose template is of kind `kb`; sessions run as it."},
 			"entry_instructions": optString("Instructions every session starts with."),

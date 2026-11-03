@@ -3,9 +3,9 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { useHumanActions, useInbox, useMessages, useXSpaceRequests } from '@/api/queries'
 
-type Section = 'overview' | 'inbox' | 'queue' | 'human' | 'messages' | 'knowledge' | 'memory' | 'events' | 'schedules' | 'limits' | 'cross-space'
-type To = '/spaces/$spaceId' | '/spaces/$spaceId/inbox' | '/spaces/$spaceId/queue' | '/spaces/$spaceId/human' | '/spaces/$spaceId/messages' | '/spaces/$spaceId/knowledge' | '/spaces/$spaceId/memory' | '/spaces/$spaceId/events'
-  | '/spaces/$spaceId/schedules' | '/spaces/$spaceId/limits' | '/spaces/$spaceId/cross-space'
+type Section = 'overview' | 'inbox' | 'queue' | 'human' | 'messages' | 'repositories' | 'knowledge' | 'memory' | 'events' | 'schedules' | 'limits' | 'cross-space'
+type To = '/spaces/$spaceId' | '/spaces/$spaceId/inbox' | '/spaces/$spaceId/queue' | '/spaces/$spaceId/human' | '/spaces/$spaceId/messages' | '/spaces/$spaceId/repositories'
+  | '/spaces/$spaceId/knowledge' | '/spaces/$spaceId/memory' | '/spaces/$spaceId/events' | '/spaces/$spaceId/schedules' | '/spaces/$spaceId/limits' | '/spaces/$spaceId/cross-space'
 
 /**
  * Section links of a space; inbox, human actions and messages show how many items wait. They are navigation links
@@ -19,7 +19,7 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
   const forOperators = useMessages(spaceId).data?.operators_pending ?? 0
   const incoming = (useXSpaceRequests(spaceId).data ?? []).filter((r) => r.side === 'incoming' && r.state === 'pending').length
   const active: Section = path.includes('/inbox') ? 'inbox' : path.includes('/events') ? 'events' : path.includes('/queue') ? 'queue'
-    : path.includes('/schedules') ? 'schedules' : path.includes('/limits') ? 'limits'
+    : path.includes('/schedules') ? 'schedules' : path.includes('/limits') ? 'limits' : path.includes('/repositories') ? 'repositories'
     : path.includes('/human') ? 'human' : path.includes('/messages') ? 'messages' : path.includes('/memory') ? 'memory' : path.includes('/knowledge') ? 'knowledge' : path.includes('/cross-space') ? 'cross-space' : 'overview'
   const count = (n: number, color?: string) => (n > 0 ? <Badge size="xs" color={color} circle={n < 10}>{n}</Badge> : null)
   const items: { key: Section; to: To; label: string; extra?: ReactNode }[] = [
@@ -28,6 +28,7 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
     { key: 'queue', to: '/spaces/$spaceId/queue', label: 'Queue' },
     { key: 'human', to: '/spaces/$spaceId/human', label: 'Human actions', extra: count(waiting, 'owlYellow') },
     { key: 'messages', to: '/spaces/$spaceId/messages', label: 'Messages', extra: count(forOperators, 'owlYellow') },
+    { key: 'repositories', to: '/spaces/$spaceId/repositories', label: 'Repositories' },
     { key: 'knowledge', to: '/spaces/$spaceId/knowledge', label: 'Knowledge' },
     { key: 'memory', to: '/spaces/$spaceId/memory', label: 'Memory' },
     { key: 'events', to: '/spaces/$spaceId/events', label: 'Events' },

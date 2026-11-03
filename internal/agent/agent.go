@@ -100,6 +100,8 @@ type Agent struct {
 	reloc relocState
 	// guardLocks serialize each space's lease guard between launches and retirement (ADR-0043), by space ID.
 	guardLocks map[string]*sync.Mutex
+	// repoLocks serialize each space's repository syncs and clones (ADR-0044), by space ID.
+	repoLocks map[string]*sync.Mutex
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.

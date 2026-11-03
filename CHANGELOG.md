@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Space repositories (ADR-0044, SM-REPO-001/003, SM-SPACE-001, SM-UI-002, SM-API-004): a central list per space (name,
+  folder, clone URL without credentials, default branch, role code or kb, clone policy auto, on_demand or manual) with
+  API CRUD under `/spaces/{id}/repositories` (If-Match, audited), a sync endpoint, the node protocol command
+  `space.repos.sync` (protocol minor 4) that clones, fetches and reports with the node's own Git authentication, a space
+  **Repositories** page with the node's report (remote, default branch, last fetch, changes, unpushed commits, worktrees
+  and their runs), worktree links on runs and tasks, the read-only agent tool `spaceman_repos_list`, `spaceman repo`
+  commands and the Terraform resource `spaceman_space_repository`. Workers' worktrees and first launches clone configured
+  repositories; relocation clones configured repositories on the destination. Migration 0029 lists every knowledge
+  base's folder as a repository (role kb, manual); knowledge bases are unchanged.
 - Release readiness report (`docs/RELEASE_READINESS.md`, site: Development → Release readiness): what is implemented,
   tested and verified for real, what is not, and what a production release still needs. It makes no production-readiness
   claim.

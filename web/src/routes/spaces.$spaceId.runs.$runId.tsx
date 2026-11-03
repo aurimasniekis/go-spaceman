@@ -115,6 +115,15 @@ function RunPage() {
         <Detail label="Started" value={isSet(r.started_at) ? datetime(r.started_at) : '—'} />
         <Detail label="Ended" value={isSet(r.ended_at) ? `${datetime(r.ended_at)}${r.end_reason ? ` (${r.end_reason})` : ''}` : '—'} />
         <Detail label="Exit code" value={r.exit_code !== undefined && ended ? String(r.exit_code) : '—'} mono />
+        {r.launch.worktree && (
+          <Card p="sm">
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Worktree</Text>
+            <Text size="sm" className="mono" style={{ wordBreak: 'break-all' }}>
+              worktrees/{r.launch.worktree.branch.replaceAll('/', '-')} on {r.launch.worktree.branch}
+            </Text>
+            <AnchorLink to="/spaces/$spaceId/repositories" params={{ spaceId: r.space_id }} size="xs" className="mono">{r.launch.worktree.repo}</AnchorLink>
+          </Card>
+        )}
       </SimpleGrid>
       {r.error && <ErrorAlert error={new Error(r.error)} title="Run error" />}
       <ManifestCard manifest={r.manifest} />

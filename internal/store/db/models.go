@@ -1141,6 +1141,34 @@ type SpaceLimit struct {
 	Version    int64
 }
 
+type SpaceRepository struct {
+	ID            string
+	SpaceID       string
+	Name          string
+	Path          string
+	Description   string
+	Url           string
+	DefaultBranch string
+	Role          string
+	ClonePolicy   string
+	Version       int64
+	CreatedAt     int64
+	CreatedBy     string
+	UpdatedAt     int64
+	UpdatedBy     string
+}
+
+type SpaceRepositoryReport struct {
+	SpaceID     string
+	NodeID      string
+	ReportJson  string
+	ReportedAt  sql.NullInt64
+	CheckedAt   sql.NullInt64
+	CommandID   string
+	RequestedAt sql.NullInt64
+	RequestedBy string
+}
+
 type SpaceRole struct {
 	SpaceID      string
 	Name         string

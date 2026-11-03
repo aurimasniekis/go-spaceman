@@ -16,7 +16,7 @@ var (
 
 func (a *App) kbCmd() *cobra.Command {
 	kbForm := func(f *form) {
-		f.str("name", "name", "name (required)").str("repo", "repo", "repository URL of the knowledge base (required)").
+		f.str("name", "name", "name (required)").str("repo", "repo", "repository folder in the space, e.g. repos/kb (required; added to the space's repositories when new)").
 			str("role", "space_role", "space role that answers requests (required)").str("description", "description", "description").
 			str("base-branch", "base_branch", "branch answers and proposals start from").boolean("enabled", "enabled", "enabled").
 			text("entry-instructions", "entry_instructions", "instructions given to each session").
@@ -40,7 +40,7 @@ func (a *App) kbCmd() *cobra.Command {
 			view: view{items: "items", cols: kbCols, empty: "No knowledge bases."}}),
 		a.cmd(opts{use: "get", short: "A knowledge base with its sessions, requests and proposals", op: "get-kb", scoped: true, args: pos("kb")}),
 		a.cmd(opts{use: "create", short: "Add a knowledge base", op: "create-kb", scoped: true, bodyArgs: []string{"slug"}, form: kbForm,
-			example: "spaceman kb create --space payments runbooks --name Runbooks --repo https://git.example.com/runbooks.git --role kb --write-policy review"}),
+			example: "spaceman kb create --space payments runbooks --name Runbooks --repo repos/runbooks --role kb --write-policy review"}),
 		a.cmd(opts{use: "update", short: "Edit a knowledge base (only the flags given change)", op: "update-kb", get: "get-kb", merge: true, mergeKey: "kb",
 			version: func(m map[string]any) string { kb, _ := m["kb"].(map[string]any); return numberString(kb["version"]) },
 			scoped:  true, args: pos("kb"), form: kbForm}),
