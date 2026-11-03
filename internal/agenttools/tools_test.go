@@ -173,6 +173,16 @@ func TestInboxAndTasks(t *testing.T) {
 	must(t, f.call(f.wrk, "spaceman_task_get", map[string]any{"task_id": task.ID}, &one))
 	code(t, f.call(f.wrk, "spaceman_task_get", map[string]any{"task_id": task.ID, "extra": 1}, nil), apperr.CodeInvalid)
 	code(t, f.call(f.wrk, "spaceman_unknown", nil, nil), apperr.CodeNotFound)
+
+	// SM-INBOX-001: dreamer findings and KB messages arrive under their own source kinds, attributed to the run.
+	for kind, want := range map[string]string{KindDreamer: "dreamer", KindKB: "kb"} {
+		p := &fleet.RunPrincipal{RunID: "run_" + want, SpaceID: "spc_a", Kind: kind, Role: want, InstanceID: "ins_" + want}
+		var it inbox.Item
+		must(t, f.call(p, "spaceman_inbox_add", map[string]any{"title": "Finding from " + want, "body": "details"}, &it))
+		if it.SourceKind != want || it.SourceID != p.RunID {
+			t.Fatalf("%s item %+v", kind, it)
+		}
+	}
 }
 
 func TestAttachmentsAndHuman(t *testing.T) {

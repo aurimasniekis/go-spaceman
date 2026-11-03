@@ -33,7 +33,8 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 // SM-KB-001…006, SM-CTRL-005, ADR-0026 end to end with a real agent, central and Git repository: each requesting
 // instance gets its own KB session (a kb run in its own worktree); requests queue at capacity; answers carry evidence
 // and reach the requester; a proposal is accepted on the node by fast-forward after the KB's check, a conflicting one
-// is refused without changing anything, and read-only KBs take no proposals.
+// is refused without changing anything, and read-only KBs take no proposals. One requester is a Codex run served by a
+// Claude Code KB session (SM-KB-004: harness-independent request/reply through SpaceMan's tools).
 func TestKBSupportSessions(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -88,18 +89,18 @@ func TestKBSupportSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	launch := func(role string) (*fleet.Run, string) {
+	launch := func(role, harness string) (*fleet.Run, string) {
 		t.Helper()
-		r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: role, Harness: hns.KindClaude})
+		r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: role, Harness: harness})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eventually(t, role+" running", func() bool { return e.run1(r.ID).Observed == "running" })
 		return r, e.runToken(r.ID)
 	}
-	a, at := launch("implementor")
-	b, bt := launch("implementor")
-	other, ot := launch("reviewer")
+	a, at := launch("implementor", hns.KindClaude)
+	b, bt := launch("implementor", hns.KindCodex)
+	other, ot := launch("reviewer", hns.KindClaude)
 
 	if r := e.bridgeCall(other.ID, ot, "spaceman_kb_ask", map[string]any{"kb": "payments", "kind": "context", "question": "x"}); r.OK || r.Code != "forbidden" {
 		t.Fatalf("unadmitted role: %+v", r)

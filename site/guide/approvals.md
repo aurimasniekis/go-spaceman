@@ -89,4 +89,6 @@ audit log records the operation, the digest and the outcome.
 ## HallPass and other systems
 
 An approval in SpaceMan never stands in for another system's approval. HallPass, for example, enforces its own access
-requests; linking a HallPass request to a SpaceMan approval does not bypass HallPass policy.
+requests. SpaceMan does not link HallPass requests to its approvals and never calls HallPass; an agent that needs
+server access asks HallPass itself (the built-in [HallPass skill](./skills) describes how), and HallPass's policy
+decides.

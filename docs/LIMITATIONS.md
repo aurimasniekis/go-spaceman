@@ -39,6 +39,12 @@
   its `issues_opened` and `push` webhook fixtures to a real pulsed (`make test-real-pulse`). Its GitHub App
   installation lookup was answered by a local stand-in serving pulse-github's own test JSON, so the real GitHub API was
   not involved. There is no upstream pull request fixture, so the PR template has no real evidence.
+- **Paused spaces always ingest, and wakes are not deferred.** Subscriptions keep running while a space is paused
+  (there is no setting to stop them), and nothing holds back control's notification of a new item: with **Hold**,
+  a control run that is still running is notified at once. Only launches are refused while paused (SM-EVT-014).
+- **Custom subscriptions are created without the UI.** The UI subscribes a space to a template; a subscription with a
+  custom definition is created through the API or `spaceman subscription create --custom`. Template definitions are
+  edited as JSON, not in a visual editor (SM-EVT-017).
 
 ## Event publication
 - **Off by default; nothing is back-filled.** Events of a period with `events.outbound.enabled: false` are never
@@ -132,7 +138,8 @@
   disabling apply to the next call.
 - **No requests from servers.** Sampling, elicitation, roots and server notifications are not relayed.
 - **Upstream state is per run.** A relaunched run, or a run whose session failed or idled out, starts a new session.
-- **Approvals for gateway calls** are not enforced yet; they arrive with the approval gateway (M3-05).
+- **Approvals for gateway calls need a policy.** A gateway call waits for a person only when an approval policy covers
+  its operation (`mcp.<server>.<tool>` or a prefix such as `mcp.deploys.*`); other calls run at once (ADR-0024).
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
 ## Skills
@@ -150,12 +157,31 @@
   with the same arguments after the notice. An approval belongs to the run that asked, so a relaunched run asks again.
 - **Interrupted executions are not retried.** If central stops while an approved operation runs, its outcome is
   unknown; it is marked interrupted and needs a new approval to run again.
-- **No routing when the requester is gone.** A response for a run that ended waits as a stored notification; routing
-  it to control or a successor arrives with M4-07 (SM-HUM-009).
+- **Ended requesters are not relaunched.** A response for a run that ended is routed to a live successor run, control
+  or the operators, or held for the next run of the same instance; SpaceMan never relaunches the ended run to deliver
+  it (ADR-0032, SM-HUM-009).
+- **Responses never become inbox items.** A routed response reaches control as a durable notification, not as an inbox
+  item; the inbox's `human_response` source kind has no producer (SM-INBOX-001).
+- **No search and no clarification requests.** Human actions are listed by type and status only; there is no text
+  search, and no way to ask the requester for more information other than a comment (SM-HUM-006).
+- **Few filters.** The Needs you page filters by type and by reminded or escalated, and a space's tab by pending or
+  not. There is no assigned-to-me, unassigned, space, status, priority or due filter, and no choice of sort order
+  (SM-HUI-001).
+- **No notification preferences**, and a task's human-action blocker and an action's requester run are shown by ID,
+  not linked (SM-HUI-006).
+- **No retention or export.** Human actions are kept until their space is purged. They are in backups and the audit
+  log, but there is no retention policy and no export (SM-HUI-007).
 
 ## Control and repositories
-- **No repository tracking yet.** SpaceMan records each worker's branch and worktree, but not remotes, dirty state or
-  unpushed commits (SM-REPO-003). Worktrees are never cleaned up automatically; remove them with git when done.
+- **Repository state is inspected only for relocation.** SpaceMan records each worker's branch and worktree. Remotes,
+  dirty state and unpushed commits are inspected when a space is relocated, but not tracked or shown otherwise
+  (SM-REPO-003). Worktrees are never cleaned up automatically; remove them with git when done.
+- **Reassigning a task is API-only.** A task's `assignee_run` and `assignee_role` can be changed through the API (the
+  CLI sets the role only); the UI has no reassign control (SM-CTRL-004).
+- **The incident policy is partial.** It sets insertion, preemption (running tasks return to ready), the number of
+  active top-level tasks and whether escalation reorders. It does not define which triggers may raise incidents
+  (operators and control create incident tasks), what happens to a preempted task's workers (they keep running, and
+  control is not told), or how preempted work resumes (SM-QUEUE-009).
 - **Repositories are not configured centrally.** A space can hold any number of Git repositories, but only as folders
   in its folder on the node: operators or agents clone them there, control names one per worker launch (`repo`), and
   relocation inspects every repository it finds. Central keeps no list of a space's repositories; only knowledge-base
@@ -180,6 +206,8 @@
   restart), which leaves a gap.
 - **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
   node keeps its local recording. Tested: node-side only (`make test-fault`).
+- **No recording retention, and a fixed quota.** Central keeps recordings until an operator deletes them or the space
+  is purged. Each recording is capped at 512 MiB on the node; the cap cannot be configured (SM-REC-003).
 
 ## Web UI
 - **No single attention summary.** A space's overview shows its node, lease, active runs, accounts, roles and usage, and
@@ -189,13 +217,41 @@
   the Knowledge page. Nothing gathers them on one view. Of storage problems, the UI shows only a truncated recording on the
   run's terminal, labelled "Truncated (quota)" even when the node's disk was full; quota use and free space are not
   shown (SM-UI-003).
+- **No archive control.** The UI creates, edits, pauses and resumes spaces; archiving, restoring and purging are done
+  with the CLI or the API (SM-SPACE-002).
+- **No terminal takeover.** Terminals are watch-only. The `terminal:takeover` permission exists, but no API or page
+  takes over a terminal; operators give input through **Message the agent** (SM-UI-004).
+- **No repositories or workspaces area.** Repositories are folders on the node (SM-REPO-001), and runs and tasks do not
+  show their worktree (SM-UI-002).
+- **TanStack Table and Store are not used.** They are dependencies, but tables are Mantine tables and state is React
+  state and TanStack Query (SM-UI-001).
+- **Not every form uses TanStack Form.** Sign-in, setup, reset and recovery, account, spaces, runs, nodes, users,
+  tokens, accounts, sign-in providers, inbox items, tasks, event connections and subscriptions, schedules, messages,
+  new prompts, and human-action requests, responses and policies do. Other forms (among them MCP servers, approval
+  policies, skills, roles and space roles, prompt drafts, event templates, knowledge bases, dreams, cross-space
+  settings, relocation, limits, human-action types, group mappings and linked identities) and the schema-driven fields
+  inside the response form use plain React state (SM-ATT-007).
+
+## Attachments
+- **Only inbox items carry attachments.** Tasks, human actions, comments and messages hold Markdown text only, so files
+  can be pasted, dropped or attached only when writing an inbox item, not when replying (SM-ATT-001, SM-ATT-002).
+- **No retention or export.** Attachments are in backups, are removed with their space, and unreferenced uploads are
+  collected; there is no retention policy and no export (SM-ATT-006).
+- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB); they are not copied
+  into the run's folder (SM-ATT-005).
+
+## Audit and logs
+- **The audit log is read newest first.** The API pages backwards from the newest event; there is no forward cursor a
+  consumer (for example a SIEM export) can store and resume from. Audit events are never pruned, so there is no
+  retention-gap signal; `POST /audit/verify` reports a sequence gap if events were deleted (SM-OBS-003).
+- **No HTTP access log.** Central logs errors and component events, not every request; request counts and latencies
+  are metrics (SM-OBS-001).
 
 ## Messaging
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself.
 - **Native harness messaging is not used.** Claude Code's and Codex's own messaging features are not verified across
   standalone runs, so SpaceMan does not rely on them (SM-COMM-003).
-- **Reminders and escalation arrive in M4**; expiry runs once a minute.
 - **Schema forms cover common fields.** Strings (with formats and enums), numbers, booleans and string lists render as
   fields; nested objects and other arrays use the JSON editor.
 

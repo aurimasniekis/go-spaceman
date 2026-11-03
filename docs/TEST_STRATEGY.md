@@ -90,8 +90,8 @@ A topic marked "—" under Real has no real-environment evidence yet. LIMITATION
 
 ## Cross-cutting invariants
 
-Tests added for invariant and architecture requirements that had no feature-specific test (traceability audit,
-2026-11-03). All are simulated.
+Tests added for invariant and architecture requirements that had no feature-specific test (traceability audits of
+the `todo` and `partial` rows, 2026-11-03). All are simulated.
 
 | Test | Requirement | What must hold |
 |---|---|---|
@@ -102,6 +102,11 @@ Tests added for invariant and architecture requirements that had no feature-spec
 | `internal/agenttools` `TestCatalogs` (extended) | SM-INV-012 | `spaceman_human_ask` is in the catalog of every run kind. |
 | `internal/harness` `TestCapabilitiesAreExplicit` | SM-HARN-003/004, SM-INV-014 | Each adapter advertises exactly its verified capabilities, and none advertises native team messaging. A missing binary advertises nothing. |
 | `internal/config` `TestDeployExamplesLoad` | SM-INV-017 | The example configurations in `deploy/examples` load and validate as shipped. |
+| `internal/app` `TestRootDoesNotBypassExecutionSafety` | SM-INV-016 | With the root token over HTTP, a second control run is refused and none is created, a space with an active run is neither archived nor purged, editing a space cannot change its pinned node, and a paused space admits no launch. |
+| `internal/app` `TestWatchResumesFromItsPosition` | SM-API-002 | The change feed resumes from `after` or `Last-Event-ID` with exactly the missed changes, in order; a position beyond the feed yields a `gap` event and the stream continues. |
+| `internal/runner/hc` `TestClientInterruptKillSend` | SM-RUN-001, SM-COMM-003 | Interrupt, kill and safe input map to herdr-core's `terminal.interrupt`, `terminal.kill` and `terminal.send`; idle-gated input sends `if: idle`, and a refusal is `ErrBusy`. |
+| `internal/app` `TestKBSupportSessions` (extended) | SM-KB-004 | One requester is a Codex run; its request is served by a Claude Code KB session through the same tools. |
+| `internal/agenttools` `TestInboxAndTasks` (extended) | SM-INBOX-001 | Dreamer and KB runs add inbox items under their own source kinds, attributed to the run. |
 
 ## Real-evidence run (2026-11-03, SM-VER-002)
 

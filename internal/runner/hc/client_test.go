@@ -185,6 +185,70 @@ func TestClientCreditsAndInput(t *testing.T) {
 	}
 }
 
+// SM-RUN-001: stop, kill and safe input map to herdr-core's terminal.interrupt, terminal.kill and terminal.send
+// (docs/contracts/herdr-core.md); idle-gated input sends `if: idle`, and a refused send is ErrBusy.
+func TestClientInterruptKillSend(t *testing.T) {
+	calls := make(chan map[string]any, 8)
+	_, sock := startFake(t, func(_ *fakeCore, w io.Writer, req map[string]any) {
+		calls <- req
+		switch req["method"] {
+		case "terminal.interrupt":
+			reply(w, req["id"], map[string]any{"outcome": "stopped"})
+		case "terminal.kill":
+			reply(w, req["id"], map[string]any{"address": "t3", "state": "finished", "reason": "killed", "created_ms": 1})
+		case "terminal.send":
+			if p, _ := req["params"].(map[string]any); p["if"] == "idle" {
+				b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req["id"], "error": map[string]any{"code": -32000, "message": "busy",
+					"data": map[string]any{"kind": "status_mismatch"}}})
+				writeFrame(w, 0, KindData, b)
+				return
+			}
+			reply(w, req["id"], map[string]any{"turn": 2, "started": true, "status": "working"})
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := Dial(ctx, sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	r := New(c)
+	params := func(method string) map[string]any {
+		t.Helper()
+		req := <-calls
+		if req["method"] != method {
+			t.Fatalf("method %v, want %s", req["method"], method)
+		}
+		p, _ := req["params"].(map[string]any)
+		if p["terminal"] != "t3" {
+			t.Fatalf("%s params %v", method, p)
+		}
+		return p
+	}
+	if out, err := r.Interrupt(ctx, "t3"); err != nil || out != "stopped" {
+		t.Fatalf("interrupt: %q %v", out, err)
+	}
+	params("terminal.interrupt")
+	p, err := r.Kill(ctx, "t3")
+	if err != nil || p.State != runner.StateFinished || p.Reason != "killed" {
+		t.Fatalf("kill: %+v %v", p, err)
+	}
+	params("terminal.kill")
+	if err := r.Send(ctx, "t3", "you have 1 message", false); err != nil {
+		t.Fatal(err)
+	}
+	if sp := params("terminal.send"); sp["text"] != "you have 1 message" || sp["if"] != nil {
+		t.Fatalf("send params %v", sp)
+	}
+	if err := r.Send(ctx, "t3", "notice", true); !errors.Is(err, runner.ErrBusy) {
+		t.Fatalf("idle-gated send to a busy program: %v", err)
+	}
+	if sp := params("terminal.send"); sp["if"] != "idle" {
+		t.Fatalf("idle-gated send params %v", sp)
+	}
+}
+
 func TestEventDecoding(t *testing.T) {
 	r := &Runner{c: &Client{hello: Hello{Core: Core{ID: "core1"}}}}
 	ev, ok := r.decodeEvent([]byte(`{"jsonrpc":"2.0","method":"event","params":{"data":{"exit_code":2,"finished_ms":1,"reason":"exited","signal":null},"seq":37,"terminal":"t11","type":"finished"}}`))
