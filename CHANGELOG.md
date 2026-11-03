@@ -124,6 +124,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   history and items they create are marked.
 
 ### Fixed
+- A space's lease guard no longer outlives its runs (SM-ARCH-004, ADR-0043). The node agent kept one
+  `spaceman-agent lease-guard` process per space that had ever run, reading the lease file once a second while the space
+  sat idle. The guard now ends with the space's last live run, and the next launch starts a new one before its run.
+  Enforcement for live runs is unchanged.
+- The Architecture page no longer says recordings, attachments and transcripts can be kept in S3. They are stored on
+  central's local disk; only backups have an S3 target.
 - Central no longer refuses to start (or to run `spaceman backup`) when the command-line client's (`SPACEMAN_SERVER`,
   `SPACEMAN_TOKEN_FILE`, `SPACEMAN_OUTPUT`, `SPACEMAN_SPACE`, `SPACEMAN_ALLOW_INSECURE_HTTP`), enrollment's
   (`SPACEMAN_ENROLL_TOKEN`) or the Terraform provider's (`SPACEMAN_ENDPOINT`) variables are set; they were rejected as

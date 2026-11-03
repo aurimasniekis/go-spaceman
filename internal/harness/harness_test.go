@@ -1,7 +1,10 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -127,5 +130,37 @@ func TestRegistry(t *testing.T) {
 	}
 	if _, err := Get("opencode"); err == nil {
 		t.Fatal("unimplemented harness accepted")
+	}
+}
+
+// SM-HARN-003/004, SM-INV-014: each adapter advertises exactly the capabilities verified for it. SpaceMan starts every
+// run as a standalone session, a topology in which Claude Code's native team messaging (SendMessage) does not reach
+// other runs (docs/contracts/harnesses.md), so no adapter advertises messaging.native_team and runs talk only through
+// SpaceMan's durable messages. A harness that is not installed advertises nothing.
+func TestCapabilitiesAreExplicit(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "harness")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'fake 9.8.7'\n"), 0o700); err != nil { //nolint:gosec // test stub must be executable
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		KindClaude: {CapFixedSessionID, CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapSystemPrompt, CapTranscripts, CapSkills},
+		KindCodex:  {CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapTranscripts},
+	}
+	for kind, caps := range want {
+		h, err := Get(kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info := h.Detect(context.Background(), bin)
+		if !info.Available || info.Version != "9.8.7" || !slices.Equal(info.Capabilities, caps) {
+			t.Fatalf("%s: %+v", kind, info)
+		}
+		if slices.Contains(info.Capabilities, CapNativeTeam) {
+			t.Fatalf("%s advertises native team messaging", kind)
+		}
+		missing := h.Detect(context.Background(), filepath.Join(t.TempDir(), "absent"))
+		if missing.Available || len(missing.Capabilities) != 0 || missing.Error != "not installed" {
+			t.Fatalf("%s not installed: %+v", kind, missing)
+		}
 	}
 }

@@ -88,6 +88,21 @@
 
 A topic marked "—" under Real has no real-environment evidence yet. LIMITATIONS.md and TRACEABILITY.md record what is missing (for example real Codex runs, AWS S3, a physical Linux host and amd64 under systemd, and Google and GitHub behind Porch and go-pulse-github). Fakes are never presented as working integrations.
 
+## Cross-cutting invariants
+
+Tests added for invariant and architecture requirements that had no feature-specific test (traceability audit,
+2026-11-03). All are simulated.
+
+| Test | Requirement | What must hold |
+|---|---|---|
+| `internal/app` `TestNodeDaemonIsNotAController` | SM-INV-005, SM-RUN-003 | With central unreachable, the bridge refuses inbox, task, worker-launch and queue tools with `unavailable`. The node starts no program, and nothing it refused is replayed after reconnecting. |
+| `internal/app` `TestIdleSpaceKeepsNoLeaseGuard` | SM-ARCH-004, ADR-0043 | A space's lease guard lives while the space has live runs and ends with the last one. The next launch starts a fresh guard and runs under it. |
+| `internal/app` `TestUsageAndTranscript` (extended) | SM-REC-001 | The recording holds terminal output and not the transcript. Deleting the transcript or the recording leaves the other artifacts and the usage unchanged. |
+| `internal/app` `TestHumanActionsOverHTTP` (extended) | SM-INV-011 | Asking, blocking, commenting and answering add nothing to the inbox. The queue still holds only the operator's task. |
+| `internal/agenttools` `TestCatalogs` (extended) | SM-INV-012 | `spaceman_human_ask` is in the catalog of every run kind. |
+| `internal/harness` `TestCapabilitiesAreExplicit` | SM-HARN-003/004, SM-INV-014 | Each adapter advertises exactly its verified capabilities, and none advertises native team messaging. A missing binary advertises nothing. |
+| `internal/config` `TestDeployExamplesLoad` | SM-INV-017 | The example configurations in `deploy/examples` load and validate as shipped. |
+
 ## Real-evidence run (2026-11-03, SM-VER-002)
 
 macOS (Darwin 24.6), Docker 29.8.2 (linux/arm64 VM), hc 0.1.16, Claude Code 2.1.317, nats-server 2.15.1, Playwright 1.64.1.

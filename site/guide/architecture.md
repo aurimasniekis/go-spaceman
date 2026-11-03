@@ -17,7 +17,7 @@ flowchart LR
     SVC["Services: spaces, queue, inbox, human actions, approvals, KB, memory, events, outbox, schedules, backups"]
     GW["MCP gateway and agent tools"]
     DB[("SQLite (WAL) in data_dir")]
-    ART[("Artifacts: recordings, attachments, transcripts (local or S3)")]
+    ART[("Artifacts: recordings, attachments, transcripts (local directory)")]
   end
   subgraph Node["Node: spaceman-agent"]
     AG["Agent daemon and journal"]
@@ -47,8 +47,9 @@ flowchart LR
 ```
 
 - **Central** is one Go binary with the web UI embedded. All state is in one SQLite database under `data_dir`, written
-  through a single writer, plus an artifact store (a directory or an S3 bucket). There is exactly one active central;
-  a process lock on the data directory prevents a second one.
+  through a single writer, plus an artifact store on the local disk (an S3 artifact store is not implemented; backups
+  have their own S3 target). There is exactly one active central; a process lock on the data directory prevents a
+  second one.
 - **Nodes** run `spaceman-agent`. The agent always dials central; central never connects to a node. It runs every
   harness inside its own [herdr-core](https://github.com/herdrdev/herdr-core) core (never the operator's default
   core), records each terminal, and keeps a local journal so a restart adopts what is running instead of starting it

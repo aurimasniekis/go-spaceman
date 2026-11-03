@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -15,6 +16,7 @@ import (
 
 // SM-REC-005, ADR-0028 end to end: a Claude Code run's usage is read from its native transcript (where Claude Code
 // writes it) and its transcript is uploaded after the run ends; a Codex run's usage stays unknown, not zero.
+// SM-REC-001: the run's recording, transcript and usage are kept apart.
 func TestUsageAndTranscript(t *testing.T) {
 	e := newFleetEnv(t)
 	e.enroll()
@@ -41,6 +43,7 @@ func TestUsageAndTranscript(t *testing.T) {
 		return e.run1(cl.ID).Observed == "running" && e.run1(cx.ID).Observed == "running" && e.run1(cl.ID).SessionID != ""
 	})
 	r := e.run1(cl.ID)
+	e.run.Output(e.run.LiveByLabel("spaceman.run", cl.ID)[0].ID, "terminal output only\r\n")
 	transcript := []byte(`{"type":"assistant","message":{"id":"msg_1","model":"claude-haiku-5-5","usage":{"input_tokens":3,"output_tokens":7,"cache_creation_input_tokens":11,"cache_read_input_tokens":13}}}` + "\n" +
 		`{"type":"cost-state","totalCostUSD":0.002,"hasUnknownModelCost":false}` + "\n")
 	p := filepath.Join(e.agentDir, "spaces", sp.Workdir, "instances", r.InstanceID, "claude", "projects", "-work", r.SessionID+".jsonl")
@@ -79,5 +82,41 @@ func TestUsageAndTranscript(t *testing.T) {
 	s, err := e.c.Usage.Space(ctx, sp.ID)
 	if err != nil || s.KnownRuns != 1 || s.UnknownRuns != 1 || s.Output != 7 {
 		t.Fatalf("summary: %+v %v", s, err)
+	}
+
+	// SM-REC-001: the terminal recording, the native transcript and the normalized usage are separate records. The
+	// recording holds terminal output and not the transcript; deleting either artifact leaves the others as they were.
+	recorded := func() string {
+		res, err := e.c.Fleet.Recordings().Read(cl.ID, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var b strings.Builder
+		for _, rec := range res.Records {
+			b.Write(rec.Data)
+		}
+		return b.String()
+	}
+	eventually(t, "terminal output recorded", func() bool { return strings.Contains(recorded(), "terminal output only") })
+	if strings.Contains(recorded(), "cache_creation_input_tokens") {
+		t.Fatal("the transcript was written into the terminal recording")
+	}
+	if err := e.c.Usage.DeleteTranscript(ctx, admin, sp.ID, cl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(recorded(), "terminal output only") {
+		t.Fatal("deleting the transcript removed the recording")
+	}
+	if u, err := e.c.Usage.ForRun(ctx, sp.ID, cl.ID); err != nil || !u.Known || *u.Models[0].Output != 7 || u.Transcript == nil || u.Transcript.State != "deleted" {
+		t.Fatalf("usage after the transcript was deleted: %+v %v", u, err)
+	}
+	if err := e.c.Fleet.Recordings().Delete(cl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if recorded() != "" {
+		t.Fatal("recording not deleted")
+	}
+	if u, err := e.c.Usage.ForRun(ctx, sp.ID, cl.ID); err != nil || !u.Known || *u.Models[0].Output != 7 {
+		t.Fatalf("usage after the recording was deleted: %+v %v", u, err)
 	}
 }

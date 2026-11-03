@@ -12,7 +12,8 @@ import (
 )
 
 // SM-HUM-* over HTTP: a blocking question on a task, If-Match on responses, type-specific outcomes, comments, the global
-// view filtered to readable spaces, and approval decisions that need approval:decide.
+// view filtered to readable spaces, and approval decisions that need approval:decide. SM-INV-011: human actions stay
+// out of the inbox and the queue.
 func TestHumanActionsOverHTTP(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -66,6 +67,19 @@ func TestHumanActionsOverHTTP(t *testing.T) {
 	var ap, apOther human.Action
 	root.do("POST", base+"/human-actions", map[string]any{"type": "approval", "title": "Deploy to production?", "request": map[string]any{"action": "deploy v1.2"}}).json(t, &ap)
 	root.do("POST", "/spaces/"+other.ID+"/human-actions", map[string]any{"type": "todo", "title": "Elsewhere"}).json(t, &apOther)
+	// SM-INV-011: human actions are records of their own. Asking, blocking, commenting and answering added nothing to
+	// either space's inbox, and the queue holds only the operator's task.
+	for _, id := range []string{sp.ID, other.ID} {
+		if p, err := h.c.Inbox.List(ctx, id, "", "", 100); err != nil || len(p.Items) != 0 {
+			t.Fatalf("human actions reached the inbox of %s: %+v %v", id, p, err)
+		}
+	}
+	if l, _, err := h.c.Queue.List(ctx, sp.ID); err != nil || len(l) != 1 || l[0].ID != task.ID {
+		t.Fatalf("human actions changed the queue: %+v %v", l, err)
+	}
+	if l, _, err := h.c.Queue.List(ctx, other.ID); err != nil || len(l) != 0 {
+		t.Fatalf("a human action became a task: %+v %v", l, err)
+	}
 
 	expect(t, root.do("POST", "/users", map[string]any{"email": "vic@example.com", "display_name": "Vic", "password": "correct horse battery staple",
 		"grants": []map[string]string{{"role": "viewer", "domain": sp.ID}}}), 201)

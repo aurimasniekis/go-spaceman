@@ -14,6 +14,11 @@
 - **At-least-once events.** Durable event ingestion is at-least-once, with deduplication on the event ID. Core NATS subscriptions are at-most-once and non-durable (SM-EVT-011, ADR-0042).
 - **No hard currency limits.** Usage data may be delayed or missing. Unknown usage is shown as unknown (SM-REC-005, SM-LIMIT-003).
 - **Single active central instance.** No high availability. Recovery is restore-from-backup (ADR-0001).
+- **No infrastructure provisioning.** SpaceMan never creates machines, containers, networks or cloud resources. Operators
+  install `spaceman-agent` and its harnesses on machines they own and enroll each node (SM-INV-004).
+- **Only SpaceMan's own runs are managed.** A harness or other program started from an agent's shell, or by hand on a
+  node, is not a managed worker: it has no run, lease, run credential or recording, and SpaceMan cannot prevent it
+  (SM-RUN-003, SM-INV-007).
 
 ## Event ingestion
 - **Pulse connections only.** Connections use the go-pulse SDK with Pulse `.creds` (a client tag is required), also for
@@ -114,7 +119,6 @@
 - **Native sessions are not carried.** Runs on the destination start fresh harness sessions (project continuity only).
 - **Without the source, only central's copies.** The unavailable-source flow restores acknowledged memory and the
   repositories the operator lists; everything else on the source may be lost.
-- **No CLI.** Relocation is in the UI, the API and Terraform; a `spaceman space relocate` command waits for the CLI work (M5-02).
 - **Retention by timer runs only in `spaceman serve`.** Expired retained folders are deleted by central's relocation timer;
   the source must be connected to delete them. A source that never returns keeps its folder.
 - **Simulated evidence only.** Two in-process nodes with a fake runner and real Git; no relocation between real machines
@@ -152,6 +156,14 @@
 ## Control and repositories
 - **No repository tracking yet.** SpaceMan records each worker's branch and worktree, but not remotes, dirty state or
   unpushed commits (SM-REPO-003). Worktrees are never cleaned up automatically; remove them with git when done.
+- **Repositories are not configured centrally.** A space can hold any number of Git repositories, but only as folders
+  in its folder on the node: operators or agents clone them there, control names one per worker launch (`repo`), and
+  relocation inspects every repository it finds. Central keeps no list of a space's repositories; only knowledge-base
+  repositories are configured (one per knowledge base, any number per space). There is no repository API, page or
+  Terraform resource (SM-REPO-001, SM-SPACE-001).
+- **No per-space retention settings.** Recordings, transcripts and attachments are kept until an operator deletes them
+  or the space is purged; event deliveries and outbound events follow installation-wide retention. A space's storage
+  quota (limits) bounds new uploads but deletes nothing (SM-SPACE-001).
 - **Restart budget is per space and hour.** Three supervisor restarts per hour; the counter is durable (runs created
   by the supervisor), not configurable yet.
 - **Repository-local Git programs are refused.** The node daemon refuses to run Git in a repository whose own
@@ -168,6 +180,15 @@
   restart), which leaves a gap.
 - **A write failure on central's own disk** stops central's copy of that recording, and nothing marks it there. The
   node keeps its local recording. Tested: node-side only (`make test-fault`).
+
+## Web UI
+- **No single attention summary.** A space's overview shows its node, lease, active runs, accounts, roles and usage, and
+  the section links count new inbox items, open human actions, operator messages and incoming cross-space requests.
+  The next runnable task and skipped tasks with their blockers are on the Queue page, ingestion problems (subscription
+  errors, quarantine) on the Events page, memory sync state and conflicts on the Memory page, and knowledge-base work on
+  the Knowledge page. Nothing gathers them on one view. Of storage problems, the UI shows only a truncated recording on the
+  run's terminal, labelled "Truncated (quota)" even when the node's disk was full; quota use and free space are not
+  shown (SM-UI-003).
 
 ## Messaging
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
@@ -287,6 +308,13 @@
 - **Write-only rotation is explicit.** Terraform cannot see a changed write-only secret: bump its `_wo_version`.
 - **Tested against a local central only** (simulated, `make tf-acc`); no Terraform run against a production
   deployment, a real identity provider or a real Pulse deployment is recorded.
+
+## Extension points
+- **Not every adapter has a Go interface yet** (SM-ARCH-003). Harnesses (`harness.Harness`, compiled-in `Registry`),
+  runners (`runner.Runner`), outbound publication (`outbox.Publisher`), attachment content (`attachments.Blobs`),
+  backup targets (`backup.Target`) and the upstream MCP gateway (`agenttools.Upstream`) do. Inbound events are bound to
+  the go-pulse SDK in `internal/events`, recordings and transcripts are written straight to central's disk, and the MCP
+  gateway speaks only streamable HTTP; none of these has an interface for a second adapter.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The

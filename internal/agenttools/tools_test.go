@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,12 @@ func TestCatalogs(t *testing.T) {
 		t.Fatalf("diagnostic: %s", d)
 	}
 	code(t, f.call(f.diag, "spaceman_inbox_add", map[string]any{"body": "x"}, nil), apperr.CodeForbidden)
+	// SM-INV-012: every kind of space agent can ask a person directly, without going through control.
+	for _, k := range allKinds {
+		if !slices.Contains(strings.Split(names(k), ","), "spaceman_human_ask") {
+			t.Fatalf("%s runs cannot request human attention", k)
+		}
+	}
 }
 
 func TestInboxAndTasks(t *testing.T) {
