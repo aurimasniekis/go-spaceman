@@ -87,6 +87,11 @@ type Options struct {
 	// record is written and further output is dropped — the run itself is never affected (SM-REC-004).
 	MaxBytes int64
 	Now      func() time.Time
+	// ResumeSeq and ResumeSegment continue a recording whose earlier segments are no longer in Dir (central's copy,
+	// archived to the artifact store): the next record is numbered above ResumeSeq and the next segment above
+	// ResumeSegment, whichever of these and Dir's own segments is higher.
+	ResumeSeq     uint64
+	ResumeSegment int
 }
 
 // Writer appends records. It is safe for concurrent use. Writes never block on readers.
@@ -110,6 +115,24 @@ type Writer struct {
 
 // SegmentName returns the file name of segment n.
 func SegmentName(n int) string { return fmt.Sprintf("%s%06d%s", segmentPrefix, n, segmentSuffix) }
+
+// IsSegment reports whether name is a segment file name.
+func IsSegment(name string) bool {
+	_, ok := SegmentIndex(name)
+	return ok
+}
+
+// SegmentIndex returns the number of a segment file name.
+func SegmentIndex(name string) (int, bool) {
+	var n int
+	if !strings.HasPrefix(name, segmentPrefix) || !strings.HasSuffix(name, segmentSuffix) || len(name) != len(SegmentName(1)) {
+		return 0, false
+	}
+	if _, err := fmt.Sscanf(name, segmentPrefix+"%06d"+segmentSuffix, &n); err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
 
 // Segments lists a recording's segment files in order.
 func Segments(dir string) ([]string, error) {
@@ -143,7 +166,7 @@ func Open(o Options) (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Writer{o: o, enc: enc}
+	w := &Writer{o: o, enc: enc, segIndex: o.ResumeSegment, seq: o.ResumeSeq}
 	segs, err := Segments(o.Dir)
 	if err != nil {
 		return nil, err
@@ -153,14 +176,13 @@ func Open(o Options) (*Writer, error) {
 		if err == nil {
 			w.total += fi.Size()
 		}
-		var n int
-		if _, err := fmt.Sscanf(filepath.Base(s), segmentPrefix+"%06d"+segmentSuffix, &n); err == nil && n > w.segIndex {
+		if n, ok := SegmentIndex(filepath.Base(s)); ok && n > w.segIndex {
 			w.segIndex = n
 		}
 	}
 	if len(segs) > 0 {
 		res, _ := Read(o.Dir, 0)
-		if len(res.Records) > 0 {
+		if len(res.Records) > 0 && res.Records[len(res.Records)-1].Seq > w.seq {
 			w.seq = res.Records[len(res.Records)-1].Seq
 		}
 	}
@@ -382,10 +404,20 @@ func Read(dir string, after uint64) (ReadResult, error) {
 	if err != nil {
 		return ReadResult{}, err
 	}
+	return ReadSegments(segs, func(p string) (io.ReadCloser, error) { return os.Open(p) }, after) //nolint:gosec // paths from Segments
+}
+
+// ReadSegments decodes the named segments in order, each opened by open (a file, or an object of the artifact
+// store), returning records with seq > after.
+func ReadSegments(names []string, open func(name string) (io.ReadCloser, error), after uint64) (ReadResult, error) {
 	var res ReadResult
 	var last uint64
-	for _, s := range segs {
-		torn, err := readSegment(s, func(r Record) {
+	for _, s := range names {
+		rc, err := open(s)
+		if err != nil {
+			return res, err
+		}
+		torn, err := readSegment(rc, func(r Record) {
 			if last != 0 && r.Seq != last+1 {
 				res.Gaps++
 			}
@@ -397,6 +429,7 @@ func Read(dir string, after uint64) (ReadResult, error) {
 				res.Records = append(res.Records, r)
 			}
 		})
+		_ = rc.Close()
 		if err != nil {
 			return res, err
 		}
@@ -405,12 +438,14 @@ func Read(dir string, after uint64) (ReadResult, error) {
 	return res, nil
 }
 
-func readSegment(path string, emit func(Record)) (torn bool, err error) {
-	f, err := os.Open(path) //nolint:gosec // path from Segments
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
+// LastSeq returns the sequence number of the last record of one segment (0 when it holds none).
+func LastSeq(r io.Reader) uint64 {
+	var last uint64
+	_, _ = readSegment(r, func(rec Record) { last = rec.Seq })
+	return last
+}
+
+func readSegment(f io.Reader, emit func(Record)) (torn bool, err error) {
 	dec, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return false, err

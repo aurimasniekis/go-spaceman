@@ -53,7 +53,7 @@ func coreEventID(e pulse.Event, h nats.Header) string {
 
 // startCore subscribes a core subscription on the connection's NATS client. A refusal by the server (no subscribe
 // grant) is reported here when it arrives within the check round trip, and through natsError otherwise.
-func (m *Manager) startCore(ctx context.Context, c *connRun, s db.EventSubscription, key string) error {
+func (m *Manager) startCore(ctx context.Context, c *connRun, s db.EventSubscription, key string) (*subRun, error) {
 	nc := c.client.Conn()
 	sctx, stop := context.WithCancel(ctx)
 	run := &subRun{key: key, id: s.ID, subject: s.EffectiveSubject, stop: stop, nc: nc}
@@ -62,22 +62,21 @@ func (m *Manager) startCore(ctx context.Context, c *connRun, s db.EventSubscript
 	nsub, err := nc.Subscribe(s.EffectiveSubject, func(msg *nats.Msg) { m.handleCore(sctx, subID, spaceID, msg) })
 	if err != nil {
 		stop()
-		return fmt.Errorf("core subscribe: %w", err)
+		return nil, fmt.Errorf("core subscribe: %w", err)
 	}
 	run.nsub = nsub
 	if err := nc.FlushTimeout(subscribeCheck); err != nil {
 		run.halt()
-		return fmt.Errorf("core subscribe: %w", err)
+		return nil, fmt.Errorf("core subscribe: %w", err)
 	}
 	if last := nc.LastError(); last != nil && last != before && deniedSubscription(last, s.EffectiveSubject) { //nolint:errorlint // identity: a new error since subscribing
 		run.halt()
-		return deniedError(s.EffectiveSubject)
+		return nil, deniedError(s.EffectiveSubject)
 	}
 	m.coreMu.Lock()
 	m.core[nsub] = run
 	m.coreMu.Unlock()
-	m.subs[s.ID] = run
-	return nil
+	return run, nil
 }
 
 func deniedSubscription(err error, subject string) bool {
@@ -183,6 +182,9 @@ func (m *Manager) refreshMetrics(ctx context.Context, subs []db.EventSubscriptio
 				r.dropped = d
 			}
 			continue
+		}
+		if r.js == nil || r.sub == nil {
+			continue // a source without a JetStream consumer
 		}
 		ictx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		cons, err := r.js.Consumer(ictx, r.stream, r.sub.Consumer())

@@ -45,12 +45,13 @@ var sshIOTypes = map[string]bool{"Client": true, "Session": true, "ServerConn": 
 
 // bannedInternal are module-relative package suffixes that must not be called inside a transaction.
 var bannedInternal = []string{
-	"/internal/nodeconn",   // node protocol sends
-	"/internal/runner",     // herdr-core RPC
-	"/internal/artifacts",  // artifact store I/O (local FS, S3)
-	"/internal/pulsebus",   // Pulse/NATS publish and subscribe
-	"/internal/mcpgw",      // upstream MCP calls
-	"/internal/eventbus",   // in-process fan-out (publish after commit)
+	"/internal/nodeconn",  // node protocol sends
+	"/internal/runner",    // herdr-core RPC
+	"/internal/artifacts", // artifact store I/O (local FS, S3)
+	"/internal/s3client",  // object storage requests (S3 backups and artifacts)
+	"/internal/pulsebus",  // Pulse/NATS publish and subscribe
+	"/internal/mcpgw",     // upstream MCP calls
+	"/internal/eventbus",  // in-process fan-out (publish after commit)
 }
 
 func run(pass *analysis.Pass) (any, error) {

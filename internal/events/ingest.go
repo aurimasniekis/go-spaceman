@@ -271,6 +271,8 @@ type Manager struct {
 	// coreMu guards core, the running core subscriptions by their NATS subscription (read by NATS's error callback).
 	coreMu sync.Mutex
 	core   map[*nats.Subscription]*subRun
+	// sources are the inbound event sources by delivery mode (SM-ARCH-003).
+	sources map[string]Source
 }
 
 type limiter struct {
@@ -355,8 +357,10 @@ func NewManager(svc *Service, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Manager{svc: svc, log: obs.Component(log, "events"), retry: 30 * time.Second, conns: map[string]*connRun{}, subs: map[string]*subRun{},
+	m := &Manager{svc: svc, log: obs.Component(log, "events"), retry: 30 * time.Second, conns: map[string]*connRun{}, subs: map[string]*subRun{},
 		lims: map[string]*limiter{}, core: map[*nats.Subscription]*subRun{}}
+	m.sources = map[string]Source{DeliveryDurable: durableSource{m}, DeliveryCore: coreSource{m}}
+	return m
 }
 
 // Run reconciles consumers until ctx ends.
@@ -441,15 +445,18 @@ func (m *Manager) reconcile(ctx context.Context) {
 			continue
 		}
 		m.stopSub(s.ID)
-		start := m.start
-		if s.Delivery == DeliveryCore {
-			start = m.startCore
+		src := m.sources[s.Delivery]
+		if src == nil {
+			m.svc.setState(s.ID, "error", fmt.Sprintf("no inbound event source for delivery %q", s.Delivery))
+			continue
 		}
-		if err := start(ctx, c, s, key); err != nil {
+		run, err := src.Start(ctx, c, s, key)
+		if err != nil {
 			m.svc.setState(s.ID, "error", err.Error())
 			m.log.Warn("event subscription failed", slog.String("subscription", s.ID), obs.Err(err))
 			continue
 		}
+		m.subs[s.ID] = run
 		m.svc.setState(s.ID, "running", "")
 	}
 	for id := range m.subs {
@@ -495,7 +502,7 @@ func (m *Manager) connect(c db.EventConnection) (*pulse.Client, error) {
 
 // start runs a subscription's durable consumer. A pending cursor change deletes the consumer first, so the SDK
 // creates it again at the chosen position (ADR-0011: an existing durable is bound without updating its config).
-func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription, key string) error {
+func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription, key string) (*subRun, error) {
 	opts := []pulse.SubOption{pulse.Durable(s.Durable), pulse.FromStream(c.row.Stream)}
 	var boundary time.Time
 	if s.AppliedGeneration < s.CursorGeneration {
@@ -503,7 +510,7 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		err := c.client.JetStream().DeleteConsumer(dctx, c.row.Stream, c.client.ClientID()+"_"+s.Durable)
 		cancel()
 		if err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
-			return fmt.Errorf("reset consumer: %w", err)
+			return nil, fmt.Errorf("reset consumer: %w", err)
 		}
 		switch s.StartPolicy {
 		case StartNew:
@@ -559,7 +566,7 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 	}, opts...)
 	if err != nil {
 		stop()
-		return err
+		return nil, err
 	}
 	if s.AppliedGeneration < s.CursorGeneration {
 		if err := m.svc.s.W().TxNamed(ctx, "events.cursor_applied", func(tx *store.Tx) error {
@@ -573,9 +580,8 @@ func (m *Manager) start(ctx context.Context, c *connRun, s db.EventSubscription,
 		}); err != nil {
 			sub.Stop()
 			stop()
-			return err
+			return nil, err
 		}
 	}
-	m.subs[s.ID] = &subRun{key: key, id: s.ID, subject: s.EffectiveSubject, sub: sub, stop: stop, js: c.client.JetStream(), stream: c.row.Stream}
-	return nil
+	return &subRun{key: key, id: s.ID, subject: s.EffectiveSubject, sub: sub, stop: stop, js: c.client.JetStream(), stream: c.row.Stream}, nil
 }

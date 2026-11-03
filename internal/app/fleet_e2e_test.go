@@ -350,7 +350,7 @@ func TestRecordingShippedReplayedAndStreamed(t *testing.T) {
 	term := e.run.LiveByLabel("spaceman.run", r.ID)[0].ID
 	e.run.Output(term, "hello from the run\r\n")
 	stored := func(want string) bool {
-		res, err := e.c.Fleet.Recordings().Read(r.ID, 0)
+		res, err := e.c.Fleet.Recordings().Read(context.Background(), r.ID, 0)
 		if err != nil {
 			return false
 		}

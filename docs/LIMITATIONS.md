@@ -354,6 +354,9 @@
   a stopped central.
 - **Restore needs `git`** when the backup holds role memory, and attachments outside the data directory are restored to
   the configured `artifacts.local_dir` only.
+- **Backups copy the S3 artifact store whole.** With `artifacts.backend: s3` every artifact in the bucket is
+  downloaded into each backup (ADR-0048), which takes time and backup space for a large bucket. A restore writes
+  the artifacts to the local folders; run `spaceman artifacts migrate --to s3` before starting central.
 
 ## Packaging and deployment
 - **Linux only, and not yet run on a physical or cloud Linux host.** The production target is Linux on amd64 and arm64
@@ -380,10 +383,18 @@
 - **Accepted but unused central settings.** `auth.local_login_disabled` and `nodes.command_timeout` are validated but
   have no effect: password sign-in is turned off at run time on the Sign-in providers page or with
   `spaceman oidc settings set --sso-only` (which checks first that an administrator can still sign in), not by
-  configuration, and node commands use fixed timeouts. `artifacts.backend: s3` passes validation, but central
-  refuses to start with it because the S3 artifact store is not implemented; recordings, attachments and transcripts
-  are stored on the local disk. Backups have their own, implemented S3 target. See the
-  configuration reference (`site/reference/configuration.md`).
+  configuration, and node commands use fixed timeouts. See the configuration reference
+  (`site/reference/configuration.md`).
+- **The S3 artifact store** (`artifacts.backend: s3`, ADR-0048) is verified against MinIO only (`TestRealS3Artifacts`
+  in `make test-real-s3`); AWS S3 and Cloudflare R2, virtual-hosted addressing and listings past 1000 keys are
+  unverified. Objects are not encrypted by SpaceMan (as on the local disk): use a private bucket, with server-side
+  encryption if wanted. One prefix serves one installation (garbage collection deletes unreferenced attachment
+  content under it). Each object is a single PUT (at most 5 GiB). Central still needs local disk for the spool:
+  recordings being shipped, transcripts being received and uploads in progress. Recordings are archived to the bucket
+  only once their run ends; a recording or transcript whose upload failed stays on the local disk (and is served from
+  there) until central's next start. Switching the backend moves nothing: stop central and run
+  `spaceman artifacts migrate`. Recordings and transcripts of runs that are not in a restored database stay in the
+  bucket.
 - **Upgrades are unexercised.** No upgrade from one release to another has run. Central and nodes on different versions
   are untested.
 
@@ -413,11 +424,11 @@
   deployment, a real identity provider or a real Pulse deployment is recorded.
 
 ## Extension points
-- **Not every adapter has a Go interface yet** (SM-ARCH-003). Harnesses (`harness.Harness`, compiled-in `Registry`),
-  runners (`runner.Runner`), outbound publication (`outbox.Publisher`), attachment content (`attachments.Blobs`),
-  backup targets (`backup.Target`) and the upstream MCP gateway (`agenttools.Upstream`) do. Inbound events are bound to
-  the go-pulse SDK in `internal/events`, recordings and transcripts are written straight to central's disk, and the MCP
-  gateway speaks only streamable HTTP; none of these has an interface for a second adapter.
+- **One implementation per interface, mostly.** Every adapter kind has a Go interface (SM-ARCH-003, ADR-0048):
+  harnesses (`harness.Harness`), runners (`runner.Runner`), artifact storage (`artifacts.Store`: local and S3),
+  outbound publication (`outbox.Publisher`), inbound event sources (`events.Source`: Pulse durable consumers and core
+  NATS) and MCP upstream transports (`gateway.Transport`). Adapters are compiled in. The gateway speaks only streamable
+  HTTP to upstream servers (no stdio or SSE-only transport), and Pulse is the only inbound event system.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The

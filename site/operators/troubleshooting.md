@@ -29,7 +29,9 @@ flowchart TD
 | `database schema is newer than this binary` | An older binary on a newer database. Run the newer version, or restore a backup ([rollback](./upgrade#rollback)). Do not work around it. |
 | `migration failed (… pre-migration snapshot in …)` | The database stays at the last good version. See [upgrade and rollback](./upgrade). |
 | `… restore from the latest verified backup` | The database is corrupt. [Restore](./backup#restore) a verified backup. |
-| `artifacts.backend "s3" is not implemented yet; use "local"` | The S3 artifact store does not exist yet ([limitations](/reference/limitations)). Use `local`. |
+| `artifacts.s3.access_key_file: …` or `artifacts.s3: endpoint must use https` | The S3 artifact store's settings are wrong or a key file is unreadable by the service user ([Artifact storage](./storage#s3-compatible-storage)). The error never shows a key. |
+| Warning `attachment content is on the local disk while artifacts.backend is s3` | Attachments were restored or written before the switch to S3 and are not served. Stop central and run `spaceman artifacts migrate --to s3` ([moving artifacts](./storage#moving-artifacts-between-the-disk-and-s3)). |
+| Warning `recording not archived to the artifact store` or `transcript kept on the local disk` | The bucket refused an upload. The artifact stays on the local disk, is served from there and is uploaded at the next start. Check the bucket and its credentials. |
 
 A warning `role memory cannot be stored centrally until git is installed` does not stop central, but role memory is not
 preserved and backups leave it out until `git` is installed.

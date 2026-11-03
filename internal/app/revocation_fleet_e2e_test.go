@@ -44,7 +44,7 @@ func TestTerminalStreamEndsOnRevocation(t *testing.T) {
 	}
 	eventually(t, "running", func() bool { return e.run1(r.ID).Observed == "running" })
 	eventually(t, "recording shipped", func() bool {
-		res, err := e.c.Fleet.Recordings().Read(r.ID, 0)
+		res, err := e.c.Fleet.Recordings().Read(context.Background(), r.ID, 0)
 		return err == nil && len(res.Records) > 0
 	})
 	termURL := e.srv.URL + api.Prefix + "/spaces/" + sp.ID + "/runs/" + r.ID + "/terminal"

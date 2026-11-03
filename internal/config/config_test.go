@@ -184,3 +184,49 @@ func TestClientVariablesIgnoredByCentral(t *testing.T) {
 		t.Fatalf("typo accepted: %v", err)
 	}
 }
+
+// SM-STORE-002 (ADR-0048): the S3 artifact backend needs a bucket, absolute key files and a safe prefix that does not
+// overlap the backups' prefix in the same bucket.
+func TestArtifactsS3Validation(t *testing.T) {
+	base := func() *Config {
+		cfg := Default()
+		cfg.PublicURL = "https://spaceman.example.com"
+		cfg.Artifacts.Backend = "s3"
+		cfg.Artifacts.S3 = S3Config{Endpoint: "https://s3.example.com", Bucket: "sm", Prefix: "spaceman/artifacts/",
+			AccessKeyFile: "/etc/spaceman/s3-ak", SecretKeyFile: "/etc/spaceman/s3-sk"}
+		return cfg
+	}
+	if err := base().Validate(); err != nil {
+		t.Fatalf("valid s3 backend: %v", err)
+	}
+	for name, c := range map[string]struct {
+		mod  func(*Config)
+		want string
+	}{
+		"bucket":   {func(c *Config) { c.Artifacts.S3.Bucket = "" }, "artifacts.s3.bucket"},
+		"key file": {func(c *Config) { c.Artifacts.S3.SecretKeyFile = "sk" }, "absolute paths"},
+		"no keys":  {func(c *Config) { c.Artifacts.S3.AccessKeyFile, c.Artifacts.S3.SecretKeyFile = "", "" }, "absolute paths"},
+		"ca":       {func(c *Config) { c.Artifacts.S3.CAFile = "ca.pem" }, "artifacts.s3.ca_file"},
+		"prefix":   {func(c *Config) { c.Artifacts.S3.Prefix = "../x/" }, "artifacts.s3.prefix must"},
+		"no slash": {func(c *Config) { c.Artifacts.S3.Prefix = "x" }, "artifacts.s3.prefix must"},
+		"insecure": {func(c *Config) { c.Artifacts.S3.InsecureAllowed = true }, "development-only"},
+		"overlap": {func(c *Config) {
+			c.Backups.Target = "s3"
+			c.Backups.S3 = c.Artifacts.S3
+			c.Backups.S3.Prefix = "spaceman/"
+		}, "overlap"},
+	} {
+		cfg := base()
+		c.mod(cfg)
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	cfg := base()
+	cfg.Backups.Target = "s3"
+	cfg.Backups.S3 = cfg.Artifacts.S3
+	cfg.Backups.S3.Prefix = "spaceman/backups/"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("separate prefixes in one bucket: %v", err)
+	}
+}

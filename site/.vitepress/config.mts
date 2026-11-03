@@ -107,6 +107,7 @@ export default withMermaid(
             { text: 'Relocating a space', link: '/operators/relocation' },
             { text: 'Accounts', link: '/operators/accounts' },
             { text: 'Terminals and recordings', link: '/operators/terminals' },
+            { text: 'Artifact storage', link: '/operators/storage' },
             { text: 'Backups and restore', link: '/operators/backup' },
             { text: 'Observability', link: '/operators/observability' },
             { text: 'Terraform', link: '/operators/terraform' },

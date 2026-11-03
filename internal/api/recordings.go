@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -52,7 +51,7 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 				if in.Limit == 0 {
 					in.Limit = 1000
 				}
-				res, err := f.Recordings().Read(in.RunID, in.After)
+				res, err := f.Recordings().Read(ctx, in.RunID, in.After)
 				if err != nil {
 					return nil, d.fail(ctx, "recordings.get", err)
 				}
@@ -138,7 +137,7 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 		return err
 	}
 	catchUp := func() bool {
-		res, err := f.Recordings().Read(runID, after)
+		res, err := f.Recordings().Read(ctx, runID, after)
 		if err != nil {
 			return false
 		}
@@ -217,12 +216,7 @@ func (d *Deps) recordingDownload(w http.ResponseWriter, r *http.Request, f *flee
 		writeProblem(w, newProblem(http.StatusNotFound, "not_found", "run not found", nil))
 		return
 	}
-	dir, err := f.Recordings().Dir(runID)
-	if err != nil {
-		writeProblem(w, newProblem(http.StatusNotFound, "not_found", "run not found", nil))
-		return
-	}
-	segs, err := recording.Segments(dir)
+	segs, err := f.Recordings().Segments(ctx, runID)
 	if err != nil || len(segs) == 0 {
 		writeProblem(w, newProblem(http.StatusNotFound, "not_found", "no recording stored for this run", nil))
 		return
@@ -230,7 +224,7 @@ func (d *Deps) recordingDownload(w http.ResponseWriter, r *http.Request, f *flee
 	w.Header().Set("Content-Type", "application/zstd")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", runID+".smrec.zst"))
 	for _, s := range segs {
-		fh, err := os.Open(s) //nolint:gosec // path from recording.Segments under the store
+		fh, err := f.Recordings().OpenSegment(ctx, runID, s)
 		if err != nil {
 			return
 		}

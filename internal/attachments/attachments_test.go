@@ -34,14 +34,21 @@ type fx struct {
 	blob string
 }
 
-func newFx(t *testing.T, o Options) *fx {
+func newFx(t *testing.T, o Options) *fx { t.Helper(); return newFxWith(t, o, nil) }
+
+// newFxWith uses the blobs mk returns for the fixture's directory (nil: the local store).
+func newFxWith(t *testing.T, o Options, mk func(dir string) Blobs) *fx {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC))
 	s := storetest.Open(t, storetest.WithClock(clk))
 	kr := keyringtest.Load(t, s)
 	dir := t.TempDir()
 	o.Clock = clk
-	f := &fx{ctx: context.Background(), s: s, svc: New(s, NewLocal(dir), audit.NewWriter(kr), o), clk: clk, blob: dir}
+	var blobs Blobs = NewLocal(dir)
+	if mk != nil {
+		blobs = mk(dir)
+	}
+	f := &fx{ctx: context.Background(), s: s, svc: New(s, blobs, audit.NewWriter(kr), o), clk: clk, blob: dir}
 	err := s.W().TxNamed(f.ctx, "test.seed", func(tx *store.Tx) error {
 		for _, q := range []string{
 			`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`,

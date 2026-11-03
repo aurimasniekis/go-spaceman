@@ -2,12 +2,10 @@ package backup
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
-	"github.com/aurimasniekis/go-spaceman/internal/s3client"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -27,40 +25,11 @@ func TargetFromConfig(c *config.Config) (Target, error) {
 		if err := ValidatePrefix(s.Prefix); err != nil {
 			return nil, fmt.Errorf("backups.s3.prefix: %w", err)
 		}
-		ak, err := readSecretFile(s.AccessKeyFile)
+		cl, err := artifacts.NewS3Client("backups.s3", s, c.IsProduction())
 		if err != nil {
-			return nil, fmt.Errorf("backups.s3.access_key_file: %w", err)
-		}
-		sk, err := readSecretFile(s.SecretKeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("backups.s3.secret_key_file: %w", err)
-		}
-		var ca string
-		if s.CAFile != "" {
-			pem, err := os.ReadFile(s.CAFile)
-			if err != nil {
-				return nil, fmt.Errorf("backups.s3.ca_file: %w", err)
-			}
-			ca = string(pem)
-		}
-		cl, err := s3client.New(s3client.Config{Endpoint: s.Endpoint, Region: s.Region, Bucket: s.Bucket, PathStyle: s.UsePathStyle, AccessKeyID: ak,
-			SecretAccessKey: sk, CABundlePEM: ca, AllowPrivateNetwork: s.AllowPrivateNetwork, AllowInsecureHTTP: s.InsecureAllowed && !c.IsProduction()})
-		if err != nil {
-			return nil, fmt.Errorf("backups.s3: %w", err)
+			return nil, err
 		}
 		return S3Target{Objects: cl, Bucket: s.Bucket, Prefix: s.Prefix, Staging: filepath.Join(c.DataDir, store.BackupsDir, ".staging")}, nil
 	}
 	return nil, fmt.Errorf("unknown backups.target %q", b.Target)
-}
-
-func readSecretFile(p string) (string, error) {
-	b, err := readSmall(p, 4096)
-	if err != nil {
-		return "", err
-	}
-	v := strings.TrimSpace(string(b))
-	if v == "" {
-		return "", fmt.Errorf("%s is empty", p)
-	}
-	return v, nil
 }

@@ -111,6 +111,8 @@ type Service struct {
 	audit   *audit.Writer
 	changes *changefeed.Recorder
 	rt      *runtime
+	// transport reaches upstream servers (SM-ARCH-003).
+	transport Transport
 	// Gate enforces approval policies on gateway tools (ADR-0024); nil gates nothing.
 	Gate interface {
 		Gate(ctx context.Context, p *fleet.RunPrincipal, op, resource string, args json.RawMessage) (func(error), error)
@@ -122,11 +124,16 @@ type Options struct {
 	MaxSessions int           // open upstream sessions across all runs (default 256)
 	IdleClose   time.Duration // an unused session is closed after this (default 10m)
 	Log         *slog.Logger
+	// Transport reaches upstream servers; nil is StreamableHTTP, the only transport compiled in.
+	Transport Transport
 }
 
 // New returns the service.
 func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, ch *changefeed.Recorder, o Options) *Service {
-	svc := &Service{s: s, kr: kr, audit: aw, changes: ch}
+	if o.Transport == nil {
+		o.Transport = StreamableHTTP{}
+	}
+	svc := &Service{s: s, kr: kr, audit: aw, changes: ch, transport: o.Transport}
 	svc.rt = newRuntime(svc, o)
 	return svc
 }

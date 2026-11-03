@@ -1,9 +1,9 @@
 // Derived from github.com/aurimasniekis/go-hallpass internal/s3client at bdd8329 (Apache-2.0, same author).
 
 // Package s3client is a small S3-compatible object storage client (AWS S3, Cloudflare R2, MinIO and others) for remote
-// backups: put, get, head, list and delete, signed with AWS Signature Version 4. TLS verification is always on, there
-// is no HTTP proxy and no redirect following, and private networks are refused at connect time unless allowed, like
-// the OIDC client.
+// backups and the S3 artifact store: put, get (whole or from an offset), head, list and delete, signed with AWS
+// Signature Version 4. TLS verification is always on, there is no HTTP proxy and no redirect following, and private
+// networks are refused at connect time unless allowed, like the OIDC client.
 package s3client
 
 import (
@@ -198,6 +198,12 @@ func (c *Client) objectURL(key string, q url.Values) (*url.URL, string) {
 }
 
 func (c *Client) do(ctx context.Context, method, key string, q url.Values, body io.Reader, size int64, payloadHash string) (*http.Response, error) {
+	return c.doHeader(ctx, method, key, q, body, size, payloadHash, nil)
+}
+
+// doHeader is do with extra request headers. They are not signed (S3 requires only host and the x-amz-* headers in
+// the signature).
+func (c *Client) doHeader(ctx context.Context, method, key string, q url.Values, body io.Reader, size int64, payloadHash string, hdr http.Header) (*http.Response, error) {
 	u, raw := c.objectURL(key, q)
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
@@ -205,6 +211,11 @@ func (c *Client) do(ctx context.Context, method, key string, q url.Values, body 
 	}
 	if body != nil {
 		req.ContentLength = size
+	}
+	for k, vs := range hdr {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 	sign(req, raw, payloadHash, c.cfg.AccessKeyID, c.cfg.SecretAccessKey, c.cfg.Region, c.cfg.Now())
 	resp, err := c.http.Do(req)
@@ -245,6 +256,45 @@ func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, int64, err
 		return nil, 0, err
 	}
 	return resp.Body, resp.ContentLength, nil
+}
+
+// GetRange opens key for reading from byte offset off to its end (an HTTP Range request); n is the number of bytes
+// the body holds. off must be below the object's size (S3 answers 416 otherwise).
+func (c *Client) GetRange(ctx context.Context, key string, off int64) (io.ReadCloser, int64, error) {
+	if off < 0 {
+		return nil, 0, fmt.Errorf("negative range offset %d", off)
+	}
+	resp, err := c.doHeader(ctx, http.MethodGet, key, nil, nil, 0, EmptySHA256, http.Header{"Range": {"bytes=" + strconv.FormatInt(off, 10) + "-"}})
+	if err != nil {
+		return nil, 0, err
+	}
+	switch {
+	case resp.StatusCode == http.StatusPartialContent:
+	case resp.StatusCode == http.StatusOK && off == 0:
+		// A range that covers the whole object may be answered with the whole object.
+	default:
+		_ = resp.Body.Close()
+		return nil, 0, fmt.Errorf("object storage ignored the range request for %s (HTTP %d)", key, resp.StatusCode)
+	}
+	return resp.Body, resp.ContentLength, nil
+}
+
+// Stat returns key's size and modification time, or ErrNotFound.
+func (c *Client) Stat(ctx context.Context, key string) (Object, error) {
+	resp, err := c.do(ctx, http.MethodHead, key, nil, nil, 0, EmptySHA256)
+	if err != nil {
+		var e *Error
+		if errors.As(err, &e) && e.Status == http.StatusNotFound {
+			return Object{}, fmt.Errorf("%w: %s", ErrNotFound, key)
+		}
+		return Object{}, err
+	}
+	_ = resp.Body.Close()
+	o := Object{Key: key, Size: resp.ContentLength}
+	if t, err := http.ParseTime(resp.Header.Get("Last-Modified")); err == nil {
+		o.LastModified = t.UTC()
+	}
+	return o, nil
 }
 
 // Head returns the size of key, or ErrNotFound.

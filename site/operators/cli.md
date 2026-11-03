@@ -6,8 +6,8 @@ Every command is bound to an operation of the [HTTP API](/reference/api) of its 
 [command-line reference](/reference/cli/) is generated from the command definitions and lists the operations each command
 calls.
 
-The local commands work on the server itself: `serve` runs central, and `admin`, `keys` and `backup` work on the data
-directory directly (offline).
+The local commands work on the server itself: `serve` runs central, and `admin`, `keys`, `backup` and `artifacts` work
+on the data directory directly (offline).
 
 ## Installation
 
@@ -172,4 +172,5 @@ recording to a file instead.
 
 `spaceman system backup list|create|verify` asks a running central (the **Backups** page's operations). The offline
 `spaceman backup` commands read the data directory with the KEK, and restoring stays offline
-(`spaceman backup restore`, see [Backups and restore](./backup)).
+(`spaceman backup restore`, see [Backups and restore](./backup)). `spaceman artifacts migrate` moves stored artifacts
+between the local disk and an S3 bucket while central is stopped ([Artifact storage](./storage)).

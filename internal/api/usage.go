@@ -76,8 +76,7 @@ func TranscriptDownload(svc *usage.Service) RawRoute {
 				h.Set("X-Content-Type-Options", "nosniff")
 				h.Set("Cache-Control", "private, no-store")
 				h.Set("ETag", `"`+t.SHA256+`"`)
-				st, _ := f.Stat()
-				http.ServeContent(w, r, "", st.ModTime(), f)
+				http.ServeContent(w, r, "", f.Info().ModTime, f)
 			}
 		}}
 }

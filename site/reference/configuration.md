@@ -88,17 +88,17 @@ Configures node connectivity and execution leases (ADR-0006).
 
 ### `artifacts`
 
-Selects the artifact store (SM-STORE-002).
+Selects the artifact store (SM-STORE-002, ADR-0048): where attachment content, central's copies of recordings and run transcripts are kept.
 
 | Key | Default | Environment | Description |
 |---|---|---|---|
-| `artifacts.backend` | `local` | `SPACEMAN_ARTIFACTS_BACKEND` | "local" (default: &lt;data_dir&gt;/artifacts). "s3" passes validation but central refuses to start with it: the S3 artifact store is not implemented (backups have their own S3 target). |
-| `artifacts.local_dir` | (empty) | `SPACEMAN_ARTIFACTS_LOCAL_DIR` | The local backend's directory (default &lt;data_dir&gt;/artifacts). |
+| `artifacts.backend` | `local` | `SPACEMAN_ARTIFACTS_BACKEND` | "local" (default: attachments in local_dir, recordings and transcripts in &lt;data_dir&gt;) or "s3" (the bucket in s3; recordings being shipped and transcripts being received are spooled in &lt;data_dir&gt; until complete). Switching backends does not move stored artifacts: stop central and run `spaceman artifacts migrate`. |
+| `artifacts.local_dir` | (empty) | `SPACEMAN_ARTIFACTS_LOCAL_DIR` | The local backend's attachment directory (default &lt;data_dir&gt;/artifacts); with s3 it holds the upload spool (tmp/). |
 | `artifacts.s3.endpoint` | (empty) | `SPACEMAN_ARTIFACTS_S3_ENDPOINT` | The S3 API endpoint URL (required for s3). |
 | `artifacts.s3.region` | (empty) | `SPACEMAN_ARTIFACTS_S3_REGION` | The bucket's region. |
 | `artifacts.s3.bucket` | (empty) | `SPACEMAN_ARTIFACTS_S3_BUCKET` | The bucket name (required for s3). |
 | `artifacts.s3.prefix` | (empty) | `SPACEMAN_ARTIFACTS_S3_PREFIX` | Prepended to every object key. |
-| `artifacts.s3.access_key_file` | (empty) | `SPACEMAN_ARTIFACTS_S3_ACCESS_KEY_FILE` | Holds the access key ID (set together with secret_key_file). |
+| `artifacts.s3.access_key_file` | (empty) | `SPACEMAN_ARTIFACTS_S3_ACCESS_KEY_FILE` | Holds the access key ID (an absolute path, required with secret_key_file). |
 | `artifacts.s3.secret_key_file` | (empty) | `SPACEMAN_ARTIFACTS_S3_SECRET_KEY_FILE` | Holds the secret access key. |
 | `artifacts.s3.use_path_style` | `false` | `SPACEMAN_ARTIFACTS_S3_USE_PATH_STYLE` | Addresses the bucket in the path instead of the host name (MinIO and most self-hosted stores). |
 | `artifacts.s3.insecure_allowed` | `false` | `SPACEMAN_ARTIFACTS_S3_INSECURE_ALLOWED` | Permits a plain http endpoint (development mode only). |
@@ -143,7 +143,7 @@ Configures where central keeps backups and the backup schedule (SM-STORE-005, AD
 | `backups.s3.region` | (empty) | `SPACEMAN_BACKUPS_S3_REGION` | The bucket's region. |
 | `backups.s3.bucket` | (empty) | `SPACEMAN_BACKUPS_S3_BUCKET` | The bucket name (required for s3). |
 | `backups.s3.prefix` | (empty) | `SPACEMAN_BACKUPS_S3_PREFIX` | Prepended to every object key. |
-| `backups.s3.access_key_file` | (empty) | `SPACEMAN_BACKUPS_S3_ACCESS_KEY_FILE` | Holds the access key ID (set together with secret_key_file). |
+| `backups.s3.access_key_file` | (empty) | `SPACEMAN_BACKUPS_S3_ACCESS_KEY_FILE` | Holds the access key ID (an absolute path, required with secret_key_file). |
 | `backups.s3.secret_key_file` | (empty) | `SPACEMAN_BACKUPS_S3_SECRET_KEY_FILE` | Holds the secret access key. |
 | `backups.s3.use_path_style` | `false` | `SPACEMAN_BACKUPS_S3_USE_PATH_STYLE` | Addresses the bucket in the path instead of the host name (MinIO and most self-hosted stores). |
 | `backups.s3.insecure_allowed` | `false` | `SPACEMAN_BACKUPS_S3_INSECURE_ALLOWED` | Permits a plain http endpoint (development mode only). |

@@ -28,7 +28,7 @@ func (svc *Service) DeleteRecording(ctx context.Context, actor audit.Actor, spac
 	if !r.EndedAt.Valid {
 		return apperr.New(apperr.CodeConflict, "the run is still active; its recording can be deleted once it ended")
 	}
-	if err := svc.rec.Delete(runID); err != nil {
+	if err := svc.rec.Delete(ctx, runID); err != nil {
 		return err
 	}
 	return svc.s.W().TxNamed(ctx, "fleet.recording_delete", func(tx *store.Tx) error {

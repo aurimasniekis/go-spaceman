@@ -175,8 +175,8 @@
     images are allowed inline. Responses carry `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`.
   - **Implementation notes (M2-01).** Content is written before the database transaction (no I/O inside it). Garbage collection
     removes unreferenced rows after 24 h, then content no row points to, skipping content touched in the last hour so a
-    concurrent upload of the same bytes is never lost. Only the local backend exists; central refuses `artifacts.backend: s3`
-    until it is implemented (M4). Per-space quota: `artifacts.space_quota_bytes` (1 GiB); per-upload limit: `http.max_upload_bytes`.
+    concurrent upload of the same bytes is never lost. Only the local backend existed at first; the S3 backend followed
+    with ADR-0048. Per-space quota: `artifacts.space_quota_bytes` (1 GiB); per-upload limit: `http.max_upload_bytes`.
 
 ### ADR-0014 — Memory sync via git bundles over the node protocol
 - **Status:** accepted
@@ -1740,6 +1740,97 @@
 - **Consequences:** a change to the administrative API is no longer caught by this repository's `make check` if it
   breaks the provider; run the provider's `make acc` against the change. Traceability rows that cite provider tests
   name tests in that repository.
+
+### ADR-0048 — The artifact store: local directories or an S3 bucket behind one interface; backups copy S3 artifacts; Go interfaces for inbound sources and MCP transports (security-relevant change)
+- **Status:** Accepted, 2026-11-03 (gap closure for SM-STORE-002 and SM-ARCH-003; amends ADR-0013's implementation
+  notes, ADR-0028 and ADR-0031; no migration, no node protocol change).
+- **Context:** `artifacts.backend: s3` passed validation but central refused to start with it: attachment content,
+  central's copies of recordings and run transcripts were written straight to central's disk, and S3 existed only as a
+  backup target (`internal/s3client`, ported from Hallpass). SM-ARCH-003 also asks for Go interfaces for artifact
+  storage, inbound event sources and MCP transports; recordings and transcripts had none, inbound events were bound to
+  the go-pulse SDK inside the ingestion manager, and the gateway built its streamable HTTP transport inline.
+- **Decision — the store.**
+  - `internal/artifacts.Store` is the artifact store: immutable objects under keys in three namespaces,
+    `attachments/sha256/<aa>/<sha256>`, `recordings/<run>/seg-NNNNNN.smrec.zst` and `transcripts/<run>.jsonl`, with
+    `Put` (size and SHA-256 known), `Open` (a seekable reader), `Stat`, `List` and `Delete`. Anything else under the
+    prefix (temporary files, other tools' objects) is not an artifact and is never listed or written.
+  - Two stores are compiled in. `Local` maps each namespace to a directory: attachments to `artifacts.local_dir`
+    (default `<data>/artifacts`), recordings and transcripts to `<data>/recordings` and `<data>/transcripts`, which is
+    the layout central already used, so the default backend needs no migration. `S3` keeps the same keys under
+    `artifacts.s3.prefix` in one bucket through `internal/s3client`.
+  - Writes never append to an object and never hold a whole file in memory. An attachment upload is streamed into a
+    spool file in `<artifacts.local_dir>/tmp` while it is hashed and size-limited, then handed over (`PutFile`): the local
+    store renames it into place, the S3 store uploads it in one PUT whose `x-amz-content-sha256` is the content's
+    SHA-256, which the service verifies. Single PUTs bound an object to 5 GiB; attachments are bounded by
+    `http.max_upload_bytes`, transcripts by 64 MiB and recording segments by 8 MiB, so no multipart upload is needed.
+  - Reads stream. A seek turns the next read into a range GET from the new offset, so `http.ServeContent` answers
+    `Range` requests for attachments and transcripts without downloading the object. A full sequential read of an
+    attachment or a transcript is checked against its SHA-256 (`artifacts.Verified`): damaged content fails on the read
+    that reaches the end, and those last bytes are withheld, so a download ends short instead of completing. Recording
+    replay decodes every segment from its start and uses no ranges; zstd frame checksums cover segments.
+  - Content addressing and deduplication are unchanged: an upload of content already stored is not uploaded again
+    when the stored object is less than 30 minutes old, and is uploaded again (refreshing its modification time) when
+    it is older. Garbage collection removes unreferenced content only when it is older than an hour, so it never
+    removes content an upload has just found.
+  - Quotas are unchanged: the attachment quota counts attachment rows in the database inside the upload transaction,
+    whichever backend holds the bytes; the recording quota is the node's.
+- **Decision — recordings and transcripts.**
+  - Central's copy of a recording is spooled in `<data>/recordings/<run>/` while the node ships it (S3 has no append).
+    With the S3 store it is archived when its close record arrives or its run ends: each segment is uploaded and then
+    removed locally, in the background, outside any transaction. Reads, downloads and replays merge the spool and the
+    bucket by segment name, so a recording reads the same before, during and after its archive. A node that re-ships
+    its tail after the archive (it missed the acknowledgement) is deduplicated: the writer resumes from the last
+    sequence of the last archived segment and numbers new segments after it. A failed archive leaves the spool;
+    central archives the spooled recordings of ended runs at its next start.
+  - A transcript is received into `<data>/transcripts/<run>.jsonl.part` as before and checked against its size and
+    SHA-256; then it is handed to the store. If the bucket refuses it, the transcript is kept as `<run>.jsonl` on the
+    local disk, recorded as stored, served from there, and uploaded at the next start. The node is never asked to
+    send it again.
+  - Deletes (an operator's, retention's and purge's) remove the objects as well as any local copy. Purging a space
+    now deletes its runs' recordings and transcripts after the purge commits, with either store; before, a purge left
+    them in the data directory.
+- **Decision — credentials and isolation.** The bucket is configured like the backups' (`artifacts.s3`): keys come from
+  files read at start, are never logged or put in an error, and `Location` shows only `s3://bucket/prefix`. TLS is always
+  verified, a private-network endpoint needs `allow_private_network`, plain HTTP is development-only. The artifacts'
+  prefix must not overlap `backups.s3.prefix` in the same bucket (configuration validation).
+- **Decision — backups.** Backups still include every artifact, whatever the backend (SM-STORE-003 is not weakened):
+  with the S3 store, every object is streamed from the bucket into the backup and sealed like a local file, in the
+  same layout (`artifacts/`, `recordings/`, `transcripts/`), and attachment content is checked against its address on
+  the way. A path the local spool already provided is not copied twice. The manifest records the store
+  (`artifact_store: {kind, location, included: true, objects}`). There is no "reference only" mode: a backup that
+  depended on the bucket surviving would not be a backup of the artifacts. A restore writes the artifacts to the local
+  folders, as before.
+- **Decision — migration.** Switching `artifacts.backend` moves nothing. The offline command
+  `spaceman artifacts migrate --to s3|local [--remove-source] [--dry-run] [--json]` copies what the destination lacks
+  (attachment content checked against its address), takes the data-directory lock (central must be stopped) and is safe
+  to repeat. The procedure from local to S3: stop central, migrate to S3, set the backend, start central, then remove
+  the local copies (`--remove-source` on a second run). After a restore into an installation with the S3 backend,
+  `backup restore` prints the migrate command to run before starting central. Central with the S3 backend warns at
+  start when attachment content is still on the local disk; it does not move it by itself.
+- **Decision — interfaces (SM-ARCH-003).** Narrow interfaces, compiled in, with the existing implementations behind
+  them and nothing new added:
+  - artifact storage: `artifacts.Store` (`Local`, `S3`), with `attachments.Blobs` (content addressing) on top of it;
+    `fleet.Options.RecordingStore` and `usage.New` take the store;
+  - inbound event sources: `events.Source` (`Delivery`, `Start`), one per delivery mode; the ingestion manager picks
+    the source by the subscription's delivery mode. The durable (JetStream through go-pulse) and core NATS sources are
+    the existing code. A delivery mode without a source is reported on the subscription;
+  - MCP upstream transports: `gateway.Transport` (`Name`, `Client`); `StreamableHTTP` is the only one and the default.
+- **Security-relevant change.** No default changes and no existing guarantee is relaxed, but recordings, transcripts
+  and attachments can now leave central's disk. Objects are stored as they are on the local disk, without client-side
+  encryption, so the bucket must be private to SpaceMan, with server-side encryption if wanted; its credentials can
+  read every artifact. One prefix belongs to one installation: attachment garbage collection deletes unreferenced
+  content under it, so two installations (or a restored copy) sharing a prefix would delete each other's content.
+- **Alternatives:** multipart or SigV4 streaming (chunked) uploads to avoid the spool (more protocol surface, and the
+  spool is bounded and on central's own disk); an unsigned payload (gives up the service's integrity check); keeping
+  recordings only on the local disk (does not meet SM-STORE-002); backups that only reference the bucket (rejected
+  above); migrating automatically at start (moves data without the operator asking, possibly for hours).
+- **Consequences:** central still needs local disk for the spool: live recordings, transcripts being received and
+  uploads in progress. A backup of a large bucket copies all of it, which takes time and space in the backup target.
+  Objects of runs that are not in a restored database stay in the bucket (attachment content is collected; recordings
+  and transcripts are not). The transcript lock is held during the upload of a final chunk (at most 64 MiB). Resuming
+  an archived recording reads its last segment from the bucket under the recordings lock. Evidence: the in-process
+  fake bucket (`s3test`, which now serves ranges and modification times) and the opt-in MinIO suite
+  (`TestRealS3Artifacts`); AWS S3 and R2 are unverified.
 
 ### ADR-0050 — Incident policy (trusted triggers, worker handling, resumption), run:diagnose, human-action type permissions and user profile edits (security-relevant change)
 - **Status:** Accepted, 2026-11-03 (gap closure for SM-QUEUE-009, SM-CTRL-004, SM-HUI-008 and the user part of SM-API-004;

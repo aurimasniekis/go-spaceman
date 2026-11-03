@@ -87,7 +87,7 @@ func TestUsageAndTranscript(t *testing.T) {
 	// SM-REC-001: the terminal recording, the native transcript and the normalized usage are separate records. The
 	// recording holds terminal output and not the transcript; deleting either artifact leaves the others as they were.
 	recorded := func() string {
-		res, err := e.c.Fleet.Recordings().Read(cl.ID, 0)
+		res, err := e.c.Fleet.Recordings().Read(context.Background(), cl.ID, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestUsageAndTranscript(t *testing.T) {
 	if u, err := e.c.Usage.ForRun(ctx, sp.ID, cl.ID); err != nil || !u.Known || *u.Models[0].Output != 7 || u.Transcript == nil || u.Transcript.State != "deleted" {
 		t.Fatalf("usage after the transcript was deleted: %+v %v", u, err)
 	}
-	if err := e.c.Fleet.Recordings().Delete(cl.ID); err != nil {
+	if err := e.c.Fleet.Recordings().Delete(context.Background(), cl.ID); err != nil {
 		t.Fatal(err)
 	}
 	if recorded() != "" {

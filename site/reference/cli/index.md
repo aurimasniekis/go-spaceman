@@ -39,6 +39,7 @@ Every command accepts these.
 | [`spaceman admin`](./admin) | Bootstrap and break-glass administration (offline: takes the data-directory lock; needs the KEK) |
 | [`spaceman approval`](./approval) | Enforced approvals of a space: list, show and revoke (decide them with `spaceman human respond`) |
 | [`spaceman approval-policy`](./approval-policy) | Operations that need a person's approval |
+| [`spaceman artifacts`](./artifacts) | Move stored attachments, recordings and transcripts between the local disk and S3 (docs: site/operators/storage.md) |
 | [`spaceman attachment`](./attachment) | A space's attachments: upload, show and download (--space) |
 | [`spaceman audit`](./audit) | The audit log: list and verify the hash chain |
 | [`spaceman backup`](./backup) | Create, list, verify and restore sealed backups (docs: site/operators/backup.md) |

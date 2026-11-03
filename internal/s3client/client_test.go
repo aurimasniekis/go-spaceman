@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/s3client"
 	"github.com/aurimasniekis/go-spaceman/internal/s3client/s3test"
@@ -169,5 +170,48 @@ func TestConfigValidation(t *testing.T) {
 	cfg.Endpoint, cfg.AllowInsecureHTTP = "http://127.0.0.1:9000", true
 	if _, err := s3client.New(cfg); err != nil {
 		t.Fatalf("http with AllowInsecureHTTP: %v", err)
+	}
+}
+
+// Range reads and Stat (the artifact store's seeking reader and its garbage-collection age check).
+func TestRangeAndStat(t *testing.T) {
+	srv := s3test.New(t, "AKIDTEST")
+	c := client(t, srv, nil)
+	ctx := context.Background()
+	put(t, c, "a/obj", []byte("0123456789"))
+	rc, n, err := c.GetRange(ctx, "a/obj", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(b) != "456789" || n != 6 || srv.Ranges != 1 {
+		t.Fatalf("range %q (%d), %d range requests", b, n, srv.Ranges)
+	}
+	if _, _, err := c.GetRange(ctx, "a/obj", 10); err == nil {
+		t.Fatal("a range past the end was served")
+	}
+	if _, _, err := c.GetRange(ctx, "a/obj", -1); err == nil {
+		t.Fatal("negative offset accepted")
+	}
+	if _, _, err := c.GetRange(ctx, "a/missing", 0); !errors.Is(err, s3client.ErrNotFound) {
+		t.Fatalf("range of a missing key: %v", err)
+	}
+	old := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	srv.SetModTime("hp-backups", "a/obj", old)
+	o, err := c.Stat(ctx, "a/obj")
+	if err != nil || o.Size != 10 || !o.LastModified.Equal(old) || o.Key != "a/obj" {
+		t.Fatalf("stat %+v %v", o, err)
+	}
+	if _, err := c.Stat(ctx, "a/missing"); !errors.Is(err, s3client.ErrNotFound) {
+		t.Fatalf("stat missing: %v", err)
+	}
+	objs, err := c.List(ctx, "a/")
+	if err != nil || len(objs) != 1 || !objs[0].LastModified.Equal(old) {
+		t.Fatalf("list %+v %v", objs, err)
+	}
+	srv.Fail = func(*http.Request) int { return http.StatusInternalServerError }
+	if _, err := c.Stat(ctx, "a/obj"); err == nil {
+		t.Fatal("stat error swallowed")
 	}
 }

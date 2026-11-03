@@ -263,14 +263,18 @@ type NodesConfig struct {
 	CommandTimeout Duration `yaml:"command_timeout"`
 }
 
-// ArtifactsConfig selects the artifact store (SM-STORE-002).
+// ArtifactsConfig selects the artifact store (SM-STORE-002, ADR-0048): where attachment content, central's copies of
+// recordings and run transcripts are kept.
 type ArtifactsConfig struct {
-	// Backend is "local" (default: <data_dir>/artifacts). "s3" passes validation but central refuses to start with it:
-	// the S3 artifact store is not implemented (backups have their own S3 target).
+	// Backend is "local" (default: attachments in local_dir, recordings and transcripts in <data_dir>) or "s3" (the
+	// bucket in s3; recordings being shipped and transcripts being received are spooled in <data_dir> until complete).
+	// Switching backends does not move stored artifacts: stop central and run `spaceman artifacts migrate`.
 	Backend string `yaml:"backend"`
-	// LocalDir is the local backend's directory (default <data_dir>/artifacts).
-	LocalDir string   `yaml:"local_dir"`
-	S3       S3Config `yaml:"s3"`
+	// LocalDir is the local backend's attachment directory (default <data_dir>/artifacts); with s3 it holds the upload
+	// spool (tmp/).
+	LocalDir string `yaml:"local_dir"`
+	// S3 is the bucket of the s3 backend; its prefix must not overlap backups.s3's in the same bucket.
+	S3 S3Config `yaml:"s3"`
 	// SpaceQuotaBytes bounds the attachments stored per space (SM-ATT-002).
 	SpaceQuotaBytes int64 `yaml:"space_quota_bytes"`
 }
@@ -285,7 +289,7 @@ type S3Config struct {
 	Bucket string `yaml:"bucket"`
 	// Prefix is prepended to every object key.
 	Prefix string `yaml:"prefix"`
-	// AccessKeyFile holds the access key ID (set together with secret_key_file).
+	// AccessKeyFile holds the access key ID (an absolute path, required with secret_key_file).
 	AccessKeyFile string `yaml:"access_key_file"`
 	// SecretKeyFile holds the secret access key.
 	SecretKeyFile string `yaml:"secret_key_file"`

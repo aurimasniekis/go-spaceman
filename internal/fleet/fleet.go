@@ -15,11 +15,13 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -38,8 +40,11 @@ type Options struct {
 	Clock             clock.Clock
 	Log               *slog.Logger
 	Metrics           *metrics.Metrics
-	// RecordingsDir stores central copies of node recordings (empty: <none>, recordings are not accepted).
+	// RecordingsDir stores central copies of node recordings (empty: <none>, recordings are not accepted). With a
+	// RecordingStore other than a local store rooted here, it is the spool of recordings still being shipped.
 	RecordingsDir string
+	// RecordingStore keeps finished recordings (ADR-0048). Nil: a local store rooted at RecordingsDir.
+	RecordingStore artifacts.Store
 	// ResolveAccount picks the account a launch uses inside the launch transaction (SM-ACCT-003); it returns the
 	// account ID stored with the run. Nil: launches carry no account.
 	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (string, error)
@@ -47,6 +52,9 @@ type Options struct {
 	// text) before validation, and returns what the run manifest records about it (SM-PROMPT-003/004). Nil: launches are
 	// used as given.
 	ResolveLaunch func(ctx context.Context, spaceID string, in *LaunchInput) (map[string]any, error)
+	// OnSpacePurged is called after a space was purged, with its runs' IDs, to delete artifacts kept elsewhere
+	// (transcripts). Nil: nothing more is deleted.
+	OnSpacePurged func(ctx context.Context, runIDs []string)
 	// OnRunEnded is called after a run was recorded as ended (exited, failed or lost).
 	OnRunEnded func(runID string)
 	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.
@@ -124,7 +132,7 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o, reloc: relocEngine{retain: make(chan struct{}, 1)},
 		tko: takeovers{meters: map[string]*takeoverMeter{}, wake: make(chan struct{}, 1)}}
 	svc.hub = newHub(svc)
-	svc.rec = newRecordings(o.RecordingsDir, o.Clock.Now)
+	svc.rec = newRecordings(o.RecordingsDir, o.RecordingStore, obs.Component(o.Log, "recordings"), o.Clock.Now)
 	return svc
 }
 

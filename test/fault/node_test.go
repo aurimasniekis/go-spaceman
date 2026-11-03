@@ -28,7 +28,7 @@ var eventually = apptest.Eventually
 
 // centralRecording is the concatenated output and the records of central's copy of a run's recording.
 func centralRecording(e *apptest.Env, runID string) (string, []recording.Record) {
-	res, err := e.C.Fleet.Recordings().Read(runID, 0)
+	res, err := e.C.Fleet.Recordings().Read(context.Background(), runID, 0)
 	if err != nil {
 		return "", nil
 	}
@@ -210,7 +210,7 @@ func TestFaultInterruptedRecordingAndUpload(t *testing.T) {
 		_, recs := centralRecording(e, r.ID)
 		return len(recs) > 0 && recs[len(recs)-1].Kind == recording.KindClose
 	})
-	res, err := e.C.Fleet.Recordings().Read(r.ID, 0)
+	res, err := e.C.Fleet.Recordings().Read(context.Background(), r.ID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

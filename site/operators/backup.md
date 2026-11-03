@@ -14,12 +14,21 @@ the installation back **paused, with new execution authority**: nothing runs unt
 | A consistent database snapshot (SQLite `VACUUM INTO`): spaces, runs, the queue, inbox items, messages, human actions (including open ones), approvals, every catalog version (prompts, profiles, role templates, skills, human-action types, event templates), event connections and subscriptions with their cursors, users, grants, token verifiers, the audit chain and the outbox | **The KEK** and the development KEK file (`dev-kek`) |
 | Credentials (accounts, connection credentials, MCP headers, sign-in provider secrets), still sealed by the keyring exactly as stored | Node workspaces and worktrees, including uncommitted or unpushed changes |
 | Role memory: one Git bundle per collection central has synced, with all refs (preserved conflicts too). Connected nodes are asked to checkpoint and sync first ([below](#role-memory-is-flushed-first)) | Role memory a node could not sync before the snapshot (a disconnected or older node, or a sync that did not finish in time): the manifest names those spaces |
-| Recordings, attachments and artifacts, and run transcripts stored on central | Node-local credentials, journals, leases and harness state |
+| Recordings, attachments and artifacts, and run transcripts stored on central, including those in an [S3 artifact store](/operators/storage) (copied into the backup) | Node-local credentials, journals, leases and harness state |
 | The effective central configuration (settings and file paths, no secret values) | Native harness state not uploaded yet (transcripts still on nodes, live terminal sessions) |
 | | Secrets referenced by path in the configuration: TLS keys, Pulse `.creds` files, S3 key files |
 | | State held elsewhere: Pulse streams and durable consumers, upstream Git repositories, identity providers |
 
 Every manifest repeats these two lists, so a backup states its own scope.
+
+### Artifacts in S3
+
+With `artifacts.backend: s3` ([Artifact storage](/operators/storage)), a backup still holds every artifact: each object
+is downloaded from the bucket while the backup is made, sealed like a local file and stored in the same layout
+(`artifacts/`, `recordings/`, `transcripts/`), so the backup does not depend on the bucket surviving. Attachment
+content is checked against its SHA-256 on the way; damaged content fails the backup. The manifest's `artifact_store`
+records where the artifacts came from (`kind`, `location`, `included: true` and the number of objects copied). For a
+large bucket this takes time and space in the backup target (ADR-0048).
 
 ### Layout
 
@@ -158,6 +167,16 @@ against the manifest), turns memory bundles back into bare repositories, install
 directory to `<folder>.pre-restore-<time>`); nothing is deleted. The backup's configuration is written next to it for
 comparison and is never applied. Finally the command opens the restored database and proves that the KEK unlocks its
 keyring.
+
+A restore always writes artifacts to the local folders. When the installation uses the S3 artifact store, upload them
+before the first start; the restore command prints this step:
+
+```bash
+sudo -u spaceman spaceman -c /etc/spaceman/spaceman.yaml artifacts migrate --to s3 --remove-source
+```
+
+Give a restored copy that runs next to the original its own `artifacts.s3.prefix`: attachment garbage collection
+deletes unreferenced content under its prefix, so two installations must never share one.
 
 ### The first start after a restore
 

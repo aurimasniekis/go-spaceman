@@ -26,6 +26,7 @@ PACKAGES=(
   internal/outbox
   internal/backup
   internal/s3client
+  internal/artifacts
   internal/limits
   internal/retention
   internal/spaceexport

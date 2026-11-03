@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -91,7 +93,8 @@ var (
 		"credentials: accounts, connection credentials, MCP server headers and sign-in provider secrets, sealed by the keyring " +
 			"exactly as stored (the keyring's data keys are wrapped under the KEK)",
 		"role memory: one Git bundle of every collection central has synced (all refs, including preserved conflicts)",
-		"recordings, attachments and artifacts, and run transcripts stored on central",
+		"recordings, attachments and artifacts, and run transcripts stored on central, including those in an S3 artifact " +
+			"store (artifacts.backend: s3), which are copied into the backup and sealed like local files (ADR-0048)",
 		"configuration: the effective central configuration at backup time (settings and file paths, no secret values)",
 	}
 	Excluded = []string{
@@ -142,6 +145,20 @@ type Manifest struct {
 	// MemoryFlush records how role memory was prepared before the snapshot (SM-MEM-005, ADR-0045); absent in backups
 	// made before it existed.
 	MemoryFlush *MemoryFlush `json:"memory_flush,omitempty"`
+	// ArtifactStore is where central kept its artifacts when the backup was made ("local", or "s3" with its
+	// location); either way the backup holds them (ADR-0048). Absent in backups made before it existed (local).
+	ArtifactStore *ArtifactStore `json:"artifact_store,omitempty"`
+}
+
+// ArtifactStore records the artifact store a backup copied artifacts from.
+type ArtifactStore struct {
+	Kind     string `json:"kind" enum:"local,s3"`
+	Location string `json:"location,omitempty"`
+	// Included is always true: S3 artifacts are copied into the backup, never only referenced.
+	Included bool `json:"included"`
+	// Objects is how many artifacts were copied from the remote store (0 for the local store, whose files are
+	// counted with the other files).
+	Objects int `json:"objects"`
 }
 
 // MemoryFlush is the outcome of asking the nodes to checkpoint and sync role memory before a backup. A backup holds
@@ -239,6 +256,9 @@ type Sources struct {
 	Memory      string
 	// Git creates memory bundles; nil leaves memory out (with a warning).
 	Git *memory.Git
+	// Store is a remote artifact store (S3) whose artifacts are copied into the backup as well; nil for the local
+	// store, whose directories are the trees above.
+	Store artifacts.Store
 }
 
 // DefaultSources returns the trees inside dataDir; artifactsDir overrides <data>/artifacts when set.
@@ -330,6 +350,9 @@ func Create(ctx context.Context, src Snapshotter, kek keyring.KeyWrapper, dest s
 		if err := b.tree(ctx, t.root, t.dir, t.kind); err != nil {
 			return nil, err
 		}
+	}
+	if err := b.objects(ctx, s.Store); err != nil {
+		return nil, err
 	}
 	if err := b.memory(ctx, s.Memory, s.Git); err != nil {
 		return nil, err
@@ -464,6 +487,62 @@ func (b *builder) tree(ctx context.Context, root, dir, kind string) error {
 		}
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// objectDirs map artifact-store namespaces to the backup's trees: the same layout as the local store, so a backup
+// made with either backend restores the same way.
+var objectDirs = map[string]string{artifacts.NSAttachments: dirArtifacts, artifacts.NSRecordings: dirRecordings, artifacts.NSTranscripts: dirTranscripts}
+
+var objectKinds = map[string]string{artifacts.NSAttachments: KindAttachment, artifacts.NSRecordings: KindRecording, artifacts.NSTranscripts: KindTranscript}
+
+// objects copies every artifact of a remote store into the backup, streaming each object into its sealed file. A
+// path the local trees already provided (a spooled recording segment or transcript not yet uploaded) is not copied
+// twice. Attachment content is checked against its address while it is sealed.
+func (b *builder) objects(ctx context.Context, st artifacts.Store) error {
+	if st == nil {
+		b.m.ArtifactStore = &ArtifactStore{Kind: "local", Included: true}
+		return nil
+	}
+	b.m.ArtifactStore = &ArtifactStore{Kind: st.Kind(), Location: st.Location(), Included: true}
+	have := map[string]bool{}
+	for _, f := range b.m.Files {
+		have[f.Path] = true
+	}
+	for _, ns := range artifacts.Namespaces {
+		objs, err := st.List(ctx, ns+"/")
+		if err != nil {
+			return fmt.Errorf("list %s in the artifact store: %w", ns, err)
+		}
+		for _, info := range objs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			p := objectDirs[ns] + "/" + strings.TrimPrefix(info.Key, ns+"/")
+			if have[p] || !validRel(p) {
+				continue
+			}
+			o, err := st.Open(ctx, info.Key)
+			if errors.Is(err, fs.ErrNotExist) {
+				b.m.Warnings = append(b.m.Warnings, fmt.Sprintf("%s disappeared from the artifact store while the backup was taken", info.Key))
+				continue
+			} else if err != nil {
+				return fmt.Errorf("open %s in the artifact store: %w", info.Key, err)
+			}
+			var r io.ReadCloser = o
+			if sum, ok := artifacts.AttachmentSum(info.Key); ok {
+				r = artifacts.Verified(o, sum)
+			}
+			plain, sealed, err := sealReader(r, filepath.Join(b.dir, filepath.FromSlash(p+SealedSuffix)), b.kek, SealedKindFile(p), b.m.ID)
+			_ = r.Close()
+			if err != nil {
+				return fmt.Errorf("copy %s from the artifact store: %w", info.Key, err)
+			}
+			b.add(p, objectKinds[ns], plain, sealed)
+			have[p] = true
+			b.m.ArtifactStore.Objects++
 		}
 	}
 	return nil

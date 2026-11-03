@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/approvals"
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
@@ -76,6 +78,8 @@ type Central struct {
 	Metrics *metrics.Metrics
 	Health  *health.Checker
 	Fleet   *fleet.Service
+	// Artifacts is the artifact store (SM-STORE-002, ADR-0048): attachment content, finished recordings and transcripts.
+	Artifacts artifacts.Store
 	// Attachments stores uploaded files (SM-ATT-*).
 	Attachments *attachments.Service
 	// Inbox holds each space's incoming items (SM-INBOX-*).
@@ -188,10 +192,18 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.OIDC = oidc.New(st, c.Keyring, c.Audit, c.Auth, oidc.Options{PublicURL: cfg.PublicURL, DevMode: !cfg.IsProduction(), Clock: o.Clock,
 		Logger: log, Metrics: m})
 	c.Catalog = catalog.New(st, c.Audit, c.Changes, catalog.Options{MaxPermissionMode: cfg.Harness.MaxPermissionMode})
+	artifactDir := cfg.Artifacts.LocalDir
+	if artifactDir == "" {
+		artifactDir = st.Path("artifacts")
+	}
+	if c.Artifacts, err = openArtifacts(cfg, st, artifactDir); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
-		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
+		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
 			if err != nil {
@@ -219,7 +231,15 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			return r.Manifest, nil
 		},
 		// The notifier is created below; these hooks only run once the server serves.
+		OnSpacePurged: func(ctx context.Context, runIDs []string) {
+			if c.Usage != nil {
+				c.Usage.PurgeTranscripts(ctx, runIDs)
+			}
+		},
 		OnRunEnded: func(runID string) {
+			if c.Fleet != nil {
+				c.Fleet.Recordings().RunEnded(runID) // archived to the artifact store (S3) once the run ended
+			}
 			if c.Gateway != nil {
 				c.Gateway.EndRun(runID)
 			}
@@ -271,15 +291,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		}
 		return env, err
 	}
-	if cfg.Artifacts.Backend != "local" {
-		_ = st.Close()
-		return nil, fmt.Errorf("artifacts.backend %q is not implemented yet; use \"local\"", cfg.Artifacts.Backend)
-	}
-	artifactDir := cfg.Artifacts.LocalDir
-	if artifactDir == "" {
-		artifactDir = st.Path("artifacts")
-	}
-	c.Attachments = attachments.New(st, attachments.NewLocal(artifactDir), c.Audit, attachments.Options{MaxBytes: cfg.HTTP.MaxUploadBytes,
+	c.Attachments = attachments.New(st, attachments.NewStore(c.Artifacts, filepath.Join(artifactDir, "tmp")), c.Audit, attachments.Options{MaxBytes: cfg.HTTP.MaxUploadBytes,
 		QuotaBytes: cfg.Artifacts.SpaceQuotaBytes, Clock: o.Clock, QuotaFor: func(ctx context.Context, q *db.Queries, spaceID string) int64 {
 			return c.Limits.Value(ctx, q, spaceID, limits.StorageQuota)
 		}})
@@ -343,7 +355,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.XSpace.Kick = c.Human.Kick
 	c.KB.OnCrossSpace = c.XSpace.OnKBDone
 	c.Dreams = dream.New(st, c.Audit, c.Changes, c.Fleet, o.Clock, obs.Component(log, "dreamer"))
-	c.Usage = usage.New(st, c.Audit, c.Changes, st.Path("transcripts"), obs.Component(log, "usage"))
+	c.Usage = usage.New(st, c.Audit, c.Changes, st.Path("transcripts"), c.Artifacts, obs.Component(log, "usage"))
 	target, err := backup.TargetFromConfig(cfg)
 	if err != nil {
 		_ = st.Close()
@@ -351,7 +363,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	bc := cfg.Backups
 	c.Backups = backup.NewService(st, c.Keyring.Wrapper(), c.Audit, c.Changes, backup.ServiceOptions{Target: target,
-		Sources: backup.DefaultSources(st.Dir(), artifactDir, gitBin), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
+		Sources: backupSources(st.Dir(), artifactDir, gitBin, c.Artifacts), Config: func() []byte { b, _ := yaml.Marshal(cfg); return b },
 		Schedule: bc.Enabled, Interval: bc.Interval.D(), KeepLast: bc.KeepLast, MaxAge: bc.MaxAge.D(), Clock: o.Clock, Log: obs.Component(log, "backup"),
 		PrepareMemory: c.prepareBackupMemory})
 	c.Fleet.Hub().Usage = usageWithBudgets{Service: c.Usage, limits: c.Limits}
@@ -573,6 +585,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	c.Retention.Bind(ctx)
 	go c.Health.Run(ctx, 15*time.Second)
 	go c.housekeeping(ctx)
+	go c.uploadSpooledArtifacts(ctx)
 	if err := c.Human.Recover(ctx); err != nil {
 		return fmt.Errorf("schedule human-action reminders: %w", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -277,9 +278,12 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 }
 
 // PurgeSpace permanently deletes an archived space's SpaceMan records (runs, commands, lease). It never touches
-// upstream repositories (SM-SPACE-004); the node's folder is retained per the node's recovery policy.
+// upstream repositories (SM-SPACE-004); the node's folder is retained per the node's recovery policy. After the
+// commit, central's copies of the runs' recordings are deleted from the artifact store and OnSpacePurged deletes
+// their transcripts (ADR-0048); a failure there is logged and leaves objects no record points to.
 func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string) error {
-	return svc.s.W().TxNamed(ctx, "fleet.purge_space", func(tx *store.Tx) error {
+	var runIDs []string
+	err := svc.s.W().TxNamed(ctx, "fleet.purge_space", func(tx *store.Tx) error {
 		sp, err := tx.Q.GetSpace(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return errSpaceNotFound
@@ -288,6 +292,9 @@ func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string
 		}
 		if sp.State != "archived" {
 			return apperr.New(apperr.CodePrecondition, "only archived spaces can be purged")
+		}
+		if runIDs, err = spaceRunIDs(ctx, tx, id); err != nil {
+			return err
 		}
 		for _, q := range []string{
 			`DELETE FROM node_commands WHERE space_id = ?`,
@@ -316,6 +323,36 @@ func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string
 			Details: map[string]any{"slug": sp.Slug}})
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	for _, runID := range runIDs {
+		if err := svc.rec.Delete(ctx, runID); err != nil {
+			svc.opts.Log.Warn("purge: recording not deleted from the artifact store", slog.String("run.id", runID), slog.Any("error", err))
+		}
+	}
+	if svc.opts.OnSpacePurged != nil && len(runIDs) > 0 {
+		svc.opts.OnSpacePurged(ctx, runIDs)
+	}
+	return nil
+}
+
+// spaceRunIDs lists the IDs of a space's runs.
+func spaceRunIDs(ctx context.Context, tx *store.Tx, spaceID string) ([]string, error) {
+	rows, err := tx.SQL.QueryContext(ctx, `SELECT id FROM runs WHERE space_id = ?`, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // leaseFor grants or renews the lease of a space for its pinned node. A new grant keeps the generation when the same

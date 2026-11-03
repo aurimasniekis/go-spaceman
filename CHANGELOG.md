@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Operators now hold `run:diagnose`, so operators and admins keep launching diagnostics; viewers never could.
 - **Security:** an incident task from a source the queue policy does not trust no longer jumps the queue or preempts
   work; by default it becomes a proposal (ADR-0050).
+- Purging a space deletes its runs' recordings and transcripts from the artifact store after the purge commits; they
+  were left in the data directory before (ADR-0048).
 - The Terraform provider moved to its own repository, `terraform-provider-spaceman` (module
   `github.com/aurimasniekis/terraform-provider-spaceman`), with its history (ADR-0047). This repository no longer contains
   it, and `make check`, CI and the Makefile no longer refer to it: its unit and acceptance tests run there, and the
@@ -36,6 +38,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   changes a user's email, display name and administrator MFA setting; the users API returns `mfa_required_set` beside
   the effective `mfa_required`. **Edit** on the Users page, `spaceman user update`, and Terraform `spaceman_user` now
   updates these fields in place instead of refusing them.
+- S3 artifact store (ADR-0048, SM-STORE-002): `artifacts.backend: s3` keeps attachment content, central's copies of
+  recordings and run transcripts in an S3-compatible bucket (`artifacts.s3`, keys from files, TLS always verified) under
+  the same keys as the local layout. Uploads are spooled and sent as single PUTs whose SHA-256 the service checks;
+  downloads stream, answer range requests with range GETs, and fail at the end when attachment or transcript content is
+  damaged. Recordings are spooled while a node ships them and archived when they close or their run ends; transcripts
+  are uploaded once received and checked; an upload the bucket refuses stays on the local disk, is served from there and
+  is retried at the next start. Retention, purge and garbage collection delete the objects; quotas are unchanged.
+  Backups copy every S3 artifact into the sealed backup and record the store in the manifest (`artifact_store`). The new
+  offline command `spaceman artifacts migrate --to s3|local [--remove-source] [--dry-run]` moves stored artifacts, and
+  `spaceman backup restore` names it when the installation uses S3. Configuration validation refuses an
+  `artifacts.s3.prefix` that overlaps `backups.s3.prefix` in the same bucket. Operators' page: Artifact storage.
+- Go interfaces for the remaining adapter kinds (SM-ARCH-003, ADR-0048): `artifacts.Store` (local and S3),
+  `events.Source` (Pulse durable consumers and core NATS, picked by delivery mode) and `gateway.Transport` (streamable
+  HTTP). The implementations are unchanged; tests drive each through a fake.
 - Space repositories (ADR-0044, SM-REPO-001/003, SM-SPACE-001, SM-UI-002, SM-API-004): a central list per space (name,
   folder, clone URL without credentials, default branch, role code or kb, clone policy auto, on_demand or manual) with
   API CRUD under `/spaces/{id}/repositories` (If-Match, audited), a sync endpoint, the node protocol command

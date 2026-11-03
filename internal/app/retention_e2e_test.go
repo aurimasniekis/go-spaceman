@@ -291,7 +291,7 @@ func TestRecordingQuotaAndRetention(t *testing.T) {
 		e.run.Output(e.run.LiveByLabel("spaceman.run", id)[0].ID, "output of "+id+"\r\n")
 	}
 	recorded := func(id string) int {
-		res, err := e.c.Fleet.Recordings().Read(id, 0)
+		res, err := e.c.Fleet.Recordings().Read(context.Background(), id, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

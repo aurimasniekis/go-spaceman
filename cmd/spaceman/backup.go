@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.yaml.in/yaml/v3"
 
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/backup"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -83,8 +84,14 @@ func backupCreateCmd(g *globals) *cobra.Command {
 			}
 			id := ids.New(ids.Backup)
 			dest := filepath.Join(target.StagingDir(), id)
-			res, err := backup.Create(ctx, src, kek, dest, backup.Options{ID: id, Sources: backup.DefaultSources(cfg.DataDir, cfg.Artifacts.LocalDir, gitOrNil()),
-				Config: cfgYAML, MemoryFlush: backup.OfflineMemoryFlush()})
+			sources := backup.DefaultSources(cfg.DataDir, cfg.Artifacts.LocalDir, gitOrNil())
+			if cfg.Artifacts.Backend == "s3" {
+				// Artifacts in the S3 artifact store are copied into the backup (ADR-0048).
+				if sources.Store, err = artifacts.S3FromConfig(cfg); err != nil {
+					return err
+				}
+			}
+			res, err := backup.Create(ctx, src, kek, dest, backup.Options{ID: id, Sources: sources, Config: cfgYAML, MemoryFlush: backup.OfflineMemoryFlush()})
 			if err != nil {
 				return err
 			}
@@ -303,6 +310,10 @@ func backupRestoreCmd(g *globals) *cobra.Command {
 				fmt.Fprintf(w, "  the backup's configuration is at %s for comparison (it is not applied)\n", res.ConfigCopy)
 			}
 			fmt.Fprintln(w, "next:")
+			if cfg.Artifacts.Backend == "s3" {
+				fmt.Fprintln(w, "  0. artifacts.backend is s3, and the backup's artifacts were restored to the local folders: upload them first with")
+				fmt.Fprintln(w, "     spaceman artifacts migrate --to s3 --remove-source")
+			}
 			fmt.Fprintln(w, "  1. start central (spaceman serve): every space comes up paused and execution authority is renewed")
 			fmt.Fprintln(w, "  2. let nodes reconnect and reconcile; runs from before the restore are stopped (fenced)")
 			fmt.Fprintln(w, "  3. check the restore notice (Backups page or GET /api/v1/system/restore), then resume each space explicitly")

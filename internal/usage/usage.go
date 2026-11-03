@@ -1,7 +1,9 @@
 // Package usage keeps runs' normalized usage and their native transcripts (SM-REC-005, ADR-0028). Usage is only what
 // a harness recorded: unknown is unknown, never zero, and a cost estimate keeps who made it and what it assumes.
 // Transcripts are stored apart from terminal recordings, uploaded by the node after a run ends, and are as sensitive as
-// recordings.
+// recordings. A transcript is received into a local .part file and, once complete and checked, handed to the artifact
+// store (ADR-0048): renamed into place on the local disk, or uploaded to S3. A transcript whose upload failed stays in
+// the local folder (served from there) until UploadSpooled moves it at the next start.
 package usage
 
 import (
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -76,16 +79,27 @@ type Service struct {
 	audit   *audit.Writer
 	changes *changefeed.Recorder
 	dir     string
+	// spool is the local folder as a store; store keeps stored transcripts (the spool itself when local).
+	spool   *artifacts.Local
+	store   artifacts.Store
+	archive bool
 	log     *slog.Logger
 	mu      sync.Mutex
 }
 
-// New returns the service; transcripts live under dir.
-func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, dir string, log *slog.Logger) *Service {
+// New returns the service; transcripts are received under dir and kept in store (nil: a local store rooted at dir).
+func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, dir string, store artifacts.Store, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{s: s, audit: aw, changes: ch, dir: dir, log: log}
+	spool := artifacts.NewLocal(map[string]string{artifacts.NSTranscripts: dir})
+	archive := true
+	if store == nil {
+		store, archive = spool, false
+	} else if l, ok := store.(*artifacts.Local); ok && l.Root(artifacts.NSTranscripts) == filepath.Clean(dir) {
+		archive = false
+	}
+	return &Service{s: s, audit: aw, changes: ch, dir: dir, spool: spool, store: store, archive: archive, log: log}
 }
 
 func (svc *Service) owned(ctx context.Context, nodeID, runID string) (db.Run, error) {
@@ -204,7 +218,7 @@ func (svc *Service) Chunk(ctx context.Context, nodeID string, ch proto.Transcrip
 			state, msg = "failed", "the transcript did not arrive intact"
 			_ = os.Remove(svc.path(r.ID) + ".part")
 		default:
-			if err := os.Rename(svc.path(r.ID)+".part", svc.path(r.ID)); err != nil {
+			if err := svc.keep(ctx, r.ID, received, sum); err != nil {
 				state, msg = "failed", "internal error"
 			} else {
 				state = "stored"
@@ -231,6 +245,43 @@ func (svc *Service) Chunk(ctx context.Context, nodeID string, ch proto.Transcrip
 		ack.Error = msg
 	}
 	return ack
+}
+
+// keep hands a complete, checked transcript to the artifact store. When the store refuses it (S3 unavailable) the file
+// stays in the local folder, from where it is served and uploaded again later (UploadSpooled).
+func (svc *Service) keep(ctx context.Context, runID string, size int64, sum string) error {
+	part := svc.path(runID) + ".part"
+	err := artifacts.PutFile(ctx, svc.store, artifacts.TranscriptKey(runID), part, size, sum)
+	if err == nil || !svc.archive {
+		return err
+	}
+	svc.log.Warn("transcript kept on the local disk: the artifact store refused it; it is uploaded at the next start",
+		slog.String("run.id", runID), slog.Any("error", err))
+	return os.Rename(part, svc.path(runID))
+}
+
+// UploadSpooled moves complete transcripts left in the local folder (failed uploads) to the artifact store. It returns
+// how many it moved; with the local store there is nothing to move.
+func (svc *Service) UploadSpooled(ctx context.Context) (int, error) {
+	if !svc.archive {
+		return 0, nil
+	}
+	infos, err := svc.spool.List(ctx, artifacts.NSTranscripts+"/")
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, i := range infos {
+		p, _ := svc.spool.Path(i.Key)
+		svc.mu.Lock()
+		err := artifacts.PutFile(ctx, svc.store, i.Key, p, 0, "")
+		svc.mu.Unlock()
+		if err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 func b2i(b bool) int64 {
@@ -332,8 +383,8 @@ func val(p *int64) int64 {
 	return *p
 }
 
-// OpenTranscript opens a stored transcript for download.
-func (svc *Service) OpenTranscript(ctx context.Context, spaceID, runID string) (*os.File, *Transcript, error) {
+// OpenTranscript opens a stored transcript for download. A full read of damaged content fails at its end.
+func (svc *Service) OpenTranscript(ctx context.Context, spaceID, runID string) (artifacts.Object, *Transcript, error) {
 	r, err := svc.s.R().GetRun(ctx, runID)
 	if err != nil || r.SpaceID != spaceID {
 		return nil, nil, apperr.New(apperr.CodeNotFound, "run not found")
@@ -342,11 +393,40 @@ func (svc *Service) OpenTranscript(ctx context.Context, spaceID, runID string) (
 	if t == nil || t.State != "stored" {
 		return nil, nil, apperr.New(apperr.CodeNotFound, "no stored transcript")
 	}
-	f, err := os.Open(svc.path(runID))
-	if err != nil {
-		return nil, nil, apperr.New(apperr.CodeNotFound, "no stored transcript")
+	key := artifacts.TranscriptKey(runID)
+	o, err := svc.spool.Open(ctx, key)
+	if err != nil && svc.archive {
+		o, err = svc.store.Open(ctx, key)
 	}
-	return f, t, nil
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, apperr.New(apperr.CodeNotFound, "no stored transcript")
+	} else if err != nil {
+		return nil, nil, err
+	}
+	if artifacts.ValidSum(t.SHA256) {
+		o = artifacts.Verified(o, t.SHA256)
+	}
+	return o, t, nil
+}
+
+// PurgeTranscripts deletes the transcripts of runs whose records were purged with their space: local files and
+// objects in the artifact store. Failures are logged.
+func (svc *Service) PurgeTranscripts(ctx context.Context, runIDs []string) {
+	for _, runID := range runIDs {
+		if !reRun.MatchString(runID) {
+			continue
+		}
+		for _, p := range []string{svc.path(runID), svc.path(runID) + ".part"} {
+			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+				svc.log.Warn("purge: transcript not deleted", slog.String("run.id", runID), slog.Any("error", err))
+			}
+		}
+		if svc.archive {
+			if err := svc.store.Delete(ctx, artifacts.TranscriptKey(runID)); err != nil {
+				svc.log.Warn("purge: transcript not deleted from the artifact store", slog.String("run.id", runID), slog.Any("error", err))
+			}
+		}
+	}
 }
 
 // DeleteTranscript removes a stored transcript (the record that it existed stays).
@@ -361,6 +441,11 @@ func (svc *Service) DeleteTranscript(ctx context.Context, actor audit.Actor, spa
 	}
 	if err := os.Remove(svc.path(runID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove transcript: %w", err)
+	}
+	if svc.archive {
+		if err := svc.store.Delete(ctx, artifacts.TranscriptKey(runID)); err != nil {
+			return fmt.Errorf("remove transcript: %w", err)
+		}
 	}
 	return svc.s.W().TxNamed(ctx, "usage.transcript_delete", func(tx *store.Tx) error {
 		if err := tx.Q.SetRunTranscriptProgress(ctx, db.SetRunTranscriptProgressParams{Received: 0, State: "deleted", Error: "", UpdatedAt: tx.NowMicros(), RunID: runID}); err != nil {

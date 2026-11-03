@@ -67,7 +67,7 @@ func newRoot(remote *cli.App) *cobra.Command {
 	remote.BindFlags(root)
 	root.AddGroup(&cobra.Group{ID: "local", Title: "Control plane and offline administration:"},
 		&cobra.Group{ID: cli.GroupID, Title: "Remote commands (a running central's API; --server and an API token):"})
-	for _, c := range []*cobra.Command{versionCmd(), serveCmd(g), adminCmd(g), keysCmd(), openapiCmd(), backupCmd(g), docsCmd(root)} {
+	for _, c := range []*cobra.Command{versionCmd(), serveCmd(g), adminCmd(g), keysCmd(), openapiCmd(), backupCmd(g), artifactsCmd(g), docsCmd(root)} {
 		c.GroupID = "local"
 		root.AddCommand(c)
 	}

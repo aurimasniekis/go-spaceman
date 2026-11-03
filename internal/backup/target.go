@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 	"github.com/aurimasniekis/go-spaceman/internal/s3client"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
@@ -158,25 +159,7 @@ func (t S3Target) Location() string { return "s3://" + t.Bucket + "/" + t.Prefix
 func (t S3Target) StagingDir() string { return t.Staging }
 
 // ValidatePrefix accepts "" or a slash-terminated prefix of safe characters (go-hallpass backup.ValidatePrefix).
-func ValidatePrefix(p string) error {
-	if p == "" {
-		return nil
-	}
-	if len(p) > 256 || !strings.HasSuffix(p, "/") || strings.HasPrefix(p, "/") || strings.Contains(p, "//") {
-		return errors.New("prefix must be empty or like spaceman/ (no leading slash, ends with a slash)")
-	}
-	for _, c := range p {
-		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && !strings.ContainsRune("-_./", c) {
-			return fmt.Errorf("prefix contains %q; use letters, digits, - _ . /", c)
-		}
-	}
-	for _, part := range strings.Split(strings.TrimSuffix(p, "/"), "/") {
-		if part == "." || part == ".." {
-			return errors.New("prefix must not contain . or .. segments")
-		}
-	}
-	return nil
-}
+func ValidatePrefix(p string) error { return artifacts.ValidatePrefix(p) }
 
 // Store implements Target: every object of the backup is uploaded with its SHA-256 (checked by the service), the
 // manifest files last.

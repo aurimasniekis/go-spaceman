@@ -12,14 +12,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
 )
 
-// Blobs is content-addressed storage for attachment content (ADR-0013). The local backend is implemented; S3 lands with
-// backups (M4) and is refused at startup until then.
+// Blobs is content-addressed storage for attachment content (ADR-0013, ADR-0048).
 type Blobs interface {
 	// Write streams r into the store, at most max bytes, and returns its sha256 (hex), size and first bytes (for MIME
 	// sniffing). Content that is already stored is not written twice.
 	Write(ctx context.Context, r io.Reader, max int64) (sum string, size int64, head []byte, err error)
+	// Open returns the content; a full sequential read of damaged content fails at its end (artifacts.Verified).
 	Open(ctx context.Context, sum string) (io.ReadSeekCloser, error)
 	// Remove deletes content not modified since before (a concurrent upload of the same content refreshes it).
 	Remove(ctx context.Context, sum string, before time.Time) error
@@ -32,26 +34,45 @@ var ErrTooLarge = errors.New("attachment exceeds the size limit")
 
 var reSum = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// LocalBlobs stores content under dir/sha256/<aa>/<sum>.
-type LocalBlobs struct{ dir string }
+// refreshAge is how old stored content may be before an upload of the same bytes stores it again, refreshing its
+// modification time: garbage collection only removes unreferenced content older than an hour, so content an upload
+// finds already stored is never removed under it.
+const refreshAge = 30 * time.Minute
 
-// NewLocal returns a local blob store rooted at dir (created on first write).
-func NewLocal(dir string) *LocalBlobs { return &LocalBlobs{dir: dir} }
+// StoreBlobs keeps attachment content in an artifact store under attachments/sha256/<aa>/<sum>. An upload is streamed
+// into a spool file (hashing it on the way, never held in memory), then handed to the store: renamed into place on
+// the local disk, or uploaded with its SHA-256, which S3 verifies.
+type StoreBlobs struct {
+	store artifacts.Store
+	spool string
+}
 
-func (b *LocalBlobs) path(sum string) (string, error) {
+// LocalBlobs is the local-disk blob store (StoreBlobs over a local artifact store).
+type LocalBlobs = StoreBlobs
+
+// NewStore returns blobs in store, spooling uploads in spoolDir.
+func NewStore(store artifacts.Store, spoolDir string) *StoreBlobs {
+	return &StoreBlobs{store: store, spool: spoolDir}
+}
+
+// NewLocal returns a local blob store rooted at dir (content under dir/sha256/<aa>/<sum>, uploads spooled in dir/tmp).
+func NewLocal(dir string) *LocalBlobs {
+	return NewStore(artifacts.NewLocal(map[string]string{artifacts.NSAttachments: dir}), filepath.Join(dir, "tmp"))
+}
+
+func key(sum string) (string, error) {
 	if !reSum.MatchString(sum) {
 		return "", fmt.Errorf("invalid content address %q", sum)
 	}
-	return filepath.Join(b.dir, "sha256", sum[:2], sum), nil
+	return artifacts.AttachmentKey(sum), nil
 }
 
-// Write implements Blobs: the content is written to a temporary file, then renamed into place.
-func (b *LocalBlobs) Write(_ context.Context, r io.Reader, max int64) (string, int64, []byte, error) {
-	tmpDir := filepath.Join(b.dir, "tmp")
-	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+// Write implements Blobs.
+func (b *StoreBlobs) Write(ctx context.Context, r io.Reader, max int64) (string, int64, []byte, error) {
+	if err := os.MkdirAll(b.spool, 0o700); err != nil {
 		return "", 0, nil, err
 	}
-	f, err := os.CreateTemp(tmpDir, "upload-*")
+	f, err := os.CreateTemp(b.spool, "upload-*")
 	if err != nil {
 		return "", 0, nil, err
 	}
@@ -70,65 +91,62 @@ func (b *LocalBlobs) Write(_ context.Context, r io.Reader, max int64) (string, i
 		return "", 0, nil, ErrTooLarge
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
-	dst, _ := b.path(sum)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	k, _ := key(sum)
+	if info, err := b.store.Stat(ctx, k); err == nil && info.Size == n && time.Since(info.ModTime) < refreshAge {
+		return sum, n, head.b, nil
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", 0, nil, err
 	}
-	if _, err := os.Stat(dst); err == nil {
-		now := time.Now()
-		_ = os.Chtimes(dst, now, now) // keep it from a concurrent garbage collection
-		return sum, n, head.b, nil
-	}
-	if err := os.Rename(tmp, dst); err != nil {
+	if err := artifacts.PutFile(ctx, b.store, k, tmp, n, sum); err != nil {
 		return "", 0, nil, err
 	}
 	return sum, n, head.b, nil
 }
 
 // Open implements Blobs.
-func (b *LocalBlobs) Open(_ context.Context, sum string) (io.ReadSeekCloser, error) {
-	p, err := b.path(sum)
+func (b *StoreBlobs) Open(ctx context.Context, sum string) (io.ReadSeekCloser, error) {
+	k, err := key(sum)
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(p) //nolint:gosec // content-addressed path validated above
+	o, err := b.store.Open(ctx, k)
+	if err != nil {
+		return nil, err
+	}
+	return artifacts.Verified(o, sum), nil
 }
 
 // Remove implements Blobs.
-func (b *LocalBlobs) Remove(_ context.Context, sum string, before time.Time) error {
-	p, err := b.path(sum)
+func (b *StoreBlobs) Remove(ctx context.Context, sum string, before time.Time) error {
+	k, err := key(sum)
 	if err != nil {
 		return err
 	}
-	fi, err := os.Stat(p)
+	info, err := b.store.Stat(ctx, k)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	if !fi.ModTime().Before(before) {
+	if !info.ModTime.Before(before) {
 		return nil
 	}
-	return os.Remove(p)
+	return b.store.Delete(ctx, k)
 }
 
 // List implements Blobs.
-func (b *LocalBlobs) List(_ context.Context) ([]string, error) {
-	var out []string
-	root := filepath.Join(b.dir, "sha256")
-	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
-		if errors.Is(err, fs.ErrNotExist) {
-			return fs.SkipAll
+func (b *StoreBlobs) List(ctx context.Context) ([]string, error) {
+	infos, err := b.store.List(ctx, artifacts.NSAttachments+"/sha256/")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(infos))
+	for _, i := range infos {
+		if sum, ok := artifacts.AttachmentSum(i.Key); ok {
+			out = append(out, sum)
 		}
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && reSum.MatchString(d.Name()) {
-			out = append(out, d.Name())
-		}
-		return nil
-	})
-	return out, err
+	}
+	return out, nil
 }
 
 type headBuffer struct {

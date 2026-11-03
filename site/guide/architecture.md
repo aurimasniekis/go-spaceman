@@ -47,8 +47,8 @@ flowchart LR
 ```
 
 - **Central** is one Go binary with the web UI embedded. All state is in one SQLite database under `data_dir`, written
-  through a single writer, plus an artifact store on the local disk (an S3 artifact store is not implemented; backups
-  have their own S3 target). There is exactly one active central; a process lock on the data directory prevents a
+  through a single writer, plus an artifact store for attachments, recordings and transcripts: the local disk or an
+  S3-compatible bucket ([Artifact storage](/operators/storage)). There is exactly one active central; a process lock on the data directory prevents a
   second one.
 - **Nodes** run `spaceman-agent`. The agent always dials central; central never connects to a node. It runs every
   harness inside its own [herdr-core](https://github.com/herdrdev/herdr-core) core (never the operator's default

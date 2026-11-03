@@ -1,7 +1,8 @@
 // Derived from github.com/aurimasniekis/go-hallpass internal/s3client/s3test at bdd8329 (Apache-2.0, same author).
 
-// Package s3test is an in-memory, path-style S3 server for tests: PUT, GET, HEAD, DELETE and ListObjectsV2. It checks
-// that every request is signed for the expected access key and that a PUT body matches its x-amz-content-sha256.
+// Package s3test is an in-memory, path-style S3 server for tests: PUT, GET (whole or a "bytes=N-" / "bytes=N-M"
+// range), HEAD, DELETE and ListObjectsV2. It checks that every request is signed for the expected access key and that
+// a PUT body matches its x-amz-content-sha256. Objects carry a modification time (Last-Modified), which tests can set.
 package s3test
 
 import (
@@ -27,17 +28,20 @@ type Server struct {
 	AccessKey string
 
 	mu      sync.Mutex
-	objects map[string][]byte // "bucket/key"
+	objects map[string][]byte    // "bucket/key"
+	mod     map[string]time.Time // modification times, same keys
 	// Fail, when set, is consulted first; a non-zero status is returned as an S3 error.
 	Fail func(r *http.Request) int
 	// PageSize bounds list pages (default 1000) to exercise continuation tokens.
 	PageSize int
 	Requests int
+	// Ranges counts GET requests that carried a Range header.
+	Ranges int
 }
 
 // New starts a TLS server; use CAPEM as the client's CA bundle.
 func New(t testing.TB, accessKey string) *Server {
-	s := &Server{AccessKey: accessKey, objects: map[string][]byte{}, PageSize: 1000}
+	s := &Server{AccessKey: accessKey, objects: map[string][]byte{}, mod: map[string]time.Time{}, PageSize: 1000}
 	s.Server = httptest.NewTLSServer(http.HandlerFunc(s.handle))
 	t.Cleanup(s.Close)
 	return s
@@ -70,11 +74,19 @@ func (s *Server) Object(bucket, key string) ([]byte, bool) {
 	return b, ok
 }
 
-// SetObject stores or replaces an object directly.
+// SetObject stores or replaces an object directly (modified now).
 func (s *Server) SetObject(bucket, key string, data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.objects[bucket+"/"+key] = data
+	s.mod[bucket+"/"+key] = time.Now().UTC()
+}
+
+// SetModTime changes an object's modification time (to age it in tests).
+func (s *Server) SetModTime(bucket, key string, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mod[bucket+"/"+key] = t.UTC()
 }
 
 type s3err struct {
@@ -126,11 +138,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Lock()
 		s.objects[full] = body
+		s.mod[full] = time.Now().UTC()
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodGet || r.Method == http.MethodHead:
 		s.mu.Lock()
 		b, ok := s.objects[full]
+		mod := s.mod[full]
 		s.mu.Unlock()
 		if !ok {
 			if r.Method == http.MethodHead {
@@ -138,6 +152,24 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeErr(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+			return
+		}
+		if !mod.IsZero() {
+			w.Header().Set("Last-Modified", mod.Format(http.TimeFormat))
+		}
+		if rg := r.Header.Get("Range"); rg != "" && r.Method == http.MethodGet {
+			s.mu.Lock()
+			s.Ranges++
+			s.mu.Unlock()
+			start, end, ok := parseRange(rg, int64(len(b)))
+			if !ok {
+				writeErr(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange", "The requested range is not satisfiable")
+				return
+			}
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(b)))
+			w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(b[start : end+1])
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
@@ -148,11 +180,37 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete:
 		s.mu.Lock()
 		delete(s.objects, full)
+		delete(s.mod, full)
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "MethodNotAllowed", r.Method)
 	}
+}
+
+// parseRange accepts one "bytes=N-" or "bytes=N-M" range within an object of size n.
+func parseRange(h string, n int64) (start, end int64, ok bool) {
+	spec, found := strings.CutPrefix(h, "bytes=")
+	if !found || strings.Contains(spec, ",") {
+		return 0, 0, false
+	}
+	a, b, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, 0, false
+	}
+	start, err := strconv.ParseInt(a, 10, 64)
+	if err != nil || start < 0 || start >= n {
+		return 0, 0, false
+	}
+	end = n - 1
+	if b != "" {
+		e, err := strconv.ParseInt(b, 10, 64)
+		if err != nil || e < start {
+			return 0, 0, false
+		}
+		end = min(e, n-1)
+	}
+	return start, end, true
 }
 
 type listContent struct {
@@ -184,7 +242,13 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, bucket string) {
 	}
 	for _, k := range keys {
 		b, _ := s.Object(bucket, k)
-		res.Contents = append(res.Contents, listContent{Key: k, Size: len(b), LastModified: time.Now().UTC().Format(time.RFC3339)})
+		s.mu.Lock()
+		mod := s.mod[bucket+"/"+k]
+		s.mu.Unlock()
+		if mod.IsZero() {
+			mod = time.Now().UTC()
+		}
+		res.Contents = append(res.Contents, listContent{Key: k, Size: len(b), LastModified: mod.Format(time.RFC3339)})
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	if err := xml.NewEncoder(w).Encode(res); err != nil {

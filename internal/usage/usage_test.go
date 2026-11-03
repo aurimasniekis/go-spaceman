@@ -52,7 +52,7 @@ func newSvc(t *testing.T) (*Service, context.Context) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return New(s, audit.NewWriter(kr), changefeed.New(nil), t.TempDir(), nil), ctx
+	return New(s, audit.NewWriter(kr), changefeed.New(nil), t.TempDir(), nil, nil), ctx
 }
 
 func i64(v int64) *int64 { return &v }

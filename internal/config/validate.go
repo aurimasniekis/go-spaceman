@@ -92,11 +92,21 @@ func (c *Config) Validate() error {
 		if s.Bucket == "" || s.Endpoint == "" {
 			v.add("artifacts.s3.bucket and artifacts.s3.endpoint are required for the s3 backend")
 		}
-		if (s.AccessKeyFile == "") != (s.SecretKeyFile == "") {
-			v.add("artifacts.s3.access_key_file and secret_key_file must be set together")
+		if !filepath.IsAbs(s.AccessKeyFile) || !filepath.IsAbs(s.SecretKeyFile) {
+			v.add("artifacts.s3.access_key_file and artifacts.s3.secret_key_file must be absolute paths")
+		}
+		if s.CAFile != "" && !filepath.IsAbs(s.CAFile) {
+			v.add("artifacts.s3.ca_file must be an absolute path")
+		}
+		if !validS3Prefix(s.Prefix) {
+			v.add("artifacts.s3.prefix must be empty or like spaceman/artifacts/ (letters, digits, - _ . /; ends with a slash)")
 		}
 		if s.InsecureAllowed && prod {
 			v.add("artifacts.s3.insecure_allowed is development-only")
+		}
+		if b := c.Backups.S3; c.Backups.Target == "s3" && b.Bucket == s.Bucket && b.Endpoint == s.Endpoint &&
+			(strings.HasPrefix(b.Prefix, s.Prefix) || strings.HasPrefix(s.Prefix, b.Prefix)) {
+			v.add("artifacts.s3.prefix and backups.s3.prefix overlap in the same bucket: give each its own prefix")
 		}
 	default:
 		v.add("artifacts.backend must be \"local\" or \"s3\", got %q", c.Artifacts.Backend)
@@ -171,6 +181,21 @@ func (v *validator) backups(b BackupsConfig, prod bool) {
 	default:
 		v.add("backups.target must be \"local\" or \"s3\", got %q", b.Target)
 	}
+}
+
+var reS3Prefix = regexp.MustCompile(`^([A-Za-z0-9._-]+/)*$`)
+
+// validS3Prefix accepts "" or a slash-terminated prefix of safe segments (no . or .. segments).
+func validS3Prefix(p string) bool {
+	if len(p) > 256 || !reS3Prefix.MatchString(p) {
+		return false
+	}
+	for _, part := range strings.Split(strings.TrimSuffix(p, "/"), "/") {
+		if part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // LimitRanges are the bounds of every limit in the limits model, keyed by its limits.* key: installation defaults and

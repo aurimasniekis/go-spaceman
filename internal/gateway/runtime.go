@@ -196,8 +196,7 @@ func (svc *Service) connect(ctx context.Context, srv db.McpServer) (*mcp.ClientS
 	}
 	ctx, cancel := context.WithTimeout(ctx, listTimeout)
 	defer cancel()
-	tr := &mcp.StreamableClientTransport{Endpoint: srv.Url, HTTPClient: httpClient(srv.AllowPrivate == 1, headers, srv.MaxResultBytes+(64<<10)),
-		MaxRetries: -1, DisableStandaloneSSE: true, MaxEventSize: int(srv.MaxResultBytes) + (64 << 10)}
+	tr := svc.transport.Client(srv, headers)
 	c := mcp.NewClient(&mcp.Implementation{Name: "spaceman-gateway", Version: buildinfo.Get().Version}, nil)
 	cs, err := c.Connect(ctx, tr, nil)
 	if err != nil {
