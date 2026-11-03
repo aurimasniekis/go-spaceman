@@ -446,3 +446,47 @@ func TestRecordingShippedReplayedAndStreamed(t *testing.T) {
 }
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+// A report that arrives after a run ended (the node sends reports concurrently) must not reopen the run: it would end
+// it a second time and publish a second run_ended event. The late report is fenced and the node told to stop it.
+func TestLateReportDoesNotReopenEndedRun(t *testing.T) {
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "late-report", Name: "Late report", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "dev", Harness: hns.KindClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "running", func() bool { return e.run1(r.ID).Observed == "running" })
+	if _, err := e.c.Fleet.StopRun(ctx, admin, r.ID, "kill", "test"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "exited", func() bool { o := e.run1(r.ID).Observed; return o == "exited" || o == "failed" })
+	ended := e.run1(r.ID)
+	e.stopAgent()
+
+	// The node's stale report, as if it had been sent before the exit but delivered after it.
+	n := dialRawNode(t, e, proto.MaxMinor)
+	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: r.ID, SpaceID: sp.ID, Generation: ended.Generation, State: proto.RunRunning,
+		TerminalID: ended.TerminalID, Status: "working"})
+	cmd := n.next(t, proto.TypeCommand)
+	var c proto.Command
+	if err := cmd.Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Kind != proto.CmdStop || c.RunID != r.ID {
+		t.Fatalf("late report answered with %+v", c)
+	}
+	if got := e.run1(r.ID); got.Observed != ended.Observed || got.Version != ended.Version {
+		t.Fatalf("late report reopened the run: %s v%d (was %s v%d)", got.Observed, got.Version, ended.Observed, ended.Version)
+	}
+}

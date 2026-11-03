@@ -540,6 +540,13 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			fenced = true
 			return nil
 		}
+		// An ended run stays ended. A report that it is still pending, starting, running or stopping arrived late (the
+		// node sends reports concurrently, and both it and central treat exited, failed and lost as final), so it must not
+		// reopen the run: that would end it a second time and publish a second run_ended event.
+		if ended(r.Observed) && !ended(rep.State) {
+			fenced = true
+			return nil
+		}
 		var exit sql.NullInt64
 		if rep.ExitCode != nil {
 			exit = sql.NullInt64{Int64: int64(*rep.ExitCode), Valid: true}
