@@ -58,7 +58,8 @@
   delivery count), so history removed by retention restarts the count.
 - **Schedules resolve to the minute** (cron) or second (interval), handle at most 10,000 missed occurrences per gap
   individually (beyond that the gap is summarized), and there is no "run now" action yet.
-- **No Terraform resources for limits and schedules yet** (ADR-0035 phase 2).
+- **Terraform manages limits and schedules** (`spaceman_space_limits`, `spaceman_space_queue_policy`,
+  `spaceman_schedule`, ADR-0041); the queue policy has no `If-Match` in the API (see Terraform provider below).
 - **Transcripts are uploaded after a run ends**, up to 64 MiB (longer ones keep their start).
 
 ## Dreams
@@ -177,7 +178,8 @@
   answer them from the UI.
 - **Peers are configured by ID.** The UI offers the spaces the operator can see; there is no directory of spaces an
   operator cannot read.
-- **No Terraform resources yet** for cross-space settings and peers (M5-01 phase 2), and no real-harness evidence.
+- **No real-harness evidence.** Cross-space settings and peers are managed through the API, the UI and Terraform
+  (`spaceman_space_xspace_settings`, `spaceman_xspace_peer`, ADR-0041), tested against the simulated suite only.
 
 ## Sign-in (OIDC)
 - **No real Porch evidence yet.** OIDC sign-in, group mappings, linking and step-up are tested against an in-process
@@ -237,17 +239,26 @@
   are untested.
 
 ## Terraform provider
-- **Phase 1 only, not published.** `terraform-provider-spaceman/` covers what the API supports today. Limits, schedules,
-  cross-space configuration, space repositories, the backup target and schedule, and users with their grants
-  are not resources yet (SM-API-004, ADR-0035). Terraform 1.11 or later is required (write-only arguments).
+- **Phases 1 and 2, not published.** `terraform-provider-spaceman/` covers what the API supports today (ADR-0035,
+  ADR-0041). Space repositories (no API), the backup target and schedule (configuration file only), type permissions
+  beyond space enablement (no API) and editing a user's email, display name or `mfa_required` (no API) are not managed
+  (SM-API-004). Terraform 1.11 or later is required (write-only arguments).
+- **No server-side precondition for two resources.** The queue policy API has no version and a user's grant changes do
+  not bump the user's version, so `spaceman_space_queue_policy` and `spaceman_user_grants` re-read before writing and
+  refuse a change made since the refresh; a change landing between that read and the write is still overwritten.
+- **Importing `spaceman_space_limits` takes every stored override.** There is no configuration at import time to tell
+  which overrides are Terraform's, so the next plan clears the ones the configuration does not set.
 - **Relocation through Terraform is the clean flow only.** A `node_id` change runs SpaceMan's relocation and waits; a
   refusal fails the apply. The unavailable-source flow needs an operator's acknowledgement in the UI or API. A completed
   relocation through Terraform is tested only against a fake API (the acceptance harness runs no node agents).
 - **Removed fields keep their value.** Optional fields left out of the configuration are not owned, so removing one keeps
-  the last value instead of resetting it.
+  the last value instead of resetting it. Exceptions: removing a limit from `spaceman_space_limits` clears that override,
+  and cross-space peer flags and user grants are owned whole (removing one turns it off).
 - **Some objects cannot be deleted.** Destroying a prompt, skill, event template, human-action type, harness profile or
-  role template only removes it from Terraform's state; knowledge bases and dream configurations are disabled; spaces are
-  archived unless `purge_on_destroy` is set. Recreating such an object with the same slug fails until it is imported.
+  role template only removes it from Terraform's state; knowledge bases, dream configurations and users are disabled;
+  a queue policy is kept and cross-space settings are reset to the defaults; spaces are archived unless
+  `purge_on_destroy` is set. Recreating such an object with the same slug (or a user with the same email) fails until it
+  is imported.
 - **Write-only rotation is explicit.** Terraform cannot see a changed write-only secret: bump its `_wo_version`.
 - **Tested against a local central only** (simulated, `make tf-acc`); no run against a production deployment, a real
   identity provider or a real Pulse deployment is recorded.

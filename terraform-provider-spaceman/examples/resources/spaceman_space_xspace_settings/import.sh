@@ -1,0 +1,2 @@
+# <space_id>
+terraform import spaceman_space_xspace_settings.payments spc_01j0000000000000000000000

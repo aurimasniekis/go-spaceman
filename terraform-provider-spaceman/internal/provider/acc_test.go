@@ -171,7 +171,7 @@ func TestAccSpace(t *testing.T) {
 					return fmt.Errorf("a refused relocation moved the space: node %s desired %s", s.NodeID, s.DesiredNodeID)
 				}
 				if _, err := c.GetRelocation(ctx, id); !client.IsNotFound(err) {
-					return fmt.Errorf("a refused relocation was recorded: %v", err)
+					return fmt.Errorf("a refused relocation was recorded: %w", err)
 				}
 				return nil
 			}),

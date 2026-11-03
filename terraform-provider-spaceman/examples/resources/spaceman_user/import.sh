@@ -1,0 +1,1 @@
+terraform import spaceman_user.ada usr_01j0000000000000000000000

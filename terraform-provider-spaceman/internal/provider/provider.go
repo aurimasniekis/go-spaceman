@@ -1,6 +1,6 @@
 // Package provider is the SpaceMan Terraform provider (SM-API-004/005): resources for SpaceMan's durable configuration
-// (spaces, roles, catalogs, credentials references, events, human-action types, approvals, knowledge bases, dreams
-// and sign-in), never for runtime state (runs, tasks, inbox items, human-action requests and responses).
+// (spaces, roles, catalogs, credentials references, events, human-action types and policies, approvals, knowledge
+// bases, dreams, limits, schedules, cross-space grants, users and sign-in), never for runtime state (runs, tasks, inbox items, human-action requests and responses).
 package provider
 
 import (
@@ -137,6 +137,15 @@ func (p *spacemanProvider) Resources(context.Context) []func() resource.Resource
 		newDreamResource,
 		newOIDCProviderResource,
 		newOIDCGroupMappingResource,
+		newSpaceLimitsResource,
+		newQueuePolicyResource,
+		newScheduleResource,
+		newXSpaceSettingsResource,
+		newXSpacePeerResource,
+		newHumanPolicyResource,
+		newUserResource,
+		newUserGrantsResource,
+		newUserIdentityResource,
 	}
 }
 
@@ -147,5 +156,7 @@ func (p *spacemanProvider) DataSources(context.Context) []func() datasource.Data
 		newSpaceDataSource,
 		newSpacesDataSource,
 		newEventTemplateDataSource,
+		newSpaceLimitsDataSource,
+		newUserDataSource,
 	}
 }

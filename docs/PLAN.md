@@ -72,7 +72,7 @@
 ### M5 — Completion
 | WP | Scope | Requirements | Status |
 |---|---|---|---|
-| M5-01 | Terraform provider (nested module) | SM-API-004/005 | in progress: phase 1 tested (simulated): nested module `terraform-provider-spaceman/` (terraform-plugin-framework), 20 resources and 5 data sources for everything the API supports, write-only secrets with version companions, `If-Match` from private state, idempotent creates, one published version per catalog change, plan-time refusal of `node_id` changes (ADR-0035); acceptance tests against a local central (`make tf-acc`); phase 2 (limits, schedules, cross-space, relocation, repositories, backup config, users) waits for M4-02/05/06; not published |
+| M5-01 | Terraform provider (nested module) | SM-API-004/005 | in progress: phases 1 and 2 tested (simulated): nested module `terraform-provider-spaceman/` (terraform-plugin-framework), 29 resources and 7 data sources for everything the API supports, write-only secrets with version companions, `If-Match` from private state, idempotent creates, one published version per catalog change, `node_id` changes as relocations (ADR-0035, ADR-0037); phase 2 adds limits (only configured overrides owned), queue policy, schedules, cross-space settings and peer grants, human-action policies, users, grants and linked identities (ADR-0041); acceptance tests against a local central (`make tf-acc`, 14 tests); not managed: space repositories (no API), backup target/schedule (configuration file), user profile edits (no API); not published |
 | M5-02 | CLI + API completeness, generated reference | SM-API-003 | todo |
 | M5-03 | Complete site + all screenshots current | SM-DOCS-* | todo |
 | M5-04 | End-to-end demonstration script + real evidence | SM-VER-002/003 | todo |

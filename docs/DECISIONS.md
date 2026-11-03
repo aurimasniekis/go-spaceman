@@ -1028,7 +1028,8 @@
   - Each agent tool call is one more small write transaction (the per-run counter).
   - Throttled ingestion may make JetStream redeliver prefetched events after its acknowledgement timeout; they are
     deduplicated and recorded as redeliveries.
-  - Terraform phase 2 (ADR-0035) can manage `space_limits` and schedules through these endpoints; not done here.
+  - Terraform phase 2 (ADR-0035) can manage `space_limits` and schedules through these endpoints; not done here
+    (done in ADR-0041).
   - Merging note: migration 0025 rebuilds `inbox_items`; later migrations that rebuild it must keep `schedule`.
 
 ### ADR-0037 — Explicit, resumable space relocation with clean-state checks and a fenced switch-over (security-relevant change)
@@ -1193,8 +1194,72 @@
   - Removing a peer row stops new requests at once; requests already open stay open, and when it was the destination's
     row, replies to them disclose nothing.
   - Purging either space deletes the requests between them.
-  - No Terraform resources yet (M5-01 phase 2); no real-harness evidence: the simulated suite and the dev stack (stub
-    harness) only.
+  - No Terraform resources yet (M5-01 phase 2, done in ADR-0041); no real-harness evidence: the simulated suite and the
+    dev stack (stub harness) only.
+
+### ADR-0041 — Terraform provider phase 2: limits own only configured overrides, grants are owned whole, users are never deleted
+- **Status:** Accepted, 2026-11-03 (M5-01 phase 2). Extends ADR-0035; no central API change.
+- **Context:** SM-API-004 also lists limits, schedules, cross-space and auth configuration; SM-HUI-008 human-action
+  policies; SM-LIMIT-001 the limits themselves. M4-02 (ADR-0036), M4-06 (ADR-0038) and the existing user and OIDC APIs now
+  provide the endpoints. Several of them do not fit ADR-0035's default pattern (Optional+Computed fields, `If-Match` from
+  private state): the limit overrides are one map replaced as a whole, the queue policy and a user's grants have no
+  usable `If-Match`, a cross-space peer row is an authorization grant, users cannot be renamed or deleted, and a
+  human-action policy `PUT` with version 0 silently overwrites.
+- **Decision:**
+  - **Resources (9) and data sources (2).** `spaceman_space_limits` (`GET/PUT /spaces/{id}/limits`),
+    `spaceman_space_queue_policy` (`PUT /spaces/{id}/queue/policy`, read from `GET /spaces/{id}/tasks`),
+    `spaceman_schedule` (`/spaces/{id}/schedules`), `spaceman_space_xspace_settings` (`/spaces/{id}/xspace/settings`),
+    `spaceman_xspace_peer` (`PUT/DELETE /spaces/{id}/xspace/peers/{peer}`, read from the list),
+    `spaceman_human_action_policy` (`/human-policies/{type}` or `/spaces/{id}/human-policies/{type}`), `spaceman_user`
+    (`POST /users`, `/users/{id}/enable|disable`), `spaceman_user_grants` (`PUT /users/{id}/grants`) and
+    `spaceman_user_identity` (`POST/DELETE /users/{id}/identities`); data sources `spaceman_space_limits` (effective
+    values, defaults, overrides and sources) and `spaceman_user` (by ID or email). All are importable.
+  - **Limits own exactly the configured overrides.** One Int64 attribute per overridable limit key (13; the top-level
+    task limit lives in the queue policy and is its own resource), Optional and not Computed: null means "not
+    Terraform's". Every write reads the current overrides and merges: configured keys are set, keys Terraform owned at
+    the last refresh but no longer configures are removed (SpaceMan's installation default applies again), all other
+    overrides — set in the UI or the API — are kept. Refresh fills only owned keys, so a foreign override is never drift
+    and a cleared owned one is. `on_lower` follows the same rule (removing it resets it to `drain`). Destroy removes the
+    owned overrides only. Import has no configuration to tell ownership, so the first read after an import takes every
+    stored override (a private-state flag); a later plan clears those the configuration does not set. Writes send
+    `If-Match` with the version read at refresh (none while nothing is stored).
+  - **No `If-Match` available: compare before write.** The queue policy API has no version, and `PUT /users/{id}/grants`
+    checks only the user's version, which grant changes do not bump. Both resources re-read the object just before writing
+    and refuse with a "changed after the plan" error when it differs from the last refresh. This narrows, but does not
+    close, the window a real precondition would close.
+  - **Authorization grants are owned whole.** `spaceman_xspace_peer` has every flag Optional with a default (off,
+    disclosure `none`, SpaceMan's quota defaults), so a flag turned on outside Terraform is drift and the next apply turns
+    it off; a working grant needs two resources (the destination's inbound side and the source's outbound side, ADR-0038).
+    `spaceman_user_grants` owns the user's whole manual grant set like `spaceman_space_accounts`; SSO-mapped grants are
+    never touched. A create of a peer configuration that exists fails (`already_exists`), and so does a human-action
+    policy create: the provider lists the scope first instead of letting version 0 overwrite (import it).
+  - **Human-action policies.** All fields are Optional+Computed (ADR-0035). Because the most specific policy applies as a
+    whole, fields left out on create start from the policy in force for that type and scope (the `effective` list; for
+    `all`, the installation's `all` default or SpaceMan's built-in values), not from zeros.
+  - **Schedules.** Full replacement through `PUT` with `If-Match`. `cron` and `interval_seconds` are owned (default empty
+    and 0) so a kind change never keeps a stale timing field. An unconfigured `anchor` is kept while kind and interval
+    stay the same and is unknown otherwise (SpaceMan then re-anchors at the update), mirroring the API. Occurrences are
+    runtime state.
+  - **Users.** Email and display name cannot be changed through the API (the store has a profile update, no operation
+    exposes it): changes are refused at plan time (ADR-0035 "no silent replacement"); the email must be configured in
+    lower case because SpaceMan stores it lower-cased. Destroy disables the user (no delete API), with a warning;
+    SpaceMan's last-administrator rule still applies. Terraform never sends passwords, `mfa_required`, reset tokens or link
+    invitations: the first are the user's own credentials, the rest are shown once.
+  - **Singletons on destroy.** Cross-space settings are reset to SpaceMan's defaults (profile empty, depth 3, 60 per hour);
+    the queue policy has no removal API and is kept, with a warning.
+- **Alternatives:** a `values` map for limits (no per-limit documentation or typo protection); Optional+Computed limit
+  attributes (a removed attribute could not clear its override, and destroy could not tell owned from foreign ones);
+  ADR-0035 ownership for peer flags (a UI-widened grant would never show as drift); grants inside `spaceman_user` (JIT
+  users created by OIDC could not get managed grants; two owners of one set); a central `PATCH /users/{id}` or an
+  `If-Match` on queue policies and grants (central changes outside this work package; recorded as gaps).
+- **Consequences:**
+  - After importing `spaceman_space_limits`, overrides the configuration does not set are planned for removal.
+  - A grant or queue-policy change made between the provider's re-read and its write is still overwritten (no
+    server-side precondition).
+  - Renaming a user needs a new user; destroying one leaves a disabled account behind.
+  - Still not managed: space repositories (no API), the backup target and schedule (configuration file only), user
+    profile edits and `mfa_required` after creation, type permissions beyond space enablement (no API), and a real
+    upstream (Pulse, IdP) in the acceptance tests.
 
 ### ADR-0039 — Security review fixes: serialized credential attempts, daemon Git that runs no repository code, contained relocation paths (security-relevant change)
 - **Status:** Accepted, 2026-11-03 (M4-08).

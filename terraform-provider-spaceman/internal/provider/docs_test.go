@@ -19,6 +19,7 @@ import (
 	pschema "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 // docAttr is the documented view of one attribute.
@@ -77,6 +78,9 @@ func dataAttrs(m map[string]dschema.Attribute) []docAttr {
 			d.typ = "Boolean"
 		case dschema.MapAttribute:
 			d.typ = "Map of String"
+			if t.ElementType != nil && t.ElementType.Equal(types.Int64Type) {
+				d.typ = "Map of Number"
+			}
 		case dschema.ListNestedAttribute:
 			d.typ, d.nested = "Attributes List", dataAttrs(t.NestedObject.Attributes)
 		default:
@@ -184,9 +188,12 @@ so the token never leaves the configured origin.
 ## What Terraform manages
 
 Durable configuration only: spaces and their roles, account bindings, accounts, harness profiles, role templates, prompts,
-skills, MCP servers and grants, event connections, templates and subscriptions, human-action types and their enablement,
-approval policies, knowledge bases, dream configurations, and OIDC providers with group mappings. Runtime state (runs,
-tasks, inbox items, messages, human-action requests and responses, approvals, recordings) is never managed.
+skills, MCP servers and grants, event connections, templates and subscriptions, human-action types, their enablement and
+policies, approval policies, knowledge bases, dream configurations, limit overrides and queue policies, schedules,
+cross-space settings and peer grants, users with their grants and linked sign-in identities, and OIDC providers with group
+mappings. Runtime state (runs, tasks, inbox items, messages, schedule occurrences, cross-space requests, human-action
+requests and responses, approvals, recordings) is never managed, and neither are one-time secrets (API tokens, node
+enrollment tokens, password reset tokens, SSO link invitations) or passwords and MFA enrollment.
 
 ## Drift and ownership
 
@@ -194,6 +201,12 @@ The web UI uses the same API, so a UI edit of a field the configuration sets sho
 restores the configured value. An optional field the configuration leaves out is not owned by Terraform: its current value
 (edited in the UI, or SpaceMan's default) is kept and never shows as drift. Removing such a field from the configuration
 therefore leaves the last value in place instead of clearing it.
+
+Two resources differ on purpose. ` + "`spaceman_space_limits`" + ` owns exactly the limits the configuration sets: removing an
+attribute clears that override (the installation default applies again), overrides of other limits set elsewhere are kept,
+and destroying the resource clears only the overrides it owns. Authorization grants are owned whole:
+` + "`spaceman_xspace_peer`" + ` (every flag defaults to off, so a flag turned on in the UI is drift), ` + "`spaceman_user_grants`" + ` and
+` + "`spaceman_space_accounts`" + ` (the whole set).
 
 Every update sends ` + "`If-Match`" + ` with the object version read during the last refresh (kept in private state), so an apply never
 overwrites a change made after the plan was computed: it fails with a conflict and the next plan shows the change. Creates
@@ -217,10 +230,11 @@ that follow a template's latest version move with it without planning a change.
 ## What cannot be deleted
 
 SpaceMan keeps catalog history: prompts, skills, event templates, human-action types, harness profiles and role templates
-have no delete API, so destroying them only removes them from Terraform's state (with a warning). Knowledge bases and dream
-configurations are disabled on destroy. Spaces are archived on destroy and purged only with ` + "`purge_on_destroy`" + `.
-Identifying fields the API cannot change (slugs, kinds, a prompt's name) are refused at plan time instead of replacing the
-object.
+have no delete API, so destroying them only removes them from Terraform's state (with a warning). Knowledge bases, dream
+configurations and users are disabled on destroy; a space's cross-space settings are reset to SpaceMan's defaults, and its
+queue policy is kept (with a warning). Spaces are archived on destroy and purged only with ` + "`purge_on_destroy`" + `.
+Identifying fields the API cannot change (slugs, kinds, a prompt's name, a user's email and display name) are refused at plan
+time instead of replacing the object.
 
 ## Node pinning
 

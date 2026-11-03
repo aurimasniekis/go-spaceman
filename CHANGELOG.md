@@ -17,6 +17,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   only). Node protocol minor 3; migration 0026.
 - Terraform: a change of `spaceman_space.node_id` now relocates the space in place (`relocation_dirty_state`,
   `relocation_stop_runs`, `relocation_recovery`, `relocation_retain_days`, `relocation_timeout`) instead of being refused.
+- Terraform provider phase 2 (SM-API-004, SM-HUI-008, ADR-0041): `spaceman_space_limits` (owns only the configured
+  overrides; removing one clears it, destroy clears the owned ones), `spaceman_space_queue_policy` (top-level task
+  limit), `spaceman_schedule`, `spaceman_space_xspace_settings`, `spaceman_xspace_peer` (one side of a cross-space grant,
+  owned whole), `spaceman_human_action_policy` (installation defaults and space overrides), `spaceman_user` (disabled on
+  destroy), `spaceman_user_grants` (the whole manual grant set) and `spaceman_user_identity`; data sources
+  `spaceman_space_limits` (effective values and sources) and `spaceman_user`. Creating a peer configuration or a
+  human-action policy that already exists fails instead of overwriting it. Passwords, reset tokens, link invitations and
+  MFA enrollment are never managed.
 
 ### Security
 - Security review (M4-08, `docs/SECURITY_REVIEW.md`, ADR-0039). The fixes:
