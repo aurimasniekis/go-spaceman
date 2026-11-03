@@ -18,6 +18,8 @@ you resume it.
 Resuming an earlier native session after a move is not possible: the session files live on the source. A launch that asks
 to resume such a session starts a new one instead, and the run's manifest says so.
 
+<Shot name="space-relocate" alt="The Relocate dialog: destination node, a node that is not available because it never connected, what to do with unpushed or changed work, whether to stop runs, and how long to keep the source folder" caption="Relocating a space" />
+
 ## How a clean relocation runs
 
 ```mermaid

@@ -60,9 +60,9 @@
 | `approval-executed` | Human actions | An approved enforced approval with its execution recorded separately | current |
 | `space-knowledge` | Space knowledge | Knowledge bases with sessions, capacity, questions and proposals | current |
 | `kb-detail` | Space knowledge | A KB's questions with answers, their basis and evidence | current |
-| `xspace-requests` | Cross-space requests | A space's incoming and outgoing cross-space requests with a question's detail (untrusted-content notice, disclosure) | todo |
-| `xspace-access` | Cross-space requests | A space's settings and what it accepts from and may send to each peer, with the disclosure level and limits | todo |
-| `xspace-admin` | Cross-space requests | Global Cross-space page: every request between spaces (source → destination) | todo |
+| `xspace-requests` | Cross-space requests | A space's incoming and outgoing cross-space requests with a question's detail (untrusted-content notice, disclosure) | current |
+| `xspace-access` | Cross-space requests | A space's settings and what it accepts from and may send to each peer, with the disclosure level and limits | current |
+| `xspace-admin` | Cross-space requests | Global Cross-space page: every request between spaces (source → destination) | current |
 | `space-memory` | Space memory | Dreams and role memory collections with central's head and the node's sync state | current |
 | `dream-runs` | Space memory | A dream configuration's recent dreams with summaries and findings | current |
 | `run-usage` | Run | A run's token usage from its native transcript and the stored transcript | current |
@@ -73,5 +73,5 @@
 | `skill-detail` | Skills | A skill's files, published versions and draft editor | current |
 | `space-role-preview` | Roles and profiles | A space role's effective configuration with origins and system text | current |
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
-| `space-relocate` | Relocating a space | Relocate dialog: destination, precheck, dirty-state policy, stop runs, source folder retention | todo (capture spec added; not captured yet) |
+| `space-relocate` | Relocating a space | Relocate dialog: destination (a never-connected node is named as not available), dirty-state policy, stop runs, source folder retention | current |
 | `ops-backups` | Backups and restore | Backups page: target, schedule, retention, a verified backup, what backups include and exclude | current |

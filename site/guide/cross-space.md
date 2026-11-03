@@ -9,6 +9,8 @@ through SpaceMan, and only as far as **both** spaces allow.
   runs in a space unless that space's control starts it.
 - The reply crosses back only as far as the answering space's **disclosure** level allows.
 
+<Shot name="xspace-requests" alt="A space's cross-space requests: incoming and outgoing requests with their state, and a question's detail with the untrusted-content notice and the disclosure level" caption="A space's cross-space requests" />
+
 ## Who may ask whom
 
 Each space configures, per **peer** space, two separate things under **Space → Cross-space → Cross-space access**:
@@ -36,6 +38,9 @@ space that does not exist. With discovery but without the grant, the answer is *
 The space's own settings (same tab) hold its **profile**, the text peers that may discover it see; the **deepest request
 chain** it accepts (default 3, at most 8); and how many requests its control may send per hour to all peers together
 (default 60).
+
+
+<Shot name="xspace-access" alt="A space's cross-space access: its profile, depth and outgoing limits, and per peer what it accepts, what it may send and how much its replies disclose" caption="What a space accepts from and may send to each peer" />
 
 ## How a request flows
 
@@ -106,6 +111,9 @@ Every refusal is recorded in the audit log with outcome **denied**.
 Only control has the cross-space tools: a space speaks to other spaces through its one accountable identity, so a
 prompt-injected worker cannot send the space's data anywhere. Global administrators see every request and every
 space's configuration on the **Cross-space** page.
+
+
+<Shot name="xspace-admin" alt="The global Cross-space page listing every request between spaces with source, destination, kind and state" caption="Every request between spaces, for administrators" />
 
 ## What crosses, and what does not
 
