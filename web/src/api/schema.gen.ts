@@ -788,7 +788,8 @@ export interface paths {
          */
         put: operations["save-harness-profile"];
         post?: never;
-        delete?: never;
+        /** Delete a harness profile (by ID or slug) no role template or space role uses */
+        delete: operations["delete-harness-profile"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1447,7 +1448,8 @@ export interface paths {
         /** Create (template_id "new") or update a role template */
         put: operations["save-role-template"];
         post?: never;
-        delete?: never;
+        /** Delete a role template (by ID or slug) no space role uses */
+        delete: operations["delete-role-template"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3057,6 +3059,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/starter-roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give the space the starter roles it does not have yet
+         * @description Adds a space role (control, planner, implementor, reviewer, kb, dreamer) for each starter role whose template still exists and whose name the space does not use. Existing roles are never changed.
+         */
+        post: operations["add-starter-roles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/state": {
         parameters: {
             query?: never;
@@ -3564,6 +3586,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/starter-roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The starter roles and whether each one's template still exists
+         * @description SpaceMan adds the starter profiles, prompts and role templates once, on the first start; operators edit or delete them. POST /spaces/{space_id}/starter-roles gives a space a role for each starter role whose template still exists.
+         */
+        get: operations["list-starter-roles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/backups": {
         parameters: {
             query?: never;
@@ -4030,6 +4072,16 @@ export interface components {
             kind: "human_action" | "external";
             note?: string;
             ref_id?: string;
+        };
+        AddedRolesOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/AddedRolesOut.json
+             */
+            readonly $schema?: string;
+            /** @description The roles added; empty when the space had them all or their templates were deleted */
+            added: string[];
         };
         ApperrFieldError: {
             field: string;
@@ -5604,6 +5656,8 @@ export interface components {
             /** @description Lowercase URL-safe identifier, unique (3-48 characters) */
             slug: string;
             standing_instructions?: string;
+            /** @description Also give the space the starter roles (control, planner, implementor, reviewer, kb, dreamer) whose templates still exist */
+            starter_roles?: boolean;
         };
         FleetIssue: {
             /** @enum {string} */
@@ -9376,6 +9430,25 @@ export interface components {
             warning: string;
             within_limit: boolean;
         };
+        StarterRoleOut: {
+            description: string;
+            /** @enum {string} */
+            kind: "control" | "worker" | "kb" | "dreamer";
+            label: string;
+            name: string;
+            template: string;
+            /** @description Empty when an operator deleted the starter template */
+            template_id?: string;
+        };
+        StarterRolesOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/StarterRolesOut.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["StarterRoleOut"][];
+        };
         "Stop-runRequest": {
             /**
              * Format: uri
@@ -11602,6 +11675,35 @@ export interface operations {
             };
         };
     };
+    "delete-harness-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-pending-human-actions": {
         parameters: {
             query?: {
@@ -13191,6 +13293,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CatalogRoleTemplate"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-role-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {
@@ -17020,6 +17151,37 @@ export interface operations {
             };
         };
     };
+    "add-starter-roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddedRolesOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "set-space-state": {
         parameters: {
             query?: never;
@@ -18210,6 +18372,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["XspaceSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-starter-roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StarterRolesOut"];
                 };
             };
             /** @description Error */

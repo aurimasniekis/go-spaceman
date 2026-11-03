@@ -3,6 +3,34 @@
 What an agent is told and how it runs comes from a few central catalogs, combined per space. Every run records the
 exact result in its manifest, so a later change never rewrites what a past run used.
 
+## Starter roles
+
+A new installation comes with **starter roles**, so the first space can launch useful agents before you configure
+anything:
+
+| Role | Kind | What it does |
+|---|---|---|
+| `control` | control | Coordinates the space: triages the inbox, plans tasks, launches workers and reviews their results. |
+| `planner` | worker | Turns a goal into small, checkable tasks with acceptance criteria; does not change code. |
+| `implementor` | worker | Makes the change a task describes in its own worktree, with tests, ready for review. |
+| `reviewer` | worker | Reviews a change for correctness, tests, security and maintainability. |
+| `kb` | kb | Answers other agents' questions from the space's knowledge base, citing its files. |
+| `dreamer` | dreamer | Consolidates role memory with SpaceMan's built-in dream prompt. |
+
+Each one is an ordinary role template (`starter-<role>`) with a published prompt of the same slug and the
+`starter-claude-code` harness profile; a `starter-codex` profile is there too. SpaceMan adds them once, at the first
+start. Edit them, or delete what you do not need: a deleted starter is not added back.
+
+A space gets the roles when you ask for it:
+
+- **New space:** keep **Add the starter roles** ticked in the create dialog (`--starter-roles` with `spaceman space
+  create`, `starter_roles: true` in the API).
+- **Existing space:** **Add starter roles** on the space's Roles card, or `spaceman role add-starters --space <space>`.
+  It adds only the roles the space does not have, and never changes the ones it has.
+
+Then launch, for example, `control` from **Launch run** and let it start the other roles. To run them on Codex, set the
+templates' profile to `starter-codex`, or give the space role another profile.
+
 ## Prompts
 
 **Prompts** hold the instructions for roles, dreams, knowledge bases and events, in one versioning system.

@@ -72,6 +72,7 @@ type CreateSpaceInput struct {
 	StandingInstructions string `json:"standing_instructions,omitempty" maxLength:"50000"`
 	NodeID               string `json:"node_id" doc:"The node the space is pinned to"`
 	DisconnectPolicy     string `json:"disconnect_policy,omitempty" enum:"interrupt,kill" doc:"What the node does with runs after losing central beyond the grace"`
+	StarterRoles         bool   `json:"starter_roles,omitempty" doc:"Also give the space the starter roles (control, planner, implementor, reviewer, kb, dreamer) whose templates still exist"`
 }
 
 // CreateSpace creates a space pinned to an existing, non-revoked node (SM-INV-002). If the node is connected, it is
@@ -125,6 +126,12 @@ func (svc *Service) CreateSpace(ctx context.Context, actor audit.Actor, in Creat
 		return nil, err
 	}
 	svc.hub.Refresh(in.NodeID)
+	if in.StarterRoles && svc.opts.AddStarterRoles != nil {
+		// The space exists either way: a failure is logged, and the roles can be added from the space later.
+		if _, err := svc.opts.AddStarterRoles(ctx, actor, id); err != nil {
+			svc.opts.Log.Warn("starter roles were not added to the new space", slog.String("space_id", id), slog.Any("error", err))
+		}
+	}
 	return svc.GetSpace(ctx, id)
 }
 

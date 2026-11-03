@@ -7,7 +7,7 @@ import { api, unwrap, type SpaceRole } from '@/api/client'
 import { keys, useMe, useRoleOptions, useSpaceMcp, useSpaceRoles } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { atLeast, roleIn } from '@/lib/access'
-import { notifyError } from '@/lib/notify'
+import { notifyError, notifyOk } from '@/lib/notify'
 import { SettingsEditor } from './SettingsEditor'
 
 const originColor: Record<string, string> = { builtin: 'gray', profile: 'owlBlue', template: 'owlPurple', space_role: 'owlGreen', launch: 'owlYellow', policy: 'owlRed' }
@@ -21,14 +21,37 @@ export function SpaceRolesCard({ spaceId }: { spaceId: string }) {
   const [preview, setPreview] = useState<string | null>(null)
   const tplName = (id: string) => options.data?.templates.find((t) => t.id === id)?.name ?? id
   const mcp = useSpaceMcp(spaceId).data ?? []
+  const qc = useQueryClient()
+  const [adding, setAdding] = useState(false)
+  // Starter roles (ADR-0051): ready-made control, planner, implementor, reviewer, kb and dreamer roles from the starter templates.
+  const addStarters = async () => {
+    setAdding(true)
+    try {
+      const r = unwrap(await api.POST('/spaces/{space_id}/starter-roles', { params: { path: { space_id: spaceId } } }))
+      void qc.invalidateQueries({ queryKey: keys.spaceRoles(spaceId) })
+      notifyOk(r.added.length > 0 ? `Added ${r.added.join(', ')}` : 'The space already has every starter role')
+    } catch (e) {
+      notifyError(e, 'Could not add the starter roles')
+    } finally {
+      setAdding(false)
+    }
+  }
   return (
     <Card mb="md">
       <Group justify="space-between" mb="xs">
         <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Roles</Text>
-        {canWrite && <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add role</Button>}
+        {canWrite && (
+          <Group gap="xs">
+            <Button size="xs" variant="default" loading={adding} onClick={() => void addStarters()}>Add starter roles</Button>
+            <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add role</Button>
+          </Group>
+        )}
       </Group>
       {(roles.data ?? []).length === 0 ? (
-        <Text size="sm" c="dimmed">No roles configured. Runs can still be launched with a free role name, a kind and a harness.</Text>
+        <Text size="sm" c="dimmed">
+          No roles configured. <b>Add starter roles</b> gives the space ready-made control, planner, implementor, reviewer, knowledge-base and
+          dreamer roles to launch right away and adjust later. Runs can also be launched with a free role name, a kind and a harness.
+        </Text>
       ) : (
         <Table>
           <Table.Tbody>

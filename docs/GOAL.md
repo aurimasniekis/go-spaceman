@@ -309,6 +309,9 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
   apply independently. Field-specific merging is documented, and effective values and their origins are exposed.
 - SM-PROMPT-004 Each run stores a non-secret resolved manifest (prompt versions and content, config revisions, settings and model, skills and
   grants, account reference, dependency versions, policy versions). Updates affect future launches by default.
+- SM-PROMPT-005 A new installation has starter roles: example harness profiles, prompts and role templates for control, planning,
+  implementation, review, knowledge-base support and dreaming, added once and editable or deletable, and a space can be given
+  ready-to-launch roles from them on request (operator request 2026-11-03, §9).
 
 ### SM-XSPACE — Cross-space collaboration
 - SM-XSPACE-001 Discovery, questions, delegation, disclosure and knowledge permissions are separate.
@@ -447,3 +450,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-02 | Real Claude Code and Codex runs are permitted for evidence, budget-bounded, against local logins and an isolated hc core. | SM-VER-002 |
 | 2026-11-02 | UI component base follows the sibling projects (Pulse, Porch, Deed): Mantine 8. | SM-UI-001 (ADR-0005) |
 | 2026-11-03 | The Terraform provider lives in its own repository (`../terraform-provider-spaceman`, module `github.com/aurimasniekis/terraform-provider-spaceman`), not in this one; this repository's build does not depend on it. | SM-API-004/005 (ADR-0047) |
+| 2026-11-03 | A new installation comes with starter roles (control, planner, implementor, reviewer, kb, dreamer) as editable, deletable examples, so a first space can launch agents without configuring every role by hand. | SM-PROMPT-005 (ADR-0051) |

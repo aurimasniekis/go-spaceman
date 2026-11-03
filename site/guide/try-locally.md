@@ -54,7 +54,19 @@ hcenv=(env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE
 
 The node turns **connected** within a few seconds. Continue with [First node and space](/guide/first-space).
 
-## 4. Stop everything
+## 4. Pick up code changes
+
+After pulling or changing the code, restart central on the stack's existing data instead of starting over:
+
+```sh
+scripts/dev-stack.sh restart "$SM_DIR"   # SKIP_UI_BUILD=1 skips the UI build
+```
+
+It rebuilds the UI and the binaries, then restarts central; spaces, nodes, runs and the root token stay. The agent
+reconnects by itself (restart it to run its new binary). Central's start-up work runs again, for example adding the
+[starter roles](/guide/roles-and-prompts#starter-roles) to an installation that does not have them yet.
+
+## 5. Stop everything
 
 Stop the agent with Ctrl-C, then:
 

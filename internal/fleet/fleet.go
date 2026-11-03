@@ -52,6 +52,9 @@ type Options struct {
 	// text) before validation, and returns what the run manifest records about it (SM-PROMPT-003/004). Nil: launches are
 	// used as given.
 	ResolveLaunch func(ctx context.Context, spaceID string, in *LaunchInput) (map[string]any, error)
+	// AddStarterRoles gives a new space the starter roles when its creation asks for them (ADR-0051). Nil: the option
+	// is refused.
+	AddStarterRoles func(ctx context.Context, actor audit.Actor, spaceID string) ([]string, error)
 	// OnSpacePurged is called after a space was purged, with its runs' IDs, to delete artifacts kept elsewhere
 	// (transcripts). Nil: nothing more is deleted.
 	OnSpacePurged func(ctx context.Context, runIDs []string)

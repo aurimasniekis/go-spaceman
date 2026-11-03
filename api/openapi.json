@@ -257,6 +257,31 @@
         ],
         "type": "object"
       },
+      "AddedRolesOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/AddedRolesOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "added": {
+            "description": "The roles added; empty when the space had them all or their templates were deleted",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "added"
+        ],
+        "type": "object"
+      },
       "ApperrFieldError": {
         "additionalProperties": false,
         "properties": {
@@ -4409,6 +4434,10 @@
           "standing_instructions": {
             "maxLength": 50000,
             "type": "string"
+          },
+          "starter_roles": {
+            "description": "Also give the space the starter roles (control, planner, implementor, reviewer, kb, dreamer) whose templates still exist",
+            "type": "boolean"
           }
         },
         "required": [
@@ -14457,6 +14486,68 @@
         ],
         "type": "object"
       },
+      "StarterRoleOut": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "control",
+              "worker",
+              "kb",
+              "dreamer"
+            ],
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          },
+          "template_id": {
+            "description": "Empty when an operator deleted the starter template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "template",
+          "kind",
+          "label",
+          "description"
+        ],
+        "type": "object"
+      },
+      "StarterRolesOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/StarterRolesOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StarterRoleOut"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "Stop-runRequest": {
         "additionalProperties": false,
         "properties": {
@@ -18026,6 +18117,39 @@
       }
     },
     "/harness-profiles/{profile_id}": {
+      "delete": {
+        "operationId": "delete-harness-profile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a harness profile (by ID or slug) no role template or space role uses",
+        "tags": [
+          "roles"
+        ]
+      },
       "get": {
         "operationId": "get-harness-profile",
         "parameters": [
@@ -20340,6 +20464,39 @@
       }
     },
     "/role-templates/{template_id}": {
+      "delete": {
+        "operationId": "delete-role-template",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a role template (by ID or slug) no space role uses",
+        "tags": [
+          "roles"
+        ]
+      },
       "get": {
         "operationId": "get-role-template",
         "parameters": [
@@ -26719,6 +26876,49 @@
         ]
       }
     },
+    "/spaces/{space_id}/starter-roles": {
+      "post": {
+        "description": "Adds a space role (control, planner, implementor, reviewer, kb, dreamer) for each starter role whose template still exists and whose name the space does not use. Existing roles are never changed.",
+        "operationId": "add-starter-roles",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddedRolesOut"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Give the space the starter roles it does not have yet",
+        "tags": [
+          "roles"
+        ]
+      }
+    },
     "/spaces/{space_id}/state": {
       "post": {
         "description": "hold admits no new work; interrupt also stops active runs politely; emergency kills them. Archiving needs no active runs.",
@@ -28818,6 +29018,38 @@
         "summary": "Edit a space's cross-space settings",
         "tags": [
           "cross-space"
+        ]
+      }
+    },
+    "/starter-roles": {
+      "get": {
+        "description": "SpaceMan adds the starter profiles, prompts and role templates once, on the first start; operators edit or delete them. POST /spaces/{space_id}/starter-roles gives a space a role for each starter role whose template still exists.",
+        "operationId": "list-starter-roles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StarterRolesOut"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The starter roles and whether each one's template still exists",
+        "tags": [
+          "roles"
         ]
       }
     },

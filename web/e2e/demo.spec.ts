@@ -46,6 +46,8 @@ test('space: UI creation of a pinned space', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Pinned node' }).click()
   await page.getByRole('option', { name: input.node }).click()
   await page.getByLabel('Goals').fill(input.goals)
+  // The demonstration configures its own roles (ADR-0051: starter roles are optional).
+  await page.getByLabel('Add the starter roles').uncheck()
   await shot(page, '01-space-form')
   await page.getByRole('button', { name: 'Create space' }).click()
   await expect(page.getByRole('heading', { name: new RegExp(input.name) })).toBeVisible()

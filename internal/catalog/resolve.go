@@ -169,7 +169,7 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 	// The launch layer: harness only when no profile chose one; model and settings override.
 	if in.Harness != "" {
 		if r.Harness != "" && r.Harness != in.Harness && r.Effective["harness"].Origin == OriginProfile {
-			return nil, apperr.New(apperr.CodeInvalid, "role %q runs on %s (its profile); launch it without a harness or change the role", in.Role, r.Harness)
+			return nil, apperr.New(apperr.CodeInvalid, "role %q is configured in this space and runs on %s (its profile): launch it without choosing a harness, use another role name, or change the role's profile", in.Role, r.Harness)
 		}
 		r.Harness = in.Harness
 		set("harness", in.Harness, OriginLaunch)

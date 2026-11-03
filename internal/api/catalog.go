@@ -14,32 +14,36 @@ import (
 
 // CatalogRules are the authorization rules of the prompt, profile, role template and space role operations.
 var CatalogRules = map[string]Rule{
-	"list-prompts":          Global(authz.PromptRead),
-	"get-prompt":            Global(authz.PromptRead),
-	"create-prompt":         Global(authz.PromptWrite),
-	"save-prompt-draft":     Global(authz.PromptWrite),
-	"publish-prompt":        Global(authz.PromptWrite),
-	"discard-prompt-draft":  Global(authz.PromptWrite),
-	"rollback-prompt":       Global(authz.PromptWrite),
-	"fork-prompt":           Global(authz.PromptWrite),
-	"diff-prompt-versions":  Global(authz.PromptRead),
-	"list-harness-profiles": Global(authz.PromptRead),
-	"get-harness-profile":   Global(authz.PromptRead),
-	"save-harness-profile":  Global(authz.PromptWrite),
-	"list-role-templates":   Global(authz.PromptRead),
-	"get-role-template":     Global(authz.PromptRead),
-	"save-role-template":    Global(authz.PromptWrite),
-	"list-role-options":     InSpace(authz.SpaceConfigRead),
-	"list-space-roles":      InSpace(authz.SpaceConfigRead),
-	"get-space-role":        InSpace(authz.SpaceConfigRead),
-	"save-space-role":       InSpace(authz.SpaceConfigWrite),
-	"delete-space-role":     InSpace(authz.SpaceConfigWrite),
-	"preview-space-role":    InSpace(authz.SpaceConfigRead),
-	"list-skills":           Global(authz.SkillRead),
-	"get-skill":             Global(authz.SkillRead),
-	"create-skill":          Global(authz.SkillWrite),
-	"save-skill-draft":      Global(authz.SkillWrite),
-	"publish-skill":         Global(authz.SkillWrite),
+	"list-prompts":           Global(authz.PromptRead),
+	"get-prompt":             Global(authz.PromptRead),
+	"create-prompt":          Global(authz.PromptWrite),
+	"save-prompt-draft":      Global(authz.PromptWrite),
+	"publish-prompt":         Global(authz.PromptWrite),
+	"discard-prompt-draft":   Global(authz.PromptWrite),
+	"rollback-prompt":        Global(authz.PromptWrite),
+	"fork-prompt":            Global(authz.PromptWrite),
+	"diff-prompt-versions":   Global(authz.PromptRead),
+	"list-harness-profiles":  Global(authz.PromptRead),
+	"get-harness-profile":    Global(authz.PromptRead),
+	"save-harness-profile":   Global(authz.PromptWrite),
+	"delete-harness-profile": Global(authz.PromptWrite),
+	"list-role-templates":    Global(authz.PromptRead),
+	"get-role-template":      Global(authz.PromptRead),
+	"save-role-template":     Global(authz.PromptWrite),
+	"delete-role-template":   Global(authz.PromptWrite),
+	"list-starter-roles":     Global(authz.PromptRead),
+	"list-role-options":      InSpace(authz.SpaceConfigRead),
+	"list-space-roles":       InSpace(authz.SpaceConfigRead),
+	"get-space-role":         InSpace(authz.SpaceConfigRead),
+	"save-space-role":        InSpace(authz.SpaceConfigWrite),
+	"delete-space-role":      InSpace(authz.SpaceConfigWrite),
+	"add-starter-roles":      InSpace(authz.SpaceConfigWrite),
+	"preview-space-role":     InSpace(authz.SpaceConfigRead),
+	"list-skills":            Global(authz.SkillRead),
+	"get-skill":              Global(authz.SkillRead),
+	"create-skill":           Global(authz.SkillWrite),
+	"save-skill-draft":       Global(authz.SkillWrite),
+	"publish-skill":          Global(authz.SkillWrite),
 }
 
 // ProfileInput creates or edits a harness profile (slug and harness are fixed after creation).
@@ -411,6 +415,24 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 				return &struct{ Body *catalog.Profile }{Body: p}, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "delete-harness-profile", Method: http.MethodDelete, Path: "/harness-profiles/{profile_id}",
+			Summary: "Delete a harness profile (by ID or slug) no role template or space role uses", Tags: tags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *struct {
+				ProfileID string `path:"profile_id" maxLength:"64"`
+			}) (*struct{}, error) {
+				id := in.ProfileID
+				if ps, err := svc.ListProfiles(ctx); err == nil {
+					for _, p := range ps {
+						if p.Slug == id {
+							id = p.ID
+						}
+					}
+				}
+				if err := svc.DeleteProfile(ctx, Actor(ctx), id); err != nil {
+					return nil, d.fail(ctx, "profiles.delete", err)
+				}
+				return &struct{}{}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "list-role-templates", Method: http.MethodGet, Path: "/role-templates", Summary: "Role templates", Tags: tags},
 			func(ctx context.Context, _ *struct{}) (*struct {
 				Body struct {
@@ -569,6 +591,48 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 				}
 				return &struct{ Body *catalog.SpaceRole }{Body: r}, nil
 			})
+		huma.Register(api, huma.Operation{OperationID: "delete-role-template", Method: http.MethodDelete, Path: "/role-templates/{template_id}",
+			Summary: "Delete a role template (by ID or slug) no space role uses", Tags: tags, DefaultStatus: http.StatusNoContent},
+			func(ctx context.Context, in *struct {
+				TemplateID string `path:"template_id" maxLength:"64"`
+			}) (*struct{}, error) {
+				id := in.TemplateID
+				if t, err := st.R().GetRoleTemplateBySlug(ctx, id); err == nil {
+					id = t.ID
+				}
+				if err := svc.DeleteTemplate(ctx, Actor(ctx), id); err != nil {
+					return nil, d.fail(ctx, "templates.delete", err)
+				}
+				return &struct{}{}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-starter-roles", Method: http.MethodGet, Path: "/starter-roles",
+			Summary: "The starter roles and whether each one's template still exists", Tags: tags,
+			Description: "SpaceMan adds the starter profiles, prompts and role templates once, on the first start; operators edit or delete them. " +
+				"POST /spaces/{space_id}/starter-roles gives a space a role for each starter role whose template still exists."},
+			func(ctx context.Context, _ *struct{}) (*struct{ Body StarterRolesOut }, error) {
+				out := StarterRolesOut{Items: []StarterRoleOut{}}
+				for _, r := range catalog.StarterRoles {
+					o := StarterRoleOut{StarterRole: r}
+					if t, err := st.R().GetRoleTemplateBySlug(ctx, r.Template); err == nil {
+						o.TemplateID = t.ID
+					}
+					out.Items = append(out.Items, o)
+				}
+				return &struct{ Body StarterRolesOut }{Body: out}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "add-starter-roles", Method: http.MethodPost, Path: "/spaces/{space_id}/starter-roles",
+			Summary: "Give the space the starter roles it does not have yet", Tags: tags,
+			Description: "Adds a space role (control, planner, implementor, reviewer, kb, dreamer) for each starter role whose template still " +
+				"exists and whose name the space does not use. Existing roles are never changed."},
+			func(ctx context.Context, in *struct {
+				SpacePath
+			}) (*struct{ Body AddedRolesOut }, error) {
+				added, err := svc.AddStarterRoles(ctx, Actor(ctx), in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "roles.starter", err)
+				}
+				return &struct{ Body AddedRolesOut }{Body: AddedRolesOut{Added: added}}, nil
+			})
 		huma.Register(api, huma.Operation{OperationID: "delete-space-role", Method: http.MethodDelete, Path: "/spaces/{space_id}/roles/{name}",
 			Summary: "Remove a role from the space", Tags: tags, DefaultStatus: http.StatusNoContent},
 			func(ctx context.Context, in *struct {
@@ -598,4 +662,20 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 					Effective: r.Effective, Prompt: r.Prompt, Skills: append([]catalog.ResolvedSkill{}, r.Skills...)}}, nil
 			})
 	}
+}
+
+// StarterRoleOut is a starter role and its template, when it still exists.
+type StarterRoleOut struct {
+	catalog.StarterRole
+	TemplateID string `json:"template_id,omitempty" doc:"Empty when an operator deleted the starter template"`
+}
+
+// StarterRolesOut lists the starter roles.
+type StarterRolesOut struct {
+	Items []StarterRoleOut `json:"items"`
+}
+
+// AddedRolesOut names the space roles a request added.
+type AddedRolesOut struct {
+	Added []string `json:"added" doc:"The roles added; empty when the space had them all or their templates were deleted"`
 }

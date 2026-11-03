@@ -19,6 +19,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acceptance tests build central from a SpaceMan checkout (`SPACEMAN_SRC`, or `../spaceman`).
 
 ### Added
+- Starter roles (SM-PROMPT-005, ADR-0051): a new installation gets example harness profiles, prompts and role templates
+  for control, planner, implementor, reviewer, kb and dreamer, added once and editable or deletable. A space gets
+  ready-to-launch roles from them with **Add starter roles**, `spaceman role add-starters`, `POST
+  /spaces/{id}/starter-roles`, or `starter_roles` when it is created (ticked by default in the UI).
+- `scripts/dev-stack.sh restart DIR`: rebuild and restart central on a dev stack's existing data.
+- Role templates and harness profiles can be deleted (`DELETE /role-templates/{id}`, `DELETE /harness-profiles/{id}`,
+  `spaceman role template delete`, `spaceman profile delete`, the Roles page) while nothing uses them.
 - Incident policy (ADR-0050, SM-QUEUE-009, migration 0034): a space's queue policy names the **trusted triggers** that
   may raise incidents (`operator`, `control`, `subscription:<id>`, `template:<id or slug>`; default operator and
   control); an incident from any other source — including one control relays from a worker's, schedule's or another

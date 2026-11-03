@@ -61,7 +61,7 @@ Every command accepts these.
 | [`spaceman oidc`](./oidc) | Single sign-on: OIDC providers, group mappings and sign-in settings |
 | [`spaceman openapi`](./openapi) | Print the OpenAPI 3.1 document of the API |
 | [`spaceman password`](./password) | Your password: change it (passwords come from files or standard input) |
-| [`spaceman profile`](./profile) | Harness profiles: list, show, create and update |
+| [`spaceman profile`](./profile) | Harness profiles: list, show, create, update and delete |
 | [`spaceman prompt`](./prompt) | Prompt catalog: list, show, create, draft, publish, diff, fork and roll back |
 | [`spaceman repo`](./repo) | A space's repositories: list, show, add, edit, remove and sync (--space) |
 | [`spaceman role`](./role) | Roles of a space (--space), their options, and role templates |

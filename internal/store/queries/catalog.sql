@@ -91,3 +91,18 @@ SELECT * FROM space_roles WHERE space_id = ? ORDER BY name;
 
 -- name: DeleteSpaceRole :execrows
 DELETE FROM space_roles WHERE space_id = ? AND name = ?;
+
+-- name: DeleteRoleTemplate :execrows
+DELETE FROM role_templates WHERE id = ?;
+
+-- name: SpaceRolesUsingTemplate :many
+SELECT space_id, name FROM space_roles WHERE template_id = ? ORDER BY space_id, name LIMIT 5;
+
+-- name: DeleteProfile :execrows
+DELETE FROM harness_profiles WHERE id = ?;
+
+-- name: TemplatesUsingProfile :many
+SELECT slug FROM role_templates WHERE profile_id = ? ORDER BY slug LIMIT 5;
+
+-- name: SpaceRolesUsingProfile :many
+SELECT space_id, name FROM space_roles WHERE profile_id = ? ORDER BY space_id, name LIMIT 5;

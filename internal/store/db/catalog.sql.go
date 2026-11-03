@@ -10,12 +10,36 @@ import (
 	"database/sql"
 )
 
+const deleteProfile = `-- name: DeleteProfile :execrows
+DELETE FROM harness_profiles WHERE id = ?
+`
+
+func (q *Queries) DeleteProfile(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteProfile, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deletePromptDraft = `-- name: DeletePromptDraft :execrows
 DELETE FROM prompt_versions WHERE id = ? AND state = 'draft'
 `
 
 func (q *Queries) DeletePromptDraft(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deletePromptDraft, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteRoleTemplate = `-- name: DeleteRoleTemplate :execrows
+DELETE FROM role_templates WHERE id = ?
+`
+
+func (q *Queries) DeleteRoleTemplate(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteRoleTemplate, id)
 	if err != nil {
 		return 0, err
 	}
@@ -640,6 +664,97 @@ func (q *Queries) PublishPromptVersion(ctx context.Context, arg PublishPromptVer
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const spaceRolesUsingProfile = `-- name: SpaceRolesUsingProfile :many
+SELECT space_id, name FROM space_roles WHERE profile_id = ? ORDER BY space_id, name LIMIT 5
+`
+
+type SpaceRolesUsingProfileRow struct {
+	SpaceID string
+	Name    string
+}
+
+func (q *Queries) SpaceRolesUsingProfile(ctx context.Context, profileID string) ([]SpaceRolesUsingProfileRow, error) {
+	rows, err := q.db.QueryContext(ctx, spaceRolesUsingProfile, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceRolesUsingProfileRow{}
+	for rows.Next() {
+		var i SpaceRolesUsingProfileRow
+		if err := rows.Scan(&i.SpaceID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const spaceRolesUsingTemplate = `-- name: SpaceRolesUsingTemplate :many
+SELECT space_id, name FROM space_roles WHERE template_id = ? ORDER BY space_id, name LIMIT 5
+`
+
+type SpaceRolesUsingTemplateRow struct {
+	SpaceID string
+	Name    string
+}
+
+func (q *Queries) SpaceRolesUsingTemplate(ctx context.Context, templateID string) ([]SpaceRolesUsingTemplateRow, error) {
+	rows, err := q.db.QueryContext(ctx, spaceRolesUsingTemplate, templateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpaceRolesUsingTemplateRow{}
+	for rows.Next() {
+		var i SpaceRolesUsingTemplateRow
+		if err := rows.Scan(&i.SpaceID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const templatesUsingProfile = `-- name: TemplatesUsingProfile :many
+SELECT slug FROM role_templates WHERE profile_id = ? ORDER BY slug LIMIT 5
+`
+
+func (q *Queries) TemplatesUsingProfile(ctx context.Context, profileID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, templatesUsingProfile, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		items = append(items, slug)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateProfile = `-- name: UpdateProfile :execrows

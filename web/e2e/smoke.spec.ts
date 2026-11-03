@@ -91,6 +91,8 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('option', { name: 'dev-node' }).click()
   await page.getByLabel('Description', { exact: true }).fill('Card processing services and their release train')
   await page.getByLabel('Goals').fill('Keep the settlement pipeline green; ship the retry-budget change this week.')
+  // This journey launches free-form roles; the starter roles (ticked by default) are covered by the Scratch space below.
+  await page.getByLabel('Add the starter roles').uncheck()
   await page.getByRole('button', { name: 'Create space' }).click()
   await expect(page.getByRole('heading', { name: /Payments platform/ })).toBeVisible()
   await expect(page.getByText('valid')).toBeVisible({ timeout: 20_000 })

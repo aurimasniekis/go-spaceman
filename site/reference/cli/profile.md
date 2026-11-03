@@ -2,13 +2,14 @@
 
 # spaceman profile
 
-Harness profiles: list, show, create and update.
+Harness profiles: list, show, create, update and delete.
 
 Aliases: `profiles`.
 
 | Subcommand | Description |
 |---|---|
 | [`spaceman profile create`](#spaceman-profile-create) | Add a harness profile |
+| [`spaceman profile delete`](#spaceman-profile-delete) | Delete a harness profile no role template or space role uses (ID or slug) |
 | [`spaceman profile get`](#spaceman-profile-get) | Show a harness profile (ID or slug) |
 | [`spaceman profile list`](#spaceman-profile-list) | Harness profiles |
 | [`spaceman profile update`](#spaceman-profile-update) | Edit a harness profile (only the flags given change) |
@@ -31,6 +32,16 @@ API: `save-harness-profile` ([HTTP API](../api)).
 | `--model` | string |  | model |
 | `--name` | string |  | name |
 | `--setting` | string, repeatable |  | harness setting (key=value, repeatable) |
+
+## spaceman profile delete
+
+Delete a harness profile no role template or space role uses (ID or slug).
+
+```sh
+spaceman profile delete <profile> [flags]
+```
+
+API: `delete-harness-profile` ([HTTP API](../api)).
 
 ## spaceman profile get
 

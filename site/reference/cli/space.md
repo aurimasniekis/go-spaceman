@@ -48,7 +48,7 @@ API: `create-space` ([HTTP API](../api)).
 Example:
 
 ```sh
-spaceman space create payments --name Payments --node build-01
+spaceman space create payments --name Payments --node build-01 --starter-roles
 ```
 
 | Flag | Type | Default | Description |
@@ -64,6 +64,7 @@ spaceman space create payments --name Payments --node build-01
 | `--node` | string |  | node ID or name the space is pinned to (required) |
 | `--standing-instructions` | string |  | standing instructions for the space's agents |
 | `--standing-instructions-file` | string |  | read --standing-instructions from a file (- reads standard input) |
+| `--starter-roles` | bool |  | also give the space the starter roles (control, planner, implementor, reviewer, kb, dreamer) |
 
 ## spaceman space export
 

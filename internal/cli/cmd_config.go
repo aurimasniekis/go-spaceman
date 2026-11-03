@@ -12,6 +12,7 @@ var (
 	skillCols    = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("SOURCE", "source"), c("LATEST", "latest")}
 	profileCols  = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("HARNESS", "harness"), c("MODEL", "model"), c("REVISION", "revision")}
 	templateCols = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("KIND", "kind"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("REVISION", "revision")}
+	starterCols  = []col{c("ROLE", "name"), c("KIND", "kind"), c("TEMPLATE", "template"), c("TEMPLATE ID", "template_id"), c("DESCRIPTION", "description")}
 	roleCols     = []col{c("NAME", "name"), c("TEMPLATE", "template_id"), c("PROFILE", "profile_id"), c("PROMPT", "prompt_id"), c("MODEL", "model"), c("REVISION", "revision")}
 	connCols     = []col{c("ID", "id"), c("NAME", "name"), c("URL", "url"), c("STREAM", "stream"), c("CLIENT", "client_id"), c("ENABLED", "enabled")}
 	etplCols     = []col{c("ID", "id"), c("SLUG", "slug"), c("NAME", "name"), c("BUILTIN", "builtin"), {head: "VERSIONS", fn: countOf("versions")}}
@@ -95,7 +96,7 @@ func (a *App) profileCmd() *cobra.Command {
 		f.str("name", "name", "name").str("model", "model", "model").kv("setting", "settings", "harness setting").
 			str("description", "description", "description")
 	}
-	return group("profile", "Harness profiles: list, show, create and update", []string{"profiles"},
+	return group("profile", "Harness profiles: list, show, create, update and delete", []string{"profiles"},
 		a.cmd(opts{use: "list", short: "Harness profiles", op: "list-harness-profiles", alias: []string{"ls"},
 			view: view{items: "items", cols: profileCols, empty: "No harness profiles."}}),
 		a.cmd(opts{use: "get", short: "Show a harness profile (ID or slug)", op: "get-harness-profile", args: pos("profile")}),
@@ -110,6 +111,8 @@ func (a *App) profileCmd() *cobra.Command {
 			}}),
 		a.cmd(opts{use: "update", short: "Edit a harness profile (only the flags given change)", op: "save-harness-profile", get: "get-harness-profile", canonical: "profile_id",
 			merge: true, args: pos("profile"), form: prof}),
+		a.cmd(opts{use: "delete", short: "Delete a harness profile no role template or space role uses (ID or slug)", op: "delete-harness-profile",
+			args: pos("profile"), done: "Profile deleted."}),
 	)
 }
 
@@ -124,7 +127,7 @@ func (a *App) roleCmd() *cobra.Command {
 			str("prompt", "prompt_id", "prompt ID").str("prompt-pin", "prompt_pin", "published prompt version to pin (empty follows the latest)").
 			text("memory-conventions", "memory_conventions", "memory conventions").kv("setting", "settings", "harness setting")
 	}
-	tpl := group("template", "Role templates: list, show, create and update", []string{"templates"},
+	tpl := group("template", "Role templates: list, show, create, update, delete and the starter set", []string{"templates"},
 		a.cmd(opts{use: "list", short: "Role templates", op: "list-role-templates", alias: []string{"ls"},
 			view: view{items: "items", cols: templateCols, empty: "No role templates."}}),
 		a.cmd(opts{use: "get", short: "Show a role template (ID or slug)", op: "get-role-template", args: pos("template")}),
@@ -139,6 +142,10 @@ func (a *App) roleCmd() *cobra.Command {
 			}}),
 		a.cmd(opts{use: "update", short: "Edit a role template (only the flags given change)", op: "save-role-template", get: "get-role-template",
 			canonical: "template_id", merge: true, args: pos("template"), form: tplForm}),
+		a.cmd(opts{use: "delete", short: "Delete a role template no space role uses (ID or slug)", op: "delete-role-template", args: pos("template"),
+			done: "Template deleted."}),
+		a.cmd(opts{use: "starters", short: "The starter roles and whether each one's template still exists", op: "list-starter-roles",
+			view: view{items: "items", cols: starterCols, empty: "No starter roles."}}),
 	)
 	return group("role", "Roles of a space (--space), their options, and role templates", []string{"roles"},
 		a.cmd(opts{use: "list", short: "A space's roles", op: "list-space-roles", alias: []string{"ls"}, scoped: true,
@@ -149,6 +156,8 @@ func (a *App) roleCmd() *cobra.Command {
 		a.cmd(opts{use: "preview", short: "A role's effective configuration and where each value comes from", op: "preview-space-role", scoped: true,
 			args: pos("name")}),
 		a.cmd(opts{use: "delete", short: "Remove a role from a space", op: "delete-space-role", scoped: true, args: pos("name"), done: "Role removed."}),
+		a.cmd(opts{use: "add-starters", short: "Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer)",
+			op: "add-starter-roles", scoped: true, example: "spaceman role add-starters --space payments"}),
 		tpl,
 	)
 }

@@ -100,6 +100,19 @@ function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
       }
     },
   })
+  // Profiles a role template or space role uses cannot be deleted; the server says which (ADR-0051).
+  const remove = async () => {
+    if (!p) return
+    setError('')
+    try {
+      const r = await api.DELETE('/harness-profiles/{profile_id}', { params: { path: { profile_id: p.id } } })
+      if (r.error) throw r.error
+      void qc.invalidateQueries({ queryKey: keys.profiles })
+      onClose()
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }
   return (
     <Modal opened onClose={onClose} title={p ? `Edit ${p.name}` : 'New harness profile'} size="lg">
       <form onSubmit={submitOn(form.handleSubmit)}>
@@ -121,9 +134,12 @@ function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
           <form.Field name="description">{(f) => <Textarea label="Description" autosize minRows={2} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
           {p && <Text size="xs" c="dimmed">Saving creates revision {p.revision + 1}; it applies to later launches.</Text>}
           {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={onClose}>Cancel</Button>
-            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+          <Group justify="space-between">
+            {p ? <Button variant="subtle" color="owlRed" onClick={() => void remove()}>Delete profile</Button> : <span />}
+            <Group gap="xs">
+              <Button variant="default" onClick={onClose}>Cancel</Button>
+              <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+            </Group>
           </Group>
         </Stack>
       </form>
@@ -155,6 +171,19 @@ function TemplateModal({ t, onClose }: { t?: RoleTemplate; onClose: () => void }
   })
   const promptId = useSelector(form.store, (st) => st.values.prompt_id)
   const prompt = usePrompt(promptId || '_none')
+  // Templates a space role uses cannot be deleted; the server says which (ADR-0051).
+  const remove = async () => {
+    if (!t) return
+    setError('')
+    try {
+      const r = await api.DELETE('/role-templates/{template_id}', { params: { path: { template_id: t.id } } })
+      if (r.error) throw r.error
+      void qc.invalidateQueries({ queryKey: keys.roleTemplates })
+      onClose()
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }
   return (
     <Modal opened onClose={onClose} title={t ? `Edit ${t.name}` : 'New role template'} size="lg">
       <form onSubmit={submitOn(form.handleSubmit)}>
@@ -194,9 +223,12 @@ function TemplateModal({ t, onClose }: { t?: RoleTemplate; onClose: () => void }
           </form.Field>
           <form.Field name="settings">{(f) => <SettingsEditor value={f.state.value} onChange={(settings) => f.handleChange(settings)} />}</form.Field>
           {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={onClose}>Cancel</Button>
-            <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+          <Group justify="space-between">
+            {t ? <Button variant="subtle" color="owlRed" onClick={() => void remove()}>Delete template</Button> : <span />}
+            <Group gap="xs">
+              <Button variant="default" onClick={onClose}>Cancel</Button>
+              <form.Subscribe selector={(st) => st.isSubmitting}>{(busy) => <Button type="submit" loading={busy}>Save</Button>}</form.Subscribe>
+            </Group>
           </Group>
         </Stack>
       </form>

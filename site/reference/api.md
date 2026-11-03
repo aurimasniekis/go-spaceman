@@ -417,9 +417,11 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
 | `GET` | `/harness-profiles` | `list-harness-profiles` | Harness profiles |
+| `DELETE` | `/harness-profiles/{profile_id}` | `delete-harness-profile` | Delete a harness profile (by ID or slug) no role template or space role uses |
 | `GET` | `/harness-profiles/{profile_id}` | `get-harness-profile` | A harness profile (by ID or slug) |
 | `PUT` | `/harness-profiles/{profile_id}` | `save-harness-profile` | Create (profile_id "new") or update a harness profile |
 | `GET` | `/role-templates` | `list-role-templates` | Role templates |
+| `DELETE` | `/role-templates/{template_id}` | `delete-role-template` | Delete a role template (by ID or slug) no space role uses |
 | `GET` | `/role-templates/{template_id}` | `get-role-template` | A role template (by ID or slug) |
 | `PUT` | `/role-templates/{template_id}` | `save-role-template` | Create (template_id "new") or update a role template |
 | `GET` | `/spaces/{space_id}/role-options` | `list-role-options` | Templates, profiles and prompts a space role can use (names only) |
@@ -428,6 +430,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/spaces/{space_id}/roles/{name}` | `get-space-role` | One of a space's roles |
 | `PUT` | `/spaces/{space_id}/roles/{name}` | `save-space-role` | Configure a role in the space |
 | `GET` | `/spaces/{space_id}/roles/{name}/preview` | `preview-space-role` | A role's effective configuration and where each value comes from |
+| `POST` | `/spaces/{space_id}/starter-roles` | `add-starter-roles` | Give the space the starter roles it does not have yet |
+| `GET` | `/starter-roles` | `list-starter-roles` | The starter roles and whether each one's template still exists |
 
 ### schedules
 

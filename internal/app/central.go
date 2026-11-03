@@ -230,6 +230,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return r.Manifest, nil
 		},
+		AddStarterRoles: func(ctx context.Context, actor audit.Actor, spaceID string) ([]string, error) {
+			return c.Catalog.AddStarterRoles(ctx, actor, spaceID)
+		},
 		// The notifier is created below; these hooks only run once the server serves.
 		OnSpacePurged: func(ctx context.Context, runIDs []string) {
 			if c.Usage != nil {
@@ -422,6 +425,10 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	if err := c.Catalog.SeedBuiltins(ctx); err != nil {
 		_ = st.Close()
 		return nil, fmt.Errorf("seed skills: %w", err)
+	}
+	if err := c.Catalog.SeedStarterRoles(ctx); err != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("seed starter roles: %w", err)
 	}
 	if err := c.Events.SeedBuiltins(ctx); err != nil {
 		_ = st.Close()

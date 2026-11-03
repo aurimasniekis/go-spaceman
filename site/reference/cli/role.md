@@ -8,13 +8,34 @@ Aliases: `roles`.
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman role add-starters`](#spaceman-role-add-starters) | Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer) |
 | [`spaceman role delete`](#spaceman-role-delete) | Remove a role from a space |
 | [`spaceman role get`](#spaceman-role-get) | Show one of a space's roles |
 | [`spaceman role list`](#spaceman-role-list) | A space's roles |
 | [`spaceman role options`](#spaceman-role-options) | Templates, profiles, prompts and skills a space role can use |
 | [`spaceman role preview`](#spaceman-role-preview) | A role's effective configuration and where each value comes from |
 | [`spaceman role set`](#spaceman-role-set) | Configure a role in a space (creates it, or replaces its configuration) |
-| [`spaceman role template`](#spaceman-role-template) | Role templates: list, show, create and update |
+| [`spaceman role template`](#spaceman-role-template) | Role templates: list, show, create, update, delete and the starter set |
+
+## spaceman role add-starters
+
+Give the space the starter roles it does not have yet (control, planner, implementor, reviewer, kb, dreamer).
+
+```sh
+spaceman role add-starters [flags]
+```
+
+API: `add-starter-roles` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman role add-starters --space payments
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman role delete
 
@@ -113,15 +134,17 @@ API: `save-space-role` ([HTTP API](../api)).
 
 ## spaceman role template
 
-Role templates: list, show, create and update.
+Role templates: list, show, create, update, delete and the starter set.
 
 Aliases: `templates`.
 
 | Subcommand | Description |
 |---|---|
 | [`spaceman role template create`](#spaceman-role-template-create) | Add a role template |
+| [`spaceman role template delete`](#spaceman-role-template-delete) | Delete a role template no space role uses (ID or slug) |
 | [`spaceman role template get`](#spaceman-role-template-get) | Show a role template (ID or slug) |
 | [`spaceman role template list`](#spaceman-role-template-list) | Role templates |
+| [`spaceman role template starters`](#spaceman-role-template-starters) | The starter roles and whether each one's template still exists |
 | [`spaceman role template update`](#spaceman-role-template-update) | Edit a role template (only the flags given change) |
 
 ## spaceman role template create
@@ -147,6 +170,16 @@ API: `save-role-template` ([HTTP API](../api)).
 | `--prompt-pin` | string |  | published prompt version to pin (empty follows the latest) |
 | `--setting` | string, repeatable |  | harness setting (key=value, repeatable) |
 
+## spaceman role template delete
+
+Delete a role template no space role uses (ID or slug).
+
+```sh
+spaceman role template delete <template> [flags]
+```
+
+API: `delete-role-template` ([HTTP API](../api)).
+
 ## spaceman role template get
 
 Show a role template (ID or slug).
@@ -168,6 +201,16 @@ spaceman role template list [flags]
 Aliases: `ls`.
 
 API: `list-role-templates` ([HTTP API](../api)).
+
+## spaceman role template starters
+
+The starter roles and whether each one's template still exists.
+
+```sh
+spaceman role template starters [flags]
+```
+
+API: `list-starter-roles` ([HTTP API](../api)).
 
 ## spaceman role template update
 

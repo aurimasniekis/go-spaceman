@@ -2,7 +2,9 @@ package catalog
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -331,5 +333,63 @@ func (svc *Service) DeleteSpaceRole(ctx context.Context, actor audit.Actor, spac
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "space.role_deleted", Target: audit.Target{Type: "space", ID: spaceID},
 			Details: map[string]any{"role": name}})
 		return err
+	})
+}
+
+// DeleteTemplate deletes a role template no space role uses (ADR-0051). Runs already launched keep their manifest.
+func (svc *Service) DeleteTemplate(ctx context.Context, actor audit.Actor, id string) error {
+	return svc.s.W().TxNamed(ctx, "catalog.template_delete", func(tx *store.Tx) error {
+		t, err := tx.Q.GetRoleTemplate(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperr.New(apperr.CodeNotFound, "role template not found")
+		} else if err != nil {
+			return err
+		}
+		users, err := tx.Q.SpaceRolesUsingTemplate(ctx, id)
+		if err != nil {
+			return err
+		}
+		if len(users) > 0 {
+			names := make([]string, 0, len(users))
+			for _, u := range users {
+				names = append(names, u.SpaceID+"/"+u.Name)
+			}
+			return apperr.New(apperr.CodePrecondition, "space roles use this template (%s); delete them or move them to another template first", strings.Join(names, ", "))
+		}
+		if _, err := tx.Q.DeleteRoleTemplate(ctx, id); err != nil {
+			return err
+		}
+		return svc.log(ctx, tx, actor, "role_template.deleted", "role_template", id, map[string]any{"slug": t.Slug})
+	})
+}
+
+// DeleteProfile deletes a harness profile no role template or space role uses (ADR-0051).
+func (svc *Service) DeleteProfile(ctx context.Context, actor audit.Actor, id string) error {
+	return svc.s.W().TxNamed(ctx, "catalog.profile_delete", func(tx *store.Tx) error {
+		p, err := tx.Q.GetProfile(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperr.New(apperr.CodeNotFound, "harness profile not found")
+		} else if err != nil {
+			return err
+		}
+		tpls, err := tx.Q.TemplatesUsingProfile(ctx, id)
+		if err != nil {
+			return err
+		}
+		roles, err := tx.Q.SpaceRolesUsingProfile(ctx, id)
+		if err != nil {
+			return err
+		}
+		if len(tpls) > 0 || len(roles) > 0 {
+			names := append([]string{}, tpls...)
+			for _, r := range roles {
+				names = append(names, r.SpaceID+"/"+r.Name)
+			}
+			return apperr.New(apperr.CodePrecondition, "role templates or space roles use this profile (%s); change them first", strings.Join(names, ", "))
+		}
+		if _, err := tx.Q.DeleteProfile(ctx, id); err != nil {
+			return err
+		}
+		return svc.log(ctx, tx, actor, "harness_profile.deleted", "harness_profile", id, map[string]any{"slug": p.Slug})
 	})
 }

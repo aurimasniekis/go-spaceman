@@ -1,4 +1,4 @@
-import { Button, Group, Modal, Select, SimpleGrid, Stack, Text, Textarea, TextInput } from '@mantine/core'
+import { Button, Checkbox, Group, Modal, Select, SimpleGrid, Stack, Text, Textarea, TextInput } from '@mantine/core'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -29,6 +29,7 @@ export function SpaceFormModal({ space, opened, onClose, onSaved }: { space?: Sp
       goals: space?.goals ?? '',
       standing_instructions: space?.standing_instructions ?? '',
       disconnect_policy: (space?.disconnect_policy ?? 'interrupt') as Space['disconnect_policy'],
+      starter_roles: true,
     },
     onSubmit: async ({ value }) => {
       setError('')
@@ -87,6 +88,12 @@ export function SpaceFormModal({ space, opened, onClose, onSaved }: { space?: Sp
           <form.Field name="standing_instructions">
             {(f) => <Textarea label="Standing instructions" description="Given to every agent in this space" autosize minRows={3} maxRows={12} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
+          {!editing && (
+            <form.Field name="starter_roles">
+              {(f) => <Checkbox label="Add the starter roles" description="Ready-made control, planner, implementor, reviewer, knowledge-base and dreamer roles to launch right away; edit or remove them later"
+                checked={f.state.value} onChange={(e) => f.handleChange(e.currentTarget.checked)} />}
+            </form.Field>
+          )}
           {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={onClose}>Cancel</Button>

@@ -2002,6 +2002,38 @@
     change feed announces their IDs, which then read as not found.
   - A paused worker stays paused until resumed; nothing times it out.
 
+### ADR-0051 — Starter roles: example profiles, prompts and role templates added once, given to spaces on request
+- **Status:** Accepted, 2026-11-03 (operator request: a new installation should be usable without configuring every
+  role by hand; SM-PROMPT-005; no migration, no node protocol change).
+- **Context:** A space launches a configured role only after an operator has created a prompt, a harness profile, a
+  role template and a space role. A first-time user had to do all of that before the first useful run, and KB sessions
+  and dreams also need space roles of kind `kb` and `dreamer`. Role templates and profiles could not be deleted.
+- **Decision:**
+  - **Starter set, added once.** On the first start, central adds two harness profiles (`starter-claude-code` and
+    `starter-codex`, the harnesses' own defaults), a published prompt for each starter role (`starter-<role>`) and six
+    role templates: `starter-control` (control), `starter-planner`, `starter-implementor`, `starter-reviewer` (worker),
+    `starter-kb` (kb) and `starter-dreamer` (dreamer, with the built-in `dream-consolidation` prompt). The templates
+    use the Claude Code profile. An entry whose slug exists is left alone. When the set is complete, the setting
+    `catalog.starter_roles_seeded` records it, and later starts add nothing, so an operator's edits and deletions are
+    final.
+  - **Ordinary entries.** They are edited, versioned and deleted like any other profile, prompt or template. The
+    `starter-` slugs keep them apart from an installation's own entries.
+  - **Spaces get them on request.** `POST /spaces/{id}/starter-roles` (`role add-starters`, **Add starter roles** on the
+    space page) adds a space role named after each starter role (control, planner, implementor, reviewer, kb, dreamer)
+    whose template still exists and whose name the space does not use. Existing roles are never changed. Creating a
+    space with `starter_roles: true` (`--starter-roles`, a checkbox the create dialog ticks by default) does the same.
+    A failure there is logged; the space is created either way. Spaces created through the API without the option get
+    no roles, as before.
+  - **Deleting templates and profiles.** `DELETE /role-templates/{id or slug}` and `DELETE /harness-profiles/{id or
+    slug}` delete an entry nothing uses, and are refused while a space role (or, for a profile, a template) refers to
+    it, naming up to five users. Runs already launched keep their manifests.
+- **Consequences:**
+  - A new installation can create a space and launch control, planners, implementors and reviewers at once.
+  - The prompts give guidance only: they name tools the role's kind already has and grant nothing (SM-SEC-001).
+  - Codex users switch the templates' profile to `starter-codex` (one edit per template) or launch with a space-role
+    profile override.
+  - Installations that existed before this change get the starter set at their next start (the setting is new).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

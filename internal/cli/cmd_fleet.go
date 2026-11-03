@@ -61,10 +61,11 @@ func (a *App) spaceCmd() *cobra.Command {
 			str("disconnect-policy", "disconnect_policy", "interrupt or kill: what happens to runs when the node disconnects")
 	}
 	create := a.cmd(opts{use: "create", short: "Create a space pinned to a node", op: "create-space", idem: true, bodyArgs: []string{"slug"},
-		example: "spaceman space create payments --name Payments --node build-01",
+		example: "spaceman space create payments --name Payments --node build-01 --starter-roles",
 		form: func(f *form) {
 			profile(f)
-			f.str("node", "node_id", "node ID or name the space is pinned to (required)")
+			f.str("node", "node_id", "node ID or name the space is pinned to (required)").
+				boolean("starter-roles", "starter_roles", "also give the space the starter roles (control, planner, implementor, reviewer, kb, dreamer)")
 		},
 		prepare: func(ctx context.Context, cmd *cobra.Command, c *call, body map[string]any) error {
 			if n, _ := body["node_id"].(string); n != "" {

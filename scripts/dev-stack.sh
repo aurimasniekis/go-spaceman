@@ -8,6 +8,10 @@
 # Usage:
 #   scripts/dev-stack.sh up        builds, bootstraps and starts central; prints the stack directory
 #   scripts/dev-stack.sh down DIR  stops central, the agent and the stack's own hc core, then removes DIR (KEEP=1 keeps it)
+#   scripts/dev-stack.sh restart DIR
+#                                  rebuilds the UI (unless SKIP_UI_BUILD=1) and the binaries from this checkout and restarts
+#                                  central on the stack's existing data; the agent reconnects by itself (restart it to run
+#                                  its new binary). Central's start-up work runs again, e.g. adding the starter roles.
 #
 # The stack directory holds env (source it: SM_URL, SM_ROOT_TOKEN_FILE, SM_AGENT_*), logs and the root token (0600).
 # Paths are kept short (/tmp/smdev-*) because unix socket paths are limited to 103 bytes.
@@ -128,8 +132,50 @@ down() {
   if [[ "${KEEP:-}" != 1 ]]; then rm -rf "$dir"; fi
 }
 
+restart() {
+  local dir=${1:?usage: dev-stack.sh restart DIR}
+  [[ "$dir" == /tmp/smdev-* && -f "$dir/central.yaml" ]] || { echo "refusing: $dir is not a dev stack" >&2; exit 2; }
+  # shellcheck disable=SC1091
+  source "$dir/env"
+  if [[ "${SKIP_UI_BUILD:-}" != 1 ]] && ! (cd "$root/web" && pnpm run build >"$dir/ui-build.log" 2>&1); then
+    cat "$dir/ui-build.log" >&2
+    echo "dev-stack: the UI build failed; central keeps running" >&2
+    exit 1
+  fi
+  # Built next to the old binaries first, so a failed build leaves the running stack alone.
+  mkdir -p "$dir/bin.new"
+  if ! (cd "$root" && go build -tags embedui -o "$dir/bin.new/" ./cmd/spaceman ./cmd/spaceman-agent); then
+    rm -rf "$dir/bin.new"
+    echo "dev-stack: the Go build failed; central keeps running" >&2
+    exit 1
+  fi
+  if [[ -f "$dir/central.pid" ]]; then
+    local pid; pid=$(cat "$dir/central.pid")
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 100); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  mv -f "$dir/bin.new/spaceman" "$dir/bin.new/spaceman-agent" "$dir/bin/"
+  rmdir "$dir/bin.new"
+  "${clean_env[@]}" "$dir/bin/spaceman" -c "$dir/central.yaml" serve >>"$dir/central.log" 2>&1 &
+  echo $! >"$dir/central.pid"
+  for _ in $(seq 1 100); do
+    curl -fsS "$SM_URL/api/v1/system/info" >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  if ! curl -fsS "$SM_URL/api/v1/system/info" >/dev/null 2>&1; then
+    tail -n 5 "$dir/central.log" >&2
+    echo "dev-stack: central did not come back (see $dir/central.log)" >&2
+    exit 1
+  fi
+  echo "$dir"
+}
+
 case "${1:-}" in
   up) up ;;
   down) down "${2:-}" ;;
-  *) echo "usage: $0 up | down DIR" >&2; exit 2 ;;
+  restart) restart "${2:-}" ;;
+  *) echo "usage: $0 up | down DIR | restart DIR" >&2; exit 2 ;;
 esac
