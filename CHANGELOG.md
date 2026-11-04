@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.4] - 2026-11-04
+
+Fourth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md), with a fix found on the
+first deployment.
+
 ### Fixed
 - A new run is told about messages an earlier run of the same addressee saw but never acknowledged. Before, a control
   launched after one that ended without handling its notice (for example because its account was refused) was never
@@ -494,6 +499,7 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.3...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.4...HEAD
+[0.1.0-rc.4]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.4
 [0.1.0-rc.3]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.2
