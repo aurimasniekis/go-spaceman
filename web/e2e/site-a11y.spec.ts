@@ -24,7 +24,8 @@ function pages(dir: string): string[] {
 
 test('documentation site accessibility', async ({ page }) => {
   test.skip(!dist, 'set SM_SITE_DIST to the built site')
-  test.setTimeout(300_000)
+  // Every page in both color schemes: about 4 minutes locally and over 5 on GitHub's runners, so allow 15.
+  test.setTimeout(900_000)
   const server: Server = createServer((req, res) => {
     let path = decodeURIComponent((req.url ?? '/').split('?')[0])
     if (!path.startsWith(BASE)) {
