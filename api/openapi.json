@@ -5480,6 +5480,38 @@
         ],
         "type": "object"
       },
+      "FleetUpdateNodeInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/FleetUpdateNodeInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "description": "Lowercase DNS-like name, unique",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "FleetUpdateSpaceInput": {
         "additionalProperties": false,
         "properties": {
@@ -8032,6 +8064,7 @@
             "type": "string"
           },
           "unit": {
+            "description": "switch: 1 on, 0 off",
             "enum": [
               "count",
               "bytes",
@@ -8041,7 +8074,8 @@
               "tokens",
               "usd_cents",
               "percent",
-              "depth"
+              "depth",
+              "switch"
             ],
             "type": "string"
           },
@@ -8225,6 +8259,7 @@
             "type": "string"
           },
           "unit": {
+            "description": "switch: 1 on, 0 off",
             "enum": [
               "count",
               "bytes",
@@ -8234,7 +8269,8 @@
               "tokens",
               "usd_cents",
               "percent",
-              "depth"
+              "depth",
+              "switch"
             ],
             "type": "string"
           },
@@ -19372,6 +19408,65 @@
           }
         },
         "summary": "Get a node",
+        "tags": [
+          "nodes"
+        ]
+      },
+      "put": {
+        "operationId": "update-node",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "pattern": "^nod_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetUpdateNodeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetNode"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Edit a node's name, description and labels",
         "tags": [
           "nodes"
         ]

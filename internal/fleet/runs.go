@@ -337,6 +337,22 @@ func (svc *Service) CountRunsCreatedBy(ctx context.Context, spaceID, kind string
 	return svc.s.R().CountRunsCreatedBy(ctx, db.CountRunsCreatedByParams{SpaceID: spaceID, Kind: kind, CreatedBy: actorRef(actor), CreatedAt: since.UnixMicro()})
 }
 
+// LatestControlRun returns the space's newest control run, in any state (control auto-start resumes it, ADR-0056).
+func (svc *Service) LatestControlRun(ctx context.Context, spaceID string) (*Run, error) {
+	r, err := svc.s.R().GetLatestControlRun(ctx, spaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errRunNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	return runFromRow(r), nil
+}
+
+// IdleControlRuns lists the running control runs whose program reports idle or done (control idle stop, ADR-0056).
+func (svc *Service) IdleControlRuns(ctx context.Context) ([]string, error) {
+	return svc.s.R().ListIdleControlRuns(ctx)
+}
+
 // KickRun wakes the dispatch loop of the run's node.
 func (svc *Service) KickRun(ctx context.Context, runID string) {
 	if r, err := svc.s.R().GetRun(ctx, runID); err == nil {

@@ -23,7 +23,9 @@ import (
 //     when idle, and a
 //     control started later reads them then;
 //   - a control run that ends while still wanted is relaunched, resuming its session, at most MaxRestarts times per
-//     Window; after that SpaceMan stops restarting and asks people to look (an urgent human action).
+//     Window; after that SpaceMan stops restarting and asks people to look (an urgent human action);
+//   - with no control run live, control is started for waiting work and stopped after its idle time (lifecycle.go,
+//     ADR-0056).
 type Supervisor struct {
 	fl    *fleet.Service
 	q     *queue.Service
@@ -41,6 +43,8 @@ type Supervisor struct {
 	base context.Context
 	// Async runs handlers in a goroutine (production; hooks are called on request paths). Tests call them directly.
 	Async bool
+
+	lifecycle
 }
 
 // SupervisorActor creates control restarts; restarts are counted by it.
@@ -55,7 +59,7 @@ func NewSupervisor(fl *fleet.Service, q *queue.Service, msgs *messages.Service, 
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Supervisor{fl: fl, q: q, msgs: msgs, human: hs, log: obs.Component(log, "control"), clock: c, MaxRestarts: 3, Window: time.Hour, Async: true,
-		base: context.Background()}
+		base: context.Background(), lifecycle: lifecycle{MaxAutostarts: 6, IdleUnit: time.Minute, idle: map[string]*time.Timer{}}}
 }
 
 // Bind ties the handlers to the server's lifetime (Serve calls it before accepting connections).
@@ -255,7 +259,7 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		}
 		return
 	}
-	li := fleet.LaunchInput{Kind: agenttools.KindControl, Role: r.Role, Harness: r.Harness, InstanceID: r.InstanceID, SessionID: r.SessionID,
+	li := fleet.LaunchInput{Kind: agenttools.KindControl, Role: r.Role, Harness: r.Harness, InstanceID: r.InstanceID, SessionID: resumable(r),
 		Model: r.Launch.Model, Settings: r.Launch.Settings, AccountRef: r.Launch.AccountRef, Workspace: r.Launch.Workspace,
 		Prompt: "SpaceMan restarted you after your previous session ended unexpectedly. Check spaceman_messages, the inbox and the queue, then continue."}
 	if li.SessionID == "" {

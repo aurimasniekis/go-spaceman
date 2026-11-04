@@ -454,3 +454,51 @@ func TestHumanResponsesReachOnlyTheirTarget(t *testing.T) {
 	must(t, f.svc.AckRun(f.ctx, op, ctrl, "hnt_2"))
 	must(t, f.svc.AckRun(f.ctx, op, wrk, "hnt_1"))
 }
+
+// ADR-0056: the sweep asks for control in an active space with an unseen control item and no live control; Waiting
+// reports what a run has not been shown yet.
+func TestControlWantedAndWaiting(t *testing.T) {
+	f := newFx(t)
+	var wanted []string
+	f.n.ControlWanted = func(_ context.Context, spaceID string) { wanted = append(wanted, spaceID) }
+	m, _, err := f.svc.Send(f.ctx, op, "spc_a", From{Kind: "system", Label: "SpaceMan"}, SendInput{To: "control", Kind: "notification", Subject: "New task"})
+	must(t, err)
+	if w, err := f.svc.Waiting(f.ctx, "spc_a", ctrlRun, "control", true); err != nil || !w {
+		t.Fatalf("stored message not waiting: %v %v", w, err)
+	}
+	if w, _ := f.svc.Waiting(f.ctx, "spc_a", wrkRun, "implementor", false); w {
+		t.Fatal("a control message waits for a worker")
+	}
+	must(t, f.n.Sweep(f.ctx))
+	if len(wanted) != 0 {
+		t.Fatalf("control asked for while one is live: %v", wanted)
+	}
+	// No live control: the sweep asks for one; a paused space does not.
+	f.exec(`UPDATE runs SET desired = 'stopped', observed = 'exited' WHERE id = '` + ctrlRun + `'`)
+	must(t, f.n.Sweep(f.ctx))
+	if len(wanted) != 1 || wanted[0] != "spc_a" {
+		t.Fatalf("wanted %v", wanted)
+	}
+	f.exec(`UPDATE spaces SET state = 'paused' WHERE id = 'spc_a'`)
+	must(t, f.n.Sweep(f.ctx))
+	if len(wanted) != 1 {
+		t.Fatalf("control asked for in a paused space: %v", wanted)
+	}
+	// Once seen (available), it no longer waits and no longer asks for control.
+	f.exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_a'`, `UPDATE messages SET state = 'available' WHERE id = '`+m.ID+`'`)
+	must(t, f.n.Sweep(f.ctx))
+	if w, _ := f.svc.Waiting(f.ctx, "spc_a", ctrlRun, "control", true); w || len(wanted) != 1 {
+		t.Fatalf("a seen message: waiting %v, wanted %v", w, wanted)
+	}
+	// A human response that wakes control and was never noticed waits too.
+	f.exec(`INSERT INTO human_actions (id, space_id, type, title, requester_kind, requester_run, rank, status, outcome, created_at, created_by, updated_at)
+	        VALUES ('hum_2', 'spc_a', 'question', 'Which?', 'agent', '`+ctrlRun+`', 1, 'resolved', 'answered', 0, 't', 0)`,
+		`INSERT INTO human_notifications (id, action_id, space_id, target_kind, kind, created_at) VALUES ('hnt_2', 'hum_2', 'spc_a', 'control', 'resolved', 0)`)
+	if w, _ := f.svc.Waiting(f.ctx, "spc_a", ctrlRun, "control", true); !w {
+		t.Fatal("an unnoticed human response does not wait")
+	}
+	must(t, f.n.Sweep(f.ctx))
+	if len(wanted) != 2 {
+		t.Fatalf("a human response did not ask for control: %v", wanted)
+	}
+}

@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, Group, Modal, NumberInput, SegmentedControl, SimpleGrid, Stack, Table, Text, Title, Tooltip } from '@mantine/core'
+import { Alert, Badge, Button, Card, Group, Modal, NumberInput, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, Title, Tooltip } from '@mantine/core'
 import { IconInfoCircle, IconPencil } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
@@ -173,8 +173,12 @@ function EditLimits({ spaceId, l, canRetain, onClose }: { spaceId: string; l: Li
   // Limit keys are snake_case identifiers, so each is its own field under values.
   const input = (x: Limit) => (
     <form.Field key={x.key} name={`values.${x.key}`}>
-      {(f) => <NumberInput label={x.label} disabled={isRetention(x) && !canRetain}
-        description={`${x.scope}${x.zero_means_none ? (isRetention(x) ? ' (0: keep)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
+      {(f) => x.unit === 'switch' ? (
+        <Select label={x.label} description={x.scope} allowDeselect={false} value={f.state.value === '' ? '' : String(f.state.value)}
+          data={[{ value: '', label: `Default (${limitValue(x.default, x.unit)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }]}
+          onChange={(v) => f.handleChange(v === '1' ? 1 : v === '0' ? 0 : '')} />
+      ) : <NumberInput label={x.label} disabled={isRetention(x) && !canRetain}
+        description={`${x.scope}${x.zero_means_none ? (isRetention(x) ? ' (0: keep)' : x.unit === 'minutes' ? ' (0: never)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
         min={x.min} max={x.max} allowDecimal={false}
         thousandSeparator="," placeholder={`Default: ${limitValue(x.default, x.unit, x.zero_means_none)}`} value={f.state.value ?? ''}
         onChange={(v) => f.handleChange(typeof v === 'number' ? v : '')} />}

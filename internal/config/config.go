@@ -146,6 +146,14 @@ type LimitsConfig struct {
 	RecordingQuotaBytes int64 `yaml:"recording_quota_bytes"`
 	// ExportMaxBytes bounds one space export archive (1 MiB-64 GiB, default 2 GiB): a larger export is refused.
 	ExportMaxBytes int64 `yaml:"export_max_bytes"`
+	// ControlAutostart starts a space's control role when work arrives for control and no control run is live (1: on,
+	// the default; 0: off). It is skipped while the space is paused and when the launch is refused (no control role,
+	// account or budget); at most 6 starts an hour per space (ADR-0056).
+	ControlAutostart int64 `yaml:"control_autostart"`
+	// ControlIdleStopMinutes stops a control run that has been idle this long (finished its turn, nothing waiting for
+	// it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at
+	// most 10080).
+	ControlIdleStopMinutes int64 `yaml:"control_idle_stop_minutes"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual

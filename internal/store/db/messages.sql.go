@@ -499,6 +499,40 @@ func (q *Queries) ListSpaceMessages(ctx context.Context, arg ListSpaceMessagesPa
 	return items, nil
 }
 
+const listSpacesWantingControl = `-- name: ListSpacesWantingControl :many
+SELECT s.id FROM spaces s
+WHERE s.state = 'active'
+  AND (EXISTS (SELECT 1 FROM messages m WHERE m.space_id = s.id AND m.to_kind = 'control' AND m.state = 'stored')
+    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.target_kind = 'control' AND n.state = 'pending' AND n.wake = 1))
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.space_id = s.id AND r.kind = 'control'
+    AND (r.desired = 'running' OR r.observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')))
+`
+
+// Active spaces where something waits for control that no control has seen (a stored message to control, or a pending
+// human response that wakes it) and no control run is authoritative (the ux_runs_one_control condition).
+func (q *Queries) ListSpacesWantingControl(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listSpacesWantingControl)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markMessagesAvailable = `-- name: MarkMessagesAvailable :execrows
 UPDATE messages SET state = 'available', available_at = ?1, delivered_via = ?2, version = version + 1
 WHERE id IN (/*SLICE:ids*/?) AND state = 'stored'

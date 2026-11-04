@@ -1,9 +1,9 @@
 import { bytes } from '@/lib/format'
 
-/** A limit's value in its unit: "No limit" for 0 where 0 means none ("Kept" for a retention period), sizes in binary
- * units, cents as dollars. */
+/** A limit's value in its unit: "No limit" for 0 where 0 means none ("Kept" for a retention period, "Never" for minutes), sizes in binary
+ * units, cents as dollars, a switch as On or Off. */
 export function limitValue(value: number, unit: string, zeroMeansNone = false): string {
-  if (zeroMeansNone && value === 0) return unit === 'days' ? 'Kept' : 'No limit'
+  if (zeroMeansNone && value === 0) return unit === 'days' ? 'Kept' : unit === 'minutes' ? 'Never' : 'No limit'
   switch (unit) {
     case 'days':
       return value === 1 ? '1 day' : `${value.toLocaleString('en-US')} days`
@@ -19,6 +19,8 @@ export function limitValue(value: number, unit: string, zeroMeansNone = false): 
       return `${value} %`
     case 'tokens':
       return `${value.toLocaleString('en-US')} tokens`
+    case 'switch':
+      return value === 0 ? 'Off' : 'On'
     default:
       return value.toLocaleString('en-US')
   }

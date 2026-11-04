@@ -59,6 +59,8 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	cfg.Nodes.HeartbeatInterval = config.Duration(300 * time.Millisecond)
 	cfg.Nodes.LeaseTTL = config.Duration(5 * time.Second)
 	cfg.Nodes.DisconnectGrace = config.Duration(time.Second)
+	// Control is not started or stopped on its own unless a test asks (TestControlAutostart): most tests count runs.
+	cfg.Limits.ControlAutostart, cfg.Limits.ControlIdleStopMinutes = 0, 0
 	for _, o := range opts {
 		o(cfg)
 	}

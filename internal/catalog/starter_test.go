@@ -92,3 +92,37 @@ func TestStarterRoles(t *testing.T) {
 	must(t, f.svc.DeleteTemplate(f.ctx, op, impl.ID))
 	code(t, f.svc.DeleteTemplate(f.ctx, op, impl.ID), apperr.CodeNotFound)
 }
+
+// ADR-0056: control auto-start launches the space role named control when its template is of kind control, otherwise
+// the first such role by name, and nothing when the space has none.
+func TestControlRole(t *testing.T) {
+	f := newFx(t)
+	must(t, f.svc.SeedBuiltins(f.ctx))
+	must(t, f.svc.SeedStarterRoles(f.ctx))
+	if name, err := f.svc.ControlRole(f.ctx, "spc_a"); err != nil || name != "" {
+		t.Fatalf("no roles: %q %v", name, err)
+	}
+	ctrl, err := f.s.R().GetRoleTemplateBySlug(f.ctx, "starter-control")
+	must(t, err)
+	impl, err := f.s.R().GetRoleTemplateBySlug(f.ctx, "starter-implementor")
+	must(t, err)
+	for _, r := range []SpaceRole{{Name: "worker", TemplateID: impl.ID}, {Name: "lead", TemplateID: ctrl.ID}, {Name: "chief", TemplateID: ctrl.ID}} {
+		_, err := f.svc.SaveSpaceRole(f.ctx, op, "spc_a", r)
+		must(t, err)
+	}
+	if name, err := f.svc.ControlRole(f.ctx, "spc_a"); err != nil || name != "chief" {
+		t.Fatalf("first control role by name: %q %v", name, err)
+	}
+	// A role named control that is not of kind control does not count; one that is wins.
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "control", TemplateID: impl.ID})
+	must(t, err)
+	if name, _ := f.svc.ControlRole(f.ctx, "spc_a"); name != "chief" {
+		t.Fatalf("a worker role named control was chosen: %q", name)
+	}
+	must(t, f.svc.DeleteSpaceRole(f.ctx, op, "spc_a", "control"))
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "control", TemplateID: ctrl.ID})
+	must(t, err)
+	if name, _ := f.svc.ControlRole(f.ctx, "spc_a"); name != "control" {
+		t.Fatalf("control role: %q", name)
+	}
+}

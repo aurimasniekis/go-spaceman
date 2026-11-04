@@ -5,7 +5,8 @@
 A node is created in central (**Nodes → Add node**), which returns a single-use enrollment token. `spaceman-agent
 enroll` exchanges it for a node credential (`spaceman_nd_…`, stored with mode 0600). The credential identifies the node
 on every connection; **Revoke credential** in the node's menu ends its access, and **New enrollment token** lets a node
-enroll again.
+enroll again. Edit a node's name, description and labels with `spaceman node update` or `PUT /api/v1/nodes/{id}` (send
+`If-Match`). Terraform can register nodes and hand out their tokens too ([`spaceman_node`](./terraform#nodes)).
 
 <Shot name="setup-node-enroll" alt="Nodes page with build-01 connected, its agent version, herdr-core core and harnesses" caption="Nodes, their runner and detected harnesses" />
 

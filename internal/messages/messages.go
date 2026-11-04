@@ -412,6 +412,31 @@ func addressedTo(m db.Message, rc Recipient) bool {
 }
 
 // sentBy reports whether a run sent a message.
+// Waiting reports whether something waits for a run that it has not been shown yet: a stored message to it (not sent
+// by it) or a pending human response that wakes it. Control idle stop leaves such a run running (ADR-0056).
+func (svc *Service) Waiting(ctx context.Context, spaceID, runID, role string, control bool) (bool, error) {
+	q := svc.s.R()
+	msgs, err := q.ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: spaceID, RunID: runID, Role: role, IsControl: b2i(control), Lim: 100})
+	if err != nil {
+		return false, err
+	}
+	for _, m := range msgs {
+		if m.State == Stored && !sentBy(m, runID) {
+			return true, nil
+		}
+	}
+	ns, err := q.ListHumanNotificationsFor(ctx, db.ListHumanNotificationsForParams{SpaceID: spaceID, RunID: runID, IsControl: b2i(control), Lim: 100})
+	if err != nil {
+		return false, err
+	}
+	for _, x := range ns {
+		if x.Wake == 1 && !x.NoticedAt.Valid {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func sentBy(m db.Message, runID string) bool { return m.FromKind == "run" && m.FromID == runID }
 
 func (svc *Service) ack(ctx context.Context, tx *store.Tx, actor audit.Actor, m db.Message, by string, now sql.NullInt64) error {

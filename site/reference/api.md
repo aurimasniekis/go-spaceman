@@ -115,6 +115,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/nodes` | `list-nodes` | List nodes |
 | `POST` | `/nodes` | `create-node` | Register a node and issue its enrollment token |
 | `GET` | `/nodes/{node_id}` | `get-node` | Get a node |
+| `PUT` | `/nodes/{node_id}` | `update-node` | Edit a node's name, description and labels |
 | `POST` | `/nodes/{node_id}/enrollment` | `reissue-enrollment` | Issue a new enrollment token (re-enrollment replaces the node's credentials) |
 | `POST` | `/nodes/{node_id}/state` | `set-node-state` | Enable, disable or revoke a node (disable and revoke close its connection) |
 

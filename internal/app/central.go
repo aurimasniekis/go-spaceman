@@ -270,9 +270,12 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Supervisor.OnSpaceState(spaceID, state) // notices deferred while paused go out on resume
 			}
 		},
-		OnRunIdle: func(string) {
+		OnRunIdle: func(runID string) {
 			if c.Notifier != nil {
 				c.Notifier.Kick()
+			}
+			if c.Supervisor != nil {
+				c.Supervisor.OnRunIdle(runID) // control's idle stop (ADR-0056)
 			}
 			if c.Human != nil {
 				c.Human.Kick() // a resumed instance may take a held response
@@ -328,6 +331,10 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Queue.Workers = c.Fleet
 	c.Queue.Notify = c.Supervisor.Notify
 	c.Supervisor.Inbox = c.Inbox
+	// Control lifecycle (ADR-0056): started for waiting work, stopped after its idle time.
+	c.Supervisor.Limit = func(ctx context.Context, spaceID, key string) int64 { return c.Limits.Value(ctx, nil, spaceID, key) }
+	c.Supervisor.ControlRole = c.Catalog.ControlRole
+	c.Notifier.ControlWanted = c.Supervisor.ControlWanted
 	c.Inbox.OnCreated = c.Supervisor.OnInboxItem
 	c.Human.Inbox = c.Inbox // routed responses become inbox items when the human policy says so (SM-INBOX-001)
 	c.Queue.OnCreated = c.Supervisor.OnTaskCreated
@@ -629,6 +636,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	c.Supervisor.Bind(ctx)
 	// Notices deferred while a space was paused that a resume did not get to send before central stopped (SM-EVT-014).
 	go c.Supervisor.FlushDeferred(ctx)
+	go c.Supervisor.ArmIdleTimers(ctx)
 	go events.NewManager(c.Events, c.Log).Run(ctx)
 	c.Outbox.RefreshMetrics(ctx)
 	if ob := c.Cfg.Events.Outbound; ob.Enabled {

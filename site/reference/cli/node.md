@@ -2,7 +2,7 @@
 
 # spaceman node
 
-Nodes: list, enroll, disable, enable and revoke.
+Nodes: list, enroll, edit, disable, enable and revoke.
 
 Aliases: `nodes`.
 
@@ -15,6 +15,7 @@ Aliases: `nodes`.
 | [`spaceman node get`](#spaceman-node-get) | Show a node (ID or name) |
 | [`spaceman node list`](#spaceman-node-list) | List nodes |
 | [`spaceman node revoke`](#spaceman-node-revoke) | Revoke a node permanently (its credentials stop working) |
+| [`spaceman node update`](#spaceman-node-update) | Edit a node's name, description and labels (only the flags given change) |
 
 ## spaceman node create
 
@@ -111,4 +112,22 @@ API: `set-node-state` ([HTTP API](../api)).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--yes` | bool |  | confirm: revoke the node permanently |
+
+## spaceman node update
+
+Edit a node's name, description and labels (only the flags given change).
+
+```sh
+spaceman node update <node> [flags]
+```
+
+API: `get-node`, `update-node` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--description` | string |  | description |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--label` | string, repeatable |  | label (replaces all labels) (key=value, repeatable) |
+| `--name` | string |  | new name |
 

@@ -51,6 +51,7 @@ redirect with the token.
 
 | Area | Resources |
 |---|---|
+| Nodes | `spaceman_node` |
 | Spaces | `spaceman_space`, `spaceman_space_role`, `spaceman_space_accounts`, `spaceman_space_repository` |
 | Credentials | `spaceman_account` |
 | Roles and prompts | `spaceman_harness_profile`, `spaceman_role_template`, `spaceman_prompt`, `spaceman_skill` |
@@ -68,9 +69,32 @@ templates such as the built-in GitHub presets (`spaceman_event_template`), a spa
 
 Terraform never manages runtime state: runs, tasks, inbox items, messages, schedule occurrences, the node's repository
 reports and syncs, cross-space requests,
-human-action requests and responses, approvals and recordings stay in SpaceMan. Nodes are enrolled with a one-time token
-(see [Nodes and leases](./nodes)) and read with the node data sources. API tokens, password reset tokens and SSO link
+human-action requests and responses, approvals and recordings stay in SpaceMan. A node's connection, capacity and agent
+version are runtime state too, read with the node data sources. API tokens, password reset tokens and SSO link
 invitations are shown once and are never handled by Terraform, and neither are passwords or MFA enrollment.
+
+## Nodes
+
+`spaceman_node` registers a node and returns its one-time `enrollment_token`, which you hand to the host's provisioning
+(cloud-init, Ansible) to run `spaceman-agent enroll` (see [Nodes and leases](./nodes)):
+
+```hcl
+resource "spaceman_node" "build" {
+  name               = "build-01"
+  labels             = { zone = "eu" }
+  enrollment_version = 1 # bump to issue a new token, for example when the host is rebuilt
+}
+```
+
+- The token is a sensitive attribute and is kept in the Terraform state. It works once, and only until
+  `enrollment_expires_at` (`nodes.enrollment_ttl`, 24 hours by default). Protect the state as you would any secret.
+- The name, description and labels are edited in place. `enabled = false` disables the node: it gets no new runs and its
+  connection is closed.
+- Changing `enrollment_version` issues a new token. Using the new token re-enrolls the node and replaces its
+  credentials.
+- Destroying the resource **revokes** the node. This is permanent: its credentials stop working, the runs of its spaces
+  stop, and its name stays taken. Set `revoke_on_destroy = false` to only remove it from the state.
+- An import has no token. Bump `enrollment_version` to issue one.
 
 ## Edits in the UI
 

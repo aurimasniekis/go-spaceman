@@ -1,9 +1,9 @@
-import { Button, Divider, Modal, PasswordInput, Stack, Text, TextInput } from '@mantine/core'
+import { Button, Divider, getDefaultZIndex, Modal, PasswordInput, Stack, Text, TextInput } from '@mantine/core'
 import { IconLogin2 } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { api, unwrap } from '@/api/client'
+import { ApiError, api, unwrap } from '@/api/client'
 import { keys, useMe } from '@/api/queries'
 import { setReauthHandler, setSession, type ReauthCode } from '@/api/session'
 import { errorMessage } from '@/components/ErrorAlert'
@@ -13,6 +13,9 @@ import { ssoStartUrl } from '@/lib/sso'
  * Step-up prompt (SM-AUTH-005): sensitive operations need a recent password (and TOTP for MFA-bound ones). The original
  * request is retried once after a successful re-authentication. An SSO session steps up at its identity provider (a
  * fresh login there, Hallpass HP-OIDC-013), or with the SpaceMan TOTP code where the provider allows that fallback.
+ *
+ * A password account with an authenticator always re-authenticates with both (the server requires the code), whatever
+ * the refused request asked for. The prompt opens above any dialog that triggered it.
  */
 export function ReauthModal() {
   const qc = useQueryClient()
@@ -21,6 +24,7 @@ export function ReauthModal() {
   const [code, setCode] = useState<ReauthCode | null>(null)
   const [error, setError] = useState('')
   const resolve = useRef<((ok: boolean) => void) | null>(null)
+  const needCode = code === 'mfa_required' || !!me?.user?.mfa_enrolled
 
   useEffect(
     () =>
@@ -61,13 +65,18 @@ export function ReauthModal() {
         qc.setQueryData(keys.me, me)
         finish(true)
       } catch (e) {
+        if (!sso && e instanceof ApiError && e.code === 'mfa_required') {
+          setCode('mfa_required') // the account has a second factor this page did not know about yet
+          setError('Enter the code from your authenticator app as well.')
+          return
+        }
         setError(errorMessage(e))
       }
     },
   })
 
   return (
-    <Modal opened={code !== null} onClose={() => finish(false)} title="Confirm it's you" size="sm">
+    <Modal opened={code !== null} onClose={() => finish(false)} title="Confirm it's you" size="sm" zIndex={getDefaultZIndex('max')}>
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -84,14 +93,14 @@ export function ReauthModal() {
           ) : (
             <>
               <Text size="sm" c="dimmed">
-                {code === 'mfa_required' ? 'This action needs your password and an authenticator code.' : 'This action needs your password again.'}
+                {needCode ? 'This action needs your password and an authenticator code.' : 'This action needs your password again.'}
               </Text>
               <form.Field name="password">
                 {(f) => <PasswordInput label="Password" autoComplete="current-password" data-autofocus value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
               </form.Field>
             </>
           )}
-          {(code === 'mfa_required' || (sso && me?.user?.mfa_enrolled)) && (
+          {needCode && (
             <form.Field name="code">
               {(f) => <TextInput label={sso ? 'SpaceMan authenticator code' : 'Authenticator code'} inputMode="numeric" autoComplete="one-time-code" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
             </form.Field>

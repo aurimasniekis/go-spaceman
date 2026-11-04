@@ -393,3 +393,34 @@ func (svc *Service) DeleteProfile(ctx context.Context, actor audit.Actor, id str
 		return svc.log(ctx, tx, actor, "harness_profile.deleted", "harness_profile", id, map[string]any{"slug": p.Slug})
 	})
 }
+
+// ControlRole returns the space role control auto-start launches when the space never had a control run (ADR-0056):
+// the role named control when its template is of kind control, otherwise the first such role by name; "" when the
+// space has none.
+func (svc *Service) ControlRole(ctx context.Context, spaceID string) (string, error) {
+	roles, err := svc.ListSpaceRoles(ctx, spaceID)
+	if err != nil {
+		return "", err
+	}
+	tpls, err := svc.ListTemplates(ctx)
+	if err != nil {
+		return "", err
+	}
+	kind := map[string]string{}
+	for _, t := range tpls {
+		kind[t.ID] = t.Kind
+	}
+	found := ""
+	for _, r := range roles {
+		if kind[r.TemplateID] != "control" {
+			continue
+		}
+		if r.Name == "control" {
+			return r.Name, nil
+		}
+		if found == "" || r.Name < found {
+			found = r.Name
+		}
+	}
+	return found, nil
+}

@@ -113,6 +113,50 @@ func (q *Queries) GetActiveRunToken(ctx context.Context, runID string) ([]byte, 
 	return token_enc, err
 }
 
+const getLatestControlRun = `-- name: GetLatestControlRun :one
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+func (q *Queries) GetLatestControlRun(ctx context.Context, spaceID string) (Run, error) {
+	row := q.db.QueryRowContext(ctx, getLatestControlRun, spaceID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.NodeID,
+		&i.Generation,
+		&i.Kind,
+		&i.Role,
+		&i.Harness,
+		&i.InstanceID,
+		&i.SessionID,
+		&i.Desired,
+		&i.Observed,
+		&i.TerminalID,
+		&i.CoreID,
+		&i.Identity,
+		&i.Pid,
+		&i.ExitCode,
+		&i.EndReason,
+		&i.Error,
+		&i.Status,
+		&i.StatusKind,
+		&i.Turn,
+		&i.Adopted,
+		&i.LaunchJson,
+		&i.ManifestJson,
+		&i.Version,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.ObservedAt,
+		&i.UpdatedAt,
+		&i.RecordingDeletedAt,
+	)
+	return i, err
+}
+
 const getLease = `-- name: GetLease :one
 SELECT space_id, node_id, generation, state, granted_at, renewed_at, expires_at FROM execution_leases WHERE space_id = ?
 `
@@ -760,6 +804,33 @@ func (q *Queries) ListCommandsByRun(ctx context.Context, runID sql.NullString) (
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIdleControlRuns = `-- name: ListIdleControlRuns :many
+SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed = 'running' AND status IN ('idle', 'done')
+`
+
+func (q *Queries) ListIdleControlRuns(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listIdleControlRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

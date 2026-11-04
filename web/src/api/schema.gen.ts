@@ -1076,7 +1076,8 @@ export interface paths {
         };
         /** Get a node */
         get: operations["get-node"];
-        put?: never;
+        /** Edit a node's name, description and labels */
+        put: operations["update-node"];
         post?: never;
         delete?: never;
         options?: never;
@@ -6045,6 +6046,20 @@ export interface components {
             /** Format: date-time */
             started_at: string;
         };
+        FleetUpdateNodeInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetUpdateNodeInput.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            /** @description Lowercase DNS-like name, unique */
+            name: string;
+        };
         FleetUpdateSpaceInput: {
             /**
              * Format: uri
@@ -7018,8 +7033,11 @@ export interface components {
             overridable: boolean;
             /** @description What one limit value bounds */
             scope: string;
-            /** @enum {string} */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth";
+            /**
+             * @description switch: 1 on, 0 off
+             * @enum {string}
+             */
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
             /** @description 0 means no limit */
             zero_means_none: boolean;
         };
@@ -7100,8 +7118,11 @@ export interface components {
             scope: string;
             /** @enum {string} */
             source: "installation" | "space" | "queue_policy";
-            /** @enum {string} */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth";
+            /**
+             * @description switch: 1 on, 0 off
+             * @enum {string}
+             */
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
             /** Format: int64 */
             value: number;
             /** @description 0 means no limit */
@@ -12413,6 +12434,44 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetNode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-node": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetUpdateNodeInput"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

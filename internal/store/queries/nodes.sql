@@ -178,3 +178,9 @@ UPDATE run_credentials SET revoked_at = ? WHERE run_id = ? AND revoked_at IS NUL
 
 -- name: CountRunsCreatedBy :one
 SELECT count(*) FROM runs WHERE space_id = ? AND kind = ? AND created_by = ? AND created_at >= ?;
+
+-- name: GetLatestControlRun :one
+SELECT * FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- name: ListIdleControlRuns :many
+SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed = 'running' AND status IN ('idle', 'done');

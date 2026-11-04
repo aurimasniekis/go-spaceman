@@ -38,6 +38,10 @@ type Notifier struct {
 
 	mu   sync.Mutex
 	last map[string]time.Time
+
+	// ControlWanted is called from the sweep for each active space where something waits for control that no control
+	// has seen and no control run is live (control auto-start, ADR-0056). Nil: nothing is started.
+	ControlWanted func(ctx context.Context, spaceID string)
 }
 
 // Notice timing.
@@ -91,6 +95,15 @@ func (n *Notifier) Sweep(ctx context.Context) error {
 	runs, err := n.svc.s.R().ListNoticeCandidates(ctx)
 	if err != nil {
 		return err
+	}
+	if n.ControlWanted != nil {
+		spaces, err := n.svc.s.R().ListSpacesWantingControl(ctx)
+		if err != nil {
+			return err
+		}
+		for _, id := range spaces {
+			n.ControlWanted(ctx, id)
+		}
 	}
 	now := n.clock.Now()
 	for _, r := range runs {
