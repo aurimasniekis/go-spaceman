@@ -13,7 +13,8 @@ Debian 13 container, but not yet on a physical or cloud Linux host or on amd64. 
 You can install SpaceMan in three ways:
 
 - **Release archives** with systemd (this page). This is the main path for central and nodes.
-- **Container images** you build yourself ([Containers and images](/operators/containers)). This works for central.
+- **Container images** from Docker Hub (`aurimasniekis/spaceman`, `aurimasniekis/spaceman-agent`) or built yourself
+  ([Containers and images](/operators/containers)). This works for central.
   The node agent image is *not* agent-ready by itself.
 - **From source** ([below](#from-source)).
 

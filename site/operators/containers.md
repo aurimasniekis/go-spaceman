@@ -1,7 +1,19 @@
 # Containers and images
 
-SpaceMan has two Dockerfiles: one for central and one for a node agent **base** image. This project publishes no
-images to any registry. Build them from a tagged source tree. Both images are Linux only (amd64 and arm64).
+SpaceMan has two Dockerfiles: one for central and one for a node agent **base** image. Both images are Linux only
+(amd64 and arm64).
+
+Each release publishes them to Docker Hub, tagged with the version (`latest` only for a final release, not a release
+candidate):
+
+```sh
+docker pull docker.io/aurimasniekis/spaceman:<version>         # central, web UI embedded
+docker pull docker.io/aurimasniekis/spaceman-agent:<version>   # node agent base (not agent-ready by itself)
+```
+
+Each pushed image carries an SBOM and a build provenance attestation: `gh attestation verify
+oci://docker.io/aurimasniekis/spaceman:<version> --repo aurimasniekis/go-spaceman`. You can also build them yourself
+from a tagged source tree, as below.
 
 ## Image matrix
 

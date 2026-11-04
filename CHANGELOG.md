@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Release images on Docker Hub (ADR-0055): `docker.io/aurimasniekis/spaceman` and `docker.io/aurimasniekis/spaceman-agent`
+  for linux/amd64 and linux/arm64, pushed by the release workflow for every `v*` tag, with SBOMs and provenance
+  attestations.
+
 ## [0.1.0-rc.2] - 2026-11-04
 
 Second release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md). Replaces 0.1.0-rc.1, whose

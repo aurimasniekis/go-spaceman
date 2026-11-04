@@ -2127,6 +2127,20 @@
     notices work for Codex runs.
   - The real-run suite (`make test-real-codex`) needs only a key or a ChatGPT login to verify a full turn.
 
+### ADR-0055 — Release images are published to Docker Hub
+- **Status:** Accepted, 2026-11-04 (operator request; amends the publishing part of ADR-0034, which pushed no image).
+- **Context:** The release workflow built and smoke-tested both images but published none, so evaluators had to build
+  them. The repository now has a `DOCKERHUB_TOKEN` secret, as the sibling projects do (Porch publishes
+  `docker.io/aurimasniekis/porch` the same way).
+- **Decision:** For a `v*` tag, the release workflow pushes `docker.io/aurimasniekis/spaceman` and
+  `docker.io/aurimasniekis/spaceman-agent` for linux/amd64 and linux/arm64, built from the same Dockerfiles and build
+  arguments as the smoke-tested images, tagged with the version (and `latest` for a final release only), with SBOM and
+  `mode=max` provenance, and a GitHub build provenance attestation of each digest. Without the secret the release goes
+  ahead without images and says so. The draft release notes list the pushed digests.
+- **Consequences:** Images appear on Docker Hub when the tag is pushed, before the draft GitHub release is published
+  by hand. What the images contain is unchanged (ADR-0034): no herdr-core and no harness, and the agent image is not
+  agent-ready by itself. Images are not scanned in the release job; CI's security job runs govulncheck on the code.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
