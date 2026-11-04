@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.1] - 2026-11-04
+
+First release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md).
+
 ### Fixed
 - Terminal notices reach agents after their first turn. herdr-core's idle gate refuses a program that reports `done`,
   which Claude Code does after every turn, so new inbox items and messages were never announced; a refused notice now
@@ -459,3 +463,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`scripts/dev-stack.sh`) and a browser end-to-end journey (`make e2e`).
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
+
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.1...HEAD
+[0.1.0-rc.1]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.1
