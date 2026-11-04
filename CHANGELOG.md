@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.5] - 2026-11-04
+
+Fifth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): control starts for waiting
+work and stops when idle, nodes can be edited (and provisioned with Terraform), and the step-up prompt asks for the
+authenticator code.
+
 ### Added
 - Control starts and stops on its own (ADR-0056). When work waits for control (an inbox item, a task to decide on, a
   worker that ended, a message) and no control run is live, SpaceMan launches the space's control role, resuming the
@@ -517,7 +523,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.4...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.5...HEAD
+[0.1.0-rc.5]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.4
 [0.1.0-rc.3]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.2
