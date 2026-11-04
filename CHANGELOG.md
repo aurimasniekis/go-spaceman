@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Terraform provider's new `spaceman_node` resource uses them to register nodes and hand out enrollment tokens.
 
 ### Fixed
+- The "Confirm it's you" step-up prompt opens above the dialog that triggered it, not underneath it. For an account with
+  an authenticator it asks for the code together with the password. Before, it asked for the password only and then
+  showed "multi-factor authentication required".
 - A restarted control resumes its session only when the session finished a turn. Resuming a session that was never
   saved fails, so such a restart now starts a fresh session on the same instance.
 
