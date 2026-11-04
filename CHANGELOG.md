@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Control starts and stops on its own (ADR-0056). When work waits for control (an inbox item, a task to decide on, a
+  worker that ended, a message) and no control run is live, SpaceMan launches the space's control role, resuming the
+  last control's session. It skips this while the space is paused or its node is away. When the launch is refused it
+  raises a human action, and it stops after six starts an hour. A control idle for 30 minutes is stopped, and the next
+  work starts it again. These are two new space limits, `control_autostart` (on by default) and
+  `control_idle_stop_minutes` (30; 0: never), on the Limits page as **Start control on new work** and **Stop idle
+  control**.
+
+### Fixed
+- A restarted control resumes its session only when the session finished a turn. Resuming a session that was never
+  saved fails, so such a restart now starts a fresh session on the same instance.
+
 ## [0.1.0-rc.4] - 2026-11-04
 
 Fourth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md), with a fix found on the

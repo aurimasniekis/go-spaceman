@@ -7018,8 +7018,11 @@ export interface components {
             overridable: boolean;
             /** @description What one limit value bounds */
             scope: string;
-            /** @enum {string} */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth";
+            /**
+             * @description switch: 1 on, 0 off
+             * @enum {string}
+             */
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
             /** @description 0 means no limit */
             zero_means_none: boolean;
         };
@@ -7100,8 +7103,11 @@ export interface components {
             scope: string;
             /** @enum {string} */
             source: "installation" | "space" | "queue_policy";
-            /** @enum {string} */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth";
+            /**
+             * @description switch: 1 on, 0 off
+             * @enum {string}
+             */
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
             /** Format: int64 */
             value: number;
             /** @description 0 means no limit */

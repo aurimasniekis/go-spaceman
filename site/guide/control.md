@@ -50,7 +50,32 @@ attention:
   proposed an incident, and an incident that ended with the preempted tasks that wait or were resumed (see
   [Incidents](./queue#incidents)).
 
-When control's program is idle it is told that messages are waiting. A control run started later finds them too.
+When control's program is idle it is told that messages are waiting. A control run started later is told about them
+too, including ones an earlier control was told about but never acknowledged.
+
+## Starting and stopping on its own
+
+You do not have to keep control running. When work waits for control and no control run is live, SpaceMan **starts
+control** itself. It does not need a new event: anything waiting for control that no control has seen yet counts, such
+as a new inbox item, a task to decide on, a worker that ended or a message from an agent.
+
+- It **resumes the last control run**: the same role, harness, instance and account, and the same session when the
+  last run finished at least one turn. A space that never had a control run gets its control role (the space role
+  named `control`, or the first role whose template is of kind control).
+- It does not start control while the space is paused, archived or relocating, or while its node is away. The work
+  waits until then.
+- When the launch is refused, for example because no account fits or a budget is spent, SpaceMan raises a human action,
+  "Control could not start", once an hour with the reason. It also stops after six starts in an hour, so a control
+  that keeps ending cannot loop.
+
+A control run that has been **idle** (its turn finished) for 30 minutes is **stopped**. SpaceMan does not count this as
+a failure and does not restart it. The next work starts control again, resuming its session. Control stays running
+while it works, while an operator has [taken over its terminal](/operators/terminals#taking-over-a-terminal), and while something waits for it that it has
+not been told about yet.
+
+Both behaviours are [limits](./limits) of the space. Turn **Start control on new work** (`control_autostart`) off to
+start control only by hand. Set **Stop idle control** (`control_idle_stop_minutes`) to 0 to keep an idle control
+running. Turning auto-start off never stops a control that is running.
 
 ## Recovery
 
@@ -60,7 +85,11 @@ within an hour, SpaceMan stops and raises an urgent [human action](./human-actio
 steps to check. A control run that an operator stopped, or one in a paused space, is never restarted.
 
 An operator **restarts control** by stopping its run (Runs, or `spaceman run stop`) and launching control again:
-SpaceMan never restarts a run an operator stopped, and a second control run is refused while one is wanted.
+SpaceMan never restarts a run an operator stopped, and a second control run is refused while one is wanted. With
+auto-start on, the next waiting work starts a stopped control again. Turn auto-start off to keep it stopped.
+
+A restart resumes the session only when the run finished at least one turn. A session with no turn was never saved,
+so it cannot be resumed.
 
 ## Diagnostics
 

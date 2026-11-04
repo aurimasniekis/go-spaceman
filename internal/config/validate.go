@@ -223,6 +223,9 @@ var LimitRanges = map[string][2]int64{
 	"retention_human_actions_days": {0, 36_500},
 	"recording_quota_bytes":        {1 << 20, 64 << 30},
 	"export_max_bytes":             {1 << 20, 64 << 30},
+	// Control lifecycle (ADR-0056): a switch (0 off, 1 on) and minutes (0: never).
+	"control_autostart":         {0, 1},
+	"control_idle_stop_minutes": {0, 10_080},
 }
 
 // LimitValues returns the installation default of every limit, keyed like LimitRanges.
@@ -236,7 +239,8 @@ func (c *Config) LimitValues() map[string]int64 {
 		"budget_cost_cents_24h": l.BudgetCostCents24h, "budget_tokens_per_run": l.BudgetTokensPerRun, "budget_warn_percent": l.BudgetWarnPercent,
 		"retention_recordings_days": l.RetentionRecordingsDays, "retention_transcripts_days": l.RetentionTranscriptsDays,
 		"retention_attachments_days": l.RetentionAttachmentsDays, "retention_human_actions_days": l.RetentionHumanActionsDays,
-		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes}
+		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
+		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes}
 }
 
 func (v *validator) limits(c *Config) {

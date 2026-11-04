@@ -74,3 +74,13 @@ WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done'
 
 -- name: ListMessagesByNotice :many
 SELECT id, space_id, version FROM messages WHERE notice_command = ?;
+
+-- name: ListSpacesWantingControl :many
+-- Active spaces where something waits for control that no control has seen (a stored message to control, or a pending
+-- human response that wakes it) and no control run is authoritative (the ux_runs_one_control condition).
+SELECT s.id FROM spaces s
+WHERE s.state = 'active'
+  AND (EXISTS (SELECT 1 FROM messages m WHERE m.space_id = s.id AND m.to_kind = 'control' AND m.state = 'stored')
+    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.target_kind = 'control' AND n.state = 'pending' AND n.wake = 1))
+  AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.space_id = s.id AND r.kind = 'control'
+    AND (r.desired = 'running' OR r.observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')));

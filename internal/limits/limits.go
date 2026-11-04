@@ -55,6 +55,9 @@ const (
 	RetainHumanActions = "retention_human_actions_days"
 	RecordingQuota     = "recording_quota_bytes"
 	ExportMax          = "export_max_bytes"
+	// Control lifecycle (ADR-0056).
+	ControlAutostart = "control_autostart"
+	ControlIdleStop  = "control_idle_stop_minutes"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -79,7 +82,7 @@ const (
 type Def struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
-	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,days,tokens,usd_cents,percent,depth"`
+	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,days,tokens,usd_cents,percent,depth,switch" doc:"switch: 1 on, 0 off"`
 	Scope       string `json:"scope" doc:"What one limit value bounds"`
 	Min         int64  `json:"min"`
 	Max         int64  `json:"max"`
@@ -137,6 +140,13 @@ var Defs = []Def{
 		Enforced: "daily retention pass", OnLower: retentionLower, Overridable: true},
 	{Key: ExportMax, Label: "Export size", Unit: "bytes", Scope: "size of one space export archive",
 		Enforced: "space export (refused before it starts when larger)", OnLower: "Only later exports are refused.", Overridable: true},
+	{Key: ControlAutostart, Label: "Start control on new work", Unit: "switch",
+		Scope:    "launch the space's control role when work arrives for control (an inbox item, a task to decide on, a worker that ended) and no control run is live; it resumes the last control's session",
+		Enforced: "control supervisor (skipped while paused, and when the launch is refused: no control role, account or budget; at most 6 starts an hour)",
+		OnLower:  "Turning it off never stops a running control; control is no longer started for new work.", Overridable: true},
+	{Key: ControlIdleStop, Label: "Stop idle control", Unit: "minutes",
+		Scope: "how long control may sit idle (turn finished, nothing waiting for it, no operator at its terminal) before SpaceMan stops it; with control started on new work, the next event starts it again", ZeroNone: true,
+		Enforced: "control supervisor (idle timer)", OnLower: "Applies from control's next idle point.", Overridable: true},
 }
 
 func init() {

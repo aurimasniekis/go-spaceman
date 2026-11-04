@@ -28,6 +28,8 @@ it comes from and where SpaceMan enforces it.
 | Terminal recording size (`recording_quota_bytes`) | 512 MiB | 1 MiB–64 GiB | one run's recording on the node | the node's recorder, from the launch |
 | Export size (`export_max_bytes`) | 2 GiB | 1 MiB–64 GiB | one space export archive | space export |
 | Recording, transcript, attachment and finished human-action retention (`retention_*_days`) | kept (0) | 0–36,500 days | how long central keeps them | the daily retention pass ([Retention and export](/guide/retention)) |
+| Start control on new work (`control_autostart`) | on (1) | 0 off, 1 on | whether work waiting for control starts the space's control role ([Control](/guide/control#starting-and-stopping-on-its-own)) | control supervisor |
+| Stop idle control (`control_idle_stop_minutes`) | 30 | 0–10,080 (0: never) | how long control sits idle before it is stopped | control supervisor |
 
 Some limits are set elsewhere and only shown here: the node's **capacity** (the node agent's `capacity` setting, shared
 by every space on the node), each knowledge base's own session limit, human-action rate limits per type
@@ -88,6 +90,8 @@ limits:
   task_deadline_minutes: 0      # no deadline
   budget_tokens_24h: 0          # no budget
   budget_warn_percent: 80
+  control_autostart: 1          # start control when work waits for it (0: off)
+  control_idle_stop_minutes: 30 # stop control after 30 idle minutes (0: never)
 ```
 
 - `GET /api/v1/spaces/{space_id}/limits`: every limit with its value, default, override and source, the related limits

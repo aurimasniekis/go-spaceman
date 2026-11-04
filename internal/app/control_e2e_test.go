@@ -6,15 +6,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
+	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/queue"
 )
 
@@ -173,8 +176,11 @@ func TestControlSupervisor(t *testing.T) {
 	e.run.Exit(e.run1(wrk.ID).TerminalID, 2, "crashed")
 	eventually(t, "worker-ended notification", func() bool { return toControl("implementor run ended") })
 
-	// Control crashes: it is restarted, resuming its session, until the budget is spent.
+	// Control crashes after a turn: it is restarted, resuming its session, until the budget is spent.
 	current := ctrl.ID
+	e.run.SetStatus(e.run1(current).TerminalID, "working")
+	e.run.SetStatus(e.run1(current).TerminalID, "idle")
+	eventually(t, "control finished a turn", func() bool { return e.run1(current).Turn == 1 })
 	for i := 0; i < 2; i++ {
 		e.run.Exit(e.run1(current).TerminalID, 1, "crashed")
 		var next string
@@ -192,6 +198,9 @@ func TestControlSupervisor(t *testing.T) {
 			t.Fatalf("restart did not resume: %+v", n)
 		}
 		current = next
+		e.run.SetStatus(e.run1(current).TerminalID, "working")
+		e.run.SetStatus(e.run1(current).TerminalID, "idle")
+		eventually(t, "restarted control finished a turn", func() bool { return e.run1(current).Turn >= 1 })
 	}
 	e.run.Exit(e.run1(current).TerminalID, 1, "crashed")
 	eventually(t, "attention raised", func() bool {
@@ -221,5 +230,99 @@ func TestControlSupervisor(t *testing.T) {
 		if r.Kind == "control" && r.Observed == "running" {
 			t.Fatalf("control restarted after an operator stop: %s", r.ID)
 		}
+	}
+}
+
+// SM-CTRL-002, ADR-0056: with no control run live, work waiting for control starts the space's control role; a control
+// idle for its idle time is stopped (not restarted), and the next work starts it again, resuming its session; a busy
+// control is never stopped; with auto-start off, nothing starts.
+func TestControlAutostart(t *testing.T) {
+	e := newFleetEnv(t, func(c *config.Config) { c.Limits.ControlAutostart, c.Limits.ControlIdleStopMinutes = 1, 1 })
+	e.enroll()
+	e.startAgent()
+	ctx := context.Background()
+	admin := audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
+	e.c.Supervisor.IdleUnit = 400 * time.Millisecond // "1 minute" of idle time
+	nctx, stop := context.WithCancel(ctx)
+	t.Cleanup(stop)
+	go e.c.Notifier.Run(nctx) // the sweep starts control for waiting work
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "auto", Name: "Auto", NodeID: nodes[0].ID, StarterRoles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	controls := func() []*fleet.Run {
+		runs, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 50)
+		var out []*fleet.Run
+		for _, r := range runs {
+			if r.Kind == "control" {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	live := func() *fleet.Run {
+		for _, r := range controls() {
+			if r.Desired == "running" && r.Observed == "running" {
+				return r
+			}
+		}
+		return nil
+	}
+
+	// An inbox item and no control: the space's control role starts and is told about the item once idle.
+	if _, _, err := e.c.Inbox.Create(ctx, admin, sp.ID, inbox.CreateInput{SourceKind: "operator", SourceID: "usr_admin", Body: "Refunds are slow"}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "control started for the inbox item", func() bool { return live() != nil })
+	first := live()
+	if first.Role != "control" || first.CreatedBy != "system:control-autostart" || !strings.Contains(first.Launch.Prompt, "SpaceMan started you") {
+		t.Fatalf("started control %+v", first)
+	}
+	e.run.SetStatus(first.TerminalID, "idle")
+	eventually(t, "control told about the item", func() bool {
+		return slices.ContainsFunc(e.run.Inputs(first.TerminalID), func(s string) bool { return strings.Contains(s, "1 new message") })
+	})
+	// It works on it (a turn), then sits idle: stopped after its idle time, and not restarted.
+	e.run.SetStatus(first.TerminalID, "working")
+	e.run.SetStatus(first.TerminalID, "done")
+	eventually(t, "idle control stopped", func() bool { r := e.run1(first.ID); return r.Desired == "stopped" && r.Observed == "exited" })
+	time.Sleep(time.Second)
+	if r := live(); r != nil {
+		t.Fatalf("control restarted after its idle stop: %+v", r)
+	}
+
+	// New work: control starts again, resuming the first session; while it works it is not stopped.
+	if _, _, err := e.c.Queue.Create(ctx, admin, sp.ID, queue.CreateInput{Title: "Speed up refunds", Status: queue.Ready}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "control started again", func() bool { return live() != nil })
+	second := live()
+	if second.InstanceID != first.InstanceID || second.SessionID != e.run1(first.ID).SessionID {
+		t.Fatalf("restart did not resume: %+v (first %+v)", second, e.run1(first.ID))
+	}
+	e.run.SetStatus(second.TerminalID, "working")
+	time.Sleep(1500 * time.Millisecond)
+	if r := e.run1(second.ID); r.Desired != "running" || r.Observed != "running" {
+		t.Fatalf("a working control was stopped: %+v", r)
+	}
+
+	// Turned off for the space: an operator stops control, and new work starts nothing.
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.ControlAutostart: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Fleet.StopRun(ctx, admin, second.ID, "kill", "done for today"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "control stopped", func() bool { return e.run1(second.ID).Observed == "exited" })
+	if _, _, err := e.c.Inbox.Create(ctx, admin, sp.ID, inbox.CreateInput{SourceKind: "operator", SourceID: "usr_admin", Body: "Another one"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second)
+	if r := live(); r != nil || len(controls()) != 2 {
+		t.Fatalf("control started with auto-start off: %d control runs", len(controls()))
 	}
 }

@@ -177,11 +177,15 @@ func (f *Fake) Send(_ context.Context, id, text string, ifIdle bool) error {
 	return nil
 }
 
-// SetStatus changes a process's reported status.
+// SetStatus changes a process's reported status. Like herdr-core, a working program that becomes idle or done has
+// finished a turn.
 func (f *Fake) SetStatus(id, state string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if fp, ok := f.procs[id]; ok {
+		if fp.p.Status.State == "working" && (state == "idle" || state == "done") {
+			fp.p.Turn++
+		}
 		fp.p.Status.State = state
 		f.emit("status", fp.p)
 	}

@@ -8032,6 +8032,7 @@
             "type": "string"
           },
           "unit": {
+            "description": "switch: 1 on, 0 off",
             "enum": [
               "count",
               "bytes",
@@ -8041,7 +8042,8 @@
               "tokens",
               "usd_cents",
               "percent",
-              "depth"
+              "depth",
+              "switch"
             ],
             "type": "string"
           },
@@ -8225,6 +8227,7 @@
             "type": "string"
           },
           "unit": {
+            "description": "switch: 1 on, 0 off",
             "enum": [
               "count",
               "bytes",
@@ -8234,7 +8237,8 @@
               "tokens",
               "usd_cents",
               "percent",
-              "depth"
+              "depth",
+              "switch"
             ],
             "type": "string"
           },

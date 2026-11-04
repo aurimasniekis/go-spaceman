@@ -205,6 +205,8 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 ### SM-CTRL — Control and supporting agents
 - SM-CTRL-001 Control reads the inbox, manages the queue, delegates, starts and stops workers, evaluates outcomes, and handles decisions and cross-space requests.
 - SM-CTRL-002 Control sleeps and wakes on actionable events. Recovery is bounded, and repeated failure raises attention.
+  When no control run is live, waiting work starts the space's control role. An idle control is stopped after a
+  configurable time. Both are per-space settings (operator decision, 2026-11-04; ADR-0056).
 - SM-CTRL-003 Workers cannot promote themselves to control.
 - SM-CTRL-004 Operators can pause, stop, reorder, cancel, reassign, restart control and launch audited diagnostics.
 - SM-CTRL-005 KB support admission is preauthorized by control or an operator. Agents request their own KB session through a scoped operation

@@ -2141,6 +2141,47 @@
   by hand. What the images contain is unchanged (ADR-0034): no herdr-core and no harness, and the agent image is not
   agent-ready by itself. Images are not scanned in the release job; CI's security job runs govulncheck on the code.
 
+### ADR-0056 — Control starts for waiting work and stops when idle
+- **Status:** Accepted, 2026-11-04 (operator decision: on by default; stop after an idle timeout).
+- **Context:** Control only woke if a control run was already live. An operator had to launch control by hand, and an
+  idle control kept its harness session running for as long as nobody stopped it. Events still became durable
+  notifications to control (SM-CTRL-002), but they waited until someone started it.
+- **Decision:**
+  - **Auto-start.** The notifier's sweep lists the active spaces where something waits for control that no control has
+    seen and no control run is authoritative: a stored message to control, or a pending human response that wakes it.
+    The sweep runs on every new message and once a minute. For each such space the supervisor launches control as the
+    system actor `control-autostart`, unless:
+    - the space turned auto-start off;
+    - its node holds no valid lease;
+    - it already started control six times in the last hour (it then raises a human action).
+
+    The launch resumes the newest control run: role, harness, instance, model, settings, account and workspace. It
+    resumes that run's session only when the run finished a turn, because a session with no turn was never saved. A
+    space that never had a control run gets its control role: the space role named `control` when its template is of
+    kind control, otherwise the first such role by name. A refused launch (account, budget, relocation, validation)
+    raises a high-priority human action, "Control could not start", deduplicated per hour. The unique index on one
+    authoritative control run per space settles a race between two starts.
+  - **Idle stop.** When a control run reports idle or done, the supervisor arms a timer. When the timer fires, it stops
+    the run (interrupt, then kill after the grace) as `control-idle`, but only if the run is still idle at the same
+    turn. If an operator holds a takeover, or a stored message or unwoken human response waits for the run, the timer
+    starts over instead. The stop sets desired=stopped, so recovery does not restart the run; the next waiting work
+    auto-starts it. Timers live in memory. Serve re-arms them for idle control runs at start, each with its full idle
+    time.
+  - **Settings.** Both are space limits in the one limits model (ADR-0036): `control_autostart`, a new unit `switch`
+    (0 off, 1 on, default on), and `control_idle_stop_minutes` (0: never, default 30, at most 10,080). This gives them
+    installation defaults, per-space overrides, audit, the API, the Limits page and Terraform without a new resource.
+    The in-process test environment defaults both to off so run counts stay predictable. `TestControlAutostart` turns
+    them on.
+  - Control recovery after a crash (bounded restarts) now also resumes a session only when it finished a turn.
+- **Consequences:**
+  - Control costs harness time only while there is work. Each start after an idle stop is a new run, with a new
+    recording and a new run token.
+  - An item a control saw (noticed or fetched) but left unacknowledged does not start control on its own. The next
+    control is told about it when it first becomes idle.
+  - An idle stop interrupts a program that is waiting at its prompt. Work in the middle of a turn is never stopped.
+  - Not security-relevant: the launch goes through the same resolution, admission (limits and budgets) and audit as
+    any launch, as a system actor.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
