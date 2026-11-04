@@ -1076,7 +1076,8 @@ export interface paths {
         };
         /** Get a node */
         get: operations["get-node"];
-        put?: never;
+        /** Edit a node's name, description and labels */
+        put: operations["update-node"];
         post?: never;
         delete?: never;
         options?: never;
@@ -6044,6 +6045,20 @@ export interface components {
             run_id: string;
             /** Format: date-time */
             started_at: string;
+        };
+        FleetUpdateNodeInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetUpdateNodeInput.json
+             */
+            readonly $schema?: string;
+            description?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            /** @description Lowercase DNS-like name, unique */
+            name: string;
         };
         FleetUpdateSpaceInput: {
             /**
@@ -12419,6 +12434,44 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetNode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-node": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                node_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetUpdateNodeInput"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

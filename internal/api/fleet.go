@@ -18,6 +18,7 @@ var FleetRules = map[string]Rule{
 	"create-node":        StepUp(authz.NodeEnroll),
 	"reissue-enrollment": StepUp(authz.NodeEnroll),
 	"set-node-state":     StepUp(authz.NodeWrite),
+	"update-node":        Global(authz.NodeWrite),
 
 	"list-spaces":     {Session: true},
 	"create-space":    Global(authz.SpaceCreate),
@@ -105,6 +106,23 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 					return nil, d.fail(ctx, "nodes.create", err)
 				}
 				return &struct{ Body *fleet.NodeEnrollment }{Body: e}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "update-node", Method: http.MethodPut, Path: "/nodes/{node_id}",
+			Summary: "Edit a node's name, description and labels", Tags: tags},
+			func(ctx context.Context, in *struct {
+				NodePath
+				IfMatch
+				Body fleet.UpdateNodeInput
+			}) (*struct{ Body *fleet.Node }, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "nodes.update", err)
+				}
+				n, err := f.UpdateNode(ctx, Actor(ctx), in.NodeID, v, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "nodes.update", err)
+				}
+				return &struct{ Body *fleet.Node }{Body: n}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "reissue-enrollment", Method: http.MethodPost, Path: "/nodes/{node_id}/enrollment",
 			Summary: "Issue a new enrollment token (re-enrollment replaces the node's credentials)", Tags: tags},

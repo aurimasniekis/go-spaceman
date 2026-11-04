@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   work starts it again. These are two new space limits, `control_autostart` (on by default) and
   `control_idle_stop_minutes` (30; 0: never), on the Limits page as **Start control on new work** and **Stop idle
   control**.
+- `PUT /api/v1/nodes/{id}` and `spaceman node update` edit a node's name, description and labels (with `If-Match`). The
+  Terraform provider's new `spaceman_node` resource uses them to register nodes and hand out enrollment tokens.
 
 ### Fixed
 - A restarted control resumes its session only when the session finished a turn. Resuming a session that was never

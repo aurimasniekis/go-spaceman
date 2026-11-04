@@ -23,7 +23,7 @@ func (a *App) nodeCmd() *cobra.Command {
 		return a.cmd(opts{use: verb, short: short, op: "set-node-state", args: []arg{{"node", aNode}},
 			static: map[string]any{"state": s}, view: view{first: []string{"connected"}}, confirm: confirm})
 	}
-	return group("node", "Nodes: list, enroll, disable, enable and revoke", []string{"nodes"},
+	return group("node", "Nodes: list, enroll, edit, disable, enable and revoke", []string{"nodes"},
 		a.cmd(opts{use: "list", short: "List nodes", op: "list-nodes", alias: []string{"ls"}, view: view{items: "items", cols: nodeCols, empty: "No nodes."}}),
 		a.cmd(opts{use: "get", short: "Show a node (ID or name)", op: "get-node", args: []arg{{"node", aNode}}}),
 		a.cmd(opts{use: "create", short: "Register a node and issue its one-time enrollment token", op: "create-node", bodyArgs: []string{"name"}, idem: true,
@@ -35,6 +35,11 @@ func (a *App) nodeCmd() *cobra.Command {
 				f.str("description", "description", "description").kv("label", "labels", "label")
 			},
 			view: view{first: []string{"expires_at", "token"}}}),
+		a.cmd(opts{use: "update", short: "Edit a node's name, description and labels (only the flags given change)", op: "update-node", get: "get-node",
+			merge: true, args: []arg{{"node", aNode}},
+			form: func(f *form) {
+				f.str("name", "name", "new name").str("description", "description", "description").kv("label", "labels", "label (replaces all labels)")
+			}}),
 		a.cmd(opts{use: "enrollment", short: "Issue a new one-time enrollment token for a pending node", op: "reissue-enrollment",
 			args: []arg{{"node", aNode}}, secret: "token", view: view{first: []string{"expires_at", "token"}}}),
 		state("disable", "disabled", "Disable a node (no new runs; its lease stays)", ""),

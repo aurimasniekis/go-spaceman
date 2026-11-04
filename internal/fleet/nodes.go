@@ -168,6 +168,56 @@ func (svc *Service) CreateNode(ctx context.Context, actor audit.Actor, in Create
 	return &NodeEnrollment{Node: n, Token: token, ExpiresAt: exp}, nil
 }
 
+// UpdateNodeInput is a node's editable metadata (PUT /nodes/{id}); the whole set is replaced.
+type UpdateNodeInput struct {
+	Name        string            `json:"name" doc:"Lowercase DNS-like name, unique"`
+	Description string            `json:"description,omitempty" maxLength:"500"`
+	Labels      map[string]string `json:"labels,omitempty"`
+}
+
+// UpdateNode replaces a node's name, description and labels (version-checked). Its state, enrollment and connection are
+// unchanged.
+func (svc *Service) UpdateNode(ctx context.Context, actor audit.Actor, id string, version int64, in UpdateNodeInput) (*Node, error) {
+	v := &apperr.Validation{}
+	if !reNodeName.MatchString(in.Name) {
+		v.Add("name", "must be a lowercase name (letters, digits, dashes; at most 63)")
+	}
+	validLabels(v, in.Labels)
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+	labels, _ := json.Marshal(nonNil(in.Labels))
+	err := svc.s.W().TxNamed(ctx, "fleet.update_node", func(tx *store.Tx) error {
+		cur, err := tx.Q.GetNode(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNodeNotFound
+		} else if err != nil {
+			return err
+		}
+		if other, err := tx.Q.GetNodeByName(ctx, in.Name); err == nil && other.ID != id {
+			return apperr.New(apperr.CodeAlreadyExists, "a node named %q already exists", in.Name)
+		}
+		n, err := tx.Q.UpdateNodeMeta(ctx, db.UpdateNodeMetaParams{Name: in.Name, Description: strings.TrimSpace(in.Description), LabelsJson: string(labels),
+			UpdatedAt: tx.NowMicros(), ID: id, Version: version})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodeConflict, "the node changed (version %d, you sent %d); reload and retry", cur.Version, version)
+		}
+		if err := svc.record(ctx, tx, "", "node", id, "updated", version+1); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "node.updated", Target: audit.Target{Type: "node", ID: id},
+			Details: map[string]any{"name": in.Name, "previous_name": cur.Name}})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return svc.GetNode(ctx, id)
+}
+
 // ReissueEnrollment issues a new enrollment token for a node that has not enrolled, or to re-enroll a node (the old
 // credentials are revoked when the new enrollment is used).
 func (svc *Service) ReissueEnrollment(ctx context.Context, actor audit.Actor, nodeID string) (*NodeEnrollment, error) {

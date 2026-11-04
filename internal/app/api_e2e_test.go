@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -18,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
+	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 )
 
@@ -344,4 +346,50 @@ func TestEveryOperationHasARule(t *testing.T) {
 		t.Fatalf("operations without an authorization rule: %v", missing)
 	}
 	_ = a
+}
+
+// SM-NODE-001: a node's name, description and labels are edited with If-Match (PUT /nodes/{id}); its state and
+// enrollment are unchanged, names stay unique, and a stale version conflicts. Viewers cannot edit nodes.
+func TestAPIUpdateNode(t *testing.T) {
+	h := newHarness(t)
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(context.Background())
+	root := h.client()
+	root.bearer = rootSecret
+	expect(t, root.do("POST", "/users", map[string]any{"email": "ada@example.com", "display_name": "Ada",
+		"password": "correct horse battery staple", "grants": []map[string]string{{"role": "admin", "domain": "*"}}}), 201)
+	adm := h.client()
+	adm.bearer = loginAndIssueToken(t, h, "ada@example.com", []map[string]string{{"role": "admin", "domain": "*"}})
+	var a, b struct {
+		Node struct {
+			ID      string            `json:"id"`
+			Name    string            `json:"name"`
+			State   string            `json:"state"`
+			Labels  map[string]string `json:"labels"`
+			Version int64             `json:"version"`
+		} `json:"node"`
+		Token string `json:"token"`
+	}
+	r := adm.do("POST", "/nodes", map[string]any{"name": "build-1", "labels": map[string]string{"zone": "a"}}, "Idempotency-Key", "node-build-1")
+	expect(t, r, 201)
+	r.json(t, &a)
+	r = adm.do("POST", "/nodes", map[string]any{"name": "build-2"}, "Idempotency-Key", "node-build-2")
+	expect(t, r, 201)
+	r.json(t, &b)
+
+	r = adm.do("PUT", "/nodes/"+a.Node.ID, map[string]any{"name": "builder-1", "description": "CI builds", "labels": map[string]string{"zone": "b", "gpu": "no"}},
+		"If-Match", fmt.Sprintf(`"%d"`, a.Node.Version))
+	expect(t, r, 200)
+	var got fleet.Node
+	r.json(t, &got)
+	if got.Name != "builder-1" || got.Description != "CI builds" || got.Labels["zone"] != "b" || got.State != "pending" || got.Version != a.Node.Version+1 {
+		t.Fatalf("updated node %+v", got)
+	}
+	// Stale version, a name another node has, and a viewer are all refused.
+	expect(t, adm.do("PUT", "/nodes/"+a.Node.ID, map[string]any{"name": "builder-1"}, "If-Match", fmt.Sprintf(`"%d"`, a.Node.Version)), 409)
+	expect(t, adm.do("PUT", "/nodes/"+a.Node.ID, map[string]any{"name": "build-2"}, "If-Match", fmt.Sprintf(`"%d"`, got.Version)), 409)
+	expect(t, root.do("POST", "/users", map[string]any{"email": "bob@example.com", "display_name": "Bob",
+		"password": "correct horse battery staple", "grants": []map[string]string{{"role": "viewer", "domain": "*"}}}), 201)
+	viewer := h.client()
+	viewer.bearer = loginAndIssueToken(t, h, "bob@example.com", []map[string]string{{"role": "viewer", "domain": "*"}})
+	expect(t, viewer.do("PUT", "/nodes/"+a.Node.ID, map[string]any{"name": "builder-9"}, "If-Match", fmt.Sprintf(`"%d"`, got.Version)), 403)
 }
