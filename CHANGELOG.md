@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.2] - 2026-11-04
+
+Second release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md). Replaces 0.1.0-rc.1, whose
+unpublished drafts were withdrawn: Codex runs with an OpenAI API key did not start there.
+
 ### Fixed
 - Codex runs with an OpenAI API key start working instead of stopping at Codex's sign-in screen: interactive Codex
   0.166.0 ignores `OPENAI_API_KEY`, so the node now also stores the key as an API-key login in the instance's
@@ -474,5 +479,5 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.1...HEAD
-[0.1.0-rc.1]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.1
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.2...HEAD
+[0.1.0-rc.2]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.2
