@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"regexp"
@@ -17,8 +18,10 @@ import (
 //   - MCP: -c mcp_servers.spaceman.command=… -c mcp_servers.spaceman.args=[…] (TOML overrides)
 //   - session: Codex chooses its own session ID; resume is `codex resume <id>` (the ID is discovered from
 //     $CODEX_HOME/sessions after launch — not a fixed-ID capability)
-//   - auth: OPENAI_API_KEY / CODEX_API_KEY through the launcher shim, or a ChatGPT login: $CODEX_HOME/auth.json and
-//     auth.lock linked to the node's live copy of the account's login, which Codex refreshes in place (ADR-0053)
+//   - auth: an API key becomes $CODEX_HOME/auth.json in API-key mode, as `codex login --with-api-key` writes it: the
+//     interactive Codex 0.166.0 ignores OPENAI_API_KEY and CODEX_API_KEY and stops at its sign-in screen (ADR-0054); or a
+//     ChatGPT login: $CODEX_HOME/auth.json and auth.lock linked to the node's live copy of the account's login, which
+//     Codex refreshes in place (ADR-0053)
 //   - skills: $CODEX_HOME/skills/<name>/SKILL.md (verified with codex-cli 0.166.0 `debug prompt-input`)
 type Codex struct{}
 
@@ -90,6 +93,13 @@ func (Codex) Build(c Context) (Launch, error) {
 		SessionID:  p.SessionID,
 		LoginLinks: map[string]string{filepath.Join(home, "auth.json"): "auth.json", filepath.Join(home, "auth.lock"): "auth.lock"},
 	}
+	if key := firstNonEmpty(p.Secrets["OPENAI_API_KEY"], p.Secrets["CODEX_API_KEY"]); key != "" {
+		b, err := json.Marshal(map[string]string{"auth_mode": "apikey", "OPENAI_API_KEY": key})
+		if err != nil {
+			return Launch{}, err
+		}
+		l.SecretFiles = map[string][]byte{filepath.Join(home, "auth.json"): b}
+	}
 	if seed := p.Secrets[CodexAuthKey]; seed != "" {
 		if p.AccountRef == "" {
 			return Launch{}, errors.New("codex: a ChatGPT login needs its account")
@@ -97,4 +107,13 @@ func (Codex) Build(c Context) (Launch, error) {
 		l.Login = &Login{Account: p.AccountRef, Seed: []byte(seed)}
 	}
 	return l, nil
+}
+
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

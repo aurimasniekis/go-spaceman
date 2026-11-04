@@ -78,7 +78,10 @@ func cleanEnv() []string {
 func newEnv(t *testing.T) *env { return newEnvWith(t, "") }
 
 // newEnvWith starts central and configures an agent whose Claude Code binary is claude ("" uses a stub script).
-func newEnvWith(t *testing.T, claude string) *env {
+func newEnvWith(t *testing.T, claude string) *env { return newEnvHarnesses(t, claude, "") }
+
+// newEnvHarnesses is newEnvWith with a Codex binary too ("" uses the stub script for either).
+func newEnvHarnesses(t *testing.T, claude, codex string) *env {
 	t.Helper()
 	if _, err := exec.LookPath("hc"); err != nil {
 		t.Skip("hc not installed")
@@ -114,9 +117,12 @@ log: {level: debug, format: text}
 	stub := filepath.Join(dir, "stub-claude.sh")
 	must(t, os.WriteFile(stub, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo '0.0.0 (stub)'; exit 0; fi\necho stub-harness-started \"$@\"\nif [ -n \"$CLAUDE_CODE_OAUTH_TOKEN\" ]; then echo has-token; fi\n"+
 		"env | grep -c SPACEMAN_RUN_TOKEN\ni=0; while true; do echo tick-$i; i=$((i+1)); sleep 0.5; done\n"), 0o700))
-	claudeBin := stub
+	claudeBin, codexBin := stub, stub
 	if claude != "" {
 		claudeBin = claude
+	}
+	if codex != "" {
+		codexBin = codex
 	}
 	e.session = "smr" + filepath.Base(dir)[7:]
 	e.socket = filepath.Join(dir, "hc.sock")
@@ -128,7 +134,7 @@ central: {url: %s, credential_file: %s/agent/node.credential, reconnect_max: 1s}
 runner: {session: %s, socket: %s}
 harness: {claude_binary: %s, codex_binary: %s}
 log: {level: debug, format: text}
-`, dir, e.url, dir, e.session, e.socket, claudeBin, stub)), 0o600))
+`, dir, e.url, dir, e.session, e.socket, claudeBin, codexBin)), 0o600))
 	t.Cleanup(func() {
 		e.stopAgent(syscall.SIGTERM)
 		if e.central != nil && e.central.Process != nil {
@@ -306,6 +312,11 @@ func (e *env) launchRun(t *testing.T) (nodeID, spaceID, runID string) {
 // setupSpace enrolls a node, starts the agent, creates a pinned space (disconnect policy kill) and binds a Claude
 // account holding token as its default (SM-ACCT-003). It returns the node and space IDs once the lease is granted.
 func (e *env) setupSpace(t *testing.T, token string) (nodeID, spaceID string) {
+	return e.setupSpaceWith(t, "claude_oauth_token", token)
+}
+
+// setupSpaceWith is setupSpace with an account of another kind (for example openai_api_key or codex_chatgpt_login).
+func (e *env) setupSpaceWith(t *testing.T, kind, secret string) (nodeID, spaceID string) {
 	t.Helper()
 	var en struct {
 		Node  struct{ ID string } `json:"node"`
@@ -329,7 +340,7 @@ func (e *env) setupSpace(t *testing.T, token string) (nodeID, spaceID string) {
 		t.Fatalf("create space: %d", st)
 	}
 	var acc struct{ ID string }
-	if st := e.api("POST", "/accounts", map[string]any{"name": "real-claude", "kind": "claude_oauth_token", "secret": token}, &acc); st != 201 {
+	if st := e.api("POST", "/accounts", map[string]any{"name": "real-" + strings.ReplaceAll(kind, "_", "-"), "kind": kind, "secret": secret}, &acc); st != 201 {
 		t.Fatalf("create account: %d", st)
 	}
 	if st := e.api("PUT", "/spaces/"+sp.ID+"/accounts", map[string]any{"items": []map[string]any{{"account_id": acc.ID, "default": true}}}, nil); st != 200 {

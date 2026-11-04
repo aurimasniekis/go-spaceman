@@ -18,7 +18,8 @@ import (
 // The installed Codex reads what the node lays out for it (SM-MCP-004, SM-ACCT-002, ADR-0053), without a credential or a
 // model call: a skill materialized into $CODEX_HOME/skills appears in the model's prompt input, and a login file
 // linked into $CODEX_HOME through the node's shared login folder is the one Codex uses. The login here is an API-key
-// file with a fake key (a ChatGPT login cannot be made without an account); the linking is the same. Run:
+// file with a fake key (a ChatGPT login cannot be made without an account); the linking is the same. An OpenAI API key
+// becomes a stored API-key login of the instance (ADR-0054), which Codex reads too. Run:
 // go test -tags real -run TestRealCodexReadsNodeLayout ./internal/agent/
 func TestRealCodexReadsNodeLayout(t *testing.T) {
 	bin, err := exec.LookPath("codex")
@@ -66,5 +67,25 @@ func TestRealCodexReadsNodeLayout(t *testing.T) {
 	}
 	if fi, err := os.Lstat(filepath.Join(l.Env["CODEX_HOME"], "auth.json")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("auth.json is not the node's link: %v %v", fi, err)
+	}
+
+	// The same instance launched with an OpenAI API key (ADR-0054): the ChatGPT link goes, the key becomes a stored
+	// API-key login, and Codex reads it.
+	c.Payload = proto.LaunchPayload{Secrets: map[string]string{"OPENAI_API_KEY": "sk-spaceman-real-test-api-key"}}
+	l, err = harness.Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.linkLogin(l.Login, l.LoginLinks); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSecretFiles(l.SecretFiles); err != nil {
+		t.Fatal(err)
+	}
+	if out := run("login", "status"); !strings.Contains(out, "API key configured - sk-space") {
+		t.Fatalf("codex did not read the stored API-key login: %s", out)
+	}
+	if fi, err := os.Lstat(filepath.Join(l.Env["CODEX_HOME"], "auth.json")); err != nil || fi.Mode()&os.ModeSymlink != 0 || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the API-key login is not a 0600 file of the instance: %v %v", fi, err)
 	}
 }

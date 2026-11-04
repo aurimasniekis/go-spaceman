@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- Codex runs with an OpenAI API key start working instead of stopping at Codex's sign-in screen: interactive Codex
+  0.166.0 ignores `OPENAI_API_KEY`, so the node now also stores the key as an API-key login in the instance's
+  `CODEX_HOME` (ADR-0054). Found by a dry run of the new real Codex suite.
+
+### Added
+- `make test-real-codex` (a real Codex turn through SpaceMan) and `make test-real-s3-external` (the artifact store and
+  backups against your own S3 or R2 bucket), with a checklist for verifying a release on another server
+  (docs/TEST_STRATEGY.md).
+
 ## [0.1.0-rc.1] - 2026-11-04
 
 First release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md).

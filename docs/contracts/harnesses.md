@@ -71,6 +71,12 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
     token refresh because auth changed after guarded reload". Copies of one ChatGPT login would break each other.
   - `CODEX_ACCESS_TOKEN` (`codex login --with-access-token`) is "Agent Identity" authentication, not a ChatGPT login;
     SpaceMan does not use it.
+  - **Interactive sign-in (2026-11-04):** started like a SpaceMan run (`--no-daemon -s read-only -a never -- <prompt>` in
+    an isolated herdr-core core, fresh `CODEX_HOME`), Codex ignores `OPENAI_API_KEY` and `CODEX_API_KEY` (also with
+    `-c forced_login_method="api"`) and shows "Welcome to Codex … Choose how you want to use Codex". With an API-key
+    `auth.json` it skips that screen and shows no folder-trust prompt (with this sandbox and approval policy), sends the
+    prompt (`401 Unauthorized` for the test key) and reports `status {app: codex, state: working}` through OSC 7501
+    (ADR-0054).
   - Not verified: a real ChatGPT login (no account) and a real model turn.
   - Env `OPENAI_API_KEY` and `CODEX_API_KEY` (strings-verified).
 - **Notify hook:** `notify = [argv…]` in config.toml, called at turn end.

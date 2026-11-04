@@ -66,6 +66,9 @@
   production profile (TLS behind a proxy) has not been run.
 
 ## Accounts
+- **Codex API keys are stored on the node.** Interactive Codex reads an API key only from a stored login, so the node
+  keeps it in each Codex instance's `CODEX_HOME/auth.json` (0600) between runs, rewritten at every launch; it is not
+  removed when the account is deleted (ADR-0054). Claude Code credentials still reach a run only through the launcher.
 - **A Codex ChatGPT login belongs to one node.** The node keeps one live copy of each ChatGPT login, which Codex
   refreshes in place; a refresh token works once, so the same login used on two nodes stops working on one of them
   after the first refresh. The copy stays on the node (0600, readable by the agent's user and root) and is not removed

@@ -100,6 +100,10 @@ func TestCodexBuild(t *testing.T) {
 	if l.Env["CODEX_HOME"] != "/data/spaces/spc_a/instances/ins_1/codex" || len(l.SecretEnv) != 1 || l.SecretEnv["OPENAI_API_KEY"] != "sk" {
 		t.Fatalf("env %v secrets %v", l.Env, l.SecretEnv)
 	}
+	// Interactive Codex takes an API key only from a stored login (ADR-0054): the key becomes auth.json in API-key mode.
+	if got := string(l.SecretFiles["/data/spaces/spc_a/instances/ins_1/codex/auth.json"]); got != `{"OPENAI_API_KEY":"sk","auth_mode":"apikey"}` || len(l.SecretFiles) != 1 {
+		t.Fatalf("secret files %v", l.SecretFiles)
+	}
 	// Skills load from $CODEX_HOME/skills (codex-cli 0.166.0); an API-key launch has no login but still names where a
 	// login would be linked, so links left by an earlier ChatGPT login are removed.
 	if l.SkillsRoot != "/data/spaces/spc_a/instances/ins_1/codex/skills" || l.Login != nil ||
@@ -110,7 +114,7 @@ func TestCodexBuild(t *testing.T) {
 	cl := ctxFor(proto.LaunchPayload{AccountRef: "acc_plan", Secrets: map[string]string{CodexAuthKey: `{"auth_mode":"chatgpt"}`}})
 	cl.Binary = "codex"
 	l, err = Codex{}.Build(cl)
-	if err != nil || l.Login == nil || l.Login.Account != "acc_plan" || string(l.Login.Seed) != `{"auth_mode":"chatgpt"}` || len(l.SecretEnv) != 0 {
+	if err != nil || l.Login == nil || l.Login.Account != "acc_plan" || string(l.Login.Seed) != `{"auth_mode":"chatgpt"}` || len(l.SecretEnv) != 0 || len(l.SecretFiles) != 0 {
 		t.Fatalf("ChatGPT login %+v secrets %v %v", l.Login, l.SecretEnv, err)
 	}
 	if _, err := (Codex{}).Build(func() Context {

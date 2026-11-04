@@ -68,6 +68,12 @@ later run on the node uses the refreshed one.
   other copy stop working. Add a separate login (sign in again in another `CODEX_HOME`) for each node.
 - The copy stays on the node after the account is deleted in SpaceMan; remove the node's `logins` folder to delete it.
 
+### Codex API keys are stored too
+
+Interactive Codex reads an API key only from a stored login, not from its environment. For an OpenAI API key the node
+therefore also writes the key into the Codex instance's own `CODEX_HOME/auth.json` (0600) at every launch, so a
+rotation applies at the next launch. The file stays on the node after the account is deleted.
+
 ::: warning Credentials are visible on the node
 A running harness needs its credential. Anyone with root, or the agent's operating-system user, on that node can read
 it from the process. Give nodes to people you would also give the credential to.

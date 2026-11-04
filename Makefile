@@ -150,7 +150,7 @@ PORCH_SRC ?= $(SIBLINGS)/porch
 PULSE_SRC ?= $(SIBLINGS)/pulse
 PULSE_GITHUB_SRC ?= $(SIBLINGS)/pulse-github
 
-.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-systemd
+.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd
 # Real Porch (built from PORCH_SRC into a temp dir, with Porch's own fake Google upstream): SpaceMan OIDC sign-in.
 test-real-porch:
 	SPACEMAN_REAL_PORCH=1 SPACEMAN_PORCH_SRC=$(PORCH_SRC) $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealPorch' -v ./test/real/
@@ -163,6 +163,18 @@ test-real-pulse:
 # Real S3: a throwaway MinIO container (pinned digest, random port, removed afterwards).
 test-real-s3:
 	SPACEMAN_REAL_S3=1 $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealS3' -v ./test/real/
+
+# Real S3 service of your own (AWS S3, Cloudflare R2, self-hosted MinIO): SPACEMAN_REAL_S3_ENDPOINT, _BUCKET,
+# _ACCESS_KEY_ID, _SECRET_ACCESS_KEY (optional _REGION, _PATH_STYLE=1, _CA_FILE, _ALLOW_PRIVATE_NETWORK=1). Works under a
+# random prefix and deletes only what it wrote.
+test-real-s3-external:
+	SPACEMAN_REAL_S3_EXTERNAL=1 $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealS3External$$' -v ./test/real/
+
+# A real, billed Codex run through SpaceMan: OPENAI_API_KEY, or SPACEMAN_REAL_CODEX_AUTH_FILE (the auth.json of a
+# dedicated ChatGPT login); optional SPACEMAN_REAL_CODEX_MODEL.
+test-real-codex:
+	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE SPACEMAN_REAL_CODEX=1 $(GO) test -tags real -count=1 -timeout 15m \
+	  -run '^TestRealCodexRun$$' -v ./test/real/
 
 # Linux/systemd: a Debian 13 container with systemd as PID 1 running the linux release binary and the shipped units.
 test-real-systemd:

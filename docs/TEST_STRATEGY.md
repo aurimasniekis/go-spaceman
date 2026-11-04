@@ -27,6 +27,8 @@
 | `make test-real-porch` | `TestRealPorchOIDC`: go-porch built from the sibling checkout (`PORCH_SRC`) into a temp dir, with Porch's fake Google fixture upstream; SpaceMan registered as a Porch client; sign-in, `porch.groups` mapping, group JIT and step-up through a scripted browser | real Porch (development mode); fake upstream |
 | `make test-real-pulse` | `TestRealPulseGitHub`: pulsed and nats-server (`PULSE_SRC`) and the `pulse-github` service (`PULSE_GITHUB_SRC`) publishing its own webhook fixtures; ingestion into two spaces, dedup, replay, quarantine, loop guard, outbound publication read back with go-pulse | real pulsed, nats-server and go-pulse-github; GitHub App lookup stubbed with pulse-github's test JSON |
 | `make test-real-s3` | `TestRealS3BackupRestore`: a throwaway MinIO container (pinned digest, random port, TLS with a test CA, generated credentials); client calls, API and CLI backups, list, verify, tamper detection, offline restore and comparison. `TestRealS3Artifacts`: the S3 artifact store against the same image (store contract, an API attachment upload and range download with `artifacts.backend: s3`, an offline backup copying it in, `spaceman artifacts migrate` both ways, a restore migrated to a new prefix and served) | real MinIO |
+| `make test-real-codex` | `TestRealCodexRun`: a real, billed Codex turn through SpaceMan with an `openai_api_key` account (`OPENAI_API_KEY`) or a `codex_chatgpt_login` account (`SPACEMAN_REAL_CODEX_AUTH_FILE`): Codex answers, herdr-core reports its turn through OSC 7501, and the credential is at rest only where ADR-0009, ADR-0053 and ADR-0054 put it | real (opt-in) |
+| `make test-real-s3-external` | `TestRealS3External`: the artifact store and an S3 backup against your own bucket (AWS S3, Cloudflare R2 or a self-hosted service), under a random prefix it deletes afterwards | real (opt-in) |
 | `make test-real-systemd` | `scripts/systemd-smoke.sh`: the linux release archive installed in a Debian 13 container with systemd as PID 1 (`--cgroupns=private --cap-add SYS_ADMIN`); `spaceman.service` health, readiness, stop/start/restart, KEK assertion, `systemd-analyze security`; `spaceman-agent.service` refusing cleanly without enrollment or herdr-core | real systemd 257 (container, linux/arm64) |
 | provider repository: `make test`, `make acc` | Terraform provider unit tests. Acceptance tests run the Terraform binary against a throwaway local central | simulated (local central), real Terraform |
 | `make web-check` | UI typecheck, vitest unit tests (Markdown sanitizer, contrast, forms) and the production build | simulated |
@@ -116,10 +118,28 @@ macOS (Darwin 24.6), Docker 29.8.2 (linux/arm64 VM), hc 0.1.16, Claude Code 2.1.
 |---|---|---|
 | herdr-core | `go test -tags real ./internal/runner/hc/`; `TestRealNodeEndToEnd`, `TestRealDisconnectEnforcement` | PASS (isolated cores; `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE` unset) |
 | Claude Code | `TestRealClaudeRun`, `TestRealClaudeUsesSpaceManTools`, `TestRealClaudeUsesGatewayTool` (Haiku) | PASS |
-| Codex | — | not run: no credential |
+| Codex | `TestRealCodexReadsNodeLayout` (codex-cli 0.166.0, no credential); `TestRealCodexRun` dry run with an invalid key (2026-11-04: Codex passes sign-in, starts its MCP servers and calls the API) | layout PASS; a real turn not run: no credential |
 | Porch OIDC | `make test-real-porch` (go-porch v0.3.0) | PASS |
 | Pulse, NATS, go-pulse-github | `make test-real-pulse` (pulsed v0.1.3, go-pulse-github v0.1.0) | PASS |
 | S3 | `make test-real-s3` (MinIO RELEASE.2026-10-23T20-06-51Z) | PASS |
 | Linux/systemd | `make test-real-systemd` (Debian 13, systemd 257.13, linux/arm64) | PASS; amd64 not run |
 | Containers | `make image-smoke` | PASS |
 | Browsers | `make e2e-browsers` (Firefox, WebKit) | PASS |
+
+## Verifying a release candidate on another server (SM-VER-002)
+
+The evidence still missing, with the command that collects each piece. Every suite is opt-in, works in a throwaway
+directory or under a random prefix, and removes only what it created. Run from a checkout of the release tag with Go,
+herdr-core (`hc`), Docker and pnpm installed; unset `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET` and `HC_SCOPE` first.
+
+| Evidence | Needs | Command |
+|---|---|---|
+| A real Codex turn (API key) | an OpenAI API key; `codex` on `PATH` | `OPENAI_API_KEY=… make test-real-codex` |
+| A real Codex turn (ChatGPT login) | the `auth.json` of a **dedicated** ChatGPT login: sign in again in a spare `CODEX_HOME` (a refresh token works once, so do not use your everyday file) | `SPACEMAN_REAL_CODEX_AUTH_FILE=…/auth.json make test-real-codex` |
+| S3 or R2 | a scratch bucket and keys that can put, get, list and delete in it | `SPACEMAN_REAL_S3_ENDPOINT=https://s3.<region>.amazonaws.com SPACEMAN_REAL_S3_REGION=<region> SPACEMAN_REAL_S3_BUCKET=… SPACEMAN_REAL_S3_ACCESS_KEY_ID=… SPACEMAN_REAL_S3_SECRET_ACCESS_KEY=… make test-real-s3-external` (R2: `https://<account>.r2.cloudflarestorage.com`, region `auto`) |
+| A physical Linux host and amd64 | a Linux machine (amd64), systemd | `make release-snapshot`, then install the archive with the shipped units as in site/operators/install.md, and run `make test-real` and `make e2e` there; `make test-real-systemd` also on amd64 |
+| Real Google sign-in | a Porch deployment federated with Google, a test Google account | configure SpaceMan's OIDC provider against that Porch (site/operators/sso.md) and sign in through the UI |
+| Real GitHub events | a GitHub App or webhook for a test repository, go-pulse-github and pulsed | follow site/guide/events.md with the `github-issue` template, open an issue in the test repository and see the inbox item |
+
+Record each result in the table above (date, versions, PASS or what failed) and in TRACEABILITY.md's real-evidence
+column; SM-VER-002 becomes implemented when every row has real evidence.

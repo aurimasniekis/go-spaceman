@@ -48,7 +48,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 
 ## 3. Architecture decisions
 
-53 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
+54 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
 
 | ADR | Decision |
 |---|---|
@@ -73,6 +73,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0051 | Starter roles: example profiles, prompts and role templates added once, given to spaces on request, editable and deletable. |
 | 0052 | Notices to programs that finished their turn, a 160×48 terminal size, a web terminal that survives reopening, one change-feed stream per browser. |
 | 0053 | Codex ChatGPT logins as one live file per account on the node, shared by its instances; Codex skills in `$CODEX_HOME/skills`. |
+| 0054 | An OpenAI API key reaches Codex as a stored login in its `CODEX_HOME`, since interactive Codex ignores key variables. |
 
 ## 4. Commits
 

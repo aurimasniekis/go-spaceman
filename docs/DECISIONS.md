@@ -2104,6 +2104,29 @@
   - A real ChatGPT login and a real Codex turn remain unverified (no account or credential); the layout is verified
     with an API-key file (`TestRealCodexReadsNodeLayout`, codex-cli 0.166.0).
 
+### ADR-0054 — An OpenAI API key reaches Codex as a stored login in its CODEX_HOME (security-relevant change)
+- **Status:** Accepted, 2026-11-04 (found by a dry run of the real Codex suite through SpaceMan with codex-cli 0.166.0;
+  no migration, no node protocol change).
+- **Context:** SpaceMan handed an `openai_api_key` account to Codex as `OPENAI_API_KEY` through the launcher (ADR-0009),
+  as for Claude Code. The interactive Codex 0.166.0 ignores that variable, and `CODEX_API_KEY` too, even with
+  `forced_login_method="api"`: it stops at its first-run screen ("Choose how you want to use Codex") and reports no
+  status, so such a run never starts working. With `$CODEX_HOME/auth.json` in API-key mode (what
+  `codex login --with-api-key` writes) it starts at once, sends the prompt and reports its status through OSC 7501.
+  Only fakes had run Codex before, so nothing had shown this.
+- **Decision:** For an API key, the Codex adapter also returns a credential file:
+  `$CODEX_HOME/auth.json` = `{"auth_mode":"apikey","OPENAI_API_KEY":…}`. The node writes it with mode 0600 through a
+  temporary file and a rename, after removing links left by a ChatGPT login (ADR-0053), so it replaces a link and never
+  writes through one. It is rewritten at every launch, so a rotation applies at once. The key still also goes to the
+  launcher as before.
+- **Consequences:**
+  - **Security-relevant:** an OpenAI API key bound to a space stays on the node's disk between runs, in each instance's
+    `CODEX_HOME` (0600, readable by the agent's user and root), and is not removed when the account is deleted.
+    ADR-0009's "secrets only through the launcher's file" no longer holds for Codex API keys; Claude Code credentials
+    are unchanged.
+  - Codex's OSC 7501 status is now verified live (`status {app: codex, state: working}` in herdr-core), so terminal
+    notices work for Codex runs.
+  - The real-run suite (`make test-real-codex`) needs only a key or a ChatGPT login to verify a full turn.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

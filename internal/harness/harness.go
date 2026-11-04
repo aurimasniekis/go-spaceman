@@ -77,6 +77,10 @@ type Launch struct {
 	SecretEnv map[string]string
 	// Login is a login file the harness reads and rewrites itself (a Codex ChatGPT login, ADR-0053); nil otherwise.
 	Login *Login
+	// SecretFiles are credential files the harness reads from its config dir (absolute paths): written by the node with
+	// mode 0600 through a temporary file and a rename, so a link left at the path is replaced, never followed. Codex
+	// takes an API key only from a stored login (ADR-0054).
+	SecretFiles map[string][]byte
 	// LoginLinks are where the harness looks for a login file, as paths in its config dir mapped to file names in the
 	// node's shared login folder. With Login they are linked to the account's live copy; without it, links left from
 	// an earlier login are removed (a regular file there is the harness's own and is kept).

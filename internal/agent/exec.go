@@ -298,6 +298,10 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("write login", err)
 		return
 	}
+	if err := writeSecretFiles(built.SecretFiles); err != nil { // after the login links are gone
+		fail("write login", err)
+		return
+	}
 	a.rememberRunToken(c.RunID, p.RunToken)
 	if err := writeSecrets(rd, built.SecretEnv, p.RunToken); err != nil {
 		fail("write secret file", err)

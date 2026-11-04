@@ -97,3 +97,39 @@ func TestLinkLogin(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0054: an API key for Codex is a stored login in the instance's CODEX_HOME. Written over a link to a shared
+// ChatGPT login, it replaces the link and leaves the shared login alone.
+func TestWriteSecretFilesReplacesLinks(t *testing.T) {
+	data := t.TempDir()
+	a := &Agent{o: Options{DataDir: data}}
+	home := filepath.Join(data, "instances", "i", "codex")
+	links := map[string]string{filepath.Join(home, "auth.json"): "auth.json", filepath.Join(home, "auth.lock"): "auth.lock"}
+	chatgpt := []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"r1"}}`)
+	if err := a.linkLogin(&harness.Login{Account: "acc_1", Seed: chatgpt}, links); err != nil {
+		t.Fatal(err)
+	}
+	shared, _ := os.Readlink(filepath.Join(home, "auth.json"))
+	apikey := []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}`)
+	// The launch order: links of the earlier login go, then the key's login file is written.
+	if err := a.linkLogin(nil, links); err != nil {
+		t.Fatal(err)
+	}
+	// Even with a link still in place (a crash in between), the file replaces it and never writes through it.
+	if err := os.Symlink(shared, filepath.Join(home, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSecretFiles(map[string][]byte{filepath.Join(home, "auth.json"): apikey}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(filepath.Join(home, "auth.json"))
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("API-key login file %v %v", fi, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(home, "auth.json")); string(got) != string(apikey) {
+		t.Fatalf("content %s", got)
+	}
+	if got, _ := os.ReadFile(shared); string(got) != string(chatgpt) {
+		t.Fatalf("the shared ChatGPT login was overwritten through the link: %s", got)
+	}
+}

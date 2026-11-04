@@ -126,3 +126,17 @@ func writeAtomic(path string, data []byte) error {
 	}
 	return os.Rename(tmp.Name(), path)
 }
+
+// writeSecretFiles writes credential files a harness reads from its config dir (ADR-0054): 0600, through a temporary
+// file and a rename, so a link at the path (a ChatGPT login left by an earlier launch) is replaced, never followed.
+func writeSecretFiles(files map[string][]byte) error {
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		if err := writeAtomic(path, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
