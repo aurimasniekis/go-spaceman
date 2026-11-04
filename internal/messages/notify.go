@@ -122,6 +122,17 @@ func due(noticed sql.NullInt64, now time.Time) bool {
 	return !noticed.Valid || now.Sub(time.UnixMicro(noticed.Int64)) >= noticeRetry
 }
 
+// before reports whether a notice was never given or was given before t (a run's start).
+func before(noticed sql.NullInt64, t int64) bool { return !noticed.Valid || noticed.Int64 < t }
+
+// inherited reports whether m was made available (noticed or fetched) before the run started and is still not
+// acknowledged: an earlier run of the same addressee saw it and ended without acknowledging it (for example a control
+// whose account was refused). The run never saw it, so it is noticed once (SM-COMM-003); a refused notice clears
+// noticed_at, so it is tried again.
+func inherited(m db.Message, since int64) bool {
+	return m.State == Available && m.AvailableAt.Valid && m.AvailableAt.Int64 < since && before(m.NoticedAt, since)
+}
+
 func (n *Notifier) notify(ctx context.Context, r db.ListNoticeCandidatesRow, now time.Time) (bool, error) {
 	sent := false
 	err := n.svc.s.W().TxNamed(ctx, "messages.notice", func(tx *store.Tx) error {
@@ -131,7 +142,7 @@ func (n *Notifier) notify(ctx context.Context, r db.ListNoticeCandidatesRow, now
 		}
 		var mids []string
 		for _, m := range msgs {
-			if m.State == Stored && !sentBy(m, r.ID) && due(m.NoticedAt, now) {
+			if !sentBy(m, r.ID) && (m.State == Stored && (due(m.NoticedAt, now) || before(m.NoticedAt, r.Since)) || inherited(m, r.Since)) {
 				mids = append(mids, m.ID)
 			}
 		}
@@ -142,7 +153,7 @@ func (n *Notifier) notify(ctx context.Context, r db.ListNoticeCandidatesRow, now
 		var nids []string
 		for _, x := range ns {
 			// wake 0: the policy says not to type into the terminal for it; the run reads it when it checks its messages.
-			if x.Wake == 1 && due(x.NoticedAt, now) {
+			if x.Wake == 1 && (due(x.NoticedAt, now) || before(x.NoticedAt, r.Since)) {
 				nids = append(nids, x.ID)
 			}
 		}

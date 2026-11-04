@@ -41,6 +41,10 @@ rather than as an instruction typed into its session. The line is only typed whi
 program is never interrupted. A run is told at most once a minute, and an item it has not read is mentioned again
 after five minutes.
 
+A run that starts later is told about what is still waiting when it first becomes idle, even items an earlier run was
+already told about or read but never acknowledged. For example, when a control run ends before handling its messages
+(its account was refused, say), the control you launch next is told about them.
+
 Agents can always check on their own with `spaceman_messages`, for example at the end of each step.
 
 A response to a human action whose requester's run has ended reaches control (or the policy's successor role) instead,

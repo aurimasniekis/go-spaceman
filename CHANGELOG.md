@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- A new run is told about messages an earlier run of the same addressee saw but never acknowledged. Before, a control
+  launched after one that ended without handling its notice (for example because its account was refused) was never
+  told about the waiting inbox item.
+
 ## [0.1.0-rc.3] - 2026-11-04
 
 Third release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): the first with images on
