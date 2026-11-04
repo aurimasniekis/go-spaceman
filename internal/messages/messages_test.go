@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -277,6 +278,61 @@ func TestNotifier(t *testing.T) {
 	}
 	f.n.Kick()
 	f.n.Kick() // never blocks
+}
+
+// SM-COMM-003: a message an earlier control saw but never acknowledged (its notice was typed, then the run ended, for
+// example because its account was refused) is noticed once to the control that replaces it; a refused notice is tried
+// again, and nothing is noticed twice to the same run.
+func TestNotifierNewRunInheritsUnacknowledged(t *testing.T) {
+	f := newFx(t)
+	f.exec(`UPDATE runs SET status = 'idle' WHERE id = '` + ctrlRun + `'`)
+	m, _, err := f.svc.Send(f.ctx, op, "spc_a", From{Kind: "system", Label: "SpaceMan"}, SendInput{To: "control", Kind: "notification", Subject: "New inbox item"})
+	must(t, err)
+	must(t, f.n.Sweep(f.ctx))
+	if f.q.count(ctrlRun) != 1 {
+		t.Fatalf("first control notices %d", f.q.count(ctrlRun))
+	}
+	noticeCmd := func() (cmd string) {
+		must(t, f.s.W().TxNamed(f.ctx, "q", func(tx *store.Tx) error {
+			row, err := tx.Q.GetMessage(f.ctx, m.ID)
+			cmd = row.NoticeCommand
+			return err
+		}))
+		return cmd
+	}
+	ack := func(cmd, result string) {
+		must(t, f.s.W().TxNamed(f.ctx, "ack", func(tx *store.Tx) error { return f.n.OnCommandAck(f.ctx, tx, cmd, result) }))
+	}
+	ack(noticeCmd(), proto.AckAccepted)
+	if got, _ := f.svc.Get(f.ctx, "spc_a", m.ID); got.State != Available {
+		t.Fatalf("after acceptance %+v", got)
+	}
+
+	// The first control ends without reading it; a new one starts later and is idle at its prompt.
+	f.clk.Advance(10 * time.Second)
+	const ctrl2 = "run_01cccccccccccccccccccccccc"
+	at := f.clk.Now().UnixMicro()
+	f.exec(`UPDATE runs SET desired = 'stopped', observed = 'exited' WHERE id = '`+ctrlRun+`'`,
+		fmt.Sprintf(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at, started_at)
+		 VALUES ('%s', 'spc_a', 'nod_1', 1, 'control', 'control', 'claude-code', 'ins_c2', 'running', 'running', 'idle', '{}', %d, 't', %d, %d)`, ctrl2, at, at, at))
+	must(t, f.n.Sweep(f.ctx))
+	if f.q.count(ctrl2) != 1 || !strings.Contains(f.q.notices[ctrl2][0], "1 new message") {
+		t.Fatalf("new control notices %+v", f.q.notices)
+	}
+	// A refused notice is tried again at the next sweep.
+	ack(noticeCmd(), proto.AckRejected)
+	f.clk.Advance(2 * time.Minute)
+	must(t, f.n.Sweep(f.ctx))
+	if f.q.count(ctrl2) != 2 {
+		t.Fatalf("refused notice not retried: %d", f.q.count(ctrl2))
+	}
+	// Once typed into this run, it is not noticed to it again, however long it stays unacknowledged.
+	ack(noticeCmd(), proto.AckAccepted)
+	f.clk.Advance(30 * time.Minute)
+	must(t, f.n.Sweep(f.ctx))
+	if f.q.count(ctrl2) != 2 {
+		t.Fatalf("noticed twice to the same run: %d", f.q.count(ctrl2))
+	}
 }
 
 // The messaging tools enforce sender and recipient identity from the run credential.

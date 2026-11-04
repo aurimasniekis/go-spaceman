@@ -26,7 +26,7 @@ UPDATE messages SET state = 'available', available_at = sqlc.arg(now), delivered
 WHERE notice_command = sqlc.arg(command) AND state = 'stored';
 
 -- name: ClearRefusedMessageNotice :exec
-UPDATE messages SET noticed_at = NULL WHERE notice_command = sqlc.arg(command) AND state = 'stored';
+UPDATE messages SET noticed_at = NULL WHERE notice_command = sqlc.arg(command) AND state IN ('stored', 'available');
 
 -- name: SetMessageNotice :exec
 UPDATE messages SET notice_command = sqlc.arg(command), noticed_at = sqlc.arg(now) WHERE id IN (sqlc.slice(ids));
@@ -69,7 +69,7 @@ WHERE id = sqlc.arg(id) AND space_id = sqlc.arg(space_id) AND state IN ('pending
   AND ((target_kind = 'run' AND target_run = sqlc.arg(run_id)) OR (target_kind = 'control' AND sqlc.arg(is_control) = 1));
 
 -- name: ListNoticeCandidates :many
-SELECT id, space_id, kind, role, harness, status FROM runs
+SELECT id, space_id, kind, role, harness, status, coalesce(started_at, created_at) AS since FROM runs
 WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done');
 
 -- name: ListMessagesByNotice :many

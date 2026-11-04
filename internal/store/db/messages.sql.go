@@ -60,7 +60,7 @@ func (q *Queries) AckNotification(ctx context.Context, arg AckNotificationParams
 }
 
 const clearRefusedMessageNotice = `-- name: ClearRefusedMessageNotice :exec
-UPDATE messages SET noticed_at = NULL WHERE notice_command = ?1 AND state = 'stored'
+UPDATE messages SET noticed_at = NULL WHERE notice_command = ?1 AND state IN ('stored', 'available')
 `
 
 func (q *Queries) ClearRefusedMessageNotice(ctx context.Context, command string) error {
@@ -397,7 +397,7 @@ func (q *Queries) ListMessagesFor(ctx context.Context, arg ListMessagesForParams
 }
 
 const listNoticeCandidates = `-- name: ListNoticeCandidates :many
-SELECT id, space_id, kind, role, harness, status FROM runs
+SELECT id, space_id, kind, role, harness, status, coalesce(started_at, created_at) AS since FROM runs
 WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done')
 `
 
@@ -408,6 +408,7 @@ type ListNoticeCandidatesRow struct {
 	Role    string
 	Harness string
 	Status  string
+	Since   int64
 }
 
 func (q *Queries) ListNoticeCandidates(ctx context.Context) ([]ListNoticeCandidatesRow, error) {
@@ -426,6 +427,7 @@ func (q *Queries) ListNoticeCandidates(ctx context.Context) ([]ListNoticeCandida
 			&i.Role,
 			&i.Harness,
 			&i.Status,
+			&i.Since,
 		); err != nil {
 			return nil, err
 		}
