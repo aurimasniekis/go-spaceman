@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.6] - 2026-11-05
+
+Sixth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): private repositories cloned
+with SSH keys SpaceMan holds. Central and the node agent both need this release (node protocol 1.7).
+
 ### Added
 - Repository SSH keys held by SpaceMan (ADR-0057, security-relevant). A repository with an SSH URL can have an Ed25519
   key that central generates and keeps sealed; only the public key is shown, to add as a read-only deploy key. The node
@@ -537,7 +542,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.5...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.6...HEAD
+[0.1.0-rc.6]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.6
 [0.1.0-rc.5]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.4
 [0.1.0-rc.3]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.3
