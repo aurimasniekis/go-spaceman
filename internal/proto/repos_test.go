@@ -1,6 +1,9 @@
 package proto
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // ADR-0044: repository URLs never carry credentials or a remote helper; local URLs only in development.
 func TestValidateRepoURL(t *testing.T) {
@@ -39,5 +42,35 @@ func TestValidateRepoURL(t *testing.T) {
 	}
 	if RedactRepoURL("https://u:p@h/x") != "https://h/x" || RedactRepoURL("git@h:x") != "git@h:x" {
 		t.Fatal("redaction")
+	}
+}
+
+// ADR-0057: an SSH key applies only to SSH URLs, and redaction removes keys from launch and sync payloads (stored and
+// logged forms) while keeping everything else.
+func TestRepoKeysOnlySSHAndRedacted(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"git@github.com:acme/api.git": true, "ssh://git@host:2222/acme/api.git": true, "git+ssh://host/a.git": true, "ssh+git://host/a.git": true,
+		"https://github.com/acme/api.git": false, "http://host/a.git": false, "file:///srv/a.git": false, "/srv/a.git": false,
+	} {
+		if IsSSHURL(raw) != want {
+			t.Errorf("IsSSHURL(%q) = %v, want %v", raw, !want, want)
+		}
+	}
+	src := RepoSource{ID: "rep_1", URL: "git@github.com:acme/api.git", SSHKey: "-----BEGIN OPENSSH PRIVATE KEY-----", KnownHosts: "github.com ssh-ed25519 AAAA"}
+	l := LaunchPayload{Harness: "claude-code", RunToken: "tok", Secrets: map[string]string{"K": "v"}, Repository: &src}
+	red := l.Redacted()
+	if red.Repository.SSHKey != "" || red.Repository.KnownHosts == "" || red.RunToken != "" || red.Secrets != nil || l.Repository.SSHKey == "" {
+		t.Fatalf("launch redaction %+v (original %+v)", red.Repository, l.Repository)
+	}
+	if r := (LaunchPayload{}).Redacted(); r.Repository != nil {
+		t.Fatal("a launch without a repository gained one")
+	}
+	p := ReposSyncPayload{Repositories: []RepoSource{src, {ID: "rep_2"}}, Clone: []string{"rep_1"}}
+	rp := p.Redacted()
+	if rp.Repositories[0].SSHKey != "" || rp.Repositories[0].ID != "rep_1" || len(rp.Clone) != 1 || p.Repositories[0].SSHKey == "" {
+		t.Fatalf("sync redaction %+v", rp)
+	}
+	if !strings.Contains(BuiltinKnownHosts, "github.com ssh-ed25519 ") {
+		t.Fatal("built-in pins lost GitHub's ed25519 key")
 	}
 }

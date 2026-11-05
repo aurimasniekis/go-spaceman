@@ -231,7 +231,8 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				wt := *in.Worktree
 				wt.Repo = r.Path
 				in.Worktree = &wt
-				source = &proto.RepoSource{ID: r.ID, Name: r.Name, Path: r.Path, URL: r.Url, DefaultBranch: r.DefaultBranch, ClonePolicy: r.ClonePolicy}
+				source = &proto.RepoSource{ID: r.ID, Name: r.Name, Path: r.Path, URL: r.Url, DefaultBranch: r.DefaultBranch, ClonePolicy: r.ClonePolicy,
+					KnownHosts: r.KnownHosts}
 				if resolved == nil {
 					resolved = map[string]any{}
 				}

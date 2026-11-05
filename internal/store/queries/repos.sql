@@ -1,10 +1,10 @@
 -- name: InsertSpaceRepository :exec
-INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, known_hosts, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSpaceRepository :execrows
 UPDATE space_repositories SET description = sqlc.arg(description), url = sqlc.arg(url), default_branch = sqlc.arg(default_branch), role = sqlc.arg(role),
-  clone_policy = sqlc.arg(clone_policy), updated_at = sqlc.arg(now), updated_by = sqlc.arg(updated_by), version = version + 1
+  clone_policy = sqlc.arg(clone_policy), known_hosts = sqlc.arg(known_hosts), updated_at = sqlc.arg(now), updated_by = sqlc.arg(updated_by), version = version + 1
 WHERE id = sqlc.arg(id) AND space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
 
 -- name: GetSpaceRepository :one
@@ -42,3 +42,11 @@ ON CONFLICT (space_id) DO UPDATE SET node_id = excluded.node_id, report_json = e
   checked_at = excluded.checked_at
 WHERE space_repository_reports.checked_at IS NULL OR space_repository_reports.checked_at <= excluded.checked_at
   OR space_repository_reports.node_id <> excluded.node_id;
+
+-- name: SetRepositorySSHKey :execrows
+UPDATE space_repositories SET ssh_key_enc = sqlc.arg(ssh_key_enc), ssh_public_key = sqlc.arg(ssh_public_key), ssh_key_created_at = sqlc.arg(created_at),
+  updated_at = sqlc.arg(now), updated_by = sqlc.arg(updated_by), version = version + 1
+WHERE id = sqlc.arg(id) AND space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
+
+-- name: GetRepositorySSHKey :one
+SELECT id, space_id, url, ssh_key_enc FROM space_repositories WHERE id = ? AND space_id = ?;

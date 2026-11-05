@@ -126,7 +126,9 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-REPO-003 Remotes, branches, workspace ownership, dirty state, unpushed commits and result refs are tracked.
 - SM-REPO-004 SpaceMan never merges autonomously and never chooses branching policy. Agents open PRs through available tools.
 - SM-REPO-005 Git authentication is provided by the node (existing Git/SSH, Hallpass Git roles, operator mechanisms). SpaceMan never requires
-  managed Git credentials and never overwrites node auth. Git transport auth and forge API auth are distinct.
+  managed Git credentials and never overwrites node auth. Git transport auth and forge API auth are distinct. Optionally,
+  a repository can have an SSH key SpaceMan holds. The node uses it only for its own clones and fetches of that
+  repository, and agents never receive it (operator decision, 2026-11-05; ADR-0057).
 - SM-REPO-006 Abandoned work is preserved. SpaceMan never silently resets, commits, pushes or deletes source changes.
 
 ### SM-ACCT — Accounts and harness credentials

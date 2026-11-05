@@ -58,8 +58,36 @@ func (q *Queries) GetRepositoryReport(ctx context.Context, spaceID string) (Spac
 	return i, err
 }
 
+const getRepositorySSHKey = `-- name: GetRepositorySSHKey :one
+SELECT id, space_id, url, ssh_key_enc FROM space_repositories WHERE id = ? AND space_id = ?
+`
+
+type GetRepositorySSHKeyParams struct {
+	ID      string
+	SpaceID string
+}
+
+type GetRepositorySSHKeyRow struct {
+	ID        string
+	SpaceID   string
+	Url       string
+	SshKeyEnc []byte
+}
+
+func (q *Queries) GetRepositorySSHKey(ctx context.Context, arg GetRepositorySSHKeyParams) (GetRepositorySSHKeyRow, error) {
+	row := q.db.QueryRowContext(ctx, getRepositorySSHKey, arg.ID, arg.SpaceID)
+	var i GetRepositorySSHKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Url,
+		&i.SshKeyEnc,
+	)
+	return i, err
+}
+
 const getSpaceRepository = `-- name: GetSpaceRepository :one
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by FROM space_repositories WHERE id = ? AND space_id = ?
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE id = ? AND space_id = ?
 `
 
 type GetSpaceRepositoryParams struct {
@@ -85,12 +113,16 @@ func (q *Queries) GetSpaceRepository(ctx context.Context, arg GetSpaceRepository
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.SshKeyEnc,
+		&i.SshPublicKey,
+		&i.SshKeyCreatedAt,
+		&i.KnownHosts,
 	)
 	return i, err
 }
 
 const getSpaceRepositoryByName = `-- name: GetSpaceRepositoryByName :one
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by FROM space_repositories WHERE space_id = ? AND name = ?
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE space_id = ? AND name = ?
 `
 
 type GetSpaceRepositoryByNameParams struct {
@@ -116,12 +148,16 @@ func (q *Queries) GetSpaceRepositoryByName(ctx context.Context, arg GetSpaceRepo
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.SshKeyEnc,
+		&i.SshPublicKey,
+		&i.SshKeyCreatedAt,
+		&i.KnownHosts,
 	)
 	return i, err
 }
 
 const getSpaceRepositoryByPath = `-- name: GetSpaceRepositoryByPath :one
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by FROM space_repositories WHERE space_id = ? AND path = ?
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE space_id = ? AND path = ?
 `
 
 type GetSpaceRepositoryByPathParams struct {
@@ -147,13 +183,17 @@ func (q *Queries) GetSpaceRepositoryByPath(ctx context.Context, arg GetSpaceRepo
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.SshKeyEnc,
+		&i.SshPublicKey,
+		&i.SshKeyCreatedAt,
+		&i.KnownHosts,
 	)
 	return i, err
 }
 
 const insertSpaceRepository = `-- name: InsertSpaceRepository :exec
-INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, known_hosts, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSpaceRepositoryParams struct {
@@ -166,6 +206,7 @@ type InsertSpaceRepositoryParams struct {
 	DefaultBranch string
 	Role          string
 	ClonePolicy   string
+	KnownHosts    string
 	CreatedAt     int64
 	CreatedBy     string
 	UpdatedAt     int64
@@ -183,6 +224,7 @@ func (q *Queries) InsertSpaceRepository(ctx context.Context, arg InsertSpaceRepo
 		arg.DefaultBranch,
 		arg.Role,
 		arg.ClonePolicy,
+		arg.KnownHosts,
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
@@ -224,7 +266,7 @@ func (q *Queries) ListKBsUsingRepository(ctx context.Context, arg ListKBsUsingRe
 }
 
 const listSpaceRepositories = `-- name: ListSpaceRepositories :many
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by FROM space_repositories WHERE space_id = ? ORDER BY name
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE space_id = ? ORDER BY name
 `
 
 func (q *Queries) ListSpaceRepositories(ctx context.Context, spaceID string) ([]SpaceRepository, error) {
@@ -251,6 +293,10 @@ func (q *Queries) ListSpaceRepositories(ctx context.Context, spaceID string) ([]
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.UpdatedBy,
+			&i.SshKeyEnc,
+			&i.SshPublicKey,
+			&i.SshKeyCreatedAt,
+			&i.KnownHosts,
 		); err != nil {
 			return nil, err
 		}
@@ -296,6 +342,40 @@ func (q *Queries) SetRepositoryReport(ctx context.Context, arg SetRepositoryRepo
 	return result.RowsAffected()
 }
 
+const setRepositorySSHKey = `-- name: SetRepositorySSHKey :execrows
+UPDATE space_repositories SET ssh_key_enc = ?1, ssh_public_key = ?2, ssh_key_created_at = ?3,
+  updated_at = ?4, updated_by = ?5, version = version + 1
+WHERE id = ?6 AND space_id = ?7 AND version = ?8
+`
+
+type SetRepositorySSHKeyParams struct {
+	SshKeyEnc    []byte
+	SshPublicKey string
+	CreatedAt    sql.NullInt64
+	Now          int64
+	UpdatedBy    string
+	ID           string
+	SpaceID      string
+	Version      int64
+}
+
+func (q *Queries) SetRepositorySSHKey(ctx context.Context, arg SetRepositorySSHKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setRepositorySSHKey,
+		arg.SshKeyEnc,
+		arg.SshPublicKey,
+		arg.CreatedAt,
+		arg.Now,
+		arg.UpdatedBy,
+		arg.ID,
+		arg.SpaceID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setRepositorySyncRequested = `-- name: SetRepositorySyncRequested :exec
 INSERT INTO space_repository_reports (space_id, command_id, requested_at, requested_by) VALUES (?, ?, ?, ?)
 ON CONFLICT (space_id) DO UPDATE SET command_id = excluded.command_id, requested_at = excluded.requested_at, requested_by = excluded.requested_by
@@ -320,8 +400,8 @@ func (q *Queries) SetRepositorySyncRequested(ctx context.Context, arg SetReposit
 
 const updateSpaceRepository = `-- name: UpdateSpaceRepository :execrows
 UPDATE space_repositories SET description = ?1, url = ?2, default_branch = ?3, role = ?4,
-  clone_policy = ?5, updated_at = ?6, updated_by = ?7, version = version + 1
-WHERE id = ?8 AND space_id = ?9 AND version = ?10
+  clone_policy = ?5, known_hosts = ?6, updated_at = ?7, updated_by = ?8, version = version + 1
+WHERE id = ?9 AND space_id = ?10 AND version = ?11
 `
 
 type UpdateSpaceRepositoryParams struct {
@@ -330,6 +410,7 @@ type UpdateSpaceRepositoryParams struct {
 	DefaultBranch string
 	Role          string
 	ClonePolicy   string
+	KnownHosts    string
 	Now           int64
 	UpdatedBy     string
 	ID            string
@@ -344,6 +425,7 @@ func (q *Queries) UpdateSpaceRepository(ctx context.Context, arg UpdateSpaceRepo
 		arg.DefaultBranch,
 		arg.Role,
 		arg.ClonePolicy,
+		arg.KnownHosts,
 		arg.Now,
 		arg.UpdatedBy,
 		arg.ID,

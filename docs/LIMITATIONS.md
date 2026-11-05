@@ -227,10 +227,21 @@
   herdr-core's interrupt (Esc or Ctrl+C) and has been verified only with the in-memory runner; a paused worker stays
   paused until it is resumed, and automatic resumption only restarts tasks that still have a live worker (others wait
   for control to launch one).
-- **Repository credentials stay on the node.** Configured repositories are cloned and fetched with the node's own Git
-  authentication (SSH keys, credential helpers, Hallpass Git roles). SpaceMan stores no Git credentials and refuses
-  URLs that carry them, so a remote that needs a token in its URL cannot be configured; set up the node's Git instead
-  (SM-REPO-005, ADR-0044). Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
+- **Repository credentials.** Configured repositories are cloned and fetched with the node's own Git authentication
+  (SSH keys, credential helpers, Hallpass Git roles), unless a repository has an SSH key SpaceMan holds (ADR-0057).
+  SpaceMan refuses URLs that carry credentials, so a remote that needs a token in its URL cannot be configured
+  (SM-REPO-005, ADR-0044). A SpaceMan SSH key:
+  - is used only over SSH;
+  - is used only for the node's own clones, fetches and `ls-remote` of that repository. Agents' git commands in their
+    terminals don't get it;
+  - needs node protocol 1.7 (agent 0.1.0-rc.6 or later). An older agent ignores it, and the repository shows a note.
+
+  While a clone or fetch runs, the key is offered on a private agent socket. Agents run as the same Unix user as the
+  node agent, so one could connect to that socket and have it sign. It can never read the key, and with a read-only
+  deploy key that gives no more than the checkout the agent already has.
+
+  Built-in host-key pins cover github.com only; other hosts need the repository's known_hosts. A relocation's
+  destination does not clone repositories that have a key: the first sync after the move does. Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
   `file://` and local paths need development mode.
 - **Unlisted folders still work.** Workers may still use a repository folder that is not in the space's list; such a
   folder is reported as unlisted but not tracked, and a relocation carries it only as the source has it. A space has at

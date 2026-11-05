@@ -48,7 +48,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 
 ## 3. Architecture decisions
 
-56 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
+57 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
 
 | ADR | Decision |
 |---|---|
@@ -76,6 +76,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0054 | An OpenAI API key reaches Codex as a stored login in its `CODEX_HOME`, since interactive Codex ignores key variables. |
 | 0055 | Release images published to Docker Hub (`aurimasniekis/spaceman`, `aurimasniekis/spaceman-agent`) for every release tag. |
 | 0056 | Control starts for waiting work when no control run is live, and stops after an idle timeout (two space limits). |
+| 0057 | Repository SSH keys held by SpaceMan: sealed in central, sent only with a clone or fetch, served from an in-memory agent on the node against pinned host keys; agents never receive them. |
 
 ## 4. Commits
 

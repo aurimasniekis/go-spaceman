@@ -2,7 +2,7 @@
 
 # spaceman repo
 
-A space's repositories: list, show, add, edit, remove and sync (--space).
+A space's repositories: list, show, add, edit, remove, SSH keys and sync (--space).
 
 Aliases: `repos`, `repository`, `repositories`.
 
@@ -12,6 +12,8 @@ Aliases: `repos`, `repository`, `repositories`.
 | [`spaceman repo delete`](#spaceman-repo-delete) | Remove a repository from the space (its folder on the node stays) |
 | [`spaceman repo get`](#spaceman-repo-get) | A repository (ID or name) with the node's latest report |
 | [`spaceman repo list`](#spaceman-repo-list) | A space's repositories with the node's latest report |
+| [`spaceman repo ssh-key`](#spaceman-repo-ssh-key) | Generate (or rotate) the repository's SSH key and print its public key |
+| [`spaceman repo ssh-key-remove`](#spaceman-repo-ssh-key-remove) | Remove the repository's SSH key (the node's own Git authentication applies again) |
 | [`spaceman repo sync`](#spaceman-repo-sync) | Ask the node to clone what is missing, fetch and report |
 | [`spaceman repo update`](#spaceman-repo-update) | Edit a repository (only the flags given change; name and path are fixed) |
 
@@ -37,10 +39,11 @@ spaceman repo create --space payments api --url git@github.com:acme/api.git --pa
 | `--default-branch` | string |  | default branch (default main) |
 | `--description` | string |  | description |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--known-hosts-file` | string |  | known_hosts lines pinning the Git host's SSH keys for the repository's SSH key (empty: the built-in pins, github.com) |
 | `--path` | string |  | folder in the space folder (default the name; fixed after creation) |
 | `--role` | string |  | code or kb |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
-| `--url` | string |  | clone URL without credentials (https://, ssh:// or git@host:path; the node's own Git authentication is used) |
+| `--url` | string |  | clone URL without credentials (https://, ssh:// or git@host:path; the node's own Git authentication is used unless the repository has an SSH key) |
 
 ## spaceman repo delete
 
@@ -87,6 +90,45 @@ API: `list-space-repositories` ([HTTP API](../api)).
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
+## spaceman repo ssh-key
+
+Generate (or rotate) the repository's SSH key and print its public key.
+
+SpaceMan generates an Ed25519 key and keeps the private half; add the printed public key to the Git host as a read-only deploy key. The node then clones and fetches the repository with it over SSH, and agents never receive it. Running it again replaces the key at once.
+
+```sh
+spaceman repo ssh-key <repository> [flags]
+```
+
+API: `get-space-repository`, `generate-repository-ssh-key` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman repo ssh-key --space payments api
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman repo ssh-key-remove
+
+Remove the repository's SSH key (the node's own Git authentication applies again).
+
+```sh
+spaceman repo ssh-key-remove <repository> [flags]
+```
+
+API: `get-space-repository`, `remove-repository-ssh-key` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+| `--yes` | bool |  | confirm: remove the repository's SSH key |
+
 ## spaceman repo sync
 
 Ask the node to clone what is missing, fetch and report.
@@ -129,8 +171,9 @@ API: `get-space-repository`, `update-space-repository` ([HTTP API](../api)).
 | `--description` | string |  | description |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--known-hosts-file` | string |  | known_hosts lines pinning the Git host's SSH keys for the repository's SSH key (empty: the built-in pins, github.com) |
 | `--path` | string |  | folder in the space folder (default the name; fixed after creation) |
 | `--role` | string |  | code or kb |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
-| `--url` | string |  | clone URL without credentials (https://, ssh:// or git@host:path; the node's own Git authentication is used) |
+| `--url` | string |  | clone URL without credentials (https://, ssh:// or git@host:path; the node's own Git authentication is used unless the repository has an SSH key) |
 

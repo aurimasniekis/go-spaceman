@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.6] - 2026-11-05
+
+Sixth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): private repositories cloned
+with SSH keys SpaceMan holds. Central and the node agent both need this release (node protocol 1.7).
+
+### Added
+- Repository SSH keys held by SpaceMan (ADR-0057, security-relevant). A repository with an SSH URL can have an Ed25519
+  key that central generates and keeps sealed; only the public key is shown, to add as a read-only deploy key. The node
+  clones and fetches with it over SSH, against pinned host keys (GitHub built in, `known_hosts` per repository for
+  others), and agents never receive it.
+  - API: `POST`/`DELETE /spaces/{id}/repositories/{id}/ssh-key`.
+  - CLI: `spaceman repo ssh-key` and `spaceman repo ssh-key-remove`.
+  - UI: the repository's SSH key card.
+  - The node protocol goes to 1.7.
+
+### Fixed
+- Repository clone and fetch errors caused by SSH host keys are now one line that says what to fix, instead of ssh's
+  warning banner.
+
 ## [0.1.0-rc.5] - 2026-11-04
 
 Fifth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): control starts for waiting
@@ -523,7 +542,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.5...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.6...HEAD
+[0.1.0-rc.6]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.6
 [0.1.0-rc.5]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.4
 [0.1.0-rc.3]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.3

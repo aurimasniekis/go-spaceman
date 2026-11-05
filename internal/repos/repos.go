@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path"
 	"regexp"
@@ -33,6 +34,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -65,22 +67,33 @@ var (
 
 // Repository is a configured repository with the node's latest view of it.
 type Repository struct {
-	ID            string    `json:"id"`
-	SpaceID       string    `json:"space_id"`
-	Name          string    `json:"name" doc:"Unique in the space; fixed after creation"`
-	Path          string    `json:"path" doc:"Folder relative to the space folder on the node; fixed after creation"`
-	Description   string    `json:"description"`
-	URL           string    `json:"url" doc:"Clone URL without credentials (the node's own Git authentication is used); empty for a manual repository"`
-	DefaultBranch string    `json:"default_branch"`
-	Role          string    `json:"role" enum:"code,kb"`
-	ClonePolicy   string    `json:"clone_policy" enum:"auto,on_demand,manual" doc:"auto: cloned while the node holds the space's lease; on_demand: cloned when a run needs it or on a sync; manual: never cloned by SpaceMan"`
-	KBs           []string  `json:"knowledge_bases" doc:"Slugs of knowledge bases that use this repository"`
-	Status        *Status   `json:"status,omitempty" doc:"The node's latest report (runtime state, untrusted: it comes from the node and the repository)"`
-	Version       int64     `json:"version"`
-	CreatedAt     time.Time `json:"created_at"`
-	CreatedBy     string    `json:"created_by"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	UpdatedBy     string    `json:"updated_by"`
+	ID            string   `json:"id"`
+	SpaceID       string   `json:"space_id"`
+	Name          string   `json:"name" doc:"Unique in the space; fixed after creation"`
+	Path          string   `json:"path" doc:"Folder relative to the space folder on the node; fixed after creation"`
+	Description   string   `json:"description"`
+	URL           string   `json:"url" doc:"Clone URL without credentials; empty for a manual repository. With an SSH key SpaceMan holds the credential, otherwise the node's own Git authentication is used"`
+	DefaultBranch string   `json:"default_branch"`
+	Role          string   `json:"role" enum:"code,kb"`
+	ClonePolicy   string   `json:"clone_policy" enum:"auto,on_demand,manual" doc:"auto: cloned while the node holds the space's lease; on_demand: cloned when a run needs it or on a sync; manual: never cloned by SpaceMan"`
+	KBs           []string `json:"knowledge_bases" doc:"Slugs of knowledge bases that use this repository"`
+	// SSHKey is the repository's SpaceMan SSH key (ADR-0057): only its public half and fingerprint ever leave central.
+	SSHKey     *SSHKey   `json:"ssh_key,omitempty" doc:"The SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key)"`
+	KnownHosts string    `json:"known_hosts" doc:"known_hosts lines pinning the Git host's keys for the SSH key; empty: SpaceMan's built-in pins (github.com)"`
+	Status     *Status   `json:"status,omitempty" doc:"The node's latest report (runtime state, untrusted: it comes from the node and the repository)"`
+	Version    int64     `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+	CreatedBy  string    `json:"created_by"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	UpdatedBy  string    `json:"updated_by"`
+}
+
+// SSHKey is the public half of a repository's SpaceMan SSH key.
+type SSHKey struct {
+	PublicKey   string    `json:"public_key" doc:"authorized_keys format; add it to the Git host as a read-only deploy key"`
+	Fingerprint string    `json:"fingerprint" doc:"SHA256 fingerprint"`
+	CreatedAt   time.Time `json:"created_at"`
+	Note        string    `json:"note,omitempty" doc:"Why the key is not in use (an outdated node agent)"`
 }
 
 // Status is a repository as the space's node last reported it.
@@ -128,6 +141,7 @@ type Input struct {
 	DefaultBranch string `json:"default_branch,omitempty" maxLength:"100" doc:"Default main"`
 	Role          string `json:"role,omitempty" enum:"code,kb" doc:"Default code"`
 	ClonePolicy   string `json:"clone_policy,omitempty" enum:"auto,on_demand,manual" doc:"Default auto with a URL, manual without"`
+	KnownHosts    string `json:"known_hosts,omitempty" maxLength:"16384" doc:"known_hosts lines pinning the Git host's SSH keys, used with the repository's SSH key; empty: the built-in pins (github.com)"`
 }
 
 // SyncInput asks the node for a sync.
@@ -159,8 +173,10 @@ type Overview struct {
 type Options struct {
 	// AllowLocalURLs accepts file://, http://, git:// URLs and local paths (development mode only).
 	AllowLocalURLs bool
-	Clock          clock.Clock
-	Log            *slog.Logger
+	// Keyring seals repository SSH keys (ADR-0057); nil: SSH keys are unavailable.
+	Keyring *keyring.Keyring
+	Clock   clock.Clock
+	Log     *slog.Logger
 }
 
 // Service manages space repositories.
@@ -192,9 +208,13 @@ func actorRef(a audit.Actor) string {
 }
 
 func out(r db.SpaceRepository) *Repository {
-	return &Repository{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, Path: r.Path, Description: r.Description, URL: r.Url, DefaultBranch: r.DefaultBranch,
-		Role: r.Role, ClonePolicy: r.ClonePolicy, KBs: []string{}, Version: r.Version, CreatedAt: time.UnixMicro(r.CreatedAt).UTC(),
+	o := &Repository{ID: r.ID, SpaceID: r.SpaceID, Name: r.Name, Path: r.Path, Description: r.Description, URL: r.Url, DefaultBranch: r.DefaultBranch,
+		Role: r.Role, ClonePolicy: r.ClonePolicy, KBs: []string{}, KnownHosts: r.KnownHosts, Version: r.Version, CreatedAt: time.UnixMicro(r.CreatedAt).UTC(),
 		CreatedBy: r.CreatedBy, UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), UpdatedBy: r.UpdatedBy}
+	if r.SshPublicKey != "" && len(r.SshKeyEnc) > 0 {
+		o.SSHKey = &SSHKey{PublicKey: r.SshPublicKey, Fingerprint: fingerprint(r.SshPublicKey), CreatedAt: time.UnixMicro(r.SshKeyCreatedAt.Int64).UTC()}
+	}
+	return o
 }
 
 // ValidPath reports whether p is a usable repository folder: relative, clean, at most 8 levels deep, outside the
@@ -272,6 +292,10 @@ func (svc *Service) normalize(in *Input, cur *db.SpaceRepository) error {
 	if len(in.Description) > 2000 {
 		v.Add("description", "is longer than 2000 characters")
 	}
+	in.KnownHosts = strings.TrimSpace(strings.ReplaceAll(in.KnownHosts, "\r\n", "\n"))
+	if err := ValidateKnownHosts(in.KnownHosts); err != nil {
+		v.Add("known_hosts", "%s", err.Error())
+	}
 	return v.Err()
 }
 
@@ -317,7 +341,7 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 			return apperr.New(apperr.CodeAlreadyExists, "repository %q already uses the folder %s", r.Name, in.Path)
 		}
 		if err := tx.Q.InsertSpaceRepository(ctx, db.InsertSpaceRepositoryParams{ID: id, SpaceID: spaceID, Name: in.Name, Path: in.Path,
-			Description: in.Description, Url: in.URL, DefaultBranch: in.DefaultBranch, Role: in.Role, ClonePolicy: in.ClonePolicy, CreatedAt: tx.NowMicros(),
+			Description: in.Description, Url: in.URL, DefaultBranch: in.DefaultBranch, Role: in.Role, ClonePolicy: in.ClonePolicy, KnownHosts: in.KnownHosts, CreatedAt: tx.NowMicros(),
 			CreatedBy: actorRef(actor), UpdatedAt: tx.NowMicros(), UpdatedBy: actorRef(actor)}); err != nil {
 			if store.IsConstraint(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "the space already has a repository with this name or folder")
@@ -364,8 +388,11 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, spaceID, id s
 		if err := svc.normalize(&in, &cur); err != nil {
 			return err
 		}
+		if len(cur.SshKeyEnc) > 0 && in.URL != "" && !proto.IsSSHURL(in.URL) {
+			return apperr.New(apperr.CodeInvalid, "the repository has an SSH key, so its URL must be an SSH URL; remove the key first to use another URL")
+		}
 		n, err := tx.Q.UpdateSpaceRepository(ctx, db.UpdateSpaceRepositoryParams{Description: in.Description, Url: in.URL, DefaultBranch: in.DefaultBranch,
-			Role: in.Role, ClonePolicy: in.ClonePolicy, Now: tx.NowMicros(), UpdatedBy: actorRef(actor), ID: id, SpaceID: spaceID, Version: version})
+			Role: in.Role, ClonePolicy: in.ClonePolicy, KnownHosts: in.KnownHosts, Now: tx.NowMicros(), UpdatedBy: actorRef(actor), ID: id, SpaceID: spaceID, Version: version})
 		if err != nil {
 			return err
 		}
@@ -476,8 +503,15 @@ func (svc *Service) List(ctx context.Context, spaceID string) (*Overview, error)
 		states[st.ID] = st
 	}
 	owners := svc.worktreeOwners(ctx, spaceID)
+	var nodeMinor int64 = -1 // the space's node's protocol minor (-1: unknown)
+	if n, err := q.GetNode(ctx, sp.NodeID); err == nil && n.ProtocolMinor > 0 {
+		nodeMinor = n.ProtocolMinor
+	}
 	for _, r := range rows {
 		x := out(r)
+		if x.SSHKey != nil && nodeMinor >= 0 && nodeMinor < proto.MinorRepoKeys {
+			x.SSHKey.Note = fmt.Sprintf("The space's node agent (protocol 1.%d) cannot use SpaceMan SSH keys: it clones with its own Git authentication until it is updated.", nodeMinor)
+		}
 		if kbs, err := q.ListKBsUsingRepository(ctx, db.ListKBsUsingRepositoryParams{SpaceID: spaceID, Repo: r.Path}); err == nil {
 			x.KBs = kbs
 		}
@@ -612,7 +646,7 @@ func payload(rows []db.SpaceRepository) proto.ReposSyncPayload {
 
 // Source is a configured repository as the node receives it.
 func Source(r db.SpaceRepository) proto.RepoSource {
-	return proto.RepoSource{ID: r.ID, Name: r.Name, Path: r.Path, URL: r.Url, DefaultBranch: r.DefaultBranch, ClonePolicy: r.ClonePolicy}
+	return proto.RepoSource{ID: r.ID, Name: r.Name, Path: r.Path, URL: r.Url, DefaultBranch: r.DefaultBranch, ClonePolicy: r.ClonePolicy, KnownHosts: r.KnownHosts}
 }
 
 // queueAuto queues an automatic sync inside tx (clone the auto repositories, no fetch) when the space's node is connected
