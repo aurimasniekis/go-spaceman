@@ -19,6 +19,9 @@ var RepositoryRules = map[string]Rule{
 	"update-space-repository": InSpace(authz.SpaceConfigWrite),
 	"delete-space-repository": InSpace(authz.SpaceConfigWrite),
 	"sync-space-repositories": InSpace(authz.SpaceConfigWrite),
+	// The private key never leaves central through the API; generating and removing one changes how the node clones.
+	"generate-repository-ssh-key": InSpace(authz.SpaceConfigWrite),
+	"remove-repository-ssh-key":   InSpace(authz.SpaceConfigWrite),
 }
 
 // RepositoryPath identifies a repository of a space (by ID or name).
@@ -58,8 +61,8 @@ func RegisterRepositories(svc *repos.Service) func(api huma.API, d *Deps) {
 			})
 		huma.Register(api, huma.Operation{OperationID: "create-space-repository", Method: http.MethodPost, Path: "/spaces/{space_id}/repositories",
 			Summary: "Add a repository to a space",
-			Description: "The URL never carries credentials: the node's own Git authentication is used. With the auto clone policy the node clones it " +
-				"as soon as it holds the space's lease.",
+			Description: "The URL never carries credentials: the node's own Git authentication is used, or the repository's SpaceMan SSH key once " +
+				"one is generated (POST …/ssh-key). With the auto clone policy the node clones it as soon as it holds the space's lease.",
 			Tags: tags, DefaultStatus: http.StatusCreated},
 			func(ctx context.Context, in *struct {
 				SpacePath
@@ -89,6 +92,54 @@ func RegisterRepositories(svc *repos.Service) func(api huma.API, d *Deps) {
 				r, err := svc.Update(ctx, Actor(ctx), in.SpaceID, cur.ID, v, in.Body)
 				if err != nil {
 					return nil, d.fail(ctx, "repos.update", err)
+				}
+				return &repositoryOut{ETag: ETag(r.Version), Body: r}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "generate-repository-ssh-key", Method: http.MethodPost,
+			Path:    "/spaces/{space_id}/repositories/{repository_id}/ssh-key",
+			Summary: "Generate (or rotate) the repository's SSH key",
+			Description: "SpaceMan generates an Ed25519 key, keeps the private half sealed and returns only the public key: add it to the Git host as a " +
+				"read-only deploy key. The node clones and fetches this repository with it over SSH, against the pinned host keys, and agents never " +
+				"receive it (ADR-0057). Rotating replaces the key at once; remove the old public key from the host. The URL must be an SSH URL.",
+			Tags: tags},
+			func(ctx context.Context, in *struct {
+				RepositoryPath
+				IfMatch
+			}) (*repositoryOut, error) {
+				v, err := optionalVersion(in.IfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "repos.ssh_key", err)
+				}
+				cur, err := svc.Get(ctx, in.SpaceID, in.RepositoryID)
+				if err != nil {
+					return nil, d.fail(ctx, "repos.ssh_key", err)
+				}
+				r, err := svc.GenerateSSHKey(ctx, Actor(ctx), in.SpaceID, cur.ID, v)
+				if err != nil {
+					return nil, d.fail(ctx, "repos.ssh_key", err)
+				}
+				return &repositoryOut{ETag: ETag(r.Version), Body: r}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "remove-repository-ssh-key", Method: http.MethodDelete,
+			Path:        "/spaces/{space_id}/repositories/{repository_id}/ssh-key",
+			Summary:     "Remove the repository's SSH key",
+			Description: "The node clones and fetches with its own Git authentication again. Remove the public key from the Git host too.",
+			Tags:        tags},
+			func(ctx context.Context, in *struct {
+				RepositoryPath
+				IfMatch
+			}) (*repositoryOut, error) {
+				v, err := optionalVersion(in.IfMatch)
+				if err != nil {
+					return nil, d.fail(ctx, "repos.ssh_key_remove", err)
+				}
+				cur, err := svc.Get(ctx, in.SpaceID, in.RepositoryID)
+				if err != nil {
+					return nil, d.fail(ctx, "repos.ssh_key_remove", err)
+				}
+				r, err := svc.RemoveSSHKey(ctx, Actor(ctx), in.SpaceID, cur.ID, v)
+				if err != nil {
+					return nil, d.fail(ctx, "repos.ssh_key_remove", err)
 				}
 				return &repositoryOut{ETag: ETag(r.Version), Body: r}, nil
 			})

@@ -404,6 +404,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}/repositories/{repository_id}` | `delete-space-repository` | Remove a repository from a space |
 | `GET` | `/spaces/{space_id}/repositories/{repository_id}` | `get-space-repository` | A repository with the node's latest report |
 | `PUT` | `/spaces/{space_id}/repositories/{repository_id}` | `update-space-repository` | Edit a repository |
+| `DELETE` | `/spaces/{space_id}/repositories/{repository_id}/ssh-key` | `remove-repository-ssh-key` | Remove the repository's SSH key |
+| `POST` | `/spaces/{space_id}/repositories/{repository_id}/ssh-key` | `generate-repository-ssh-key` | Generate (or rotate) the repository's SSH key |
 | `POST` | `/spaces/{space_id}/repositories/sync` | `sync-space-repositories` | Ask the node to clone, fetch and report a space's repositories |
 
 ### retention

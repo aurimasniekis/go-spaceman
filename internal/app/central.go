@@ -366,7 +366,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return v.Get(limits.KBSessions), v.Get(limits.SupportDepth)
 	}
 	c.Fleet.Hub().KBResult = c.KB.OnResult
-	c.Repos = repos.New(st, c.Audit, c.Changes, c.Fleet, repos.Options{AllowLocalURLs: !cfg.IsProduction(), Clock: o.Clock, Log: obs.Component(log, "repos")})
+	c.Repos = repos.New(st, c.Audit, c.Changes, c.Fleet, repos.Options{AllowLocalURLs: !cfg.IsProduction(), Keyring: c.Keyring, Clock: o.Clock,
+		Log: obs.Component(log, "repos")})
+	c.Fleet.Hub().RepoKey = c.Repos.Key // repository SSH keys go only onto the wire message of a clone or fetch (ADR-0057)
 	c.KB.ResolveRepo = c.Repos.ForKB
 	c.Fleet.Hub().RepoStatus = c.Repos.OnStatus
 	c.Fleet.Hub().OnConnected = c.Repos.OnNodeConnected

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Repository SSH keys held by SpaceMan (ADR-0057, security-relevant). A repository with an SSH URL can have an Ed25519
+  key that central generates and keeps sealed; only the public key is shown, to add as a read-only deploy key. The node
+  clones and fetches with it over SSH, against pinned host keys (GitHub built in, `known_hosts` per repository for
+  others), and agents never receive it.
+  - API: `POST`/`DELETE /spaces/{id}/repositories/{id}/ssh-key`.
+  - CLI: `spaceman repo ssh-key` and `spaceman repo ssh-key-remove`.
+  - UI: the repository's SSH key card.
+  - The node protocol goes to 1.7.
+
+### Fixed
+- Repository clone and fetch errors caused by SSH host keys are now one line that says what to fix, instead of ssh's
+  warning banner.
+
 ## [0.1.0-rc.5] - 2026-11-04
 
 Fifth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): control starts for waiting

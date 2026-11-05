@@ -1209,20 +1209,24 @@ type SpaceLimit struct {
 }
 
 type SpaceRepository struct {
-	ID            string
-	SpaceID       string
-	Name          string
-	Path          string
-	Description   string
-	Url           string
-	DefaultBranch string
-	Role          string
-	ClonePolicy   string
-	Version       int64
-	CreatedAt     int64
-	CreatedBy     string
-	UpdatedAt     int64
-	UpdatedBy     string
+	ID              string
+	SpaceID         string
+	Name            string
+	Path            string
+	Description     string
+	Url             string
+	DefaultBranch   string
+	Role            string
+	ClonePolicy     string
+	Version         int64
+	CreatedAt       int64
+	CreatedBy       string
+	UpdatedAt       int64
+	UpdatedBy       string
+	SshKeyEnc       []byte
+	SshPublicKey    string
+	SshKeyCreatedAt sql.NullInt64
+	KnownHosts      string
 }
 
 type SpaceRepositoryReport struct {

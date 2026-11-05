@@ -31,13 +31,43 @@ spaceman repo create --space payments api --url git@github.com:acme/api.git --pa
 
 A space has at most 50 repositories.
 
-### Git authentication stays on the node
+### Git authentication
 
-The node clones and fetches with its own Git setup: SSH keys and agents, credential helpers, Hallpass Git roles or
-whatever the operator configured. SpaceMan does not store Git credentials, and a URL with credentials in it
-(`https://user:token@…`) is refused, as are Git's remote-helper URLs (`ext::…`, which run programs), plain `http://` and
-`git://`, and local paths. In development mode (`mode: development`) `http://`, `git://`, `file://` URLs and absolute
-paths are allowed for local remotes. Agents use the same node setup inside their terminals.
+By default the node clones and fetches with its own Git setup: SSH keys and agents, credential helpers, Hallpass Git
+roles or whatever the operator configured. A URL with credentials in it (`https://user:token@…`) is refused, as are:
+- Git's remote-helper URLs (`ext::…`, which run programs);
+- plain `http://` and `git://`;
+- local paths.
+
+In development mode (`mode: development`), `http://`, `git://` and `file://` URLs and absolute paths are allowed for local
+remotes. Agents use the same node setup inside their terminals.
+
+Public repositories need no credentials: use their `https://` URL.
+
+### SSH keys held by SpaceMan
+
+For a private repository, SpaceMan can hold the credential instead of the node's user, so agents never see it:
+
+1. Give the repository an SSH URL (`git@github.com:acme/api.git` or `ssh://…`).
+2. Open the repository and choose **Generate SSH key** (or run `spaceman repo ssh-key --space <space> <repository>`).
+   SpaceMan creates an Ed25519 key, keeps the private half sealed in its database and shows only the public key.
+3. Add the public key to the Git host as a **read-only deploy key** (GitHub: the repository's *Settings → Deploy
+   keys*, with *Allow write access* off).
+4. Sync. The node clones and fetches with that key.
+
+How the key is handled:
+- It travels only in the message of a clone or fetch, over the node's authenticated connection. The node never writes
+  it to disk, to the environment or to its journal. It keeps the key in memory and offers it to that one git command
+  on a private agent socket, which signs but never hands out the key.
+- ssh runs without the node's SSH configuration, and accepts only pinned host keys. SpaceMan has GitHub's keys built
+  in. For any other host, paste its keys into the repository's **Known hosts** (known_hosts lines, for example from
+  `ssh-keyscan gitlab.example.com`, checked against the host's published fingerprints).
+- **Rotate** replaces the key at once; add the new public key and remove the old one on the host. **Remove** returns
+  the repository to the node's own Git authentication.
+
+Agents work in their own worktrees and never get the key. To push, they need their own means, as before. The key
+needs the node agent from release 0.1.0-rc.6 or later; an older agent shows a note on the key and keeps using its own
+Git setup.
 
 ### Clone policies
 
@@ -99,17 +129,21 @@ removed.
 
 [Relocation](../operators/relocation) reads the list. A clean relocation carries what the source has, and the destination
 also clones configured `auto` repositories the source never cloned. A relocation from an unavailable source clones every
-configured repository with a URL on the destination, besides the ones the operator lists.
+configured repository with a URL on the destination, besides the ones the operator lists. A repository with a
+SpaceMan SSH key is cloned on the destination by the first sync after the move.
 
 ## API, CLI and Terraform
 
 - `GET`/`POST /api/v1/spaces/{space_id}/repositories`; `GET`/`PUT`/`DELETE /api/v1/spaces/{space_id}/repositories/{id or name}`
-  (`PUT` needs `If-Match`; `DELETE` checks it when given); `POST /api/v1/spaces/{space_id}/repositories/sync` (202).
+  (`PUT` needs `If-Match`; `DELETE` checks it when given); `POST /api/v1/spaces/{space_id}/repositories/sync` (202);
+  `POST`/`DELETE /api/v1/spaces/{space_id}/repositories/{id or name}/ssh-key` generates (or rotates) and removes the SSH
+  key.
   Reading needs `space_config:read`, changes and syncs `space_config:write`. Every change is audited
   (`space_repository.*`).
-- `spaceman repo list|get|create|update|delete|sync` ([CLI reference](../reference/cli/repo)).
-- Terraform: `spaceman_space_repository` manages the configuration; the node's report is runtime state and is not part
-  of the resource ([Terraform](../operators/terraform)).
+- `spaceman repo list|get|create|update|delete|ssh-key|ssh-key-remove|sync` ([CLI reference](../reference/cli/repo)).
+- Terraform: `spaceman_space_repository` manages the configuration, including `known_hosts` and `ssh_key` (its computed
+  `ssh_public_key` can feed the host's deploy key resource). The node's report is runtime state and is not part of the
+  resource ([Terraform](../operators/terraform)).
 
 ## Limitations
 

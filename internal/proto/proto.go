@@ -29,8 +29,9 @@ const (
 	// 3: space relocation (space.relocate.* commands, relocation reports and transfers, ADR-0037); 4: configured space
 	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044); 5: memory flush
 	// before a backup (memory.flush / memory.flushed, ADR-0045); 6: terminal takeover (takeover.state, takeover.input,
-	// takeover.ended; SM-UI-004, ADR-0046)
-	MaxMinor = 6
+	// takeover.ended; SM-UI-004, ADR-0046); 7: repository SSH keys (ssh_key and known_hosts on repository sources,
+	// ADR-0057)
+	MaxMinor = 7
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -391,6 +392,20 @@ const DefaultRecordingMaxBytes = 512 << 20
 // Redacted returns a copy without secrets (for storage and logs).
 func (p LaunchPayload) Redacted() LaunchPayload {
 	p.Secrets, p.RunToken = nil, ""
+	if p.Repository != nil {
+		r := p.Repository.Redacted()
+		p.Repository = &r
+	}
+	return p
+}
+
+// Redacted returns a copy without repository keys (for storage and logs).
+func (p ReposSyncPayload) Redacted() ReposSyncPayload {
+	repos := make([]RepoSource, len(p.Repositories))
+	for i, r := range p.Repositories {
+		repos[i] = r.Redacted()
+	}
+	p.Repositories = repos
 	return p
 }
 

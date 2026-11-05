@@ -88,6 +88,10 @@ func RedactRepoURL(raw string) string {
 // space.repos.sync command, repository sources on launches and the node's repository status reports.
 const MinorRepositories = 4
 
+// MinorRepoKeys is the first minor version whose repository sources may carry an SSH key and known_hosts (ADR-0057):
+// central attaches keys only on a session that negotiated it.
+const MinorRepoKeys = 7
+
 // Repository clone policies (ADR-0044).
 const (
 	CloneAuto     = "auto"      // cloned while the node holds the space's lease
@@ -95,8 +99,10 @@ const (
 	CloneManual   = "manual"    // never cloned by SpaceMan; only inspected
 )
 
-// RepoSource is a configured repository of a space as the node materializes it. URL never carries credentials: the
-// node's own Git authentication is used and never replaced (SM-REPO-005). Path is relative to the space folder.
+// RepoSource is a configured repository of a space as the node materializes it. URL never carries credentials. Without
+// SSHKey the node's own Git authentication is used (SM-REPO-005); with it (minor ≥ 7, ADR-0057) the node clones and
+// fetches over SSH with that key only, served from a private in-memory agent, and accepts only the host keys in
+// KnownHosts (or the built-in pins). Path is relative to the space folder.
 type RepoSource struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -104,6 +110,37 @@ type RepoSource struct {
 	URL           string `json:"url,omitempty"`
 	DefaultBranch string `json:"default_branch"`
 	ClonePolicy   string `json:"clone_policy"`
+	// SSHKey is the repository's private key (OpenSSH format). Central puts it only on the wire message at dispatch
+	// time: stored command payloads, logs and the node's journal never contain it (Redacted).
+	SSHKey     string `json:"ssh_key,omitempty"`
+	KnownHosts string `json:"known_hosts,omitempty" doc:"known_hosts lines for this repository's host; empty: the built-in pins"`
+}
+
+// Redacted returns a copy without the key.
+func (r RepoSource) Redacted() RepoSource {
+	r.SSHKey = ""
+	return r
+}
+
+// BuiltinKnownHosts are the host keys SpaceMan accepts for a repository with an SSH key and no known_hosts of its own:
+// GitHub's, as published at https://api.github.com/meta (fingerprints SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU,
+// p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM, uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s; checked 2026-11-05). Other
+// hosts need the repository's known_hosts.
+const BuiltinKnownHosts = `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+`
+
+// IsSSHURL reports whether a repository URL uses SSH (ssh:// or the scp-like form), the only kind an SSH key applies to.
+func IsSSHURL(raw string) bool {
+	if i := strings.Index(raw, "://"); i > 0 {
+		switch strings.ToLower(raw[:i]) {
+		case "ssh", "git+ssh", "ssh+git":
+			return true
+		}
+		return false
+	}
+	return reSCP.MatchString(raw)
 }
 
 // ReposSyncPayload is the body of space.repos.sync: the space's configured repositories; the node clones those in

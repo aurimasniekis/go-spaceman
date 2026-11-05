@@ -1,5 +1,5 @@
-import { Alert, Badge, Button, Card, Drawer, Group, Modal, Select, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
-import { IconInfoCircle, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
+import { Alert, Badge, Button, Card, Code, CopyButton, Drawer, Group, Modal, Select, SimpleGrid, Stack, Table, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
+import { IconInfoCircle, IconKey, IconPlus, IconRefresh, IconTrash } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -175,7 +175,7 @@ function RepositoryDrawer({ spaceId, repo, canWrite, onClose, onEdit, onSync }: 
             <Field label="Role" value={repo.role === 'kb' ? 'Knowledge base' : 'Code'} />
             <Field label="Knowledge bases" value={(repo.knowledge_bases ?? []).join(', ') || '—'} />
           </SimpleGrid>
-          <Text size="xs" c="dimmed">Git authentication is the node's own (SSH keys, credential helpers, Hallpass Git roles); the URL never holds credentials.</Text>
+          <SSHKeySection spaceId={spaceId} repo={repo} canWrite={canWrite} />
           <Title order={6}>Node report</Title>
           {!st ? <Text size="sm" c="dimmed">Not reported yet. Sync to ask the node.</Text> : (
             <>
@@ -244,6 +244,62 @@ function RepositoryDrawer({ spaceId, repo, canWrite, onClose, onEdit, onSync }: 
   )
 }
 
+/** SSH key (ADR-0057): SpaceMan keeps the private key; only the public key is shown, to add as a read-only deploy key. */
+function SSHKeySection({ spaceId, repo, canWrite }: { spaceId: string; repo: Repository; canWrite: boolean }) {
+  const qc = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const key = repo.ssh_key
+  const call = async (method: 'POST' | 'DELETE', done: string) => {
+    if (method === 'POST' && key && !window.confirm('Replace the SSH key? The current key stops being used at once: add the new public key to the Git host and remove the old one.')) return
+    if (method === 'DELETE' && !window.confirm('Remove the SSH key? The node clones and fetches with its own Git authentication again.')) return
+    setBusy(true)
+    try {
+      const opts = { params: { path: { space_id: spaceId, repository_id: repo.id }, header: { 'If-Match': ifMatch(repo.version) } } }
+      unwrap(method === 'POST'
+        ? await api.POST('/spaces/{space_id}/repositories/{repository_id}/ssh-key', opts)
+        : await api.DELETE('/spaces/{space_id}/repositories/{repository_id}/ssh-key', opts))
+      void qc.invalidateQueries({ queryKey: keys.repositories(spaceId) })
+      notifyOk(done)
+    } catch (e) {
+      notifyError(e, 'Could not change the SSH key')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Card withBorder padding="sm">
+      <Stack gap={6}>
+        <Group justify="space-between">
+          <Title order={6}>SSH key</Title>
+          {canWrite && (
+            <Group gap="xs">
+              {key && <Button size="xs" variant="default" color="owlRed" loading={busy} onClick={() => void call('DELETE', 'SSH key removed')}>Remove</Button>}
+              <Button size="xs" variant={key ? 'default' : 'filled'} leftSection={<IconKey size={14} />} loading={busy}
+                onClick={() => void call('POST', key ? 'New SSH key generated: add it to the Git host' : 'SSH key generated: add it to the Git host')}>
+                {key ? 'Rotate' : 'Generate SSH key'}
+              </Button>
+            </Group>
+          )}
+        </Group>
+        {key ? (
+          <>
+            <Text size="xs" c="dimmed">Add this public key to the Git host as a <b>read-only deploy key</b>. SpaceMan keeps the private key; the node uses it only to clone and fetch, and agents never receive it.</Text>
+            <Group gap="xs" wrap="nowrap" align="flex-start">
+              <Code block style={{ flex: 1, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>{key.public_key}</Code>
+              <CopyButton value={key.public_key}>{({ copied, copy }) => <Button size="xs" variant="default" onClick={copy}>{copied ? 'Copied' : 'Copy'}</Button>}</CopyButton>
+            </Group>
+            <Text size="xs" c="dimmed" className="mono">{key.fingerprint} · created {datetime(key.created_at)}</Text>
+            <Text size="xs" c="dimmed">Host keys: {repo.known_hosts ? 'the repository\'s known_hosts' : 'built-in pins (github.com); set known_hosts for other hosts'}.</Text>
+            {key.note && <Alert color="owlYellow" icon={<IconInfoCircle size={16} />}>{key.note}</Alert>}
+          </>
+        ) : (
+          <Text size="xs" c="dimmed">None: the node clones and fetches with its own Git authentication. Generate a key so SpaceMan holds the credential instead (SSH URLs only).</Text>
+        )}
+      </Stack>
+    </Card>
+  )
+}
+
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
@@ -260,12 +316,12 @@ function RepositoryModal({ spaceId, repo, onClose }: { spaceId: string; repo: Re
     defaultValues: {
       name: repo?.name ?? '', path: repo?.path ?? '', url: repo?.url ?? '', default_branch: repo?.default_branch ?? 'main',
       role: (repo?.role ?? 'code') as NonNullable<RepositoryInput['role']>, clone_policy: (repo?.clone_policy ?? 'auto') as NonNullable<RepositoryInput['clone_policy']>,
-      description: repo?.description ?? '',
+      description: repo?.description ?? '', known_hosts: repo?.known_hosts ?? '',
     },
     onSubmit: async ({ value }) => {
       setError('')
       const body: RepositoryInput = { url: value.url.trim() || undefined, default_branch: value.default_branch.trim(), role: value.role,
-        clone_policy: value.clone_policy, description: value.description }
+        clone_policy: value.clone_policy, description: value.description, known_hosts: value.known_hosts.trim() || undefined }
       try {
         if (repo) {
           unwrap(await api.PUT('/spaces/{space_id}/repositories/{repository_id}', {
@@ -297,7 +353,7 @@ function RepositoryModal({ spaceId, repo, onClose }: { spaceId: string; repo: Re
             </form.Field>
           </SimpleGrid>
           <form.Field name="url">
-            {(f) => <TextInput label="Clone URL" description="https://, ssh:// or git@host:org/repo.git, without credentials: the node's own Git authentication is used"
+            {(f) => <TextInput label="Clone URL" description="https://, ssh:// or git@host:org/repo.git, without credentials. The node's own Git authentication is used unless the repository has an SSH key"
               placeholder="git@github.com:acme/api.git" className="mono" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
           <SimpleGrid cols={{ base: 1, sm: 3 }}>
@@ -315,6 +371,10 @@ function RepositoryModal({ spaceId, repo, onClose }: { spaceId: string; repo: Re
           </SimpleGrid>
           <form.Field name="description">
             {(f) => <Textarea label="Description" autosize minRows={1} maxRows={4} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
+          </form.Field>
+          <form.Field name="known_hosts">
+            {(f) => <Textarea label="Known hosts" description="Pins the Git host's SSH keys for the repository's SSH key (known_hosts lines). Empty: the built-in pins (github.com)."
+              className="mono" autosize minRows={1} maxRows={6} placeholder="gitlab.example.com ssh-ed25519 AAAA…" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
           {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
           <Group justify="flex-end">

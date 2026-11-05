@@ -47,6 +47,9 @@ type Hub struct {
 	sessions map[string]*session
 	// Secrets attaches run secrets to launches (nil: none).
 	Secrets SecretsResolver
+	// RepoKey returns a space repository's private SSH key ("" when it has none) for the wire message of a clone or
+	// fetch (repos.Service.Key, ADR-0057; nil: none).
+	RepoKey func(ctx context.Context, spaceID, repoID string) (string, error)
 	// Tools runs agent tool calls (nil: agents only have the node's local tools).
 	Tools ToolDispatcher
 	// Memory stores role memory the node syncs (ADR-0025); nil refuses syncs.
@@ -654,7 +657,7 @@ func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
 			continue
 		}
 		for _, c := range cmds {
-			msg, err := h.materialize(ctx, c)
+			msg, err := h.materialize(ctx, c, s.minor)
 			if errors.Is(err, ErrCredentialsUnavailable) && c.RunID.Valid {
 				if ferr := h.svc.failUndispatched(ctx, c.RunID.String, err.Error()); ferr != nil {
 					s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
@@ -675,16 +678,40 @@ func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
 	}
 }
 
-// materialize turns a stored command into the wire message, attaching the run token and secrets to launches.
-func (h *Hub) materialize(ctx context.Context, c db.NodeCommand) (proto.Command, error) {
+// materialize turns a stored command into the wire message, attaching the run token and secrets to launches and
+// repository SSH keys to clones and fetches (minor ≥ 7, ADR-0057). Stored payloads never hold any of them.
+func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, minor int) (proto.Command, error) {
 	msg := proto.Command{CommandID: c.ID, Kind: c.Kind, SpaceID: c.SpaceID, RunID: c.RunID.String, Generation: c.Generation,
 		IdempotencyKey: c.IdempotencyKey, Payload: json.RawMessage(c.PayloadJson)}
+	keys := h.RepoKey != nil && minor >= proto.MinorRepoKeys
+	if c.Kind == proto.CmdReposSync && keys {
+		var p proto.ReposSyncPayload
+		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
+			return msg, err
+		}
+		for i := range p.Repositories {
+			k, err := h.RepoKey(ctx, c.SpaceID, p.Repositories[i].ID)
+			if err != nil {
+				return msg, err
+			}
+			p.Repositories[i].SSHKey = k
+		}
+		msg.Payload = mustJSON(p)
+		return msg, nil
+	}
 	if c.Kind != proto.CmdLaunch {
 		return msg, nil
 	}
 	var p proto.LaunchPayload
 	if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
 		return msg, err
+	}
+	if p.Repository != nil && keys {
+		k, err := h.RepoKey(ctx, c.SpaceID, p.Repository.ID)
+		if err != nil {
+			return msg, err
+		}
+		p.Repository.SSHKey = k
 	}
 	tok, err := h.svc.runToken(ctx, c.RunID.String)
 	if err != nil {

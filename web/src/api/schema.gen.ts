@@ -2663,7 +2663,7 @@ export interface paths {
         put?: never;
         /**
          * Add a repository to a space
-         * @description The URL never carries credentials: the node's own Git authentication is used. With the auto clone policy the node clones it as soon as it holds the space's lease.
+         * @description The URL never carries credentials: the node's own Git authentication is used, or the repository's SpaceMan SSH key once one is generated (POST …/ssh-key). With the auto clone policy the node clones it as soon as it holds the space's lease.
          */
         post: operations["create-space-repository"];
         delete?: never;
@@ -2712,6 +2712,30 @@ export interface paths {
          * @description Only the configuration is removed: the folder on the node and the upstream repository stay. A repository a knowledge base uses cannot be removed.
          */
         delete: operations["delete-space-repository"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/repositories/{repository_id}/ssh-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate (or rotate) the repository's SSH key
+         * @description SpaceMan generates an Ed25519 key, keeps the private half sealed and returns only the public key: add it to the Git host as a read-only deploy key. The node clones and fetches this repository with it over SSH, against the pinned host keys, and agents never receive it (ADR-0057). Rotating replaces the key at once; remove the old public key from the host. The URL must be an SSH URL.
+         */
+        post: operations["generate-repository-ssh-key"];
+        /**
+         * Remove the repository's SSH key
+         * @description The node clones and fetches with its own Git authentication again. Remove the public key from the Git host too.
+         */
+        delete: operations["remove-repository-ssh-key"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8704,6 +8728,8 @@ export interface components {
             /** @description Default main */
             default_branch?: string;
             description?: string;
+            /** @description known_hosts lines pinning the Git host's SSH keys, used with the repository's SSH key; empty: the built-in pins (github.com) */
+            known_hosts?: string;
             /** @description Required on create: lowercase letters, digits, . _ -; fixed after creation */
             name?: string;
             /** @description Folder in the space folder (default the name); fixed after creation */
@@ -8735,6 +8761,16 @@ export interface components {
             sync_pending: boolean;
             /** @description Repositories the node found in the space folder that are not configured */
             unlisted: string[];
+        };
+        ReposSSHKey: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description SHA256 fingerprint */
+            fingerprint: string;
+            /** @description Why the key is not in use (an outdated node agent) */
+            note?: string;
+            /** @description authorized_keys format; add it to the Git host as a read-only deploy key */
+            public_key: string;
         };
         ReposStatus: {
             /** @description The main folder's checked-out branch */
@@ -8837,6 +8873,8 @@ export interface components {
             id: string;
             /** @description Slugs of knowledge bases that use this repository */
             knowledge_bases: string[];
+            /** @description known_hosts lines pinning the Git host's keys for the SSH key; empty: SpaceMan's built-in pins (github.com) */
+            known_hosts: string;
             /** @description Unique in the space; fixed after creation */
             name: string;
             /** @description Folder relative to the space folder on the node; fixed after creation */
@@ -8844,12 +8882,14 @@ export interface components {
             /** @enum {string} */
             role: "code" | "kb";
             space_id: string;
+            /** @description The SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key) */
+            ssh_key?: components["schemas"]["ReposSSHKey"];
             /** @description The node's latest report (runtime state, untrusted: it comes from the node and the repository) */
             status?: components["schemas"]["ReposStatus"];
             /** Format: date-time */
             updated_at: string;
             updated_by: string;
-            /** @description Clone URL without credentials (the node's own Git authentication is used); empty for a manual repository */
+            /** @description Clone URL without credentials; empty for a manual repository. With an SSH key SpaceMan holds the credential, otherwise the node's own Git authentication is used */
             url: string;
             /** Format: int64 */
             version: number;
@@ -16369,6 +16409,80 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "generate-repository-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                /** @description The repository's ID or name */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "remove-repository-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+                /** @description The repository's ID or name */
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"];
+                };
             };
             /** @description Error */
             default: {

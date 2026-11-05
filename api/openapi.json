@@ -12599,6 +12599,11 @@
             "maxLength": 2000,
             "type": "string"
           },
+          "known_hosts": {
+            "description": "known_hosts lines pinning the Git host's SSH keys, used with the repository's SSH key; empty: the built-in pins (github.com)",
+            "maxLength": 16384,
+            "type": "string"
+          },
           "name": {
             "description": "Required on create: lowercase letters, digits, . _ -; fixed after creation",
             "maxLength": 63,
@@ -12675,6 +12680,33 @@
           "unlisted",
           "stale",
           "sync_pending"
+        ],
+        "type": "object"
+      },
+      "ReposSSHKey": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "fingerprint": {
+            "description": "SHA256 fingerprint",
+            "type": "string"
+          },
+          "note": {
+            "description": "Why the key is not in use (an outdated node agent)",
+            "type": "string"
+          },
+          "public_key": {
+            "description": "authorized_keys format; add it to the Git host as a read-only deploy key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "public_key",
+          "fingerprint",
+          "created_at"
         ],
         "type": "object"
       },
@@ -12927,6 +12959,10 @@
             },
             "type": "array"
           },
+          "known_hosts": {
+            "description": "known_hosts lines pinning the Git host's keys for the SSH key; empty: SpaceMan's built-in pins (github.com)",
+            "type": "string"
+          },
           "name": {
             "description": "Unique in the space; fixed after creation",
             "type": "string"
@@ -12945,6 +12981,10 @@
           "space_id": {
             "type": "string"
           },
+          "ssh_key": {
+            "$ref": "#/components/schemas/ReposSSHKey",
+            "description": "The SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key)"
+          },
           "status": {
             "$ref": "#/components/schemas/ReposStatus",
             "description": "The node's latest report (runtime state, untrusted: it comes from the node and the repository)"
@@ -12957,7 +12997,7 @@
             "type": "string"
           },
           "url": {
-            "description": "Clone URL without credentials (the node's own Git authentication is used); empty for a manual repository",
+            "description": "Clone URL without credentials; empty for a manual repository. With an SSH key SpaceMan holds the credential, otherwise the node's own Git authentication is used",
             "type": "string"
           },
           "version": {
@@ -12976,6 +13016,7 @@
           "role",
           "clone_policy",
           "knowledge_bases",
+          "known_hosts",
           "version",
           "created_at",
           "created_by",
@@ -25330,7 +25371,7 @@
         ]
       },
       "post": {
-        "description": "The URL never carries credentials: the node's own Git authentication is used. With the auto clone policy the node clones it as soon as it holds the space's lease.",
+        "description": "The URL never carries credentials: the node's own Git authentication is used, or the repository's SpaceMan SSH key once one is generated (POST …/ssh-key). With the auto clone policy the node clones it as soon as it holds the space's lease.",
         "operationId": "create-space-repository",
         "parameters": [
           {
@@ -25628,6 +25669,144 @@
           }
         },
         "summary": "Edit a repository",
+        "tags": [
+          "repositories"
+        ]
+      }
+    },
+    "/spaces/{space_id}/repositories/{repository_id}/ssh-key": {
+      "delete": {
+        "description": "The node clones and fetches with its own Git authentication again. Remove the public key from the Git host too.",
+        "operationId": "remove-repository-ssh-key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The repository's ID or name",
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "description": "The repository's ID or name",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Repository"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove the repository's SSH key",
+        "tags": [
+          "repositories"
+        ]
+      },
+      "post": {
+        "description": "SpaceMan generates an Ed25519 key, keeps the private half sealed and returns only the public key: add it to the Git host as a read-only deploy key. The node clones and fetches this repository with it over SSH, against the pinned host keys, and agents never receive it (ADR-0057). Rotating replaces the key at once; remove the old public key from the host. The URL must be an SSH URL.",
+        "operationId": "generate-repository-ssh-key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The repository's ID or name",
+            "in": "path",
+            "name": "repository_id",
+            "required": true,
+            "schema": {
+              "description": "The repository's ID or name",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Repository"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Generate (or rotate) the repository's SSH key",
         "tags": [
           "repositories"
         ]

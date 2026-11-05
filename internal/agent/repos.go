@@ -131,25 +131,37 @@ func (a *Agent) syncRepos(ctx context.Context, spaceID, space string, p proto.Re
 
 func (a *Agent) syncRepo(ctx context.Context, g *projectGit, space string, r proto.RepoSource, clone, fetch bool, st *proto.RepoState) {
 	dir := filepath.Join(space, filepath.FromSlash(r.Path))
+	var env []string
+	if r.URL != "" {
+		auth, err := newRepoAuth(ctx, r)
+		switch {
+		case err != nil:
+			st.Error = truncateStr(err.Error(), 500)
+			r.URL = ""
+		default:
+			defer auth.Close()
+			env = auth.Env()
+		}
+	}
 	if r.URL != "" {
 		if err := proto.ValidateRepoURL(r.URL, true); err != nil {
 			st.Error = "url " + err.Error()
 			r.URL = ""
 		} else {
-			st.Remote = g.remoteState(ctx, space, r.URL, r.DefaultBranch)
+			st.Remote = g.remoteState(ctx, space, r.URL, r.DefaultBranch, env)
 		}
 	}
 	present := isRepoDir(dir)
 	switch {
 	case !present && clone && r.URL != "" && r.ClonePolicy != proto.CloneManual:
-		if err := g.cloneSource(ctx, space, r, st.Remote); err != nil {
+		if err := g.cloneSource(ctx, space, r, st.Remote, env); err != nil {
 			st.Error = truncateStr(err.Error(), 500)
 			a.log.Warn("repository clone failed", slog.String("repository.id", r.ID), obs.Err(err))
 		} else {
 			present, st.Cloned = true, true
 		}
 	case present && fetch && r.URL != "":
-		if err := g.fetchSource(ctx, dir, r); err != nil {
+		if err := g.fetchSource(ctx, dir, r, env); err != nil {
 			st.Error = truncateStr(err.Error(), 500)
 		} else {
 			st.Fetched = true
@@ -190,7 +202,12 @@ func (a *Agent) ensureRepo(ctx context.Context, spaceID, space string, r proto.R
 	if err != nil {
 		return err
 	}
-	return g.cloneSource(ctx, space, r, g.remoteState(ctx, space, r.URL, r.DefaultBranch))
+	auth, err := newRepoAuth(ctx, r)
+	if err != nil {
+		return err
+	}
+	defer auth.Close()
+	return g.cloneSource(ctx, space, r, g.remoteState(ctx, space, r.URL, r.DefaultBranch, auth.Env()), auth.Env())
 }
 
 // isRepoDir reports whether dir is a repository's main folder (a .git directory, not a linked worktree's .git file).
@@ -200,11 +217,11 @@ func isRepoDir(dir string) bool {
 }
 
 // remoteState asks the remote for its default branch (git ls-remote): whether it answers and where the branch points.
-func (g *projectGit) remoteState(ctx context.Context, space, rawURL, branch string) *proto.RepoRemoteState {
+func (g *projectGit) remoteState(ctx context.Context, space, rawURL, branch string, env []string) *proto.RepoRemoteState {
 	rs := &proto.RepoRemoteState{URL: proto.RedactRepoURL(rawURL)}
-	out, err := g.runEnv(ctx, space, lsRemoteBudget, nil, "ls-remote", "--", rawURL, "refs/heads/"+branch)
+	out, err := g.runEnv(ctx, space, lsRemoteBudget, env, "ls-remote", "--", rawURL, "refs/heads/"+branch)
 	if err != nil {
-		rs.Error = truncateStr(err.Error(), 300)
+		rs.Error = truncateStr(sshError(err).Error(), 300)
 		return rs
 	}
 	rs.Reachable = true
@@ -222,7 +239,7 @@ func (g *projectGit) remoteState(ctx context.Context, space, rawURL, branch stri
 // cloneSource clones a configured repository into its folder. The configured default branch is checked out when the
 // remote has it; an empty or differently organized remote is cloned as it is. The clone is then fetched once, so
 // its last fetch time is known.
-func (g *projectGit) cloneSource(ctx context.Context, space string, r proto.RepoSource, remote *proto.RepoRemoteState) error {
+func (g *projectGit) cloneSource(ctx context.Context, space string, r proto.RepoSource, remote *proto.RepoRemoteState, env []string) error {
 	rel := filepath.FromSlash(r.Path)
 	dir := filepath.Join(space, rel)
 	if err := noSymlinkParents(space, rel); err != nil {
@@ -241,18 +258,18 @@ func (g *projectGit) cloneSource(ctx context.Context, space string, r proto.Repo
 	if remote != nil && remote.Head != "" {
 		args = append(args, "--branch", r.DefaultBranch)
 	}
-	if _, err := g.runEnv(ctx, space, cloneTimeout, nil, append(args, "--", r.URL, dir)...); err != nil {
-		return fmt.Errorf("clone %s: %w", r.Path, err)
+	if _, err := g.runEnv(ctx, space, cloneTimeout, env, append(args, "--", r.URL, dir)...); err != nil {
+		return fmt.Errorf("clone %s: %w", r.Path, sshError(err))
 	}
-	return g.fetchSource(ctx, dir, r)
+	return g.fetchSource(ctx, dir, r, env)
 }
 
 // fetchSource fetches every branch from the configured URL into the remote-tracking branches of the remote that has
 // that URL (origin otherwise). Local branches, the work tree and the index are untouched; nothing is pruned.
-func (g *projectGit) fetchSource(ctx context.Context, dir string, r proto.RepoSource) error {
+func (g *projectGit) fetchSource(ctx context.Context, dir string, r proto.RepoSource, env []string) error {
 	name := g.remoteName(ctx, dir, r.URL)
-	if _, err := g.runEnv(ctx, dir, fetchTimeout, nil, "fetch", "--quiet", "--no-tags", "--", r.URL, "+refs/heads/*:refs/remotes/"+name+"/*"); err != nil {
-		return fmt.Errorf("fetch %s: %w", r.Path, err)
+	if _, err := g.runEnv(ctx, dir, fetchTimeout, env, "fetch", "--quiet", "--no-tags", "--", r.URL, "+refs/heads/*:refs/remotes/"+name+"/*"); err != nil {
+		return fmt.Errorf("fetch %s: %w", r.Path, sshError(err))
 	}
 	return nil
 }
