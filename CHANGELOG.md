@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.8] - 2026-11-06
+
+Eighth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): shared Git SSH keys, so one
+key on a Git account clones many private repositories, and a clearer host-key error for repositories without a key.
+Shared keys work with node agents from 0.1.0-rc.6 on (node protocol 1.7). The clearer error needs this release's agent.
+
 ### Added
 - Shared Git SSH keys (ADR-0058, security-relevant). An administrator generates one key, adds its public half to a Git
   account (preferably a read-only machine user), and picks the spaces that may use it. Those spaces' repositories
@@ -601,7 +607,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.7...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.8...HEAD
+[0.1.0-rc.8]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.8
 [0.1.0-rc.7]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.7
 [0.1.0-rc.6]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.6
 [0.1.0-rc.5]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.5
