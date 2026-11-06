@@ -173,6 +173,11 @@ func writeFile(t *testing.T, name, content string, mode os.FileMode) string {
 	if err := os.WriteFile(p, []byte(content), mode); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile's mode is filtered by the umask; set it exactly so tests of
+	// loose permissions see a loose file under any umask.
+	if err := os.Chmod(p, mode); err != nil {
+		t.Fatal(err)
+	}
 	return p
 }
 

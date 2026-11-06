@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- Tests: `internal/keyring` TestLoadKEKSources and `internal/cli` TestTokenSources pass under a restrictive umask (such
+  as 077). They now chmod their deliberately world-readable files instead of relying on the mode given to WriteFile,
+  which the umask narrows. Product code is unchanged.
+
 ## [0.1.0-rc.8] - 2026-11-06
 
 Eighth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): shared Git SSH keys, so one
