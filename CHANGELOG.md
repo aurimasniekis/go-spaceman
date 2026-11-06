@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Security
+- `github.com/klauspost/compress` 1.20.2 fixes GO-2026-6865, which govulncheck reports as reachable through the zstd
+  encoder used for terminal recordings.
+
 ### Added
 - Watching agents (UX review §4):
   - A space's **Terminals** tab shows every running agent as a tab: a status dot, `role #turn` and its state in words.
