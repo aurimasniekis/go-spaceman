@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.7] - 2026-11-06
+
+Seventh release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): the first pass of the UX
+review (Terminals views, one space layout, dark-theme status colours) and a security update of klauspost/compress. Only
+central changes; node agents from 0.1.0-rc.6 keep working.
+
 ### Security
 - `github.com/klauspost/compress` 1.20.2 fixes GO-2026-6865, which govulncheck reports as reachable through the zstd
   encoder used for terminal recordings.
@@ -581,7 +587,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.6...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.7...HEAD
+[0.1.0-rc.7]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.7
 [0.1.0-rc.6]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.6
 [0.1.0-rc.5]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.4
