@@ -42,10 +42,10 @@ jobs:
       - name: analyzer tests
         run: make tools-test
       - name: race tests
-        # The race detector slows SQLite transactions several-fold on shared runners; the 100 ms write-transaction guard is
-        # still enforced by the non-race coverage run below.
+        # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
+        # 290 ms); the 100 ms write-transaction guard is still enforced by the non-race coverage run below.
         env:
-          SM_TEST_TX_MAX: 500ms
+          SM_TEST_TX_MAX: 1s
         run: make race
       - name: coverage floor
         run: make coverage

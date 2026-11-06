@@ -91,7 +91,7 @@ jobs:
           go-version-file: go.mod
       - name: vet and race tests
         env:
-          SM_TEST_TX_MAX: 500ms # race detector overhead on shared runners; see ci.yaml
+          SM_TEST_TX_MAX: 1s # race detector overhead on shared runners; see ci.yaml
         run: make vet race
 
   web:
