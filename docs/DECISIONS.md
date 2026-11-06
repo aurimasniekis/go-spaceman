@@ -2252,6 +2252,132 @@
   - Terraform manages keys as `spaceman_git_ssh_key`, with `public_key` exposed for the account's SSH key resource, and
     repositories reference them with `git_key_id`.
 
+### ADR-0059 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
+- **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
+  (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default. Nothing
+  in this ADR is implemented yet. Contract:
+  `docs/contracts/harbor-pilot.md` (v0.1.1); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike).
+- **Context:**
+  - **What operators want.** Run model traffic should go through Harbor Pilot (HP), a self-hosted LLM gateway. HP gives
+    failover, hard per-project spend limits and usage for every harness.
+  - **How HP issues tokens.** It mints short-lived child tokens from a parent token that holds `tokens:mint`. Each child
+    carries trusted `bound_refs`, which HP records on every request.
+  - **SpaceMan today.** Accounts are per-harness secrets that reach the run unchanged (`accounts.SecretEnv`).
+  - **The spike showed both harnesses work with only a secret env.**
+    - Claude Code 2.1.317 runs with `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` and the ADR-0021 seed.
+    - Interactive codex-cli 0.166.0 runs with a custom `model_provider` whose `env_key` is `HARBOR_PILOT_TOKEN`,
+      without a login screen or `auth.json`.
+    - HP's request detail shows `trusted_refs.spaceman.run` for both.
+- **Decision:**
+  1. **A central integration, not an account kind.**
+     - **One connection per central.** It is a singleton `harbor_pilot_connection` row and holds:
+       - the base URL;
+       - the **parent token** (`hpk_`, scopes `gateway:invoke`, `gateway:models`, `tokens:mint`);
+       - an optional **service-principal token** (`hpa_`, `usage.read` + `config.read`, plus `activity.read` once
+         per-run usage exists).
+     - **Each space opts in** through `space_harbor_pilot`, which has these fields:
+       - `enabled`;
+       - `project_id` (required when enabled);
+       - `harnesses`: the list of harnesses routed through HP **(Q6)**. It is open to any harness HP can serve, not
+         only Claude Code and Codex. A harness not in the list keeps its direct accounts;
+       - `ttl_seconds`: default 86400 (24 h), min 900 (15 min), max 604800 (7 days) **(Q2)**;
+       - `on_budget_status_unavailable`: `proceed` (default) or `refuse` **(Q3)**;
+       - `allowed_model_aliases`: optional.
+     - **Why not an account kind:**
+       - an account's secret is, by construction, the value delivered to the run, so one bug would hand `tokens:mint`
+         to an agent;
+       - a kind carries one harness;
+       - project, TTL and aliases are per-space settings, not credentials;
+       - the service principal is not a harness credential.
+     - **Precedent.** The pattern follows ADR-0058 shared keys and the MCP gateway servers.
+  2. **Sealing.**
+     - **Stored tokens.** Both tokens are sealed with `keyring.PurposeCredential`, with associated data
+       `harborpilot:parent:<conn id>` and `harborpilot:sp:<conn id>`.
+     - **Write-only everywhere:** API, CLI, UI, Terraform, audit, change feed and exports. The API shows only `has_*`,
+       the version counters, and the binding id found during validation.
+     - **Never sent to a node.** Only central's HP client opens these tokens.
+     - **Run child tokens.** They are sealed the same way (`harborpilot:run:<run id>`) in `run_gateway_credentials`, so
+       an at-least-once dispatch resend reuses the token instead of minting again.
+     - **Permissions** go through Casbin:
+       - the connection needs `account:write`;
+       - space settings need `space_config:write`;
+       - status needs space read.
+  3. **Transport.**
+     - https is required unless the host is loopback or `allow_insecure_http` is set (as in ADR-0035).
+     - Redirects are never followed.
+     - Errors keep HP's status and error type, never bodies.
+     - Tokens are never logged.
+  4. **The gateway replaces accounts for an opted-in harness.**
+     - `LaunchRun` skips account resolution.
+     - A launch that names an account is refused (`precondition`).
+     - The resolved manifest records `{gateway: "harbor-pilot", project_id}`.
+     - If HP is unavailable (no connection, or a mint that fails), the launch or dispatch is refused. **There is never a
+       fallback to a direct account**, silent or audited **(Q1)**. A harness configured for HP goes only through HP.
+     - A launch is refused early when a blocking HP budget covering the space is `exceeded`. HP stays authoritative and
+       enforces with 429 mid-run.
+     - When budget status can't be fetched, the space's `on_budget_status_unavailable` decides: `proceed` (the default;
+       the gateway still enforces) or `refuse` **(Q3)**.
+  5. **A per-run child token, minted at dispatch** (not in `LaunchRun`; see Alternatives):
+     - scopes `[gateway:invoke, gateway:models]`;
+     - the space's TTL;
+     - `bound_refs = {spaceman.space, spaceman.run, spaceman.instance, session, project_id}`, plus `spaceman.task` when
+       the run has one.
+     - **Bindings shared by many spaces must not pin `spaceman.space`.** HP refuses a bound value that differs from a
+       binding's pinned one.
+     - **Revocation.** The token is revoked on every end path (exit, failure, stop, relocation, purge, lease loss,
+       connection change) through a durable queue written in the end path's own transaction. The TTL is only a backstop.
+  6. **Delivery only through the launcher secrets file (ADR-0009).**
+     - **Claude Code** gets `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`, and no other Anthropic or Claude credential.
+     - **Codex** gets the five `-c model_provider…` overrides with `env_key = "HARBOR_PILOT_TOKEN"`, and that variable.
+       No `auth.json` is written, and the node removes any ADR-0054 API-key `auth.json` or ChatGPT-login link from that
+       instance's `CODEX_HOME`.
+     - **Node protocol.** This needs node protocol minor 8. Gateway launches to older agents are refused with a clear
+       reason.
+     - **Model choice.** The run's model must be one the HP plan routes. With HP 0.1.1 it must also be a Claude model
+       whose requests carry no `system`-role messages (spike). How the default is chosen per space is settled in the
+       implementation, through `allowed_model_aliases` or a default model.
+  7. **Events and usage.**
+     - **Events.** HP events become shipped event templates. Their text is untrusted (T-03).
+       - Only project-scoped budget events map to one space.
+       - **Unscoped events stay open (Q4).** These are quota, `access.request.blocked`, and binding/workspace/global
+         budget events. **Interim default: no automatic routing.** They reach only the spaces that explicitly subscribe
+         with the template.
+     - **Usage.** HP 0.1.1 can't report usage per run (no filter or grouping by trusted ref).
+       - The Limits page shows project-level HP usage, labelled with its source.
+       - Per-run usage waits for an upstream change **(Q5)**. That request, and the doc mismatches, go to the Harbor
+         Pilot space in SpaceMan as cross-space requests once that space exists, not as GitHub issues filed by agents.
+- **Consequences (security-relevant):**
+  - **Agents can read their own child token.** A leaked one is worth one binding's routing and budget for at most the
+    TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
+    because HP can't refresh a token inside a running harness. The 24 h default and the per-space maximum of 7 days
+    bound this **(Q2)**.
+  - **Revoking the parent in HP cuts every live run at once.** That gives an emergency stop, and is also a single point of
+    failure.
+  - **Hard spend limits come only from HP.** SpaceMan's own budgets stay soft (ADR-0036).
+  - **An HP outage stops new runs** for the harnesses that opted in.
+  - **The parent token is long-lived and high-value.** Its protection rests on central's keyring and KEK, as for accounts.
+  - **Evidence ceiling (Q7).** Until a real upstream is available, evidence is "real `serve --demo` 0.1.1 with
+    synthetic upstreams". A live run against a real HP and provider is a placeholder in TRACEABILITY (SM-GW-010); the
+    operator says one is coming soon.
+- **Alternatives:**
+  - **An account kind:** rejected (above).
+  - **One parent token per space:** more secrets, no gain.
+  - **Minting in `LaunchRun`, before its transaction:** rejected. Relocation may clear the session id inside the launch
+    transaction, and a node that stays offline past the TTL would receive an expired token. Early refusal comes from a
+    pre-check instead.
+- **Operator questions and answers (asked and answered 2026-11-06):**
+  - **Q1, fallback to a direct account:** never.
+  - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.
+  - **Q3, budget status unavailable:** a per-space setting, defaulting to proceed.
+  - **Q4, unscoped events:** **undecided (open).** In the meantime they are not routed automatically and go only to
+    spaces that explicitly subscribe.
+  - **Q5, upstream issues:** yes, through cross-space requests to the Harbor Pilot space in SpaceMan once it exists.
+    These cover a ref filter for usage, a service-principal token resource in its provider, project-id outputs in
+    scenario 07, the doc mismatches and the K-13 protocol gap.
+  - **Q6, per-harness opt-in:** yes, with a `harnesses` list open to any harness HP can serve.
+  - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` 0.1.1, with a placeholder kept for a
+    live run.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -2267,3 +2393,5 @@
 | K-9 | ~~Codex ChatGPT-login token materialization (`auth.json`) vs API key.~~ **Resolved 2026-11-03:** the `codex_chatgpt_login` kind, one live copy per account linked into each `CODEX_HOME` (ADR-0053); a real ChatGPT login is not verified (no account). | SM-ACCT-002 | done |
 | K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
+| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0059), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; interim default is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | ADR-0059 acceptance; SM-GW-007, SM-GW-010 | ADR-0059 stays Proposed; Q4 open; live-run placeholder in TRACEABILITY |
+| K-13 | Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works). `docs/contracts/harnesses.md`, Harbor Pilot gateway spike. | Claude Code gateway runs on the default model | Report to the Harbor Pilot space as a cross-space request (Q5); until then a gateway run's model must avoid it |

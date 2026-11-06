@@ -140,6 +140,49 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-ACCT-005 Secrets are write-only and excluded from logs, events, resolved manifests and API reads. Docs state that privileged node operators can read runtime secrets.
 - SM-ACCT-006 Rotation affects subsequent launches.
 
+### SM-GW — LLM gateway (Harbor Pilot; operator addition, §9; design in ADR-0059, Proposed)
+- SM-GW-001 **Connection.** One Harbor Pilot connection per central holds:
+  - the base URL;
+  - a parent token with `tokens:mint`;
+  - an optional read-only service-principal token.
+
+  Both tokens are sealed and write-only (API, CLI, UI, Terraform, audit, change feed, exports, logs). They never reach a
+  node. The base URL needs https unless the host is loopback or insecure HTTP is explicitly allowed, and redirects are
+  not followed.
+- SM-GW-002 **Space opt-in.** A space opts in with:
+  - a Harbor Pilot project id;
+  - a `harnesses` list: any harness Harbor Pilot can serve, while the others keep their direct accounts;
+  - a token TTL: 24 h by default, 15 min to 7 days;
+  - optional allowed model aliases.
+
+  For a listed harness, the gateway replaces accounts: a launch that names an account is refused.
+- SM-GW-003 **Run token.** Each run of an opted-in harness gets its own child token, minted at dispatch:
+  - scopes: invoke and models only;
+  - bound refs: space, run, instance, session, project id, and the task when the run has one.
+
+  A resend reuses the run's token. If minting fails, the run fails with a readable reason. A harness configured for Harbor
+  Pilot never falls back to a direct account (operator decision, 2026-11-06).
+- SM-GW-004 **Delivery.** The token reaches the run only through the launcher secrets file (ADR-0009):
+  - Claude Code gets `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`;
+  - Codex gets a custom `model_provider` with `env_key = HARBOR_PILOT_TOKEN`.
+
+  No other harness credential is delivered. Agents too old for the gateway are refused with a clear reason.
+- SM-GW-005 **Revocation.** The run token is revoked on every end path: exit, failure, stop, relocation, purge, lease loss
+  and connection change. A durable queue survives a central crash; the TTL is only a backstop.
+- SM-GW-006 **Budgets.** The Limits page shows the status of the Harbor Pilot budgets that cover the space, labelled as
+  hard limits enforced by Harbor Pilot. A launch is refused early, naming the budget, its spend and its reset time, when a
+  blocking covering budget is exhausted. When budget status can't be fetched, a per-space setting decides: proceed (the
+  default; the gateway still enforces) or refuse.
+- SM-GW-007 **Events.** Harbor Pilot events on Pulse (`evt.harborpilot.>`) arrive as inbox items for the right space
+  through shipped event templates. Their text is untrusted. Events that are not scoped to a project are delivered only to
+  spaces that explicitly subscribe; how to route them automatically is open (DECISIONS K-12).
+- SM-GW-008 **Usage.** Usage taken from Harbor Pilot is real data with its source labelled. Usage that Harbor Pilot
+  cannot attribute to a run is never presented as per-run usage.
+- SM-GW-009 **Terraform.** Terraform manages the connection (write-only tokens) and per-space settings. A combined example
+  with the `harborpilot` provider applies cleanly.
+- SM-GW-010 **Evidence.** Gateway behaviour is tested against a real `harbor-pilot serve --demo` (pinned version, opt-in).
+  Status keeps contract-tested, real-demo-tested and externally verified apart.
+
 ### SM-HARN — Harness adapters
 - SM-HARN-001 Launch and resume. Space-specific configuration and session dirs, with instance overlays. Prompt and memory integration. Account
   materialization. SpaceMan MCP bootstrap. Skills. Native transcripts. Usage extraction. Notifications and interruption. Supporting-session
@@ -455,3 +498,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-02 | UI component base follows the sibling projects (Pulse, Porch, Deed): Mantine 8. | SM-UI-001 (ADR-0005) |
 | 2026-11-03 | The Terraform provider lives in its own repository (`../terraform-provider-spaceman`, module `github.com/aurimasniekis/terraform-provider-spaceman`), not in this one; this repository's build does not depend on it. | SM-API-004/005 (ADR-0047) |
 | 2026-11-03 | A new installation comes with starter roles (control, planner, implementor, reviewer, kb, dreamer) as editable, deletable examples, so a first space can launch agents without configuring every role by hand. | SM-PROMPT-005 (ADR-0051) |
+| 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0059 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |

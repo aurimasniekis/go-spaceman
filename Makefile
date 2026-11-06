@@ -150,7 +150,7 @@ PORCH_SRC ?= $(SIBLINGS)/porch
 PULSE_SRC ?= $(SIBLINGS)/pulse
 PULSE_GITHUB_SRC ?= $(SIBLINGS)/pulse-github
 
-.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd
+.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd test-harbor-pilot
 # Real Porch (built from PORCH_SRC into a temp dir, with Porch's own fake Google upstream): SpaceMan OIDC sign-in.
 test-real-porch:
 	SPACEMAN_REAL_PORCH=1 SPACEMAN_PORCH_SRC=$(PORCH_SRC) $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealPorch' -v ./test/real/
@@ -175,6 +175,12 @@ test-real-s3-external:
 test-real-codex:
 	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE SPACEMAN_REAL_CODEX=1 $(GO) test -tags real -count=1 -timeout 15m \
 	  -run '^TestRealCodexRun$$' -v ./test/real/
+
+# Real Harbor Pilot gateway (docs/contracts/harbor-pilot.md): `harbor-pilot serve --demo` v0.1.1 on loopback in a temp
+# data dir, with its own binding, budget, service principal and parent token (internal/harborpilot/hptest). Uses
+# HARBOR_PILOT_BIN, or installs the pinned release with `go install`. Synthetic upstreams; no provider credentials.
+test-harbor-pilot:
+	SPACEMAN_HARBOR_PILOT=1 $(GO) test -count=1 -timeout 15m -run '^TestRealHarborPilot' -v ./internal/harborpilot/...
 
 # Linux/systemd: a Debian 13 container with systemd as PID 1 running the linux release binary and the shipped units.
 test-real-systemd:

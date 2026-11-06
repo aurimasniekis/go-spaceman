@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Groundwork for routing run model traffic through a Harbor Pilot gateway (no product behaviour yet):
+  - a contract pinned to Harbor Pilot v0.1.1 (`docs/contracts/harbor-pilot.md`);
+  - ADR-0059, **Proposed** and security-relevant, with the operator's answers to its design questions recorded (one, routing of unscoped events, still open);
+  - requirements SM-GW-001…010;
+  - an opt-in test harness that runs a real `harbor-pilot serve --demo` (`make test-harbor-pilot`, `SPACEMAN_HARBOR_PILOT=1`);
+  - a recorded spike: Claude Code 2.1.317 and interactive codex-cli 0.166.0 both reach the gateway with only a
+    per-run token in their secret environment. Codex needs no login seeding.
+
 ## [0.1.0-rc.8] - 2026-11-06
 
 Eighth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): shared Git SSH keys, so one

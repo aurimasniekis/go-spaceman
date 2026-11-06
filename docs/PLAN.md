@@ -78,6 +78,18 @@
 | M5-04 | End-to-end demonstration script + real evidence | SM-VER-002/003 | tested (simulated + real): demonstration script: `make demo` (`test/demo`, build tag `demo`, browser steps `web/e2e/demo.spec.ts`) runs the 30 steps of §41 against a real central with the UI, two real agents with their own herdr-core cores, devpulse and devmcp, through the browser, API and CLI, with one evidence line per step (`docs/DEMO.md`); stub mode passes 31 of 31 steps (2026-11-03); real mode (a haiku Claude Code worker) passed 31 of 31 on 2026-11-03 (`docs/DEMO.md`). Real evidence for SM-VER-002 recorded 2026-11-03 (herdr-core, Claude Code, Porch, Pulse/NATS/go-pulse-github, MinIO, systemd in a container, images, Chromium/Firefox/WebKit; `docs/TEST_STRATEGY.md`); missing: Codex (no credential), AWS S3, a physical Linux host and amd64 under systemd |
 | M5-05 | Release readiness report | GOAL §8 | implemented: `docs/RELEASE_READINESS.md` (site: Development → Release readiness) covers every GOAL §8 obligation: features, decisions, commits, tests and where they ran, real versus simulated evidence, limitations, deployment and recovery, site status, screenshots, traceability (185 implemented, 33 partial, 1 n/a); no production-readiness claim |
 
+### HP — Harbor Pilot gateway (operator request 2026-11-06; ADR-0059, Proposed)
+| WP | Scope | Requirements | Status |
+|---|---|---|---|
+| HP-T1 | Contract (`docs/contracts/harbor-pilot.md`, v0.1.1), ADR-0059 draft, SM-GW requirements, `internal/harborpilot/hptest` harness (`make test-harbor-pilot`), live harness spike | SM-GW-010, SM-GW-004 (spike) | implemented: contract and spike recorded; hptest self-test passes against real `serve --demo` v0.1.1 (opt-in) |
+| HP-T2 | Connection, space settings, Harbor Pilot client (migration, API, UI forms) | SM-GW-001/002 | todo |
+| HP-T3 | Central run-token lifecycle: pre-launch check, mint-or-reuse at dispatch, revocation queue on every end path | SM-GW-002/003/005 | todo |
+| HP-T4 | Node delivery, protocol minor 8: Claude and Codex adapters | SM-GW-004 | todo (spike: both harnesses drivable; model choice needed) |
+| HP-T5 | Budget status, early refusal, Limits page | SM-GW-006/008 | todo |
+| HP-T6 | Harbor Pilot event templates | SM-GW-007 | todo |
+| HP-T7 | Terraform resources and the combined example (terraform-provider-spaceman) | SM-GW-009 | todo |
+| HP-T8 | Verification, threat model, limitations, release notes | SM-GW-* | todo |
+
 ## 2. Phase checklist (run at the start and end of each WP)
 
 1. Reread the relevant GOAL.md requirements and the contracts each one touches.
@@ -169,6 +181,7 @@
 | 2026-11-05 | M2-06 | Repository SSH keys held by SpaceMan (operator request after private clones failed on the deployment, ADR-0057, security-relevant): migration 0037, generate/rotate/remove API, CLI and UI card, `known_hosts` per repository with GitHub's keys built in, keys attached to clone/fetch wire messages at dispatch (protocol 1.7), served by the node from an in-memory ssh-agent with pinned host keys; THREAT_MODEL T-31 | `1c7a055` (`feat(repos)`); released as `v0.1.0-rc.6` | `TestRepoSSHKeyCloneAndFetch`, `TestRepoAuthAgentSignsOnly`, `TestRepositorySSHKeyEndToEnd` (OpenSSH client against an SSH Git host in the test) |
 | 2026-11-06 | M5-03 | UX review of every page (operator request; review by a head-of-UX agent from fresh screenshots, kept as docs/UX_REVIEW.md) and its first three steps: dark-theme status colours, badges, type scale, queue/messages/attention fixes; one space layout (header, tabs, section headers) for every space page including runs; the run workbench (header bar, inspector); a space Terminals tab and a Terminals workspace (spaces and agents beside the selected space's tabs) | `68e12f0` and `e56b66e` (`feat(web)`, `fix(web)`), `d945c14` (`fix(deps)`); released as `v0.1.0-rc.7` | web unit tests (theme contrast, run display), `make e2e`, `make site-check` (axe on every screenshot), screenshots recaptured |
 | 2026-11-06 | M2-06 | Shared Git SSH keys (operator request, ADR-0058, security-relevant): administrator-managed keys scoped to spaces, chosen by repositories instead of their own deploy key, delivered like ADR-0057 keys; migration 0038, API, CLI, Git SSH keys page, repository choice | `6197f99` (`feat(repos)`); released as `v0.1.0-rc.8` | `TestSharedGitKeyEndToEnd`, `internal/gitkeys` tests, screenshot `git-ssh-keys` |
+| 2026-11-06 | HP-T1 | Harbor Pilot contract pinned to v0.1.1 (68d6eae), ADR-0059 (Proposed, security-relevant; operator answers to Q1–Q7 recorded, Q4 still open), SM-GW-001…010 with TRACEABILITY rows, `internal/harborpilot/hptest` opt-in harness and `make test-harbor-pilot`, live spike with Claude Code 2.1.317 and codex-cli 0.166.0 | branch `feat/harbor-pilot-contract` | `TestRealHarborPilotSelfTest` against real `serve --demo` v0.1.1; spike in `docs/contracts/harnesses.md` |
 
 ### Open issues
 - **Intermittent e2e launch stall.** `make e2e` occasionally waits past 20 s for a launched run to show `running`
@@ -192,3 +205,4 @@
 | D-2 | 2026-11-02 | `914b461` (`fix(agent): honour the reconnect cap on the first retry`) was committed with a hand-written message; `/cc` was not invoked for it. | Oversight while splitting an unrelated fix out of the accessibility work. | Later commits use `/cc` again. |
 | D-3 | 2026-11-03 | `2e37fee` (`feat(events): publish SpaceMan events to Pulse through an outbox`) was committed with a hand-written message; `/cc` was not invoked for it. | Oversight after reviewing a delegated work package. | Later commits use `/cc` again. |
 | D-4 | 2026-11-03 | `de12e4b` in the new provider repository (`build: make the provider a standalone repository`), and later `dbe5a4f`, `e52e68c` and `bff1f80` there, were committed with hand-written messages following the `/cc` skill's Conventional Commits rules; `/cc` did **not** produce them. | `/cc` reads the staged diff of the session's working directory, and the provider repository is outside it, so the skill could not see that repository's changes. | Commits in this repository keep using `/cc`. |
+| D-5 | 2026-11-06 | The HP-T1 commit on branch `feat/harbor-pilot-contract` has a hand-written Conventional Commits 1.0.0 message; `/cc` did **not** produce it. | The `/cc` skill is not available in the SpaceMan worker session that did HP-T1. | Use `/cc` where it is available. |
