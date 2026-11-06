@@ -61,12 +61,14 @@ const columns: ColumnDef<AttentionSpace, unknown>[] = [
   },
 ]
 
-function Section({ title, ok, children }: { title: string; ok: boolean; children: ReactNode }) {
+function Section({ title, ok, warn, children }: { title: string; ok: boolean; warn?: string; children: ReactNode }) {
   return (
     <Card>
       <Group justify="space-between" mb={6}>
         <Text fw={600}>{title}</Text>
-        {ok ? <Badge color="owlGreen" variant="light" leftSection={<IconCircleCheck size={12} />}>ok</Badge> : <Badge color="owlRed" variant="light">needs attention</Badge>}
+        {!ok ? <Badge color="owlRed" variant="light">Needs attention</Badge>
+          : warn ? <Badge color="owlYellow" variant="light">{warn}</Badge>
+            : <Badge color="owlGreen" variant="light" leftSection={<IconCircleCheck size={12} />}>OK</Badge>}
       </Group>
       {children}
     </Card>
@@ -136,9 +138,9 @@ export function AttentionView({ data }: { data: Attention }) {
             </Section>
           )}
           {data.backups && (
-            <Section title="Backups" ok={data.backups.state !== 'failing'}>
+            <Section title="Backups" ok={data.backups.state !== 'failing'} warn={data.backups.state === 'none' ? 'Never backed up' : undefined}>
               <Text size="sm">
-                {data.backups.state === 'none' ? 'No backup has run yet.' : `Last good backup ${data.backups.last_succeeded_at ? datetime(data.backups.last_succeeded_at) : 'never'}.`}
+                {data.backups.state === 'none' ? 'No backup has run yet: nothing could be restored.' : `Last good backup ${data.backups.last_succeeded_at ? datetime(data.backups.last_succeeded_at) : 'never'}.`}
                 {data.backups.last_failed_at && ` Last failure ${datetime(data.backups.last_failed_at)}.`}
                 {data.backups.last_verify_failed_at && ` Last failed verification ${datetime(data.backups.last_verify_failed_at)}.`}
               </Text>

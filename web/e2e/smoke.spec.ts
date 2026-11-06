@@ -227,7 +227,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await rows.first().click()
   await page.getByRole('button', { name: 'Change state' }).click()
   await page.getByRole('menuitem', { name: 'running', exact: true }).click()
-  await expect(page.getByRole('dialog').getByText('running', { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog').getByText('Running', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
 
   // Human actions: a blocking question on the task appears in the space tab and the global "Needs you" view (with the nav

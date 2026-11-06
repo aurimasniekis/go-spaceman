@@ -30,3 +30,11 @@ kbd,
   outline-offset: 2px;
 }
 
+
+/* An input marked mono keeps the UI font for its label, description and error; only the field is monospace (UX C12). */
+.mantine-InputWrapper-root.mono {
+  font-family: var(--mantine-font-family);
+}
+.mantine-InputWrapper-root.mono .mantine-Input-input {
+  font-family: var(--sm-mono);
+}

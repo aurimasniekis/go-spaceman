@@ -3,11 +3,12 @@ import { IconArrowDown, IconArrowUp, IconGripVertical, IconHandStop, IconPlus, I
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, type KeyboardEvent } from 'react'
-import { api, unwrap, type QueuePolicy, type Task } from '@/api/client'
-import { keys, useMe, useNext, useQueue, useSpace } from '@/api/queries'
+import { api, unwrap, type QueuePolicy, type Run, type Task } from '@/api/client'
+import { keys, useMe, useNext, useQueue, useRuns, useSpace } from '@/api/queries'
+import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
-import { TaskPriority, TaskStatus } from '@/features/queue/badges'
+import { TaskPriority, TaskRowState } from '@/features/queue/badges'
 import { dropOn, step } from '@/features/queue/order'
 import { TaskDrawer } from '@/features/queue/TaskDrawer'
 import { TaskModal } from '@/features/queue/TaskModal'
@@ -27,6 +28,7 @@ function QueuePage() {
   const qc = useQueryClient()
   const space = useSpace(spaceId)
   const queue = useQueue(spaceId)
+  const runs = useRuns(spaceId)
   const next = useNext(spaceId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
@@ -77,13 +79,19 @@ function QueuePage() {
       <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={queue.error} />
       <Card mb="sm" p="sm">
-        <Group gap="xs">
-          <Text size="sm" fw={600}>Next eligible:</Text>
-          {next.data?.selected ? <Badge color="owlGreen">{next.data.selected.title}</Badge> : <Text size="sm" c="dimmed">nothing</Text>}
-          {(next.data?.skipped ?? []).slice(0, 3).map((s) => (
-            <Tooltip key={s.task_id} label={s.reason}><Badge variant="outline" color="gray">skipped: {s.title}</Badge></Tooltip>
-          ))}
-          <Text size="xs" c="dimmed" ml="auto">Limit: {queue.data?.policy.max_active ?? 1} running top-level task(s)</Text>
+        <Group gap="xs" wrap="nowrap">
+          <Text size="sm" fw={600}>Next:</Text>
+          {next.data?.selected ? <Text size="sm" truncate>{next.data.selected.title}</Text> : <Text size="sm" c="dimmed">nothing can start now</Text>}
+          {(next.data?.skipped ?? []).length > 0 && (
+            <Tooltip multiline w={420} label={(next.data?.skipped ?? []).slice(0, 8).map((s) => `${s.title}: ${s.reason}`).join('\n')} style={{ whiteSpace: 'pre-line' }}>
+              <Text size="sm" c="dimmed" td="underline" style={{ textDecorationStyle: 'dotted', cursor: 'help', whiteSpace: 'nowrap' }}>
+                · {next.data!.skipped!.length} {next.data!.skipped!.length === 1 ? 'task waits' : 'tasks wait'}
+              </Text>
+            </Tooltip>
+          )}
+          <Text size="xs" c="dimmed" ml="auto" style={{ whiteSpace: 'nowrap' }}>
+            {(() => { const n = queue.data?.policy.max_active ?? 1; return `At most ${n} top-level ${n === 1 ? 'task' : 'tasks'} at a time` })()}
+          </Text>
         </Group>
       </Card>
       <Group justify="space-between" mb={6}>
@@ -102,12 +110,12 @@ function QueuePage() {
             <Group gap="xs" wrap="nowrap">
               {canWrite && <IconGripVertical size={14} style={{ cursor: 'grab', flexShrink: 0 }} aria-hidden />}
               <Text size="xs" c="dimmed" w={24} ta="right">{t.position}</Text>
-              <TaskStatus status={t.status} />
+              <TaskRowState task={t} />
               <TaskPriority task={t} />
               <Text size="sm" fw={t.status === 'running' ? 600 : 400} style={{ flex: 1 }} truncate>{t.title}</Text>
               {t.manual && <Tooltip label="Placed by an operator: duplicate triggers never move it"><IconHandStop size={14} aria-label="Placed by an operator" /></Tooltip>}
-              {(t.waiting ?? []).length > 0 && <Tooltip label={t.waiting!.join('; ')} multiline w={320}><Badge variant="outline" color="owlYellow">waiting</Badge></Tooltip>}
-              {t.blockers.length > 0 && <Badge variant="light" color="owlYellow">{t.blockers.length} blocker{t.blockers.length > 1 ? 's' : ''}</Badge>}
+              {t.status !== 'ready' && t.blockers.length > 0 && <Badge variant="light" color="owlRed">Blocked · {t.blockers.length}</Badge>}
+              {t.assignee_run && <AssigneeRun spaceId={spaceId} runId={t.assignee_run} runs={runs.data} />}
               {canWrite && (
                 <Group gap={0} onClick={(e) => e.stopPropagation()}>
                   <ActionIcon aria-label={`Move ${t.title} up`} disabled={!step(all, t, -1)} onClick={() => { const b = step(all, t, -1); if (b) void move(t, b) }}><IconArrowUp size={14} /></ActionIcon>
@@ -210,5 +218,18 @@ function PolicyModal({ spaceId, policy, onClose }: { spaceId: string; policy: Qu
         </form.AppForm>
       </form>
     </Modal>
+  )
+}
+
+/** The run working on a task: its role and turn, linking to its terminal (UX review: running tasks did not say who). */
+function AssigneeRun({ spaceId, runId, runs }: { spaceId: string; runId: string; runs?: Run[] }) {
+  const r = runs?.find((x) => x.id === runId)
+  const live = r && !['exited', 'failed', 'lost'].includes(r.observed)
+  return (
+    <Tooltip label={r ? `${r.role} run ${runId}${live ? '' : ` (${r.observed})`}` : runId}>
+      <AnchorLink to="/spaces/$spaceId/runs/$runId" params={{ spaceId, runId }} size="xs" onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+        {r ? `${r.role}${r.turn ? ` #${r.turn}` : ''}` : 'run'}{live ? '' : ' (ended)'} →
+      </AnchorLink>
+    </Tooltip>
   )
 }

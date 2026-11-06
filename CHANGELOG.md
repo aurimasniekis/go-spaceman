@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+- UX review (docs/UX_REVIEW.md), first pass:
+  - In the dark theme, status badges and alerts get their colour back: Ready, Waiting, Pending and Open had all looked
+    the same grey, and so had warnings such as "not encrypted".
+  - Badges are in sentence case, and dialog and drawer titles are bold.
+  - The type scale is one step larger: help text was 11 px.
+  - Row actions are 28 px targets, and monospace inputs keep normal labels.
+  - Queue rows show one state ("Waiting" or "Blocked · n" instead of READY plus WAITING), and running tasks link to the
+    run working on them. "Next" is one line, with the reasons a task waits in a tooltip.
+  - Messages shows people and agents by default, with SpaceMan's own notifications under a System filter.
+  - Attention shows "Never backed up" instead of OK when no backup has run.
+
 ## [0.1.0-rc.6] - 2026-11-05
 
 Sixth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): private repositories cloned

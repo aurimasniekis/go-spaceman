@@ -1,4 +1,4 @@
-import { Badge } from '@mantine/core'
+import { Badge, Tooltip } from '@mantine/core'
 import type { Task } from '@/api/client'
 
 export const statusColor: Record<Task['status'], string> = {
@@ -6,8 +6,25 @@ export const statusColor: Record<Task['status'], string> = {
 }
 const priorityColor: Record<Task['priority'], string> = { low: 'gray', normal: 'owlBlue', high: 'owlYellow', urgent: 'owlRed' }
 
+const STATUS_LABEL: Record<Task['status'], string> = { backlog: 'Backlog', ready: 'Ready', running: 'Running', review: 'Review', blocked: 'Blocked', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' }
+
 export function TaskStatus({ status }: { status: Task['status'] }) {
-  return <Badge color={statusColor[status]} variant={status === 'running' ? 'filled' : 'light'}>{status}</Badge>
+  return <Badge color={statusColor[status]} variant={status === 'running' ? 'filled' : 'light'}>{STATUS_LABEL[status] ?? status}</Badge>
+}
+
+/**
+ * One state per row (UX review: a row read READY and WAITING at once). A ready task that waits on dependencies shows
+ * "Waiting" with what it waits on; one with open blockers shows "Blocked"; otherwise the task's own state.
+ */
+export function TaskRowState({ task }: { task: Task }) {
+  const waiting = task.waiting ?? []
+  if (task.status === 'ready' && task.blockers.length > 0) {
+    return <Tooltip label={`${task.blockers.length} open blocker${task.blockers.length > 1 ? 's' : ''}`}><Badge color="owlRed" variant="light">Blocked · {task.blockers.length}</Badge></Tooltip>
+  }
+  if (task.status === 'ready' && waiting.length > 0) {
+    return <Tooltip label={waiting.join('; ')} multiline w={320}><Badge color="owlYellow" variant="light">Waiting</Badge></Tooltip>
+  }
+  return <TaskStatus status={task.status} />
 }
 
 export function TaskPriority({ task }: { task: Task }) {

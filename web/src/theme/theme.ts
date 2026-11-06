@@ -32,28 +32,53 @@ export const theme = createTheme({
   headings: { fontFamily: "'Inter Variable', Inter, system-ui, sans-serif", fontWeight: '600' },
   defaultRadius: 'sm',
   radius: { xs: '2px', sm: '4px', md: '6px', lg: '8px', xl: '10px' },
-  fontSizes: { xs: '11px', sm: '12px', md: '13px', lg: '15px', xl: '18px' },
+  // sm 13 / xs 12: field descriptions and table hints were 11 px in dimmed grey, too small to read comfortably.
+  fontSizes: { xs: '12px', sm: '13px', md: '14px', lg: '16px', xl: '20px' },
   spacing: { xs: '6px', sm: '8px', md: '12px', lg: '16px', xl: '24px' },
   cursorType: 'pointer',
   components: {
     Button: { defaultProps: { size: 'xs' } },
-    ActionIcon: { defaultProps: { size: 'sm', variant: 'subtle', color: 'gray' } },
+    // 28 px row actions: 22 px was under the WCAG 2.5.8 target size.
+    ActionIcon: { defaultProps: { size: 'md', variant: 'subtle', color: 'gray' } },
     TextInput: { defaultProps: { size: 'xs' } },
     PasswordInput: { defaultProps: { size: 'xs' } },
     NumberInput: { defaultProps: { size: 'xs' } },
     Select: { defaultProps: { size: 'xs' } },
     Textarea: { defaultProps: { size: 'xs' } },
     SegmentedControl: { defaultProps: { size: 'xs' } },
-    Badge: { defaultProps: { size: 'sm', radius: 'sm', variant: 'light' } },
+    // States and categories in sentence case: uppercase made every badge shout, names and titles included.
+    Badge: { defaultProps: { size: 'sm', radius: 'sm', variant: 'light' }, styles: { root: { textTransform: 'none', fontWeight: 600, letterSpacing: 0 } } },
     Table: { defaultProps: { fz: 'sm', verticalSpacing: 6, horizontalSpacing: 'sm', highlightOnHover: true } },
     Card: { defaultProps: { withBorder: true, padding: 'md', radius: 'md' } },
     Tooltip: { defaultProps: { openDelay: 300, fz: 'xs' } },
     NavLink: { defaultProps: { py: 5 } },
     // Close buttons have no visible text; give them a name (axe button-name).
-    Modal: { defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } } },
-    Drawer: { defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' } } },
+    Modal: { defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } }, styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' } } },
+    Drawer: { defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' } }, styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' } } },
   },
 })
+
+/**
+ * Night Owl variant colors for the `light` variant (badges, alerts, light buttons). Mantine's dark scheme takes the text
+ * from shade 0 (near-white) and a 15 % tint of shade 3, so every hue looked the same grey: READY, WAITING and a warning
+ * alert all read alike. The accent itself (shade 4) carries the text instead, on a 12 % tint of it (18 % on hover); red stays above 4.5:1 only up to about 12 %.
+ */
+export const ACCENTS = { owlBlue, owlPurple, owlGreen, owlRed, owlYellow }
+
+function rgba(hex: string, a: number): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  return `rgba(${r}, ${g}, ${b}, ${a})`
+}
+
+function darkLightVariants(): Record<string, string> {
+  const vars: Record<string, string> = {}
+  for (const [name, c] of Object.entries(ACCENTS)) {
+    vars[`--mantine-color-${name}-light-color`] = c[4]
+    vars[`--mantine-color-${name}-light`] = rgba(c[4], 0.12)
+    vars[`--mantine-color-${name}-light-hover`] = rgba(c[4], 0.18)
+  }
+  return vars
+}
 
 export const LIGHT_DIMMED = '#5c6670'
 export const DARK_DIMMED = '#8b9fae'
@@ -81,5 +106,6 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--sm-on-filled': nightOwl.bg,
     '--sm-accent-purple': nightOwl.purple,
     '--sm-accent-teal': nightOwl.teal,
+    ...darkLightVariants(),
   },
 })

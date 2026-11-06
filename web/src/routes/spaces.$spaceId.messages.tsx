@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core'
+import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, SegmentedControl, Select, Stack, Text, TextInput } from '@mantine/core'
 import { IconArrowRight, IconCheck, IconMessagePlus } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
@@ -40,8 +40,12 @@ function MessagesPage() {
   const [composing, setComposing] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
   const [onlyMine, setOnlyMine] = useState(false)
+  // People and agents by default: SpaceMan's own notifications to control would otherwise bury them (UX review).
+  const [view, setView] = useState<'people' | 'system' | 'all'>('people')
   const all = list.data?.items ?? []
-  const items = onlyMine ? all.filter((m) => m.to_kind === 'operators') : all
+  const isSystem = (m: (typeof all)[number]) => m.from_kind === 'system' || m.kind === 'notification'
+  const systemCount = all.filter(isSystem).length
+  const items = all.filter((m) => (view === 'all' || (view === 'system') === isSystem(m)) && (!onlyMine || m.to_kind === 'operators'))
   const current = all.find((m) => m.id === open) ?? null
   return (
     <>
@@ -50,7 +54,11 @@ function MessagesPage() {
       <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={list.error} />
       <Group justify="space-between" mb={6}>
-        <Text size="xs" c="dimmed">{list.data?.operators_pending ?? 0} waiting for operators</Text>
+        <Group gap="sm">
+          <SegmentedControl size="xs" value={view} onChange={(v) => setView(v as typeof view)} aria-label="Which messages"
+            data={[{ value: 'people', label: 'People and agents' }, { value: 'system', label: `System (${systemCount})` }, { value: 'all', label: 'All' }]} />
+          <Text size="xs" c="dimmed">{list.data?.operators_pending ?? 0} waiting for operators</Text>
+        </Group>
         <Checkbox size="xs" label="Only messages to operators" checked={onlyMine} onChange={(e) => setOnlyMine(e.currentTarget.checked)} />
       </Group>
       <Stack gap={4} role="list" aria-label="Messages">
@@ -66,7 +74,11 @@ function MessagesPage() {
             </Group>
           </Card>
         ))}
-        {list.isSuccess && items.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">No messages yet.</Text>}
+        {list.isSuccess && items.length === 0 && (
+          <Text size="sm" c="dimmed" ta="center" p="lg">
+            {all.length === 0 ? 'No messages yet.' : view === 'people' ? `No messages between people and agents. ${systemCount} system notifications are under System.` : 'Nothing here.'}
+          </Text>
+        )}
       </Stack>
       <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size="lg" title="Message">
         {current && <MessageDetail spaceId={spaceId} m={current} canWrite={canWrite} />}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { lightOwl, nightOwl } from './nightowl'
-import { DARK_DIMMED, LIGHT_DIMMED, owlBlue, owlGreen, owlPurple, owlRed, owlYellow, theme } from './theme'
+import { ACCENTS, DARK_DIMMED, LIGHT_DIMMED, owlBlue, owlGreen, owlPurple, owlRed, owlYellow, theme } from './theme'
 
 function luminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
@@ -45,5 +45,17 @@ describe('accent contrast', () => {
     expect(contrast(c[5], nightOwl.bgRaised)).toBeGreaterThanOrEqual(4.5) // dark text on cards
     expect(contrast(c[4], nightOwl.bgRaised)).toBeGreaterThanOrEqual(4.5) // dark c="<color>" text (Mantine uses shade 4)
     expect(contrast(c[7], lightOwl.bgRaised)).toBeGreaterThanOrEqual(4.5) // light text on raised surfaces
+  })
+})
+
+// Light-variant badges and alerts in Night Owl: the accent text on its 12 % tint over the raised surface stays readable
+// (the tint is drawn over #0b2942; checking the text against the card itself and against the accent mixed in at 12 %).
+describe('dark light-variant contrast', () => {
+  const mix = (fg: string, bg: string, a: number) =>
+    '#' + [1, 3, 5].map((i) => Math.round(parseInt(fg.slice(i, i + 2), 16) * a + parseInt(bg.slice(i, i + 2), 16) * (1 - a)).toString(16).padStart(2, '0')).join('')
+  it.each(Object.entries(ACCENTS))('%s', (_, c) => {
+    expect(contrast(c[4], nightOwl.bgRaised)).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(c[4], mix(c[4], nightOwl.bgRaised, 0.12))).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(c[4], mix(c[4], nightOwl.bg, 0.12))).toBeGreaterThanOrEqual(4.5)
   })
 })
