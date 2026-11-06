@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -149,4 +150,25 @@ func walk(t *testing.T, root string, fn func(string, []byte)) {
 		}
 		return nil
 	})
+}
+
+// A host-key failure names what decided it: SpaceMan's pins for a repository with a SpaceMan key, the node's own SSH
+// setup otherwise (with the ways out: an https URL, a SpaceMan key, or the node's known_hosts).
+func TestSSHErrorNamesWhatDecided(t *testing.T) {
+	failed := errors.New("git clone: Host key verification failed.\r\nfatal: Could not read from remote repository.")
+	if got := sshError(failed, true).Error(); !strings.Contains(got, "pinned known_hosts") {
+		t.Fatalf("keyed: %q", got)
+	}
+	got := sshError(failed, false).Error()
+	if strings.Contains(got, "pinned known_hosts") || !strings.Contains(got, "node's own SSH setup") || !strings.Contains(got, "https://") {
+		t.Fatalf("not keyed: %q", got)
+	}
+	changed := errors.New("@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@")
+	if got := sshError(changed, false).Error(); !strings.Contains(got, "node user's known_hosts") {
+		t.Fatalf("changed, not keyed: %q", got)
+	}
+	other := errors.New("repository not found")
+	if !errors.Is(sshError(other, true), other) || sshError(nil, false) != nil {
+		t.Fatal("other errors pass through")
+	}
 }

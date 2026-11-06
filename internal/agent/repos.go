@@ -221,7 +221,7 @@ func (g *projectGit) remoteState(ctx context.Context, space, rawURL, branch stri
 	rs := &proto.RepoRemoteState{URL: proto.RedactRepoURL(rawURL)}
 	out, err := g.runEnv(ctx, space, lsRemoteBudget, env, "ls-remote", "--", rawURL, "refs/heads/"+branch)
 	if err != nil {
-		rs.Error = truncateStr(sshError(err).Error(), 300)
+		rs.Error = truncateStr(sshError(err, len(env) > 0).Error(), 300)
 		return rs
 	}
 	rs.Reachable = true
@@ -259,7 +259,7 @@ func (g *projectGit) cloneSource(ctx context.Context, space string, r proto.Repo
 		args = append(args, "--branch", r.DefaultBranch)
 	}
 	if _, err := g.runEnv(ctx, space, cloneTimeout, env, append(args, "--", r.URL, dir)...); err != nil {
-		return fmt.Errorf("clone %s: %w", r.Path, sshError(err))
+		return fmt.Errorf("clone %s: %w", r.Path, sshError(err, r.SSHKey != ""))
 	}
 	return g.fetchSource(ctx, dir, r, env)
 }
@@ -269,7 +269,7 @@ func (g *projectGit) cloneSource(ctx context.Context, space string, r proto.Repo
 func (g *projectGit) fetchSource(ctx context.Context, dir string, r proto.RepoSource, env []string) error {
 	name := g.remoteName(ctx, dir, r.URL)
 	if _, err := g.runEnv(ctx, dir, fetchTimeout, env, "fetch", "--quiet", "--no-tags", "--", r.URL, "+refs/heads/*:refs/remotes/"+name+"/*"); err != nil {
-		return fmt.Errorf("fetch %s: %w", r.Path, sshError(err))
+		return fmt.Errorf("fetch %s: %w", r.Path, sshError(err, r.SSHKey != ""))
 	}
 	return nil
 }
