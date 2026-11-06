@@ -10,7 +10,7 @@ import { errorMessage } from '@/components/ErrorAlert'
 import { atLeast, hasGlobal, roleIn } from '@/lib/access'
 import { notifyOk } from '@/lib/notify'
 
-type Dialog = 'archive' | 'restore' | 'purge' | null
+export type Dialog = 'archive' | 'restore' | 'purge' | null
 
 const ENDED = ['exited', 'failed', 'lost']
 

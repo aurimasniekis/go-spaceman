@@ -2,13 +2,12 @@ import { Badge, Button, Card, Group, Table, Text, Tooltip } from '@mantine/core'
 import { IconPlus } from '@tabler/icons-react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useMe, useSpace, useSubscriptions } from '@/api/queries'
+import { useMe, useSubscriptions } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { DeliveryBadge, SubscriptionState } from '@/features/events/badges'
 import { SubscriptionModal } from '@/features/events/SubscriptionModal'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 
@@ -16,15 +15,13 @@ export const Route = createFileRoute('/spaces/$spaceId/events/')({ component: Sp
 
 function SpaceEventsPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const subs = useSubscriptions(spaceId)
   const me = useMe().data
   const [creating, setCreating] = useState(false)
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="Event subscriptions: each delivers matching Pulse events into this space's inbox through its own durable consumer (or a non-durable core NATS subscription)."
+      <SectionHeader title="Events" description="Subscriptions that deliver matching events into this space's inbox"
         actions={atLeast(roleIn(me, spaceId), 'operator') && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>Subscribe</Button>} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={subs.error} />
       <Card p={0}>
         <Table>

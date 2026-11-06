@@ -21,6 +21,8 @@
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
+| `space-terminals` | Terminals and recordings | A space's Terminals tab: every agent as a tab with its status, the selected agent's live terminal | current |
+| `terminals-workspace` | Terminals and recordings | The Terminals workspace: spaces and their agents in a sidebar, the selected space's agents as tabs | current |
 | `terminal-takeover` | Terminals and recordings | Live terminal taken over by the signed-in admin, with the takeover banner | current |
 | `terminal-replay` | Site landing, Terminals and recordings | Replay with seek and speed | current |
 | `auth-users` | Sign-in and access | Users and grants | current |

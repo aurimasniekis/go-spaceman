@@ -1,12 +1,46 @@
 # Terminals and recordings
 
+## Watching your agents
+
+There are three ways to watch agents:
+
+- **A space's Terminals tab** shows every running agent of the space as a tab. Each tab has a status dot, the agent's
+  role and turn (`control #4`), and its state in words ("working · 12m", "idle", "waiting for input"). Runs that ended
+  in the last day are under **Ended**. Choosing one opens it as a tab that shows its last screen. Press `[` and `]` to
+  move between tabs.
+- **The Terminals workspace** (**Terminals** in the sidebar) lists every space with its running agents. Choosing a space
+  shows its agents as tabs. Choosing an agent opens its terminal. The bottom bar counts the running agents and those
+  waiting for input. The space and agent are in the URL, so you can share or bookmark a view.
+- **A run's page** (from a run's link, or **Terminals / control #4**) shows one agent with its inspector open.
+
+<Shot name="space-terminals" alt="A space's Terminals tab: tabs for control, reviewer and two KB support sessions above control's live terminal" caption="A space's agents as tabs" />
+
+<Shot name="terminals-workspace" alt="The Terminals workspace: spaces and their agents in a list on the left, the selected space's agents as tabs and a live terminal" caption="Every space's agents in one place" />
+
+The status dot means:
+- green: working;
+- blue: idle;
+- amber: waiting for input or permission;
+- grey: starting or ended;
+- red: failed;
+- purple: the node is offline, so the state reconciles when it reconnects.
+
 ## Watching a run
 
-Each run's page opens on its terminal. While the run is active, the **Live** view shows the stored output and then
-streams new output as it happens. It is **watch-only**: key presses in the browser are never sent to the run. To give an
-agent input, use **Message the agent**, which delivers the text the next time the agent is idle, or stop it.
+The header of an agent's terminal shows its role, kind, harness, turn and state, with Live/Replay, **Take over** and
+**Stop**. While the run is active, the **Live** view shows the stored output and then streams new output as it happens.
+It is **watch-only**: key presses in the browser are never sent to the run. To give an agent input, use the message box
+below the terminal, which delivers the text the next time the agent is idle, or stop it.
 
-<Shot name="terminal-live" alt="Live watch-only terminal of a running control agent with a message box below" caption="A live, watch-only terminal" />
+The **inspector** beside the terminal (the panel button toggles it) shows:
+- **Now:** the state, turn, how long the run has run, and human actions it is waiting on.
+- **Task:** the task it works on.
+- **Usage:** its tokens and estimated cost.
+- **Placement:** its node, account and worktree.
+- **Launch and configuration:** collapsed by default.
+- **Identifiers:** collapsed by default, each with a copy button.
+
+<Shot name="terminal-live" alt="A run's page: control's live terminal with the inspector showing its state, task, usage and node" caption="A live, watch-only terminal with its inspector" />
 
 Watching a terminal needs the `terminal:watch` permission (operator and above). The stream re-checks your session
 periodically and ends if it was revoked or your grant was removed.

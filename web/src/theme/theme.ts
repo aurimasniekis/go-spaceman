@@ -81,7 +81,8 @@ function darkLightVariants(): Record<string, string> {
 }
 
 export const LIGHT_DIMMED = '#5c6670'
-export const DARK_DIMMED = '#8b9fae'
+// Readable on the hovered or selected row too (#1d3b53, 4.6:1), not only on the body and cards.
+export const DARK_DIMMED = '#93a6b4'
 
 /** Exact Night Owl / Light Owl surfaces as CSS variables (body, borders, dimmed text). */
 export const cssVariablesResolver: CSSVariablesResolver = () => ({

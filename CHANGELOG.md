@@ -6,7 +6,30 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Watching agents (UX review §4):
+  - A space's **Terminals** tab shows every running agent as a tab: a status dot, `role #turn` and its state in words.
+    The selected agent's terminal is below. Runs that ended in the last day are under **Ended**.
+  - The **Terminals** workspace (sidebar) lists every space with its agents next to the selected space's tabs, with a
+    status bar of running agents and those waiting for input. Space and agent are in the URL.
+  - `[` and `]` switch between agents.
+
 ### Changed
+- Every space page, its run pages, inbox items and subscriptions share one layout. The space's header (name, state, node,
+  Launch run, Pause, and a ⋯ menu for edit, export, relocate and the lifecycle) and its section tabs stay put, and a
+  section has a one-line title. The run page is in the layout, with a "Terminals / control #4" breadcrumb, so you can go
+  from a terminal to any section of its space.
+- A run's page has a one-line header (status dot, role, kind and harness, turn, state, Live/Replay, Take over, Stop) and
+  an inspector beside the terminal:
+  - Now: state, turn, duration, human actions it waits on;
+  - Task;
+  - Usage: tokens and estimate;
+  - Placement: node, account, worktree;
+  - Launch and configuration, and Identifiers, both collapsed.
+  The nine identifier cards are gone, an ended run shows a one-line summary, and the takeover toast is gone.
+- The space overview leads with its running agents (with links to their terminals) and puts the run history at the
+  bottom. The lease card is gone, and an invalid lease shows as an alert.
+- In the dark theme, dimmed text is slightly lighter, so it stays readable on hovered and selected rows.
 - UX review (docs/UX_REVIEW.md), first pass:
   - In the dark theme, status badges and alerts get their colour back: Ready, Waiting, Pending and Open had all looked
     the same grey, and so had warnings such as "not encrypted".

@@ -4,16 +4,15 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, type KeyboardEvent } from 'react'
 import { api, unwrap, type QueuePolicy, type Run, type Task } from '@/api/client'
-import { keys, useMe, useNext, useQueue, useRuns, useSpace } from '@/api/queries'
+import { keys, useMe, useNext, useQueue, useRuns } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { TaskPriority, TaskRowState } from '@/features/queue/badges'
 import { dropOn, step } from '@/features/queue/order'
 import { TaskDrawer } from '@/features/queue/TaskDrawer'
 import { TaskModal } from '@/features/queue/TaskModal'
 import { useAppForm } from '@/components/form/appForm'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { notifyError } from '@/lib/notify'
 
@@ -26,7 +25,6 @@ export const Route = createFileRoute('/spaces/$spaceId/queue')({
 function QueuePage() {
   const { spaceId } = Route.useParams()
   const qc = useQueryClient()
-  const space = useSpace(spaceId)
   const queue = useQueue(spaceId)
   const runs = useRuns(spaceId)
   const next = useNext(spaceId)
@@ -69,14 +67,13 @@ function QueuePage() {
 
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="The execution queue: one order, set by priority on arrival and by operators after that."
+      <SectionHeader title="Queue" description="The work queue, in the order it runs"
         actions={canWrite && (
           <>
             <Button variant="default" leftSection={<IconSettings size={14} />} onClick={() => setPolicyOpen(true)}>Policy</Button>
             <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New task</Button>
           </>
         )} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={queue.error} />
       <Card mb="sm" p="sm">
         <Group gap="xs" wrap="nowrap">

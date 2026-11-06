@@ -19,6 +19,7 @@ describe('theme contrast', () => {
     ['dark text on raised', nightOwl.fg, nightOwl.bgRaised],
     ['dark dimmed on body', DARK_DIMMED, nightOwl.bg],
     ['dark dimmed on raised', DARK_DIMMED, nightOwl.bgRaised],
+    ['dark dimmed on a hovered or selected row', DARK_DIMMED, '#1d3b53'],
     ['light text on body', lightOwl.fg, lightOwl.bg],
     ['light text on raised', lightOwl.fg, lightOwl.bgRaised],
     ['light dimmed on body', LIGHT_DIMMED, lightOwl.bg],

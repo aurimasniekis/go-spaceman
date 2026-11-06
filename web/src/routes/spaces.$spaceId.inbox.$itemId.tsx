@@ -1,10 +1,10 @@
-import { Anchor, Badge, Breadcrumbs, Button, Card, Code, Group, Menu, Modal, Stack, Text, Title } from '@mantine/core'
+import { Badge, Button, Card, Code, Group, Menu, Modal, Stack, Text, Title } from '@mantine/core'
 import { IconCheck, IconChevronDown, IconClockPause, IconRotate, IconX } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type InboxItem } from '@/api/client'
-import { keys, useInboxItem, useMe, useSpace } from '@/api/queries'
+import { keys, useInboxItem, useMe } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { AttachmentList } from '@/components/AttachmentList'
 import { ErrorAlert } from '@/components/ErrorAlert'
@@ -22,7 +22,6 @@ export const Route = createFileRoute('/spaces/$spaceId/inbox/$itemId')({ compone
 function ItemPage() {
   const { spaceId, itemId } = Route.useParams()
   const qc = useQueryClient()
-  const space = useSpace(spaceId)
   const item = useInboxItem(spaceId, itemId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
@@ -50,10 +49,7 @@ function ItemPage() {
 
   return (
     <Stack gap="md">
-      <Breadcrumbs>
-        <Anchor component={Link} to="/spaces" size="sm">Spaces</Anchor>
-        <AnchorLink to="/spaces/$spaceId/inbox" params={{ spaceId }} size="sm">{space.data?.name ?? spaceId} · Inbox</AnchorLink>
-      </Breadcrumbs>
+      <AnchorLink to="/spaces/$spaceId/inbox" params={{ spaceId }} size="sm">← All inbox items</AnchorLink>
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Stack gap={4}>
           <Group gap="xs"><Title order={3}>{it.title}</Title><UrgencyBadge urgency={it.urgency} /><InboxStatusBadge status={it.status} /><ProvenanceBadges item={it} /></Group>

@@ -5,11 +5,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, check, ifMatch, unwrap, type Repository, type RepositoryInput, type RepositoryStatus } from '@/api/client'
-import { keys, useMe, useRepositories, useSpace } from '@/api/queries'
+import { keys, useMe, useRepositories } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { fieldError, required } from '@/lib/form'
@@ -29,7 +28,6 @@ const short = (c?: string) => (c ? c.slice(0, 10) : '—')
  */
 function RepositoriesPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const list = useRepositories(spaceId)
   const canWrite = atLeast(roleIn(useMe().data, spaceId), 'operator')
   const qc = useQueryClient()
@@ -48,15 +46,13 @@ function RepositoriesPage() {
   }
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'}
-        description="The space's Git repositories: the node clones them into the space folder with its own Git authentication, and workers get worktrees of them. SpaceMan never merges, pushes, resets or deletes."
+      <SectionHeader title="Repositories" description="Git repositories the node clones for this space; workers get worktrees of them"
         actions={canWrite && (
           <Group gap="xs">
             <Button variant="default" leftSection={<IconRefresh size={14} />} disabled={items.length === 0} onClick={() => void sync()}>Sync now</Button>
             <Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add repository</Button>
           </Group>
         )} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={list.error} />
       {ov && items.length > 0 && (
         <Text size="xs" c="dimmed" mb="xs">

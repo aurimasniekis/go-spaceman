@@ -1,11 +1,11 @@
-import { Alert, Anchor, Badge, Breadcrumbs, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
+import { Alert, Badge, Button, Card, Checkbox, Code, CopyButton, Group, Menu, Modal, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Tabs, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core'
 import { IconChevronDown, IconCopy, IconTrash } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, check, ifMatch, unwrap, type Cursor, type Delivery, type Subscription } from '@/api/client'
-import { keys, useDeliveries, useMe, useQuarantine, useReplays, useSpace, useSubscription } from '@/api/queries'
+import { keys, useDeliveries, useMe, useQuarantine, useReplays, useSubscription } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { coreExplanation, DeliveryBadge, OutcomeBadge, SubscriptionState, whilePausedOptions } from '@/features/events/badges'
@@ -33,7 +33,6 @@ function SubscriptionPage() {
   const { spaceId, subscriptionId } = Route.useParams()
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const space = useSpace(spaceId)
   const sub = useSubscription(spaceId, subscriptionId)
   const deliveries = useDeliveries(spaceId, subscriptionId)
   const quarantine = useQuarantine(spaceId, subscriptionId)
@@ -82,10 +81,7 @@ function SubscriptionPage() {
 
   return (
     <Stack gap="md">
-      <Breadcrumbs>
-        <Anchor component={Link} to="/spaces" size="sm">Spaces</Anchor>
-        <AnchorLink to="/spaces/$spaceId/events" params={{ spaceId }} size="sm">{space.data?.name ?? spaceId} · Events</AnchorLink>
-      </Breadcrumbs>
+      <AnchorLink to="/spaces/$spaceId/events" params={{ spaceId }} size="sm">← All subscriptions</AnchorLink>
       <Group justify="space-between" align="flex-start">
         <Stack gap={2}>
           <Group gap="xs"><Title order={3}>{s.name}</Title><SubscriptionState sub={s} /><DeliveryBadge sub={s} /></Group>

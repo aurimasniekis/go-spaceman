@@ -2,13 +2,12 @@ import { Button, Card, Group, SegmentedControl, Stack, Table, Text, Tooltip } fr
 import { IconPaperclip, IconPlus } from '@tabler/icons-react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useInbox, useMe, useSpace, type InboxStatus } from '@/api/queries'
+import { useInbox, useMe, type InboxStatus } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { InboxStatusBadge, sourceLabel, statusLabel, UrgencyBadge } from '@/features/inbox/badges'
 import { NewItemModal } from '@/features/inbox/NewItemModal'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 
@@ -19,7 +18,6 @@ const FILTERS: (InboxStatus | '')[] = ['new', 'in_progress', 'deferred', 'done',
 function InboxPage() {
   const { spaceId } = Route.useParams()
   const navigate = useNavigate()
-  const space = useSpace(spaceId)
   const me = useMe().data
   const [status, setStatus] = useState<InboxStatus | ''>('new')
   const [creating, setCreating] = useState(false)
@@ -30,12 +28,9 @@ function InboxPage() {
 
   return (
     <>
-      <PageHeader
-        title={space.data?.name ?? 'Space'}
-        description="Requests, events and messages for this space. Control decides what each item becomes; an item is not a task."
+      <SectionHeader title="Inbox" description="Requests, events and messages for control to triage"
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New item</Button>}
       />
-      <SpaceNav spaceId={spaceId} />
       <Stack gap="sm">
         <SegmentedControl
           aria-label="Filter by status"

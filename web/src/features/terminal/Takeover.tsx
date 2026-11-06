@@ -104,13 +104,15 @@ export function useTakeoverInput(spaceId: string, runId: string, run: Run, me: M
  * Who holds the terminal, for everyone watching, with the controls the viewer may use: take over (terminal:takeover,
  * admins by default), release (the holder) or end someone else's takeover.
  */
-export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended }: {
+export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended, part }: {
   spaceId: string
   runId: string
   run: Run
   me: Me | null | undefined
   canTakeOver: boolean
   ended: boolean
+  /** button: only the "Take over" button (for a header row); banner: only the one-line takeover banner. Default both. */
+  part?: 'button' | 'banner'
 }) {
   const qc = useQueryClient()
   const [confirm, setConfirm] = useState(false)
@@ -124,8 +126,7 @@ export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended }: {
     setBusy(true)
     try {
       unwrap(await api.POST('/spaces/{space_id}/runs/{run_id}/takeover', { params: { path } }))
-      setConfirm(false)
-      notifyOk('You have taken over the terminal')
+      setConfirm(false) // the banner says it; no toast over the terminal (UX review)
     } catch (e) {
       notifyError(e, 'Could not take over the terminal')
     } finally {
@@ -148,6 +149,7 @@ export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended }: {
   }
 
   if (t) {
+    if (part === 'button') return null
     return (
       <Alert color={mine ? 'owlYellow' : 'owlPurple'} variant="light" icon={<IconKeyboard size={18} />} role="status"
         title={mine ? 'You have taken over this terminal' : `${t.holder_label || t.holder} has taken over this terminal`}>
@@ -170,12 +172,11 @@ export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended }: {
       </Alert>
     )
   }
-  if (!canTakeOver || ended || run.desired !== 'running') return null
+  if (!canTakeOver || ended || run.desired !== 'running' || part === 'banner') return null
+  const button = <Button size="xs" variant="default" leftSection={<IconHandStop size={14} />} onClick={() => setConfirm(true)}>Take over</Button>
   return (
     <>
-      <Group justify="flex-end">
-        <Button size="xs" variant="default" leftSection={<IconHandStop size={14} />} onClick={() => setConfirm(true)}>Take over terminal</Button>
-      </Group>
+      {part === 'button' ? button : <Group justify="flex-end">{button}</Group>}
       <Modal opened={confirm} onClose={() => setConfirm(false)} title="Take over this terminal?">
         <Stack gap="sm">
           <Text size="sm">You will type directly into the agent&apos;s program. While you hold the terminal:</Text>

@@ -4,12 +4,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, unwrap, type KBDetail, type KnowledgeBase } from '@/api/client'
-import { useKB, useKBs, useMe, useSpace, useSpaceRoles } from '@/api/queries'
+import { useKB, useKBs, useMe, useSpaceRoles } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
 import { useAppForm } from '@/components/form/appForm'
-import { PageHeader } from '@/components/PageHeader'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
@@ -26,16 +25,14 @@ const propColor: Record<string, string> = { proposed: 'owlBlue', accepting: 'owl
  */
 function KnowledgePage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const kbs = useKBs(spaceId)
   const canWrite = atLeast(roleIn(useMe().data, spaceId), 'operator')
   const [open, setOpen] = useState<string | null>(null)
   const [editing, setEditing] = useState<KnowledgeBase | 'new' | null>(null)
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="Knowledge bases agents ask for context, decisions and documentation. Each requester gets its own support session."
+      <SectionHeader title="Knowledge" description="Knowledge bases agents ask for context and decisions"
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setEditing('new')}>Add knowledge base</Button>} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={kbs.error} />
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         {(kbs.data ?? []).map((k) => (

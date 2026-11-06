@@ -5,14 +5,13 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type Message } from '@/api/client'
-import { keys, useMe, useMessages, useRuns, useSpace } from '@/api/queries'
+import { keys, useMe, useMessages, useRuns } from '@/api/queries'
 import { AttachmentList } from '@/components/AttachmentList'
 import { Composer } from '@/components/composer/Composer'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
-import { PageHeader } from '@/components/PageHeader'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { required } from '@/lib/form'
@@ -33,7 +32,6 @@ function party(kind: string, id?: string, label?: string) {
 /** Durable messages between agents, control and operators (SM-COMM-001). Delivery state is SpaceMan's, never terminal text. */
 function MessagesPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const list = useMessages(spaceId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
@@ -49,9 +47,8 @@ function MessagesPage() {
   const current = all.find((m) => m.id === open) ?? null
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="Durable messages between agents, control and operators. Recipients are notified when idle and acknowledge through their tools."
+      <SectionHeader title="Messages" description="Messages between agents, control and operators"
         actions={canWrite && <Button leftSection={<IconMessagePlus size={14} />} onClick={() => setComposing(true)}>Send message</Button>} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={list.error} />
       <Group justify="space-between" mb={6}>
         <Group gap="sm">

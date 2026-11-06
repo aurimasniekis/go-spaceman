@@ -5,12 +5,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, ifMatch, unwrap, type Limit, type Limits } from '@/api/client'
-import { keys, useLimits, useMe, useSpace } from '@/api/queries'
+import { keys, useLimits, useMe } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { limitValue, usd } from '@/features/limits/format'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago } from '@/lib/format'
 import { notifyOk } from '@/lib/notify'
@@ -32,7 +31,6 @@ const BUDGET_STATE: Record<string, { label: string; color: string }> = {
 
 function LimitsPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const limits = useLimits(spaceId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
@@ -41,9 +39,8 @@ function LimitsPage() {
 
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="The limits in force in this space: installation defaults, this space's overrides, and where each is enforced."
+      <SectionHeader title="Limits" description="Limits and budgets in force in this space, and where each comes from"
         actions={canWrite && l && <Button leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>Edit limits</Button>} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={limits.error} />
       {l && (
         <Stack gap="md">
