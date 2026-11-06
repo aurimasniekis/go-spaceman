@@ -4,9 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { api, unwrap } from '@/api/client'
 import { useState } from 'react'
-import { useHumanSearch, useMe, useSpace } from '@/api/queries'
+import { useHumanSearch, useMe } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { ActionDetail } from '@/features/human/ActionDetail'
 import { ActionFilters, useActionFilters } from '@/features/human/ActionFilters'
 import { ActionList } from '@/features/human/ActionList'
@@ -15,7 +15,6 @@ import { NewActionModal } from '@/features/human/NewActionModal'
 import { PoliciesPanel } from '@/features/human/PoliciesPanel'
 import { SpaceTypesModal } from '@/features/human/SpaceTypesModal'
 import { TypePermissionsModal } from '@/features/human/TypePermissionsModal'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { useView } from '@/lib/viewPrefs'
 
@@ -27,7 +26,6 @@ export const Route = createFileRoute('/spaces/$spaceId/human')({
 
 function SpaceHumanPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const filters = useActionFilters(`human.space.${spaceId}`)
   const [view, setView] = useView('human.space.final', { showFinal: false })
   const showFinal = view.showFinal || filters.f.status !== ''
@@ -48,7 +46,7 @@ function SpaceHumanPage() {
   const items = list.data?.items ?? []
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="Requests for people in this space: separate from the inbox, the queue and agent messages."
+      <SectionHeader title="Human actions" description="Questions, approvals and tasks for people in this space"
         actions={(
           <>
             <Button variant="default" onClick={() => setPolicies(true)}>Policies</Button>
@@ -57,7 +55,6 @@ function SpaceHumanPage() {
             {canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New action</Button>}
           </>
         )} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={list.error ?? linked.error} />
       <ActionFilters filters={filters} />
       <Group justify="space-between" mb={6}>

@@ -1,10 +1,10 @@
 import { Badge, Box, Group, UnstyledButton } from '@mantine/core'
 import { Link, useRouterState } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
-import { useHumanActions, useInbox, useMessages, useXSpaceRequests } from '@/api/queries'
+import { useHumanActions, useInbox, useMessages, useRuns, useXSpaceRequests } from '@/api/queries'
 
-type Section = 'overview' | 'inbox' | 'queue' | 'human' | 'messages' | 'repositories' | 'knowledge' | 'memory' | 'events' | 'schedules' | 'limits' | 'cross-space'
-type To = '/spaces/$spaceId' | '/spaces/$spaceId/inbox' | '/spaces/$spaceId/queue' | '/spaces/$spaceId/human' | '/spaces/$spaceId/messages' | '/spaces/$spaceId/repositories'
+type Section = 'overview' | 'terminals' | 'inbox' | 'queue' | 'human' | 'messages' | 'repositories' | 'knowledge' | 'memory' | 'events' | 'schedules' | 'limits' | 'cross-space'
+type To = '/spaces/$spaceId' | '/spaces/$spaceId/terminals' | '/spaces/$spaceId/inbox' | '/spaces/$spaceId/queue' | '/spaces/$spaceId/human' | '/spaces/$spaceId/messages' | '/spaces/$spaceId/repositories'
   | '/spaces/$spaceId/knowledge' | '/spaces/$spaceId/memory' | '/spaces/$spaceId/events' | '/spaces/$spaceId/schedules' | '/spaces/$spaceId/limits' | '/spaces/$spaceId/cross-space'
 
 /**
@@ -18,12 +18,14 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
   const waiting = (human.data?.items ?? []).filter((a) => a.status === 'open' || a.status === 'in_progress').length
   const forOperators = useMessages(spaceId).data?.operators_pending ?? 0
   const incoming = (useXSpaceRequests(spaceId).data ?? []).filter((r) => r.side === 'incoming' && r.state === 'pending').length
-  const active: Section = path.includes('/inbox') ? 'inbox' : path.includes('/events') ? 'events' : path.includes('/queue') ? 'queue'
+  const running = (useRuns(spaceId).data ?? []).filter((r) => !['exited', 'failed', 'lost'].includes(r.observed)).length
+  const active: Section = path.includes('/terminals') || path.includes('/runs/') ? 'terminals' : path.includes('/inbox') ? 'inbox' : path.includes('/events') ? 'events' : path.includes('/queue') ? 'queue'
     : path.includes('/schedules') ? 'schedules' : path.includes('/limits') ? 'limits' : path.includes('/repositories') ? 'repositories'
     : path.includes('/human') ? 'human' : path.includes('/messages') ? 'messages' : path.includes('/memory') ? 'memory' : path.includes('/knowledge') ? 'knowledge' : path.includes('/cross-space') ? 'cross-space' : 'overview'
   const count = (n: number, color?: string) => (n > 0 ? <Badge size="xs" color={color} circle={n < 10}>{n}</Badge> : null)
   const items: { key: Section; to: To; label: string; extra?: ReactNode }[] = [
     { key: 'overview', to: '/spaces/$spaceId', label: 'Overview' },
+    { key: 'terminals', to: '/spaces/$spaceId/terminals', label: 'Terminals', extra: count(running, 'owlGreen') },
     { key: 'inbox', to: '/spaces/$spaceId/inbox', label: 'Inbox', extra: count(fresh) },
     { key: 'queue', to: '/spaces/$spaceId/queue', label: 'Queue' },
     { key: 'human', to: '/spaces/$spaceId/human', label: 'Human actions', extra: count(waiting, 'owlYellow') },

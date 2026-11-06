@@ -95,7 +95,10 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByLabel('Add the starter roles').uncheck()
   await page.getByRole('button', { name: 'Create space' }).click()
   await expect(page.getByRole('heading', { name: /Payments platform/ })).toBeVisible()
-  await expect(page.getByText('valid')).toBeVisible({ timeout: 20_000 })
+  // The space's node is connected and holds the lease once Launch run is enabled.
+  await expect(page.getByRole('button', { name: 'Launch run' })).toBeEnabled({ timeout: 20_000 })
+  const spaceId = new URL(page.url()).pathname.split('/')[2]
+  await expect.poll(async () => (await page.request.get(`/api/v1/spaces/${spaceId}`).then((r) => r.json())).lease?.valid, { timeout: 20_000 }).toBe(true)
   await shot(page, 'space')
 
   // An account: runs cannot start until the space has one (SM-ACCT-003). The stub harness ignores the credential.
@@ -126,21 +129,21 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('button', { name: 'Launch', exact: true }).click()
   await expect(page).toHaveURL(/\/runs\/run_/)
   await expect(page.getByText('Live · watch-only')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByText('running', { exact: true })).toBeVisible({ timeout: 20_000 })
+  // The header's status dot: the program runs (working or idle), not starting or ended.
+  await expect(page.getByRole('img', { name: /^(Working|Idle|Needs attention)$/ }).first()).toBeVisible({ timeout: 20_000 })
   await page.waitForTimeout(4_000)
   await shot(page, 'run-live')
 
   // Stop it, then replay the recording.
   await page.getByRole('button', { name: 'Stop' }).click()
   await page.getByRole('menuitem', { name: 'Stop the program' }).click()
-  await expect(page.getByText(/^(exited|failed)$/)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('img', { name: /^(Ended|Failed)$/ }).first()).toBeVisible({ timeout: 30_000 })
   await page.getByText('Replay', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })
   await page.waitForTimeout(500)
   await shot(page, 'run-replay')
 
   // Inbox: an operator item written in the composer, with an attached image and file, rendered safely and marked done.
-  await page.getByRole('link', { name: 'Payments platform' }).click()
   await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: /Inbox/ }).click()
   await page.getByRole('button', { name: 'New item' }).click()
   const editor = page.getByRole('textbox', { name: 'Item text' })
@@ -170,7 +173,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
 
   // Events: a Pulse connection (devpulse), a GitHub issues subscription, a published go-pulse-github event that arrives
   // in the inbox, rendered as untrusted text.
-  await page.getByRole('link', { name: 'Events' }).click()
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Events' }).click()
   await page.getByRole('tab', { name: 'Connections' }).click()
   await page.getByRole('button', { name: 'Add connection' }).click()
   await page.getByLabel('Name').fill('dev-pulse')
@@ -210,7 +213,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('button', { name: 'Create task' }).click()
   await page.getByRole('button', { name: 'Add to queue' }).click()
   await expect(page.getByText('Done', { exact: true }).first()).toBeVisible()
-  await page.getByRole('link', { name: 'Payments platform · Inbox' }).click()
+  await page.getByRole('link', { name: '← All inbox items' }).click()
   await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: 'Queue' }).click()
   await page.getByRole('button', { name: 'New task' }).click()
   await page.getByLabel('Title').fill('Upgrade the Go toolchain')
@@ -227,7 +230,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await rows.first().click()
   await page.getByRole('button', { name: 'Change state' }).click()
   await page.getByRole('menuitem', { name: 'running', exact: true }).click()
-  await expect(page.getByRole('dialog').getByText('running', { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog').getByText('Running', { exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
 
   // Human actions: a blocking question on the task appears in the space tab and the global "Needs you" view (with the nav

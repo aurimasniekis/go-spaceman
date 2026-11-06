@@ -1,18 +1,17 @@
-import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core'
+import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, SegmentedControl, Select, Stack, Text, TextInput } from '@mantine/core'
 import { IconArrowRight, IconCheck, IconMessagePlus } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type Message } from '@/api/client'
-import { keys, useMe, useMessages, useRuns, useSpace } from '@/api/queries'
+import { keys, useMe, useMessages, useRuns } from '@/api/queries'
 import { AttachmentList } from '@/components/AttachmentList'
 import { Composer } from '@/components/composer/Composer'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
-import { PageHeader } from '@/components/PageHeader'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { required } from '@/lib/form'
@@ -33,24 +32,30 @@ function party(kind: string, id?: string, label?: string) {
 /** Durable messages between agents, control and operators (SM-COMM-001). Delivery state is SpaceMan's, never terminal text. */
 function MessagesPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const list = useMessages(spaceId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
   const [composing, setComposing] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
   const [onlyMine, setOnlyMine] = useState(false)
+  // People and agents by default: SpaceMan's own notifications to control would otherwise bury them (UX review).
+  const [view, setView] = useState<'people' | 'system' | 'all'>('people')
   const all = list.data?.items ?? []
-  const items = onlyMine ? all.filter((m) => m.to_kind === 'operators') : all
+  const isSystem = (m: (typeof all)[number]) => m.from_kind === 'system' || m.kind === 'notification'
+  const systemCount = all.filter(isSystem).length
+  const items = all.filter((m) => (view === 'all' || (view === 'system') === isSystem(m)) && (!onlyMine || m.to_kind === 'operators'))
   const current = all.find((m) => m.id === open) ?? null
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="Durable messages between agents, control and operators. Recipients are notified when idle and acknowledge through their tools."
+      <SectionHeader title="Messages" description="Messages between agents, control and operators"
         actions={canWrite && <Button leftSection={<IconMessagePlus size={14} />} onClick={() => setComposing(true)}>Send message</Button>} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={list.error} />
       <Group justify="space-between" mb={6}>
-        <Text size="xs" c="dimmed">{list.data?.operators_pending ?? 0} waiting for operators</Text>
+        <Group gap="sm">
+          <SegmentedControl size="xs" value={view} onChange={(v) => setView(v as typeof view)} aria-label="Which messages"
+            data={[{ value: 'people', label: 'People and agents' }, { value: 'system', label: `System (${systemCount})` }, { value: 'all', label: 'All' }]} />
+          <Text size="xs" c="dimmed">{list.data?.operators_pending ?? 0} waiting for operators</Text>
+        </Group>
         <Checkbox size="xs" label="Only messages to operators" checked={onlyMine} onChange={(e) => setOnlyMine(e.currentTarget.checked)} />
       </Group>
       <Stack gap={4} role="list" aria-label="Messages">
@@ -66,7 +71,11 @@ function MessagesPage() {
             </Group>
           </Card>
         ))}
-        {list.isSuccess && items.length === 0 && <Text size="sm" c="dimmed" ta="center" p="lg">No messages yet.</Text>}
+        {list.isSuccess && items.length === 0 && (
+          <Text size="sm" c="dimmed" ta="center" p="lg">
+            {all.length === 0 ? 'No messages yet.' : view === 'people' ? `No messages between people and agents. ${systemCount} system notifications are under System.` : 'Nothing here.'}
+          </Text>
+        )}
       </Stack>
       <Drawer opened={current !== null} onClose={() => setOpen(null)} position="right" size="lg" title="Message">
         {current && <MessageDetail spaceId={spaceId} m={current} canWrite={canWrite} />}

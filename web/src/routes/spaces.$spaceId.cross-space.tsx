@@ -5,10 +5,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { api, ifMatch, unwrap, type XSpacePeer, type XSpaceRequest } from '@/api/client'
-import { useMe, useSpace, useXSpacePeers, useXSpaceRequests, useXSpaceSettings } from '@/api/queries'
+import { useMe, useXSpacePeers, useXSpaceRequests, useXSpaceSettings } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { accepts, disclosureLabel, sends } from '@/features/xspace/access'
 import { PeerModal, RequestDetail, RequestTable } from '@/features/xspace/XSpace'
 import { atLeast, roleIn } from '@/lib/access'
@@ -22,14 +21,11 @@ export const Route = createFileRoute('/spaces/$spaceId/cross-space')({ component
  */
 function CrossSpacePage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const canWrite = atLeast(roleIn(useMe().data, spaceId), 'operator')
   const [tab, setTab] = useState<string | null>('requests')
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'}
-        description="Requests between this space's control and other spaces, and what this space accepts from and may send to each of them." />
-      <SpaceNav spaceId={spaceId} />
+      <SectionHeader title="Cross-space" description="Requests between this space's control and other spaces, and who may send them" />
       <Tabs value={tab} onChange={setTab}>
         <Tabs.List mb="sm">
           <Tabs.Tab value="requests">Requests</Tabs.Tab>

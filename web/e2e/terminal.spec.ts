@@ -43,7 +43,7 @@ test('reopening a full-screen run terminal', async ({ page }) => {
   await page.goto(`/spaces/${sp.id}/runs/${run.id}`)
   await expect(page.getByText('Live · watch-only')).toBeVisible({ timeout: 20_000 })
   for (let i = 0; i < 3; i++) {
-    await page.getByRole('link', { name: 'Full screen' }).first().click()
+    await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: 'Overview' }).click()
     await expect(page).toHaveURL(new RegExp(`/spaces/${sp.id}$`))
     await page.goBack()
     // A hung tab never shows the badge again, and never answers.

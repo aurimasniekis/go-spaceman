@@ -135,11 +135,14 @@ export const useSpace = (id: string) =>
     refetchInterval: 15_000,
   })
 
-export const useRuns = (space: string) =>
-  useQuery({
+/** A space's runs (newest 200); also used for every space at once by the Terminals workspace. */
+export const runsQuery = (space: string) =>
+  queryOptions({
     queryKey: keys.runs(space),
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/runs', { params: { path: { space_id: space }, query: { limit: 200 } } })).items,
   })
+
+export const useRuns = (space: string) => useQuery(runsQuery(space))
 
 /** The space's relocation in progress, or its latest one (null when it never had one). */
 export const useRelocation = (space: string) =>

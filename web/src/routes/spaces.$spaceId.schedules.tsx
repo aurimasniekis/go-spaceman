@@ -6,12 +6,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { api, ApiError, ifMatch, unwrap, type Schedule, type ScheduleInput } from '@/api/client'
-import { keys, useMe, useSchedule, useSchedules, useSpace } from '@/api/queries'
+import { keys, useMe, useSchedule, useSchedules } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
-import { PageHeader } from '@/components/PageHeader'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { MISSED_LABEL, scheduleWhen } from '@/features/limits/format'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { fieldError, required } from '@/lib/form'
@@ -32,7 +31,6 @@ function zones(): string[] {
 
 function SchedulesPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const list = useSchedules(spaceId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
@@ -42,10 +40,8 @@ function SchedulesPage() {
 
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'}
-        description="Recurring work: inbox items or tasks at cron or interval occurrences in a time zone. One timer drives them; no agent waits or polls."
+      <SectionHeader title="Schedules" description="Recurring tasks and inbox items for this space"
         actions={canWrite && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>New schedule</Button>} />
-      <SpaceNav spaceId={spaceId} />
       <ErrorAlert error={list.error} />
       <Card p={0}>
         <Table highlightOnHover>

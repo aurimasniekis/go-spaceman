@@ -1,225 +1,48 @@
-import { Anchor, Badge, Breadcrumbs, Button, Card, Group, Menu, SegmentedControl, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
-import { RunUsageCard } from '@/features/usage/UsageCards'
-import { IconChevronDown, IconSend, IconPlayerStop } from '@tabler/icons-react'
-import { useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { api, check, unwrap, type Me, type Run } from '@/api/client'
-import { keys, useMe, useRun, useSpace } from '@/api/queries'
+import { Breadcrumbs, CopyButton, Text, Tooltip } from '@mantine/core'
+import { createFileRoute } from '@tanstack/react-router'
 import { AnchorLink } from '@/components/AnchorLink'
-import { useAppForm } from '@/components/form/appForm'
+import { useRun } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
-import { RunState } from '@/components/StatusBadge'
-import { TakeoverPanel, useTakeoverInput } from '@/features/terminal/Takeover'
-import { TerminalView } from '@/features/terminal/TerminalView'
-import { atLeast, roleIn } from '@/lib/access'
-import { datetime, isSet } from '@/lib/format'
-import { notifyError, notifyOk } from '@/lib/notify'
+import { RunWorkbench } from '@/features/runs/RunWorkbench'
+import { isEnded, runTitle } from '@/features/runs/runInfo'
+import { RunUsageCard } from '@/features/usage/UsageCards'
 
 export const Route = createFileRoute('/spaces/$spaceId/runs/$runId')({
   validateSearch: (s: Record<string, unknown>): { view?: 'live' | 'replay' } => (s.view === 'replay' || s.view === 'live' ? { view: s.view } : {}),
   component: RunPage,
 })
 
-const ENDED = ['exited', 'failed', 'lost']
-
+/**
+ * One run, inside the space layout (UX review §4.1/§4.2): the workbench with the inspector open, a breadcrumb back to
+ * the space's terminals, and the full usage table below.
+ */
 function RunPage() {
   const { spaceId, runId } = Route.useParams()
   const { view } = Route.useSearch()
   const navigate = Route.useNavigate()
-  const qc = useQueryClient()
-  const space = useSpace(spaceId)
   const run = useRun(spaceId, runId)
-  const me = useMe().data
-  const operator = atLeast(roleIn(me, spaceId), 'operator')
-  // terminal:takeover is an admin permission by default (the API enforces it).
-  const canTakeOver = atLeast(roleIn(me, spaceId), 'admin')
-
   if (run.error) return <ErrorAlert error={run.error} />
   if (!run.data) return null
   const r = run.data
-  const ended = ENDED.includes(r.observed)
-  const mode = view ?? (ended ? 'replay' : 'live')
-  return <RunView spaceId={spaceId} runId={runId} r={r} ended={ended} mode={mode} operator={operator} canTakeOver={canTakeOver}
-    me={me} spaceName={space.data?.name} navigate={(v) => void navigate({ search: { view: v } })} qc={qc} />
-}
-
-function RunView({ spaceId, runId, r, ended, mode, operator, canTakeOver, me, spaceName, navigate, qc }: {
-  spaceId: string
-  runId: string
-  r: Run
-  ended: boolean
-  mode: 'live' | 'replay'
-  operator: boolean
-  canTakeOver: boolean
-  me: Me | null | undefined
-  spaceName?: string
-  navigate: (v: 'live' | 'replay') => void
-  qc: QueryClient
-}) {
-  const onKeys = useTakeoverInput(spaceId, runId, r, me)
-  const takenOver = !!r.takeover
-
-  const stop = async (m: 'interrupt' | 'kill') => {
-    try {
-      qc.setQueryData(keys.run(spaceId, runId), unwrap(await api.POST('/spaces/{space_id}/runs/{run_id}/stop', { params: { path: { space_id: spaceId, run_id: runId } }, body: { mode: m, reason: 'stopped from the web UI' } })))
-      notifyOk(m === 'kill' ? 'Stop requested' : 'Interrupt requested')
-    } catch (e) {
-      notifyError(e, 'Could not stop the run')
-    }
-  }
-
-  const inputForm = useAppForm({
-    defaultValues: { text: '' },
-    onSubmit: async ({ value }) => {
-      try {
-        check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: runId } }, body: { text: value.text } }))
-        inputForm.reset()
-        notifyOk('Delivered when the agent is idle')
-      } catch (e) {
-        notifyError(e, 'Could not send input')
-      }
-    },
-  })
-
-  return (
-    <Stack gap="md">
-      <Breadcrumbs>
-        <Anchor component={Link} to="/spaces" size="sm">Spaces</Anchor>
-        <AnchorLink to="/spaces/$spaceId" params={{ spaceId }} size="sm">{spaceName ?? spaceId}</AnchorLink>
-        <Text size="sm" className="mono">{runId}</Text>
-      </Breadcrumbs>
-      <Group justify="space-between" wrap="nowrap">
-        <Group gap="xs">
-          <Text fw={600} size="lg">{r.role}</Text>
-          <Badge variant="outline" color="gray">{r.harness}</Badge>
-          <RunState run={r} />
-          {r.status && <Badge color="owlPurple" variant="outline">{r.status}</Badge>}
-          {r.adopted && <Tooltip label="Adopted from the node after a restart"><Badge color="gray" variant="outline">adopted</Badge></Tooltip>}
-        </Group>
-        <Group gap="xs">
-          <SegmentedControl value={mode} onChange={(v) => navigate(v as 'live' | 'replay')}
-            data={[{ value: 'live', label: 'Live', disabled: ended }, { value: 'replay', label: 'Replay' }]} aria-label="Terminal view" />
-          {operator && !ended && (
-            <Menu position="bottom-end">
-              <Menu.Target>
-                <Button color="owlRed" variant="light" leftSection={<IconPlayerStop size={14} />} rightSection={<IconChevronDown size={12} />}>Stop</Button>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item onClick={() => void stop('interrupt')}>Interrupt (keeps the session resumable)</Menu.Item>
-                <Menu.Item color="owlRed" onClick={() => void stop('kill')}>Stop the program</Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          )}
-        </Group>
-      </Group>
-
-      <TakeoverPanel spaceId={spaceId} runId={runId} run={r} me={me} canTakeOver={canTakeOver} ended={ended} />
-
-      <TerminalView key={mode} spaceId={spaceId} runId={runId} mode={mode} onInput={mode === 'live' ? onKeys : null} />
-
-      {operator && !ended && !takenOver && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (inputForm.state.values.text.trim()) void inputForm.handleSubmit()
-          }}
-        >
-          <Group gap="xs" wrap="nowrap">
-            <inputForm.AppField name="text">
-              {(f) => <f.TextField flex={1} placeholder="Message the agent (sent at its next idle point)" aria-label="Message the agent" />}
-            </inputForm.AppField>
-            <inputForm.Subscribe selector={(st) => st.values.text.trim() !== ''}>
-              {(has) => <Button type="submit" leftSection={<IconSend size={14} />} disabled={!has}>Send</Button>}
-            </inputForm.Subscribe>
-          </Group>
-        </form>
-      )}
-
-      <SimpleGrid cols={{ base: 2, sm: 4 }}>
-        <Detail label="Kind" value={r.kind} />
-        <Detail label="Instance" value={r.instance_id} mono />
-        <Detail label="Session" value={r.session_id || '—'} mono />
-        <Detail label="Lease generation" value={String(r.generation)} mono />
-        <Detail label="Launched by" value={r.created_by} mono />
-        <Detail label="Created" value={datetime(r.created_at)} />
-        <Detail label="Started" value={isSet(r.started_at) ? datetime(r.started_at) : '—'} />
-        <Detail label="Ended" value={isSet(r.ended_at) ? `${datetime(r.ended_at)}${r.end_reason ? ` (${r.end_reason})` : ''}` : '—'} />
-        <Detail label="Exit code" value={r.exit_code !== undefined && ended ? String(r.exit_code) : '—'} mono />
-        {r.launch.worktree && (
-          <Card p="sm">
-            <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Worktree</Text>
-            <Text size="sm" className="mono" style={{ wordBreak: 'break-all' }}>
-              worktrees/{r.launch.worktree.branch.replaceAll('/', '-')} on {r.launch.worktree.branch}
-            </Text>
-            <AnchorLink to="/spaces/$spaceId/repositories" params={{ spaceId: r.space_id }} size="xs" className="mono">{r.launch.worktree.repo}</AnchorLink>
-          </Card>
+  const mode = view ?? (isEnded(r) ? 'replay' : 'live')
+  const crumbs = (
+    <Breadcrumbs>
+      <AnchorLink to="/spaces/$spaceId/terminals" params={{ spaceId }} search={{ run: runId }} size="sm">Terminals</AnchorLink>
+      <CopyButton value={runId}>
+        {({ copied, copy }) => (
+          <Tooltip label={copied ? 'Copied' : `${runId} (click to copy)`}>
+            <Text size="sm" onClick={copy} style={{ cursor: 'copy' }}>{runTitle(r)}</Text>
+          </Tooltip>
         )}
-      </SimpleGrid>
-      {r.error && <ErrorAlert error={new Error(r.error)} title="Run error" />}
-      <ManifestCard manifest={r.manifest} />
-      <RunUsageCard spaceId={r.space_id} runId={r.id} />
-    </Stack>
+      </CopyButton>
+    </Breadcrumbs>
   )
-}
-
-type Manifest = {
-  effective?: Record<string, { value: string; origin: string }>
-  prompt?: { slug: string; number: number; pinned: boolean; sha256: string }
-  space_role?: { name: string; revision: number }
-  template?: { slug: string; revision: number }
-  profile?: { slug: string; revision: number }
-  dependencies?: Record<string, string | number>
-  policy?: { version: number; max_permission_mode: string }
-  account_ref?: string
-  skills?: { slug: string; number: number; pinned: boolean; sha256: string; origin: string }[] | null
-  skills_unavailable?: string[]
-  mcp_servers?: { slug: string; version: number; tools?: string[] | null }[] | null
-}
-
-/** The non-secret configuration the run started with (SM-PROMPT-004); later catalog changes do not alter it. */
-function ManifestCard({ manifest }: { manifest: unknown }) {
-  const m = (manifest ?? {}) as Manifest
-  const eff = Object.entries(m.effective ?? {}).filter(([k]) => k !== 'system_text_sha256').sort(([a], [b]) => a.localeCompare(b))
-  if (eff.length === 0 && !m.dependencies) return null
   return (
-    <Card>
-      <Text fw={600} mb={4}>Configuration at launch</Text>
-      <Text size="xs" c="dimmed" mb="xs">
-        {[m.space_role && `role ${m.space_role.name} r${m.space_role.revision}`, m.template && `template ${m.template.slug} r${m.template.revision}`,
-          m.profile && `profile ${m.profile.slug} r${m.profile.revision}`, m.prompt && `prompt ${m.prompt.slug} v${m.prompt.number}${m.prompt.pinned ? ' (pinned)' : ''}`,
-          m.account_ref && `account ${m.account_ref}`, m.policy && `policy v${m.policy.version} (max permission mode ${m.policy.max_permission_mode})`]
-          .filter(Boolean).join(' · ')}
-      </Text>
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing={4}>
-        {eff.map(([k, f]) => (
-          <Group key={k} gap={6} wrap="nowrap">
-            <Text size="xs" className="mono" c="dimmed">{k}</Text>
-            <Text size="xs" className="mono" truncate>{f.value}</Text>
-            <Text size="xs" c="dimmed">({f.origin.replace('_', ' ')})</Text>
-          </Group>
-        ))}
-      </SimpleGrid>
-      {(m.skills?.length ?? 0) > 0 && (
-        <Text size="xs" mt="xs">Skills: {m.skills!.map((sk) => `${sk.slug} v${sk.number}${sk.pinned ? ' (pinned)' : ''}`).join(' · ')}</Text>
-      )}
-      {(m.mcp_servers?.length ?? 0) > 0 && (
-        <Text size="xs" mt={2}>MCP servers: {m.mcp_servers!.map((x) => `${x.slug}${x.tools?.length ? ` (${x.tools.join(', ')})` : ''}`).join(' · ')}</Text>
-      )}
-      {(m.skills_unavailable?.length ?? 0) > 0 && (
-        <Text size="xs" c="owlYellow" mt={2}>Not installed (no published version): {m.skills_unavailable!.join(', ')}</Text>
-      )}
-      {m.dependencies && (
-        <Text size="xs" c="dimmed" mt="xs">Versions: {Object.entries(m.dependencies).filter(([, v]) => v !== '' && v !== undefined).map(([k, v]) => `${k} ${v}`).join(' · ')}</Text>
-      )}
-    </Card>
-  )
-}
-
-function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <Card p="sm">
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{label}</Text>
-      <Text size="sm" className={mono ? 'mono' : undefined} style={{ wordBreak: 'break-all' }}>{value}</Text>
-    </Card>
+    <>
+      <RunWorkbench spaceId={spaceId} run={r} mode={mode} onMode={(v) => void navigate({ search: { view: v } })} crumbs={crumbs} />
+      <div style={{ marginTop: 'var(--mantine-spacing-md)' }}>
+        <RunUsageCard spaceId={spaceId} runId={runId} />
+      </div>
+    </>
   )
 }

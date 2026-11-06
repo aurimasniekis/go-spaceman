@@ -4,12 +4,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, check, unwrap, type MemoryCollection } from '@/api/client'
-import { useMe, useMemory, useSpace } from '@/api/queries'
+import { useMe, useMemory } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { MarkdownView } from '@/components/MarkdownView'
-import { PageHeader } from '@/components/PageHeader'
+import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { DreamsCard } from '@/features/memory/DreamsCard'
-import { SpaceNav } from '@/features/spaces/SpaceNav'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
 import { notifyError } from '@/lib/notify'
@@ -24,15 +23,13 @@ const short = (h?: string) => (h ? h.slice(0, 8) : '—')
  */
 function MemoryPage() {
   const { spaceId } = Route.useParams()
-  const space = useSpace(spaceId)
   const mem = useMemory(spaceId)
   const [open, setOpen] = useState<string | null>(null)
   const items = mem.data?.items ?? []
   const current = items.find((c) => c.role === open) ?? null
   return (
     <>
-      <PageHeader title={space.data?.name ?? 'Space'} description="Role memory: notes each role keeps across runs, shared by every instance of the role and preserved centrally." />
-      <SpaceNav spaceId={spaceId} />
+      <SectionHeader title="Memory" description="Notes each role keeps across runs" />
       <ErrorAlert error={mem.error} />
       <DreamsCard spaceId={spaceId} />
       {mem.data && !mem.data.available && (

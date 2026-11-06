@@ -373,7 +373,7 @@ test('documentation screenshots', async ({ page, browser }) => {
   })
   await capture(page, 'space-overview', async () => {
     await page.goto(`/spaces/${payments.id}`)
-    await expect(page.getByRole('cell', { name: 'reviewer (worker)' })).toBeVisible()
+    await expect(page.getByRole('cell', { name: /^reviewer/ }).first()).toBeVisible()
   })
   // Everything that needs a person (SM-UI-003): pending human actions, blocked tasks, quarantine, runs, nodes, storage.
   await capture(page, 'attention', async () => {
@@ -389,7 +389,8 @@ test('documentation screenshots', async ({ page, browser }) => {
   expect(enrolled.ok()).toBeTruthy()
   await capture(page, 'space-relocate', async () => {
     await page.goto(`/spaces/${payments.id}`)
-    await page.getByRole('button', { name: 'Relocate' }).click()
+    await page.getByRole('button', { name: 'More actions for Payments platform' }).click()
+    await page.getByRole('menuitem', { name: 'Relocate…' }).click()
     await expect(page.getByText('Not available as a destination: build-02 (never connected)')).toBeVisible()
   })
   await capture(page, 'space-create', async () => {
@@ -425,6 +426,20 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByText('Live · watch-only')).toBeVisible()
     await page.waitForTimeout(1_500)
   })
+  // The Terminals workspace (UX review §4.4): every space and its agents beside the selected space's terminals.
+  await capture(page, 'terminals-workspace', async () => {
+    await page.goto(`/terminals?space=${payments.id}&run=${control.id}`)
+    await expect(page.getByRole('tablist', { name: 'Agents' })).toBeVisible()
+    await expect(page.getByText('Live · watch-only')).toBeVisible()
+    await page.waitForTimeout(1_500)
+  })
+  // The space's Terminals tab (UX review §4.3): every agent as a tab with its state; the selected one's terminal.
+  await capture(page, 'space-terminals', async () => {
+    await page.goto(`/spaces/${payments.id}/terminals?run=${control.id}`)
+    await expect(page.getByRole('tablist', { name: 'Agents' })).toBeVisible()
+    await expect(page.getByText('Live · watch-only')).toBeVisible()
+    await page.waitForTimeout(1_500)
+  })
   // Terminal takeover (SM-UI-004): the admin takes over control's terminal; automated input waits until it is released.
   // Takeover needs a recent sign-in: a fresh code (codes are single-use) re-authenticates the admin's session once,
   // before the capture, so no open page sees its session rotate.
@@ -435,7 +450,7 @@ test('documentation screenshots', async ({ page, browser }) => {
   await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
   await capture(page, 'terminal-takeover', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
-    const take = page.getByRole('button', { name: 'Take over terminal' })
+    const take = page.getByRole('button', { name: 'Take over', exact: true })
     const banner = page.getByText('You have taken over this terminal')
     await expect(take.or(banner)).toBeVisible()
     if (await take.isVisible()) {
@@ -662,15 +677,15 @@ test('documentation screenshots', async ({ page, browser }) => {
   })
   await capture(page, 'run-manifest', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
-    await page.getByText('Configuration at launch').scrollIntoViewIfNeeded()
-    await expect(page.getByText('Configuration at launch')).toBeVisible()
+    await page.getByRole('button', { name: 'Launch and configuration' }).click()
+    await expect(page.getByText('Launched by')).toBeVisible()
   })
   await expect.poll(async () => (await api.call<{ known: boolean; transcript?: { state: string } }>('GET', `/spaces/${payments.id}/runs/${finished.id}/usage`)).transcript?.state ?? '',
     { timeout: 30_000 }).toBe('stored')
   await capture(page, 'run-usage', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${finished.id}`)
     await page.getByText('Native transcript').scrollIntoViewIfNeeded()
-    await expect(page.getByText('from the transcript')).toBeVisible()
+    await expect(page.getByText('from the transcript').last()).toBeVisible()
   })
   await capture(page, 'space-usage', async () => {
     await page.goto(`/spaces/${payments.id}`)
@@ -851,7 +866,8 @@ test('documentation screenshots', async ({ page, browser }) => {
   // Space export (ADR-0045): what the archive would hold, the export limit and the plaintext warning.
   await capture(page, 'space-export', async () => {
     await page.goto(`/spaces/${payments.id}`)
-    await page.getByRole('button', { name: 'Export', exact: true }).click()
+    await page.getByRole('button', { name: 'More actions for Payments platform' }).click()
+    await page.getByRole('menuitem', { name: 'Export…' }).click()
     await expect(page.getByText('The archive is not encrypted')).toBeVisible()
   })
   await api.call('POST', `/spaces/${payments.id}/schedules`, { name: 'weekday review', description: 'Morning look at the queue and open incidents', kind: 'cron',

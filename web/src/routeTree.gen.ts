@@ -30,6 +30,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInProvidersRouteImport } from './routes/sign-in-providers'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as SpacesRouteImport } from './routes/spaces'
+import { Route as TerminalsRouteImport } from './routes/terminals'
 import { Route as TokensRouteImport } from './routes/tokens'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as EventsIndexRouteImport } from './routes/events.index'
@@ -50,6 +51,7 @@ import { Route as SpacesSpaceIdMessagesRouteImport } from './routes/spaces.$spac
 import { Route as SpacesSpaceIdQueueRouteImport } from './routes/spaces.$spaceId.queue'
 import { Route as SpacesSpaceIdRepositoriesRouteImport } from './routes/spaces.$spaceId.repositories'
 import { Route as SpacesSpaceIdSchedulesRouteImport } from './routes/spaces.$spaceId.schedules'
+import { Route as SpacesSpaceIdTerminalsRouteImport } from './routes/spaces.$spaceId.terminals'
 import { Route as SpacesSpaceIdEventsIndexRouteImport } from './routes/spaces.$spaceId.events.index'
 import { Route as SpacesSpaceIdEventsSubscriptionIdRouteImport } from './routes/spaces.$spaceId.events.$subscriptionId'
 import { Route as SpacesSpaceIdInboxIndexRouteImport } from './routes/spaces.$spaceId.inbox.index'
@@ -161,6 +163,11 @@ const SpacesRoute = SpacesRouteImport.update({
   path: '/spaces',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TerminalsRoute = TerminalsRouteImport.update({
+  id: '/terminals',
+  path: '/terminals',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TokensRoute = TokensRouteImport.update({
   id: '/tokens',
   path: '/tokens',
@@ -263,6 +270,11 @@ const SpacesSpaceIdSchedulesRoute = SpacesSpaceIdSchedulesRouteImport.update({
   path: '/schedules',
   getParentRoute: () => SpacesSpaceIdRoute,
 } as any)
+const SpacesSpaceIdTerminalsRoute = SpacesSpaceIdTerminalsRouteImport.update({
+  id: '/terminals',
+  path: '/terminals',
+  getParentRoute: () => SpacesSpaceIdRoute,
+} as any)
 const SpacesSpaceIdEventsIndexRoute =
   SpacesSpaceIdEventsIndexRouteImport.update({
     id: '/',
@@ -314,6 +326,7 @@ export interface FileRoutesByFullPath {
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
+  '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
@@ -333,6 +346,7 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
+  '/spaces/$spaceId/terminals': typeof SpacesSpaceIdTerminalsRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -360,6 +374,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
+  '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
@@ -376,6 +391,7 @@ export interface FileRoutesByTo {
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
+  '/spaces/$spaceId/terminals': typeof SpacesSpaceIdTerminalsRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -406,6 +422,7 @@ export interface FileRoutesById {
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
+  '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
   '/prompts/$promptId': typeof PromptsPromptIdRoute
@@ -425,6 +442,7 @@ export interface FileRoutesById {
   '/spaces/$spaceId/queue': typeof SpacesSpaceIdQueueRoute
   '/spaces/$spaceId/repositories': typeof SpacesSpaceIdRepositoriesRoute
   '/spaces/$spaceId/schedules': typeof SpacesSpaceIdSchedulesRoute
+  '/spaces/$spaceId/terminals': typeof SpacesSpaceIdTerminalsRoute
   '/spaces/$spaceId/': typeof SpacesSpaceIdIndexRoute
   '/spaces/$spaceId/events/$subscriptionId': typeof SpacesSpaceIdEventsSubscriptionIdRoute
   '/spaces/$spaceId/inbox/$itemId': typeof SpacesSpaceIdInboxItemIdRoute
@@ -456,6 +474,7 @@ export interface FileRouteTypes {
     | '/sign-in-providers'
     | '/skills'
     | '/spaces'
+    | '/terminals'
     | '/tokens'
     | '/users'
     | '/prompts/$promptId'
@@ -475,6 +494,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
+    | '/spaces/$spaceId/terminals'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -502,6 +522,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in-providers'
     | '/skills'
+    | '/terminals'
     | '/tokens'
     | '/users'
     | '/prompts/$promptId'
@@ -518,6 +539,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
+    | '/spaces/$spaceId/terminals'
     | '/spaces/$spaceId'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -547,6 +569,7 @@ export interface FileRouteTypes {
     | '/sign-in-providers'
     | '/skills'
     | '/spaces'
+    | '/terminals'
     | '/tokens'
     | '/users'
     | '/prompts/$promptId'
@@ -566,6 +589,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId/queue'
     | '/spaces/$spaceId/repositories'
     | '/spaces/$spaceId/schedules'
+    | '/spaces/$spaceId/terminals'
     | '/spaces/$spaceId/'
     | '/spaces/$spaceId/events/$subscriptionId'
     | '/spaces/$spaceId/inbox/$itemId'
@@ -596,6 +620,7 @@ export interface RootRouteChildren {
   SignInProvidersRoute: typeof SignInProvidersRoute
   SkillsRoute: typeof SkillsRoute
   SpacesRoute: typeof SpacesRouteWithChildren
+  TerminalsRoute: typeof TerminalsRoute
   TokensRoute: typeof TokensRoute
   UsersRoute: typeof UsersRoute
   PromptsPromptIdRoute: typeof PromptsPromptIdRoute
@@ -751,6 +776,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/terminals': {
+      id: '/terminals'
+      path: '/terminals'
+      fullPath: '/terminals'
+      preLoaderRoute: typeof TerminalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tokens': {
       id: '/tokens'
       path: '/tokens'
@@ -891,6 +923,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SpacesSpaceIdSchedulesRouteImport
       parentRoute: typeof SpacesSpaceIdRoute
     }
+    '/spaces/$spaceId/terminals': {
+      id: '/spaces/$spaceId/terminals'
+      path: '/terminals'
+      fullPath: '/spaces/$spaceId/terminals'
+      preLoaderRoute: typeof SpacesSpaceIdTerminalsRouteImport
+      parentRoute: typeof SpacesSpaceIdRoute
+    }
     '/spaces/$spaceId/events/': {
       id: '/spaces/$spaceId/events/'
       path: '/'
@@ -981,6 +1020,7 @@ interface SpacesSpaceIdRouteChildren {
   SpacesSpaceIdQueueRoute: typeof SpacesSpaceIdQueueRoute
   SpacesSpaceIdRepositoriesRoute: typeof SpacesSpaceIdRepositoriesRoute
   SpacesSpaceIdSchedulesRoute: typeof SpacesSpaceIdSchedulesRoute
+  SpacesSpaceIdTerminalsRoute: typeof SpacesSpaceIdTerminalsRoute
   SpacesSpaceIdIndexRoute: typeof SpacesSpaceIdIndexRoute
   SpacesSpaceIdRunsRunIdRoute: typeof SpacesSpaceIdRunsRunIdRoute
 }
@@ -997,6 +1037,7 @@ const SpacesSpaceIdRouteChildren: SpacesSpaceIdRouteChildren = {
   SpacesSpaceIdQueueRoute: SpacesSpaceIdQueueRoute,
   SpacesSpaceIdRepositoriesRoute: SpacesSpaceIdRepositoriesRoute,
   SpacesSpaceIdSchedulesRoute: SpacesSpaceIdSchedulesRoute,
+  SpacesSpaceIdTerminalsRoute: SpacesSpaceIdTerminalsRoute,
   SpacesSpaceIdIndexRoute: SpacesSpaceIdIndexRoute,
   SpacesSpaceIdRunsRunIdRoute: SpacesSpaceIdRunsRunIdRoute,
 }
@@ -1040,6 +1081,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInProvidersRoute: SignInProvidersRoute,
   SkillsRoute: SkillsRoute,
   SpacesRoute: SpacesRouteWithChildren,
+  TerminalsRoute: TerminalsRoute,
   TokensRoute: TokensRoute,
   UsersRoute: UsersRoute,
   PromptsPromptIdRoute: PromptsPromptIdRoute,

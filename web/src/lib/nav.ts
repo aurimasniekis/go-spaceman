@@ -1,9 +1,9 @@
-import { IconActivity, IconAlertTriangle, IconArrowsExchange, IconDatabaseExport, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconUserCircle, IconUsers } from '@tabler/icons-react'
+import { IconActivity, IconAlertTriangle, IconArrowsExchange, IconDatabaseExport, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconTerminal2, IconUserCircle, IconUsers } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
 export interface NavItem {
-  to: '/' | '/attention' | '/human' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/cross-space' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/account'
+  to: '/' | '/attention' | '/human' | '/terminals' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/cross-space' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/account'
   label: string
   icon: typeof IconBox
   group: 'Work' | 'Fleet' | 'Configuration' | 'Integrations' | 'Access'
@@ -19,6 +19,7 @@ export const nav: NavItem[] = [
   { to: '/', label: 'Overview', icon: IconLayoutDashboard, group: 'Work' },
   { to: '/attention', label: 'Attention', icon: IconAlertTriangle, group: 'Work' },
   { to: '/human', label: 'Needs you', icon: IconBell, group: 'Work', pendingBadge: true },
+  { to: '/terminals', label: 'Terminals', icon: IconTerminal2, group: 'Work' },
   { to: '/spaces', label: 'Spaces', icon: IconBox, group: 'Work' },
   { to: '/nodes', label: 'Nodes', icon: IconServer2, group: 'Fleet', global: true },
   { to: '/prompts', label: 'Prompts', icon: IconFileText, group: 'Configuration', global: true },
