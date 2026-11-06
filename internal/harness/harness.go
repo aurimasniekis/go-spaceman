@@ -70,6 +70,10 @@ type Launch struct {
 	// MergeJSON patches JSON object files the harness itself also writes (keys are absolute paths): objects are merged
 	// recursively and other values are set, everything else in the file is kept. A missing file is created (0600).
 	MergeJSON map[string]map[string]any
+	// OwnJSON are the top-level keys SpaceMan owns in JSON object files the harness also writes (keys are absolute
+	// paths): each is set, keys SpaceMan set at an earlier launch and no longer gives are removed, and every other key
+	// is kept; a missing file is created (0600). So a key removed from a profile is gone on the next launch (ADR-0059).
+	OwnJSON map[string]map[string]any
 	// SkillsRoot is where the harness loads per-user skills from (<root>/<name>/SKILL.md); empty when the harness's skill
 	// loading is not verified, and then skills are not materialized.
 	SkillsRoot string

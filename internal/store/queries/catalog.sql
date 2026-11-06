@@ -41,8 +41,8 @@ WHERE id = sqlc.arg(id) AND state = 'draft' AND version = sqlc.arg(version);
 DELETE FROM prompt_versions WHERE id = ? AND state = 'draft';
 
 -- name: InsertProfile :exec
-INSERT INTO harness_profiles (id, slug, name, harness, model, settings_json, description, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO harness_profiles (id, slug, name, harness, model, settings_json, claude_settings_json, description, created_at, created_by, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetProfile :one
 SELECT * FROM harness_profiles WHERE id = ?;
@@ -51,7 +51,7 @@ SELECT * FROM harness_profiles WHERE id = ?;
 SELECT * FROM harness_profiles ORDER BY slug;
 
 -- name: UpdateProfile :execrows
-UPDATE harness_profiles SET name = ?, model = ?, settings_json = ?, description = ?, revision = revision + 1, version = version + 1, updated_at = ?
+UPDATE harness_profiles SET name = ?, model = ?, settings_json = ?, claude_settings_json = ?, description = ?, revision = revision + 1, version = version + 1, updated_at = ?
 WHERE id = ? AND version = ?;
 
 -- name: InsertRoleTemplate :exec

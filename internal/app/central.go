@@ -218,6 +218,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				return nil, err
 			}
 			in.Kind, in.Harness, in.Model, in.Settings, in.SystemText = r.Kind, r.Harness, r.Model, r.Settings, r.SystemText
+			in.ClaudeSettings = r.ClaudeSettings
 			in.RecordingMaxBytes = c.Limits.Value(ctx, st.R(), spaceID, limits.RecordingQuota)
 			in.Skills = nil
 			for _, sk := range r.Skills {

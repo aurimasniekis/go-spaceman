@@ -64,7 +64,7 @@ func (q *Queries) DeleteSpaceRole(ctx context.Context, arg DeleteSpaceRoleParams
 }
 
 const getProfile = `-- name: GetProfile :one
-SELECT id, slug, name, harness, model, settings_json, description, revision, created_at, created_by, updated_at, version FROM harness_profiles WHERE id = ?
+SELECT id, slug, name, harness, model, settings_json, description, revision, created_at, created_by, updated_at, version, claude_settings_json FROM harness_profiles WHERE id = ?
 `
 
 func (q *Queries) GetProfile(ctx context.Context, id string) (HarnessProfile, error) {
@@ -83,6 +83,7 @@ func (q *Queries) GetProfile(ctx context.Context, id string) (HarnessProfile, er
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.ClaudeSettingsJson,
 	)
 	return i, err
 }
@@ -270,21 +271,22 @@ func (q *Queries) GetSpaceRole(ctx context.Context, arg GetSpaceRoleParams) (Spa
 }
 
 const insertProfile = `-- name: InsertProfile :exec
-INSERT INTO harness_profiles (id, slug, name, harness, model, settings_json, description, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO harness_profiles (id, slug, name, harness, model, settings_json, claude_settings_json, description, created_at, created_by, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertProfileParams struct {
-	ID           string
-	Slug         string
-	Name         string
-	Harness      string
-	Model        string
-	SettingsJson string
-	Description  string
-	CreatedAt    int64
-	CreatedBy    string
-	UpdatedAt    int64
+	ID                 string
+	Slug               string
+	Name               string
+	Harness            string
+	Model              string
+	SettingsJson       string
+	ClaudeSettingsJson string
+	Description        string
+	CreatedAt          int64
+	CreatedBy          string
+	UpdatedAt          int64
 }
 
 func (q *Queries) InsertProfile(ctx context.Context, arg InsertProfileParams) error {
@@ -295,6 +297,7 @@ func (q *Queries) InsertProfile(ctx context.Context, arg InsertProfileParams) er
 		arg.Harness,
 		arg.Model,
 		arg.SettingsJson,
+		arg.ClaudeSettingsJson,
 		arg.Description,
 		arg.CreatedAt,
 		arg.CreatedBy,
@@ -433,7 +436,7 @@ func (q *Queries) LatestPromptVersion(ctx context.Context, promptID string) (Pro
 }
 
 const listProfiles = `-- name: ListProfiles :many
-SELECT id, slug, name, harness, model, settings_json, description, revision, created_at, created_by, updated_at, version FROM harness_profiles ORDER BY slug
+SELECT id, slug, name, harness, model, settings_json, description, revision, created_at, created_by, updated_at, version, claude_settings_json FROM harness_profiles ORDER BY slug
 `
 
 func (q *Queries) ListProfiles(ctx context.Context) ([]HarnessProfile, error) {
@@ -458,6 +461,7 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]HarnessProfile, error) {
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.ClaudeSettingsJson,
 		); err != nil {
 			return nil, err
 		}
@@ -758,18 +762,19 @@ func (q *Queries) TemplatesUsingProfile(ctx context.Context, profileID string) (
 }
 
 const updateProfile = `-- name: UpdateProfile :execrows
-UPDATE harness_profiles SET name = ?, model = ?, settings_json = ?, description = ?, revision = revision + 1, version = version + 1, updated_at = ?
+UPDATE harness_profiles SET name = ?, model = ?, settings_json = ?, claude_settings_json = ?, description = ?, revision = revision + 1, version = version + 1, updated_at = ?
 WHERE id = ? AND version = ?
 `
 
 type UpdateProfileParams struct {
-	Name         string
-	Model        string
-	SettingsJson string
-	Description  string
-	UpdatedAt    int64
-	ID           string
-	Version      int64
+	Name               string
+	Model              string
+	SettingsJson       string
+	ClaudeSettingsJson string
+	Description        string
+	UpdatedAt          int64
+	ID                 string
+	Version            int64
 }
 
 func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (int64, error) {
@@ -777,6 +782,7 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (i
 		arg.Name,
 		arg.Model,
 		arg.SettingsJson,
+		arg.ClaudeSettingsJson,
 		arg.Description,
 		arg.UpdatedAt,
 		arg.ID,

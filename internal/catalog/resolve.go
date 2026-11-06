@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
@@ -61,8 +62,10 @@ type Resolved struct {
 	Effective  map[string]Field
 	Prompt     *PromptRef
 	// Skills are the skill versions the run gets (files included; the manifest records versions and hashes).
-	Skills   []ResolvedSkill
-	Manifest map[string]any
+	Skills []ResolvedSkill
+	// ClaudeSettings are the profile's Claude Code settings.json keys after policy, nil when it has none (ADR-0059).
+	ClaudeSettings proto.ClaudeSettings
+	Manifest       map[string]any
 }
 
 // permissionRank orders Claude Code permission modes by how much they allow without asking.
@@ -130,6 +133,11 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 				r.Settings[k] = v
 				set("settings."+k, v, OriginProfile)
 			}
+			if cs := parseClaudeSettings(p.ClaudeSettingsJson); len(cs) > 0 && p.Harness == "claude-code" {
+				r.ClaudeSettings = cs
+				set("claude_settings", strings.Join(cs.Keys(), ", "), OriginProfile)
+				set("claude_settings.permissions.defaultMode", cs.DefaultMode(), OriginProfile)
+			}
 		}
 		for k, v := range parseSettings(tpl.SettingsJson) {
 			r.Settings[k] = v
@@ -182,12 +190,19 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 		r.Settings[k] = v
 		set("settings."+k, v, OriginLaunch)
 	}
-	// Policy ceilings apply independently of the layer that set the value.
+	// Policy ceilings apply independently of the layer that set the value, the profile's settings.json included.
 	if m, ok := r.Settings["permission_mode"]; ok {
 		if permissionRank[m] > permissionRank[svc.opts.MaxPermissionMode] {
 			r.Settings["permission_mode"] = svc.opts.MaxPermissionMode
 			set("settings.permission_mode", svc.opts.MaxPermissionMode, OriginPolicy)
 		}
+	}
+	if m := r.ClaudeSettings.DefaultMode(); m != "" && permissionRank[m] > permissionRank[svc.opts.MaxPermissionMode] {
+		r.ClaudeSettings = r.ClaudeSettings.WithDefaultMode(svc.opts.MaxPermissionMode)
+		set("claude_settings.permissions.defaultMode", svc.opts.MaxPermissionMode, OriginPolicy)
+	}
+	if r.ClaudeSettings != nil {
+		manifest["claude_settings"] = r.ClaudeSettings
 	}
 	if r.Kind == "" || r.Harness == "" {
 		return nil, apperr.New(apperr.CodeInvalid, "a launch needs a kind and a harness, or a configured space role")

@@ -104,6 +104,8 @@ type LaunchInput struct {
 	Worktree   *proto.Worktree   `json:"worktree,omitempty" doc:"Run in a git worktree of a repository inside the space folder"`
 	// Skills are filled by resolution from the space role (not part of the API).
 	Skills []proto.Skill `json:"-"`
+	// ClaudeSettings are the role profile's Claude Code settings, filled by resolution (not part of the API, ADR-0059).
+	ClaudeSettings proto.ClaudeSettings `json:"-"`
 	// Dream prepares a dream workspace (set by the dream scheduler, not part of the API).
 	Dream      *proto.DreamSpec `json:"-"`
 	AccountRef string           `json:"account_ref,omitempty"`
@@ -260,7 +262,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: in.SessionID,
 			Resume: in.SessionID != "", Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
-			Worktree: in.Worktree, Repository: source, Skills: in.Skills, AccountRef: in.AccountRef, Dream: in.Dream, RecordingMaxBytes: in.RecordingMaxBytes}
+			Worktree: in.Worktree, Repository: source, Skills: in.Skills, ClaudeSettings: in.ClaudeSettings, AccountRef: in.AccountRef, Dream: in.Dream, RecordingMaxBytes: in.RecordingMaxBytes}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
 		}
@@ -383,7 +385,7 @@ func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness strin
 
 // failUndispatched ends a run whose launch could not be sent (its account became unusable after the launch was
 // accepted): the launch command is cancelled and the run is failed with the reason, so it does not wait forever.
-func (svc *Service) failUndispatched(ctx context.Context, runID, reason string) error {
+func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reason string) error {
 	err := svc.s.W().TxNamed(ctx, "fleet.run_undispatched", func(tx *store.Tx) error {
 		r, err := tx.Q.GetRun(ctx, runID)
 		if err != nil {
@@ -392,7 +394,7 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, reason string) 
 		if _, err := tx.Q.CancelRunCommands(ctx, db.CancelRunCommandsParams{Reason: reason, RunID: sql.NullString{String: runID, Valid: true}}); err != nil {
 			return err
 		}
-		if _, err := tx.Q.UpdateRunObserved(ctx, db.UpdateRunObservedParams{Observed: proto.RunFailed, EndReason: "account_unavailable", Error: reason,
+		if _, err := tx.Q.UpdateRunObserved(ctx, db.UpdateRunObservedParams{Observed: proto.RunFailed, EndReason: endReason, Error: reason,
 			Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, MarkEnded: 1, ID: r.ID, Generation: r.Generation}); err != nil {
 			return err
 		}
@@ -403,7 +405,7 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, reason string) 
 			return err
 		}
 		if !ended(r.Observed) {
-			if err := svc.runEvent(ctx, tx, r, outbox.RunEnded{Run: outboxRun(r), State: proto.RunFailed, EndReason: "account_unavailable"}); err != nil {
+			if err := svc.runEvent(ctx, tx, r, outbox.RunEnded{Run: outboxRun(r), State: proto.RunFailed, EndReason: endReason}); err != nil {
 				return err
 			}
 		}
