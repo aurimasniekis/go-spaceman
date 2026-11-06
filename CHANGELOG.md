@@ -15,6 +15,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - UI: a Git SSH keys page, and a Shared Git SSH key choice on each repository.
   - Migration 0038.
 
+### Fixed
+- A host-key failure on a repository without a SpaceMan SSH key no longer talks about pinned known_hosts. Those pins
+  apply only to keyed repositories. The message now says the node's own SSH setup does not know the host, and how to
+  fix it: an `https://` URL for a public repository, a SpaceMan SSH key, or the node user's known_hosts.
+
 ## [0.1.0-rc.7] - 2026-11-06
 
 Seventh release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): the first pass of the UX

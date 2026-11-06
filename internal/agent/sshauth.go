@@ -126,16 +126,23 @@ func (a *repoAuth) Close() {
 }
 
 // sshError turns ssh's host-key failures into one line an operator can act on; other errors are returned as they are.
-func sshError(err error) error {
+// keyed says whether the repository has a SpaceMan SSH key: only then do SpaceMan's pinned host keys apply; otherwise
+// the node's own SSH setup decided (ADR-0044, ADR-0057).
+func sshError(err error, keyed bool) error {
 	if err == nil {
 		return nil
 	}
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "REMOTE HOST IDENTIFICATION HAS CHANGED"):
+	case keyed && strings.Contains(msg, "REMOTE HOST IDENTIFICATION HAS CHANGED"):
 		return errors.New("the Git host's SSH key does not match the pinned known_hosts; check the host's published keys and the repository's known_hosts")
-	case strings.Contains(msg, "Host key verification failed"):
+	case keyed && strings.Contains(msg, "Host key verification failed"):
 		return errors.New("host key verification failed: the Git host is not in the pinned known_hosts; add its keys to the repository's known_hosts")
+	case strings.Contains(msg, "REMOTE HOST IDENTIFICATION HAS CHANGED"):
+		return errors.New("the Git host's SSH key does not match the node user's known_hosts; check the host's published keys")
+	case strings.Contains(msg, "Host key verification failed"):
+		return errors.New("host key verification failed: the node's own SSH setup does not know this Git host. Use an https:// URL for a public " +
+			"repository, give the repository an SSH key SpaceMan holds (its host keys are then pinned), or add the host to the node user's known_hosts")
 	}
 	return err
 }
