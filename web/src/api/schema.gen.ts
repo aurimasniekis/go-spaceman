@@ -756,6 +756,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/git-ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Shared Git SSH keys (never their private halves) */
+        get: operations["list-git-ssh-keys"];
+        put?: never;
+        /**
+         * Generate a shared Git SSH key
+         * @description SpaceMan generates an Ed25519 key, keeps the private half sealed and returns only the public key. Add it to the Git account whose repositories the listed spaces may clone (prefer a read-only machine user: a key on a person's account can also push) or as a deploy key. Agents never receive it (ADR-0058).
+         */
+        post: operations["create-git-ssh-key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git-ssh-keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A shared Git SSH key */
+        get: operations["get-git-ssh-key"];
+        /** Rename a shared Git SSH key or change the spaces that may use it */
+        put: operations["update-git-ssh-key"];
+        post?: never;
+        /** Delete a shared Git SSH key no repository uses */
+        delete: operations["delete-git-ssh-key"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git-ssh-keys/{key_id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace a shared Git SSH key
+         * @description The old key stops being used at once: add the new public key where the old one was and remove the old one.
+         */
+        post: operations["rotate-git-ssh-key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/harness-profiles": {
         parameters: {
             query?: never;
@@ -1761,6 +1821,23 @@ export interface paths {
          * @description The archive itself is GET /spaces/{space_id}/export (a ZIP of JSON Lines and attachment files). It is NOT encrypted; see warning.
          */
         get: operations["get-space-export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/git-ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The shared Git SSH keys a space's repositories may use */
+        get: operations["list-space-git-ssh-keys"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6207,6 +6284,57 @@ export interface components {
             content: string;
             path: string;
         };
+        GitkeysInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GitkeysInput.json
+             */
+            readonly $schema?: string;
+            /** @description Let every space use the key */
+            all_spaces?: boolean;
+            description?: string;
+            /** @description Unique: lowercase letters, digits, . _ - */
+            name: string;
+            /** @description Space IDs that may use the key (ignored with all_spaces) */
+            spaces?: string[];
+        };
+        GitkeysKey: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GitkeysKey.json
+             */
+            readonly $schema?: string;
+            /** @description Every space may use it; otherwise only the listed spaces */
+            all_spaces: boolean;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            description: string;
+            /** @description SHA256 fingerprint */
+            fingerprint: string;
+            id: string;
+            name: string;
+            /** @description authorized_keys format: add it to the Git account (or as a deploy key) that may read the repositories */
+            public_key: string;
+            /** Format: date-time */
+            rotated_at?: string;
+            /** @description Spaces that may use it (when all_spaces is false) */
+            spaces: string[];
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            /** @description Repositories that clone with it */
+            used_by: components["schemas"]["GitkeysRepoRef"][];
+            /** Format: int64 */
+            version: number;
+        };
+        GitkeysRepoRef: {
+            name: string;
+            repository_id: string;
+            space_id: string;
+        };
         HttpCookie: {
             Domain: string;
             /** Format: date-time */
@@ -7238,6 +7366,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["EventsTemplate"][];
         };
+        "List-git-ssh-keysResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-git-ssh-keysResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["GitkeysKey"][];
+        };
         "List-harness-profilesResponse": {
             /**
              * Format: uri
@@ -7410,6 +7547,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["CatalogSkill"][];
+        };
+        "List-space-git-ssh-keysResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-git-ssh-keysResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["GitkeysKey"][];
         };
         "List-space-human-typesResponse": {
             /**
@@ -8713,6 +8859,13 @@ export interface components {
             attachment_ids?: string[];
             body: string;
         };
+        ReposGitKeyRef: {
+            fingerprint: string;
+            id: string;
+            name: string;
+            /** @description Why the key is not in use (no longer allowed for the space, or an outdated node agent) */
+            note?: string;
+        };
         ReposInput: {
             /**
              * Format: uri
@@ -8728,6 +8881,8 @@ export interface components {
             /** @description Default main */
             default_branch?: string;
             description?: string;
+            /** @description A shared Git SSH key (gky_…) the space may use; empty: the repository's own key, if any, or the node's own Git authentication */
+            git_key_id?: string;
             /** @description known_hosts lines pinning the Git host's SSH keys, used with the repository's SSH key; empty: the built-in pins (github.com) */
             known_hosts?: string;
             /** @description Required on create: lowercase letters, digits, . _ -; fixed after creation */
@@ -8870,6 +9025,8 @@ export interface components {
             created_by: string;
             default_branch: string;
             description: string;
+            /** @description The shared Git SSH key SpaceMan clones and fetches with instead (ADR-0058) */
+            git_key?: components["schemas"]["ReposGitKeyRef"];
             id: string;
             /** @description Slugs of knowledge bases that use this repository */
             knowledge_bases: string[];
@@ -8882,7 +9039,7 @@ export interface components {
             /** @enum {string} */
             role: "code" | "kb";
             space_id: string;
-            /** @description The SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key) */
+            /** @description The repository's own SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key) */
             ssh_key?: components["schemas"]["ReposSSHKey"];
             /** @description The node's latest report (runtime state, untrusted: it comes from the node and the repository) */
             status?: components["schemas"]["ReposStatus"];
@@ -11640,6 +11797,208 @@ export interface operations {
             };
         };
     };
+    "list-git-ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-git-ssh-keysResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-git-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitkeysInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitkeysKey"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-git-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The key's ID (gky_…) */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitkeysKey"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-git-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                /** @description The key's ID (gky_…) */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitkeysInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitkeysKey"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-git-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The key's ID (gky_…) */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "rotate-git-ssh-key": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                /** @description The key's ID (gky_…) */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitkeysKey"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-harness-profiles": {
         parameters: {
             query?: never;
@@ -14193,6 +14552,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpaceexportSummary"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-git-ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-git-ssh-keysResponse"];
                 };
             };
             /** @description Error */

@@ -87,6 +87,9 @@ func (svc *Service) GenerateSSHKey(ctx context.Context, actor audit.Actor, space
 		if err != nil {
 			return err
 		}
+		if cur.GitKeyID != "" {
+			return apperr.New(apperr.CodePrecondition, "the repository uses the shared Git SSH key %s; choose no shared key before giving it its own", cur.GitKeyID)
+		}
 		if cur.Url != "" && !proto.IsSSHURL(cur.Url) {
 			return apperr.New(apperr.CodePrecondition, "an SSH key needs an SSH URL (git@host:owner/repo.git or ssh://); change the URL first")
 		}
@@ -166,14 +169,20 @@ func (svc *Service) storeKey(ctx context.Context, tx *store.Tx, actor audit.Acto
 	return err
 }
 
-// Key returns a repository's private SSH key (OpenSSH PEM), or "" when it has none. Only the node hub calls it, to put
+// Key returns the private SSH key (OpenSSH PEM) a repository clones with: its own, else its shared Git SSH key, or "" when it has none. Only the node hub calls it, to put
 // the key on the wire message of a clone or fetch; it is never logged, stored elsewhere or returned by the API.
 func (svc *Service) Key(ctx context.Context, spaceID, id string) (string, error) {
 	r, err := svc.s.R().GetRepositorySSHKey(ctx, db.GetRepositorySSHKeyParams{ID: id, SpaceID: spaceID})
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && len(r.SshKeyEnc) == 0) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	} else if err != nil {
 		return "", err
+	}
+	if len(r.SshKeyEnc) == 0 {
+		if r.GitKeyID != "" && svc.o.GitKeys != nil {
+			return svc.o.GitKeys.Private(ctx, spaceID, r.GitKeyID) // a shared key (ADR-0058); "" when the space may no longer use it
+		}
+		return "", nil
 	}
 	if svc.o.Keyring == nil {
 		return "", errors.New("repository SSH keys need the keyring")

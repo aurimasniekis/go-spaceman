@@ -59,7 +59,7 @@ func (q *Queries) GetRepositoryReport(ctx context.Context, spaceID string) (Spac
 }
 
 const getRepositorySSHKey = `-- name: GetRepositorySSHKey :one
-SELECT id, space_id, url, ssh_key_enc FROM space_repositories WHERE id = ? AND space_id = ?
+SELECT id, space_id, url, ssh_key_enc, git_key_id FROM space_repositories WHERE id = ? AND space_id = ?
 `
 
 type GetRepositorySSHKeyParams struct {
@@ -72,6 +72,7 @@ type GetRepositorySSHKeyRow struct {
 	SpaceID   string
 	Url       string
 	SshKeyEnc []byte
+	GitKeyID  string
 }
 
 func (q *Queries) GetRepositorySSHKey(ctx context.Context, arg GetRepositorySSHKeyParams) (GetRepositorySSHKeyRow, error) {
@@ -82,12 +83,13 @@ func (q *Queries) GetRepositorySSHKey(ctx context.Context, arg GetRepositorySSHK
 		&i.SpaceID,
 		&i.Url,
 		&i.SshKeyEnc,
+		&i.GitKeyID,
 	)
 	return i, err
 }
 
 const getSpaceRepository = `-- name: GetSpaceRepository :one
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE id = ? AND space_id = ?
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts, git_key_id FROM space_repositories WHERE id = ? AND space_id = ?
 `
 
 type GetSpaceRepositoryParams struct {
@@ -117,12 +119,13 @@ func (q *Queries) GetSpaceRepository(ctx context.Context, arg GetSpaceRepository
 		&i.SshPublicKey,
 		&i.SshKeyCreatedAt,
 		&i.KnownHosts,
+		&i.GitKeyID,
 	)
 	return i, err
 }
 
 const getSpaceRepositoryByName = `-- name: GetSpaceRepositoryByName :one
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE space_id = ? AND name = ?
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts, git_key_id FROM space_repositories WHERE space_id = ? AND name = ?
 `
 
 type GetSpaceRepositoryByNameParams struct {
@@ -152,12 +155,13 @@ func (q *Queries) GetSpaceRepositoryByName(ctx context.Context, arg GetSpaceRepo
 		&i.SshPublicKey,
 		&i.SshKeyCreatedAt,
 		&i.KnownHosts,
+		&i.GitKeyID,
 	)
 	return i, err
 }
 
 const getSpaceRepositoryByPath = `-- name: GetSpaceRepositoryByPath :one
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE space_id = ? AND path = ?
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts, git_key_id FROM space_repositories WHERE space_id = ? AND path = ?
 `
 
 type GetSpaceRepositoryByPathParams struct {
@@ -187,13 +191,14 @@ func (q *Queries) GetSpaceRepositoryByPath(ctx context.Context, arg GetSpaceRepo
 		&i.SshPublicKey,
 		&i.SshKeyCreatedAt,
 		&i.KnownHosts,
+		&i.GitKeyID,
 	)
 	return i, err
 }
 
 const insertSpaceRepository = `-- name: InsertSpaceRepository :exec
-INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, known_hosts, created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, known_hosts, git_key_id, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSpaceRepositoryParams struct {
@@ -207,6 +212,7 @@ type InsertSpaceRepositoryParams struct {
 	Role          string
 	ClonePolicy   string
 	KnownHosts    string
+	GitKeyID      string
 	CreatedAt     int64
 	CreatedBy     string
 	UpdatedAt     int64
@@ -225,6 +231,7 @@ func (q *Queries) InsertSpaceRepository(ctx context.Context, arg InsertSpaceRepo
 		arg.Role,
 		arg.ClonePolicy,
 		arg.KnownHosts,
+		arg.GitKeyID,
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
@@ -266,7 +273,7 @@ func (q *Queries) ListKBsUsingRepository(ctx context.Context, arg ListKBsUsingRe
 }
 
 const listSpaceRepositories = `-- name: ListSpaceRepositories :many
-SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts FROM space_repositories WHERE space_id = ? ORDER BY name
+SELECT id, space_id, name, path, description, url, default_branch, role, clone_policy, version, created_at, created_by, updated_at, updated_by, ssh_key_enc, ssh_public_key, ssh_key_created_at, known_hosts, git_key_id FROM space_repositories WHERE space_id = ? ORDER BY name
 `
 
 func (q *Queries) ListSpaceRepositories(ctx context.Context, spaceID string) ([]SpaceRepository, error) {
@@ -297,6 +304,7 @@ func (q *Queries) ListSpaceRepositories(ctx context.Context, spaceID string) ([]
 			&i.SshPublicKey,
 			&i.SshKeyCreatedAt,
 			&i.KnownHosts,
+			&i.GitKeyID,
 		); err != nil {
 			return nil, err
 		}
@@ -400,8 +408,8 @@ func (q *Queries) SetRepositorySyncRequested(ctx context.Context, arg SetReposit
 
 const updateSpaceRepository = `-- name: UpdateSpaceRepository :execrows
 UPDATE space_repositories SET description = ?1, url = ?2, default_branch = ?3, role = ?4,
-  clone_policy = ?5, known_hosts = ?6, updated_at = ?7, updated_by = ?8, version = version + 1
-WHERE id = ?9 AND space_id = ?10 AND version = ?11
+  clone_policy = ?5, known_hosts = ?6, git_key_id = ?7, updated_at = ?8, updated_by = ?9, version = version + 1
+WHERE id = ?10 AND space_id = ?11 AND version = ?12
 `
 
 type UpdateSpaceRepositoryParams struct {
@@ -411,6 +419,7 @@ type UpdateSpaceRepositoryParams struct {
 	Role          string
 	ClonePolicy   string
 	KnownHosts    string
+	GitKeyID      string
 	Now           int64
 	UpdatedBy     string
 	ID            string
@@ -426,6 +435,7 @@ func (q *Queries) UpdateSpaceRepository(ctx context.Context, arg UpdateSpaceRepo
 		arg.Role,
 		arg.ClonePolicy,
 		arg.KnownHosts,
+		arg.GitKeyID,
 		arg.Now,
 		arg.UpdatedBy,
 		arg.ID,

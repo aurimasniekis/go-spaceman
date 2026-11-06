@@ -516,6 +516,14 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/accounts')
     await expect(page.getByText('Team subscription (claude setup-token)')).toBeVisible()
   })
+  // Shared Git SSH keys (ADR-0058): one key a read-only machine user holds, for the payments space; only its public half shows.
+  await api.call('POST', '/git-ssh-keys', { name: 'github-bot', description: 'Read-only machine user for the payments repositories',
+    spaces: [payments.id] })
+  await capture(page, 'git-ssh-keys', async () => {
+    await page.goto('/git-keys')
+    await page.getByText('github-bot', { exact: true }).click()
+    await expect(page.getByText('Public key', { exact: true })).toBeVisible()
+  })
   await capture(page, 'space-accounts', async () => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Choose accounts' }).click()

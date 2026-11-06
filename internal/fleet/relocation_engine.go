@@ -500,8 +500,8 @@ func (svc *Service) preparePayload(ctx context.Context, r db.Relocation) (proto.
 			return p, err
 		}
 		for _, cr := range configured {
-			// A repository with a SpaceMan SSH key is cloned by the first sync after the move, which carries its key (ADR-0057).
-			if cr.ClonePolicy == proto.CloneAuto && cr.Url != "" && len(cr.SshKeyEnc) == 0 && !inspected[cr.Path] && !exported[cr.Path] && localSpacePath(cr.Path) {
+			// A repository with a SpaceMan SSH key (its own or a shared one) is cloned by the first sync after the move, which carries the key (ADR-0057/0058).
+			if cr.ClonePolicy == proto.CloneAuto && cr.Url != "" && len(cr.SshKeyEnc) == 0 && cr.GitKeyID == "" && !inspected[cr.Path] && !exported[cr.Path] && localSpacePath(cr.Path) {
 				p.Repos = append(p.Repos, proto.RelocateRepo{Path: cr.Path, Remotes: []proto.GitRemote{{Name: "origin", URL: cr.Url}}, Branch: cr.DefaultBranch,
 					Branches: []proto.BranchCheck{}, Worktrees: []proto.ExportedWorktree{}})
 			}

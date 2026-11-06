@@ -51,6 +51,33 @@ func (a *App) accountCmd() *cobra.Command {
 	)
 }
 
+var gitKeyCols = []col{c("ID", "id"), c("NAME", "name"), c("FINGERPRINT", "fingerprint"), c("ALL SPACES", "all_spaces"), c("UPDATED", "updated_at")}
+
+func (a *App) gitKeyCmd() *cobra.Command {
+	keyForm := func(f *form) {
+		f.str("name", "name", "unique name").str("description", "description", "description").
+			boolean("all-spaces", "all_spaces", "let every space use the key").list("space", "spaces", "space ID that may use the key")
+	}
+	return group("git-key", "Shared Git SSH keys (ADR-0058): generate, list, show, edit, rotate and delete", []string{"git-keys"},
+		a.cmd(opts{use: "list", short: "Shared Git SSH keys (never their private halves)", op: "list-git-ssh-keys", alias: []string{"ls"},
+			view: view{items: "items", cols: gitKeyCols, empty: "No Git SSH keys."}}),
+		a.cmd(opts{use: "get", short: "Show a key with its public half, spaces and the repositories that use it", op: "get-git-ssh-key", args: pos("key")}),
+		a.cmd(opts{use: "create", short: "Generate a key and print its public half", op: "create-git-ssh-key", form: keyForm,
+			long: "SpaceMan generates an Ed25519 key and keeps the private half. Add the printed public key to the Git account the spaces " +
+				"may clone with (a read-only machine user is safest: a key on a person's account can also push), then choose the key on " +
+				"the spaces' repositories.",
+			example: "spaceman git-key create --name github-bot --space spc_… --description \"read-only machine user\"",
+			view:    view{first: []string{"public_key"}}}),
+		a.cmd(opts{use: "update", short: "Rename a key or change the spaces that may use it", op: "update-git-ssh-key", get: "get-git-ssh-key", merge: true,
+			args: pos("key"), form: keyForm}),
+		a.cmd(opts{use: "rotate", short: "Replace a key (add the new public key where the old one was)", op: "rotate-git-ssh-key", get: "get-git-ssh-key",
+			args: pos("key"), confirm: "replace the key (the old one stops working at once)", view: view{first: []string{"public_key"}}}),
+		a.cmd(opts{use: "delete", short: "Delete a key no repository uses", op: "delete-git-ssh-key", args: pos("key"), done: "Git SSH key deleted."}),
+		a.cmd(opts{use: "for-space", short: "The keys a space's repositories may use", op: "list-space-git-ssh-keys", scoped: true,
+			view: view{items: "items", cols: gitKeyCols, empty: "No Git SSH keys for this space."}}),
+	)
+}
+
 func (a *App) promptCmd() *cobra.Command {
 	return group("prompt", "Prompt catalog: list, show, create, draft, publish, diff, fork and roll back", []string{"prompts"},
 		a.cmd(opts{use: "list", short: "The prompt catalog", op: "list-prompts", alias: []string{"ls"}, view: view{items: "items", cols: promptCols, empty: "No prompts."}}),

@@ -238,6 +238,18 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `PUT` | `/event-templates/{template_id}/draft` | `save-template-draft` | Save the template's draft version |
 | `POST` | `/event-templates/preview` | `preview-event-template` | Test a definition against a sample event |
 
+### git-ssh-keys
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `GET` | `/git-ssh-keys` | `list-git-ssh-keys` | Shared Git SSH keys (never their private halves) |
+| `POST` | `/git-ssh-keys` | `create-git-ssh-key` | Generate a shared Git SSH key |
+| `DELETE` | `/git-ssh-keys/{key_id}` | `delete-git-ssh-key` | Delete a shared Git SSH key no repository uses |
+| `GET` | `/git-ssh-keys/{key_id}` | `get-git-ssh-key` | A shared Git SSH key |
+| `PUT` | `/git-ssh-keys/{key_id}` | `update-git-ssh-key` | Rename a shared Git SSH key or change the spaces that may use it |
+| `POST` | `/git-ssh-keys/{key_id}/rotate` | `rotate-git-ssh-key` | Replace a shared Git SSH key |
+| `GET` | `/spaces/{space_id}/git-ssh-keys` | `list-space-git-ssh-keys` | The shared Git SSH keys a space's repositories may use |
+
 ### human-action-policies
 
 | Method | Path | Operation | Summary |

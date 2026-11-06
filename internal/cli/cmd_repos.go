@@ -15,7 +15,8 @@ func (a *App) repoCmd() *cobra.Command {
 			str("default-branch", "default_branch", "default branch (default main)").str("role", "role", "code or kb").
 			str("clone-policy", "clone_policy", "auto (clone while the node holds the lease), on_demand (when a run needs it) or manual (never)").
 			str("description", "description", "description").
-			textFile("known-hosts", "known_hosts", "known_hosts lines pinning the Git host's SSH keys for the repository's SSH key (empty: the built-in pins, github.com)")
+			textFile("known-hosts", "known_hosts", "known_hosts lines pinning the Git host's SSH keys for the repository's SSH key (empty: the built-in pins, github.com)").
+			str("git-key", "git_key_id", "a shared Git SSH key (gky_…) the space may use (spaceman git-key list); empty: none")
 	}
 	return group("repo", "A space's repositories: list, show, add, edit, remove, SSH keys and sync (--space)", []string{"repos", "repository", "repositories"},
 		a.cmd(opts{use: "list", short: "A space's repositories with the node's latest report", op: "list-space-repositories", alias: []string{"ls"}, scoped: true,

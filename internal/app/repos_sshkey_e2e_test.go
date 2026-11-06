@@ -13,6 +13,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/gitkeys"
 	"github.com/aurimasniekis/go-spaceman/internal/gitsshtest"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/repos"
@@ -138,5 +139,113 @@ func TestRepositorySSHKeyEndToEnd(t *testing.T) {
 	})
 	if _, err := e.c.Repos.RemoveSSHKey(ctx, admin, sp.ID, r.ID, 0); err == nil {
 		t.Fatal("removing a missing key succeeded")
+	}
+}
+
+// ADR-0058 end to end: an administrator generates a shared Git SSH key for one space; that space's repository clones with
+// it over SSH through the node; another space may not choose it; a repository has its own key or a shared one, never
+// both; a key in use cannot be deleted or taken away from its space, and rotating it changes the fingerprint.
+func TestSharedGitKeyEndToEnd(t *testing.T) {
+	for _, bin := range []string{"git", "ssh"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " is not installed")
+		}
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("SSH_AUTH_SOCK", "")
+	e := newFleetEnv(t)
+	e.enroll()
+	e.startAgent()
+	ctx := context.Background()
+	admin := audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "shared", Name: "Shared", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "other", Name: "Other", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+
+	root := t.TempDir()
+	bare, seed := filepath.Join(root, "api.git"), filepath.Join(root, "seed")
+	gitIn(t, root, "init", "-q", "--bare", "-b", "main", bare)
+	gitIn(t, root, "clone", "-q", bare, seed)
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("shared\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, seed, "checkout", "-q", "-b", "main")
+	gitIn(t, seed, "add", ".")
+	gitIn(t, seed, "commit", "-q", "-m", "init")
+	gitIn(t, seed, "push", "-q", "-u", "origin", "main")
+
+	key, err := e.c.GitKeys.Create(ctx, admin, gitkeys.Input{Name: "machine-user", Description: "read-only bot", Spaces: []string{sp.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(key.PublicKey, "ssh-ed25519 ") || len(key.Spaces) != 1 {
+		t.Fatalf("key %+v", key)
+	}
+	addr, known := gitsshtest.ServerFunc(t, func(k ssh.PublicKey) bool {
+		pub, _, _, _, _ := ssh.ParseAuthorizedKey([]byte(key.PublicKey))
+		return pub != nil && string(k.Marshal()) == string(pub.Marshal())
+	})
+	url := "ssh://git@" + addr + bare
+
+	// Another space may not choose it; a key needs an SSH URL.
+	if _, err := e.c.Repos.Create(ctx, admin, other.ID, repos.Input{Name: "api", URL: url, ClonePolicy: proto.CloneManual, GitKeyID: key.ID}); err == nil {
+		t.Fatal("a space not on the key's list chose it")
+	}
+	if _, err := e.c.Repos.Create(ctx, admin, sp.ID, repos.Input{Name: "web", URL: "https://example.com/web.git", ClonePolicy: proto.CloneManual, GitKeyID: key.ID}); err == nil {
+		t.Fatal("a shared key on an https URL was accepted")
+	}
+
+	r, err := e.c.Repos.Create(ctx, admin, sp.ID, repos.Input{Name: "api", URL: url, ClonePolicy: proto.CloneAuto, KnownHosts: known, GitKeyID: key.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "cloned with the shared key", func() bool {
+		x, _ := e.c.Repos.Get(ctx, sp.ID, r.ID)
+		return x.Status != nil && x.Status.State == "present"
+	})
+	x, _ := e.c.Repos.Get(ctx, sp.ID, r.ID)
+	if x.GitKey == nil || x.GitKey.Name != "machine-user" || x.GitKey.Note != "" || x.SSHKey != nil {
+		t.Fatalf("repository key %+v / %+v", x.GitKey, x.SSHKey)
+	}
+	if _, err := e.c.Repos.GenerateSSHKey(ctx, admin, sp.ID, r.ID, 0); err == nil {
+		t.Fatal("a repository using a shared key got its own key too")
+	}
+
+	// In use: not deletable, and its space cannot be taken off the list.
+	if err := e.c.GitKeys.Delete(ctx, admin, key.ID); err == nil {
+		t.Fatal("a key in use was deleted")
+	}
+	if _, err := e.c.GitKeys.Update(ctx, admin, key.ID, key.Version, gitkeys.Input{Name: "machine-user", Spaces: []string{other.ID}}); err == nil {
+		t.Fatal("the using space was taken off the list")
+	}
+	k2, err := e.c.GitKeys.Rotate(ctx, admin, key.ID, 0)
+	if err != nil || k2.Fingerprint == key.Fingerprint || k2.RotatedAt == nil {
+		t.Fatalf("rotate: %+v %v", k2, err)
+	}
+	if listed, _ := e.c.GitKeys.ForSpace(ctx, other.ID); len(listed) != 0 {
+		t.Fatalf("other space sees %d keys", len(listed))
+	}
+	if listed, _ := e.c.GitKeys.ForSpace(ctx, sp.ID); len(listed) != 1 || len(listed[0].UsedBy) != 0 {
+		t.Fatalf("the space's list: %+v", listed)
+	}
+	var n int
+	if err := e.c.Store.ReadDB().QueryRowContext(ctx, `SELECT count(*) FROM node_commands WHERE payload_json LIKE '%PRIVATE KEY%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("stored commands with a key: %d %v", n, err)
+	}
+	// Choosing no shared key frees it; then it can be deleted.
+	cur, _ := e.c.Repos.Get(ctx, sp.ID, r.ID)
+	if _, err := e.c.Repos.Update(ctx, admin, sp.ID, r.ID, cur.Version, repos.Input{URL: url, ClonePolicy: proto.CloneAuto, KnownHosts: known}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.c.GitKeys.Delete(ctx, admin, key.ID); err != nil {
+		t.Fatalf("delete an unused key: %v", err)
 	}
 }

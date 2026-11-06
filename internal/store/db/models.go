@@ -342,6 +342,26 @@ type ExecutionLease struct {
 	ExpiresAt  int64
 }
 
+type GitSshKey struct {
+	ID          string
+	Name        string
+	Description string
+	PublicKey   string
+	PrivateEnc  []byte
+	AllSpaces   int64
+	RotatedAt   sql.NullInt64
+	CreatedAt   int64
+	CreatedBy   string
+	UpdatedAt   int64
+	UpdatedBy   string
+	Version     int64
+}
+
+type GitSshKeySpace struct {
+	KeyID   string
+	SpaceID string
+}
+
 type HarnessProfile struct {
 	ID           string
 	Slug         string
@@ -1227,6 +1247,7 @@ type SpaceRepository struct {
 	SshPublicKey    string
 	SshKeyCreatedAt sql.NullInt64
 	KnownHosts      string
+	GitKeyID        string
 }
 
 type SpaceRepositoryReport struct {

@@ -5864,6 +5864,152 @@
         ],
         "type": "object"
       },
+      "GitkeysInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GitkeysInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "all_spaces": {
+            "description": "Let every space use the key",
+            "type": "boolean"
+          },
+          "description": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique: lowercase letters, digits, . _ -",
+            "maxLength": 63,
+            "type": "string"
+          },
+          "spaces": {
+            "description": "Space IDs that may use the key (ignored with all_spaces)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "GitkeysKey": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GitkeysKey.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "all_spaces": {
+            "description": "Every space may use it; otherwise only the listed spaces",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "description": "SHA256 fingerprint",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "public_key": {
+            "description": "authorized_keys format: add it to the Git account (or as a deploy key) that may read the repositories",
+            "type": "string"
+          },
+          "rotated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "spaces": {
+            "description": "Spaces that may use it (when all_spaces is false)",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "used_by": {
+            "description": "Repositories that clone with it",
+            "items": {
+              "$ref": "#/components/schemas/GitkeysRepoRef"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "public_key",
+          "fingerprint",
+          "all_spaces",
+          "spaces",
+          "used_by",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
+      "GitkeysRepoRef": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "repository_id": {
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "space_id",
+          "repository_id",
+          "name"
+        ],
+        "type": "object"
+      },
       "HttpCookie": {
         "additionalProperties": false,
         "properties": {
@@ -8534,6 +8680,30 @@
         ],
         "type": "object"
       },
+      "List-git-ssh-keysResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-git-ssh-keysResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GitkeysKey"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "List-harness-profilesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -8986,6 +9156,30 @@
           "items": {
             "items": {
               "$ref": "#/components/schemas/CatalogSkill"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "List-space-git-ssh-keysResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/List-space-git-ssh-keysResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GitkeysKey"
             },
             "type": "array"
           }
@@ -12569,6 +12763,30 @@
         ],
         "type": "object"
       },
+      "ReposGitKeyRef": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "note": {
+            "description": "Why the key is not in use (no longer allowed for the space, or an outdated node agent)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "fingerprint"
+        ],
+        "type": "object"
+      },
       "ReposInput": {
         "additionalProperties": false,
         "properties": {
@@ -12597,6 +12815,11 @@
           },
           "description": {
             "maxLength": 2000,
+            "type": "string"
+          },
+          "git_key_id": {
+            "description": "A shared Git SSH key (gky_…) the space may use; empty: the repository's own key, if any, or the node's own Git authentication",
+            "maxLength": 64,
             "type": "string"
           },
           "known_hosts": {
@@ -12949,6 +13172,10 @@
           "description": {
             "type": "string"
           },
+          "git_key": {
+            "$ref": "#/components/schemas/ReposGitKeyRef",
+            "description": "The shared Git SSH key SpaceMan clones and fetches with instead (ADR-0058)"
+          },
           "id": {
             "type": "string"
           },
@@ -12983,7 +13210,7 @@
           },
           "ssh_key": {
             "$ref": "#/components/schemas/ReposSSHKey",
-            "description": "The SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key)"
+            "description": "The repository's own SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key)"
           },
           "status": {
             "$ref": "#/components/schemas/ReposStatus",
@@ -18172,6 +18399,299 @@
         ]
       }
     },
+    "/git-ssh-keys": {
+      "get": {
+        "operationId": "list-git-ssh-keys",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-git-ssh-keysResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Shared Git SSH keys (never their private halves)",
+        "tags": [
+          "git-ssh-keys"
+        ]
+      },
+      "post": {
+        "description": "SpaceMan generates an Ed25519 key, keeps the private half sealed and returns only the public key. Add it to the Git account whose repositories the listed spaces may clone (prefer a read-only machine user: a key on a person's account can also push) or as a deploy key. Agents never receive it (ADR-0058).",
+        "operationId": "create-git-ssh-key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitkeysInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitkeysKey"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Generate a shared Git SSH key",
+        "tags": [
+          "git-ssh-keys"
+        ]
+      }
+    },
+    "/git-ssh-keys/{key_id}": {
+      "delete": {
+        "operationId": "delete-git-ssh-key",
+        "parameters": [
+          {
+            "description": "The key's ID (gky_…)",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "description": "The key's ID (gky_…)",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a shared Git SSH key no repository uses",
+        "tags": [
+          "git-ssh-keys"
+        ]
+      },
+      "get": {
+        "operationId": "get-git-ssh-key",
+        "parameters": [
+          {
+            "description": "The key's ID (gky_…)",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "description": "The key's ID (gky_…)",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitkeysKey"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A shared Git SSH key",
+        "tags": [
+          "git-ssh-keys"
+        ]
+      },
+      "put": {
+        "operationId": "update-git-ssh-key",
+        "parameters": [
+          {
+            "description": "The key's ID (gky_…)",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "description": "The key's ID (gky_…)",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitkeysInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitkeysKey"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename a shared Git SSH key or change the spaces that may use it",
+        "tags": [
+          "git-ssh-keys"
+        ]
+      }
+    },
+    "/git-ssh-keys/{key_id}/rotate": {
+      "post": {
+        "description": "The old key stops being used at once: add the new public key where the old one was and remove the old one.",
+        "operationId": "rotate-git-ssh-key",
+        "parameters": [
+          {
+            "description": "The key's ID (gky_…)",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "description": "The key's ID (gky_…)",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitkeysKey"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace a shared Git SSH key",
+        "tags": [
+          "git-ssh-keys"
+        ]
+      }
+    },
     "/harness-profiles": {
       "get": {
         "operationId": "list-harness-profiles",
@@ -21899,6 +22419,48 @@
         "summary": "What a space export would hold now: counts, estimated size and the space's export limit",
         "tags": [
           "spaces"
+        ]
+      }
+    },
+    "/spaces/{space_id}/git-ssh-keys": {
+      "get": {
+        "operationId": "list-space-git-ssh-keys",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/List-space-git-ssh-keysResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The shared Git SSH keys a space's repositories may use",
+        "tags": [
+          "git-ssh-keys"
         ]
       }
     },
