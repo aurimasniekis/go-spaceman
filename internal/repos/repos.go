@@ -33,6 +33,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/gitkeys"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
@@ -78,14 +79,15 @@ type Repository struct {
 	ClonePolicy   string   `json:"clone_policy" enum:"auto,on_demand,manual" doc:"auto: cloned while the node holds the space's lease; on_demand: cloned when a run needs it or on a sync; manual: never cloned by SpaceMan"`
 	KBs           []string `json:"knowledge_bases" doc:"Slugs of knowledge bases that use this repository"`
 	// SSHKey is the repository's SpaceMan SSH key (ADR-0057): only its public half and fingerprint ever leave central.
-	SSHKey     *SSHKey   `json:"ssh_key,omitempty" doc:"The SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key)"`
-	KnownHosts string    `json:"known_hosts" doc:"known_hosts lines pinning the Git host's keys for the SSH key; empty: SpaceMan's built-in pins (github.com)"`
-	Status     *Status   `json:"status,omitempty" doc:"The node's latest report (runtime state, untrusted: it comes from the node and the repository)"`
-	Version    int64     `json:"version"`
-	CreatedAt  time.Time `json:"created_at"`
-	CreatedBy  string    `json:"created_by"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	UpdatedBy  string    `json:"updated_by"`
+	SSHKey     *SSHKey    `json:"ssh_key,omitempty" doc:"The repository's own SSH key SpaceMan clones and fetches with (add the public key to the Git host as a read-only deploy key)"`
+	GitKey     *GitKeyRef `json:"git_key,omitempty" doc:"The shared Git SSH key SpaceMan clones and fetches with instead (ADR-0058)"`
+	KnownHosts string     `json:"known_hosts" doc:"known_hosts lines pinning the Git host's keys for the SSH key; empty: SpaceMan's built-in pins (github.com)"`
+	Status     *Status    `json:"status,omitempty" doc:"The node's latest report (runtime state, untrusted: it comes from the node and the repository)"`
+	Version    int64      `json:"version"`
+	CreatedAt  time.Time  `json:"created_at"`
+	CreatedBy  string     `json:"created_by"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	UpdatedBy  string     `json:"updated_by"`
 }
 
 // SSHKey is the public half of a repository's SpaceMan SSH key.
@@ -94,6 +96,14 @@ type SSHKey struct {
 	Fingerprint string    `json:"fingerprint" doc:"SHA256 fingerprint"`
 	CreatedAt   time.Time `json:"created_at"`
 	Note        string    `json:"note,omitempty" doc:"Why the key is not in use (an outdated node agent)"`
+}
+
+// GitKeyRef is the shared Git SSH key a repository uses.
+type GitKeyRef struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
+	Note        string `json:"note,omitempty" doc:"Why the key is not in use (no longer allowed for the space, or an outdated node agent)"`
 }
 
 // Status is a repository as the space's node last reported it.
@@ -142,6 +152,7 @@ type Input struct {
 	Role          string `json:"role,omitempty" enum:"code,kb" doc:"Default code"`
 	ClonePolicy   string `json:"clone_policy,omitempty" enum:"auto,on_demand,manual" doc:"Default auto with a URL, manual without"`
 	KnownHosts    string `json:"known_hosts,omitempty" maxLength:"16384" doc:"known_hosts lines pinning the Git host's SSH keys, used with the repository's SSH key; empty: the built-in pins (github.com)"`
+	GitKeyID      string `json:"git_key_id,omitempty" maxLength:"64" doc:"A shared Git SSH key (gky_…) the space may use; empty: the repository's own key, if any, or the node's own Git authentication"`
 }
 
 // SyncInput asks the node for a sync.
@@ -175,6 +186,8 @@ type Options struct {
 	AllowLocalURLs bool
 	// Keyring seals repository SSH keys (ADR-0057); nil: SSH keys are unavailable.
 	Keyring *keyring.Keyring
+	// GitKeys holds shared Git SSH keys (ADR-0058); nil: none can be used.
+	GitKeys *gitkeys.Service
 	Clock   clock.Clock
 	Log     *slog.Logger
 }
@@ -314,7 +327,29 @@ func spaceCheck(ctx context.Context, q *db.Queries, spaceID string) error {
 
 func auditDetails(spaceID string, in Input) map[string]any {
 	return map[string]any{"space_id": spaceID, "name": in.Name, "path": in.Path, "url": in.URL, "default_branch": in.DefaultBranch, "role": in.Role,
-		"clone_policy": in.ClonePolicy}
+		"clone_policy": in.ClonePolicy, "git_key_id": in.GitKeyID}
+}
+
+// checkGitKey refuses a shared key the space may not use, one on a URL that is not SSH, and one beside the repository's
+// own key (a repository uses one key: ADR-0058).
+func checkGitKey(ctx context.Context, tx *store.Tx, spaceID string, in Input, ownKey bool) error {
+	if in.GitKeyID == "" {
+		return nil
+	}
+	if ownKey {
+		return apperr.New(apperr.CodePrecondition, "the repository has its own SSH key; remove it before choosing a shared key")
+	}
+	if in.URL != "" && !proto.IsSSHURL(in.URL) {
+		return apperr.New(apperr.CodeInvalid, "a Git SSH key needs an SSH URL (git@host:owner/repo.git or ssh://)")
+	}
+	ok, err := gitkeys.Allowed(ctx, tx.Q, spaceID, in.GitKeyID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperr.New(apperr.CodeInvalid, "Git SSH key %q does not exist or this space may not use it", in.GitKeyID)
+	}
+	return nil
 }
 
 // Create adds a repository. A repository with a URL and the auto policy is cloned on the node at once when it is
@@ -340,8 +375,11 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, spaceID strin
 		if r, err := tx.Q.GetSpaceRepositoryByPath(ctx, db.GetSpaceRepositoryByPathParams{SpaceID: spaceID, Path: in.Path}); err == nil {
 			return apperr.New(apperr.CodeAlreadyExists, "repository %q already uses the folder %s", r.Name, in.Path)
 		}
+		if err := checkGitKey(ctx, tx, spaceID, in, false); err != nil {
+			return err
+		}
 		if err := tx.Q.InsertSpaceRepository(ctx, db.InsertSpaceRepositoryParams{ID: id, SpaceID: spaceID, Name: in.Name, Path: in.Path,
-			Description: in.Description, Url: in.URL, DefaultBranch: in.DefaultBranch, Role: in.Role, ClonePolicy: in.ClonePolicy, KnownHosts: in.KnownHosts, CreatedAt: tx.NowMicros(),
+			Description: in.Description, Url: in.URL, DefaultBranch: in.DefaultBranch, Role: in.Role, ClonePolicy: in.ClonePolicy, KnownHosts: in.KnownHosts, GitKeyID: in.GitKeyID, CreatedAt: tx.NowMicros(),
 			CreatedBy: actorRef(actor), UpdatedAt: tx.NowMicros(), UpdatedBy: actorRef(actor)}); err != nil {
 			if store.IsConstraint(err) {
 				return apperr.New(apperr.CodeAlreadyExists, "the space already has a repository with this name or folder")
@@ -391,8 +429,11 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, spaceID, id s
 		if len(cur.SshKeyEnc) > 0 && in.URL != "" && !proto.IsSSHURL(in.URL) {
 			return apperr.New(apperr.CodeInvalid, "the repository has an SSH key, so its URL must be an SSH URL; remove the key first to use another URL")
 		}
+		if err := checkGitKey(ctx, tx, spaceID, in, len(cur.SshKeyEnc) > 0); err != nil {
+			return err
+		}
 		n, err := tx.Q.UpdateSpaceRepository(ctx, db.UpdateSpaceRepositoryParams{Description: in.Description, Url: in.URL, DefaultBranch: in.DefaultBranch,
-			Role: in.Role, ClonePolicy: in.ClonePolicy, KnownHosts: in.KnownHosts, Now: tx.NowMicros(), UpdatedBy: actorRef(actor), ID: id, SpaceID: spaceID, Version: version})
+			Role: in.Role, ClonePolicy: in.ClonePolicy, KnownHosts: in.KnownHosts, GitKeyID: in.GitKeyID, Now: tx.NowMicros(), UpdatedBy: actorRef(actor), ID: id, SpaceID: spaceID, Version: version})
 		if err != nil {
 			return err
 		}
@@ -509,6 +550,17 @@ func (svc *Service) List(ctx context.Context, spaceID string) (*Overview, error)
 	}
 	for _, r := range rows {
 		x := out(r)
+		if r.GitKeyID != "" {
+			x.GitKey = &GitKeyRef{ID: r.GitKeyID, Name: r.GitKeyID}
+			if k, err := q.GetGitKey(ctx, r.GitKeyID); err == nil {
+				x.GitKey.Name, x.GitKey.Fingerprint = k.Name, gitkeys.Fingerprint(k.PublicKey)
+			}
+			if ok, err := gitkeys.Allowed(ctx, q, spaceID, r.GitKeyID); err == nil && !ok {
+				x.GitKey.Note = "This space may no longer use the key: the node clones with its own Git authentication until an administrator allows it again or you choose another key."
+			} else if nodeMinor >= 0 && nodeMinor < proto.MinorRepoKeys {
+				x.GitKey.Note = fmt.Sprintf("The space's node agent (protocol 1.%d) cannot use SpaceMan SSH keys: it clones with its own Git authentication until it is updated.", nodeMinor)
+			}
+		}
 		if x.SSHKey != nil && nodeMinor >= 0 && nodeMinor < proto.MinorRepoKeys {
 			x.SSHKey.Note = fmt.Sprintf("The space's node agent (protocol 1.%d) cannot use SpaceMan SSH keys: it clones with its own Git authentication until it is updated.", nodeMinor)
 		}

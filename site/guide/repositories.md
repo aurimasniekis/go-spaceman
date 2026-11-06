@@ -65,6 +65,26 @@ How the key is handled:
 - **Rotate** replaces the key at once; add the new public key and remove the old one on the host. **Remove** returns
   the repository to the node's own Git authentication.
 
+#### One key for many repositories
+
+A deploy key opens one repository (GitHub accepts it on one repository only). To clone many private repositories
+with a single key, an administrator can generate a **shared Git SSH key**:
+
+1. Open **Git SSH keys** (sidebar, Integrations), choose **Generate key**, and pick the spaces that may use it, or
+   every space.
+2. Add its public key to the Git account that can read the repositories. GitHub: the account's *Settings → SSH and
+   GPG keys*.
+3. On each repository, choose the key under **Shared Git SSH key** (Edit), or with
+   `spaceman repo update --git-key gky_…`.
+
+<Shot name="git-ssh-keys" alt="Git SSH keys page with the shared key github-bot open: its public key to copy, its fingerprint and the space allowed to use it" caption="Git SSH keys" />
+
+Prefer a **read-only machine user** for this account. A key on a person's account can also push to everything that
+person can, and SpaceMan never needs to push. A repository uses either its own key or a shared key, never both. A key
+can't be deleted while a repository uses it, and a space can't be taken off its list while one of the space's
+repositories uses it. **Replace key** rotates it: add the new public key to the account and remove the old one. The key
+reaches the node exactly like a repository's own key: in memory, for one clone or fetch, with pinned host keys.
+
 Agents work in their own worktrees and never get the key. To push, they need their own means, as before. The key
 needs the node agent from release 0.1.0-rc.6 or later; an older agent shows a note on the key and keeps using its own
 Git setup.
@@ -140,7 +160,9 @@ SpaceMan SSH key is cloned on the destination by the first sync after the move.
   key.
   Reading needs `space_config:read`, changes and syncs `space_config:write`. Every change is audited
   (`space_repository.*`).
-- `spaceman repo list|get|create|update|delete|ssh-key|ssh-key-remove|sync` ([CLI reference](../reference/cli/repo)).
+- `spaceman repo list|get|create|update|delete|ssh-key|ssh-key-remove|sync` ([CLI reference](../reference/cli/repo)) and
+  `spaceman git-key list|get|create|update|rotate|delete|for-space` for shared keys (`/api/v1/git-ssh-keys`, administrators;
+  `/api/v1/spaces/{id}/git-ssh-keys` lists a space's keys).
 - Terraform: `spaceman_space_repository` manages the configuration, including `known_hosts` and `ssh_key` (its computed
   `ssh_public_key` can feed the host's deploy key resource). The node's report is runtime state and is not part of the
   resource ([Terraform](../operators/terraform)).

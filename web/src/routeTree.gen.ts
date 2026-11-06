@@ -18,6 +18,7 @@ import { Route as AuditRouteImport } from './routes/audit'
 import { Route as BackupsRouteImport } from './routes/backups'
 import { Route as CrossSpaceRouteImport } from './routes/cross-space'
 import { Route as EventsRouteImport } from './routes/events'
+import { Route as GitKeysRouteImport } from './routes/git-keys'
 import { Route as HumanRouteImport } from './routes/human'
 import { Route as HumanTypesRouteImport } from './routes/human-types'
 import { Route as LoginRouteImport } from './routes/login'
@@ -101,6 +102,11 @@ const CrossSpaceRoute = CrossSpaceRouteImport.update({
 const EventsRoute = EventsRouteImport.update({
   id: '/events',
   path: '/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GitKeysRoute = GitKeysRouteImport.update({
+  id: '/git-keys',
+  path: '/git-keys',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HumanRoute = HumanRouteImport.update({
@@ -314,6 +320,7 @@ export interface FileRoutesByFullPath {
   '/backups': typeof BackupsRoute
   '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
+  '/git-keys': typeof GitKeysRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -363,6 +370,7 @@ export interface FileRoutesByTo {
   '/audit': typeof AuditRoute
   '/backups': typeof BackupsRoute
   '/cross-space': typeof CrossSpaceRoute
+  '/git-keys': typeof GitKeysRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -410,6 +418,7 @@ export interface FileRoutesById {
   '/backups': typeof BackupsRoute
   '/cross-space': typeof CrossSpaceRoute
   '/events': typeof EventsRouteWithChildren
+  '/git-keys': typeof GitKeysRoute
   '/human': typeof HumanRoute
   '/human-types': typeof HumanTypesRoute
   '/login': typeof LoginRoute
@@ -462,6 +471,7 @@ export interface FileRouteTypes {
     | '/backups'
     | '/cross-space'
     | '/events'
+    | '/git-keys'
     | '/human'
     | '/human-types'
     | '/login'
@@ -511,6 +521,7 @@ export interface FileRouteTypes {
     | '/audit'
     | '/backups'
     | '/cross-space'
+    | '/git-keys'
     | '/human'
     | '/human-types'
     | '/login'
@@ -557,6 +568,7 @@ export interface FileRouteTypes {
     | '/backups'
     | '/cross-space'
     | '/events'
+    | '/git-keys'
     | '/human'
     | '/human-types'
     | '/login'
@@ -608,6 +620,7 @@ export interface RootRouteChildren {
   BackupsRoute: typeof BackupsRoute
   CrossSpaceRoute: typeof CrossSpaceRoute
   EventsRoute: typeof EventsRouteWithChildren
+  GitKeysRoute: typeof GitKeysRoute
   HumanRoute: typeof HumanRoute
   HumanTypesRoute: typeof HumanTypesRoute
   LoginRoute: typeof LoginRoute
@@ -690,6 +703,13 @@ declare module '@tanstack/react-router' {
       path: '/events'
       fullPath: '/events'
       preLoaderRoute: typeof EventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/git-keys': {
+      id: '/git-keys'
+      path: '/git-keys'
+      fullPath: '/git-keys'
+      preLoaderRoute: typeof GitKeysRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/human': {
@@ -1069,6 +1089,7 @@ const rootRouteChildren: RootRouteChildren = {
   BackupsRoute: BackupsRoute,
   CrossSpaceRoute: CrossSpaceRoute,
   EventsRoute: EventsRouteWithChildren,
+  GitKeysRoute: GitKeysRoute,
   HumanRoute: HumanRoute,
   HumanTypesRoute: HumanTypesRoute,
   LoginRoute: LoginRoute,

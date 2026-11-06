@@ -46,6 +46,7 @@ Every command accepts these.
 | [`spaceman docs`](./docs) | Generate documentation |
 | [`spaceman dream`](./dream) | Dream configurations of a space: list, create, update, start and runs (--space) |
 | [`spaceman event`](./event) | Events: Pulse connections, templates and subscriptions |
+| [`spaceman git-key`](./git-key) | Shared Git SSH keys (ADR-0058): generate, list, show, edit, rotate and delete |
 | [`spaceman human`](./human) | Human actions: list, create, respond, assign, comment and cancel; types and policies |
 | [`spaceman identity`](./identity) | Your linked sign-in identities: list and unlink (a user's: `spaceman user identity`) |
 | [`spaceman inbox`](./inbox) | A space's inbox: list, show, add and triage items (--space) |

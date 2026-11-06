@@ -2222,6 +2222,36 @@
   - Terraform manages `known_hosts` and generates or rotates the key, exposing the public key for a host's
     deploy-key resource.
 
+### ADR-0058 — Shared Git SSH keys (security-relevant)
+- **Status:** Accepted, 2026-11-06 (operator request; extends ADR-0057).
+- **Context:** A repository's own key (ADR-0057) is a GitHub deploy key, and GitHub allows a deploy key on one
+  repository only. An operator with many repositories wants one key, added once to a Git account, that all their spaces
+  can clone with.
+- **Decision:**
+  - **Keys.** Administrators (`account:write`, like harness accounts) generate shared Git SSH keys: Ed25519, with a
+    unique name and a description. The private half is sealed with the keyring's credential purpose, with the key ID as
+    associated data. The API, CLI and UI show only the public half and its fingerprint. A key can be renamed, rotated
+    (the old pair stops working at once) and deleted. Deletion is refused while a repository uses the key.
+  - **Scoping.** Each key lists the spaces that may use it, or `all_spaces`. A space's operators see only the keys their
+    space may use (`GET /spaces/{id}/git-ssh-keys`). A space can't be taken off a key's list while one of its
+    repositories uses the key.
+  - **Repositories.** A repository chooses a shared key with `git_key_id`, an SSH URL only. It has its own key or a
+    shared key, never both.
+  - **Delivery.** The repository service's `Key` resolves the repository's own key, else its shared key while the space
+    may still use it. The key then travels exactly as in ADR-0057: on the wire message of a clone or fetch only, served
+    from an in-memory agent with pinned host keys. If a space is no longer allowed to use the key, the repository shows a
+    note, and the node falls back to its own Git authentication.
+- **Consequences:**
+  - One key on a person's account can push to every repository that person can reach. The UI and docs recommend a
+    read-only machine user.
+  - The exposure while a fetch runs is the same as in ADR-0057: an agent on the node's Unix user could ask the agent
+    socket to sign, but can never read the key. A shared key reaches more repositories, though, so the same signing
+    window could read any repository its account can.
+  - Relocation leaves repositories that use a shared key to the first sync after the move, as it does for repositories
+    with their own key.
+  - Terraform manages keys as `spaceman_git_ssh_key`, with `public_key` exposed for the account's SSH key resource, and
+    repositories reference them with `git_key_id`.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

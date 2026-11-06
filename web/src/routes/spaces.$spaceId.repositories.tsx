@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, check, ifMatch, unwrap, type Repository, type RepositoryInput, type RepositoryStatus } from '@/api/client'
-import { keys, useMe, useRepositories } from '@/api/queries'
+import { keys, useMe, useRepositories, useSpaceGitKeys } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
@@ -245,6 +245,7 @@ function SSHKeySection({ spaceId, repo, canWrite }: { spaceId: string; repo: Rep
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const key = repo.ssh_key
+  const shared = repo.git_key
   const call = async (method: 'POST' | 'DELETE', done: string) => {
     if (method === 'POST' && key && !window.confirm('Replace the SSH key? The current key stops being used at once: add the new public key to the Git host and remove the old one.')) return
     if (method === 'DELETE' && !window.confirm('Remove the SSH key? The node clones and fetches with its own Git authentication again.')) return
@@ -267,7 +268,7 @@ function SSHKeySection({ spaceId, repo, canWrite }: { spaceId: string; repo: Rep
       <Stack gap={6}>
         <Group justify="space-between">
           <Title order={6}>SSH key</Title>
-          {canWrite && (
+          {canWrite && !shared && (
             <Group gap="xs">
               {key && <Button size="xs" variant="default" color="owlRed" loading={busy} onClick={() => void call('DELETE', 'SSH key removed')}>Remove</Button>}
               <Button size="xs" variant={key ? 'default' : 'filled'} leftSection={<IconKey size={14} />} loading={busy}
@@ -277,7 +278,13 @@ function SSHKeySection({ spaceId, repo, canWrite }: { spaceId: string; repo: Rep
             </Group>
           )}
         </Group>
-        {key ? (
+        {shared ? (
+          <>
+            <Text size="sm">Uses the shared key <b>{shared.name}</b> <Text span size="xs" c="dimmed" className="mono">{shared.fingerprint}</Text></Text>
+            <Text size="xs" c="dimmed">An administrator manages it under Git SSH keys; its public key is on a Git account that can read this repository. Choose another key with Edit.</Text>
+            {shared.note && <Alert color="owlYellow" icon={<IconInfoCircle size={16} />}>{shared.note}</Alert>}
+          </>
+        ) : key ? (
           <>
             <Text size="xs" c="dimmed">Add this public key to the Git host as a <b>read-only deploy key</b>. SpaceMan keeps the private key; the node uses it only to clone and fetch, and agents never receive it.</Text>
             <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -289,7 +296,7 @@ function SSHKeySection({ spaceId, repo, canWrite }: { spaceId: string; repo: Rep
             {key.note && <Alert color="owlYellow" icon={<IconInfoCircle size={16} />}>{key.note}</Alert>}
           </>
         ) : (
-          <Text size="xs" c="dimmed">None: the node clones and fetches with its own Git authentication. Generate a key so SpaceMan holds the credential instead (SSH URLs only).</Text>
+          <Text size="xs" c="dimmed">None: the node clones and fetches with its own Git authentication. Generate a deploy key for this repository, or choose a shared key with Edit, so SpaceMan holds the credential instead (SSH URLs only).</Text>
         )}
       </Stack>
     </Card>
@@ -307,17 +314,18 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
 
 function RepositoryModal({ spaceId, repo, onClose }: { spaceId: string; repo: Repository | null; onClose: () => void }) {
   const qc = useQueryClient()
+  const sharedKeys = useSpaceGitKeys(spaceId)
   const [error, setError] = useState('')
   const form = useForm({
     defaultValues: {
       name: repo?.name ?? '', path: repo?.path ?? '', url: repo?.url ?? '', default_branch: repo?.default_branch ?? 'main',
       role: (repo?.role ?? 'code') as NonNullable<RepositoryInput['role']>, clone_policy: (repo?.clone_policy ?? 'auto') as NonNullable<RepositoryInput['clone_policy']>,
-      description: repo?.description ?? '', known_hosts: repo?.known_hosts ?? '',
+      description: repo?.description ?? '', known_hosts: repo?.known_hosts ?? '', git_key_id: repo?.git_key?.id ?? '',
     },
     onSubmit: async ({ value }) => {
       setError('')
       const body: RepositoryInput = { url: value.url.trim() || undefined, default_branch: value.default_branch.trim(), role: value.role,
-        clone_policy: value.clone_policy, description: value.description, known_hosts: value.known_hosts.trim() || undefined }
+        clone_policy: value.clone_policy, description: value.description, known_hosts: value.known_hosts.trim() || undefined, git_key_id: value.git_key_id || undefined }
       try {
         if (repo) {
           unwrap(await api.PUT('/spaces/{space_id}/repositories/{repository_id}', {
@@ -368,6 +376,13 @@ function RepositoryModal({ spaceId, repo, onClose }: { spaceId: string; repo: Re
           <form.Field name="description">
             {(f) => <Textarea label="Description" autosize minRows={1} maxRows={4} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}
           </form.Field>
+          {(sharedKeys.data?.length ?? 0) > 0 && !repo?.ssh_key && (
+            <form.Field name="git_key_id">
+              {(f) => <Select label="Shared Git SSH key" description="Clone with a key an administrator shared with this space (SSH URLs only)" allowDeselect={false}
+                value={f.state.value} onChange={(v) => f.handleChange(v ?? '')}
+                data={[{ value: '', label: "None (the repository's own key, or the node's Git)" }, ...(sharedKeys.data ?? []).map((k) => ({ value: k.id, label: `${k.name} · ${k.fingerprint.slice(0, 18)}…` }))]} />}
+            </form.Field>
+          )}
           <form.Field name="known_hosts">
             {(f) => <Textarea label="Known hosts" description="Pins the Git host's SSH keys for the repository's SSH key (known_hosts lines). Empty: the built-in pins (github.com)."
               className="mono" autosize minRows={1} maxRows={6} placeholder="gitlab.example.com ssh-ed25519 AAAA…" value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}

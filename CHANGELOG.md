@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Shared Git SSH keys (ADR-0058, security-relevant). An administrator generates one key, adds its public half to a Git
+  account (preferably a read-only machine user), and picks the spaces that may use it. Those spaces' repositories
+  choose it instead of their own deploy key.
+  - API: `/api/v1/git-ssh-keys`, and `/spaces/{id}/git-ssh-keys`.
+  - CLI: `spaceman git-key`, and `spaceman repo update --git-key`.
+  - UI: a Git SSH keys page, and a Shared Git SSH key choice on each repository.
+  - Migration 0038.
+
 ### Fixed
 - A host-key failure on a repository without a SpaceMan SSH key no longer talks about pinned known_hosts. Those pins
   apply only to keyed repositories. The message now says the node's own SSH setup does not know the host, and how to

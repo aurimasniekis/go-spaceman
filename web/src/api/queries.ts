@@ -33,6 +33,8 @@ export const keys = {
   human: (space: string) => ['human', space] as const,
   humanPending: ['human', 'pending'] as const,
   accounts: ['accounts'] as const,
+  gitKeys: ['git-ssh-keys'] as const,
+  spaceGitKeys: (space: string) => ['git-ssh-keys', 'space', space] as const,
   accountKinds: ['account-kinds'] as const,
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
   messages: (space: string) => ['messages', space] as const,
@@ -427,3 +429,11 @@ export const useAllXSpace = (enabled: boolean) =>
       const [requests, peers] = await Promise.all([api.GET('/xspace/requests', { params: { query: { limit: 200 } } }), api.GET('/xspace/peers')])
       return { requests: unwrap(requests).items, peers: unwrap(peers).items }
     } })
+
+/** Shared Git SSH keys (ADR-0058): administrators manage them. */
+export const useGitKeys = (enabled = true) =>
+  useQuery({ queryKey: keys.gitKeys, enabled, queryFn: async () => unwrap(await api.GET('/git-ssh-keys')).items })
+
+/** The shared Git SSH keys a space's repositories may use. */
+export const useSpaceGitKeys = (space: string) =>
+  useQuery({ queryKey: keys.spaceGitKeys(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/git-ssh-keys', { params: { path: { space_id: space } } })).items })

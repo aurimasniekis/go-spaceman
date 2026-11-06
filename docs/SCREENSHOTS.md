@@ -18,6 +18,7 @@
 | `space-overview` | Site landing, First node and space | Space overview with lease and runs with the Export and lifecycle actions | current |
 | `attention` | Observability | Attention page: what needs a person across spaces (human actions, tasks, quarantine, runs, budgets, nodes, outbox, backups, storage) | current |
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
+| `git-ssh-keys` | Repositories | Git SSH keys page: a shared key's public half, the spaces that may use it and the repositories that do (the private half is never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |

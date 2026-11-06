@@ -78,6 +78,7 @@ const (
 	Relocation     = "rlc"
 	Schedule       = "sch"
 	Retention      = "ret"
+	GitKey         = "gky" // a shared Git SSH key (ADR-0058)
 	Takeover       = "tko" // terminal takeover (SM-UI-004)
 	Preemption     = "tpr" // a task's or worker's preemption by an incident (SM-QUEUE-009)
 	Operation      = "op"  // long-running operation

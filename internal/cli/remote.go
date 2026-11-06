@@ -13,7 +13,7 @@ const GroupID = "remote"
 func (a *App) Commands() []*cobra.Command {
 	cmds := []*cobra.Command{
 		a.nodeCmd(), a.spaceCmd(), a.runCmd(), a.inboxCmd(), a.taskCmd(), a.humanCmd(), a.scheduleCmd(), a.limitsCmd(),
-		a.accountCmd(), a.promptCmd(), a.skillCmd(), a.profileCmd(), a.roleCmd(), a.eventCmd(), a.mcpCmd(), a.approvalPolicyCmd(),
+		a.accountCmd(), a.gitKeyCmd(), a.promptCmd(), a.skillCmd(), a.profileCmd(), a.roleCmd(), a.eventCmd(), a.mcpCmd(), a.approvalPolicyCmd(),
 		a.xspaceCmd(), a.userCmd(), a.tokenCmd(), a.auditCmd(), a.systemCmd(), a.whoamiCmd(),
 		a.kbCmd(), a.repoCmd(), a.memoryCmd(), a.messageCmd(), a.dreamCmd(), a.approvalCmd(), a.attachmentCmd(),
 		a.oidcCmd(), a.identityCmd(), a.sessionCmd(), a.notificationsCmd(), a.mfaCmd(), a.passwordCmd(), a.watchCmd(),

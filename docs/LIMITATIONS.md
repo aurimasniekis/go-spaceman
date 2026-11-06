@@ -240,7 +240,8 @@
   node agent, so one could connect to that socket and have it sign. It can never read the key, and with a read-only
   deploy key that gives no more than the checkout the agent already has.
 
-  Built-in host-key pins cover github.com only; other hosts need the repository's known_hosts. A relocation's
+  Shared Git SSH keys (ADR-0058) behave the same way, but open every repository their Git account can read: use a
+  read-only machine user. Built-in host-key pins cover github.com only; other hosts need the repository's known_hosts. A relocation's
   destination does not clone repositories that have a key: the first sync after the move does. Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
   `file://` and local paths need development mode.
 - **Unlisted folders still work.** Workers may still use a repository folder that is not in the space's list; such a

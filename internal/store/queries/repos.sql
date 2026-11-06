@@ -1,10 +1,10 @@
 -- name: InsertSpaceRepository :exec
-INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, known_hosts, created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO space_repositories (id, space_id, name, path, description, url, default_branch, role, clone_policy, known_hosts, git_key_id, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSpaceRepository :execrows
 UPDATE space_repositories SET description = sqlc.arg(description), url = sqlc.arg(url), default_branch = sqlc.arg(default_branch), role = sqlc.arg(role),
-  clone_policy = sqlc.arg(clone_policy), known_hosts = sqlc.arg(known_hosts), updated_at = sqlc.arg(now), updated_by = sqlc.arg(updated_by), version = version + 1
+  clone_policy = sqlc.arg(clone_policy), known_hosts = sqlc.arg(known_hosts), git_key_id = sqlc.arg(git_key_id), updated_at = sqlc.arg(now), updated_by = sqlc.arg(updated_by), version = version + 1
 WHERE id = sqlc.arg(id) AND space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
 
 -- name: GetSpaceRepository :one
@@ -49,4 +49,4 @@ UPDATE space_repositories SET ssh_key_enc = sqlc.arg(ssh_key_enc), ssh_public_ke
 WHERE id = sqlc.arg(id) AND space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
 
 -- name: GetRepositorySSHKey :one
-SELECT id, space_id, url, ssh_key_enc FROM space_repositories WHERE id = ? AND space_id = ?;
+SELECT id, space_id, url, ssh_key_enc, git_key_id FROM space_repositories WHERE id = ? AND space_id = ?;

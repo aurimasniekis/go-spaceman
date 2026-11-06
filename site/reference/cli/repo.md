@@ -39,6 +39,7 @@ spaceman repo create --space payments api --url git@github.com:acme/api.git --pa
 | `--default-branch` | string |  | default branch (default main) |
 | `--description` | string |  | description |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--git-key` | string |  | a shared Git SSH key (gky_…) the space may use (spaceman git-key list); empty: none |
 | `--known-hosts-file` | string |  | known_hosts lines pinning the Git host's SSH keys for the repository's SSH key (empty: the built-in pins, github.com) |
 | `--path` | string |  | folder in the space folder (default the name; fixed after creation) |
 | `--role` | string |  | code or kb |
@@ -170,6 +171,7 @@ API: `get-space-repository`, `update-space-repository` ([HTTP API](../api)).
 | `--default-branch` | string |  | default branch (default main) |
 | `--description` | string |  | description |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--git-key` | string |  | a shared Git SSH key (gky_…) the space may use (spaceman git-key list); empty: none |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--known-hosts-file` | string |  | known_hosts lines pinning the Git host's SSH keys for the repository's SSH key (empty: the built-in pins, github.com) |
 | `--path` | string |  | folder in the space folder (default the name; fixed after creation) |
