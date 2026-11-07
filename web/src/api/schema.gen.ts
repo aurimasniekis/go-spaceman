@@ -827,13 +827,13 @@ export interface paths {
         get: operations["get-harbor-pilot-connection"];
         /**
          * Connect Harbor Pilot, or replace the connection
-         * @description Without If-Match this creates the connection; with it, it replaces it. Every write is validated against Harbor Pilot first: the parent token mints (and at once revokes) a probe credential, which shows it holds tokens:mint, which client binding it belongs to, when it expires and that the gateway is Harbor Pilot 0.1.3 or later; a service-principal token must read budget status and projects. Tokens are sealed and never returned (ADR-0060).
+         * @description Without If-Match this creates the connection; with it, it replaces it. Every write is validated against Harbor Pilot first: the parent token mints (and at once revokes) a probe credential, which shows it holds tokens:mint, which client binding it belongs to, when it expires and that the gateway is Harbor Pilot 0.1.3 or later; a service-principal token must read budget status and projects. Tokens are sealed and never returned (ADR-0060). Stored tokens are only sent to the address they were entered for: a change of base_url or run_base_url, or newly allowing insecure HTTP, needs parent_token (and service_token or remove_service_token when one is stored) in the same request, or it is refused with 422 before any call. Needs account:write and a step-up.
          */
         put: operations["put-harbor-pilot-connection"];
         post?: never;
         /**
          * Remove the Harbor Pilot connection
-         * @description Refused while any space routes runs through Harbor Pilot or run tokens are live.
+         * @description Refused while any space routes runs through Harbor Pilot, or unexpired tokens (run or validation) are live or waiting to be revoked. Needs account:write and a step-up.
          */
         delete: operations["delete-harbor-pilot-connection"];
         options?: never;
@@ -1882,7 +1882,7 @@ export interface paths {
         get: operations["get-space-harbor-pilot"];
         /**
          * Set a space's Harbor Pilot settings
-         * @description Without If-Match this creates the settings; with it, it replaces them. Enabling needs the connection, and the project is checked against Harbor Pilot: it must be the connection's binding project or one of its allowed projects. For the listed harnesses the gateway replaces accounts; there is no fallback to a direct account (ADR-0060).
+         * @description Without If-Match this creates the settings; with it, it replaces them. Enabling needs the connection, and the project is checked against Harbor Pilot: it must be the connection's binding project or one of its allowed projects. For the listed harnesses the gateway replaces accounts; there is no fallback to a direct account (ADR-0060). The rest needs space_config:write, but setting or changing project_id (who pays) needs account:write; an empty project_id on an update keeps the stored project.
          */
         put: operations["put-space-harbor-pilot"];
         post?: never;
@@ -6445,13 +6445,13 @@ export interface components {
             allow_insecure_http?: boolean;
             /** @description The gateway origin, e.g. https://harbor-pilot.example.com (https unless the host is loopback or allow_insecure_http is set) */
             base_url: string;
-            /** @description A Harbor Pilot gateway credential (hpk_…) with gateway:invoke, gateway:models and tokens:mint. Required on create; empty keeps the current one. Never returned */
+            /** @description A Harbor Pilot gateway credential (hpk_…) with gateway:invoke, gateway:models and tokens:mint. Required on create and when the gateway address changes; otherwise empty keeps the current one. Never returned */
             parent_token?: string;
             /** @description Remove the service-principal token */
             remove_service_token?: boolean;
             /** @description The origin runs reach the gateway on, when it differs from base_url. It needs https (no loopback exemption) unless allow_insecure_http is set */
             run_base_url?: string;
-            /** @description A Harbor Pilot service-principal token (hpa_…) with usage.read and config.read, for budget status and project checks. Empty keeps the current one. Never returned */
+            /** @description A Harbor Pilot service-principal token (hpa_…) with usage.read and config.read, for budget status and project checks. Empty keeps the current one, except when the gateway address changes (then send it again or set remove_service_token). Never returned */
             service_token?: string;
         };
         HarborpilotSpaceInput: {
@@ -6471,7 +6471,7 @@ export interface components {
              * @enum {string}
              */
             on_budget_status_unavailable?: "proceed" | "refuse" | "";
-            /** @description The Harbor Pilot project id (required when enabled); it must be the connection's binding project or one of its allowed projects */
+            /** @description The Harbor Pilot project id (required when enabled); it must be the connection's binding project or one of its allowed projects. Setting or changing it needs account:write; empty on an update keeps the stored project */
             project_id?: string;
             /**
              * Format: int64

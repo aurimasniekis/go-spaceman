@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { durationLabel, harnessLabel, ttlError } from './format'
+import { durationLabel, gatewayAddressChanged, harnessLabel, ttlError } from './format'
 
 describe('Harbor Pilot settings format', () => {
   it('labels token lifetimes', () => {
@@ -19,5 +19,16 @@ describe('Harbor Pilot settings format', () => {
   it('names harnesses, keeping unknown kinds', () => {
     expect(harnessLabel('claude-code')).toBe('Claude Code')
     expect(harnessLabel('gemini-cli')).toBe('gemini-cli')
+  })
+  it('tells when a connection edit moves the gateway (the tokens are then needed again)', () => {
+    const cur = { base_url: 'https://hp.example.com', run_base_url: '', allow_insecure_http: false }
+    expect(gatewayAddressChanged(null, 'https://hp.example.com', '', false)).toBe(false)
+    expect(gatewayAddressChanged(cur, 'https://hp.example.com/', '', false)).toBe(false)
+    expect(gatewayAddressChanged(cur, 'https://hp.example.com', 'https://hp.example.com', false)).toBe(false)
+    expect(gatewayAddressChanged(cur, 'https://elsewhere.example.com', '', false)).toBe(true)
+    expect(gatewayAddressChanged(cur, 'https://hp.example.com/gw', '', false)).toBe(true)
+    expect(gatewayAddressChanged(cur, 'https://hp.example.com', 'https://runs.example.com', false)).toBe(true)
+    expect(gatewayAddressChanged(cur, 'https://hp.example.com', '', true)).toBe(true)
+    expect(gatewayAddressChanged({ ...cur, allow_insecure_http: true }, 'https://hp.example.com', '', false)).toBe(false)
   })
 })

@@ -80,17 +80,31 @@ func TestHarborPilotPermissionsOverHTTP(t *testing.T) {
 	expect(t, root.do("PUT", "/harbor-pilot/connection", conn, "If-Match", `"7"`), 409) // stale
 	expect(t, root.do("PUT", "/harbor-pilot/connection", conn, "If-Match", `"1"`), 200)
 	expect(t, global.do("GET", "/harbor-pilot/connection", nil), 200)
+	// A new gateway address without the tokens entered again is refused before any call: stored tokens never go there.
+	elsewhere := hpfake.New(t)
+	r = root.do("PUT", "/harbor-pilot/connection", map[string]any{"base_url": elsewhere.URL(), "allow_insecure_http": true}, "If-Match", `"2"`)
+	if r.status != 422 || !strings.Contains(string(r.body), "re-enter the tokens when the gateway URL changes") || elsewhere.Count() != 0 {
+		t.Fatalf("address change without tokens: %d %s (%d requests elsewhere)", r.status, r.body, elsewhere.Count())
+	}
 	for _, c := range []*client{spaceAdmin, op, viewer} {
 		expect(t, c.do("DELETE", "/harbor-pilot/connection", nil, "If-Match", `"2"`), 403)
 	}
 
+	// The project decides who pays: setting or changing it needs account:write (ADR-0060 decision 2, the operator's
+	// decision of 2026-11-07), so a space's operators and its own admins can't, and no probe reaches Harbor Pilot.
 	base := "/spaces/" + a.ID + "/harbor-pilot"
 	settings := map[string]any{"enabled": true, "project_id": "prj_web"}
 	expect(t, viewer.do("GET", base, nil), 200)
 	expect(t, other.do("GET", base, nil), 404) // another space is invisible
 	expect(t, viewer.do("PUT", base, settings), 403)
 	expect(t, other.do("PUT", base, settings), 404)
-	r = op.do("PUT", base, settings)
+	probes := f.Count()
+	expect(t, op.do("PUT", base, settings), 403)
+	expect(t, spaceAdmin.do("PUT", base, settings), 403)
+	if f.Count() != probes {
+		t.Fatal("a refused project write probed Harbor Pilot")
+	}
+	r = global.do("PUT", base, settings)
 	expect(t, r, 200)
 	var sp harborpilot.SpaceSettings
 	r.json(t, &sp)
@@ -100,16 +114,30 @@ func TestHarborPilotPermissionsOverHTTP(t *testing.T) {
 	expect(t, spaceAdmin.do("PUT", base, settings), 409)
 	expect(t, spaceAdmin.do("PUT", base, map[string]any{"enabled": true, "project_id": "prj_web", "ttl_seconds": 600}, "If-Match", `"1"`), 422)
 	expect(t, spaceAdmin.do("PUT", base, map[string]any{"enabled": true, "project_id": "prj_web", "on_budget_status_unavailable": "fallback"}, "If-Match", `"1"`), 422)
+	// The rest of the settings are space configuration: the same project, or none sent, is kept.
 	expect(t, spaceAdmin.do("PUT", base, map[string]any{"enabled": true, "project_id": "prj_web", "ttl_seconds": 3600}, "If-Match", `"1"`), 200)
+	r = op.do("PUT", base, map[string]any{"enabled": true, "ttl_seconds": 7200}, "If-Match", `"2"`)
+	expect(t, r, 200)
+	r.json(t, &sp)
+	if sp.ProjectID != "prj_web" || sp.TTLSeconds != 7200 {
+		t.Fatalf("omitted project %+v", sp)
+	}
+	for _, c := range []*client{op, spaceAdmin} {
+		expect(t, c.do("PUT", base, map[string]any{"enabled": true, "project_id": "prj_data"}, "If-Match", `"3"`), 403)
+	}
+	expect(t, root.do("PUT", base, map[string]any{"enabled": true, "project_id": "prj_data"}, "If-Match", `"3"`), 200)
+	expect(t, global.do("PUT", base, map[string]any{"enabled": true, "project_id": "prj_web"}, "If-Match", `"4"`), 200)
+	expect(t, op.do("PUT", base, map[string]any{"enabled": false}, "If-Match", `"5"`), 200)
+	expect(t, op.do("PUT", base, map[string]any{"enabled": true}, "If-Match", `"6"`), 200)
 
 	// Deleting the connection is refused while a space routes runs through it.
 	expect(t, root.do("DELETE", "/harbor-pilot/connection", nil), 428)
 	if r := root.do("DELETE", "/harbor-pilot/connection", nil, "If-Match", `"2"`); r.status != 409 || !strings.Contains(string(r.body), "route runs through Harbor Pilot") {
 		t.Fatalf("delete while enabled: %d %s", r.status, r.body)
 	}
-	expect(t, viewer.do("DELETE", base, nil, "If-Match", `"2"`), 403)
+	expect(t, viewer.do("DELETE", base, nil, "If-Match", `"7"`), 403)
 	expect(t, op.do("DELETE", base, nil), 428)
-	expect(t, op.do("DELETE", base, nil, "If-Match", `"2"`), 204)
+	expect(t, op.do("DELETE", base, nil, "If-Match", `"7"`), 204)
 	expect(t, global.do("DELETE", "/harbor-pilot/connection", nil, "If-Match", `"2"`), 204)
 	expect(t, root.do("GET", "/harbor-pilot/connection", nil), 404)
 }
@@ -228,8 +256,10 @@ func TestHarborPilotCanaryTokensLeakNowhere(t *testing.T) {
 	// The database files on disk.
 	for _, name := range []string{store.DBFile, store.DBFile + "-wal"} {
 		raw, err := os.ReadFile(h.c.Store.Path(name))
-		if err != nil {
-			continue
+		if err != nil && name == store.DBFile {
+			t.Fatalf("the database file can't be read, so it isn't checked: %v", err)
+		} else if err != nil {
+			continue // no WAL at the moment
 		}
 		if bytes.Contains(raw, []byte("CANARY")) {
 			t.Fatalf("a token is in plain text in %s", name)

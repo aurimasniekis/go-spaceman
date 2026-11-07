@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -212,7 +213,7 @@ func TestConnectionLifecycleAndSpaces(t *testing.T) {
 	if err != nil || sp.Stored || sp.Enabled || sp.TTLSeconds != 86400 || sp.OnBudgetStatusUnavailable != "proceed" || len(sp.Harnesses) != 2 || sp.Connected {
 		t.Fatalf("defaults %+v %v", sp, err)
 	}
-	_, err = svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_web"})
+	_, err = svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_web"}, true)
 	code(t, err, apperr.CodePrecondition)
 	if _, err := svc.GetSpace(ctx, "spc_nope"); err == nil {
 		t.Fatal("unknown space")
@@ -238,29 +239,32 @@ func TestConnectionLifecycleAndSpaces(t *testing.T) {
 	}
 
 	// Space validation.
-	fieldMsg(t, func() error { _, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true}); return err }(), "project_id", "required")
 	fieldMsg(t, func() error {
-		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{ProjectID: "prj_web", TTLSeconds: 600})
+		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true}, true)
+		return err
+	}(), "project_id", "required")
+	fieldMsg(t, func() error {
+		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{ProjectID: "prj_web", TTLSeconds: 600}, true)
 		return err
 	}(), "ttl_seconds", "between 900")
 	fieldMsg(t, func() error {
-		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{ProjectID: "prj_web", TTLSeconds: 604801})
+		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{ProjectID: "prj_web", TTLSeconds: 604801}, true)
 		return err
 	}(), "ttl_seconds", "between 900")
 	fieldMsg(t, func() error {
-		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Harnesses: []string{"Claude Code"}})
+		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Harnesses: []string{"Claude Code"}}, true)
 		return err
 	}(), "harnesses", "not a harness kind")
 	fieldMsg(t, func() error {
-		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_missing"})
+		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_missing"}, true)
 		return err
 	}(), "project_id", "has no project")
 	fieldMsg(t, func() error {
-		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "web-app"})
+		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "web-app"}, true)
 		return err
 	}(), "project_id", "use its id prj_web")
 	fieldMsg(t, func() error {
-		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_other"})
+		_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_other"}, true)
 		return err
 	}(), "project_id", "allowed projects")
 	if got := f.Unrevoked(); len(got) != 0 {
@@ -269,14 +273,14 @@ func TestConnectionLifecycleAndSpaces(t *testing.T) {
 
 	// Any harness name is accepted (ADR-0060 Q6), sorted and deduplicated.
 	sp, err = svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_web", Harnesses: []string{"codex", "gemini-cli", "codex"},
-		TTLSeconds: 7200, OnBudgetStatusUnavailable: "refuse", AllowedModelAliases: []string{"coding/default", "coding/fast", "coding/default"}})
+		TTLSeconds: 7200, OnBudgetStatusUnavailable: "refuse", AllowedModelAliases: []string{"coding/default", "coding/fast", "coding/default"}}, true)
 	if err != nil || !sp.Stored || !sp.Enabled || strings.Join(sp.Harnesses, ",") != "codex,gemini-cli" || sp.TTLSeconds != 7200 ||
 		sp.OnBudgetStatusUnavailable != "refuse" || strings.Join(sp.AllowedModelAliases, ",") != "coding/default,coding/fast" || sp.Version != 1 || !sp.Connected {
 		t.Fatalf("enabled %+v %v", sp, err)
 	}
-	_, err = svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{})
+	_, err = svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{}, true)
 	code(t, err, apperr.CodeConflict)
-	_, err = svc.PutSpace(ctx, admin, "spc_b", 3, SpaceInput{})
+	_, err = svc.PutSpace(ctx, admin, "spc_b", 3, SpaceInput{}, true)
 	code(t, err, apperr.CodeNotFound)
 
 	// Deleting the connection is refused while a space is enabled.
@@ -302,7 +306,7 @@ func TestConnectionLifecycleAndSpaces(t *testing.T) {
 	}
 
 	// Disabling, then deleting the space settings, then the connection.
-	sp, err = svc.PutSpace(ctx, admin, "spc_a", sp.Version, SpaceInput{ProjectID: "prj_web"})
+	sp, err = svc.PutSpace(ctx, admin, "spc_a", sp.Version, SpaceInput{ProjectID: "prj_web"}, true)
 	if err != nil || sp.Enabled || sp.Version != 2 {
 		t.Fatalf("disabled %+v %v", sp, err)
 	}
@@ -329,10 +333,205 @@ func TestDeleteConnectionWaitsForRunTokens(t *testing.T) {
 	ctx := context.Background()
 	c := connect(t, svc, f)
 	if err := s.W().TxNamed(ctx, "seed", func(tx *store.Tx) error {
-		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO gateway_revocations (credential_id, reason, expires_at, next_attempt_at, requested_at) VALUES ('crd_x', 'run ended', 1, 1, 1)`)
+		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO gateway_revocations (credential_id, reason, expires_at, next_attempt_at, requested_at) VALUES ('crd_x', 'run ended', ?, 1, 1)`,
+			time.Now().Add(time.Hour).UnixMicro())
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	code(t, svc.DeleteConnection(ctx, admin, c.Version), apperr.CodePrecondition)
+	ae := appErr(t, svc.DeleteConnection(ctx, admin, c.Version), apperr.CodePrecondition)
+	if !strings.Contains(ae.Message, "tokens (run or validation)") {
+		t.Fatalf("message %q", ae.Message)
+	}
+	// An expired credential no longer matters (Harbor Pilot refuses it anyway): it does not keep the connection.
+	if err := s.W().TxNamed(ctx, "expire", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE gateway_revocations SET expires_at = 1 WHERE credential_id = 'crd_x'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteConnection(ctx, admin, c.Version); err != nil {
+		t.Fatalf("expired pending revocation still blocks: %v", err)
+	}
+}
+
+// Security (review of HP-T2, finding 1): the stored tokens are only ever sent to the address they were entered for.
+// Moving the gateway (base_url, run_base_url, or newly allowing plain http) without entering the tokens again is
+// refused with a validation error before any request, so the new address never sees a stored token.
+func TestConnectionAddressChangeNeedsTokens(t *testing.T) {
+	t.Parallel()
+	svc, _ := newSvc(t)
+	f := hpfake.New(t)
+	evil := hpfake.New(t)
+	ctx := context.Background()
+	c := connect(t, svc, f)
+	before := f.Count()
+
+	for name, in := range map[string]ConnectionInput{
+		"base_url":            {BaseURL: evil.URL(), AllowInsecureHTTP: true},
+		"base_url+path":       {BaseURL: f.URL() + "/other", AllowInsecureHTTP: true},
+		"run_base_url":        {BaseURL: f.URL(), RunBaseURL: evil.URL(), AllowInsecureHTTP: true},
+		"parent_only":         {BaseURL: evil.URL(), AllowInsecureHTTP: true, ParentToken: f.Parent},
+		"service_only":        {BaseURL: evil.URL(), AllowInsecureHTTP: true, ServiceToken: f.Service},
+		"remove_service_only": {BaseURL: evil.URL(), AllowInsecureHTTP: true, RemoveServiceToken: true},
+	} {
+		_, err := svc.PutConnection(ctx, admin, c.Version, in)
+		ae := appErr(t, err, apperr.CodeInvalid)
+		fields := map[string]bool{}
+		for _, fe := range ae.Fields {
+			if !strings.Contains(fe.Message, "re-enter the tokens when the gateway URL changes") {
+				t.Errorf("%s: %s: %q", name, fe.Field, fe.Message)
+			}
+			fields[fe.Field] = true
+		}
+		if fields["parent_token"] != (in.ParentToken == "") || fields["service_token"] != (in.ServiceToken == "" && !in.RemoveServiceToken) {
+			t.Errorf("%s: fields %+v", name, ae.Fields)
+		}
+	}
+	if n := evil.Count(); n != 0 {
+		t.Fatalf("the new address got %d requests", n)
+	}
+	if n := f.Count(); n != before {
+		t.Fatalf("the stored address got %d requests for refused writes", n-before)
+	}
+
+	// Newly allowing plain http needs the tokens again too.
+	svc2, _ := newSvc(t)
+	g := hpfake.New(t)
+	c2, err := svc2.PutConnection(ctx, admin, 0, ConnectionInput{BaseURL: g.URL(), RunBaseURL: "https://hp.example.com", ParentToken: g.Parent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before = g.Count()
+	_, err = svc2.PutConnection(ctx, admin, c2.Version, ConnectionInput{BaseURL: g.URL(), RunBaseURL: "https://hp.example.com", AllowInsecureHTTP: true})
+	fieldMsg(t, err, "parent_token", "re-enter the tokens")
+	if g.Count() != before {
+		t.Fatal("a refused write called the gateway")
+	}
+
+	// Entering the tokens again moves the connection; the same address keeps them without.
+	c3, err := svc.PutConnection(ctx, admin, c.Version, ConnectionInput{BaseURL: evil.URL(), AllowInsecureHTTP: true, ParentToken: evil.Parent, ServiceToken: evil.Service})
+	if err != nil || c3.BaseURL != evil.URL() {
+		t.Fatalf("move with tokens %+v %v", c3, err)
+	}
+	if _, err := svc.PutConnection(ctx, admin, c3.Version, ConnectionInput{BaseURL: evil.URL(), AllowInsecureHTTP: true}); err != nil {
+		t.Fatalf("same address without tokens: %v", err)
+	}
+}
+
+// ADR-0060 decision 2 (the operator's decision of 2026-11-07): the project decides who pays, so setting or changing it
+// needs account:write; the rest of a space's settings need only space_config:write.
+func TestSpaceProjectNeedsAccountWrite(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	ctx := context.Background()
+	connect(t, svc, f)
+	op := audit.Actor{Type: audit.ActorUser, ID: "usr_op"}
+
+	// An operator can't create settings with a project, and no probe reaches Harbor Pilot.
+	before := f.Count()
+	_, err := svc.PutSpace(ctx, op, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_web"}, false)
+	if ae := appErr(t, err, apperr.CodeForbidden); !strings.Contains(ae.Message, "needs account:write") {
+		t.Fatalf("message %q", ae.Message)
+	}
+	if f.Count() != before {
+		t.Fatal("a refused project change probed Harbor Pilot")
+	}
+	// Settings without a project are fine.
+	sp, err := svc.PutSpace(ctx, op, "spc_b", 0, SpaceInput{TTLSeconds: 3600}, false)
+	if err != nil || sp.ProjectID != "" {
+		t.Fatalf("no project %+v %v", sp, err)
+	}
+
+	sp, err = svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_web"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The operator changes the rest; an omitted project keeps the stored one, the same one is fine too.
+	sp, err = svc.PutSpace(ctx, op, "spc_a", sp.Version, SpaceInput{Enabled: true, TTLSeconds: 3600}, false)
+	if err != nil || sp.ProjectID != "prj_web" || sp.TTLSeconds != 3600 {
+		t.Fatalf("omitted project %+v %v", sp, err)
+	}
+	sp, err = svc.PutSpace(ctx, op, "spc_a", sp.Version, SpaceInput{ProjectID: "prj_web"}, false)
+	if err != nil || sp.Enabled {
+		t.Fatalf("disable %+v %v", sp, err)
+	}
+	_, err = svc.PutSpace(ctx, op, "spc_a", sp.Version, SpaceInput{Enabled: true, ProjectID: "prj_data"}, false)
+	code(t, err, apperr.CodeForbidden)
+	sp, err = svc.PutSpace(ctx, admin, "spc_a", sp.Version, SpaceInput{Enabled: true, ProjectID: "prj_data"}, true)
+	if err != nil || sp.ProjectID != "prj_data" {
+		t.Fatalf("admin change %+v %v", sp, err)
+	}
+	var got string
+	if err := s.ReadDB().QueryRowContext(ctx, `SELECT group_concat(c, ',') FROM (SELECT json_extract(details_json, '$.project_changed') AS c FROM audit_events
+		WHERE action LIKE 'harbor_pilot.space.%' ORDER BY seq)`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "0,1,0,0,1" {
+		t.Fatalf("project_changed in audit: %s", got)
+	}
+
+	// The check is repeated in the transaction: a project changed behind the caller's back (between the probe and
+	// the write) is not silently kept by an operator's write.
+	f.Set(func(h *hpfake.HP) {
+		h.Hook = func(r *http.Request) {
+			if r.Method == http.MethodGet {
+				_ = s.W().TxNamed(ctx, "behind", func(tx *store.Tx) error {
+					_, err := tx.SQL.ExecContext(ctx, `UPDATE space_harbor_pilot SET project_id = 'prj_web' WHERE space_id = 'spc_a'`)
+					return err
+				})
+			}
+		}
+	})
+	_, err = svc.PutSpace(ctx, op, "spc_a", sp.Version, SpaceInput{Enabled: true, TTLSeconds: 7200}, false)
+	code(t, err, apperr.CodeForbidden)
+}
+
+// Review of HP-T2, finding 6: the project is checked against one connection; a connection replaced meanwhile (another
+// binding, say) makes the write a conflict instead of storing a project the new binding may not allow.
+func TestSpaceProjectCheckedAgainstTheStoredConnection(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	ctx := context.Background()
+	connect(t, svc, f)
+	f.Set(func(h *hpfake.HP) {
+		h.Hook = func(r *http.Request) {
+			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/projects/") {
+				_ = s.W().TxNamed(ctx, "replace", func(tx *store.Tx) error {
+					_, err := tx.SQL.ExecContext(ctx, `UPDATE harbor_pilot_connection SET binding_id = 'bnd_other', version = version + 1`)
+					return err
+				})
+			}
+		}
+	})
+	_, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: "prj_web"}, true)
+	if ae := appErr(t, err, apperr.CodeConflict); !strings.Contains(ae.Message, "connection changed") {
+		t.Fatalf("message %q", ae.Message)
+	}
+	if sp, _ := svc.GetSpace(ctx, "spc_a"); sp.Stored {
+		t.Fatalf("stored %+v", sp)
+	}
+}
+
+// Review of HP-T2, finding 5: a validation credential that can be neither revoked nor queued is said to stay valid,
+// not to be queued.
+func TestUnqueuedValidationCredentialIsReported(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	ctx := context.Background()
+	if err := s.W().TxNamed(ctx, "block", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `CREATE TRIGGER no_revocations BEFORE INSERT ON gateway_revocations BEGIN SELECT RAISE(ABORT, 'refused'); END`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.Set(func(h *hpfake.HP) { h.FailRevoke = true })
+	c := connect(t, svc, f)
+	w := strings.Join(c.Warnings, "\n")
+	if !strings.Contains(w, "nor queued for revocation") || strings.Contains(w, "it is queued") {
+		t.Fatalf("warnings %q", c.Warnings)
+	}
 }

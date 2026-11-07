@@ -83,13 +83,13 @@ func (a *App) harborPilotCmd() *cobra.Command {
 		f.str("base-url", "base_url", "gateway origin SpaceMan calls (https unless loopback or --allow-insecure-http)").
 			str("run-base-url", "run_base_url", "origin runs reach the gateway on, when it differs (needs https)").
 			boolean("allow-insecure-http", "allow_insecure_http", "allow plain http: tokens then cross the network in clear text").
-			secret("parent-token", "parent_token", "parent gateway credential (hpk_…) with tokens:mint; required when connecting").
-			secret("service-token", "service_token", "service-principal token (hpa_…) with usage.read and config.read").
+			secret("parent-token", "parent_token", "parent gateway credential (hpk_…) with tokens:mint; required when connecting or changing the gateway URL").
+			secret("service-token", "service_token", "service-principal token (hpa_…) with usage.read and config.read; give it again (or --remove-service-token) when changing the gateway URL").
 			boolean("remove-service-token", "remove_service_token", "remove the service-principal token")
 	}
 	spaceForm := func(f *form) {
 		f.boolean("enabled", "enabled", "route the space's runs of the listed harnesses through Harbor Pilot").
-			str("project", "project_id", "Harbor Pilot project id runs are charged to (required when enabled)").
+			str("project", "project_id", "Harbor Pilot project id runs are charged to (required when enabled; setting or changing it needs account:write)").
 			list("harness", "harnesses", "harness kind routed through Harbor Pilot (default: claude-code and codex)").
 			integer("ttl", "ttl_seconds", "run token lifetime in seconds, 900 to 604800 (default 86400)").
 			str("on-budget-status-unavailable", "on_budget_status_unavailable", "proceed or refuse").
@@ -101,13 +101,17 @@ func (a *App) harborPilotCmd() *cobra.Command {
 			get: "get-harbor-pilot-connection", getOptional: true, merge: true, form: connForm,
 			long: "Saving mints a probe token with the parent token and revokes it at once: it shows the parent holds tokens:mint, its client " +
 				"binding and expiry, and that the gateway is Harbor Pilot 0.1.3 or later. Tokens come from a file or standard input and are " +
-				"never shown again; omit them to keep the current ones.",
+				"never shown again; omit them to keep the current ones. Stored tokens are only sent to the address they were entered for: " +
+				"changing --base-url or --run-base-url, or turning on --allow-insecure-http, needs --parent-token (and --service-token or " +
+				"--remove-service-token when one is stored) again. Needs account:write.",
 			example: "spaceman harbor-pilot connect --base-url https://harbor-pilot.example.com --parent-token-file ~/.hp/parent --service-token-file ~/.hp/reader"}),
 		a.cmd(opts{use: "disconnect", short: "Remove the connection (refused while a space uses it)", op: "delete-harbor-pilot-connection",
 			get: "get-harbor-pilot-connection", confirm: "remove the Harbor Pilot connection", done: "Harbor Pilot connection removed."}),
 		a.cmd(opts{use: "space", short: "A space's Harbor Pilot settings", op: "get-space-harbor-pilot", scoped: true}),
 		a.cmd(opts{use: "set-space", short: "Set a space's Harbor Pilot settings (only the flags given change)", op: "put-space-harbor-pilot",
 			get: "get-space-harbor-pilot", merge: true, optionalIfMatch: true, scoped: true, form: spaceForm,
+			long: "Needs space_config:write. The project decides who pays, so setting or changing --project needs account:write " +
+				"(a global administrator); without --project the stored project is kept.",
 			example: "spaceman harbor-pilot set-space --space payments --enabled --project prj_01… --harness codex --ttl 43200"}),
 		a.cmd(opts{use: "unset-space", short: "Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot)",
 			op: "delete-space-harbor-pilot", get: "get-space-harbor-pilot", scoped: true, done: "Harbor Pilot settings removed."}),

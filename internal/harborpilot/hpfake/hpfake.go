@@ -39,7 +39,10 @@ type HP struct {
 	FailRevoke    bool              // revocations answer 500
 	Minted        map[string]bool   // credential id → revoked
 	Bodies        []string          // raw mint bodies
-	seq           int
+	Requests      int               // every request served
+	// Hook, when set, runs before each request is served (without the fake's lock), e.g. to change state mid-call.
+	Hook func(r *http.Request)
+	seq  int
 }
 
 // New starts a fake gateway for t, with a valid parent (invoke, models, mint) and service token (usage.read,
@@ -77,7 +80,14 @@ func bearer(r *http.Request) string {
 
 func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
+	hook := f.Hook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(r)
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.Requests++
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/harbor/credentials":
 		f.mint(w, r)
@@ -221,6 +231,14 @@ func (f *HP) Unrevoked() []string {
 	return out
 }
 
+// Count is the number of requests served.
+func (f *HP) Count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Requests
+}
+
+// Set changes the fake's state under its lock.
 func (f *HP) Set(fn func(f *HP)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

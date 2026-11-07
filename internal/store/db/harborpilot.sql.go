@@ -11,22 +11,22 @@ import (
 )
 
 const countLiveRunGatewayCredentials = `-- name: CountLiveRunGatewayCredentials :one
-SELECT count(*) FROM run_gateway_credentials WHERE token_enc IS NOT NULL
+SELECT count(*) FROM run_gateway_credentials WHERE token_enc IS NOT NULL AND expires_at > ?1
 `
 
-func (q *Queries) CountLiveRunGatewayCredentials(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countLiveRunGatewayCredentials)
+func (q *Queries) CountLiveRunGatewayCredentials(ctx context.Context, now int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLiveRunGatewayCredentials, now)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const countPendingGatewayRevocations = `-- name: CountPendingGatewayRevocations :one
-SELECT count(*) FROM gateway_revocations WHERE state = 'pending'
+SELECT count(*) FROM gateway_revocations WHERE state = 'pending' AND expires_at > ?1
 `
 
-func (q *Queries) CountPendingGatewayRevocations(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countPendingGatewayRevocations)
+func (q *Queries) CountPendingGatewayRevocations(ctx context.Context, now int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingGatewayRevocations, now)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

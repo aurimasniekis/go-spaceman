@@ -48,13 +48,13 @@ func TestRealHarborPilotConnection(t *testing.T) {
 	}
 	assertNoChildren()
 
-	sp, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: g.AltProjectID})
+	sp, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: true, ProjectID: g.AltProjectID}, true)
 	if err != nil || !sp.Enabled || sp.ProjectID != g.AltProjectID {
 		t.Fatalf("space %+v %v", sp, err)
 	}
-	_, err = svc.PutSpace(ctx, admin, "spc_b", 0, SpaceInput{Enabled: true, ProjectID: "web-app"})
+	_, err = svc.PutSpace(ctx, admin, "spc_b", 0, SpaceInput{Enabled: true, ProjectID: "web-app"}, true)
 	fieldMsg(t, err, "project_id", "use its id "+g.ProjectID)
-	_, err = svc.PutSpace(ctx, admin, "spc_b", 0, SpaceInput{Enabled: true, ProjectID: "prj_doesnotexist"})
+	_, err = svc.PutSpace(ctx, admin, "spc_b", 0, SpaceInput{Enabled: true, ProjectID: "prj_doesnotexist"}, true)
 	fieldMsg(t, err, "project_id", "has no project")
 
 	// Without a service-principal token, the mint probe is the check: Harbor Pilot refuses a name (it allows ids only).
@@ -62,7 +62,7 @@ func TestRealHarborPilotConnection(t *testing.T) {
 	if err != nil || c.HasServiceToken {
 		t.Fatalf("remove service token %+v %v", c, err)
 	}
-	_, err = svc.PutSpace(ctx, admin, "spc_b", 0, SpaceInput{Enabled: true, ProjectID: "web-app"})
+	_, err = svc.PutSpace(ctx, admin, "spc_b", 0, SpaceInput{Enabled: true, ProjectID: "web-app"}, true)
 	fieldMsg(t, err, "project_id", "refused project")
 
 	// Deleting the connection is refused while spc_a uses it.
