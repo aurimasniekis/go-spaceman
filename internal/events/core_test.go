@@ -84,18 +84,18 @@ func TestCoreSubscriptionIngests(t *testing.T) {
 	if hashed != 3 {
 		t.Fatalf("content-hashed deliveries = %d, want 3", hashed)
 	}
-	// Ingestion metrics (bounded labels only).
+	// Ingestion metrics (bounded labels only). They are recorded after the delivery row, so wait for them.
 	for _, c := range []struct {
 		result string
 		want   float64
 	}{{"created", 2}, {"duplicate", 2}, {"filtered", 1}} {
-		if v := metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "core", "origin", "live", "result", c.result); v != c.want {
-			t.Errorf("core %s = %v, want %v", c.result, v, c.want)
-		}
+		eventually(t, "core "+c.result+" metric", func() bool {
+			return metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "core", "origin", "live", "result", c.result) == c.want
+		})
 	}
-	if v := metricstest.Value(t, f.mt, "spaceman_ingest_processing_duration_seconds", "delivery", "core"); v != 5 {
-		t.Errorf("core latency samples = %v", v)
-	}
+	eventually(t, "core latency samples", func() bool {
+		return metricstest.Value(t, f.mt, "spaceman_ingest_processing_duration_seconds", "delivery", "core") == 5
+	})
 	eventually(t, "gauges", func() bool {
 		return metricstest.Value(t, f.mt, "spaceman_ingest_subscriptions", "delivery", "core", "state", "running") == 1 &&
 			metricstest.Value(t, f.mt, "spaceman_ingest_connections", "connection_kind", "pulse", "state", "connected") == 1
@@ -116,9 +116,9 @@ func TestCoreSubscriptionQuarantine(t *testing.T) {
 	if g, _ := f.svc.GetSubscription(f.ctx, "spc_a", s.ID); g.LastError != "" || g.Quarantined != 1 {
 		t.Fatalf("a quarantined message is not a subscription error: %+v", g)
 	}
-	if v := metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "core", "result", "quarantined"); v != 1 {
-		t.Fatalf("quarantined metric = %v", v)
-	}
+	eventually(t, "quarantined metric", func() bool {
+		return metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "core", "result", "quarantined") == 1
+	})
 	eventually(t, "quarantine gauge", func() bool { return metricstest.Value(t, f.mt, "spaceman_ingest_quarantine_open") == 1 })
 	def.InputSchema = json.RawMessage(`{"type":"object","required":["name"]}`)
 	cur, _ := f.svc.GetSubscription(f.ctx, "spc_a", s.ID)
@@ -278,9 +278,10 @@ func TestDurableIngestMetrics(t *testing.T) {
 	if v := metricstest.Value(t, f.mt, "spaceman_ingest_replays_total"); v != 1 {
 		t.Fatalf("replays = %v", v)
 	}
-	if v := metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "durable", "result", "created"); v < 1 {
-		t.Fatalf("durable created = %v", v)
-	}
+	// The metric is recorded after the delivery, asynchronously to this test.
+	eventually(t, "durable created metric", func() bool {
+		return metricstest.Value(t, f.mt, "spaceman_ingest_deliveries_total", "delivery", "durable", "result", "created") >= 1
+	})
 }
 
 // SM-EVT-016 on core: a message carrying this installation's spaceman-origin is recorded as filtered, not ingested.
@@ -292,7 +293,7 @@ func TestCoreOwnEventsAreNotReingested(t *testing.T) {
 	t.Cleanup(src.Close)
 	f.corePublish(src, issueSubject, issuePayload(t, ""), map[string]string{outbox.HeaderOrigin: "spaceman-test"})
 	eventually(t, "own message filtered", func() bool { return f.outcomes("spc_a", s.ID)[OutcomeFiltered] == 1 })
-	if d := f.deliveries("spc_a", s.ID); d[0].Detail != OwnOriginDetail || len(f.items("spc_a")) != 0 {
-		t.Fatalf("delivery %+v items %d", d[0], len(f.items("spc_a")))
+	if d := f.deliveries("spc_a", s.ID); len(d) == 0 || d[0].Detail != OwnOriginDetail || len(f.items("spc_a")) != 0 {
+		t.Fatalf("delivery %+v items %d", d, len(f.items("spc_a")))
 	}
 }
