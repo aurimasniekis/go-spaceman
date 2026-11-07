@@ -49,7 +49,8 @@ type fleetEnv struct {
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
-// central or the agent under the race detector never outlives a lease; tests of lease expiry pass shortLease.
+// the agent under the race detector never outlives a lease; tests whose runs must survive restartCentral pass
+// longLease, and tests of lease expiry pass shortLease.
 func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	t.Helper()
 	dir := t.TempDir()
@@ -88,6 +89,11 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	})
 	return e
 }
+
+// longLease makes leases last 30 s, for tests whose runs must survive restartCentral: reopening central's store under
+// the race detector takes about as long as the default 5 s lease, and the node's reconnects are refused until it is
+// open, so the lease could expire and the node stop the space's runs.
+func longLease(cfg *config.Config) { cfg.Nodes.LeaseTTL = config.Duration(30 * time.Second) }
 
 // shortLease makes leases expire quickly (1 s plus a 0.5 s grace) for tests of what happens without central.
 func shortLease(cfg *config.Config) {
@@ -190,7 +196,7 @@ func (e *fleetEnv) run1(id string) *fleet.Run {
 // agent and central restarts without duplicate execution, stop, control uniqueness and fencing.
 func TestFleetLifecycle(t *testing.T) {
 	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
-	e := newFleetEnv(t)
+	e := newFleetEnv(t, longLease)
 	ctx := context.Background()
 	e.enroll()
 	e.startAgent()

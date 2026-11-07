@@ -17,7 +17,7 @@ import (
 // control when it is idle, and is never shown to another worker.
 func TestHumanResponseRoutedWhenTheRequesterEnds(t *testing.T) {
 	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
-	e := newFleetEnv(t)
+	e := newFleetEnv(t, longLease)
 	e.enroll()
 	e.startAgent()
 	ctx := context.Background()

@@ -28,7 +28,7 @@ func TestCrossSpaceRequests(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	e := newFleetEnv(t)
+	e := newFleetEnv(t, longLease)
 	e.enroll()
 	e.startAgent()
 	ctx := context.Background()
