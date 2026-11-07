@@ -6,7 +6,8 @@
 
 -- +goose Up
 ALTER TABLE mcp_servers ADD COLUMN kind TEXT NOT NULL DEFAULT 'http' CHECK (kind IN ('http', 'spaceman'));
-ALTER TABLE mcp_servers ADD COLUMN api_token_id TEXT REFERENCES api_tokens (id);
+-- A spaceman server always has its internal token; an http server never has one.
+ALTER TABLE mcp_servers ADD COLUMN api_token_id TEXT REFERENCES api_tokens (id) CHECK ((kind = 'spaceman') = (api_token_id IS NOT NULL));
 ALTER TABLE mcp_servers ADD COLUMN spaceman_json TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE api_tokens ADD COLUMN purpose TEXT NOT NULL DEFAULT '' CHECK (purpose IN ('', 'spaceman_mcp'));
 

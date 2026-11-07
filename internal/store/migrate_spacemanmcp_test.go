@@ -8,7 +8,8 @@ import (
 
 // 0042 adds the SpaceMan MCP columns to a database at 0041 (ADR-0063): existing gateway servers become kind 'http'
 // with no internal token and '{}' settings, existing API tokens get the empty (bearer) purpose, and the new
-// constraints hold: two kinds, two purposes, and an internal token reference that must exist.
+// constraints hold: two kinds, two purposes, and an internal token reference that must exist exactly for the
+// spaceman kind.
 func TestSpacemanMCPMigrationFrom0041(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -60,6 +61,11 @@ func TestSpacemanMCPMigrationFrom0041(t *testing.T) {
 		`INSERT INTO api_tokens (id, name, user_id, mac, hint, created_at, expires_at, purpose) VALUES ('atk_3', 'x', 'usr_1', x'03', '', 0, 1, 'bearer')`,
 		`INSERT INTO mcp_servers (id, slug, name, url, kind, created_at, created_by, updated_at) VALUES ('mcp_3', 'stdio', 'S', '', 'stdio', 0, 't', 0)`,
 		`INSERT INTO mcp_servers (id, slug, name, url, kind, api_token_id, created_at, created_by, updated_at) VALUES ('mcp_4', 'ghost', 'G', '', 'spaceman', 'atk_missing', 0, 't', 0)`,
+		// kind = 'spaceman' needs its internal token, and only a spaceman server has one.
+		`INSERT INTO mcp_servers (id, slug, name, url, kind, created_at, created_by, updated_at) VALUES ('mcp_5', 'tokenless', 'T', '', 'spaceman', 0, 't', 0)`,
+		`INSERT INTO mcp_servers (id, slug, name, url, api_token_id, created_at, created_by, updated_at) VALUES ('mcp_6', 'httptok', 'H', 'https://x.example.com', 'atk_2', 0, 't', 0)`,
+		`UPDATE mcp_servers SET api_token_id = NULL WHERE id = 'mcp_2'`,
+		`UPDATE mcp_servers SET api_token_id = 'atk_2' WHERE id = 'mcp_1'`,
 	} {
 		if _, err := s.wdb.ExecContext(ctx, q); err == nil {
 			t.Fatalf("accepted: %s", q)

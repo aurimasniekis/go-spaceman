@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- SpaceMan admin MCP groundwork (ADR-0063, Proposed; AM-1/AM-2). Nothing uses it yet.
+- SpaceMan admin MCP (ADR-0063, Proposed; AM-1 to AM-5): SpaceMan's own API as MCP tools for a space's control and
+  worker runs.
   - Internal API tokens: owned by an administrator, scoped like any API token, without a secret, and never accepted as
     a bearer token. Their calls are audited with the owner, the token (`via spaceman_mcp:<token>`) and the agent run.
   - Migration 0042 (forward-only) adds the gateway server kind and its internal token, and the token purpose.
@@ -16,6 +17,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     which needs an approval) and a filter by the token's grants.
   - The executor (AM-4): tools run through the API's own handler chain in process, with the internal token's
     principal; retried creates are idempotent, API problems are tool errors and results are capped.
+  - The `spaceman` gateway server kind (AM-5): `create-spaceman-mcp`, `update-spaceman-mcp` and
+    `reissue-spaceman-mcp` (all need a step-up). The server's internal token is minted with it and revoked when it is
+    re-issued or deleted. Defaults: the `admin` preset, admin on every space, no expiry, no approvals for writes.
+    Dangerous tools and diagnostic launches always need a person's approval (`approvals.Require`, operation
+    `mcp.<slug>.<class>.<tool>`); `approval: writes` gates writes too. KB, dreamer and diagnostic runs never see the
+    tools, and an agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through them.
+    Reads filtered by the caller's grants (`list-spaces` and ten others) are tools; personal operations are not.
+    A revoked token empties the catalog, and calls are refused with the reason.
 - Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on;
   until then a gateway run's harness gets no model credentials, so don't enable Harbor Pilot for a space yet.
   - A harness a space routes through Harbor Pilot uses no account: a launch that names one is refused, a model outside

@@ -123,6 +123,15 @@ func TestInternalTokens(t *testing.T) {
 	if child.ParentTokenID != rtp.TokenID {
 		t.Fatalf("parent not recorded: %+v", child)
 	}
+	// A child never outlives its parent: asked never to expire, it expires with the 30-day token that issued it.
+	if child.NeverExpires || child.ExpiresAt == nil || !child.ExpiresAt.Equal(rtp.ExpiresAt) {
+		t.Fatalf("child of a 30-day token: never %v, expires %v, parent expires %v", child.NeverExpires, child.ExpiresAt, rtp.ExpiresAt)
+	}
+	short, err := f.svc.CreateInternalToken(f.ctx, rtp, spacemanMCP("short", []GrantInput{{Role: authz.RoleViewer, Domain: spaceX}}, 2*day, false))
+	must(t, err)
+	if short.ExpiresAt == nil || !short.ExpiresAt.Before(rtp.ExpiresAt) {
+		t.Fatalf("a shorter child was extended: %v (parent %v)", short.ExpiresAt, rtp.ExpiresAt)
+	}
 	ops, err := f.svc.CreateInternalToken(f.ctx, rp, spacemanMCP("ops", []GrantInput{{Role: authz.RoleOperator, Domain: spaceX}}, 2*day, false))
 	must(t, err)
 	opsP, err := f.svc.InternalPrincipal(f.ctx, ops.ID, "run_2")
@@ -173,7 +182,7 @@ func TestInternalTokens(t *testing.T) {
 	var n int
 	must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT count(*) FROM audit_events WHERE action = 'api_token.created'
 		AND json_extract(details_json, '$.purpose') = 'spaceman_mcp'`).Scan(&n))
-	if n != 4 {
-		t.Fatalf("%d internal token creations audited, want 4", n)
+	if n != 5 {
+		t.Fatalf("%d internal token creations audited, want 5", n)
 	}
 }

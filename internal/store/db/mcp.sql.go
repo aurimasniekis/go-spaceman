@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const countMCPGrants = `-- name: CountMCPGrants :one
@@ -183,8 +184,8 @@ func (q *Queries) InsertMCPGrant(ctx context.Context, arg InsertMCPGrantParams) 
 
 const insertMCPServer = `-- name: InsertMCPServer :exec
 INSERT INTO mcp_servers (id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json,
-  call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, kind, api_token_id, spaceman_json)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertMCPServerParams struct {
@@ -205,6 +206,9 @@ type InsertMCPServerParams struct {
 	CreatedAt       int64
 	CreatedBy       string
 	UpdatedAt       int64
+	Kind            string
+	ApiTokenID      sql.NullString
+	SpacemanJson    string
 }
 
 func (q *Queries) InsertMCPServer(ctx context.Context, arg InsertMCPServerParams) error {
@@ -226,6 +230,9 @@ func (q *Queries) InsertMCPServer(ctx context.Context, arg InsertMCPServerParams
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
+		arg.Kind,
+		arg.ApiTokenID,
+		arg.SpacemanJson,
 	)
 	return err
 }
@@ -367,6 +374,34 @@ func (q *Queries) SetMCPServerHeaders(ctx context.Context, arg SetMCPServerHeade
 	result, err := q.db.ExecContext(ctx, setMCPServerHeaders,
 		arg.HeadersEnc,
 		arg.HeaderNamesJson,
+		arg.Now,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setMCPServerSpaceman = `-- name: SetMCPServerSpaceman :execrows
+UPDATE mcp_servers SET spaceman_json = ?1, api_token_id = ?2, updated_at = ?3,
+  version = version + 1
+WHERE id = ?4 AND version = ?5 AND kind = 'spaceman'
+`
+
+type SetMCPServerSpacemanParams struct {
+	SpacemanJson string
+	ApiTokenID   sql.NullString
+	Now          int64
+	ID           string
+	Version      int64
+}
+
+func (q *Queries) SetMCPServerSpaceman(ctx context.Context, arg SetMCPServerSpacemanParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setMCPServerSpaceman,
+		arg.SpacemanJson,
+		arg.ApiTokenID,
 		arg.Now,
 		arg.ID,
 		arg.Version,

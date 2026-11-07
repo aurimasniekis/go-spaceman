@@ -2681,9 +2681,9 @@
 - **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design;
   question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
   Implemented so far: migration 0042, the internal token and its principal, the audit attribution and the approver
-  exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4). No server or endpoint serves
-  them yet (AM-5 to AM-10). Requirements SM-MCP-005..009; threat
-  T-33.
+  exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4); the gateway kind with its
+  create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5). The CLI, web, Terraform
+  and endpoint parts follow (AM-6 to AM-10). Requirements SM-MCP-005..009; threat T-33.
 - **Context:**
   - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
     manage tasks, limits, roles, schedules and the other things an administrator does with the CLI or the API. Today an
@@ -2710,11 +2710,12 @@
      - Per call, central builds the principal from the token ID (`auth.InternalPrincipal`): it fails like a bad bearer
        token when the token is unknown, not internal, revoked or expired, or its owner is disabled. The principal carries
        the run (`Principal.RunID`) and is authorized as token **and** owner, as every API token is, so it loses what its
-       owner loses. Revoking the token (Tokens page, or revoking its parent), disabling the owner, deleting or disabling
-       the server (revokes the token in the same transaction, AM-5), revoking the grant or reaching the expiry stops it
-       on the next call.
-     - A child token's expiry is not bounded by its parent's expiry: only revocation cascades from parent to child.
-       AM-5 will cap the child's TTL at the parent's expiry.
+       owner loses. Revoking the token (Tokens page, or revoking its parent), disabling the owner, deleting the server
+       (revokes the token in the same transaction, `auth.RevokeAPITokenTx`), disabling the server (its tools are hidden
+       and calls refused; the token stays, so re-enabling needs no re-issue), revoking the grant or reaching the expiry
+       stops it on the next call.
+     - A child token never outlives its parent: when a token creates the server, the internal token's expiry is capped
+       at that token's (a "never" request becomes the parent's expiry). Revocation also cascades from parent to child.
      - "Re-issue" revokes the token and mints a new one in one transaction: for grant changes, owner transfer and expiry
        renewal.
   3. **Audit.** Calls are attributed to the owner, with `via: spaceman_mcp:<token id>` and `run: <run id>`
@@ -2738,6 +2739,9 @@
        them by name. Every dangerous tool is flagged approval-required whatever the preset (`Tool.ApprovalRequired`,
        enforced in AM-5).
      - The catalog also hides tools that the token's grants can never reach.
+     - Calls run only with an internal token's principal: the in-process handler and the executor refuse any other
+       (a bearer token's would skip step-up). Path values `.` and `..` are refused, and any status from 300 up is a tool
+       error. A create's idempotency key needs the run.
      - Session-rule reads filtered by the principal are read tools. These operations allow "any signed-in principal,
        filtered by grants", such as `list-spaces`, event connections and templates, and attention; their rule carries
        `Filtered` (`api.FilteredRead`, AM-5). The API refuses internal principals on every other Session rule, so
@@ -2753,7 +2757,10 @@
      - takeover and terminal input;
      - operations that return a one-time secret (node enrollment);
      - sign-in provider writes;
-     - SpaceMan MCP management, token operations, and gateway operations that target a `spaceman` server;
+     - SpaceMan MCP management (`create-spaceman-mcp`, `update-spaceman-mcp`, `reissue-spaceman-mcp`), token operations,
+       and gateway operations that target a `spaceman` server: the gateway service refuses an actor acting through a
+       SpaceMan MCP server on a `spaceman` server (grant, revoke, check, delete), and `update-mcp-server` refuses a
+       `spaceman` server for everyone;
      - restore acknowledgement.
   7. **Defaults (operator decisions for a trusted infra space).**
      - **Preset: full admin on all spaces** (`admin@*`), labelled "infra" in the UI. Narrower presets (read-only or
@@ -2762,17 +2769,27 @@
      - **Approvals: none by default, but dangerous tools always need one** (operator decision on plan question Q3): deletes and purges, retention runs,
        harness profile settings (T-32), diagnostic launches, SSH key generation and rotation, account and event
        connection secrets, prompt, skill, role template and human-type publication, HTTP MCP server and grant writes,
-       node state and updates, relocations. This needs a synthetic one-use policy in `internal/approvals`
-       (`Gate.Require`, AM-5). Writes can be gated per server.
+       node state and updates, relocations, and launches of diagnostic runs (`launch_run` with `kind: diagnostic` is
+       classed dangerous per call). `approvals.Require` gates them with a matching policy or, without one, a synthetic
+       one-use policy (policy ID `required`). The approval operation is `mcp.<slug>.<class>.<tool>`, so a policy can
+       name a class (`mcp.infra.write.*`). A server's `approval` is `none` (default) or `writes` (every write tool needs
+       an approval too). Without an approval gate, such calls are refused (fail closed). Human-action responses and
+       approval decisions refuse an actor acting through a SpaceMan MCP server at the service level as well.
      - **Expiry: never** by default (operator decision on plan question Q5); 1–366 days on request.
      - Only control and worker runs get the tools; KB, dreamer and diagnostic runs never do.
   8. **External endpoint in this release** (operator decision on plan question Q9; AM-10, SM-MCP-009). Central also serves the tool surface at
      `/api/v1/mcp` for operators' own MCP clients, authenticated with a bearer API token (never an internal one), with
      the same classification, exclusions and approval rules.
-  9. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed token
-     ID, owner, expiry and effective tools; no secret attributes), granted with the existing `spaceman_mcp_grant`
-     (AM-9).
-  10. **Numbers:** migration 0042 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
+  9. **API (AM-5):** `create-spaceman-mcp` (`POST /mcp-servers/spaceman`), `update-spaceman-mcp`
+     (`PUT /mcp-servers/{id}/spaceman`: tools, approval mode, limits) and `reissue-spaceman-mcp`
+     (`POST /mcp-servers/{id}/reissue`: new grants, expiry or owner), all `StepUp(mcp:write)`. Servers carry `kind` and,
+     for a spaceman server, its settings and token (ID, owner, grants, expiry, state). The run manifest's `mcp_servers`
+     entries gain `kind`. A spaceman server can't take the slug `spaceman` (it would read as a built-in `spaceman_*`
+     tool). The database requires a token exactly for the spaceman kind.
+  10. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed
+      token ID, owner, expiry and effective tools; no secret attributes), granted with the existing `spaceman_mcp_grant`
+      (AM-9).
+  11. **Numbers:** migration 0042 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
       `api_tokens.purpose`, forward-only like every migration; numbered 0041 until the control reminders took that
       number), T-33, SM-MCP-005..009. No protocol minor.
 - **Alternatives:**

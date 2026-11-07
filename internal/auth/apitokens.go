@@ -206,50 +206,56 @@ func (svc *Service) tokensWithGrants(ctx context.Context, rows []db.ApiToken) ([
 // no-op.
 func (svc *Service) RevokeAPIToken(ctx context.Context, actor audit.Actor, id string) (*APIToken, error) {
 	err := svc.s.W().TxNamed(ctx, "auth.revoke_api_token", func(tx *store.Tx) error {
-		if _, err := tx.Q.GetAPIToken(ctx, id); errors.Is(err, sql.ErrNoRows) {
-			return apperr.New(apperr.CodeNotFound, "API token not found")
-		} else if err != nil {
-			return err
-		}
-		children, err := tx.Q.ListActiveChildAPITokens(ctx, sql.NullString{String: id, Valid: true})
-		if err != nil {
-			return err
-		}
-		for _, tid := range append([]string{id}, children...) {
-			n, err := tx.Q.RevokeAPIToken(ctx, db.RevokeAPITokenParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-				Actor: sql.NullString{String: actorRef(actor), Valid: true}, ID: tid})
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				continue
-			}
-			var details map[string]any
-			if tid != id {
-				details = map[string]any{"parent_token_id": id}
-			}
-			if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "api_token.revoked", Target: audit.Target{Type: "api_token", ID: tid},
-				Details: details}); err != nil {
-				return err
-			}
-			if err := tx.Q.DeleteRoleGrantsBySubject(ctx, TokenSubject(tid)); err != nil {
-				return err
-			}
-			revoked := tid
-			svc.revokedAfterCommit(tx, revocation{tokenID: revoked})
-			tx.AfterCommit(func() {
-				if svc.bus != nil {
-					svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTokenRevoked, Key: revoked})
-				}
-			})
-		}
-		svc.reloadAfterCommit(ctx, tx)
-		return nil
+		return svc.RevokeAPITokenTx(ctx, tx, actor, id)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return svc.GetAPIToken(ctx, id)
+}
+
+// RevokeAPITokenTx revokes a token and the tokens it issued inside the caller's transaction (a SpaceMan MCP server
+// revokes its internal token when it is re-issued or deleted, ADR-0063). Revoking a revoked token is a no-op.
+func (svc *Service) RevokeAPITokenTx(ctx context.Context, tx *store.Tx, actor audit.Actor, id string) error {
+	if _, err := tx.Q.GetAPIToken(ctx, id); errors.Is(err, sql.ErrNoRows) {
+		return apperr.New(apperr.CodeNotFound, "API token not found")
+	} else if err != nil {
+		return err
+	}
+	children, err := tx.Q.ListActiveChildAPITokens(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return err
+	}
+	for _, tid := range append([]string{id}, children...) {
+		n, err := tx.Q.RevokeAPIToken(ctx, db.RevokeAPITokenParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
+			Actor: sql.NullString{String: actorRef(actor), Valid: true}, ID: tid})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			continue
+		}
+		var details map[string]any
+		if tid != id {
+			details = map[string]any{"parent_token_id": id}
+		}
+		if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "api_token.revoked", Target: audit.Target{Type: "api_token", ID: tid},
+			Details: details}); err != nil {
+			return err
+		}
+		if err := tx.Q.DeleteRoleGrantsBySubject(ctx, TokenSubject(tid)); err != nil {
+			return err
+		}
+		revoked := tid
+		svc.revokedAfterCommit(tx, revocation{tokenID: revoked})
+		tx.AfterCommit(func() {
+			if svc.bus != nil {
+				svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTokenRevoked, Key: revoked})
+			}
+		})
+	}
+	svc.reloadAfterCommit(ctx, tx)
+	return nil
 }
 
 // AuthenticateAPIToken resolves a bearer token to a principal acting for the creating user, authorized as both the token

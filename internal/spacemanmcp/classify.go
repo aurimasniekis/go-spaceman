@@ -63,6 +63,7 @@ const (
 	rPublish    = "publishes or rolls back what every space's runs execute or render"
 	rPolicy     = "changes who is asked and how for human actions"
 	rRecording  = "reads terminal recordings, which may contain anything a run printed"
+	rSelf       = "SpaceMan MCP servers hand an administrator's authority to agents: managed by people only"
 	// rFiltered marks Session-rule reads that return only what the principal's grants reach (filtered in the handler,
 	// api.Rule.Filtered). Internal principals may call them; personal Session operations stay excluded.
 	rFiltered = "reads only what the principal's grants reach (filtered in the handler)"
@@ -222,6 +223,11 @@ var Table = map[string]Entry{
 	// Limits.
 	"get-space-limits": {Read, rRead},
 	"set-space-limits": {Write, rSpaceWrite},
+
+	// SpaceMan MCP servers: step-up (excluded by their rule); the fallback. An agent never manages its own tools.
+	"create-spaceman-mcp":  {Excluded, rSelf},
+	"update-spaceman-mcp":  {Excluded, rSelf},
+	"reissue-spaceman-mcp": {Excluded, rSelf},
 
 	// MCP gateway.
 	"add-mcp-grant":         {Dangerous, rMCP},

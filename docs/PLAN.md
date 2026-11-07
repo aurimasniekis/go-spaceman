@@ -105,9 +105,9 @@ gated, no expiry by default, one tool per operation, the external `/api/v1/mcp` 
 |---|---|---|---|
 | AM-1 | ADR-0063, THREAT_MODEL T-33, SM-MCP-005..009, LIMITATIONS, plan | SM-MCP-005..009 | implemented (docs; ADR Proposed) |
 | AM-2 | Migration 0042 (numbered 0041 until AM-5); internal tokens (`CreateInternalToken`, `InternalPrincipal`), bearer refusal, `Principal.RunID`, `Actor.Run` with `Via spaceman_mcp:`, approver re-check, API refusal of personal operations | SM-MCP-006, SM-MCP-008 | implemented, tested (simulated); not wired to servers yet |
-| AM-3 | `internal/spacemanmcp` catalog and classification | SM-MCP-007 | implemented, tested (simulated); not served to runs yet (AM-5) |
-| AM-4 | In-process handler and executor | SM-MCP-007 | implemented, tested (simulated); not served to runs yet (AM-5) |
-| AM-5 | Gateway kind, create/update/reissue operations, `approvals.Require`, wiring | SM-MCP-005/006/008 | todo |
+| AM-3 | `internal/spacemanmcp` catalog and classification | SM-MCP-007 | implemented, tested (simulated) |
+| AM-4 | In-process handler and executor | SM-MCP-007 | implemented, tested (simulated) |
+| AM-5 | Gateway kind, create/update/reissue operations, `approvals.Require`, wiring; AM-3/AM-4 review fixes; reads filtered by the principal (`api.FilteredRead`) | SM-MCP-005/006/007/008 | implemented, tested (simulated); not yet over the agent bridge (AM-8) |
 | AM-6 | CLI commands, generated API and CLI reference | SM-MCP-005 | todo |
 | AM-7 | Web: "Add SpaceMan MCP" button, modal, drawer, Tokens label | SM-MCP-005 | todo |
 | AM-8 | End-to-end tests, CHANGELOG, SECURITY_REVIEW | SM-MCP-* | todo |

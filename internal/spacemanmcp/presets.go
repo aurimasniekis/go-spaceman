@@ -113,6 +113,10 @@ func (c *Catalog) Select(sel Selection, grants []authz.Grant) ([]*Tool, error) {
 // global rule or a global-only permission, in any domain for a space rule. The API still checks every call (token and
 // owner); this only keeps tools the token can never use out of the catalog.
 func Reachable(t *Tool, grants []authz.Grant) bool {
+	if t.Rule.Session {
+		// A read filtered by the principal's grants (api.FilteredRead): any grant reaches it.
+		return len(grants) > 0
+	}
 	for _, g := range grants {
 		if !authz.RoleHas(g.Role, t.Rule.Perm) {
 			continue

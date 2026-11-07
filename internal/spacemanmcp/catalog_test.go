@@ -162,7 +162,7 @@ func TestStepUpOperationsFallBackToExcluded(t *testing.T) {
 	n := 0
 	for _, id := range operationIDs(s) {
 		r, _ := d.RuleFor(id)
-		if !(r.Reauth || r.MFA) || r.Session || r.UserOnly {
+		if !r.Reauth && !r.MFA || r.Session || r.UserOnly {
 			continue
 		}
 		n++
@@ -340,8 +340,8 @@ func TestPresetsAreDeterministic(t *testing.T) {
 	}
 }
 
-// The catalog hides what the token's grants can never reach: a space viewer sees only that space's read tools, no
-// writes and no global operations (nodes, accounts, catalogs).
+// The catalog hides what the token's grants can never reach: a space viewer sees only that space's read tools and the
+// reads filtered by its grants (list-spaces), no writes and no global operations (nodes, accounts, catalogs).
 func TestGrantFilter(t *testing.T) {
 	t.Parallel()
 	c := catalog(t)
@@ -353,11 +353,11 @@ func TestGrantFilter(t *testing.T) {
 	}
 	vn := names(viewer)
 	for _, tl := range viewer {
-		if tl.Class != spacemanmcp.Read || !tl.Rule.Space {
+		if tl.Class != spacemanmcp.Read || !tl.Rule.Space && !tl.Rule.Filtered {
 			t.Errorf("viewer@space sees %s (%s, space rule %v)", tl.Name, tl.Class, tl.Rule.Space)
 		}
 	}
-	if !slices.Contains(vn, "get_space") || !slices.Contains(vn, "list_tasks") || slices.Contains(vn, "list_nodes") || len(vn) < 30 {
+	if !slices.Contains(vn, "get_space") || !slices.Contains(vn, "list_tasks") || !slices.Contains(vn, "list_spaces") || slices.Contains(vn, "list_nodes") || len(vn) < 30 {
 		t.Errorf("viewer@space: %d tools %v", len(vn), vn)
 	}
 	op, _ := c.Select(spacemanmcp.Selection{Preset: spacemanmcp.PresetOperate}, spacemanmcp.PresetOperate.Grants(space))

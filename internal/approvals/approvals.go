@@ -56,7 +56,9 @@ var exempt = []string{"spaceman.whoami", "spaceman.ping", "spaceman.human_ask", 
 	"spaceman.message_resolve"}
 
 var (
-	reOperation = regexp.MustCompile(`^(spaceman\.[a-z0-9_]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.[A-Za-z0-9_-]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.\*|mcp\.\*|spaceman\.\*)$`)
+	// SpaceMan MCP tools (ADR-0063) are mcp.<slug>.<class>.<tool>, so a policy can name a class: mcp.<slug>.write.*.
+	reOperation = regexp.MustCompile(`^(spaceman\.[a-z0-9_]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.[A-Za-z0-9_-]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.\*|` +
+		`mcp\.[a-z][a-z0-9-]{0,30}\.(read|write|dangerous|sensitive-read)\.([A-Za-z0-9_-]{1,64}|\*)|mcp\.\*|spaceman\.\*)$`)
 	// Argument fields whose values never appear in previews.
 	reSecretKey = regexp.MustCompile(`(?i)(secret|token|password|passwd|authorization|api[_-]?key|credential|private[_-]?key|cookie)`)
 )
@@ -380,6 +382,38 @@ func (svc *Service) Gate(ctx context.Context, p *fleet.RunPrincipal, op, resourc
 	if err != nil || pol == nil {
 		return nil, err
 	}
+	return svc.gate(ctx, p, pol, op, resource, args)
+}
+
+// RequiredPolicyID is the policy ID recorded on approvals that no stored policy asked for: the operation always needs
+// one (Require).
+const RequiredPolicyID = "required"
+
+// requiredPolicy is the policy Require applies when no stored policy matches: one use, valid for an hour after the decision,
+// a day to decide.
+var requiredPolicy = db.ApprovalPolicy{ID: RequiredPolicyID, Operation: "", Uses: 1, ValidSeconds: 3600, RequestTtlSeconds: 86400}
+
+// Require is Gate for an operation that always needs a person's approval, whether or not a policy names it: dangerous
+// SpaceMan MCP tools, and writes of a server set to gate them (ADR-0063). A matching policy still sets the uses and
+// lifetimes; without one, a synthetic one-use policy does. Exempt operations are never required. It never returns
+// (nil, nil).
+func (svc *Service) Require(ctx context.Context, p *fleet.RunPrincipal, op, resource string, args json.RawMessage) (func(error), error) {
+	if isExempt(op) {
+		return nil, apperr.New(apperr.CodeInvalid, "%s cannot require an approval", op)
+	}
+	pol, err := svc.policyFor(ctx, p.SpaceID, op)
+	if err != nil {
+		return nil, err
+	}
+	if pol == nil {
+		cp := requiredPolicy
+		cp.Operation = op
+		pol = &cp
+	}
+	return svc.gate(ctx, p, pol, op, resource, args)
+}
+
+func (svc *Service) gate(ctx context.Context, p *fleet.RunPrincipal, pol *db.ApprovalPolicy, op, resource string, args json.RawMessage) (func(error), error) {
 	digest, canon, err := Digest(op, resource, args)
 	if err != nil {
 		return nil, err
@@ -547,6 +581,10 @@ func truncate(s string, n int) string {
 func (svc *Service) onFinalized(ctx context.Context, tx *store.Tx, r db.HumanAction, status, outcome string, actor audit.Actor) error {
 	if r.Type != human.TypeApproval {
 		return nil
+	}
+	if actor.Internal() {
+		// Never an approver (ADR-0063): an agent acting through a SpaceMan MCP server cannot decide an approval.
+		return apperr.New(apperr.CodeForbidden, "an approval is decided by a person, not through the SpaceMan MCP")
 	}
 	a, err := tx.Q.GetApprovalByAction(ctx, r.ID)
 	if errors.Is(err, sql.ErrNoRows) {

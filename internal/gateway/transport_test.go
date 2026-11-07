@@ -81,7 +81,7 @@ func TestGatewayUsesTransportInterface(t *testing.T) {
 	if opened != 1 || hdr != "Bearer t0ken" {
 		t.Fatalf("sessions opened %d, header %q", opened, hdr)
 	}
-	d, err := svc.Check(f.ctx, s.ID)
+	d, err := svc.Check(f.ctx, admin, s.ID)
 	must(t, err)
 	if !d.OK || d.Server != "in-memory-upstream 1.0" || len(d.Tools) != 1 || !d.Tools[0].Usable {
 		t.Fatalf("check %+v", d)

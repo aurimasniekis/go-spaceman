@@ -65,6 +65,10 @@ func load(ctx context.Context, tx *store.Tx, spaceID, id string, version int64) 
 // one wins and the other gets a conflict (SM-HUM-007). In the same transaction the related task's blockers are
 // resolved (the task keeps its state; control decides) and a notification for the requester is stored (SM-HUM-009).
 func (svc *Service) Respond(ctx context.Context, actor audit.Actor, spaceID, id string, version int64, in RespondInput) (*Action, error) {
+	if actor.Internal() {
+		// An agent acting through a SpaceMan MCP server never answers a human action (ADR-0063), whatever its grants.
+		return nil, apperr.New(apperr.CodeForbidden, "a human action is answered by a person, not through the SpaceMan MCP")
+	}
 	err := svc.s.W().TxNamed(ctx, "human.respond", func(tx *store.Tx) error {
 		r, err := load(ctx, tx, spaceID, id, version)
 		if err != nil {

@@ -32,10 +32,11 @@ import (
 // Server is a registered upstream MCP server. Header values are write-only: only their names are ever returned.
 type Server struct {
 	ID             string    `json:"id"`
+	Kind           string    `json:"kind" enum:"http,spaceman" doc:"http: an external server; spaceman: SpaceMan's own API, served in central (ADR-0063)"`
 	Slug           string    `json:"slug" doc:"Namespace of the server's tools: <slug>__<tool>"`
 	Name           string    `json:"name"`
 	Description    string    `json:"description,omitempty"`
-	URL            string    `json:"url" doc:"Streamable HTTP endpoint"`
+	URL            string    `json:"url" doc:"Streamable HTTP endpoint; empty for a spaceman server"`
 	HeaderNames    []string  `json:"header_names" doc:"Names of the stored request headers; values are never returned"`
 	HeadersVersion int64     `json:"headers_version"`
 	AllowPrivate   bool      `json:"allow_private" doc:"Allow loopback and private addresses (and plain http). Off by default."`
@@ -48,6 +49,8 @@ type Server struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Version        int64     `json:"version"`
+	// Spaceman describes a spaceman server's settings and internal token.
+	Spaceman *SpacemanInfo `json:"spaceman,omitempty"`
 }
 
 // Input creates or edits a server. Headers replace the stored set when SetHeaders is true (an empty map clears them).
@@ -113,10 +116,16 @@ type Service struct {
 	rt      *runtime
 	// transport reaches upstream servers (SM-ARCH-003).
 	transport Transport
-	// Gate enforces approval policies on gateway tools (ADR-0024); nil gates nothing.
+	// Gate enforces approval policies on gateway tools (ADR-0024); nil gates nothing, and refuses the SpaceMan MCP
+	// calls that always need an approval.
 	Gate interface {
 		Gate(ctx context.Context, p *fleet.RunPrincipal, op, resource string, args json.RawMessage) (func(error), error)
+		Require(ctx context.Context, p *fleet.RunPrincipal, op, resource string, args json.RawMessage) (func(error), error)
 	}
+	// Spaceman serves spaceman-kind servers (ADR-0063); nil offers none of their tools.
+	Spaceman SpacemanBackend
+	// Tokens mints and revokes spaceman servers' internal tokens.
+	Tokens TokenIssuer
 }
 
 // Options tune the gateway runtime.
@@ -161,10 +170,14 @@ func parseList(s string) []string {
 	return out
 }
 
-func (in *Input) normalize(create bool) error {
+func (in *Input) normalize(create bool) error { return in.validate(create, KindHTTP).Err() }
+
+// validate applies the defaults and checks the fields of a server of kind; a spaceman server has no URL or headers.
+func (in *Input) validate(create bool, kind string) *apperr.Validation {
 	v := &apperr.Validation{}
 	in.Name = strings.TrimSpace(in.Name)
 	if create && (!reSlug.MatchString(in.Slug) || in.Slug == "spaceman" || strings.Contains(in.Slug, Separator)) {
+		// "spaceman" is the built-in server's name: spaceman__<tool> would read as a built-in spaceman_* tool.
 		v.Add("slug", "must be 1-31 lowercase letters, digits or dashes, start with a letter, and not be \"spaceman\"")
 	}
 	if in.Name == "" || len(in.Name) > 120 {
@@ -173,8 +186,10 @@ func (in *Input) normalize(create bool) error {
 	if len(in.Description) > 2000 {
 		v.Add("description", "at most 2000 characters")
 	}
-	if err := checkURL(in.URL, in.AllowPrivate); err != nil {
-		v.Add("url", "%s", err.Error())
+	if kind == KindHTTP {
+		if err := checkURL(in.URL, in.AllowPrivate); err != nil {
+			v.Add("url", "%s", err.Error())
+		}
 	}
 	if in.SetHeaders {
 		if len(in.Headers) > maxHeaders {
@@ -215,7 +230,7 @@ func (in *Input) normalize(create bool) error {
 	if in.MaxResultBytes < 1024 || in.MaxResultBytes > maxResultBytes {
 		v.Add("max_result_bytes", "must be between 1024 and %d", maxResultBytes)
 	}
-	return v.Err()
+	return v
 }
 
 // checkURL accepts an absolute https URL without credentials; plain http only with private networks allowed.
@@ -277,7 +292,7 @@ func (svc *Service) headers(r db.McpServer) (map[string]string, error) {
 }
 
 func fromRow(r db.McpServer, grants int64) *Server {
-	return &Server{ID: r.ID, Slug: r.Slug, Name: r.Name, Description: r.Description, URL: r.Url, HeaderNames: parseList(r.HeaderNamesJson),
+	return &Server{ID: r.ID, Kind: r.Kind, Slug: r.Slug, Name: r.Name, Description: r.Description, URL: r.Url, HeaderNames: parseList(r.HeaderNamesJson),
 		HeadersVersion: r.HeadersVersion, AllowPrivate: r.AllowPrivate == 1, Tools: parseList(r.ToolsJson), CallTimeoutMS: r.CallTimeoutMs,
 		MaxConcurrency: r.MaxConcurrency, MaxResultBytes: r.MaxResultBytes, Enabled: r.Enabled == 1, Grants: grants,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
@@ -301,7 +316,7 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, in Input) (*S
 		if err := tx.Q.InsertMCPServer(ctx, db.InsertMCPServerParams{ID: id, Slug: in.Slug, Name: in.Name, Description: in.Description, Url: in.URL,
 			HeadersEnc: sealed, HeaderNamesJson: names, HeadersVersion: 1, AllowPrivate: b2i(in.AllowPrivate), ToolsJson: listJSON(in.Tools),
 			CallTimeoutMs: in.CallTimeoutMS, MaxConcurrency: in.MaxConcurrency, MaxResultBytes: in.MaxResultBytes, Enabled: b2i(in.Enabled),
-			CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()}); err != nil {
+			CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros(), Kind: KindHTTP, SpacemanJson: "{}"}); err != nil {
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, "", "mcp_server", id, "created", 1); err != nil {
@@ -319,6 +334,9 @@ func (svc *Service) Create(ctx context.Context, actor audit.Actor, in Input) (*S
 
 // Update edits a server. Open sessions of runs pick up the change on their next call (they are reopened).
 func (svc *Service) Update(ctx context.Context, actor audit.Actor, id string, version int64, in Input) (*Server, error) {
+	if cur, err := svc.s.R().GetMCPServer(ctx, id); err == nil && cur.Kind != KindHTTP {
+		return nil, apperr.New(apperr.CodeInvalid, "%s is a SpaceMan MCP server; edit it with update-spaceman-mcp", cur.Slug)
+	}
 	if err := in.normalize(false); err != nil {
 		return nil, err
 	}
@@ -336,6 +354,9 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, id string, ve
 			return errNotFound
 		} else if err != nil {
 			return err
+		}
+		if cur.Kind != KindHTTP {
+			return apperr.New(apperr.CodeInvalid, "%s is a SpaceMan MCP server; edit it with update-spaceman-mcp", cur.Slug)
 		}
 		if cur.Version != version {
 			return apperr.New(apperr.CodePrecondition, "the MCP server changed since version %d (now %d)", version, cur.Version)
@@ -369,7 +390,8 @@ func (svc *Service) Update(ctx context.Context, actor audit.Actor, id string, ve
 	return svc.Get(ctx, id)
 }
 
-// Delete removes a server and its grants, closing its open sessions.
+// Delete removes a server and its grants, closing its open sessions. Deleting a SpaceMan MCP server revokes its
+// internal token in the same transaction.
 func (svc *Service) Delete(ctx context.Context, actor audit.Actor, id string) error {
 	err := svc.s.W().TxNamed(ctx, "mcp.delete", func(tx *store.Tx) error {
 		cur, err := tx.Q.GetMCPServer(ctx, id)
@@ -378,14 +400,25 @@ func (svc *Service) Delete(ctx context.Context, actor audit.Actor, id string) er
 		} else if err != nil {
 			return err
 		}
+		if err := refuseInternalOnSpaceman(actor, cur); err != nil {
+			return err
+		}
 		if _, err := tx.Q.DeleteMCPServer(ctx, id); err != nil {
 			return err
+		}
+		if cur.Kind == KindSpaceman && cur.ApiTokenID.Valid {
+			if svc.Tokens == nil {
+				return errSpacemanUnavailable
+			}
+			if err := svc.Tokens.RevokeAPITokenTx(ctx, tx, actor, cur.ApiTokenID.String); err != nil && !errors.Is(err, apperr.ErrNotFound) {
+				return err
+			}
 		}
 		if err := svc.changes.Record(ctx, tx, "", "mcp_server", id, "deleted", cur.Version+1); err != nil {
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "mcp_server.deleted", Target: audit.Target{Type: "mcp_server", ID: id},
-			Details: map[string]any{"slug": cur.Slug}})
+			Details: map[string]any{"slug": cur.Slug, "kind": cur.Kind}})
 		return err
 	})
 	if err == nil {
@@ -406,7 +439,16 @@ func (svc *Service) Get(ctx context.Context, id string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fromRow(r, n), nil
+	return svc.server(ctx, r, n), nil
+}
+
+// server is a row as the API returns it, with a spaceman server's settings and token.
+func (svc *Service) server(ctx context.Context, r db.McpServer, grants int64) *Server {
+	out := fromRow(r, grants)
+	if r.Kind == KindSpaceman {
+		out.Spaceman = svc.spacemanInfo(ctx, r)
+	}
+	return out
 }
 
 // List returns every server.
@@ -421,7 +463,7 @@ func (svc *Service) List(ctx context.Context) ([]*Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, fromRow(r, n))
+		out = append(out, svc.server(ctx, r, n))
 	}
 	return out, nil
 }
@@ -450,9 +492,11 @@ func (svc *Service) AddGrant(ctx context.Context, actor audit.Actor, serverID, s
 	sort.Strings(tools)
 	id := ids.New(ids.MCPGrant)
 	err := svc.s.W().TxNamed(ctx, "mcp.grant", func(tx *store.Tx) error {
-		if _, err := tx.Q.GetMCPServer(ctx, serverID); errors.Is(err, sql.ErrNoRows) {
+		if srv, err := tx.Q.GetMCPServer(ctx, serverID); errors.Is(err, sql.ErrNoRows) {
 			return errNotFound
 		} else if err != nil {
+			return err
+		} else if err := refuseInternalOnSpaceman(actor, srv); err != nil {
 			return err
 		}
 		if _, err := tx.Q.GetSpace(ctx, spaceID); errors.Is(err, sql.ErrNoRows) {
@@ -495,6 +539,11 @@ func (svc *Service) RevokeGrant(ctx context.Context, actor audit.Actor, serverID
 			return err
 		}
 		spaceID = g.SpaceID
+		if srv, err := tx.Q.GetMCPServer(ctx, g.ServerID); err == nil {
+			if err := refuseInternalOnSpaceman(actor, srv); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Q.DeleteMCPGrant(ctx, grantID); err != nil {
 			return err
 		}
@@ -566,9 +615,10 @@ func (g granted) allows(tool string) bool {
 	return g.allowed == nil || slices.Contains(g.allowed, tool)
 }
 
-// grantsFor returns the enabled servers granted to a run's space and role. A role-specific grant and a "*" grant for
-// the same server combine: the run may use the union of their tools.
-func grantsFor(ctx context.Context, q *db.Queries, spaceID, role string) ([]granted, error) {
+// grantsFor returns the enabled servers granted to a run's space and role, for a run of kind. A role-specific grant and
+// a "*" grant for the same server combine: the run may use the union of their tools. SpaceMan MCP servers are left out
+// for every kind but control and worker (ADR-0063).
+func grantsFor(ctx context.Context, q *db.Queries, spaceID, role, kind string) ([]granted, error) {
 	rows, err := q.ListMCPGrantsBySpace(ctx, spaceID)
 	if err != nil {
 		return nil, err
@@ -580,7 +630,7 @@ func grantsFor(ctx context.Context, q *db.Queries, spaceID, role string) ([]gran
 			continue
 		}
 		s, err := q.GetMCPServer(ctx, g.ServerID)
-		if err != nil || s.Enabled != 1 {
+		if err != nil || s.Enabled != 1 || (s.Kind == KindSpaceman && !spacemanKindAllowed(kind)) {
 			continue
 		}
 		cur, ok := by[s.ID]
@@ -606,13 +656,15 @@ func grantsFor(ctx context.Context, q *db.Queries, spaceID, role string) ([]gran
 // ManifestEntry records a granted server in a run's manifest.
 type ManifestEntry struct {
 	Slug    string   `json:"slug"`
+	Kind    string   `json:"kind" enum:"http,spaceman"`
 	Version int64    `json:"version"`
 	Tools   []string `json:"tools,omitempty" doc:"Empty: every tool the server offers"`
 }
 
-// ForManifest lists what a launch of role in the space is granted (recorded in the run manifest; calls are checked again).
-func (svc *Service) ForManifest(ctx context.Context, spaceID, role string) ([]ManifestEntry, error) {
-	gs, err := grantsFor(ctx, svc.s.R(), spaceID, role)
+// ForManifest lists what a launch of role and kind in the space is granted (recorded in the run manifest; calls are
+// checked again).
+func (svc *Service) ForManifest(ctx context.Context, spaceID, role, kind string) ([]ManifestEntry, error) {
+	gs, err := grantsFor(ctx, svc.s.R(), spaceID, role, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -627,7 +679,7 @@ func (svc *Service) ForManifest(ctx context.Context, spaceID, role string) ([]Ma
 		if g.allowed == nil {
 			tools = parseList(g.server.ToolsJson)
 		}
-		out = append(out, ManifestEntry{Slug: g.server.Slug, Version: g.server.Version, Tools: tools})
+		out = append(out, ManifestEntry{Slug: g.server.Slug, Kind: g.server.Kind, Version: g.server.Version, Tools: tools})
 	}
 	return out, nil
 }

@@ -26,7 +26,7 @@ import (
 const TokenPurposeSpacemanMCP = "spaceman_mcp"
 
 // ViaSpacemanMCP prefixes the audit "via" of calls made through a SpaceMan MCP server's internal token.
-const ViaSpacemanMCP = "spaceman_mcp:"
+const ViaSpacemanMCP = audit.ViaSpacemanMCP
 
 // InternalTokenInput describes an internal token to mint.
 type InternalTokenInput struct {
@@ -123,19 +123,32 @@ func (svc *Service) CreateInternalTokenTx(ctx context.Context, tx *store.Tx, p *
 		return "", err
 	}
 	id := ids.New(ids.APIToken)
-	expires := tx.Now.Add(in.TTL)
+	expires, never := tx.Now.Add(in.TTL), in.NeverExpires
 	details := map[string]any{"name": name, "grants": grants, "purpose": in.Purpose}
-	if in.NeverExpires {
+	if never {
 		expires, details["never_expires"] = neverExpiresAt, true
 	} else {
 		details["expires_in"] = in.TTL.String()
+	}
+	if p.TokenID != "" {
+		// A child never outlives the token that issued it: its expiry is capped at the parent's (revocation already
+		// cascades, ADR-0058).
+		parent, err := tx.Q.GetAPIToken(ctx, p.TokenID)
+		if err != nil {
+			return "", err
+		}
+		if pe := time.UnixMicro(parent.ExpiresAt); expires.After(pe) {
+			expires, never = pe, false
+			delete(details, "never_expires")
+			details["expires_at_parent"] = pe.UTC().Format(time.RFC3339)
+		}
 	}
 	actor := audit.Actor{Type: audit.ActorUser, ID: p.User.ID}
 	if p.TokenID != "" {
 		actor.Via, details["parent_token_id"] = "api_token:"+p.TokenID, p.TokenID
 	}
 	if err := tx.Q.InsertAPIToken(ctx, db.InsertAPITokenParams{ID: id, Name: name, UserID: p.User.ID, Mac: mac, Hint: "",
-		CreatedAt: tx.NowMicros(), ExpiresAt: expires.UnixMicro(), NeverExpires: b2i(in.NeverExpires),
+		CreatedAt: tx.NowMicros(), ExpiresAt: expires.UnixMicro(), NeverExpires: b2i(never),
 		ParentTokenID: sql.NullString{String: p.TokenID, Valid: p.TokenID != ""}, Purpose: in.Purpose}); err != nil {
 		return "", err
 	}

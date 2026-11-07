@@ -59,6 +59,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/retention"
 	"github.com/aurimasniekis/go-spaceman/internal/schedule"
 	"github.com/aurimasniekis/go-spaceman/internal/spaceexport"
+	"github.com/aurimasniekis/go-spaceman/internal/spacemanmcp"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
@@ -242,7 +243,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			if c.Gateway != nil {
 				// What the role is granted at launch; every call is checked again against the grants of that moment.
-				mcp, err := c.Gateway.ForManifest(ctx, spaceID, in.Role)
+				mcp, err := c.Gateway.ForManifest(ctx, spaceID, in.Role, in.Kind)
 				if err != nil {
 					return nil, err
 				}
@@ -478,7 +479,26 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	)
 	_ = m.Register(c.Health.Collector())
 	m.ObserveFilesystem(metrics.VolumeData, cfg.DataDir)
+	// SpaceMan MCP servers (ADR-0063): SpaceMan's own API as gateway tools, run in process with each server's internal
+	// token. Built last, from the complete API.
+	if err := c.wireSpacemanMCP(); err != nil { //nolint:contextcheck // builds handlers; each request brings its own context
+		_ = st.Close()
+		return nil, fmt.Errorf("spaceman mcp: %w", err)
+	}
 	return c, nil
+}
+
+// wireSpacemanMCP gives the gateway its SpaceMan MCP backend: the tool catalog generated from this build's API and the
+// in-process handler that runs the tools.
+func (c *Central) wireSpacemanMCP() error {
+	d := c.APIDeps()
+	cat, err := spacemanmcp.Build(api.Register(http.NewServeMux(), d).OpenAPI(), d.RuleFor)
+	if err != nil {
+		return err
+	}
+	c.Gateway.Tokens = c.Auth
+	c.Gateway.Spaceman = &spacemanmcp.Backend{Cat: cat, Handler: d.InProcessHandler(), Tokens: c.Auth}
+	return nil
 }
 
 func (c *Central) openKeyring(ctx context.Context, environ []string) error {

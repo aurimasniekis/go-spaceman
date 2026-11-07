@@ -265,7 +265,7 @@ func truncate(s string, n int) string {
 // Catalog lists the upstream tools a run may use, namespaced "<slug>__<tool>". A server that cannot be reached is left
 // out (and logged); the run's built-in tools are unaffected.
 func (svc *Service) Catalog(ctx context.Context, p *fleet.RunPrincipal) []proto.AgentTool {
-	gs, err := grantsFor(ctx, svc.s.R(), p.SpaceID, p.Role)
+	gs, err := grantsFor(ctx, svc.s.R(), p.SpaceID, p.Role, p.Kind)
 	if err != nil || len(gs) == 0 {
 		return nil
 	}
@@ -276,6 +276,10 @@ func (svc *Service) Catalog(ctx context.Context, p *fleet.RunPrincipal) []proto.
 	ch := make(chan res, len(gs))
 	for i, g := range gs {
 		go func() {
+			if g.server.Kind == KindSpaceman {
+				ch <- res{i: i, tools: svc.spacemanCatalog(ctx, g)}
+				return
+			}
 			s, err := svc.rt.open(ctx, p, g.server)
 			if err != nil {
 				svc.rt.log.Warn("MCP server unavailable for a run", slog.String("mcp.server", g.server.Slug), slog.String("run.id", p.RunID), slog.Any("error", err))
@@ -334,7 +338,7 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 	if len(args) > maxArgsBytes {
 		return nil, apperr.New(apperr.CodeInvalid, "arguments larger than %d bytes", maxArgsBytes)
 	}
-	gs, err := grantsFor(ctx, svc.s.R(), p.SpaceID, p.Role)
+	gs, err := grantsFor(ctx, svc.s.R(), p.SpaceID, p.Role, p.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -348,10 +352,38 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 		return nil, apperr.New(apperr.CodeForbidden, "this run is not granted %s", name)
 	}
 	srv := g.server
+	op, always := "mcp."+slug+"."+tool, false
+	details := map[string]any{"space_id": p.SpaceID, "tool": tool}
+	do := func(ctx context.Context) (json.RawMessage, error) { return svc.call(ctx, p, srv, tool, args) }
+	if srv.Kind == KindSpaceman {
+		// SpaceMan MCP (ADR-0063): the operation names the tool's class, so policies can gate a class
+		// (mcp.<slug>.write.*); dangerous tools, and writes of a server that gates them, always need an approval.
+		if svc.Spaceman == nil {
+			return nil, errSpacemanUnavailable
+		}
+		t := target(srv)
+		class, ok := svc.Spaceman.Class(t, tool, args)
+		if !ok {
+			return nil, apperr.New(apperr.CodeNotFound, "%s does not offer %s", slug, tool)
+		}
+		op, always = spacemanGate(t, class, tool)
+		details["operation"], details["class"] = strings.ReplaceAll(tool, "_", "-"), class
+		do = func(ctx context.Context) (json.RawMessage, error) {
+			return svc.Spaceman.Call(ctx, t, p.RunID, tool, args)
+		}
+	}
 	var finish func(error)
-	if svc.Gate != nil {
+	switch {
+	case svc.Gate == nil && always:
+		return nil, errNeedsApprovalGate(op)
+	case svc.Gate == nil:
+	case always:
+		if finish, err = svc.Gate.Require(ctx, p, op, "mcp_server:"+srv.ID, args); err != nil {
+			return nil, err
+		}
+	default:
 		// Approval policies (ADR-0024) bind the server by ID: a server recreated under the same slug needs new approvals.
-		if finish, err = svc.Gate.Gate(ctx, p, "mcp."+slug+"."+tool, "mcp_server:"+srv.ID, args); err != nil {
+		if finish, err = svc.Gate.Gate(ctx, p, op, "mcp_server:"+srv.ID, args); err != nil {
 			return nil, err
 		}
 	}
@@ -366,7 +398,7 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 	}
 	defer release()
 	start := time.Now()
-	out, err := svc.call(ctx, p, srv, tool, args)
+	out, err := do(ctx)
 	if finish != nil {
 		finish(err)
 	}
@@ -374,13 +406,14 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 	if err != nil {
 		outcome, result = "failure", string(apperr.CodeOf(err))
 	}
+	details["result"], details["duration_ms"] = result, time.Since(start).Milliseconds()
 	svc.rt.log.Info("MCP gateway call", slog.String("run.id", p.RunID), slog.String("mcp.server", srv.Slug), slog.String("mcp.tool", tool),
 		slog.String("result", result), slog.Duration("duration", time.Since(start)))
 	// Audited after the call: no I/O happens inside the write transaction.
 	aerr := svc.s.W().TxNamed(context.WithoutCancel(ctx), "mcp.call", func(tx *store.Tx) error {
 		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorAgent, ID: p.RunID}, Action: "mcp_server.tool_called",
 			Target: audit.Target{Type: "mcp_server", ID: srv.ID}, Outcome: outcome,
-			Details: map[string]any{"space_id": p.SpaceID, "tool": tool, "result": result, "duration_ms": time.Since(start).Milliseconds()}})
+			Details: details})
 		return err
 	})
 	if aerr != nil {
@@ -441,14 +474,33 @@ type DiscoveredTool struct {
 	Usable      bool   `json:"usable" doc:"False when the namespaced name would be too long or has characters models refuse"`
 }
 
-// Check connects to a server with a throwaway session, lists its tools and closes the session.
-func (svc *Service) Check(ctx context.Context, id string) (*Discovered, error) {
+// Check connects to a server with a throwaway session, lists its tools and closes the session. For a SpaceMan MCP
+// server it lists the tools its token can use now (none when the token can no longer be used).
+func (svc *Service) Check(ctx context.Context, actor audit.Actor, id string) (*Discovered, error) {
 	srv, err := svc.s.R().GetMCPServer(ctx, id)
 	if err != nil {
 		return nil, errNotFound
 	}
+	if err := refuseInternalOnSpaceman(actor, srv); err != nil {
+		return nil, err
+	}
 	start := time.Now()
 	out := &Discovered{Tools: []DiscoveredTool{}}
+	if srv.Kind == KindSpaceman {
+		if svc.Spaceman == nil {
+			return nil, errSpacemanUnavailable
+		}
+		for _, t := range svc.Spaceman.Catalog(ctx, target(srv)) {
+			out.Tools = append(out.Tools, DiscoveredTool{Name: strings.TrimPrefix(t.Name, srv.Slug+Separator), Description: truncate(t.Description, 500),
+				ReadOnly: t.ReadOnly, Usable: true})
+		}
+		out.OK, out.Server = len(out.Tools) > 0, "SpaceMan "+buildinfo.Get().Version
+		if !out.OK {
+			out.Error = "the server's token can no longer be used (revoked, expired or its owner disabled): re-issue it"
+		}
+		out.Elapsed = time.Since(start).Milliseconds()
+		return out, nil
+	}
 	cs, tools, err := svc.connect(ctx, srv)
 	out.Elapsed = time.Since(start).Milliseconds()
 	if err != nil {
