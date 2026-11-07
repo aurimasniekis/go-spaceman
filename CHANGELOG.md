@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     per-run token in their secret environment. Codex needs no login seeding.
 
 ### Fixed
+- The queue page no longer crashes ("Duplicate options are not supported") when two tasks share a title. Task pickers
+  (a task's dependencies, a new task's parent and dependencies) use task IDs as values; a title shared by several
+  tasks shows each task's status and the end of its ID. The run launcher's "another role" choice no longer collides
+  with a space role named `custom`. The queue route has its own error boundary, and its task drawer and dialogs are
+  contained separately, so a failing part shows an alert with a retry instead of blanking the page.
 - Saving a harness profile without `claude_settings` keeps the stored settings, read in the save's own transaction; a
   failed read before the save could clear them.
 - Changes to a profile's `claude_settings` are audited on `profile.created` and `profile.updated` with the changed
