@@ -92,8 +92,9 @@ func (Claude) Build(c Context) (Launch, error) {
 	for k, v := range p.ClaudeSettings {
 		own[k] = v
 	}
-	// A fresh CLAUDE_CONFIG_DIR starts Claude Code's full-screen renderer (alternate screen, its own virtualized
-	// scrollback): the run's terminal would never hold earlier output, so a watch-only viewer, who sends no input, could
+	// Without a "tui" setting Claude Code may pick its full-screen renderer (alternate screen, its own virtualized
+	// scrollback; its fresh-install default once a config dir has started, or a server-side flag), as the operator's
+	// runs did: the run's terminal would then never hold earlier output, so a watch-only viewer, who sends no input, could
 	// not scroll back. The classic renderer writes to the normal screen and its scrollback. A profile that sets "tui"
 	// (for example "fullscreen") decides itself (ADR-0064, verified with Claude Code 2.1.317).
 	if _, set := own["tui"]; !set {

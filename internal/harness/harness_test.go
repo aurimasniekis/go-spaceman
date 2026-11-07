@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -74,13 +75,22 @@ func TestClaudeBuild(t *testing.T) {
 	if keys := l.OwnJSON[cfgSettings]; len(keys) != 3 || keys["hooks"] == nil || keys["permissions"] == nil || keys["tui"] != "default" {
 		t.Fatalf("settings keys %v", l.OwnJSON)
 	}
-	if _, set := cs["tui"]; set {
+	// Every profile key is written unchanged, and the profile's own settings are not modified.
+	for k, v := range cs {
+		if !reflect.DeepEqual(l.OwnJSON[cfgSettings][k], v) {
+			t.Fatalf("settings key %s changed: %v", k, l.OwnJSON[cfgSettings][k])
+		}
+	}
+	if _, set := cs["tui"]; set || len(cs) != 2 {
 		t.Fatal("the profile's settings were changed")
 	}
-	// A profile that picks a renderer keeps it.
-	l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"tui": "fullscreen"}}))
-	if err != nil || len(l.OwnJSON[cfgSettings]) != 1 || l.OwnJSON[cfgSettings]["tui"] != "fullscreen" {
-		t.Fatalf("profile renderer %v %v", l.OwnJSON, err)
+	// A profile that picks a renderer keeps it, whichever it is.
+	for _, tui := range []any{"fullscreen", "default"} {
+		prof := proto.ClaudeSettings{"tui": tui, "model": "opus"}
+		l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: prof}))
+		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus"}) {
+			t.Fatalf("profile renderer %v: %v %v", tui, l.OwnJSON, err)
+		}
 	}
 	if _, err := (Claude{}).Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"permissions": "all"}})); err == nil {
 		t.Error("invalid claude settings accepted")
