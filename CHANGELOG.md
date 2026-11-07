@@ -22,6 +22,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - a recorded spike: Claude Code 2.1.317 and interactive codex-cli 0.166.0 both reach the gateway with only a
     per-run token in their secret environment. Codex needs no login seeding.
 
+### Fixed
+- Saving a harness profile without `claude_settings` keeps the stored settings, read in the save's own transaction; a
+  failed read before the save could clear them.
+- Changes to a profile's `claude_settings` are audited on `profile.created` and `profile.updated` with the changed
+  top-level keys and a sha256 of the new settings, never the values.
+- The node fails a launch when its record of the settings.json keys it owns is corrupt, instead of keeping keys an
+  earlier profile set, and records the keys before writing settings.json.
+- A run that can't be dispatched (`node_too_old`, `account_unavailable`) is now failed and its launch cancelled; ending
+  it used to fail on a database constraint (a NULL session ID), which left the run pending.
+- Profile settings may set endpoint and credential `env` variables, helpers and hooks: recorded as an accepted risk
+  (ADR-0059, THREAT_MODEL T-32).
+
 ## [0.1.0-rc.8] - 2026-11-06
 
 Eighth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): shared Git SSH keys, so one
