@@ -90,9 +90,10 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	return e
 }
 
-// longLease makes leases last 30 s, for tests whose runs must survive restartCentral: reopening central's store under
-// the race detector takes about as long as the default 5 s lease, and the node's reconnects are refused until it is
-// open, so the lease could expire and the node stop the space's runs.
+// longLease makes leases last 30 s, for tests whose runs must survive restartCentral. With StoreReaders: 4 a restart
+// takes about 1 s even under the race detector, so the default 5 s lease is normally enough; the long lease is a margin
+// for a loaded host, where the node's reconnects are refused until the store is open and a short lease could expire
+// and the node stop the space's runs.
 func longLease(cfg *config.Config) { cfg.Nodes.LeaseTTL = config.Duration(30 * time.Second) }
 
 // shortLease makes leases expire quickly (1 s plus a 0.5 s grace) for tests of what happens without central.
@@ -283,8 +284,10 @@ func TestFleetLifecycle(t *testing.T) {
 	// correct, and they never come back to running.
 	restartAt := time.Now()
 	e.restartCentral()
-	if d := time.Since(restartAt); d >= e.cfg.Nodes.LeaseTTL.D() {
-		t.Fatalf("central restart took %v, not less than the %v lease: the agent may stop the runs before it reconnects", d, e.cfg.Nodes.LeaseTTL.D())
+	// A fixed bound, not the lease: it guards the reader-pool regression (a store opened with one reader per CPU took
+	// 5-7 s to open under -race), which the 30 s longLease would otherwise hide.
+	if d := time.Since(restartAt); d >= 5*time.Second {
+		t.Fatalf("central restart took %v, not less than 5 s: check app.Options.StoreReaders (each reader parses the schema on open)", d)
 	}
 	eventually(t, "reconnected after central restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
 	eventually(t, "runs running after central restart", func() bool { return e.run1(worker.ID).Observed == "running" })

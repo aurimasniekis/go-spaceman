@@ -27,14 +27,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   contract, `make test-harbor-pilot` (installs and checks v0.1.3) and ADR-0060 (Proposed). The test harness also checks
   per-run usage by trusted reference, budget refusals and the budget check on run-token mint. Claude Code's default
   model now works through the gateway (K-13 resolved on the demo gateway).
+- Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
 - Tests: `internal/app` TestFleetLifecycle no longer fails at random with "timed out waiting for runs running after
   central restart". Reopening the store checks every reader connection, one per CPU by default, and under the race
-  detector on a 32-CPU host that took 5-7 s, longer than the test's 5 s lease plus 1 s grace. The agent then stopped the
-  runs, as it should without central (SM-NODE-007), so they never returned to running. The fleet test central now uses
-  4 readers (new test-only `app.Options.StoreReaders`), and the test fails at once, with the cause, if a restart takes
-  longer than the lease. Product behaviour is unchanged.
+  detector on a 32-CPU host that took 5-7 s, longer than the 5 s lease plus 1 s grace the test then had. The agent then
+  stopped the runs, as it should without central (SM-NODE-007), so they never returned to running. The fleet test
+  central now uses 4 readers (new test-only `app.Options.StoreReaders`), which brings a restart to about 1 s; restart
+  tests also get a 30 s lease as a margin under load, and the test fails at once, with the cause, if a restart takes
+  5 s or more. Product behaviour is unchanged.
 
 ## [0.1.0-rc.9] - 2026-11-07
 
