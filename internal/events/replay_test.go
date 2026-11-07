@@ -34,10 +34,11 @@ func TestReplayIsExplicitAndDistinctFromRetry(t *testing.T) {
 	f.publish(issueSubject, issueType, issuePayload(t, ""), "") // before the subscription: history
 	s := f.subscribe("spc_a", "issues", Cursor{})
 	f.publish(issueSubject, issueType, issuePayload(t, "example-org/tool"), "live-1")
-	eventually(t, "live item", func() bool { return len(f.items("spc_a")) == 1 })
+	// The item is committed before its delivery is recorded: wait for both.
+	eventually(t, "live item", func() bool { return len(f.items("spc_a")) == 1 && len(f.deliveries("spc_a", s.ID)) == 1 })
 	d := f.deliveries("spc_a", s.ID)
 	if len(d) != 1 || d[0].Origin != OriginLive || d[0].Attempt != 1 || d[0].ReplayID != "" {
-		t.Fatalf("live delivery %+v", d[0])
+		t.Fatalf("live delivery %+v", d)
 	}
 	live, err := f.inbox.Get(f.ctx, "spc_a", f.items("spc_a")[0].ID)
 	must(t, err)
@@ -46,8 +47,8 @@ func TestReplayIsExplicitAndDistinctFromRetry(t *testing.T) {
 	}
 	// The stream delivering the same event again (nak, ack timeout, restart) is a retry: redelivery, attempt 2.
 	must(t, f.svc.Process(f.ctx, s.ID, template.Event{ID: d[0].EventID, Subject: issueSubject, Type: issueType, Data: issuePayload(t, "")}, 9, Origin{}))
-	if f.countOrigin("spc_a", s.ID, OriginRedelivery, OutcomeDuplicate) != 1 || f.deliveries("spc_a", s.ID)[0].Attempt != 2 {
-		t.Fatalf("redelivery %+v", f.deliveries("spc_a", s.ID)[0])
+	if d := f.deliveries("spc_a", s.ID); f.countOrigin("spc_a", s.ID, OriginRedelivery, OutcomeDuplicate) != 1 || len(d) == 0 || d[0].Attempt != 2 {
+		t.Fatalf("redelivery %+v", d)
 	}
 
 	cur, _ := f.svc.GetSubscription(f.ctx, "spc_a", s.ID)

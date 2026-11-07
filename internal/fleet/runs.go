@@ -384,8 +384,12 @@ func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness strin
 }
 
 // failUndispatched ends a run whose launch could not be sent (its account became unusable after the launch was
-// accepted): the launch command is cancelled and the run is failed with the reason, so it does not wait forever.
+// accepted): the launch command is cancelled and the run is failed with the reason, so it does not wait forever. Like a
+// report that ends a run, it counts the end, publishes run_ended, calls OnRunEnded and advances the space's relocation,
+// once: a run that has already ended only has its commands cancelled.
 func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reason string) error {
+	var justEnded bool
+	var spaceID string
 	err := svc.s.W().TxNamed(ctx, "fleet.run_undispatched", func(tx *store.Tx) error {
 		r, err := tx.Q.GetRun(ctx, runID)
 		if err != nil {
@@ -394,6 +398,11 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reas
 		if _, err := tx.Q.CancelRunCommands(ctx, db.CancelRunCommandsParams{Reason: reason, RunID: sql.NullString{String: runID, Valid: true}}); err != nil {
 			return err
 		}
+		spaceID, justEnded = r.SpaceID, !ended(r.Observed)
+		if !justEnded {
+			return nil
+		}
+		svc.opts.Metrics.RunEnded(metrics.Harness(r.Harness), metrics.RunLaunchFailed)
 		// SessionID "" keeps the stored one (a nil would write NULL and fail the NOT NULL constraint).
 		if _, err := tx.Q.UpdateRunObserved(ctx, db.UpdateRunObservedParams{Observed: proto.RunFailed, EndReason: endReason, Error: reason, SessionID: "",
 			MarkStarted: 0, Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, MarkEnded: 1, ID: r.ID, Generation: r.Generation}); err != nil {
@@ -405,17 +414,18 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reas
 		if err := svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1); err != nil {
 			return err
 		}
-		if !ended(r.Observed) {
-			if err := svc.runEvent(ctx, tx, r, outbox.RunEnded{Run: outboxRun(r), State: proto.RunFailed, EndReason: endReason}); err != nil {
-				return err
-			}
+		if err := svc.runEvent(ctx, tx, r, outbox.RunEnded{Run: outboxRun(r), State: proto.RunFailed, EndReason: endReason}); err != nil {
+			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "run.launch_failed", Target: audit.Target{Type: "run", ID: r.ID},
 			Details: map[string]any{"space_id": r.SpaceID, "reason": reason}})
 		return err
 	})
-	if err == nil && svc.opts.OnRunEnded != nil {
+	if err == nil && justEnded && svc.opts.OnRunEnded != nil {
 		svc.opts.OnRunEnded(runID)
+	}
+	if err == nil && justEnded {
+		svc.kickSpaceRelocation(ctx, spaceID)
 	}
 	return err
 }

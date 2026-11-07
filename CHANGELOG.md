@@ -27,10 +27,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   failed read before the save could clear them.
 - Changes to a profile's `claude_settings` are audited on `profile.created` and `profile.updated` with the changed
   top-level keys and a sha256 of the new settings, never the values.
-- The node fails a launch when its record of the settings.json keys it owns is corrupt, instead of keeping keys an
-  earlier profile set, and records the keys before writing settings.json.
+- The node records the settings.json keys it owns before writing settings.json. When that record is corrupt, it moves
+  `settings.json` and the record aside (`.corrupt-<unix nanoseconds>`), logs a warning naming both, and starts from fresh
+  settings: no key an earlier profile set survives, and the instance recovers without a fix on the node.
 - A run that can't be dispatched (`node_too_old`, `account_unavailable`) is now failed and its launch cancelled; ending
-  it used to fail on a database constraint (a NULL session ID), which left the run pending.
+  it used to fail on a database constraint (a NULL session ID), which left the run pending. Its end is handled like a
+  reported one: counted in `spaceman_runs_ended_total` (reason `launch_failed`), published once as run_ended, and a
+  draining relocation of its space goes on. Failing an already-ended run only cancels its commands.
+- Tests: `internal/events` TestReplayIsExplicitAndDistinctFromRetry, TestDurableIngestMetrics and other ingestion tests
+  no longer read deliveries or metrics once right after waiting for the inbox item. The item is committed before its
+  delivery is recorded and the metric after that, so the read could come too early (seen in CI as an index out of
+  range panic and "durable created = 0"). Failure messages no longer index possibly empty lists.
+- Tests: `internal/keyring` TestLoadKEKSources and `internal/cli` TestTokenSources pass under a restrictive umask (such
+  as 077). They now chmod their deliberately world-readable files instead of relying on the mode given to WriteFile,
+  which the umask narrows. Product code is unchanged.
+
+### Security
 - Profile settings may set endpoint and credential `env` variables, helpers and hooks: recorded as an accepted risk
   (ADR-0059, THREAT_MODEL T-32).
 
