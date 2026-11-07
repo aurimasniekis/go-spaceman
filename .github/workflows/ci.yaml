@@ -18,8 +18,10 @@ env:
   GOTOOLCHAIN: auto
 
 jobs:
+  # The Go checks run as four parallel jobs (same commands as before, nothing dropped): the race run is the longest, so
+  # lint, vet, coverage and fuzzing finish beside it instead of after it.
   go:
-    name: go (lint, vet, race tests, coverage, fuzz smoke, traceability)
+    name: go (lint, vet, sqlc drift, analyzer tests, traceability)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,16 +43,58 @@ jobs:
         run: make sqlc-check
       - name: analyzer tests
         run: make tools-test
+      - name: requirement traceability
+        run: make traceability
+
+  race:
+    name: go race tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
-        # 290 ms); the 100 ms write-transaction guard is still enforced by the non-race coverage run below.
+        # 290 ms); the 100 ms write-transaction guard is still enforced by the non-race coverage job.
         env:
           SM_TEST_TX_MAX: 1s
         run: make race
+
+  coverage:
+    name: go coverage floor
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
       - name: coverage floor
         run: make coverage
-      - name: requirement traceability
-        run: make traceability
+
+  fuzz:
+    name: go fuzz smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
       - name: fuzz smoke
         run: make fuzz-smoke FUZZTIME=${{ github.event_name == 'schedule' && '10m' || '10s' }}
 

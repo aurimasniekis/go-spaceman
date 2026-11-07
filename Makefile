@@ -43,9 +43,11 @@ lint:
 tools-test:
 	cd tools && $(GO) test ./...
 
-# Runs every Fuzz* target for FUZZTIME (a smoke run; nightly CI uses FUZZTIME=10m).
+# Runs every Fuzz* target for FUZZTIME (a smoke run; nightly CI uses FUZZTIME=10m). Packages whose test files declare no
+# Fuzz function are skipped before `go test -list`, which would otherwise build every test binary.
 fuzz-smoke:
-	@set -e; for pkg in $$($(GO) list ./...); do \
+	@set -e; $(GO) list -f '{{.ImportPath}} {{.Dir}}' ./... | while read -r pkg dir; do \
+	  grep -qsE '^func Fuzz' "$$dir"/*_test.go || continue; \
 	  for fz in $$($(GO) test -list '^Fuzz' $$pkg 2>/dev/null | grep '^Fuzz' || true); do \
 	    echo "fuzz $$pkg $$fz"; $(GO) test -run '^$$' -fuzz "^$$fz$$" -fuzztime $(FUZZTIME) $$pkg; \
 	  done; \

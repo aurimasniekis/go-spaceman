@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner/runnertest"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 // fleetEnv is a central on a real HTTP server (restartable on the same data directory) plus a node agent with an
@@ -95,6 +96,7 @@ func shortLease(cfg *config.Config) {
 }
 
 func (e *fleetEnv) startCentral() {
+	storetest.Seed(e.t, e.cfg.DataDir)
 	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}})
 	if err != nil {
 		e.t.Fatal(err)

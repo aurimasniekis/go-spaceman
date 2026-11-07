@@ -22,6 +22,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - a recorded spike: Claude Code 2.1.317 and interactive codex-cli 0.166.0 both reach the gateway with only a
     per-run token in their secret environment. Codex needs no login seeding.
 
+### Changed
+- Faster CI and `make check`, with the same checks:
+  - test stores and test centrals start from a database that was migrated once per test binary, instead of applying
+    every migration again for each test (about 10 s per store under the race detector);
+  - CI runs lint and vet, race tests, the coverage floor and fuzz smoke as parallel jobs;
+  - `make fuzz-smoke` lists fuzz targets only in packages that declare one.
+- The release workflow's test gate also enforces the coverage floor.
+
 ### Fixed
 - Saving a harness profile without `claude_settings` keeps the stored settings, read in the save's own transaction; a
   failed read before the save could clear them.

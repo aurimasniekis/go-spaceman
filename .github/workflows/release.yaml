@@ -80,7 +80,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
 
   test:
-    name: vet and race tests (release gate)
+    name: vet, race tests and coverage floor (release gate)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,6 +93,8 @@ jobs:
         env:
           SM_TEST_TX_MAX: 1s # race detector overhead on shared runners; see ci.yaml
         run: make vet race
+      - name: coverage floor (non-race, so the 100 ms write-transaction guard applies)
+        run: make coverage
 
   web:
     name: web UI (web/dist)
