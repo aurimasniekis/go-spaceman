@@ -183,7 +183,9 @@ func budgetTest(t *testing.T, g *Gateway) {
 		body []byte
 		err  error
 	)
-	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+	// The request row and its event are written after the response: poll both within one deadline.
+	deadline := time.Now().Add(15 * time.Second)
+	for ; ; time.Sleep(200 * time.Millisecond) {
 		code, body, err = g.Do(ctx, http.MethodGet, "/api/v1/activity/requests?"+q.Encode(), g.ServiceToken, nil)
 		if err != nil || code != http.StatusOK || json.Unmarshal(body, &reqs) != nil || len(reqs.Items) > 0 || time.Now().After(deadline) {
 			break
@@ -193,7 +195,6 @@ func budgetTest(t *testing.T, g *Gateway) {
 		reqs.Items[0].Status != "blocked" || reqs.Items[0].ErrorKind != "budget_exceeded" {
 		t.Fatalf("activity of the refused run: %d %v %+v", code, err, reqs)
 	}
-	code, body, err = g.Do(ctx, http.MethodGet, "/api/v1/events?limit=50", g.ServiceToken, nil)
 	var evs struct {
 		Items []struct {
 			Envelope struct {
@@ -202,13 +203,19 @@ func budgetTest(t *testing.T, g *Gateway) {
 			} `json:"envelope"`
 		} `json:"items"`
 	}
-	if err != nil || code != http.StatusOK || json.Unmarshal(body, &evs) != nil {
-		t.Fatalf("events: %d %v", code, err)
-	}
 	blocked := false
-	for _, e := range evs.Items {
-		blocked = blocked || (e.Envelope.Name == "access.request.blocked" && e.Envelope.Subjects["request_id"] == reqs.Items[0].ID &&
-			e.Envelope.Subjects["binding_id"] == g.BindingID)
+	for ; !blocked; time.Sleep(200 * time.Millisecond) {
+		code, body, err = g.Do(ctx, http.MethodGet, "/api/v1/events?limit=50", g.ServiceToken, nil)
+		if err != nil || code != http.StatusOK || json.Unmarshal(body, &evs) != nil {
+			t.Fatalf("events: %d %v", code, err)
+		}
+		for _, e := range evs.Items {
+			blocked = blocked || (e.Envelope.Name == "access.request.blocked" && e.Envelope.Subjects["request_id"] == reqs.Items[0].ID &&
+				e.Envelope.Subjects["binding_id"] == g.BindingID)
+		}
+		if time.Now().After(deadline) {
+			break
+		}
 	}
 	if !blocked {
 		t.Fatal("no access.request.blocked event for the budget refusal")

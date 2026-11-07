@@ -399,6 +399,46 @@ func (g *Gateway) CreateBudget(ctx context.Context, name, projectID, limit strin
 	return o.ID, nil
 }
 
+// IssueCredential issues another gateway credential on the provisioned binding, as the demo administrator, with the
+// given scopes (for example a parent without tokens:mint), and returns its id and token.
+func (g *Gateway) IssueCredential(ctx context.Context, name string, scopes []string) (string, string, error) {
+	var out mintResponse
+	if err := g.admin.do(ctx, http.MethodPost, "/api/v1/client-bindings/"+g.BindingID+"/credentials", map[string]any{"name": name, "scopes": scopes}, &out, http.StatusCreated); err != nil {
+		return "", "", fmt.Errorf("credential: %w", err)
+	}
+	return out.Credential.ID, out.Token, nil
+}
+
+// ActiveChildren lists the ids of the provisioned parent's child credentials that are neither revoked nor expired
+// (read with the service token, which holds config.read).
+func (g *Gateway) ActiveChildren(ctx context.Context) ([]string, error) {
+	code, body, err := g.Do(ctx, http.MethodGet, "/api/v1/client-bindings/"+g.BindingID+"/credentials?children=true", g.ServiceToken, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("credentials: status %d: %s", code, errMessage(body))
+	}
+	var l struct {
+		Items []struct {
+			ID        string     `json:"id"`
+			ParentID  string     `json:"parent_id"`
+			ExpiresAt *time.Time `json:"expires_at"`
+			RevokedAt *time.Time `json:"revoked_at"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &l); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, c := range l.Items {
+		if c.ParentID == g.ParentID && c.RevokedAt == nil && (c.ExpiresAt == nil || c.ExpiresAt.After(time.Now())) {
+			out = append(out, c.ID)
+		}
+	}
+	return out, nil
+}
+
 // MintRequest is the body of POST /v1/harbor/credentials (exactly these fields; Harbor Pilot refuses unknown ones).
 // CheckBudget (v0.1.3, D-043) refuses the mint with 429 budget_exceeded when a blocking budget covering the child is used up.
 type MintRequest struct {

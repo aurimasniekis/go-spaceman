@@ -1,0 +1,820 @@
+package harborpilot
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
+	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+)
+
+// Space setting bounds (ADR-0060 Q2, Q3).
+const (
+	DefaultTTLSeconds = 86400  // 24 h
+	MinTTLSeconds     = 900    // 15 min
+	MaxTTLSeconds     = 604800 // 7 days, Harbor Pilot's own maximum for a child
+	BudgetProceed     = "proceed"
+	BudgetRefuse      = "refuse"
+)
+
+// DefaultHarnesses are routed through Harbor Pilot when a space opts in without naming harnesses.
+var DefaultHarnesses = []string{harness.KindClaude, harness.KindCodex}
+
+// RunScopes are the scopes of a run's child token: invoke and models, never tokens:mint.
+var RunScopes = []string{ScopeInvoke, ScopeModels}
+
+// Associated data of the sealed tokens (ADR-0060 decision 2): a sealed value opens only for the row it was written for.
+func parentAAD(connID string) []byte  { return []byte("harborpilot:parent:" + connID) }
+func serviceAAD(connID string) []byte { return []byte("harborpilot:sp:" + connID) }
+
+// RunAAD is the associated data of a run's sealed child token.
+func RunAAD(runID string) []byte { return []byte("harborpilot:run:" + runID) }
+
+// Connection is the Harbor Pilot connection as the API shows it: never a token, only whether one is set and its
+// version counter.
+type Connection struct {
+	ID                  string     `json:"id"`
+	BaseURL             string     `json:"base_url" doc:"The gateway origin central calls (mint, revoke, budget status)"`
+	RunBaseURL          string     `json:"run_base_url" doc:"The origin runs reach the gateway on; empty means base_url"`
+	AllowInsecureHTTP   bool       `json:"allow_insecure_http" doc:"Plain http is allowed: tokens then cross the network in clear text"`
+	HasParentToken      bool       `json:"has_parent_token"`
+	ParentTokenVersion  int64      `json:"parent_token_version" doc:"Incremented each time a parent token is written"`
+	HasServiceToken     bool       `json:"has_service_token"`
+	ServiceTokenVersion int64      `json:"service_token_version" doc:"Incremented each time a service-principal token is written or removed"`
+	BindingID           string     `json:"binding_id" doc:"The parent token's client binding, learnt when the connection was validated"`
+	ParentExpiresAt     *time.Time `json:"parent_expires_at,omitempty" doc:"When the parent token expires, if it does"`
+	ValidatedAt         time.Time  `json:"validated_at"`
+	EnabledSpaces       []string   `json:"enabled_spaces" doc:"Spaces that route runs through Harbor Pilot"`
+	Warnings            []string   `json:"warnings"`
+	CreatedAt           time.Time  `json:"created_at"`
+	CreatedBy           string     `json:"created_by"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	UpdatedBy           string     `json:"updated_by"`
+	Version             int64      `json:"version"`
+}
+
+// ConnectionInput creates or replaces the connection. Tokens are write-only.
+type ConnectionInput struct {
+	BaseURL            string `json:"base_url" maxLength:"2048" doc:"The gateway origin, e.g. https://harbor-pilot.example.com (https unless the host is loopback or allow_insecure_http is set)"`
+	RunBaseURL         string `json:"run_base_url,omitempty" maxLength:"2048" doc:"The origin runs reach the gateway on, when it differs from base_url. It needs https (no loopback exemption) unless allow_insecure_http is set"`
+	AllowInsecureHTTP  bool   `json:"allow_insecure_http,omitempty" doc:"Allow plain http (tests and trusted local networks only: every token then crosses the network in clear text)"`
+	ParentToken        string `json:"parent_token,omitempty" maxLength:"512" writeOnly:"true" doc:"A Harbor Pilot gateway credential (hpk_…) with gateway:invoke, gateway:models and tokens:mint. Required on create; empty keeps the current one. Never returned"`
+	ServiceToken       string `json:"service_token,omitempty" maxLength:"512" writeOnly:"true" doc:"A Harbor Pilot service-principal token (hpa_…) with usage.read and config.read, for budget status and project checks. Empty keeps the current one. Never returned"`
+	RemoveServiceToken bool   `json:"remove_service_token,omitempty" doc:"Remove the service-principal token"`
+}
+
+// SpaceSettings is a space's Harbor Pilot opt-in.
+type SpaceSettings struct {
+	SpaceID                   string     `json:"space_id"`
+	Stored                    bool       `json:"stored" doc:"false: the defaults (not opted in)"`
+	Enabled                   bool       `json:"enabled"`
+	ProjectID                 string     `json:"project_id" doc:"The Harbor Pilot project the space's runs are charged to"`
+	Harnesses                 []string   `json:"harnesses" doc:"Harnesses whose runs go through Harbor Pilot; the others keep their direct accounts"`
+	TTLSeconds                int64      `json:"ttl_seconds" doc:"Lifetime of a run's token"`
+	OnBudgetStatusUnavailable string     `json:"on_budget_status_unavailable" enum:"proceed,refuse" doc:"What a launch does when Harbor Pilot budget status can't be read"`
+	AllowedModelAliases       []string   `json:"allowed_model_aliases" doc:"Models runs may use; empty: any model the binding's plan routes"`
+	Connected                 bool       `json:"connected" doc:"A Harbor Pilot connection exists"`
+	Warnings                  []string   `json:"warnings"`
+	UpdatedAt                 *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy                 string     `json:"updated_by,omitempty"`
+	Version                   int64      `json:"version"`
+}
+
+// SpaceInput sets a space's opt-in.
+type SpaceInput struct {
+	Enabled                   bool     `json:"enabled,omitempty"`
+	ProjectID                 string   `json:"project_id,omitempty" maxLength:"64" doc:"The Harbor Pilot project id (required when enabled); it must be the connection's binding project or one of its allowed projects"`
+	Harnesses                 []string `json:"harnesses,omitempty" maxItems:"16" doc:"Harness kinds routed through Harbor Pilot (any harness it can serve); empty: claude-code and codex"`
+	TTLSeconds                int64    `json:"ttl_seconds,omitempty" minimum:"0" maximum:"604800" doc:"Lifetime of a run's token: 900 to 604800 seconds; 0: 86400 (24 h)"`
+	OnBudgetStatusUnavailable string   `json:"on_budget_status_unavailable,omitempty" enum:"proceed,refuse," doc:"proceed (default; the gateway still enforces its budgets) or refuse"`
+	AllowedModelAliases       []string `json:"allowed_model_aliases,omitempty" maxItems:"64" doc:"Model aliases runs may use; empty: any"`
+}
+
+// Options configure the service.
+type Options struct {
+	// Transport replaces the HTTP transport of Harbor Pilot calls (tests).
+	Transport http.RoundTripper
+	// Timeout bounds each Harbor Pilot call (default 15 s).
+	Timeout time.Duration
+}
+
+// Service keeps the connection and the space settings.
+type Service struct {
+	s       *store.Store
+	audit   *audit.Writer
+	changes *changefeed.Recorder
+	kr      *keyring.Keyring
+	o       Options
+}
+
+// New returns the service.
+func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, kr *keyring.Keyring, o Options) *Service {
+	return &Service{s: s, audit: aw, changes: ch, kr: kr, o: o}
+}
+
+var (
+	errNoConnection = apperr.New(apperr.CodeNotFound, "no Harbor Pilot connection is configured")
+	reHarness       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+	// Harbor Pilot bound-ref values are 1-256 bytes; its ids are ULID-based (prj_…). Names are refused by the probe.
+	reProjectID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
+	reAlias     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
+	reTokenText = regexp.MustCompile(`^[\x21-\x7e]{8,512}$`)
+)
+
+func actorRef(a audit.Actor) string {
+	if a.Type == audit.ActorRoot {
+		return "root"
+	}
+	return a.Type + ":" + a.ID
+}
+
+func b2i(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func (svc *Service) client(baseURL string, insecure bool) (*Client, error) {
+	return NewClient(baseURL, ClientOptions{AllowInsecureHTTP: insecure, Transport: svc.o.Transport, Timeout: svc.o.Timeout})
+}
+
+// GetConnection returns the connection (not found when none is configured).
+func (svc *Service) GetConnection(ctx context.Context) (*Connection, error) {
+	r, err := svc.s.R().GetHarborPilotConnection(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errNoConnection
+	} else if err != nil {
+		return nil, err
+	}
+	return svc.connOut(ctx, r)
+}
+
+func (svc *Service) connOut(ctx context.Context, r db.HarborPilotConnection) (*Connection, error) {
+	enabled, err := svc.s.R().ListEnabledSpaceHarborPilot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c := &Connection{ID: r.ID, BaseURL: r.BaseUrl, RunBaseURL: r.RunBaseUrl, AllowInsecureHTTP: r.AllowInsecureHttp == 1, HasParentToken: len(r.ParentTokenEnc) > 0,
+		ParentTokenVersion: r.ParentTokenVersion, HasServiceToken: len(r.ServiceTokenEnc) > 0, ServiceTokenVersion: r.ServiceTokenVersion, BindingID: r.BindingID,
+		ValidatedAt: time.UnixMicro(r.ValidatedAt).UTC(), EnabledSpaces: make([]string, 0, len(enabled)), Warnings: []string{},
+		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), CreatedBy: r.CreatedBy, UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), UpdatedBy: r.UpdatedBy, Version: r.Version}
+	if r.ParentExpiresAt.Valid {
+		t := time.UnixMicro(r.ParentExpiresAt.Int64).UTC()
+		c.ParentExpiresAt = &t
+	}
+	for _, e := range enabled {
+		c.EnabledSpaces = append(c.EnabledSpaces, e.SpaceID)
+	}
+	if c.AllowInsecureHTTP {
+		c.Warnings = append(c.Warnings, "Insecure HTTP is allowed: the parent token and every run's token cross the network in clear text.")
+	}
+	if !c.HasServiceToken {
+		c.Warnings = append(c.Warnings, "No service-principal token: Harbor Pilot budget status, project checks and per-run usage are unavailable.")
+	}
+	now := svc.s.Now()
+	if c.ParentExpiresAt != nil {
+		if !c.ParentExpiresAt.After(now) {
+			c.Warnings = append(c.Warnings, "The parent token has expired: runs can't get tokens until it is replaced.")
+		} else {
+			for _, e := range enabled {
+				if now.Add(time.Duration(e.TtlSeconds) * time.Second).After(*c.ParentExpiresAt) {
+					c.Warnings = append(c.Warnings, parentExpiryWarning(*c.ParentExpiresAt, e.SpaceID, e.TtlSeconds))
+				}
+			}
+		}
+	}
+	return c, nil
+}
+
+func parentExpiryWarning(at time.Time, spaceID string, ttl int64) string {
+	return fmt.Sprintf("The parent token expires at %s, sooner than space %s's token lifetime (%s): Harbor Pilot shortens its runs' tokens to the parent's expiry.",
+		at.Format(time.RFC3339), spaceID, time.Duration(ttl)*time.Second)
+}
+
+// validation is what a connection probe learnt.
+type validation struct {
+	bindingID     string
+	parentExpires *time.Time
+	unrevoked     *Credential // the probe credential could not be revoked
+}
+
+// The probe child lives for Harbor Pilot's maximum, so its expires_at shows whether the parent expires sooner (Harbor
+// Pilot clamps a child's TTL to its parent's expiry). Its token is discarded at once and the credential revoked.
+const probeTTL = MaxTTLSeconds
+
+// probeParent validates a parent token by minting a child with check_budget sent explicitly (a gateway older than
+// 0.1.3 refuses the field) and revoking it.
+func (svc *Service) probeParent(ctx context.Context, c *Client, parent string, boundRefs map[string]string, ttl int64) (*validation, error) {
+	cred, _, err := c.Mint(ctx, parent, MintRequest{Name: "spaceman-validation", Scopes: RunScopes, TTLSeconds: ttl, BoundRefs: boundRefs, CheckBudget: false})
+	if err != nil {
+		return nil, err
+	}
+	v := &validation{bindingID: cred.BindingID}
+	if !cred.ExpiresAt.IsZero() && cred.ExpiresAt.Before(svc.s.Now().Add(time.Duration(ttl)*time.Second-5*time.Minute)) {
+		t := cred.ExpiresAt.UTC()
+		v.parentExpires = &t
+	}
+	if err := c.Revoke(ctx, parent, cred.ID); err != nil {
+		v.unrevoked = cred
+	}
+	return v, nil
+}
+
+// queueRevocation records a credential that could not be revoked at once in the durable revocation queue.
+func (svc *Service) queueRevocation(ctx context.Context, cred *Credential, reason string) {
+	now := svc.s.Now()
+	exp := cred.ExpiresAt
+	if exp.IsZero() {
+		exp = now.Add(probeTTL * time.Second)
+	}
+	_ = svc.s.W().TxNamed(ctx, "harborpilot.queue_revocation", func(tx *store.Tx) error {
+		return tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: cred.ID, Reason: reason, ExpiresAt: exp.UnixMicro(),
+			NextAttemptAt: now.UnixMicro(), RequestedAt: now.UnixMicro()})
+	})
+}
+
+// hpField turns a Harbor Pilot failure during validation into an API error: refusals of what the caller sent become
+// field errors, an unreachable or failing gateway is unavailable.
+func hpField(field string, err error) error {
+	var he *Error
+	if !errors.As(err, &he) {
+		return err
+	}
+	switch he.Class {
+	case ClassTransport, ClassUpstream, ClassRateLimited:
+		return apperr.New(apperr.CodeUnavailable, "Harbor Pilot could not validate the connection: %s", he.Reason())
+	case ClassTooOld:
+		field = "base_url"
+	}
+	v := &apperr.Validation{}
+	v.Add(field, "%s", he.Reason())
+	return v.Err()
+}
+
+func checkToken(v *apperr.Validation, field, tok, prefix, other, kind string) {
+	switch {
+	case !reTokenText.MatchString(tok):
+		v.Add(field, "must be 8-512 printable characters without spaces")
+	case strings.HasPrefix(tok, other):
+		v.Add(field, "is a %s token (%s…); this field needs a %s", map[string]string{"hpk_": "gateway", "hpa_": "service-principal"}[other], other, kind)
+	case !strings.HasPrefix(tok, prefix):
+		v.Add(field, "must be a %s (%s…)", kind, prefix)
+	}
+}
+
+// PutConnection creates the connection (version 0) or replaces it (version-checked). Every write is validated against
+// Harbor Pilot first, outside any transaction: a probe mint with the parent token (it must hold tokens:mint, belong to
+// a 0.1.3 or later gateway, and is revoked at once), and, with a service-principal token, budget status (usage.read)
+// and a project read (config.read).
+func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, version int64, in ConnectionInput) (*Connection, error) {
+	if svc.kr == nil {
+		return nil, apperr.New(apperr.CodeUnavailable, "the Harbor Pilot connection needs the keyring")
+	}
+	cur, err := svc.s.R().GetHarborPilotConnection(ctx)
+	exists := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	switch {
+	case !exists && version != 0:
+		return nil, errNoConnection
+	case exists && version == 0:
+		return nil, apperr.New(apperr.CodeConflict, "a Harbor Pilot connection exists: replace it with If-Match \"%d\"", cur.Version)
+	case exists && version != cur.Version:
+		return nil, apperr.New(apperr.CodeConflict, "the connection changed (version %d, you sent %d); reload and retry", cur.Version, version)
+	}
+
+	v := &apperr.Validation{}
+	base, err := ParseBaseURL(in.BaseURL, in.AllowInsecureHTTP, true)
+	if err != nil {
+		v.Add("base_url", "%s", err.Error())
+	}
+	runURL := strings.TrimSpace(in.RunBaseURL)
+	runField := "run_base_url"
+	if runURL == "" && base != nil {
+		runURL, runField = base.String(), "base_url"
+	}
+	if runURL != "" {
+		u, err := ParseBaseURL(runURL, in.AllowInsecureHTTP, false)
+		switch {
+		case err != nil && runField == "base_url":
+			v.Add("run_base_url", "runs reach the gateway on base_url, which %s; set run_base_url to the https origin runs reach", err.Error())
+		case err != nil:
+			v.Add("run_base_url", "%s", err.Error())
+		case in.RunBaseURL != "":
+			in.RunBaseURL = u.String()
+		}
+	}
+	if in.ParentToken == "" && !exists {
+		v.Add("parent_token", "is required")
+	} else if in.ParentToken != "" {
+		checkToken(v, "parent_token", in.ParentToken, "hpk_", "hpa_", "gateway credential with tokens:mint")
+	}
+	if in.ServiceToken != "" {
+		checkToken(v, "service_token", in.ServiceToken, "hpa_", "hpk_", "service-principal token")
+		if in.RemoveServiceToken {
+			v.Add("remove_service_token", "can't be set together with service_token")
+		}
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+
+	id := cur.ID
+	if !exists {
+		id = ids.New(ids.HarborPilot)
+	}
+	parent := in.ParentToken
+	if parent == "" {
+		pt, err := svc.kr.Open(keyring.PurposeCredential, parentAAD(id), cur.ParentTokenEnc)
+		if err != nil {
+			return nil, fmt.Errorf("harborpilot: open the parent token: %w", err)
+		}
+		parent = string(pt)
+	}
+	service := in.ServiceToken
+	if service == "" && !in.RemoveServiceToken && exists && len(cur.ServiceTokenEnc) > 0 {
+		st, err := svc.kr.Open(keyring.PurposeCredential, serviceAAD(id), cur.ServiceTokenEnc)
+		if err != nil {
+			return nil, fmt.Errorf("harborpilot: open the service-principal token: %w", err)
+		}
+		service = string(st)
+	}
+
+	c, err := svc.client(base.String(), in.AllowInsecureHTTP)
+	if err != nil {
+		return nil, err
+	}
+	val, err := svc.probeParent(ctx, c, parent, nil, probeTTL)
+	if err != nil {
+		return nil, hpField("parent_token", err)
+	}
+	var warnings []string
+	if val.unrevoked != nil {
+		svc.queueRevocation(ctx, val.unrevoked, "connection validation")
+		warnings = append(warnings, "The validation credential "+val.unrevoked.ID+" could not be revoked at once; it is queued for revocation.")
+	}
+	if service != "" {
+		if _, err := c.BudgetStatus(ctx, service); err != nil {
+			if IsClass(err, ClassForbidden) {
+				return nil, validationErr("service_token", "the service-principal token lacks usage.read")
+			}
+			return nil, hpField("service_token", err)
+		}
+		// config.read: reading a project that cannot exist answers 404 with it and 403 without.
+		if _, err := c.GetProject(ctx, service, "spaceman-validation-probe"); err != nil && !IsClass(err, ClassNotFound) {
+			if IsClass(err, ClassForbidden) {
+				return nil, validationErr("service_token", "the service-principal token lacks config.read")
+			}
+			return nil, hpField("service_token", err)
+		}
+	}
+
+	sealedParent, err := svc.kr.Seal(keyring.PurposeCredential, parentAAD(id), []byte(parent))
+	if err != nil {
+		return nil, err
+	}
+	var sealedService []byte
+	if service != "" {
+		if sealedService, err = svc.kr.Seal(keyring.PurposeCredential, serviceAAD(id), []byte(service)); err != nil {
+			return nil, err
+		}
+	}
+	var expires sql.NullInt64
+	if val.parentExpires != nil {
+		expires = sql.NullInt64{Int64: val.parentExpires.UnixMicro(), Valid: true}
+	}
+	err = svc.s.W().TxNamed(ctx, "harborpilot.put_connection", func(tx *store.Tx) error {
+		now := tx.NowMicros()
+		row, err := tx.Q.GetHarborPilotConnection(ctx)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			if exists {
+				return errNoConnection
+			}
+		case err != nil:
+			return err
+		case !exists:
+			return apperr.New(apperr.CodeConflict, "a Harbor Pilot connection was created meanwhile; reload and retry")
+		}
+		parentVersion, serviceVersion := int64(1), int64(0)
+		if sealedService != nil {
+			serviceVersion = 1
+		}
+		action := "created"
+		if exists {
+			action = "updated"
+			parentVersion, serviceVersion = row.ParentTokenVersion, row.ServiceTokenVersion
+			if in.ParentToken != "" {
+				parentVersion++
+			}
+			if in.ServiceToken != "" || (in.RemoveServiceToken && len(row.ServiceTokenEnc) > 0) {
+				serviceVersion++
+			}
+			if row.BindingID != "" && row.BindingID != val.bindingID {
+				enabled, err := tx.Q.ListEnabledSpaceHarborPilot(ctx)
+				if err != nil {
+					return err
+				}
+				if len(enabled) > 0 {
+					return apperr.New(apperr.CodePrecondition, "the parent token belongs to another client binding (%s, was %s) while %d spaces use Harbor Pilot; "+
+						"use a parent of the same binding, or disable those spaces first", val.bindingID, row.BindingID, len(enabled))
+				}
+			}
+			n, err := tx.Q.UpdateHarborPilotConnection(ctx, db.UpdateHarborPilotConnectionParams{BaseUrl: base.String(), RunBaseUrl: in.RunBaseURL,
+				AllowInsecureHttp: b2i(in.AllowInsecureHTTP), ParentTokenEnc: sealedParent, ParentTokenVersion: parentVersion, ServiceTokenEnc: sealedService,
+				ServiceTokenVersion: serviceVersion, BindingID: val.bindingID, ParentExpiresAt: expires, Now: now, UpdatedBy: actorRef(actor), ID: id, Version: version})
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return apperr.New(apperr.CodeConflict, "the connection changed (version %d, you sent %d); reload and retry", row.Version, version)
+			}
+		} else if err := tx.Q.InsertHarborPilotConnection(ctx, db.InsertHarborPilotConnectionParams{ID: id, BaseUrl: base.String(), RunBaseUrl: in.RunBaseURL,
+			AllowInsecureHttp: b2i(in.AllowInsecureHTTP), ParentTokenEnc: sealedParent, ServiceTokenEnc: sealedService, ServiceTokenVersion: serviceVersion,
+			BindingID: val.bindingID, ParentExpiresAt: expires, ValidatedAt: now, CreatedAt: now, CreatedBy: actorRef(actor), UpdatedAt: now, UpdatedBy: actorRef(actor)}); err != nil {
+			if store.IsConstraint(err) {
+				return apperr.New(apperr.CodeConflict, "a Harbor Pilot connection was created meanwhile; reload and retry")
+			}
+			return err
+		}
+		if err := svc.changes.Record(ctx, tx, "", "harbor_pilot_connection", id, action, version+1); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "harbor_pilot.connection." + action, Target: audit.Target{Type: "harbor_pilot_connection", ID: id},
+			Details: map[string]any{"base_url": base.String(), "run_base_url": in.RunBaseURL, "allow_insecure_http": in.AllowInsecureHTTP,
+				"parent_token_changed": in.ParentToken != "", "parent_token_version": parentVersion, "service_token_changed": in.ServiceToken != "" || in.RemoveServiceToken,
+				"has_service_token": sealedService != nil, "service_token_version": serviceVersion, "binding_id": val.bindingID}})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out, err := svc.GetConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out.Warnings = append(out.Warnings, warnings...)
+	return out, nil
+}
+
+// DeleteConnection removes the connection (version-checked). It is refused while any space routes runs through Harbor
+// Pilot, or while run tokens are live or pending revocation (their revocation needs the parent token).
+func (svc *Service) DeleteConnection(ctx context.Context, actor audit.Actor, version int64) error {
+	return svc.s.W().TxNamed(ctx, "harborpilot.delete_connection", func(tx *store.Tx) error {
+		cur, err := tx.Q.GetHarborPilotConnection(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errNoConnection
+		} else if err != nil {
+			return err
+		}
+		if cur.Version != version {
+			return apperr.New(apperr.CodeConflict, "the connection changed (version %d, you sent %d); reload and retry", cur.Version, version)
+		}
+		enabled, err := tx.Q.ListEnabledSpaceHarborPilot(ctx)
+		if err != nil {
+			return err
+		}
+		if len(enabled) > 0 {
+			return apperr.New(apperr.CodePrecondition, "%d spaces route runs through Harbor Pilot (first: %s); disable Harbor Pilot in them first", len(enabled), enabled[0].SpaceID)
+		}
+		live, err := tx.Q.CountLiveRunGatewayCredentials(ctx)
+		if err != nil {
+			return err
+		}
+		pending, err := tx.Q.CountPendingGatewayRevocations(ctx)
+		if err != nil {
+			return err
+		}
+		if live+pending > 0 {
+			return apperr.New(apperr.CodePrecondition, "%d run tokens are live or waiting to be revoked, which needs the parent token; retry once they are revoked", live+pending)
+		}
+		n, err := tx.Q.DeleteHarborPilotConnection(ctx, db.DeleteHarborPilotConnectionParams{ID: cur.ID, Version: version})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodeConflict, "the connection changed; reload and retry")
+		}
+		if err := svc.changes.Record(ctx, tx, "", "harbor_pilot_connection", cur.ID, "deleted", version+1); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "harbor_pilot.connection.deleted", Target: audit.Target{Type: "harbor_pilot_connection", ID: cur.ID},
+			Details: map[string]any{"base_url": cur.BaseUrl, "binding_id": cur.BindingID}})
+		return err
+	})
+}
+
+// ParentToken opens the parent token (central's run-token lifecycle only; it never leaves central).
+func (svc *Service) ParentToken(ctx context.Context) (string, error) {
+	r, err := svc.s.R().GetHarborPilotConnection(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errNoConnection
+	} else if err != nil {
+		return "", err
+	}
+	if svc.kr == nil {
+		return "", errors.New("harborpilot: no keyring")
+	}
+	pt, err := svc.kr.Open(keyring.PurposeCredential, parentAAD(r.ID), r.ParentTokenEnc)
+	if err != nil {
+		return "", fmt.Errorf("harborpilot: open the parent token: %w", err)
+	}
+	return string(pt), nil
+}
+
+// ServiceToken opens the service-principal token ("" when none is set).
+func (svc *Service) ServiceToken(ctx context.Context) (string, error) {
+	r, err := svc.s.R().GetHarborPilotConnection(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errNoConnection
+	} else if err != nil {
+		return "", err
+	}
+	if len(r.ServiceTokenEnc) == 0 {
+		return "", nil
+	}
+	if svc.kr == nil {
+		return "", errors.New("harborpilot: no keyring")
+	}
+	st, err := svc.kr.Open(keyring.PurposeCredential, serviceAAD(r.ID), r.ServiceTokenEnc)
+	if err != nil {
+		return "", fmt.Errorf("harborpilot: open the service-principal token: %w", err)
+	}
+	return string(st), nil
+}
+
+// GetSpace returns a space's settings (the defaults when it never opted in).
+func (svc *Service) GetSpace(ctx context.Context, spaceID string) (*SpaceSettings, error) {
+	q := svc.s.R()
+	if _, err := q.GetSpace(ctx, spaceID); errors.Is(err, sql.ErrNoRows) {
+		return nil, apperr.New(apperr.CodeNotFound, "space not found")
+	} else if err != nil {
+		return nil, err
+	}
+	conn, err := q.GetHarborPilotConnection(ctx)
+	connected := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	out := &SpaceSettings{SpaceID: spaceID, Harnesses: slices.Clone(DefaultHarnesses), TTLSeconds: DefaultTTLSeconds, OnBudgetStatusUnavailable: BudgetProceed,
+		AllowedModelAliases: []string{}, Connected: connected, Warnings: []string{}}
+	r, err := q.GetSpaceHarborPilot(ctx, spaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, nil
+	} else if err != nil {
+		return nil, err
+	}
+	out.Stored, out.Enabled, out.ProjectID, out.TTLSeconds, out.OnBudgetStatusUnavailable = true, r.Enabled == 1, r.ProjectID, r.TtlSeconds, r.OnBudgetStatusUnavailable
+	_ = json.Unmarshal([]byte(r.HarnessesJson), &out.Harnesses)
+	_ = json.Unmarshal([]byte(r.AllowedModelAliasesJson), &out.AllowedModelAliases)
+	if out.Harnesses == nil {
+		out.Harnesses = []string{}
+	}
+	if out.AllowedModelAliases == nil {
+		out.AllowedModelAliases = []string{}
+	}
+	t := time.UnixMicro(r.UpdatedAt).UTC()
+	out.UpdatedAt, out.UpdatedBy, out.Version = &t, r.UpdatedBy, r.Version
+	if out.Enabled && connected && conn.ParentExpiresAt.Valid {
+		exp := time.UnixMicro(conn.ParentExpiresAt.Int64).UTC()
+		if svc.s.Now().Add(time.Duration(out.TTLSeconds) * time.Second).After(exp) {
+			out.Warnings = append(out.Warnings, parentExpiryWarning(exp, spaceID, out.TTLSeconds))
+		}
+	}
+	if out.Enabled && !connected {
+		out.Warnings = append(out.Warnings, "No Harbor Pilot connection is configured: launches of the listed harnesses are refused.")
+	}
+	return out, nil
+}
+
+func (in *SpaceInput) normalize() error {
+	v := &apperr.Validation{}
+	in.ProjectID = strings.TrimSpace(in.ProjectID)
+	if in.ProjectID != "" && !reProjectID.MatchString(in.ProjectID) {
+		v.Add("project_id", "must be a Harbor Pilot project id (letters, digits, . _ : -, at most 64)")
+	}
+	if in.Enabled && in.ProjectID == "" {
+		v.Add("project_id", "is required when Harbor Pilot is enabled")
+	}
+	if len(in.Harnesses) == 0 {
+		in.Harnesses = slices.Clone(DefaultHarnesses)
+	}
+	for _, h := range in.Harnesses {
+		if !reHarness.MatchString(h) {
+			v.Add("harnesses", "%q is not a harness kind (lowercase letters, digits and dashes)", h)
+		}
+	}
+	slices.Sort(in.Harnesses)
+	in.Harnesses = slices.Compact(in.Harnesses)
+	switch {
+	case in.TTLSeconds == 0:
+		in.TTLSeconds = DefaultTTLSeconds
+	case in.TTLSeconds < MinTTLSeconds || in.TTLSeconds > MaxTTLSeconds:
+		v.Add("ttl_seconds", "must be between %d (15 minutes) and %d (7 days)", MinTTLSeconds, MaxTTLSeconds)
+	}
+	switch in.OnBudgetStatusUnavailable {
+	case "":
+		in.OnBudgetStatusUnavailable = BudgetProceed
+	case BudgetProceed, BudgetRefuse:
+	default:
+		v.Add("on_budget_status_unavailable", "must be proceed or refuse")
+	}
+	for _, a := range in.AllowedModelAliases {
+		if !reAlias.MatchString(a) {
+			v.Add("allowed_model_aliases", "%q is not a model alias", a)
+		}
+	}
+	slices.Sort(in.AllowedModelAliases)
+	in.AllowedModelAliases = slices.Compact(in.AllowedModelAliases)
+	if in.AllowedModelAliases == nil {
+		in.AllowedModelAliases = []string{}
+	}
+	return v.Err()
+}
+
+// projectProbeTTL is the lifetime of the credential a project check mints (and revokes at once).
+const projectProbeTTL = 60
+
+// checkProject validates an enabled space's project against the connection: with a service-principal token the project
+// must exist and be given by id, and a probe mint bound to it must succeed (the project is the binding's or one of its
+// allowed projects).
+func (svc *Service) checkProject(ctx context.Context, projectID string) error {
+	r, err := svc.s.R().GetHarborPilotConnection(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperr.New(apperr.CodePrecondition, "no Harbor Pilot connection is configured: an administrator connects Harbor Pilot first")
+	} else if err != nil {
+		return err
+	}
+	parent, err := svc.ParentToken(ctx)
+	if err != nil {
+		return err
+	}
+	service, err := svc.ServiceToken(ctx)
+	if err != nil {
+		return err
+	}
+	c, err := svc.client(r.BaseUrl, r.AllowInsecureHttp == 1)
+	if err != nil {
+		return err
+	}
+	if service != "" {
+		p, err := c.GetProject(ctx, service, projectID)
+		switch {
+		case IsClass(err, ClassNotFound):
+			return validationErr("project_id", "Harbor Pilot has no project %q", projectID)
+		case err != nil:
+			return hpField("project_id", err)
+		case p.ID != projectID:
+			return validationErr("project_id", "%q is a project name; use its id %s", projectID, p.ID)
+		}
+	}
+	val, err := svc.probeParent(ctx, c, parent, map[string]string{"project_id": projectID}, projectProbeTTL)
+	if err != nil {
+		var he *Error
+		if errors.As(err, &he) && he.Class == ClassInvalid && strings.Contains(he.Message, "project") {
+			return validationErr("project_id", "Harbor Pilot refused project %q for the connection's client binding: it must be the binding's project or one of its allowed projects", projectID)
+		}
+		return hpField("project_id", err)
+	}
+	if val.unrevoked != nil {
+		svc.queueRevocation(ctx, val.unrevoked, "project validation")
+	}
+	return nil
+}
+
+func validationErr(field, format string, args ...any) error {
+	v := &apperr.Validation{}
+	v.Add(field, format, args...)
+	return v.Err()
+}
+
+// PutSpace sets a space's opt-in: created without If-Match (version 0) or replaced with it. Enabling needs the
+// connection, and the project is checked against Harbor Pilot first (outside any transaction).
+func (svc *Service) PutSpace(ctx context.Context, actor audit.Actor, spaceID string, version int64, in SpaceInput) (*SpaceSettings, error) {
+	if _, err := svc.s.R().GetSpace(ctx, spaceID); errors.Is(err, sql.ErrNoRows) {
+		return nil, apperr.New(apperr.CodeNotFound, "space not found")
+	} else if err != nil {
+		return nil, err
+	}
+	if err := in.normalize(); err != nil {
+		return nil, err
+	}
+	cur, err := svc.s.R().GetSpaceHarborPilot(ctx, spaceID)
+	exists := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err := checkVersion(exists, cur.Version, version); err != nil {
+		return nil, err
+	}
+	if in.Enabled {
+		if err := svc.checkProject(ctx, in.ProjectID); err != nil {
+			return nil, err
+		}
+	}
+	hj, _ := json.Marshal(in.Harnesses)
+	aj, _ := json.Marshal(in.AllowedModelAliases)
+	err = svc.s.W().TxNamed(ctx, "harborpilot.put_space", func(tx *store.Tx) error {
+		now := tx.NowMicros()
+		if in.Enabled {
+			if _, err := tx.Q.GetHarborPilotConnection(ctx); errors.Is(err, sql.ErrNoRows) {
+				return apperr.New(apperr.CodePrecondition, "no Harbor Pilot connection is configured: an administrator connects Harbor Pilot first")
+			} else if err != nil {
+				return err
+			}
+		}
+		row, err := tx.Q.GetSpaceHarborPilot(ctx, spaceID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err := checkVersion(err == nil, row.Version, version); err != nil {
+			return err
+		}
+		action := "created"
+		if version == 0 {
+			if err := tx.Q.InsertSpaceHarborPilot(ctx, db.InsertSpaceHarborPilotParams{SpaceID: spaceID, Enabled: b2i(in.Enabled), ProjectID: in.ProjectID,
+				HarnessesJson: string(hj), TtlSeconds: in.TTLSeconds, OnBudgetStatusUnavailable: in.OnBudgetStatusUnavailable, AllowedModelAliasesJson: string(aj),
+				CreatedAt: now, CreatedBy: actorRef(actor), UpdatedAt: now, UpdatedBy: actorRef(actor)}); err != nil {
+				if store.IsConstraint(err) {
+					return apperr.New(apperr.CodeConflict, "the space's Harbor Pilot settings were created meanwhile; reload and retry")
+				}
+				return err
+			}
+		} else {
+			action = "updated"
+			n, err := tx.Q.UpdateSpaceHarborPilot(ctx, db.UpdateSpaceHarborPilotParams{Enabled: b2i(in.Enabled), ProjectID: in.ProjectID, HarnessesJson: string(hj),
+				TtlSeconds: in.TTLSeconds, OnBudgetStatusUnavailable: in.OnBudgetStatusUnavailable, AllowedModelAliasesJson: string(aj), Now: now,
+				UpdatedBy: actorRef(actor), SpaceID: spaceID, Version: version})
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return apperr.New(apperr.CodeConflict, "the space's Harbor Pilot settings changed; reload and retry")
+			}
+		}
+		if err := svc.changes.Record(ctx, tx, spaceID, "space_harbor_pilot", spaceID, action, version+1); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "harbor_pilot.space." + action, Target: audit.Target{Type: "space_harbor_pilot", ID: spaceID},
+			Details: map[string]any{"space_id": spaceID, "enabled": in.Enabled, "project_id": in.ProjectID, "harnesses": in.Harnesses, "ttl_seconds": in.TTLSeconds,
+				"on_budget_status_unavailable": in.OnBudgetStatusUnavailable, "allowed_model_aliases": in.AllowedModelAliases}})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return svc.GetSpace(ctx, spaceID)
+}
+
+func checkVersion(exists bool, cur, sent int64) error {
+	switch {
+	case !exists && sent != 0:
+		return apperr.New(apperr.CodeNotFound, "the space has no Harbor Pilot settings yet: create them without If-Match")
+	case exists && sent == 0:
+		return apperr.New(apperr.CodeConflict, "the space has Harbor Pilot settings: replace them with If-Match \"%d\"", cur)
+	case exists && sent != cur:
+		return apperr.New(apperr.CodeConflict, "the space's Harbor Pilot settings changed (version %d, you sent %d); reload and retry", cur, sent)
+	}
+	return nil
+}
+
+// DeleteSpace removes a space's settings (version-checked): the space no longer routes runs through Harbor Pilot.
+func (svc *Service) DeleteSpace(ctx context.Context, actor audit.Actor, spaceID string, version int64) error {
+	return svc.s.W().TxNamed(ctx, "harborpilot.delete_space", func(tx *store.Tx) error {
+		cur, err := tx.Q.GetSpaceHarborPilot(ctx, spaceID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperr.New(apperr.CodeNotFound, "the space has no Harbor Pilot settings")
+		} else if err != nil {
+			return err
+		}
+		n, err := tx.Q.DeleteSpaceHarborPilot(ctx, db.DeleteSpaceHarborPilotParams{SpaceID: spaceID, Version: version})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodeConflict, "the space's Harbor Pilot settings changed (version %d, you sent %d); reload and retry", cur.Version, version)
+		}
+		if err := svc.changes.Record(ctx, tx, spaceID, "space_harbor_pilot", spaceID, "deleted", version+1); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "harbor_pilot.space.deleted", Target: audit.Target{Type: "space_harbor_pilot", ID: spaceID},
+			Details: map[string]any{"space_id": spaceID, "was_enabled": cur.Enabled == 1, "project_id": cur.ProjectID}})
+		return err
+	})
+}

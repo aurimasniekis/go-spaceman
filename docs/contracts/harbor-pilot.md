@@ -55,7 +55,7 @@ Handler: `internal/gateway/models.go:214` (`mintChild`), service: `internal/cont
   expires_at, created_by, created_at}, token:"hpk_…"}`. **live**
 - **Caller.** The caller must hold `tokens:mint`. A child credential has no `tokens:mint`, so it cannot mint: 403
   `{"error":{"type":"permission_error","message":"… parent credential lacks tokens:mint"}}`. **live**
-- **Scopes.** They must be a subset of the parent's and may not include `tokens:mint`; otherwise 400 (`credentials.go:171`). **live**
+- **Scopes.** They must be a subset of the parent's and may not include `tokens:mint`; otherwise 400 (`credentials.go:183`). **live**
 - **TTL** (`credentials.go:167-180`):
   - it defaults to 12 h when it is 0 or absent (**code**);
   - the maximum is 7 days, and more gets 400 `child credentials live at most 7 days` (**live**);
@@ -90,7 +90,7 @@ Handler: `internal/gateway/models.go:214` (`mintChild`), service: `internal/cont
   - `type` carries the class: `invalid_request_error`, `permission_error`, `invalid_api_key`, …
   - `code` was `null` on every mint and revoke error seen. **live**
 - **Auth-failure throttling.** Failed credential checks are rate-limited per client address
-  (`internal/gateway/gateway.go:55`, `models.go:26`). **code**: the limit constant was not exercised.
+  (`internal/gateway/gateway.go:55`, `models.go:25`). **code**: the limit constant was not exercised.
 
 ## Revoke: `DELETE /v1/harbor/credentials/{id}`
 Handler: `internal/gateway/models.go:361` (`revokeChild`).

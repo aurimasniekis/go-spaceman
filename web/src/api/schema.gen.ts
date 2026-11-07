@@ -816,6 +816,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/harbor-pilot/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Harbor Pilot connection (never its tokens) */
+        get: operations["get-harbor-pilot-connection"];
+        /**
+         * Connect Harbor Pilot, or replace the connection
+         * @description Without If-Match this creates the connection; with it, it replaces it. Every write is validated against Harbor Pilot first: the parent token mints (and at once revokes) a probe credential, which shows it holds tokens:mint, which client binding it belongs to, when it expires and that the gateway is Harbor Pilot 0.1.3 or later; a service-principal token must read budget status and projects. Tokens are sealed and never returned (ADR-0060).
+         */
+        put: operations["put-harbor-pilot-connection"];
+        post?: never;
+        /**
+         * Remove the Harbor Pilot connection
+         * @description Refused while any space routes runs through Harbor Pilot or run tokens are live.
+         */
+        delete: operations["delete-harbor-pilot-connection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/harness-profiles": {
         parameters: {
             query?: never;
@@ -1841,6 +1866,28 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's Harbor Pilot settings */
+        get: operations["get-space-harbor-pilot"];
+        /**
+         * Set a space's Harbor Pilot settings
+         * @description Without If-Match this creates the settings; with it, it replaces them. Enabling needs the connection, and the project is checked against Harbor Pilot: it must be the connection's binding project or one of its allowed projects. For the listed harnesses the gateway replaces accounts; there is no fallback to a direct account (ADR-0060).
+         */
+        put: operations["put-space-harbor-pilot"];
+        post?: never;
+        /** Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) */
+        delete: operations["delete-space-harbor-pilot"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6338,6 +6385,134 @@ export interface components {
             name: string;
             repository_id: string;
             space_id: string;
+        };
+        HarborpilotConnection: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotConnection.json
+             */
+            readonly $schema?: string;
+            /** @description Plain http is allowed: tokens then cross the network in clear text */
+            allow_insecure_http: boolean;
+            /** @description The gateway origin central calls (mint, revoke, budget status) */
+            base_url: string;
+            /** @description The parent token's client binding, learnt when the connection was validated */
+            binding_id: string;
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** @description Spaces that route runs through Harbor Pilot */
+            enabled_spaces: string[];
+            has_parent_token: boolean;
+            has_service_token: boolean;
+            id: string;
+            /**
+             * Format: date-time
+             * @description When the parent token expires, if it does
+             */
+            parent_expires_at?: string;
+            /**
+             * Format: int64
+             * @description Incremented each time a parent token is written
+             */
+            parent_token_version: number;
+            /** @description The origin runs reach the gateway on; empty means base_url */
+            run_base_url: string;
+            /**
+             * Format: int64
+             * @description Incremented each time a service-principal token is written or removed
+             */
+            service_token_version: number;
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: string;
+            /** Format: date-time */
+            validated_at: string;
+            /** Format: int64 */
+            version: number;
+            warnings: string[];
+        };
+        HarborpilotConnectionInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotConnectionInput.json
+             */
+            readonly $schema?: string;
+            /** @description Allow plain http (tests and trusted local networks only: every token then crosses the network in clear text) */
+            allow_insecure_http?: boolean;
+            /** @description The gateway origin, e.g. https://harbor-pilot.example.com (https unless the host is loopback or allow_insecure_http is set) */
+            base_url: string;
+            /** @description A Harbor Pilot gateway credential (hpk_…) with gateway:invoke, gateway:models and tokens:mint. Required on create; empty keeps the current one. Never returned */
+            parent_token?: string;
+            /** @description Remove the service-principal token */
+            remove_service_token?: boolean;
+            /** @description The origin runs reach the gateway on, when it differs from base_url. It needs https (no loopback exemption) unless allow_insecure_http is set */
+            run_base_url?: string;
+            /** @description A Harbor Pilot service-principal token (hpa_…) with usage.read and config.read, for budget status and project checks. Empty keeps the current one. Never returned */
+            service_token?: string;
+        };
+        HarborpilotSpaceInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotSpaceInput.json
+             */
+            readonly $schema?: string;
+            /** @description Model aliases runs may use; empty: any */
+            allowed_model_aliases?: string[];
+            enabled?: boolean;
+            /** @description Harness kinds routed through Harbor Pilot (any harness it can serve); empty: claude-code and codex */
+            harnesses?: string[];
+            /**
+             * @description proceed (default; the gateway still enforces its budgets) or refuse
+             * @enum {string}
+             */
+            on_budget_status_unavailable?: "proceed" | "refuse" | "";
+            /** @description The Harbor Pilot project id (required when enabled); it must be the connection's binding project or one of its allowed projects */
+            project_id?: string;
+            /**
+             * Format: int64
+             * @description Lifetime of a run's token: 900 to 604800 seconds; 0: 86400 (24 h)
+             */
+            ttl_seconds?: number;
+        };
+        HarborpilotSpaceSettings: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotSpaceSettings.json
+             */
+            readonly $schema?: string;
+            /** @description Models runs may use; empty: any model the binding's plan routes */
+            allowed_model_aliases: string[];
+            /** @description A Harbor Pilot connection exists */
+            connected: boolean;
+            enabled: boolean;
+            /** @description Harnesses whose runs go through Harbor Pilot; the others keep their direct accounts */
+            harnesses: string[];
+            /**
+             * @description What a launch does when Harbor Pilot budget status can't be read
+             * @enum {string}
+             */
+            on_budget_status_unavailable: "proceed" | "refuse";
+            /** @description The Harbor Pilot project the space's runs are charged to */
+            project_id: string;
+            space_id: string;
+            /** @description false: the defaults (not opted in) */
+            stored: boolean;
+            /**
+             * Format: int64
+             * @description Lifetime of a run's token
+             */
+            ttl_seconds: number;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /** Format: int64 */
+            version: number;
+            warnings: string[];
         };
         HttpCookie: {
             Domain: string;
@@ -12014,6 +12189,103 @@ export interface operations {
             };
         };
     };
+    "get-harbor-pilot-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotConnection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-harbor-pilot-connection": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HarborpilotConnectionInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotConnection"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-harbor-pilot-connection": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-harness-profiles": {
         parameters: {
             query?: never;
@@ -14599,6 +14871,109 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["List-space-git-ssh-keysResponse"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotSpaceSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "put-space-harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HarborpilotSpaceInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotSpaceSettings"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "delete-space-harbor-pilot": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

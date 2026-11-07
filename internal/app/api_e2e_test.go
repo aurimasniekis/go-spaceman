@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -37,6 +38,12 @@ func newHarness(t *testing.T) *harness { t.Helper(); return newHarnessWith(t, ni
 // newHarnessWith is newHarness with the configuration adjusted by mod before validation.
 func newHarnessWith(t *testing.T, mod func(*config.Config)) *harness {
 	t.Helper()
+	return newHarnessLogged(t, discard(), mod)
+}
+
+// newHarnessLogged is newHarnessWith with central logging to log.
+func newHarnessLogged(t *testing.T, log *slog.Logger, mod func(*config.Config)) *harness {
+	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
 	cfg.Mode = config.ModeDevelopment
@@ -60,7 +67,7 @@ func newHarnessWith(t *testing.T, mod func(*config.Config)) *harness {
 		t.Fatal(err)
 	}
 	storetest.Seed(t, cfg.DataDir)
-	c, err := app.OpenCentral(context.Background(), cfg, discard(), app.Options{Clock: clk, Environ: []string{}})
+	c, err := app.OpenCentral(context.Background(), cfg, log, app.Options{Clock: clk, Environ: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
