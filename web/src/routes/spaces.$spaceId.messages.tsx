@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, SegmentedControl, Select, Stack, Text, TextInput } from '@mantine/core'
-import { IconArrowRight, IconCheck, IconClock, IconMessagePlus, IconX } from '@tabler/icons-react'
+import { IconArrowRight, IconCheck, IconMessagePlus, IconX } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -12,6 +12,7 @@ import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
 import { pendingSchedule } from '@/features/messages/scheduled'
+import { ScheduledBadge, ScheduledNote } from '@/features/messages/ScheduledParts'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
@@ -73,7 +74,7 @@ function MessagesPage() {
               <Text size="xs" c="dimmed" w={260} truncate>{party(m.from_kind, m.from_id, m.from_label)} <IconArrowRight size={10} /> {party(m.to_kind, m.to_id)}</Text>
               <Text size="sm" style={{ flex: 1 }} truncate>{m.subject}</Text>
               {pendingSchedule(m)
-                ? <Badge color="owlYellow" variant="light" leftSection={<IconClock size={10} />} title={`Scheduled for ${datetime(m.deliver_at)}`}>{ago(m.deliver_at)}</Badge>
+                ? <ScheduledBadge m={m} />
                 : <Text size="xs" c="dimmed" w={70} ta="right">{ago(m.created_at)}</Text>}
               <Badge color={stateColor[m.state]} variant="light">{pendingSchedule(m) ? 'scheduled' : m.state}</Badge>
             </Group>
@@ -121,11 +122,7 @@ function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; 
       <Group gap="xs"><Badge variant="light">{m.kind}</Badge><Badge color={stateColor[m.state]} variant="light">{m.state}</Badge></Group>
       <Text fw={600} size="lg">{m.subject}</Text>
       <Text size="sm" c="dimmed">From {party(m.from_kind, m.from_id, m.from_label)} to {party(m.to_kind, m.to_id)} · {datetime(m.created_at)}</Text>
-      {m.deliver_at && (
-        <Text size="xs" fw={pending ? 600 : undefined} c="dimmed">
-          {pending ? `Scheduled for ${datetime(m.deliver_at)} (${ago(m.deliver_at)}): control is not told before then` : `Scheduled for ${datetime(m.deliver_at)}`}
-        </Text>
-      )}
+      <ScheduledNote m={m} />
       <Text size="xs" c="dimmed">
         {m.available_at ? `Available ${ago(m.available_at)}${m.delivered_via ? ` (${m.delivered_via.replace('_', ' ')})` : ''}` : 'Not yet seen by a recipient'}
         {m.acknowledged_at ? ` · acknowledged ${ago(m.acknowledged_at)} by ${m.acknowledged_by}` : ''}
