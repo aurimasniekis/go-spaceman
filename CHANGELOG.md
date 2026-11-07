@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Claude Code settings on harness profiles (ADR-0059, security-relevant): a claude-code profile's `claude_settings` are
+  settings.json keys, any keys (permissions, auto mode rules, env, hooks, …). They are set in each run's own
+  `settings.json` at launch, and keys taken out of the profile are removed at the next launch. The profile form edits
+  permissions, auto mode rules (with a switch to keep or replace Claude Code's defaults) and environment variables,
+  and other keys as JSON. `permissions.defaultMode` is held to the permission mode ceiling. Nodes need this release
+  (protocol minor 8); a run of such a profile on an older node fails as `node_too_old` instead of starting without
+  them. Migration 0039.
+
 ### Fixed
 - Tests: `internal/keyring` TestLoadKEKSources and `internal/cli` TestTokenSources pass under a restrictive umask (such
   as 077). They now chmod their deliberately world-readable files instead of relying on the mode given to WriteFile,

@@ -34,6 +34,10 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
     (`--mcp-config` + `--strict-mcp-config`, stdio `spaceman-agent mcp-bridge`) without a permission prompt
     (`TestRealClaudeUsesSpaceManTools`). Searching the whole test directory afterwards found the setup-token nowhere
     in clear (central database, agent folders, hc state, logs, the instance's Claude config).
+- **Settings (ADR-0059, verified 2026-11-06 with 2.1.319, `claude auto-mode config`, no model call):** Claude Code
+  reads `$CLAUDE_CONFIG_DIR/settings.json` as the user settings file. Its `autoMode.environment`, `autoMode.allow` and
+  `autoMode.soft_deny` lists with `"$defaults"` keep the built-in rules and add the others (21 + 1, 16 + 1 and 72 + 1
+  rules). `hard_deny` isn't configurable. SpaceMan sets the profile's keys there and keeps the rest.
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).

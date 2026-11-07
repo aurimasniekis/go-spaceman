@@ -19,6 +19,43 @@ func TestScrubEnv(t *testing.T) {
 	}
 }
 
+// SpaceMan's keys are set whole, keys it set earlier and no longer gives are removed, and keys Claude Code wrote itself
+// stay (ADR-0059).
+func TestOwnJSONKeysFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "claude", "settings.json")
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() map[string]any {
+		t.Helper()
+		b, _ := os.ReadFile(p)
+		var doc map[string]any
+		must(json.Unmarshal(b, &doc))
+		return doc
+	}
+	must(OwnJSONKeysFile(p, map[string]any{"autoMode": map[string]any{"allow": []string{"a", "b"}}, "hooks": map[string]any{"Stop": []any{}}}))
+	doc := read()
+	doc["model"] = "opus" // written by Claude Code itself
+	b, _ := json.Marshal(doc)
+	must(os.WriteFile(p, b, 0o600))
+	must(OwnJSONKeysFile(p, map[string]any{"autoMode": map[string]any{"environment": []string{"e"}}}))
+	doc = read()
+	auto := doc["autoMode"].(map[string]any)
+	if doc["model"] != "opus" || doc["hooks"] != nil || auto["allow"] != nil || len(auto["environment"].([]any)) != 1 {
+		t.Fatalf("settings %v", doc)
+	}
+	must(OwnJSONKeysFile(p, map[string]any{}))
+	if doc = read(); len(doc) != 1 || doc["model"] != "opus" {
+		t.Fatalf("after clearing %v", doc)
+	}
+	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v %v", fi, err)
+	}
+}
+
 // Merging keeps what the harness wrote and adds trust for another directory without dropping the first.
 func TestMergeJSONFile(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "claude", ".claude.json") // the config dir does not exist yet

@@ -316,6 +316,10 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-PROMPT-005 A new installation has starter roles: example harness profiles, prompts and role templates for control, planning,
   implementation, review, knowledge-base support and dreaming, added once and editable or deletable, and a space can be given
   ready-to-launch roles from them on request (operator request 2026-11-03, §9).
+- SM-PROMPT-006 A Claude Code harness profile controls its runs' Claude Code settings.json (any keys: permissions,
+  auto mode rules, environment, hooks, …). The UI edits permissions, auto mode and environment variables in
+  dedicated fields and other keys as JSON, Terraform manages them, and the permission mode ceiling still applies
+  (operator request 2026-11-06, §9).
 
 ### SM-XSPACE — Cross-space collaboration
 - SM-XSPACE-001 Discovery, questions, delegation, disclosure and knowledge permissions are separate.
@@ -455,3 +459,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-02 | UI component base follows the sibling projects (Pulse, Porch, Deed): Mantine 8. | SM-UI-001 (ADR-0005) |
 | 2026-11-03 | The Terraform provider lives in its own repository (`../terraform-provider-spaceman`, module `github.com/aurimasniekis/terraform-provider-spaceman`), not in this one; this repository's build does not depend on it. | SM-API-004/005 (ADR-0047) |
 | 2026-11-03 | A new installation comes with starter roles (control, planner, implementor, reviewer, kb, dreamer) as editable, deletable examples, so a first space can launch agents without configuring every role by hand. | SM-PROMPT-005 (ADR-0051) |
+| 2026-11-06 | Claude Code runs get their settings.json from their harness profile, with full control (permissions, auto mode, hooks, any key), a proper UI rather than raw JSON for the common parts, and a Terraform provider attribute. | SM-PROMPT-006 (ADR-0059) |

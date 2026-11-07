@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -30,6 +31,10 @@ type SecretsResolver func(ctx context.Context, run *Run) (map[string]string, err
 // ErrCredentialsUnavailable is returned (wrapped) by a SecretsResolver when the run's account can no longer be used;
 // the run is then failed instead of being retried forever.
 var ErrCredentialsUnavailable = errors.New("the run's account is no longer usable")
+
+// ErrNodeTooOld is returned (wrapped) when a launch needs a newer node protocol than the node's session negotiated;
+// the run is failed instead of starting without what it asked for.
+var ErrNodeTooOld = errors.New("the node's agent is too old for this run")
 
 // ToolDispatcher runs an authenticated agent's tool call (ADR-0012). The catalog call (proto.ToolCatalog) returns
 // the run's tools as []proto.AgentTool.
@@ -658,8 +663,8 @@ func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
 		}
 		for _, c := range cmds {
 			msg, err := h.materialize(ctx, c, s.minor)
-			if errors.Is(err, ErrCredentialsUnavailable) && c.RunID.Valid {
-				if ferr := h.svc.failUndispatched(ctx, c.RunID.String, err.Error()); ferr != nil {
+			if endReason := undispatchable(err); endReason != "" && c.RunID.Valid {
+				if ferr := h.svc.failUndispatched(ctx, c.RunID.String, endReason, err.Error()); ferr != nil {
 					s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
 				}
 				continue
@@ -676,6 +681,17 @@ func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
 			})
 		}
 	}
+}
+
+// undispatchable returns the end reason for a materialize error that fails the run instead of retrying it, or "".
+func undispatchable(err error) string {
+	switch {
+	case errors.Is(err, ErrCredentialsUnavailable):
+		return "account_unavailable"
+	case errors.Is(err, ErrNodeTooOld):
+		return "node_too_old"
+	}
+	return ""
 }
 
 // materialize turns a stored command into the wire message, attaching the run token and secrets to launches and
@@ -705,6 +721,11 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, minor int) (pro
 	var p proto.LaunchPayload
 	if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
 		return msg, err
+	}
+	// An older agent would ignore the settings and run without the rules they add, deny rules included.
+	if len(p.ClaudeSettings) > 0 && minor < proto.MinorClaudeSettings {
+		return msg, fmt.Errorf("%w: the role's harness profile has Claude Code settings, which need protocol minor %d; the node negotiated %d: upgrade its agent",
+			ErrNodeTooOld, proto.MinorClaudeSettings, minor)
 	}
 	if p.Repository != nil && keys {
 		k, err := h.RepoKey(ctx, c.SpaceID, p.Repository.ID)

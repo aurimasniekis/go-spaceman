@@ -2104,6 +2104,11 @@
             "readOnly": true,
             "type": "string"
           },
+          "claude_settings": {
+            "additionalProperties": {},
+            "description": "Claude Code settings.json keys for the profile's runs (claude-code profiles only); {} for none",
+            "type": "object"
+          },
           "description": {
             "type": "string"
           },
@@ -2151,6 +2156,7 @@
           "name",
           "harness",
           "settings",
+          "claude_settings",
           "revision",
           "updated_at",
           "version"
@@ -10897,6 +10903,10 @@
             "readOnly": true,
             "type": "string"
           },
+          "claude_settings": {
+            "additionalProperties": {},
+            "type": "object"
+          },
           "effective": {
             "additionalProperties": {
               "$ref": "#/components/schemas/CatalogField"
@@ -11110,6 +11120,11 @@
             "format": "uri",
             "readOnly": true,
             "type": "string"
+          },
+          "claude_settings": {
+            "additionalProperties": {},
+            "description": "Claude Code settings.json keys for the profile's runs (claude-code profiles only); omitted on an update keeps the current ones, {} clears them",
+            "type": "object"
           },
           "description": {
             "maxLength": 2000,

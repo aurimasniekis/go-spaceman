@@ -48,7 +48,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 
 ## 3. Architecture decisions
 
-58 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
+59 ADRs in [DECISIONS.md](DECISIONS.md). The ones that shape operation most:
 
 | ADR | Decision |
 |---|---|
@@ -78,6 +78,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0056 | Control starts for waiting work when no control run is live, and stops after an idle timeout (two space limits). |
 | 0057 | Repository SSH keys held by SpaceMan: sealed in central, sent only with a clone or fetch, served from an in-memory agent on the node against pinned host keys; agents never receive them. |
 | 0058 | Shared Git SSH keys: one administrator-managed key on a Git account, scoped to listed spaces, that repositories choose instead of their own deploy key. |
+| 0059 | Claude Code settings on harness profiles: the profile's settings.json keys (permissions, auto mode, hooks, any key) set in each run's settings.json, defaultMode under the ceiling, protocol minor 8. |
 
 ## 4. Commits
 

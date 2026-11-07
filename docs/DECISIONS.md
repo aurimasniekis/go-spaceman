@@ -2252,6 +2252,46 @@
   - Terraform manages keys as `spaceman_git_ssh_key`, with `public_key` exposed for the account's SSH key resource, and
     repositories reference them with `git_key_id`.
 
+### ADR-0059 — Claude Code settings on harness profiles (security-relevant)
+- **Status:** Accepted, 2026-11-06 (operator request: full control of a run's settings.json).
+- **Context:** SpaceMan writes only `.claude.json` into a run's `CLAUDE_CONFIG_DIR`, so runs get Claude Code's built-in
+  settings. As a result, operators couldn't tell auto mode what to trust, give permission rules, or add hooks. An
+  operator whose agents reach Git through a gateway host had auto mode refuse ordinary work (pointing a remote at the
+  gateway). Node-wide managed settings would change every Claude Code session on the machine, not only SpaceMan's runs.
+- **Decision:**
+  - **Model.** A claude-code harness profile has `claude_settings`: a JSON object of settings.json keys, any keys
+    (`permissions`, `autoMode`, `env`, `hooks`, `statusLine`, `model`, …). A codex profile can't have them. Saved
+    objects are at most 256 KiB. Only the keys SpaceMan edits are checked for shape:
+    - `permissions.allow`, `ask`, `deny` and `additionalDirectories` must be string lists;
+    - `permissions.defaultMode` must be a known mode;
+    - `autoMode.environment`, `allow` and `soft_deny` must be string lists;
+    - `env` values must be strings.
+
+    Central checks them on save and the node again before writing.
+  - **Ceiling.** `permissions.defaultMode` above central's `harness.max_permission_mode` is lowered to it when a run is
+    resolved, like the `permission_mode` setting, and the effective configuration says the policy decided. The stored
+    profile keeps what was written.
+  - **Resolution.** The settings come from the role's profile only; templates, space roles and launches don't layer them.
+    They are recorded in the run manifest after policy, shown in a role's preview, and apply to later launches.
+  - **Delivery.** The launch payload carries them (`claude_settings`, protocol minor 8). At every launch the node sets
+    each of the profile's top-level keys in the run's `$CLAUDE_CONFIG_DIR/settings.json`. It removes keys it set at an
+    earlier launch that the profile no longer has (recorded in `settings.json.spaceman-keys`), and keeps keys Claude Code
+    wrote there itself.
+  - **Old nodes.** Central fails a run with settings as `node_too_old` instead of dispatching it to a node below
+    minor 8, which would ignore them and drop what they add, deny rules included.
+  - **UI.** The profile form edits permissions (default mode, allow, ask, deny, additional directories), auto mode
+    rules (with a switch for Claude Code's defaults instead of a typed `"$defaults"`) and environment variables, and
+    every other key as JSON.
+- **Consequences:**
+  - Whoever can edit harness profiles (`prompt:write`) controls the profile's runs' Claude Code settings, hooks
+    included. Hooks and status lines run commands on the node as the agent's user, as runs themselves already can.
+    Profile changes are audited, and the settings are in every run's manifest.
+  - Settings are stored in clear and recorded in manifests, so they must not hold secrets; accounts carry credentials.
+  - A key a run writes into its own settings.json carries over to the next launch unless the profile sets or once set
+    that key.
+  - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
+    update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

@@ -286,6 +286,12 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	for path, keys := range built.OwnJSON {
+		if err := OwnJSONKeysFile(path, keys); err != nil {
+			fail("write harness settings", err)
+			return
+		}
+	}
 	if built.SkillsRoot != "" {
 		if err := syncSkills(built.SkillsRoot, p.Skills); err != nil {
 			fail("write skills", err)

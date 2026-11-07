@@ -80,6 +80,15 @@ func (Claude) Build(c Context) (Launch, error) {
 	if p.Prompt != "" {
 		argv = append(argv, "--", p.Prompt)
 	}
+	// The profile's Claude Code settings (ADR-0059) are top-level keys of the run's user settings.json, set at every
+	// launch; keys the profile no longer has are removed, and keys Claude Code keeps there itself stay.
+	if problems := p.ClaudeSettings.Validate(); len(problems) > 0 {
+		return Launch{}, errors.New("claude: invalid claude_settings: " + problems[0])
+	}
+	own := map[string]any{}
+	for k, v := range p.ClaudeSettings {
+		own[k] = v
+	}
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
 	return Launch{
@@ -94,6 +103,7 @@ func (Claude) Build(c Context) (Launch, error) {
 			"theme":                  "dark",
 			"projects":               map[string]any{c.WorkDir: map[string]any{"hasTrustDialogAccepted": true}},
 		}},
+		OwnJSON: map[string]map[string]any{filepath.Join(cfg, "settings.json"): own},
 		// Verified: Claude Code loads $CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md (spike S-6).
 		SkillsRoot: filepath.Join(cfg, "skills"),
 		SecretEnv:  secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),

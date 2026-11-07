@@ -60,6 +60,22 @@ func TestClaudeBuild(t *testing.T) {
 		projects["/data/spaces/spc_a/work"].(map[string]any)["hasTrustDialogAccepted"] != true {
 		t.Fatalf("claude state %v", l.MergeJSON)
 	}
+	// The profile's settings.json keys are owned at every launch, none when it has none (ADR-0059).
+	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
+	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 0 {
+		t.Fatalf("settings keys without settings %v", l.OwnJSON)
+	}
+	cs := proto.ClaudeSettings{"permissions": map[string]any{"deny": []any{"Read(./secrets/**)"}}, "hooks": map[string]any{"Stop": []any{}}}
+	l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: cs}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys := l.OwnJSON[cfgSettings]; len(keys) != 2 || keys["hooks"] == nil || keys["permissions"] == nil {
+		t.Fatalf("settings keys %v", l.OwnJSON)
+	}
+	if _, err := (Claude{}).Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"permissions": "all"}})); err == nil {
+		t.Error("invalid claude settings accepted")
+	}
 	// Resume uses the given session.
 	l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{SessionID: "0b5e3c1e-1111-4222-8333-444455556666", Resume: true}))
 	if err != nil || !slices.Contains(l.Argv, "--resume") || slices.Contains(l.Argv, "--session-id") {
