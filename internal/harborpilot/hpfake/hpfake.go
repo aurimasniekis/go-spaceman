@@ -27,6 +27,7 @@ type HP struct {
 
 	mu            sync.Mutex
 	Parent        string            // the valid parent token
+	OtherParents  []string          // more valid parent tokens of the same binding (e.g. one SpaceMan replaced but nobody revoked)
 	ParentScopes  []string          // its scopes
 	Service       string            // the valid service-principal token
 	ServicePerms  []string          // usage.read, config.read
@@ -38,6 +39,7 @@ type HP struct {
 	FailMint      int               // when non-zero, every mint answers this status
 	FailRevoke    bool              // revocations answer 500
 	Minted        map[string]bool   // credential id → revoked
+	Owner         map[string]string // credential id → the parent token that minted it: only that one can revoke it
 	Bodies        []string          // raw mint bodies
 	Requests      int               // every request served
 	// Hook, when set, runs before each request is served (without the fake's lock), e.g. to change state mid-call.
@@ -53,7 +55,7 @@ func New(t testing.TB) *HP {
 	f := &HP{Parent: "hpk_parent_" + strings.Repeat("p", 24), ParentScopes: []string{scopeInvoke, scopeModels, scopeMint},
 		Service: "hpa_service_" + strings.Repeat("s", 24), ServicePerms: []string{"usage.read", "config.read"}, BindingID: "bnd_fake",
 		Allowed: []string{"prj_web", "prj_data"}, Projects: map[string]string{"prj_web": "prj_web", "web-app": "prj_web", "prj_data": "prj_data", "prj_other": "prj_other"},
-		Minted: map[string]bool{}}
+		Minted: map[string]bool{}, Owner: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -92,7 +94,7 @@ func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/harbor/credentials":
 		f.mint(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/harbor/credentials/"):
-		if bearer(r) != f.Parent {
+		if !f.validParent(bearer(r)) {
 			gwErr(w, 401, "invalid_request_error", "invalid, expired or revoked gateway credential", "invalid_api_key")
 			return
 		}
@@ -101,7 +103,7 @@ func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/v1/harbor/credentials/")
-		if _, ok := f.Minted[id]; !ok {
+		if _, ok := f.Minted[id]; !ok || f.Owner[id] != bearer(r) {
 			gwErr(w, 404, "invalid_request_error", "no child credential with this id is owned by the caller", "model_not_found")
 			return
 		}
@@ -144,8 +146,13 @@ func (f *HP) authAPI(w http.ResponseWriter, r *http.Request, perm string) bool {
 	return false
 }
 
+// validParent reports whether tok is a valid parent token (Harbor Pilot keeps a replaced parent valid until it is revoked).
+func (f *HP) validParent(tok string) bool {
+	return tok == f.Parent || contains(f.OtherParents, tok)
+}
+
 func (f *HP) mint(w http.ResponseWriter, r *http.Request) {
-	if bearer(r) != f.Parent {
+	if !f.validParent(bearer(r)) {
 		gwErr(w, 401, "invalid_request_error", "invalid, expired or revoked gateway credential", "invalid_api_key")
 		return
 	}
@@ -203,6 +210,7 @@ func (f *HP) mint(w http.ResponseWriter, r *http.Request) {
 	f.seq++
 	id := fmt.Sprintf("crd_%04d", f.seq)
 	f.Minted[id] = false
+	f.Owner[id] = bearer(r)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{"credential": map[string]any{"id": id, "binding_id": f.BindingID, "parent_id": "crd_parent",

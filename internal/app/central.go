@@ -218,7 +218,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		}
 	}
 	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{Log: obs.Component(log, "harborpilot"), Wake: wakeDeadlines})
-	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{})
+	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{Metrics: m})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,

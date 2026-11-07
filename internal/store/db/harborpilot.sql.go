@@ -51,6 +51,17 @@ func (q *Queries) ClearSpaceGatewayTokens(ctx context.Context, spaceID string) (
 	return result.RowsAffected()
 }
 
+const countFailedGatewayRevocations = `-- name: CountFailedGatewayRevocations :one
+SELECT count(*) FROM gateway_revocations WHERE state = 'failed'
+`
+
+func (q *Queries) CountFailedGatewayRevocations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countFailedGatewayRevocations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countLiveRunGatewayCredentials = `-- name: CountLiveRunGatewayCredentials :one
 SELECT count(*) FROM run_gateway_credentials WHERE token_enc IS NOT NULL AND expires_at > ?1
 `
@@ -108,7 +119,7 @@ func (q *Queries) DeleteSpaceHarborPilot(ctx context.Context, arg DeleteSpaceHar
 }
 
 const getGatewayRevocation = `-- name: GetGatewayRevocation :one
-SELECT credential_id, run_id, space_id, reason, expires_at, state, attempts, next_attempt_at, last_error, requested_at, done_at FROM gateway_revocations WHERE credential_id = ?
+SELECT credential_id, run_id, space_id, reason, expires_at, state, attempts, next_attempt_at, last_error, requested_at, done_at, parent_fp FROM gateway_revocations WHERE credential_id = ?
 `
 
 func (q *Queries) GetGatewayRevocation(ctx context.Context, credentialID string) (GatewayRevocation, error) {
@@ -126,6 +137,7 @@ func (q *Queries) GetGatewayRevocation(ctx context.Context, credentialID string)
 		&i.LastError,
 		&i.RequestedAt,
 		&i.DoneAt,
+		&i.ParentFp,
 	)
 	return i, err
 }
@@ -160,7 +172,7 @@ func (q *Queries) GetHarborPilotConnection(ctx context.Context) (HarborPilotConn
 }
 
 const getRunGatewayCredential = `-- name: GetRunGatewayCredential :one
-SELECT run_id, space_id, credential_id, token_enc, expires_at, created_at FROM run_gateway_credentials WHERE run_id = ?
+SELECT run_id, space_id, credential_id, token_enc, expires_at, created_at, parent_fp FROM run_gateway_credentials WHERE run_id = ?
 `
 
 func (q *Queries) GetRunGatewayCredential(ctx context.Context, runID string) (RunGatewayCredential, error) {
@@ -173,6 +185,7 @@ func (q *Queries) GetRunGatewayCredential(ctx context.Context, runID string) (Ru
 		&i.TokenEnc,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.ParentFp,
 	)
 	return i, err
 }
@@ -213,8 +226,8 @@ func (q *Queries) GetTaskIDForRun(ctx context.Context, runID string) (string, er
 }
 
 const insertGatewayRevocation = `-- name: InsertGatewayRevocation :exec
-INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (credential_id) DO NOTHING
 `
 
@@ -226,6 +239,7 @@ type InsertGatewayRevocationParams struct {
 	ExpiresAt     int64
 	NextAttemptAt int64
 	RequestedAt   int64
+	ParentFp      sql.NullString
 }
 
 func (q *Queries) InsertGatewayRevocation(ctx context.Context, arg InsertGatewayRevocationParams) error {
@@ -237,6 +251,7 @@ func (q *Queries) InsertGatewayRevocation(ctx context.Context, arg InsertGateway
 		arg.ExpiresAt,
 		arg.NextAttemptAt,
 		arg.RequestedAt,
+		arg.ParentFp,
 	)
 	return err
 }
@@ -285,7 +300,7 @@ func (q *Queries) InsertHarborPilotConnection(ctx context.Context, arg InsertHar
 }
 
 const insertRunGatewayCredential = `-- name: InsertRunGatewayCredential :exec
-INSERT INTO run_gateway_credentials (run_id, space_id, credential_id, token_enc, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO run_gateway_credentials (run_id, space_id, credential_id, token_enc, expires_at, created_at, parent_fp) VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertRunGatewayCredentialParams struct {
@@ -295,6 +310,7 @@ type InsertRunGatewayCredentialParams struct {
 	TokenEnc     []byte
 	ExpiresAt    int64
 	CreatedAt    int64
+	ParentFp     sql.NullString
 }
 
 func (q *Queries) InsertRunGatewayCredential(ctx context.Context, arg InsertRunGatewayCredentialParams) error {
@@ -305,6 +321,7 @@ func (q *Queries) InsertRunGatewayCredential(ctx context.Context, arg InsertRunG
 		arg.TokenEnc,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+		arg.ParentFp,
 	)
 	return err
 }
@@ -347,7 +364,7 @@ func (q *Queries) InsertSpaceHarborPilot(ctx context.Context, arg InsertSpaceHar
 }
 
 const listDueGatewayRevocations = `-- name: ListDueGatewayRevocations :many
-SELECT credential_id, run_id, space_id, reason, expires_at, state, attempts, next_attempt_at, last_error, requested_at, done_at FROM gateway_revocations WHERE state = 'pending' AND next_attempt_at <= ?1 ORDER BY next_attempt_at, credential_id LIMIT ?2
+SELECT credential_id, run_id, space_id, reason, expires_at, state, attempts, next_attempt_at, last_error, requested_at, done_at, parent_fp FROM gateway_revocations WHERE state = 'pending' AND next_attempt_at <= ?1 ORDER BY next_attempt_at, credential_id LIMIT ?2
 `
 
 type ListDueGatewayRevocationsParams struct {
@@ -376,6 +393,7 @@ func (q *Queries) ListDueGatewayRevocations(ctx context.Context, arg ListDueGate
 			&i.LastError,
 			&i.RequestedAt,
 			&i.DoneAt,
+			&i.ParentFp,
 		); err != nil {
 			return nil, err
 		}
@@ -461,26 +479,40 @@ func (q *Queries) ListGatewayLeaseLostRuns(ctx context.Context, before int64) ([
 	return items, nil
 }
 
-const listLiveRunGatewayCredentials = `-- name: ListLiveRunGatewayCredentials :many
-SELECT run_id, space_id, credential_id, token_enc, expires_at, created_at FROM run_gateway_credentials WHERE token_enc IS NOT NULL ORDER BY run_id
+const listParentGatewayCredentials = `-- name: ListParentGatewayCredentials :many
+SELECT c.credential_id, c.run_id, c.space_id, c.expires_at, CAST(coalesce(c.parent_fp, '') AS TEXT) AS fp
+FROM run_gateway_credentials c WHERE c.token_enc IS NOT NULL AND (c.parent_fp = ?1 OR c.parent_fp IS NULL)
+UNION
+SELECT g.credential_id, g.run_id, g.space_id, g.expires_at, CAST(coalesce(g.parent_fp, '') AS TEXT) AS fp
+FROM gateway_revocations g WHERE g.state = 'pending' AND (g.parent_fp = ?1 OR g.parent_fp IS NULL)
+ORDER BY 1
 `
 
-func (q *Queries) ListLiveRunGatewayCredentials(ctx context.Context) ([]RunGatewayCredential, error) {
-	rows, err := q.db.QueryContext(ctx, listLiveRunGatewayCredentials)
+type ListParentGatewayCredentialsRow struct {
+	CredentialID string
+	RunID        string
+	SpaceID      string
+	ExpiresAt    int64
+	Fp           string
+}
+
+// Every credential a parent token may still have to revoke (parent rotation): live run tokens and pending queued
+// revocations minted by that parent, or by an unknown one (parent_fp NULL).
+func (q *Queries) ListParentGatewayCredentials(ctx context.Context, parentFp sql.NullString) ([]ListParentGatewayCredentialsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listParentGatewayCredentials, parentFp)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []RunGatewayCredential{}
+	items := []ListParentGatewayCredentialsRow{}
 	for rows.Next() {
-		var i RunGatewayCredential
+		var i ListParentGatewayCredentialsRow
 		if err := rows.Scan(
+			&i.CredentialID,
 			&i.RunID,
 			&i.SpaceID,
-			&i.CredentialID,
-			&i.TokenEnc,
 			&i.ExpiresAt,
-			&i.CreatedAt,
+			&i.Fp,
 		); err != nil {
 			return nil, err
 		}
@@ -523,8 +555,8 @@ func (q *Queries) NextGatewayRevocation(ctx context.Context) (int64, error) {
 }
 
 const queueRunGatewayRevocation = `-- name: QueueRunGatewayRevocation :execrows
-INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
-SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
+SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2, c.parent_fp
 FROM run_gateway_credentials c WHERE c.run_id = ?3 AND c.token_enc IS NOT NULL
 ON CONFLICT (credential_id) DO NOTHING
 `
@@ -546,8 +578,8 @@ func (q *Queries) QueueRunGatewayRevocation(ctx context.Context, arg QueueRunGat
 }
 
 const queueSpaceGatewayRevocations = `-- name: QueueSpaceGatewayRevocations :execrows
-INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
-SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
+SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2, c.parent_fp
 FROM run_gateway_credentials c WHERE c.space_id = ?3 AND c.token_enc IS NOT NULL
 ON CONFLICT (credential_id) DO NOTHING
 `
@@ -568,8 +600,8 @@ func (q *Queries) QueueSpaceGatewayRevocations(ctx context.Context, arg QueueSpa
 
 const replaceRunGatewayCredential = `-- name: ReplaceRunGatewayCredential :execrows
 UPDATE run_gateway_credentials SET credential_id = ?1, token_enc = ?2, expires_at = ?3,
-  created_at = ?4
-WHERE run_id = ?5 AND credential_id = ?6 AND token_enc IS NOT NULL
+  created_at = ?4, parent_fp = ?5
+WHERE run_id = ?6 AND credential_id = ?7 AND token_enc IS NOT NULL
 `
 
 type ReplaceRunGatewayCredentialParams struct {
@@ -577,6 +609,7 @@ type ReplaceRunGatewayCredentialParams struct {
 	TokenEnc        []byte
 	ExpiresAt       int64
 	CreatedAt       int64
+	ParentFp        sql.NullString
 	RunID           string
 	OldCredentialID string
 }
@@ -587,6 +620,7 @@ func (q *Queries) ReplaceRunGatewayCredential(ctx context.Context, arg ReplaceRu
 		arg.TokenEnc,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+		arg.ParentFp,
 		arg.RunID,
 		arg.OldCredentialID,
 	)
