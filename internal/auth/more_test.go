@@ -11,6 +11,7 @@ import (
 )
 
 func TestOptionalMFAAndCodes(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -51,6 +52,7 @@ func TestOptionalMFAAndCodes(t *testing.T) {
 }
 
 func TestMFAThrottleAndSessionRevoke(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	f.loginEnrolled("admin@example.com")
@@ -102,6 +104,7 @@ func TestMFAThrottleAndSessionRevoke(t *testing.T) {
 // Security review SR-M01: parallel wrong second-factor codes cannot outrun the throttle. Attempts on one factor are
 // serialized, so after the free attempts every further code in the burst is refused before it is checked.
 func TestMFAThrottleHoldsUnderConcurrency(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	f.loginEnrolled("admin@example.com")
@@ -136,6 +139,7 @@ func TestMFAThrottleHoldsUnderConcurrency(t *testing.T) {
 
 // The same holds for parallel password guesses against one account from many addresses.
 func TestLoginThrottleHoldsUnderConcurrency(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	const burst = 16

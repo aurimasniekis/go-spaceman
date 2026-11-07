@@ -20,6 +20,7 @@ import (
 //   - A run that exits while the agent is down is reported as exited and is not relaunched.
 //   - Central and the agent restart together: the running run is kept.
 func TestRestartReconciliation(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	// Opening central again takes over 5 s under the race detector on slower hosts; a run must not outlive its lease
 	// (5 s) and grace meanwhile, or the agent stops it as designed (SM-NODE-007) and this test sees that instead.
 	e := newFleetEnv(t, func(c *config.Config) { c.Nodes.LeaseTTL = config.Duration(30 * time.Second) })

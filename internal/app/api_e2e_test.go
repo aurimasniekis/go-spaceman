@@ -157,6 +157,7 @@ func expect(t *testing.T, r resp, status int) {
 // SM-AUTH-005, SM-AUTH-001, SM-API-002: bootstrap through the real HTTP stack, sign-in with forced MFA, CSRF, origin
 // checks, problems, optimistic concurrency and idempotency.
 func TestAPIBootstrapLoginAndConventions(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	anon := h.client()
 
@@ -293,6 +294,7 @@ func TestAPIBootstrapLoginAndConventions(t *testing.T) {
 
 // Scoped API tokens through HTTP: the creator's grants bound the token, and the token shows up for the creator.
 func TestAPITokensOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(context.Background())
 	root := h.client()
@@ -348,6 +350,7 @@ func loginAndIssueToken(t *testing.T, h *harness, email string, grants []map[str
 
 // Every registered operation has an authorization rule (fail closed otherwise).
 func TestEveryOperationHasARule(t *testing.T) {
+	t.Parallel()
 	d := app.SpecDeps()
 	a := api.Register(http.NewServeMux(), d)
 	missing := api.MissingRules(a.OpenAPI(), d)
@@ -360,6 +363,7 @@ func TestEveryOperationHasARule(t *testing.T) {
 // SM-NODE-001: a node's name, description and labels are edited with If-Match (PUT /nodes/{id}); its state and
 // enrollment are unchanged, names stay unique, and a stale version conflicts. Viewers cannot edit nodes.
 func TestAPIUpdateNode(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(context.Background())
 	root := h.client()

@@ -24,6 +24,7 @@ import (
 // the private key is in no stored command, audit entry or API answer; removing the key leaves the node with its own
 // (here: no) Git authentication, so the next fetch fails.
 func TestRepositorySSHKeyEndToEnd(t *testing.T) {
+	// Not parallel: t.Setenv changes the process environment.
 	for _, bin := range []string{"git", "ssh"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skip(bin + " is not installed")
@@ -146,6 +147,7 @@ func TestRepositorySSHKeyEndToEnd(t *testing.T) {
 // it over SSH through the node; another space may not choose it; a repository has its own key or a shared one, never
 // both; a key in use cannot be deleted or taken away from its space, and rotating it changes the fingerprint.
 func TestSharedGitKeyEndToEnd(t *testing.T) {
+	// Not parallel: t.Setenv changes the process environment.
 	for _, bin := range []string{"git", "ssh"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skip(bin + " is not installed")
@@ -254,6 +256,7 @@ func TestSharedGitKeyEndToEnd(t *testing.T) {
 // a node without Git credentials or known_hosts of its own: the destination clones with the key from the prepare
 // command's wire message, at the source's commit; the key is in no stored command or audit entry.
 func TestRelocationWithRepositorySSHKey(t *testing.T) {
+	// Not parallel: t.Setenv changes the process environment.
 	for _, bin := range []string{"git", "ssh"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skip(bin + " is not installed")

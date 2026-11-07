@@ -84,6 +84,7 @@ func (n *rawNode) next(t *testing.T, typ string) proto.Envelope {
 // does not answer in time as timed out, an answer naming another flush is ignored, and a space the node reports as not
 // acknowledged keeps the node's reason. Spaces without role memory are left out; archived spaces are not asked about.
 func TestFlushMemoryBoundsAndReasons(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	ctx := context.Background()

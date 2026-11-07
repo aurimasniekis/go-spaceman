@@ -11,6 +11,7 @@ import (
 // once and then updated with the version, validated, audited and removable; agents of roles a permission leaves out
 // are refused when they ask.
 func TestTypePermissions(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	ht, err := f.svc.CreateType(f.ctx, op, "deploy-window", "Deploy window", "", TypeDraft{})
 	must(t, err)

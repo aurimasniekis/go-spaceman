@@ -78,6 +78,7 @@ func sqlExec(t *testing.T, dbPath, q string) {
 
 // The database copy is checked: integrity, schema version, keyring KEK and the audit chain.
 func TestVerifyDatabaseCopy(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	cases := []struct {
 		name string
@@ -109,6 +110,7 @@ func TestVerifyDatabaseCopy(t *testing.T) {
 }
 
 func TestTargetFromConfig(t *testing.T) {
+	t.Parallel()
 	cfg := config.Default()
 	cfg.DataDir = t.TempDir()
 	tg, err := backup.TargetFromConfig(cfg)
@@ -152,6 +154,7 @@ func TestTargetFromConfig(t *testing.T) {
 }
 
 func TestValidatePrefix(t *testing.T) {
+	t.Parallel()
 	for _, ok := range []string{"", "spaceman/", "a/b-c_d.e/"} {
 		if err := backup.ValidatePrefix(ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
@@ -165,6 +168,7 @@ func TestValidatePrefix(t *testing.T) {
 }
 
 func TestLocalTargetEdges(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	dir := filepath.Join(t.TempDir(), "backups")
 	tg := backup.LocalTarget{Dir: dir}
@@ -214,6 +218,7 @@ func TestLocalTargetEdges(t *testing.T) {
 
 // Unsupported entries in the payload trees are skipped with a warning; a malformed manifest is refused.
 func TestTreeAndManifestEdges(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	must(t, os.Symlink("/etc/hosts", f.st.Path("recordings", "link")))
 	f.write("transcripts/bad|name.jsonl", []byte("x"))
@@ -246,6 +251,7 @@ func TestTreeAndManifestEdges(t *testing.T) {
 }
 
 func TestS3TargetEdges(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	srv := s3test.New(t, "AKIDTEST")
 	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "sm-backups", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",
@@ -280,6 +286,7 @@ func TestS3TargetEdges(t *testing.T) {
 }
 
 func TestMoreRefusals(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	src := f.source()
 	existing := filepath.Join(t.TempDir(), "exists")
@@ -308,6 +315,7 @@ func TestMoreRefusals(t *testing.T) {
 
 // Retention by age deletes backups older than MaxAge but always keeps the newest.
 func TestRetentionByAge(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	dir := filepath.Join(t.TempDir(), "backups")
 	now := f.st.Now()

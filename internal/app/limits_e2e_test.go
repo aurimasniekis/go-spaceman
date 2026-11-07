@@ -21,6 +21,7 @@ import (
 // the space's on_lower policy is stop, which stops the newest run; agent tool calls stop at the per-run limit while
 // the run keeps running.
 func TestLimitsEndToEnd(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()

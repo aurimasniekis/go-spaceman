@@ -14,6 +14,7 @@ import (
 
 // Break-glass use raises an alert that stays until acknowledged; acknowledging is audited.
 func TestBreakGlassAlert(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	if on, _, err := f.svc.BreakGlassAlert(f.ctx); err != nil || on {
@@ -35,6 +36,7 @@ func TestBreakGlassAlert(t *testing.T) {
 // External step-up (SSO) rotates the session with a fresh auth time; the TOTP fallback is SSO-only and needs a
 // correct code.
 func TestExternalReauth(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	f.loginEnrolled("admin@example.com")
@@ -67,6 +69,7 @@ func TestExternalReauth(t *testing.T) {
 }
 
 func TestPrincipalSubjects(t *testing.T) {
+	t.Parallel()
 	var nilP *Principal
 	if nilP.Subjects() != nil || nilP.ActorID() != "" || nilP.IsRoot() {
 		t.Fatal("nil principal")
@@ -90,6 +93,7 @@ func TestPrincipalSubjects(t *testing.T) {
 }
 
 func TestLocalLoginDisabled(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {

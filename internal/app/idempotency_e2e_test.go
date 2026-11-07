@@ -13,6 +13,7 @@ import (
 // SM-API-002 (security review SR-L01): concurrent requests with the same Idempotency-Key create the resource once;
 // the others get the stored result.
 func TestConcurrentIdempotentCreatesOnce(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, err := h.c.Auth.IssueRootToken(ctx)

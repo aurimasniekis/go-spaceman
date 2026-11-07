@@ -49,7 +49,8 @@ type fleetEnv struct {
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
-// central or the agent under the race detector never outlives a lease; tests of lease expiry pass shortLease.
+// the agent under the race detector never outlives a lease; tests whose runs must survive restartCentral pass
+// longLease, and tests of lease expiry pass shortLease.
 func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	t.Helper()
 	dir := t.TempDir()
@@ -88,6 +89,11 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	})
 	return e
 }
+
+// longLease makes leases last 30 s, for tests whose runs must survive restartCentral: reopening central's store under
+// the race detector takes about as long as the default 5 s lease, and the node's reconnects are refused until it is
+// open, so the lease could expire and the node stop the space's runs.
+func longLease(cfg *config.Config) { cfg.Nodes.LeaseTTL = config.Duration(30 * time.Second) }
 
 // shortLease makes leases expire quickly (1 s plus a 0.5 s grace) for tests of what happens without central.
 func shortLease(cfg *config.Config) {
@@ -165,9 +171,11 @@ func (e *fleetEnv) stopAgent() {
 	}
 }
 
+// eventually waits for cond. The deadline only bounds how long a failing test waits: most tests here run in parallel
+// (t.Parallel), so under the race detector on a small runner a condition can take several seconds to hold.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
@@ -187,7 +195,8 @@ func (e *fleetEnv) run1(id string) *fleet.Run {
 // SM-NODE-001…009, SM-SPACE-002/003, SM-INV-002/006: enrollment, connection, leases, launch, duplicate delivery,
 // agent and central restarts without duplicate execution, stop, control uniqueness and fencing.
 func TestFleetLifecycle(t *testing.T) {
-	e := newFleetEnv(t)
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
+	e := newFleetEnv(t, longLease)
 	ctx := context.Background()
 	e.enroll()
 	e.startAgent()
@@ -302,6 +311,7 @@ func TestFleetLifecycle(t *testing.T) {
 
 // SM-NODE-007: without central, the node starts no work and stops running work after lease + grace.
 func TestDisconnectEnforcement(t *testing.T) {
+	// Not parallel: short leases (shortLease) expire if parallel tests starve the node.
 	e := newFleetEnv(t, shortLease)
 	ctx := context.Background()
 	e.enroll()
@@ -335,6 +345,7 @@ func ptr[T any](v T) *T { return &v }
 // SM-REC-002/004, SM-UI-004: node recordings reach central, replay through the API and stream live to watch-only
 // viewers (with the terminal:watch permission).
 func TestRecordingShippedReplayedAndStreamed(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()
@@ -455,6 +466,7 @@ func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) 
 // A report that arrives after a run ended (the node sends reports concurrently) must not reopen the run: it would end
 // it a second time and publish a second run_ended event. The late report is fenced and the node told to stop it.
 func TestLateReportDoesNotReopenEndedRun(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()
@@ -510,6 +522,7 @@ func TestLateReportDoesNotReopenEndedRun(t *testing.T) {
 // refreshed login survives later launches; a rotation in central replaces it. The login never reaches the launcher
 // shim's file, the runner's environment or its argv.
 func TestCodexChatGPTLoginIsSharedByInstances(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()

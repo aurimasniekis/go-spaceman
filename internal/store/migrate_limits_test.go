@@ -11,6 +11,7 @@ import (
 // index), deliveries and KB sessions survive with their data, older deliveries count as live first attempts, and
 // foreign keys are enforced again afterwards.
 func TestLimitsSchedulesMigrationKeepsData(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0024")})

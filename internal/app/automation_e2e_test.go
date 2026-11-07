@@ -152,6 +152,7 @@ func itemBySubscription(items []*inbox.Item, subID string) *inbox.Item {
 // (its durable events wait in the stream) and ingests them after the resume. Delivery on resume uses the notifier's
 // ordinary path (a control message), triggered by the resume itself: nothing polls.
 func TestPausedSpaceEventPolicies(t *testing.T) {
+	t.Parallel()
 	nats := pulsetest.Start(t)
 	a := newInstallation(t, nats, "spaceman", false, nil)
 	pub, err := pulse.Connect(nats.URL, pulse.WithCreds(nats.Creds("monitor")), pulse.WithSource("monitor"))
@@ -230,6 +231,7 @@ func TestPausedSpaceEventPolicies(t *testing.T) {
 // at the configured event_depth: the event that reaches it is quarantined with the reason, never turned into an item.
 // Each installation still drops its own events by spaceman-origin.
 func TestEventLoopBetweenInstallationsIsBounded(t *testing.T) {
+	t.Parallel()
 	nats := pulsetest.Start(t)
 	depth3 := func(c *config.Config) { c.Limits.EventDepth = 3 }
 	a := newInstallation(t, nats, "spaceman-a", true, depth3)

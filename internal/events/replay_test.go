@@ -30,6 +30,7 @@ func (f *fx) countOrigin(space, sub, origin, outcome string) int {
 // deliveries carry origin replay and the replay's ID, while the stream's own redeliveries are recorded as redelivery
 // with their attempt number. Inbox deduplication holds during a replay unless fresh items are asked for.
 func TestReplayIsExplicitAndDistinctFromRetry(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.publish(issueSubject, issueType, issuePayload(t, ""), "") // before the subscription: history
 	s := f.subscribe("spc_a", "issues", Cursor{})
@@ -126,6 +127,7 @@ func TestReplayIsExplicitAndDistinctFromRetry(t *testing.T) {
 // SM-LIMIT-001: a subscription's ingestion rate holds events back without dropping them; an event that cannot be
 // admitted in time is left in the stream for redelivery.
 func TestIngestionRateLimit(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	m := NewManager(f.svc, nil)
 	f.svc.o.RateFor = func(context.Context, string) int64 { return 6 } // one per 10 s, burst 1

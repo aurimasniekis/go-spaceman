@@ -128,6 +128,7 @@ func (f *fx) loginEnrolled(email string) (string, *Principal) {
 
 // HP-AUTH-002/003
 func TestPasswordHashing(t *testing.T) {
+	t.Parallel()
 	pw, err := NormalizePassword(strongPW, 12)
 	must(t, err)
 	h, err := HashPassword(pw, CurrentParams)
@@ -169,6 +170,7 @@ func TestPasswordHashing(t *testing.T) {
 }
 
 func TestArgon2Production(t *testing.T) {
+	t.Parallel()
 	p := ParamSets[1]
 	if p.Memory < 64*1024 || p.Time < 3 {
 		t.Fatalf("production parameters weakened: %+v", p)
@@ -188,6 +190,7 @@ func TestArgon2Production(t *testing.T) {
 
 // RFC 6238 Appendix B vectors (SHA-1), truncated to 6 digits.
 func TestTOTPVectors(t *testing.T) {
+	t.Parallel()
 	secret := []byte("12345678901234567890")
 	for ts, want := range map[int64]string{59: "287082", 1111111109: "081804", 1111111111: "050471", 1234567890: "005924", 2000000000: "279037", 20000000000: "353130"} {
 		if got := TOTPCode(secret, ts/30); got != want {
@@ -214,6 +217,7 @@ func TestTOTPVectors(t *testing.T) {
 
 // HP-AUTH-001/008: bootstrap once; first admin must enroll MFA before using the console.
 func TestBootstrapAndForcedEnrollment(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	if !slices.Equal(roles(op), []authz.Role{RoleAdministrator}) || op.Email != "admin@example.com" || !op.MFARequired || op.ProvisionedVia != "bootstrap" {
@@ -243,6 +247,7 @@ func TestBootstrapAndForcedEnrollment(t *testing.T) {
 }
 
 func TestLoginThrottlingAndEnumeration(t *testing.T) {
+	// Not parallel: it swaps the package-level loginVerify and compares login timings.
 	f := newFx(t)
 	f.bootstrap()
 	n := 0
@@ -338,6 +343,7 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 }
 
 func TestSessionLifecycle(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	tok, p := f.loginEnrolled("admin@example.com")
@@ -394,6 +400,7 @@ func TestSessionLifecycle(t *testing.T) {
 
 // HP-AUTH-015: the last enabled administrator cannot be disabled or demoted.
 func TestLastAdminProtection(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -415,6 +422,7 @@ func TestLastAdminProtection(t *testing.T) {
 
 // HP-AUTH-009/010/011: invitations, reset, change and session invalidation.
 func TestInviteResetChange(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -458,6 +466,7 @@ func TestInviteResetChange(t *testing.T) {
 
 // HP-AUTH-007: recovery codes are single use.
 func TestRecoveryCodes(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	res, err := f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW})
@@ -494,6 +503,7 @@ func TestRecoveryCodes(t *testing.T) {
 
 // HP-AUTH-016: break-glass issues a recovery login; it is audited.
 func TestBreakGlass(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	tok, _, err := f.svc.IssueRecoveryLogin(f.ctx, "", "rescue@example.com")
@@ -536,6 +546,7 @@ func TestBreakGlass(t *testing.T) {
 
 // HP-AUTH-018: secrets never appear in audit details or stored plaintext.
 func TestNoSecretsStored(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	f.loginEnrolled("admin@example.com")
@@ -557,6 +568,7 @@ func TestNoSecretsStored(t *testing.T) {
 }
 
 func TestMisc(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -594,6 +606,7 @@ func itoa(n int) string {
 }
 
 func TestIPThrottle(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	var err error
@@ -608,6 +621,7 @@ func TestIPThrottle(t *testing.T) {
 // HP-AUTH-011: pending invitations are listed (never with the token) and can be revoked; a revoked invitation cannot
 // be accepted, and revocation is audited.
 func TestInvitationRevocation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.bootstrap()
 	token, _, err := f.svc.Invite(f.ctx, audit.System, "new@example.com", grants(RoleViewer))

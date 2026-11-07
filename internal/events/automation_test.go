@@ -13,6 +13,7 @@ import (
 )
 
 func TestParseDepth(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]int64{"": 0, "0": 0, "7": 7, "0012": 12, "1000000": 1_000_000} {
 		if got, err := parseDepth(in); err != nil || got != want {
 			t.Errorf("parseDepth(%q) = %d, %v; want %d", in, got, err, want)
@@ -39,6 +40,7 @@ func (f *fx) publishDepth(depth, id string) {
 // item's own event; an event at or over the space's limit, or with an unreadable depth, is quarantined with the
 // reason; reprocessing it is an operator's decision and passes the depth on.
 func TestAutomationDepthIsBounded(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	ob := outbox.New(f.s, outbox.Options{Enabled: true, Source: "spaceman-test"})
 	f.inbox.Outbox = ob
@@ -114,6 +116,7 @@ func (f *fx) setSpaceState(space, state string) {
 // items are not), a wake subscription does not, and a stop subscription stops while the space is paused and catches up
 // on the events that waited in the stream once it resumes.
 func TestPausedSpacePolicies(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	// spc_b is paused in the fixture.
 	deferSub := f.subscribe("spc_b", "deferred", Cursor{})

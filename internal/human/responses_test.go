@@ -51,6 +51,7 @@ func routedPolicy(mode string) PolicyFields {
 // for live requesters stay notifications; off (the default) creates none; always makes every response an item, for
 // operators' questions too; a second routing never adds a second item.
 func TestRoutedResponsesBecomeInboxItems(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	ib := f.withInbox()
 
