@@ -470,7 +470,9 @@ func rotate(t *testing.T, svc *Service, f *hpfake.HP, fill string) (*Connection,
 	}
 	newParent := "hpk_parent_" + strings.Repeat(fill, 24)
 	var old string
-	f.Set(func(h *hpfake.HP) { old, h.Parent, h.OtherParents = h.Parent, newParent, append(h.OtherParents, h.Parent) })
+	f.Set(func(h *hpfake.HP) {
+		old, h.Parent, h.OtherParents = h.Parent, newParent, append(h.OtherParents, h.Parent)
+	})
 	out, err := svc.PutConnection(ctx, admin, cur.Version, ConnectionInput{BaseURL: f.URL(), AllowInsecureHTTP: true, ParentToken: newParent})
 	if err != nil {
 		t.Fatal(err)
