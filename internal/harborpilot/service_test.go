@@ -463,18 +463,12 @@ func TestSpaceProjectNeedsAccountWrite(t *testing.T) {
 	if err != nil || sp.ProjectID != "prj_data" {
 		t.Fatalf("admin change %+v %v", sp, err)
 	}
-	var changed []string
-	rows, err := s.ReadDB().QueryContext(ctx, `SELECT json_extract(details_json, '$.project_changed') FROM audit_events WHERE action LIKE 'harbor_pilot.space.%' ORDER BY seq`)
-	if err != nil {
+	var got string
+	if err := s.ReadDB().QueryRowContext(ctx, `SELECT group_concat(c, ',') FROM (SELECT json_extract(details_json, '$.project_changed') AS c FROM audit_events
+		WHERE action LIKE 'harbor_pilot.space.%' ORDER BY seq)`).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
-	for rows.Next() {
-		var v string
-		_ = rows.Scan(&v)
-		changed = append(changed, v)
-	}
-	_ = rows.Close()
-	if got := strings.Join(changed, ","); got != "0,1,0,0,1" {
+	if got != "0,1,0,0,1" {
 		t.Fatalf("project_changed in audit: %s", got)
 	}
 
