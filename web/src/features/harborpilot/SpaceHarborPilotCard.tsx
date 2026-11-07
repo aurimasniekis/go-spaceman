@@ -54,6 +54,8 @@ const KNOWN_HARNESSES = ['claude-code', 'codex']
 
 function SettingsModal({ spaceId, current, onClose }: { spaceId: string; current: SpaceHarborPilot; onClose: () => void }) {
   const qc = useQueryClient()
+  // The project decides who pays: only a global administrator (account:write) sets or changes it (ADR-0060 decision 2).
+  const canSetProject = roleIn(useMe().data, '*') === 'admin'
   const [enabled, setEnabled] = useState(current.enabled)
   const [project, setProject] = useState(current.project_id)
   const [harnesses, setHarnesses] = useState<string[]>(current.harnesses)
@@ -88,8 +90,11 @@ function SettingsModal({ spaceId, current, onClose }: { spaceId: string; current
       <Stack gap="sm">
         <Checkbox label="Route runs through Harbor Pilot" checked={enabled} onChange={(e) => setEnabled(e.currentTarget.checked)}
           description="Each run gets its own Harbor Pilot token instead of an account; a run is refused when Harbor Pilot can't issue one" />
-        <TextInput label="Harbor Pilot project id" placeholder="prj_…" value={project} onChange={(e) => setProject(e.currentTarget.value)} error={fields.project_id}
-          description="Runs are charged to it; it must be the connection's binding project or one of its allowed projects" classNames={{ input: 'mono' }} />
+        <TextInput label="Harbor Pilot project id" placeholder={canSetProject ? 'prj_…' : 'Not set'} value={project} onChange={(e) => setProject(e.currentTarget.value)}
+          error={fields.project_id} readOnly={!canSetProject} classNames={{ input: 'mono' }} data-testid="hp-project"
+          description={canSetProject
+            ? "Runs are charged to it; it must be the connection's binding project or one of its allowed projects"
+            : 'Runs are charged to it. Only an administrator sets or changes the project, since it decides who pays'} />
         <Stack gap={4}>
           <Text size="sm" fw={500}>Harnesses</Text>
           <Group gap="md">

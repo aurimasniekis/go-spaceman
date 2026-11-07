@@ -382,7 +382,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Fleet.Hub().KBResult = c.KB.OnResult
 	c.GitKeys = gitkeys.New(st, c.Audit, c.Changes, c.Keyring)
-	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{})
+	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{Log: obs.Component(log, "harborpilot")})
 	c.Repos = repos.New(st, c.Audit, c.Changes, c.Fleet, repos.Options{AllowLocalURLs: !cfg.IsProduction(), Keyring: c.Keyring, GitKeys: c.GitKeys, Clock: o.Clock,
 		Log: obs.Component(log, "repos")})
 	c.Fleet.Hub().RepoKey = c.Repos.Key // repository SSH keys go only onto the wire message of a clone or fetch (ADR-0057)

@@ -10,6 +10,7 @@ import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
+import { gatewayAddressChanged } from '@/features/harborpilot/format'
 
 export const Route = createFileRoute('/harbor-pilot')({ component: HarborPilotPage })
 
@@ -114,6 +115,8 @@ function ConnectionModal({ current, onClose }: { current: HarborPilotConnection 
   const [error, setError] = useState('')
   const [fields, setFields] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
+  // A new address needs the tokens again: SpaceMan never sends stored tokens to another address.
+  const moved = gatewayAddressChanged(current, baseURL, runURL, insecure)
   const save = async () => {
     setError('')
     setFields({})
@@ -135,16 +138,21 @@ function ConnectionModal({ current, onClose }: { current: HarborPilotConnection 
   return (
     <Modal opened onClose={onClose} title={current ? 'Replace the Harbor Pilot connection' : 'Connect Harbor Pilot'} size="lg">
       <Stack gap="sm">
-        <Text size="sm" c="dimmed">Saving checks the connection with Harbor Pilot: the parent token mints a probe token, which is revoked at once.</Text>
+        <Text size="sm" c="dimmed">
+          Saving checks the connection with Harbor Pilot: the parent token mints a probe token, which is revoked at once. Changing an address
+          or allowing plain HTTP needs the tokens entered again.
+        </Text>
         <TextInput label="Gateway URL" placeholder="https://harbor-pilot.example.com" value={baseURL} onChange={(e) => setBaseURL(e.currentTarget.value)}
           error={fields.base_url} data-autofocus />
         <TextInput label="URL runs use" description="Only when runs reach the gateway on another address than SpaceMan does; it needs https"
           placeholder="Same as the gateway URL" value={runURL} onChange={(e) => setRunURL(e.currentTarget.value)} error={fields.run_base_url} />
         <PasswordInput label="Parent token" autoComplete="off" classNames={{ input: 'mono' }}
-          description={current ? 'Leave empty to keep the current token' : 'An hpk_… gateway credential with tokens:mint'}
-          value={parent} onChange={(e) => setParent(e.currentTarget.value)} error={fields.parent_token} />
+          description={moved ? 'Required: the gateway address changed, so enter the token again' : current ? 'Leave empty to keep the current token' : 'An hpk_… gateway credential with tokens:mint'}
+          withAsterisk={!current || moved} value={parent} onChange={(e) => setParent(e.currentTarget.value)} error={fields.parent_token} />
         <PasswordInput label="Service-principal token" autoComplete="off" classNames={{ input: 'mono' }}
-          description={current?.has_service_token ? 'Leave empty to keep the current token' : 'Optional: an hpa_… token with usage.read and config.read, for budget status and project checks'}
+          description={current?.has_service_token
+            ? (moved ? 'Required: the gateway address changed, so enter the token again or remove it' : 'Leave empty to keep the current token')
+            : 'Optional: an hpa_… token with usage.read and config.read, for budget status and project checks'}
           value={service} onChange={(e) => setService(e.currentTarget.value)} error={fields.service_token} disabled={removeService} />
         {current?.has_service_token && (
           <Checkbox label="Remove the service-principal token" checked={removeService} onChange={(e) => setRemoveService(e.currentTarget.checked)} />

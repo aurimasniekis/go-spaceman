@@ -45,7 +45,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (credential_id) DO NOTHING;
 
 -- name: CountLiveRunGatewayCredentials :one
-SELECT count(*) FROM run_gateway_credentials WHERE token_enc IS NOT NULL;
+SELECT count(*) FROM run_gateway_credentials WHERE token_enc IS NOT NULL AND expires_at > sqlc.arg(now);
 
 -- name: CountPendingGatewayRevocations :one
-SELECT count(*) FROM gateway_revocations WHERE state = 'pending';
+SELECT count(*) FROM gateway_revocations WHERE state = 'pending' AND expires_at > sqlc.arg(now);

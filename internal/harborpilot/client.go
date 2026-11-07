@@ -17,9 +17,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 )
@@ -179,10 +181,41 @@ func NewClient(baseURL string, o ClientOptions) (*Client, error) {
 	}
 	tr := o.Transport
 	if tr == nil {
-		tr = http.DefaultTransport.(*http.Transport).Clone()
+		tr = newTransport()
 	}
 	return &Client{base: u.String(), hc: &http.Client{Timeout: to, Transport: tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+}
+
+// newTransport is the default transport: no proxy (a proxy from the environment would see every token, in clear text
+// with insecure HTTP), and a dial check that refuses addresses no gateway has: link-local (cloud metadata services),
+// unspecified and multicast. It is checked on the resolved address, so a name that resolves there is refused too.
+// Private and loopback addresses stay allowed, since a Harbor Pilot gateway usually runs on an internal network.
+func newTransport() *http.Transport {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: dialControl}
+	tr.DialContext = dialer.DialContext
+	return tr
+}
+
+func dialControl(_, address string, _ syscall.RawConn) error {
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return err
+	}
+	if deniedAddr(ap.Addr()) {
+		return errDeniedAddr
+	}
+	return nil
+}
+
+var errDeniedAddr = errors.New("harbor pilot: the gateway address is link-local, unspecified or multicast")
+
+// deniedAddr reports the addresses central never calls a gateway on.
+func deniedAddr(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() || a.IsMulticast() || a.IsUnspecified()
 }
 
 // BaseURL is the gateway origin the client calls.
@@ -312,6 +345,8 @@ func (c *Client) do(ctx context.Context, op, method, path, token string, body an
 			msg = "the request timed out"
 		case errors.Is(err, context.Canceled):
 			msg = "the request was cancelled"
+		case errors.Is(err, errDeniedAddr):
+			msg = "the gateway address is link-local, unspecified or multicast, which central never calls"
 		}
 		// The underlying error can name the URL; never the token. Keep only a fixed text.
 		return &Error{Op: op, Class: ClassTransport, Message: msg}

@@ -63,6 +63,20 @@ func TestHarborPilotMigrationFrom0039(t *testing.T) {
 		ttl != 900 || harnesses != "[]" || policy != "refuse" {
 		t.Fatalf("stored settings %d %q %q %v", ttl, harnesses, policy, err)
 	}
+	// A run's token row goes with its run.
+	for _, q := range []string{
+		`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, status, launch_json, created_at, created_by, updated_at)
+		 VALUES ('run_1', 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'codex', 'ins_1', 'running', 'running', 'idle', '{}', 0, 't', 0)`,
+		`INSERT INTO run_gateway_credentials (run_id, space_id, credential_id, token_enc, expires_at, created_at) VALUES ('run_1', 'spc_a', 'crd_run', x'00', 1, 0)`,
+		`DELETE FROM runs WHERE id = 'run_1'`,
+	} {
+		if _, err := s.wdb.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM run_gateway_credentials`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("run token rows after deleting the run: %d %v", n, err)
+	}
 	for _, q := range []string{
 		`INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at) VALUES ('crd_1', 'run_x', 'spc_a', 'run ended', 1, 1, 1)`,
 		`DELETE FROM spaces WHERE id = 'spc_a'`,

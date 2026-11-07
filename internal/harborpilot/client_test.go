@@ -33,6 +33,20 @@ func TestParseBaseURL(t *testing.T) {
 		{"ftp://hp.example.com", true, true, false, ""},
 		{"hp.example.com", false, true, false, ""},
 		{"", false, true, false, ""},
+		// Loopback look-alikes get no plain-http exemption.
+		{"http://127.0.0.1.evil.com", false, true, false, ""},
+		{"http://localhost.", false, true, false, ""},
+		{"http://localhost.evil.com", false, true, false, ""},
+		{"http://127.1", false, true, false, ""},
+		{"http://0x7f000001", false, true, false, ""},
+		{"http://2130706433", false, true, false, ""},
+		{"http://0.0.0.0", false, true, false, ""},
+		{"http://[::1%25eth0]", false, true, false, ""},
+		{"http://evil.com#@127.0.0.1", false, true, false, ""},
+		{"http://127.0.0.1@evil.com", false, true, false, ""},
+		{"http://[::1]", false, true, true, "http://[::1]"},
+		{"http://[::ffff:127.0.0.1]:8080", false, true, true, "http://[::ffff:127.0.0.1]:8080"},
+		{"http://LOCALHOST:8080", false, true, true, "http://LOCALHOST:8080"},
 	} {
 		u, err := ParseBaseURL(tc.raw, tc.insecure, tc.exempt)
 		if (err == nil) != tc.ok {
@@ -197,5 +211,39 @@ func TestSanitize(t *testing.T) {
 	}
 	if got := Sanitize("a\nb\x1b[31mc\t hpa_SECRETsecret d"); got != "a b [31mc hpa_… d" {
 		t.Fatalf("sanitised %q", got)
+	}
+}
+
+// The default transport uses no proxy (it would see every token) and never dials link-local (cloud metadata),
+// unspecified or multicast addresses; private and loopback addresses stay allowed.
+func TestClientTransportGuard(t *testing.T) {
+	t.Parallel()
+	c, err := NewClient("https://hp.example.com", ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := c.hc.Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil || tr.DialContext == nil {
+		t.Fatalf("default transport: proxy set %v, dial check %v", ok && tr.Proxy != nil, ok && tr.DialContext != nil)
+	}
+	for addr, denied := range map[string]bool{
+		"169.254.169.254:80": true, "[fe80::1]:443": true, "0.0.0.0:443": true, "[::]:443": true, "224.0.0.1:443": true,
+		"[ff02::1]:443": true, "[::ffff:169.254.169.254]:80": true,
+		"127.0.0.1:443": false, "[::1]:443": false, "10.0.0.5:443": false, "192.168.1.2:443": false, "203.0.113.7:443": false,
+	} {
+		if err := dialControl("tcp", addr, nil); (err != nil) != denied {
+			t.Errorf("%s: %v, want denied=%v", addr, err, denied)
+		}
+	}
+	for _, base := range []string{"https://169.254.169.254", "https://[fe80::1]", "https://0.0.0.0"} {
+		c, err := NewClient(base, ClientOptions{Timeout: 2 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = c.Mint(context.Background(), "hpk_secret_parent", MintRequest{Name: "x"})
+		var he *Error
+		if !errors.As(err, &he) || he.Class != ClassTransport || !strings.Contains(he.Message, "link-local") || strings.Contains(err.Error(), "hpk_secret") {
+			t.Errorf("%s: %v", base, err)
+		}
 	}
 }

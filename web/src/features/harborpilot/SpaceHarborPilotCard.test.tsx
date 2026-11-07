@@ -1,6 +1,6 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type Me, type SpaceHarborPilot } from '@/api/client'
 import { keys } from '@/api/queries'
@@ -19,8 +19,8 @@ function settings(extra: Partial<SpaceHarborPilot> = {}): SpaceHarborPilot {
     on_budget_status_unavailable: 'refuse', allowed_model_aliases: ['coding/default'], connected: true, warnings: [], version: 2, ...extra } as SpaceHarborPilot
 }
 
-function me(role: 'viewer' | 'operator'): Me {
-  return { root: false, method: 'password', user: { grants: [{ role, domain: SPACE }] } } as unknown as Me
+function me(role: 'viewer' | 'operator' | 'admin', domain: string = SPACE): Me {
+  return { root: false, method: 'password', user: { grants: [{ role, domain }] } } as unknown as Me
 }
 
 function wrap(s: SpaceHarborPilot, m: Me) {
@@ -49,5 +49,17 @@ describe('space Harbor Pilot card', () => {
     expect(screen.getByTestId('space-harbor-pilot')).toHaveTextContent('Not enabled: runs use the space')
     expect(screen.getByTestId('space-harbor-pilot')).toHaveTextContent('Harbor Pilot is not connected yet')
     expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
+  })
+
+  it('lets only a global administrator set the project (it decides who pays); others see it read-only', () => {
+    for (const [m, readOnly] of [[me('operator'), true], [me('admin'), true], [me('admin', '*'), false]] as const) {
+      const { unmount } = wrap(settings(), m)
+      fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+      const input = screen.getByTestId('hp-project')
+      expect(input).toHaveValue('prj_web')
+      expect(input.hasAttribute('readonly')).toBe(readOnly)
+      if (readOnly) expect(screen.getByText(/Only an administrator sets or changes the project/)).toBeInTheDocument()
+      unmount()
+    }
   })
 })
