@@ -92,6 +92,20 @@
   `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
 - **Demo evidence only.** Connection checks ran against a real `harbor-pilot serve --demo` 0.1.3 with synthetic
   upstreams, not against a production gateway.
+- **Only project budgets map to a space.** The `harbor-pilot-budget` template routes a project-scoped budget to the
+  space whose subscription names that project. Quota windows, blocked requests and binding, workspace, account or global
+  budgets name no project: they reach only spaces that subscribe to them, and nothing routes them automatically (Q4 is
+  undecided, DECISIONS K-12). A blocked request is not mapped to the run or space that sent it.
+- **One item per refused request.** Harbor Pilot sends `access.request.blocked` for every refused request; refusals
+  of one binding share a correlation, but each is its own inbox item. There is no digest.
+- **Harbor Pilot events: relay tested against SpaceMan's test Pulse only.** Harbor Pilot's own relay was run into
+  SpaceMan's Pulse-shaped JetStream test server, not into a real `pulsed`. The quota window template was never fed a
+  live event (the demo emits none) and is tested on events derived from Harbor Pilot's code.
+- **A new Harbor Pilot Pulse destination misses earlier events.** Harbor Pilot starts a destination at its newest
+  event; anything emitted before the relay picked it up is only sent by a replay from Harbor Pilot.
+- **Stricter than Harbor Pilot's own validation.** The templates' input schemas expect Harbor Pilot 0.1.3's id, name
+  and amount formats. An event that differs (a forged one, or a later Harbor Pilot that changes a format) is
+  quarantined, not shown.
 
 ## Usage and transcripts
 - **Codex usage is unknown.** Its records are not verified, so Codex runs show unknown usage (never zero).

@@ -51,7 +51,7 @@ func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
 		bySlug[x.Slug] = x
 	}
 	want := []string{"github-issue", "github-pull-request", "github-pr-comment", "github-pr-review", "github-pr-review-comment",
-		"github-issue-comment", "github-workflow-run", "github-check-suite"}
+		"github-issue-comment", "github-workflow-run", "github-check-suite", "harbor-pilot-budget", "harbor-pilot-quota", "harbor-pilot-access-blocked"}
 	if len(ts) != len(want) || len(builtins) != len(want) {
 		t.Fatalf("%d templates, %d built-ins", len(ts), len(builtins))
 	}
@@ -64,6 +64,9 @@ func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
 		exp, _ := json.Marshal(builtins[i].def())
 		if builtins[i].slug != slug || string(got) != string(exp) {
 			t.Errorf("%s: stored definition differs from the built-in", slug)
+		}
+		if notes := x.Versions[0].Notes; strings.HasPrefix(slug, "harbor-pilot-") != strings.Contains(notes, "Harbor Pilot v0.1.3") {
+			t.Errorf("%s: notes %q", slug, notes)
 		}
 	}
 	for _, b := range before {
