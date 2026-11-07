@@ -2700,10 +2700,15 @@
     output goes into the terminal's scrollback, the recording and the live stream. A profile that sets
     `"tui": "fullscreen"` keeps the full-screen renderer and accepts that watchers can't scroll back. Verified in the
     2.1.317 binary: the `tui` setting is checked before the fresh-install default (`settings_off`).
+  - **The node applies the default**, where it writes the run's `settings.json` (`internal/harness/claude.go`), not
+    central. It therefore needs the agent from SpaceMan 0.1.0-rc.10 or later; a run on an older node keeps Claude
+    Code's own choice of renderer. The resolved `claude_settings` that central's API returns are the profile's own and
+    don't show the default.
   - **The web view handles the wheel and touch itself** (`web/src/features/terminal/scroll.ts`). Scrolling up moves
     the box around the terminal first, then the scrollback; scrolling down goes back the same way. In an alternate
     screen, a watch-only viewer sends nothing. A takeover holder sends what a terminal would: SGR (or X10) mouse-wheel
-    reports while the program tracks the mouse, arrow keys only under xterm's alternate-scroll mode 1007, else nothing.
+    reports while the program tracks the mouse, arrow keys only under xterm's alternate-scroll mode 1007 (`ESC O A`/
+    `ESC O B` when the program set application cursor keys, DECCKM; `ESC [ A`/`ESC [ B` otherwise), else nothing.
     ghostty-web's arrow keys never reach anyone.
   - The view keeps a scrolled-up viewer on the same lines while output arrives, and shows **Jump to live** until they
     return to live output.

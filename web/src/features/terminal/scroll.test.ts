@@ -116,6 +116,21 @@ describe('terminal scrolling', () => {
     expect(wheelInput(term, 0, at)).toBe('')
   })
 
+  it('sends application cursor keys under alternate scroll mode when DECCKM is set', () => {
+    const term = new FakeTerm()
+    term.buffer.active.type = 'alternate'
+    term.modes.add(1007)
+    expect(wheelInput(term, -1, at)).toBe('\x1b[A')
+    expect(wheelInput(term, 2, at)).toBe('\x1b[B\x1b[B')
+    term.modes.add(1)
+    expect(wheelInput(term, -2, at)).toBe('\x1bOA\x1bOA')
+    expect(wheelInput(term, 1, at)).toBe('\x1bOB')
+    // Mouse reports still win while the program tracks the mouse.
+    term.mouse = true
+    term.modes.add(1006)
+    expect(wheelInput(term, -1, at)).toBe('\x1b[<64;10;5M')
+  })
+
   it('keeps a scrolled-up viewer on the same lines while output arrives', () => {
     const term = new FakeTerm()
     term.scrollback = 300

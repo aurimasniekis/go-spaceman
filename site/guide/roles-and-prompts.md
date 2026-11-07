@@ -95,7 +95,9 @@ Things to know:
 - **Runs use Claude Code's classic renderer** (`"tui": "default"`) unless the profile sets `tui`, so everything a run
   prints stays in its terminal and watchers can [scroll back](/operators/terminals#scrolling-back) without taking it
   over. To use the full-screen renderer instead, add `"tui": "fullscreen"` under **Other settings**; watchers then see
-  only the current screen (ADR-0064).
+  only the current screen (ADR-0064). The node adds this default when it writes the run's settings, so it needs
+  SpaceMan 0.1.0-rc.10 or later on the node: a run on an older node keeps Claude Code's own choice of renderer. The
+  profile's resolved settings in the API don't show the default; they show only what the profile sets.
 
 ## Space roles
 

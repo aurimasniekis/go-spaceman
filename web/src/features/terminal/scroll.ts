@@ -6,7 +6,8 @@
  * - normal screen: the terminal's own scrollback moves, locally; nothing is sent to the program;
  * - alternate screen (a full-screen program keeps no scrollback): only a takeover's holder sends anything, and only
  *   what a terminal would: mouse-wheel reports while the program tracks the mouse, arrow keys under xterm's
- *   alternate-scroll mode (1007), else nothing. A watch-only viewer never sends input (SM-UI-004).
+ *   alternate-scroll mode (1007; `ESC O A` once DECCKM sets application cursor keys), else nothing. A watch-only
+ *   viewer never sends input (SM-UI-004).
  *
  * ghostty-web itself turns every wheel event in an alternate screen into arrow keys, even when the program asked for
  * mouse reports: during a takeover Claude Code's full-screen renderer then answered "Scroll wheel is sending arrow keys
@@ -41,6 +42,8 @@ export interface Cell {
   y: number
 }
 
+/** DECCKM, application cursor keys: arrows are sent as `ESC O A` rather than `ESC [ A`. */
+const MODE_CURSOR_KEYS = 1
 const MODE_ALT_SCROLL = 1007
 const MODE_SGR_MOUSE = 1006
 /** At most this many reports or keys per gesture step, as ghostty-web does for its arrow keys. */
@@ -64,7 +67,11 @@ export function wheelInput(term: ScrollTerm, steps: number, at: Cell): string {
         `\x1b[M${String.fromCharCode(32 + button, 32 + Math.min(x, 223), 32 + Math.min(y, 223))}`
     return one.repeat(n)
   }
-  if (term.getMode(MODE_ALT_SCROLL)) return (up ? '\x1b[A' : '\x1b[B').repeat(n)
+  if (term.getMode(MODE_ALT_SCROLL)) {
+    // The arrow keys the keyboard would send, which honour the cursor-key mode as ghostty-web's own input does.
+    const intro = term.getMode(MODE_CURSOR_KEYS) ? '\x1bO' : '\x1b['
+    return (intro + (up ? 'A' : 'B')).repeat(n)
+  }
   return ''
 }
 

@@ -58,6 +58,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Claude Code runs start with its classic renderer (`"tui": "default"` in the run's settings) unless the profile's
   Claude Code settings set `tui`. Its full-screen renderer, which Claude Code otherwise often picks itself, keeps earlier output
   out of the terminal, so a watcher could not scroll back. Set `"tui": "fullscreen"` in a profile to keep it (ADR-0064).
+  The node applies this default, so it takes nodes on this release or later; runs on older nodes keep Claude Code's
+  own choice, and the profile's resolved settings in the API don't show it.
 - Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
