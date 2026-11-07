@@ -2,10 +2,14 @@ package catalog
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,7 +29,8 @@ type Profile struct {
 	Harness  string            `json:"harness" enum:"claude-code,codex"`
 	Model    string            `json:"model,omitempty"`
 	Settings map[string]string `json:"settings"`
-	// ClaudeSettings are set in each run's Claude Code settings.json (claude-code profiles only, ADR-0059).
+	// ClaudeSettings are set in each run's Claude Code settings.json (claude-code profiles only, ADR-0059). Nil on an
+	// update (SaveProfile) keeps the stored ones; an empty object clears them.
 	ClaudeSettings proto.ClaudeSettings `json:"claude_settings" doc:"Claude Code settings.json keys for the profile's runs (claude-code profiles only); {} for none"`
 	Description    string               `json:"description,omitempty"`
 	Revision       int64                `json:"revision"`
@@ -126,6 +131,30 @@ func claudeSettingsJSON(v *apperr.Validation, harness string, c proto.ClaudeSett
 	return string(b)
 }
 
+// claudeSettingsAudit records in an audit entry's details which top-level Claude Code settings keys changed and the
+// sha256 of the new settings (their stored JSON), never the values: env and hooks may hold anything (ADR-0059).
+func claudeSettingsAudit(details map[string]any, before, after string) {
+	b, a := parseClaudeSettings(before), parseClaudeSettings(after)
+	var changed []string
+	for _, k := range a.Keys() {
+		if old, ok := b[k]; !ok || !reflect.DeepEqual(old, a[k]) {
+			changed = append(changed, k)
+		}
+	}
+	for _, k := range b.Keys() {
+		if _, ok := a[k]; !ok {
+			changed = append(changed, k)
+		}
+	}
+	if len(changed) == 0 {
+		return
+	}
+	sort.Strings(changed)
+	sum := sha256.Sum256([]byte(after))
+	details["claude_settings_changed"] = changed
+	details["claude_settings_sha256"] = hex.EncodeToString(sum[:])
+}
+
 func profileOut(r db.HarnessProfile) *Profile {
 	return &Profile{ID: r.ID, Slug: r.Slug, Name: r.Name, Harness: r.Harness, Model: r.Model, Settings: parseSettings(r.SettingsJson),
 		ClaudeSettings: parseClaudeSettings(r.ClaudeSettingsJson), Description: r.Description, Revision: r.Revision,
@@ -166,6 +195,8 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 			harness = cur.Harness
 		}
 	}
+	// Nil Claude settings on an update keep the stored ones (read in the transaction below); on a create they are none.
+	keepClaude := in.ClaudeSettings == nil && id != ""
 	cj := claudeSettingsJSON(v, harness, in.ClaudeSettings)
 	if err := v.Err(); err != nil {
 		return nil, err
@@ -180,7 +211,18 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 				}
 				return err
 			}
-			return svc.log(ctx, tx, actor, "profile.created", "profile", id, map[string]any{"slug": in.Slug, "harness": in.Harness})
+			details := map[string]any{"slug": in.Slug, "harness": in.Harness}
+			claudeSettingsAudit(details, "{}", cj)
+			return svc.log(ctx, tx, actor, "profile.created", "profile", id, details)
+		}
+		cur, err := tx.Q.GetProfile(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperr.New(apperr.CodePrecondition, "the profile changed or does not exist")
+		} else if err != nil {
+			return err
+		}
+		if keepClaude {
+			cj = cur.ClaudeSettingsJson
 		}
 		n, err := tx.Q.UpdateProfile(ctx, db.UpdateProfileParams{Name: in.Name, Model: in.Model, SettingsJson: sj, ClaudeSettingsJson: cj, Description: in.Description,
 			UpdatedAt: tx.NowMicros(),
@@ -191,7 +233,12 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 		if n == 0 {
 			return apperr.New(apperr.CodePrecondition, "the profile changed or does not exist")
 		}
-		return svc.log(ctx, tx, actor, "profile.updated", "profile", id, nil)
+		details := map[string]any{}
+		claudeSettingsAudit(details, cur.ClaudeSettingsJson, cj)
+		if len(details) == 0 {
+			details = nil
+		}
+		return svc.log(ctx, tx, actor, "profile.updated", "profile", id, details)
 	})
 	if err != nil {
 		return nil, err

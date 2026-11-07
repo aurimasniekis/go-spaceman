@@ -2285,10 +2285,16 @@
 - **Consequences:**
   - Whoever can edit harness profiles (`prompt:write`) controls the profile's runs' Claude Code settings, hooks
     included. Hooks and status lines run commands on the node as the agent's user, as runs themselves already can.
-    Profile changes are audited, and the settings are in every run's manifest.
+    Profile changes are audited (`profile.created` and `profile.updated` record the changed top-level settings keys
+    and a sha256 of the new settings, never their values), and the settings are in every run's manifest.
+  - **Accepted risk (operator decision, 2026-11-07):** settings may set `env` (including endpoint and credential
+    variables such as `ANTHROPIC_BASE_URL`), credential helpers (`apiKeyHelper` and the like) and hooks, and only
+    `permissions.defaultMode` is held to the permission mode ceiling. Profile editors (admins) are trusted with run
+    credentials and node command execution (THREAT_MODEL T-32).
   - Settings are stored in clear and recorded in manifests, so they must not hold secrets; accounts carry credentials.
   - A key a run writes into its own settings.json carries over to the next launch unless the profile sets or once set
-    that key.
+    that key. The node records the keys it owns before writing settings.json and fails the launch on a corrupt record,
+    so an interrupted write or a damaged record never leaves a key it set behind.
   - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
     update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
 

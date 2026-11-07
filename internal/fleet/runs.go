@@ -394,8 +394,9 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reas
 		if _, err := tx.Q.CancelRunCommands(ctx, db.CancelRunCommandsParams{Reason: reason, RunID: sql.NullString{String: runID, Valid: true}}); err != nil {
 			return err
 		}
-		if _, err := tx.Q.UpdateRunObserved(ctx, db.UpdateRunObservedParams{Observed: proto.RunFailed, EndReason: endReason, Error: reason,
-			Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, MarkEnded: 1, ID: r.ID, Generation: r.Generation}); err != nil {
+		// SessionID "" keeps the stored one (a nil would write NULL and fail the NOT NULL constraint).
+		if _, err := tx.Q.UpdateRunObserved(ctx, db.UpdateRunObservedParams{Observed: proto.RunFailed, EndReason: endReason, Error: reason, SessionID: "",
+			MarkStarted: 0, Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, MarkEnded: 1, ID: r.ID, Generation: r.Generation}); err != nil {
 			return err
 		}
 		if _, err := tx.Q.RevokeRunCredentials(ctx, db.RevokeRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RunID: r.ID}); err != nil {
