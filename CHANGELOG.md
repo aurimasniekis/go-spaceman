@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.9] - 2026-11-07
+
+Ninth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): Claude Code settings on
+harness profiles (ADR-0059) with their review fixes; faster CI and `make check`, with the release workflow gated on
+vet, race tests, coverage, fuzz smoke and the full site check (ADR-0062); a fix for the queue page crashing on
+duplicate task titles; more built-in GitHub event templates and optional template filters (ADR-0061); live updates
+that reconnect after central restarts; terminal and mobile UI fixes, with form descriptions under their fields;
+relocation of spaces whose repositories use SpaceMan SSH keys; and the Harbor Pilot gateway contract with ADR-0060
+(Proposed; documents and an opt-in test harness, no product behaviour). Upgrade central and the node agents. The
+relocation fix needs both: an older agent keeps working, but relocating a space with keyed repositories to it still
+fails. The relocation fix changes no node protocol, but Claude settings on profiles move it to 1.8: a run of a profile
+with `claude_settings` on an older agent fails as `node_too_old`. One migration, 0039 (`claude_settings_json` on
+harness profiles), which is forward-only and cannot be reversed: take a backup before upgrading (central also writes a
+pre-migration snapshot; going back means restoring it). The new event templates are seeded at central's start, not by
+a migration.
+
 ### Added
 - More built-in GitHub event templates (ADR-0061), seeded at central's start on new and existing installations:
   - `github-pr-comment` and `github-issue-comment`: new comments on pull requests and on issues;
@@ -714,7 +730,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.8...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...HEAD
+[0.1.0-rc.9]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.9
 [0.1.0-rc.8]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.8
 [0.1.0-rc.7]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.7
 [0.1.0-rc.6]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.6
