@@ -60,9 +60,10 @@ func TestClaudeBuild(t *testing.T) {
 		projects["/data/spaces/spc_a/work"].(map[string]any)["hasTrustDialogAccepted"] != true {
 		t.Fatalf("claude state %v", l.MergeJSON)
 	}
-	// The profile's settings.json keys are owned at every launch, none when it has none (ADR-0059).
+	// The profile's settings.json keys are owned at every launch (ADR-0059), plus the classic renderer when the profile
+	// sets none, so the terminal keeps a scrollback a watch-only viewer can scroll (ADR-0064).
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
-	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 0 {
+	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 1 || keys["tui"] != "default" {
 		t.Fatalf("settings keys without settings %v", l.OwnJSON)
 	}
 	cs := proto.ClaudeSettings{"permissions": map[string]any{"deny": []any{"Read(./secrets/**)"}}, "hooks": map[string]any{"Stop": []any{}}}
@@ -70,8 +71,16 @@ func TestClaudeBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if keys := l.OwnJSON[cfgSettings]; len(keys) != 2 || keys["hooks"] == nil || keys["permissions"] == nil {
+	if keys := l.OwnJSON[cfgSettings]; len(keys) != 3 || keys["hooks"] == nil || keys["permissions"] == nil || keys["tui"] != "default" {
 		t.Fatalf("settings keys %v", l.OwnJSON)
+	}
+	if _, set := cs["tui"]; set {
+		t.Fatal("the profile's settings were changed")
+	}
+	// A profile that picks a renderer keeps it.
+	l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"tui": "fullscreen"}}))
+	if err != nil || len(l.OwnJSON[cfgSettings]) != 1 || l.OwnJSON[cfgSettings]["tui"] != "fullscreen" {
+		t.Fatalf("profile renderer %v %v", l.OwnJSON, err)
 	}
 	if _, err := (Claude{}).Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"permissions": "all"}})); err == nil {
 		t.Error("invalid claude settings accepted")
