@@ -88,6 +88,8 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
 
 ## Harbor Pilot gateway spike (2026-11-06)
 
+Evidence for ADR-0060 (Proposed, `docs/DECISIONS.md`); the gateway contract is `docs/contracts/harbor-pilot.md`.
+
 **Setup.**
 - The gateway was Harbor Pilot v0.1.1 `serve --demo` on loopback, with synthetic upstreams and the `hptest` fixture
   binding (`docs/contracts/harbor-pilot.md`).

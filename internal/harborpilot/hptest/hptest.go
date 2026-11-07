@@ -16,6 +16,7 @@ package hptest
 import (
 	"bytes"
 	"context"
+	"debug/buildinfo"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,12 @@ const (
 	BudgetName  = "spaceman-test-tiny"
 	SPName      = "spaceman-test-reader"
 	FleetRef    = "test"
+)
+
+// What a cached binary's build information must say (Binary). Variables so tests can pin the test binary instead.
+var (
+	pinnedPath    = Module
+	pinnedVersion = Version
 )
 
 // Scopes of the parent credential and the service principal.
@@ -98,6 +105,8 @@ func Start(t testing.TB) *Gateway {
 }
 
 // Binary returns HARBOR_PILOT_BIN, or installs the pinned release into the user cache directory (once) and returns it.
+// A cached binary is reused only when its build information names the pinned module and version; otherwise it is
+// reinstalled. HARBOR_PILOT_BIN is the operator's choice (for example a local build) and is used as is.
 func Binary(ctx context.Context) (string, error) {
 	if b := os.Getenv(EnvBin); b != "" {
 		if _, err := os.Stat(b); err != nil { //nolint:gosec // the operator-chosen test binary
@@ -111,7 +120,7 @@ func Binary(ctx context.Context) (string, error) {
 	}
 	dir := filepath.Join(cache, "spaceman", "hptest", Version)
 	bin := filepath.Join(dir, "harbor-pilot")
-	if _, err := os.Stat(bin); err == nil {
+	if pinned(bin) == nil {
 		return bin, nil
 	}
 	cmd := exec.CommandContext(ctx, "go", "install", Module+"@"+Version) //nolint:gosec // pinned module path and version
@@ -119,7 +128,22 @@ func Binary(ctx context.Context) (string, error) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go install %s@%s: %w: %s", Module, Version, err, out)
 	}
+	if err := pinned(bin); err != nil {
+		return "", fmt.Errorf("installed %s: %w", bin, err)
+	}
 	return bin, nil
+}
+
+// pinned checks that bin was built from the pinned module path and version.
+func pinned(bin string) error {
+	info, err := buildinfo.ReadFile(bin)
+	if err != nil {
+		return err
+	}
+	if info.Path != pinnedPath || info.Main.Version != pinnedVersion {
+		return fmt.Errorf("built from %s %s, want %s %s", info.Path, info.Main.Version, pinnedPath, pinnedVersion)
+	}
+	return nil
 }
 
 // Run starts `bin serve --demo` on a free loopback port with data in dir, waits until it is ready and provisions it.
@@ -138,6 +162,7 @@ func Run(ctx context.Context, bin, dir string) (*Gateway, func(), error) {
 	// Not CommandContext: the process outlives ctx (which only bounds start-up) until stop.
 	cmd := exec.Command(bin, "serve", "--demo", "--listen", addr, "--data-dir", data) //nolint:gosec,noctx // test binary
 	cmd.Stdout, cmd.Stderr = logf, logf
+	setProcAttr(cmd) // dies with the test binary (Linux) and runs in its own process group
 	if err := cmd.Start(); err != nil {
 		_ = logf.Close()
 		return nil, noop, err
@@ -147,11 +172,11 @@ func Run(ctx context.Context, bin, dir string) (*Gateway, func(), error) {
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
+			signalGroup(cmd, syscall.SIGTERM)
 			select {
 			case <-exited:
 			case <-time.After(10 * time.Second):
-				_ = cmd.Process.Kill()
+				signalGroup(cmd, syscall.SIGKILL)
 				<-exited
 			}
 			_ = logf.Close()

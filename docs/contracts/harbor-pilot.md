@@ -1,7 +1,8 @@
 # Contract: Harbor Pilot gateway
 
 Pinned to **Harbor Pilot v0.1.1**, commit `68d6eae735743bfa0730a36a203ef38235c0cf4d`
-(`github.com/aurimasniekis/go-harbor-pilot`). File paths below are in that repository at that revision.
+(`github.com/aurimasniekis/go-harbor-pilot`). File paths below are in that repository at that revision. SpaceMan's
+design on top of it is ADR-0060 (Proposed) in `docs/DECISIONS.md`.
 
 **How this was established (2026-11-06):**
 - The tag was cloned and built with `go build ./cmd/harbor-pilot`. `go install …/cmd/harbor-pilot@v0.1.1` was also

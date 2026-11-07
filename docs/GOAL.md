@@ -140,15 +140,16 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-ACCT-005 Secrets are write-only and excluded from logs, events, resolved manifests and API reads. Docs state that privileged node operators can read runtime secrets.
 - SM-ACCT-006 Rotation affects subsequent launches.
 
-### SM-GW — LLM gateway (Harbor Pilot; operator addition, §9; design in ADR-0059, Proposed)
+### SM-GW — LLM gateway (Harbor Pilot; operator addition, §9; design in ADR-0060, Proposed)
 - SM-GW-001 **Connection.** One Harbor Pilot connection per central holds:
   - the base URL;
   - a parent token with `tokens:mint`;
   - an optional read-only service-principal token.
 
   Both tokens are sealed and write-only (API, CLI, UI, Terraform, audit, change feed, exports, logs). They never reach a
-  node. The base URL needs https unless the host is loopback or insecure HTTP is explicitly allowed, and redirects are
-  not followed.
+  node. Central's client needs https unless the host is loopback or insecure HTTP is explicitly allowed, and redirects
+  are not followed. The URL delivered to runs carries their tokens, so it needs https with no loopback exemption, unless
+  insecure HTTP is explicitly allowed; the node checks it too.
 - SM-GW-002 **Space opt-in.** A space opts in with:
   - a Harbor Pilot project id;
   - a `harnesses` list: any harness Harbor Pilot can serve, while the others keep their direct accounts;
@@ -503,4 +504,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-03 | The Terraform provider lives in its own repository (`../terraform-provider-spaceman`, module `github.com/aurimasniekis/terraform-provider-spaceman`), not in this one; this repository's build does not depend on it. | SM-API-004/005 (ADR-0047) |
 | 2026-11-03 | A new installation comes with starter roles (control, planner, implementor, reviewer, kb, dreamer) as editable, deletable examples, so a first space can launch agents without configuring every role by hand. | SM-PROMPT-005 (ADR-0051) |
 | 2026-11-06 | Claude Code runs get their settings.json from their harness profile, with full control (permissions, auto mode, hooks, any key), a proper UI rather than raw JSON for the common parts, and a Terraform provider attribute. | SM-PROMPT-006 (ADR-0059) |
-| 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0059 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |
+| 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0060 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |

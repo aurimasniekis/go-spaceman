@@ -2,10 +2,12 @@ package hptest
 
 import (
 	"context"
+	"debug/buildinfo"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -24,6 +26,9 @@ func TestMain(m *testing.M) {
 		fakeServe()
 	case "exit":
 		os.Exit(3)
+	case "sleep":
+		time.Sleep(time.Minute)
+		os.Exit(4)
 	}
 	os.Exit(m.Run())
 }
@@ -152,7 +157,13 @@ func TestBinary(t *testing.T) {
 	if _, err := Binary(context.Background()); err == nil {
 		t.Fatal("accepted a missing HARBOR_PILOT_BIN")
 	}
-	// Without HARBOR_PILOT_BIN, an installed copy in the cache is reused (no network: the cache is pre-filled).
+	// Without HARBOR_PILOT_BIN, an installed copy in the cache is reused when its build information is the pinned one
+	// (no network: the cache is pre-filled with the test binary, and the test binary's build is pinned).
+	self, err := buildinfo.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin(t, self.Path, self.Main.Version)
 	t.Setenv(EnvBin, "")
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
@@ -161,19 +172,53 @@ func TestBinary(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(want), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(want, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	copyFile(t, os.Args[0], want)
 	if b, err := Binary(context.Background()); err != nil || b != want {
 		t.Fatalf("%q %v (want %q)", b, err, want)
 	}
-	// A failing install is reported (an unusable go toolchain on PATH).
-	if err := os.Remove(want); err != nil {
+	// A cached file that isn't the pinned build is reinstalled, and a failing install is reported (no go on PATH).
+	if err := os.WriteFile(want, []byte("not a binary"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	cp, err := exec.LookPath("cp")
+	if err != nil {
+		t.Skip("no cp")
 	}
 	t.Setenv("PATH", t.TempDir())
 	if _, err := Binary(context.Background()); err == nil || !strings.Contains(err.Error(), "go install") {
 		t.Fatalf("err %v", err)
+	}
+	// An install that leaves a binary of another version is refused.
+	tools := t.TempDir()
+	script := "#!/bin/sh\n" + cp + " '" + os.Args[0] + "' \"$GOBIN/harbor-pilot\"\n"
+	if err := os.WriteFile(filepath.Join(tools, "go"), []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(tools, "go"), 0o700); err != nil { //nolint:gosec // test-owned fake toolchain
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools)
+	pin(t, Module, Version)
+	if _, err := Binary(context.Background()); err == nil || !strings.Contains(err.Error(), "want "+Module+" "+Version) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func pin(t *testing.T, path, version string) {
+	t.Helper()
+	oldPath, oldVersion := pinnedPath, pinnedVersion
+	pinnedPath, pinnedVersion = path, version
+	t.Cleanup(func() { pinnedPath, pinnedVersion = oldPath, oldVersion })
+}
+
+func copyFile(t *testing.T, from, to string) {
+	t.Helper()
+	b, err := os.ReadFile(from) //nolint:gosec // the test binary
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(to, b, 0o700); err != nil { //nolint:gosec // an executable copy in a test-owned dir
+		t.Fatal(err)
 	}
 }
 

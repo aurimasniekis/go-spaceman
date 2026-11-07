@@ -2292,10 +2292,10 @@
   - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
     update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
 
-### ADR-0059 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
+### ADR-0060 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
 - **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
-  (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default. Nothing
-  in this ADR is implemented yet. Contract:
+  (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default that
+  control proposed. Nothing in this ADR is implemented yet. Contract:
   `docs/contracts/harbor-pilot.md` (v0.1.1); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike).
 - **Context:**
   - **What operators want.** Run model traffic should go through Harbor Pilot (HP), a self-hosted LLM gateway. HP gives
@@ -2343,9 +2343,23 @@
        - space settings need `space_config:write`;
        - status needs space read.
   3. **Transport.**
-     - https is required unless the host is loopback or `allow_insecure_http` is set (as in ADR-0035).
+     - **Central's own client** (validation, mint, revoke, budget status): https is required unless the host is
+       loopback or `allow_insecure_http` is set (as in ADR-0035).
+     - **The run-facing base URL is checked from the node's side.** The base URL also goes to nodes
+       (`ANTHROPIC_BASE_URL`, the Codex `base_url`), and every run request carries its child token. A loopback host on
+       central means the node's own loopback on another machine, so the loopback exemption doesn't carry over:
+       - the URL delivered to runs must be https, with no loopback exemption, unless `allow_insecure_http` is set;
+       - the node checks the URL in the launch payload against the same rule before it writes the secrets file, and
+         refuses the launch otherwise. So a central that skipped the check can't make a node send a token over plain
+         HTTP;
+       - if central reaches HP on another address than runs do (a loopback HP next to central, say), a separate
+         run-facing URL is configured. Whether that is a `run_base_url` field is settled in HP-T2.
+     - **`allow_insecure_http` exposes child tokens.** With it, every run's token crosses the network path in clear for
+       its whole TTL, as does the parent token on central's calls. It is for tests and a trusted local network only,
+       and the connection's status says it is set.
      - Redirects are never followed.
-     - Errors keep HP's status and error type, never bodies.
+     - Errors keep HP's status, error type and its `error.message`, cut to a fixed bound and treated as untrusted text
+       (T-03), so failure reasons stay readable (SM-GW-003). Raw response bodies are never kept.
      - Tokens are never logged.
   4. **The gateway replaces accounts for an opted-in harness.**
      - `LaunchRun` skips account resolution.
@@ -2371,7 +2385,7 @@
      - **Codex** gets the five `-c model_provider…` overrides with `env_key = "HARBOR_PILOT_TOKEN"`, and that variable.
        No `auth.json` is written, and the node removes any ADR-0054 API-key `auth.json` or ChatGPT-login link from that
        instance's `CODEX_HOME`.
-     - **Node protocol.** This needs node protocol minor 8. Gateway launches to older agents are refused with a clear
+     - **Node protocol.** This needs node protocol minor 9. Gateway launches to older agents are refused with a clear
        reason.
      - **Model choice.** The run's model must be one the HP plan routes. With HP 0.1.1 it must also be a Claude model
        whose requests carry no `system`-role messages (spike). How the default is chosen per space is settled in the
@@ -2380,8 +2394,8 @@
      - **Events.** HP events become shipped event templates. Their text is untrusted (T-03).
        - Only project-scoped budget events map to one space.
        - **Unscoped events stay open (Q4).** These are quota, `access.request.blocked`, and binding/workspace/global
-         budget events. **Interim default: no automatic routing.** They reach only the spaces that explicitly subscribe
-         with the template.
+         budget events. **Interim default (control's proposal, not the operator's choice): no automatic routing.**
+         They reach only the spaces that explicitly subscribe with the template.
      - **Usage.** HP 0.1.1 can't report usage per run (no filter or grouping by trusted ref).
        - The Limits page shows project-level HP usage, labelled with its source.
        - Per-run usage waits for an upstream change **(Q5)**. That request, and the doc mismatches, go to the Harbor
@@ -2391,6 +2405,9 @@
     TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
     because HP can't refresh a token inside a running harness. The 24 h default and the per-space maximum of 7 days
     bound this **(Q2)**.
+  - **HP clamps a child's TTL to its parent's expiry** (contract: Mint). A parent that expires sooner than a space's TTL
+    silently gives that space's runs shorter tokens, and they lose model access earlier. Validation in HP-T2 warns when
+    the parent's expiry is shorter than an opted-in space's TTL.
   - **Revoking the parent in HP cuts every live run at once.** That gives an emergency stop, and is also a single point of
     failure.
   - **Hard spend limits come only from HP.** SpaceMan's own budgets stay soft (ADR-0036).
@@ -2405,12 +2422,25 @@
   - **Minting in `LaunchRun`, before its transaction:** rejected. Relocation may clear the session id inside the launch
     transaction, and a node that stays offline past the TTL would receive an expired token. Early refusal comes from a
     pre-check instead.
+- **Open points:**
+  - **HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces? Not decided.**
+    - ADR-0059 lets a claude-code profile's `claude_settings.env` set any variable, `ANTHROPIC_BASE_URL` included. The
+      operator accepted this on 2026-11-07 (THREAT_MODEL T-32, once the profiles fix lands).
+    - In a space with HP enabled for Claude Code, a profile `env` could point a run's model traffic away from HP or
+      replace its token. Those requests would escape HP's hard budgets and its per-run attribution, so this is a
+      budget-bypass consideration, not only a configuration one.
+    - The options for HP-T4 are:
+      - the node lets the gateway's `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`HARBOR_PILOT_*` win;
+      - central refuses such profiles for gateway harnesses;
+      - or both stay as they are, documented as the operator's choice.
+    - Whoever edits profiles can already run hooks on the node (ADR-0059), so the decision is about budget
+      enforcement, not about a new privilege.
 - **Operator questions and answers (asked and answered 2026-11-06):**
   - **Q1, fallback to a direct account:** never.
   - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.
   - **Q3, budget status unavailable:** a per-space setting, defaulting to proceed.
-  - **Q4, unscoped events:** **undecided (open).** In the meantime they are not routed automatically and go only to
-    spaces that explicitly subscribe.
+  - **Q4, unscoped events:** **undecided (open)**; the operator was not sure. The interim default is control's proposal,
+    not an operator answer: they are not routed automatically and go only to spaces that explicitly subscribe.
   - **Q5, upstream issues:** yes, through cross-space requests to the Harbor Pilot space in SpaceMan once it exists.
     These cover a ref filter for usage, a service-principal token resource in its provider, project-id outputs in
     scenario 07, the doc mismatches and the K-13 protocol gap.
@@ -2433,5 +2463,5 @@
 | K-9 | ~~Codex ChatGPT-login token materialization (`auth.json`) vs API key.~~ **Resolved 2026-11-03:** the `codex_chatgpt_login` kind, one live copy per account linked into each `CODEX_HOME` (ADR-0053); a real ChatGPT login is not verified (no account). | SM-ACCT-002 | done |
 | K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
-| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0059), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; interim default is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | ADR-0059 acceptance; SM-GW-007, SM-GW-010 | ADR-0059 stays Proposed; Q4 open; live-run placeholder in TRACEABILITY |
-| K-13 | Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works). `docs/contracts/harnesses.md`, Harbor Pilot gateway spike. | Claude Code gateway runs on the default model | Report to the Harbor Pilot space as a cross-space request (Q5); until then a gateway run's model must avoid it |
+| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | ADR-0060 acceptance; SM-GW-007, SM-GW-010 | ADR-0060 stays Proposed; Q4 open; live-run placeholder in TRACEABILITY |
+| K-13 | Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works). `docs/contracts/harnesses.md`, Harbor Pilot gateway spike; ADR-0060 §6 (model choice). | Claude Code gateway runs on the default model | Report to the Harbor Pilot space as a cross-space request (Q5); until then a gateway run's model must avoid it |
