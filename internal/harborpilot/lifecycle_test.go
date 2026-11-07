@@ -502,3 +502,31 @@ func TestParentRotationRevokesLiveRunTokens(t *testing.T) {
 		t.Fatal("rotation left a pending revocation the new parent can't do")
 	}
 }
+
+// A revoker round that can't use the connection (none, or a parent token that doesn't open) still reschedules every due
+// row, so the shared deadline timer never fires again at once.
+func TestRevokerReschedulesWithoutAConnection(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	connect(t, svc, f)
+	l := newLifecycle(svc)
+	ctx := context.Background()
+	id := queueMinted(t, svc, f)
+	exec(t, s, `UPDATE harbor_pilot_connection SET parent_token_enc = x'00'`)
+	if _, err := l.RevokeDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	st, attempts, msg, next := revocation(t, s, id)
+	if st != "pending" || attempts != 1 || msg != "the parent token can't be opened" || next <= time.Now().UnixMicro() {
+		t.Fatalf("unopenable parent: %s %d %q %d", st, attempts, msg, next)
+	}
+	exec(t, s, `DELETE FROM harbor_pilot_connection`)
+	exec(t, s, `UPDATE gateway_revocations SET next_attempt_at = 0`)
+	if _, err := l.RevokeDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st, _, msg, next := revocation(t, s, id); st != "pending" || msg != "no Harbor Pilot connection is configured" || next <= time.Now().UnixMicro() {
+		t.Fatalf("no connection: %s %q %d", st, msg, next)
+	}
+}

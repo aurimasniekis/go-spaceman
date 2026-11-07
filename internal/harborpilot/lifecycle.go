@@ -367,8 +367,10 @@ func (l *Lifecycle) RevokeDue(ctx context.Context) (int, error) {
 	if err != nil || len(due) == 0 {
 		return 0, err
 	}
+	// Every due row is settled or rescheduled, whatever goes wrong here: a row left due would make the shared deadline
+	// timer fire again at once.
 	var c *Client
-	parent := ""
+	parent, unusable := "", "no Harbor Pilot connection is configured"
 	conn, err := l.svc.s.R().GetHarborPilotConnection(ctx)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -376,10 +378,10 @@ func (l *Lifecycle) RevokeDue(ctx context.Context) (int, error) {
 		return 0, err
 	default:
 		if parent, err = l.svc.open(parentAAD(conn.ID), conn.ParentTokenEnc, "parent"); err != nil {
-			return 0, err
-		}
-		if c, err = l.svc.client(conn.BaseUrl, conn.AllowInsecureHttp == 1); err != nil {
-			c = nil
+			l.svc.log().Error("harbor pilot revoker: the parent token can't be opened", "err", err)
+			unusable = "the parent token can't be opened"
+		} else if c, err = l.svc.client(conn.BaseUrl, conn.AllowInsecureHttp == 1); err != nil {
+			c, unusable = nil, "the connection's address is not usable"
 		}
 	}
 	settled := 0
@@ -390,7 +392,7 @@ func (l *Lifecycle) RevokeDue(ctx context.Context) (int, error) {
 		case !time.UnixMicro(r.ExpiresAt).After(now):
 			state, msg = "expired", "expired before it was revoked"
 		case c == nil:
-			msg = "no usable Harbor Pilot connection"
+			msg = unusable
 		default:
 			cctx, cancel := context.WithTimeout(ctx, revokeTimeout)
 			err := c.Revoke(cctx, parent, r.CredentialID)
