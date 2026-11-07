@@ -56,7 +56,7 @@ Every command accepts these.
 | [`spaceman limits`](./limits) | Space limits: show, override and list definitions |
 | [`spaceman mcp`](./mcp) | Central MCP gateway: servers, grants and a space's servers |
 | [`spaceman memory`](./memory) | Role memory of a space: collections, sync status, files, history and conflicts (--space) |
-| [`spaceman message`](./message) | Durable messages between agents, control and operators: list, show, send, reply, ack and resolve (--space) |
+| [`spaceman message`](./message) | Durable messages between agents, control and operators: list, show, send, reply, ack, resolve and cancel (--space) |
 | [`spaceman mfa`](./mfa) | Your second factor: TOTP enrollment and recovery codes |
 | [`spaceman node`](./node) | Nodes: list, enroll, edit, disable, enable and revoke |
 | [`spaceman notifications`](./notifications) | Your notification preferences: what the web UI announces to you |

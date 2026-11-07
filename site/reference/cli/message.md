@@ -2,13 +2,14 @@
 
 # spaceman message
 
-Durable messages between agents, control and operators: list, show, send, reply, ack and resolve (--space).
+Durable messages between agents, control and operators: list, show, send, reply, ack, resolve and cancel (--space).
 
 Aliases: `messages`, `msg`.
 
 | Subcommand | Description |
 |---|---|
 | [`spaceman message ack`](#spaceman-message-ack) | Acknowledge a message addressed to operators |
+| [`spaceman message cancel`](#spaceman-message-cancel) | Cancel a scheduled message to control before it is due |
 | [`spaceman message get`](#spaceman-message-get) | Show a message |
 | [`spaceman message list`](#spaceman-message-list) | A space's recent messages |
 | [`spaceman message reply`](#spaceman-message-reply) | Reply to an agent's message (a reply to a request resolves it) |
@@ -24,6 +25,20 @@ spaceman message ack <message> [flags]
 ```
 
 API: `ack-message` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman message cancel
+
+Cancel a scheduled message to control before it is due.
+
+```sh
+spaceman message cancel <message> [flags]
+```
+
+API: `cancel-message` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -58,6 +73,7 @@ API: `list-messages` ([HTTP API](../api)).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--limit` | integer |  | maximum number of items |
+| `--scheduled` | bool |  | only scheduled messages to control that are not yet due |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman message reply

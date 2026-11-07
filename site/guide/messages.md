@@ -80,7 +80,7 @@ When it falls due, it is delivered like any other message to control:
 
 Control lists what is pending with `spaceman_message_scheduled` and withdraws one with `spaceman_message_cancel`.
 Operators see them under **Messages → Scheduled** with their "scheduled for" time, and can **Cancel** one there. The
-API equivalents are `GET /spaces/{id}/messages?scheduled=true` and `POST /spaces/{id}/messages/{message_id}/cancel`.
+API equivalents are `GET /spaces/{id}/messages?scheduled=true` and `POST /spaces/{id}/messages/{message_id}/cancel`; on the command line, `spaceman message list --scheduled` and `spaceman message cancel`.
 A cancelled message is resolved as "cancelled before delivery" and is never delivered. Scheduling and cancelling are
 both audited (`message.sent` with `deliver_at`, and `message.cancelled`).
 

@@ -13,7 +13,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     `control_autostart` limits, and a control started later is told about it once.
   - Pending reminders: up to 50 per space, and a `dedup_key` returns the pending one.
   - Control lists them with `spaceman_message_scheduled` and cancels with `spaceman_message_cancel`. Operators use
-    the Messages page's **Scheduled** view, `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel`.
+    the Messages page's **Scheduled** view, `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel`, or
+    `spaceman message list --scheduled` and `spaceman message cancel`.
   - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
 - Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on;
   until then a gateway run's harness gets no model credentials, so don't enable Harbor Pilot for a space yet.
