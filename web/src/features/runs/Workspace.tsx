@@ -114,8 +114,9 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
                   // One control for the space name and the space list, instead of a second header with its own toggle.
                   <Button variant="subtle" color="gray" px={4} fw={600} size="sm" aria-label={`Space: ${currentName ?? ''}. Choose a space or agent`}
                     leftSection={<IconLayoutSidebarLeftExpand size={16} />} rightSection={<IconChevronDown size={14} />} onClick={() => setDrawer(true)}
-                    styles={{ root: { minWidth: 0 }, label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}>
-                    {currentName}
+                    styles={{ root: { minWidth: 0, maxWidth: '100%' }, inner: { minWidth: 0 }, label: { minWidth: 0 } }}>
+                    {/* Mantine's label is a flex box, where text-overflow has no effect: truncate an inner block. */}
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentName}</span>
                   </Button>
                 ) : (
                   <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
