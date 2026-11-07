@@ -78,6 +78,42 @@ func (a *App) gitKeyCmd() *cobra.Command {
 	)
 }
 
+func (a *App) harborPilotCmd() *cobra.Command {
+	connForm := func(f *form) {
+		f.str("base-url", "base_url", "gateway origin SpaceMan calls (https unless loopback or --allow-insecure-http)").
+			str("run-base-url", "run_base_url", "origin runs reach the gateway on, when it differs (needs https)").
+			boolean("allow-insecure-http", "allow_insecure_http", "allow plain http: tokens then cross the network in clear text").
+			secret("parent-token", "parent_token", "parent gateway credential (hpk_…) with tokens:mint; required when connecting").
+			secret("service-token", "service_token", "service-principal token (hpa_…) with usage.read and config.read").
+			boolean("remove-service-token", "remove_service_token", "remove the service-principal token")
+	}
+	spaceForm := func(f *form) {
+		f.boolean("enabled", "enabled", "route the space's runs of the listed harnesses through Harbor Pilot").
+			str("project", "project_id", "Harbor Pilot project id runs are charged to (required when enabled)").
+			list("harness", "harnesses", "harness kind routed through Harbor Pilot (default: claude-code and codex)").
+			integer("ttl", "ttl_seconds", "run token lifetime in seconds, 900 to 604800 (default 86400)").
+			str("on-budget-status-unavailable", "on_budget_status_unavailable", "proceed or refuse").
+			list("model", "allowed_model_aliases", "model alias runs may use (default: any)")
+	}
+	return group("harbor-pilot", "The Harbor Pilot gateway (ADR-0060): the connection and a space's settings", []string{"hp"},
+		a.cmd(opts{use: "get", short: "The connection (never its tokens)", op: "get-harbor-pilot-connection"}),
+		a.cmd(opts{use: "connect", short: "Connect Harbor Pilot or change the connection (checked with Harbor Pilot first)", op: "put-harbor-pilot-connection",
+			get: "get-harbor-pilot-connection", getOptional: true, merge: true, form: connForm,
+			long: "Saving mints a probe token with the parent token and revokes it at once: it shows the parent holds tokens:mint, its client " +
+				"binding and expiry, and that the gateway is Harbor Pilot 0.1.3 or later. Tokens come from a file or standard input and are " +
+				"never shown again; omit them to keep the current ones.",
+			example: "spaceman harbor-pilot connect --base-url https://harbor-pilot.example.com --parent-token-file ~/.hp/parent --service-token-file ~/.hp/reader"}),
+		a.cmd(opts{use: "disconnect", short: "Remove the connection (refused while a space uses it)", op: "delete-harbor-pilot-connection",
+			get: "get-harbor-pilot-connection", confirm: "remove the Harbor Pilot connection", done: "Harbor Pilot connection removed."}),
+		a.cmd(opts{use: "space", short: "A space's Harbor Pilot settings", op: "get-space-harbor-pilot", scoped: true}),
+		a.cmd(opts{use: "set-space", short: "Set a space's Harbor Pilot settings (only the flags given change)", op: "put-space-harbor-pilot",
+			get: "get-space-harbor-pilot", merge: true, optionalIfMatch: true, scoped: true, form: spaceForm,
+			example: "spaceman harbor-pilot set-space --space payments --enabled --project prj_01… --harness codex --ttl 43200"}),
+		a.cmd(opts{use: "unset-space", short: "Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot)",
+			op: "delete-space-harbor-pilot", get: "get-space-harbor-pilot", scoped: true, done: "Harbor Pilot settings removed."}),
+	)
+}
+
 func (a *App) promptCmd() *cobra.Command {
 	return group("prompt", "Prompt catalog: list, show, create, draft, publish, diff, fork and roll back", []string{"prompts"},
 		a.cmd(opts{use: "list", short: "The prompt catalog", op: "list-prompts", alias: []string{"ls"}, view: view{items: "items", cols: promptCols, empty: "No prompts."}}),

@@ -47,6 +47,7 @@ Every command accepts these.
 | [`spaceman dream`](./dream) | Dream configurations of a space: list, create, update, start and runs (--space) |
 | [`spaceman event`](./event) | Events: Pulse connections, templates and subscriptions |
 | [`spaceman git-key`](./git-key) | Shared Git SSH keys (ADR-0058): generate, list, show, edit, rotate and delete |
+| [`spaceman harbor-pilot`](./harbor-pilot) | The Harbor Pilot gateway (ADR-0060): the connection and a space's settings |
 | [`spaceman human`](./human) | Human actions: list, create, respond, assign, comment and cancel; types and policies |
 | [`spaceman identity`](./identity) | Your linked sign-in identities: list and unlink (a user's: `spaceman user identity`) |
 | [`spaceman inbox`](./inbox) | A space's inbox: list, show, add and triage items (--space) |
