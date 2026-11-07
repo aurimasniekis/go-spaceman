@@ -128,6 +128,7 @@ const (
 	RunKilled       RunEndReason = "killed"
 	RunLeaseExpired RunEndReason = "lease_expired"
 	RunLost         RunEndReason = "lost"
+	RunLaunchFailed RunEndReason = "launch_failed" // the launch could not be dispatched (node too old, account unusable)
 )
 
 // Volume names a filesystem whose capacity is exported.
@@ -170,7 +171,7 @@ var (
 	enumCommandResult = newEnum(CmdAccepted, CmdDuplicate, CmdRejected, CmdTimeout)
 	enumHarness       = newEnum(HarnessClaude, HarnessCodex)
 	enumRunStart      = newEnum(RunLaunched, RunAdopted, RunFailed)
-	enumRunEnd        = newEnum(RunExited, RunStopped, RunKilled, RunLeaseExpired, RunLost)
+	enumRunEnd        = newEnum(RunExited, RunStopped, RunKilled, RunLeaseExpired, RunLost, RunLaunchFailed)
 )
 
 // bounded admits label values that match a pattern, up to a fixed number of distinct values; the rest map to
