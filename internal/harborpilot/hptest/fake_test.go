@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// fake is a minimal stand-in for the Harbor Pilot v0.1.1 endpoints hptest uses, shaped on the behaviour recorded in
+// fake is a minimal stand-in for the Harbor Pilot v0.1.3 endpoints hptest uses, shaped on the behaviour recorded in
 // docs/contracts/harbor-pilot.md. It lets the package's own logic be tested without the real binary; it is never
 // evidence about Harbor Pilot itself.
 type fake struct {
@@ -56,7 +56,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"title": "Internal Server Error", "detail": "injected"})
 		return
 	}
-	admin := strings.HasPrefix(p, "/api/v1/") && p != "/api/v1/budgets/status"
+	admin := strings.HasPrefix(p, "/api/v1/") && p != "/api/v1/budgets/status" && p != "/api/v1/usage/summary" // those two: service token
 	if admin && p != "/api/v1/session" {
 		if c, err := r.Cookie("hp_session"); err != nil || c.Value != "ok" {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"title": "Unauthorized"})
@@ -110,6 +110,14 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": []map[string]any{{"budget_id": "bdg_1", "name": BudgetName, "scope": "project",
 			"scope_id": "prj_data", "enforcement": "block", "state": "exceeded"}}})
+	case p == "/api/v1/usage/summary":
+		if id, ok := f.bearer(r); !ok || id != "sp" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"title": "Unauthorized"})
+			return
+		}
+		k, v, _ := strings.Cut(r.URL.Query().Get("ref"), ":")
+		writeJSON(w, http.StatusOK, map[string]any{"filters": map[string]any{"refs": map[string]string{k: v}, "binding_id": r.URL.Query().Get("binding_id")},
+			"groups": []map[string]any{{"key": "acc_1", "attempts": 2}, {"key": "acc_2", "attempts": 1}}})
 	case p == "/v1/harbor/credentials" && r.Method == http.MethodPost:
 		if id, ok := f.bearer(r); !ok || id != f.parent {
 			oaiErr(w, http.StatusUnauthorized, "invalid_api_key", "invalid or revoked credential")

@@ -152,7 +152,51 @@ argv was `codex --no-daemon` with these five overrides, then `-s read-only -a ne
 - A model must be chosen that both the harness sends cleanly and the Harbor Pilot plan routes.
   - For Codex, a run needs a `-m` the plan routes (a space setting or allowed-alias default).
   - For Claude with Harbor Pilot 0.1.1, a model whose requests carry no `system`-role messages, until Harbor Pilot
-    accepts them.
+    accepts them. Harbor Pilot 0.1.2 does (re-run below), and SpaceMan requires ≥ 0.1.3.
+
+## Harbor Pilot 0.1.3 re-run: Claude Code on its default model (K-13, 2026-11-07)
+
+Re-run of the Claude Code model turn above after Harbor Pilot 0.1.2/0.1.3 started accepting `system`-role entries in
+`messages[]` (contract: Gateway data plane).
+
+**Setup.**
+- Harbor Pilot v0.1.3 `serve --demo` (from `go install`, commit `2e957c7`) on loopback, provisioned by `hptest`
+  (binding `spaceman-test`, synthetic upstreams).
+- One child token minted with the parent token: scopes `gateway:invoke` and `gateway:models`, TTL 1 h, `bound_refs`
+  `spaceman.space`, `spaceman.run`, `spaceman.instance`, `session` and `project_id`.
+- Claude Code 2.1.317 (`/usr/local/bin/claude`), started with `env -i`, a fresh `HOME`, `DISABLE_AUTOUPDATER=1`, and
+  only `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` (the child token) as credentials. **No `--model`**, so it used
+  its default, `claude-opus-5-5`.
+- It ran in print mode (`claude -p "…" --output-format json`), not interactively through `spaceman-agent launch` as in
+  the first spike. Print mode sends the same `system`-role entry, as the proxy showed.
+- A pass-through proxy in front of the gateway logged each request's model and the roles in `messages[]` (no content).
+
+**Result: K-13 is resolved on the demo.**
+- The model request was `POST /v1/messages?beta=true`, model `claude-opus-5-5`, with roles `["user","system"]`. That
+  is the shape Harbor Pilot 0.1.1 refused with 400.
+- Harbor Pilot answered 200, and the turn completed (`is_error: false`, `subtype: success`) with the demo's synthetic
+  reply. Claude reported its usage under `claude-opus-5-5`.
+- Two runs, each on its own gateway, were served by different demo accounts (contract: Demo seed, demo routing):
+  - on one, started right after the gateway was up, the request went to the demo's Anthropic-shaped upstream
+    (`demo-sonnet`). Its request detail showed **no losses**, so the `system` entry was passed through unchanged;
+  - on the other, it went to a Responses-shaped upstream (`demo-gpt`) and was translated, with losses only for fields
+    Responses lacks (among them `output_config` on the mid-conversation system message).
+- **Attribution: worked.** `harness: claude_code`; `trusted_refs` held the five bound refs plus the binding's
+  `spaceman.fleet`; Claude's `x-claude-code-session-id` was under `claims`. `activity/requests?ref=spaceman.run:<run>`
+  and `activity/sessions?ref=session:<value>` found the request and its session; `usage/summary` with
+  `group_by=ref:spaceman.run` showed the run.
+- **Cleanup.** The token was revoked (204, twice), then got 401 on `/v1/models`. The gateway and its data directory
+  were removed by the test cleanup.
+
+**What this does not show.**
+- The demo's upstreams are synthetic, so whether a **real** Anthropic upstream accepts `claude-opus-5-5`'s
+  mid-conversation `system` entry is not verified. Harbor Pilot passes it through unchanged for models not on its
+  no-support list (D-042), so a real model without support would return the provider's own 400.
+- Interactive Claude through `spaceman-agent launch` was not re-run. The first spike already showed that path reaches
+  the prompt with the ADR-0021 seed; only the model turn changed.
+
+**Consequence for HP-T4:** with Harbor Pilot ≥ 0.1.2, a Claude Code gateway run doesn't need a model chosen to avoid
+`system`-role messages. It still needs a model the space's Harbor Pilot plan routes.
 
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |

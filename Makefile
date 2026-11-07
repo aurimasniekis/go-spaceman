@@ -183,7 +183,7 @@ test-real-codex:
 	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE SPACEMAN_REAL_CODEX=1 $(GO) test -tags real -count=1 -timeout 15m \
 	  -run '^TestRealCodexRun$$' -v ./test/real/
 
-# Real Harbor Pilot gateway (docs/contracts/harbor-pilot.md): `harbor-pilot serve --demo` v0.1.1 on loopback in a temp
+# Real Harbor Pilot gateway (docs/contracts/harbor-pilot.md): `harbor-pilot serve --demo` v0.1.3 on loopback in a temp
 # data dir, with its own binding, budget, service principal and parent token (internal/harborpilot/hptest). Uses
 # HARBOR_PILOT_BIN, or installs the pinned release with `go install`. Synthetic upstreams; no provider credentials.
 test-harbor-pilot:
