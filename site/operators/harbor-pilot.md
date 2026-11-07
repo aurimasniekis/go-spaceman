@@ -5,7 +5,7 @@ per-project spend limits and usage for every harness. SpaceMan can route a space
 its own short-lived Harbor Pilot token instead of an [account](./accounts), revoked when the run ends.
 
 ::: warning Work in progress
-This page covers the connection, the per-space settings and how central mints and revokes run tokens. Handing the
+This page covers the connection, the per-space settings, how central mints and revokes run tokens, and events. Handing the
 token to the harness, and the budget status on the Limits page, come in later releases: until then a run routed through
 Harbor Pilot starts without model credentials, so don't opt a space in yet.
 The design is ADR-0060 (Proposed) in [Decisions](../security/decisions).
@@ -49,7 +49,8 @@ changes". Changing or removing the connection also asks you to confirm your sign
 `account:write`.
 
 SpaceMan calls the gateway without a proxy and never on link-local (cloud metadata), unspecified, multicast or
-broadcast addresses, including those reached through NAT64 or 6to4. Private and loopback addresses are allowed, since a gateway usually runs on an internal network.
+broadcast addresses, including those reached through NAT64 or 6to4. Private and loopback addresses are allowed, since
+a gateway usually runs on an internal network.
 
 <Shot name="harbor-pilot" alt="Harbor Pilot page: the gateway URL, the parent and service-principal tokens shown only as set with their versions, the client binding, and the space using it" caption="The connection, without its tokens" />
 
@@ -98,9 +99,21 @@ For a harness the space routes through Harbor Pilot:
 - **Replacing the parent token revokes the tokens of running runs** with the old parent first (the new parent can't
   revoke them). Those runs then have no model access until they are started again, and the page says how many.
 
+## Events
+
+Harbor Pilot can publish its events to Pulse: add a Pulse event destination in Harbor Pilot (its Pulse URL, a
+`.creds` file allowed to publish `evt.harborpilot.>`, and the event names to send, for example `budget.*`, `quota.*`
+and `access.request.blocked`). Then subscribe spaces with the built-in templates `harbor-pilot-budget`,
+`harbor-pilot-quota` and `harbor-pilot-access-blocked` ([Events](../guide/events.md#built-in-harbor-pilot-templates)).
+Give each space's budget subscription the same project id as its settings above. Quota events, blocked requests and
+budgets that aren't per project reach only spaces that subscribe to them. A destination only sends events from after
+Harbor Pilot picked it up.
+
 ## Verified
 
 The connection checks and the run-token lifecycle were run against a real `harbor-pilot serve --demo` 0.1.3 (with
 synthetic upstreams): a parent without `tokens:mint`, project checks, a run's token answering `/v1/models` with the
 expected references, the token refused after the run ended, and a revoked parent failing the next run as
-`gateway_unavailable`. The node side is scripted in that test; harnesses don't receive the token yet.
+`gateway_unavailable`. The node side is scripted in that test; harnesses don't receive the token yet. The event
+templates were tested on events captured from the same demo and with its own relay publishing into SpaceMan's
+Pulse-shaped test server, not a production Pulse.

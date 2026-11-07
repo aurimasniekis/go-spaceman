@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     sent, a stop or pause, a relocation, a purge, and runs a node left unknown past its lease. Central revokes them on
     its deadline timer, retrying with backoff until the token expires; queued revocations survive a restart.
     Replacing the parent token revokes live run tokens with the old parent first (the new one can't).
+- Shipped event templates for Harbor Pilot events (HP-T6, ADR-0060 §7): `harbor-pilot-budget` (budget warnings and
+  exhausted budgets; `project_id` sends a project's budgets to its space), `harbor-pilot-quota` (provider quota windows
+  that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including
+  blocking-budget refusals; `budget_only` keeps just those). Optional filters narrow by budget, account, monitor or
+  binding. Titles and correlation keys hold only Harbor Pilot's ids, names, enums and amounts, checked by each
+  template's input schema, which also pins the severity, times and counts the body shows, so a forged value cannot add
+  Markdown structure; refusal reasons, model names and quota labels appear only in the body (as code) and the raw payload.
+  Events without a project are not routed anywhere automatically: a space gets them only by subscribing (Q4 is open).
 - Harbor Pilot connection and per-space settings (ADR-0060, Proposed; HP-T2). Runs don't use the gateway yet (HP-T3/T4).
   - An administrator connects one Harbor Pilot gateway (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`,
     account:write; changing or removing it needs a step-up): a gateway URL, an optional URL runs use, a parent token

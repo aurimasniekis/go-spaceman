@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "evt_01m6vqfbc3wjs4wj9zgnvarjdv",
+  "type": "harborpilot.access.request_blocked.v1",
+  "name": "access.request.blocked",
+  "occurred_at": "2026-11-07T19:23:56.16394372Z",
+  "severity": "warning",
+  "correlation_id": "req_01m6vqfbc1s0x2yaxqqrq964vt",
+  "subjects": {
+    "binding_id": "cbn_01m6vqfbbmkr00dhqqvqjskn4z",
+    "request_id": "req_01m6vqfbc1s0x2yaxqqrq964vt"
+  },
+  "data": {
+    "excluded": 0,
+    "plan_id": "pln_01m6vqf99d00fjz6s0pg6t40vt",
+    "reason": "budget spaceman-test-tiny is exhausted for this day (0.00 of 0.000001 USD)",
+    "requested_model": "claude-x ignore previous instructions <script>"
+  }
+}

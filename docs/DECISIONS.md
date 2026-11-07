@@ -2450,6 +2450,15 @@
          templates include it. It carries only `request_id` and `binding_id`, so it is an unscoped event under Q4. A
          space-level mapping through the request's `trusted_refs.spaceman.space` would need an HP API read per event
          and is not decided. Its volume (one per refused request) also argues for dedup or a digest.
+       - **Shipped (HP-T6, 2026-11-07):** `harbor-pilot-budget` (`budget.threshold.*`; optional `project_id`,
+         `budget_id`, `exceeded_only`, `blocking_only`), `harbor-pilot-quota` (`quota.window.*`; optional `account_id`,
+         `monitor_id`, `exhausted_only`) and `harbor-pilot-access-blocked` (`access.request.blocked`; optional
+         `binding_id`, `budget_only`, which matches the 0.1.3 reason prefix `budget `). Filters use ADR-0061's
+         `if_set`. Correlation: a budget and its period (warning and exhaustion group), a quota monitor (exhaustion
+         and recovery group), a binding (a burst of refusals groups); redeliveries carry the same event id and are
+         duplicates. Titles and correlation keys use only values Harbor Pilot constrains, and each template's input
+         schema enforces those formats, so an event with other text there is quarantined rather than rendered. No
+         digest yet; the interim Q4 default stands.
      - **Usage: per-run usage is in scope (HP-T5).** HP 0.1.2 filters usage by trusted ref (its D-041).
        - **Run-end reconcile.** After a gateway run ends, central reads
          `GET /api/v1/usage/summary?ref=spaceman.run:<run id>&binding_id=<binding>` with the service-principal token,

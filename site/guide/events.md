@@ -85,6 +85,49 @@ optional: with `"if_set": "repository"` it applies only when the subscription se
 repository, author, bot and conclusion filters switchable.
 :::
 
+## Built-in Harbor Pilot templates
+
+[Harbor Pilot](../operators/harbor-pilot.md) (0.1.3 or later) publishes its events to Pulse as `evt.harborpilot.<area>.<entity>.<action>`,
+with its event envelope as the payload, once an administrator adds a Pulse event destination in Harbor Pilot. Three
+built-in templates turn the ones that matter to agent work into inbox items:
+
+| Template | Subject (after `evt.harborpilot.`) | Accepts | Urgency | Correlation |
+|---|---|---|---|---|
+| `harbor-pilot-budget` | `budget.threshold.*` | a budget crossed its warning fraction (`warning`) or was used up (`exceeded`) in its current period | high | `harborpilot:budget:<budget id>:<period start>` |
+| `harbor-pilot-quota` | `quota.window.*` | a monitored provider quota window ran out (`exhausted`) or has capacity again (`recovered`) | normal | `harborpilot:quota:<monitor id>` |
+| `harbor-pilot-access-blocked` | `access.request.blocked` | Harbor Pilot refused a model request by policy: a routing restriction, privacy, compatibility or a blocking budget | normal | `harborpilot:blocked:<binding id>` |
+
+All variables are optional:
+
+| Variable | Template | Meaning |
+|---|---|---|
+| `project_id` | `harbor-pilot-budget` | only budgets of this Harbor Pilot project id (`prj_…`; events carry ids, so a project name is refused), normally the project the space uses; empty for every budget |
+| `budget_id` | `harbor-pilot-budget` | only this budget |
+| `exceeded_only` | `harbor-pilot-budget` | `true` ignores warnings |
+| `blocking_only` | `harbor-pilot-budget` | `true` keeps only budgets that refuse requests (`enforcement: block`), not warn-only ones |
+| `account_id` | `harbor-pilot-quota` | only windows of this provider account |
+| `monitor_id` | `harbor-pilot-quota` | only this quota monitor |
+| `exhausted_only` | `harbor-pilot-quota` | `true` ignores recoveries |
+| `binding_id` | `harbor-pilot-access-blocked` | only requests of this client binding, for example SpaceMan's (shown on the Harbor Pilot connection) |
+| `budget_only` | `harbor-pilot-access-blocked` | `true` keeps only budget refusals |
+
+Which space gets what:
+
+- **A project's budgets go to the space of that project.** Subscribe each space that uses Harbor Pilot to
+  `harbor-pilot-budget` with its project. Only project budgets name a project.
+- **Everything else is not routed automatically.** Quota windows, blocked requests and binding, workspace, account or
+  global budgets name no project, so they reach only spaces that subscribe to them, for example an operations space
+  subscribed without filters. How to route them automatically is still undecided.
+- Harbor Pilot sends one `access.request.blocked` per refused request. Refusals of one binding share a correlation, so
+  a burst groups together. A budget's warning and its exhaustion in the same period also group, as do a quota window's
+  exhaustion and recovery. A redelivered event creates nothing new.
+- Untrusted text stays out of item titles and correlation keys: they hold only Harbor Pilot's ids, resource names,
+  states and amounts. The templates' input schemas enforce those formats, so an event with anything else there goes
+  to quarantine. Refusal reasons, the model name a client asked for and quota labels appear only in the body and the
+  raw payload attachment.
+- A new Pulse destination in Harbor Pilot starts at Harbor Pilot's newest event, so events from before it was added are
+  not sent unless you replay them from Harbor Pilot.
+
 ## Subscribing a space
 
 In a space's **Events** section, **Subscribe** asks for a connection, a published template version and its variables.

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "evt_01m6vqfzzbxb3p6n5xj67fkr2f",
+  "type": "harborpilot.budget.threshold_warning.v1",
+  "name": "budget.threshold.warning",
+  "occurred_at": "2026-11-07T19:24:17.25964724Z",
+  "severity": "warning",
+  "correlation_id": "req_01m6vqfzzbxb3p6n5xhz2fmr8w",
+  "subjects": {
+    "budget_id": "bdg_01m6vqfzz70jb7cq98fw9w0a99",
+    "project_id": "prj_01m6vqfxyezv29n42an14yag3s"
+  },
+  "data": {
+    "budget": "spaceman-test-warn",
+    "currency": "USD",
+    "enforcement": "warn",
+    "fraction": 0.61455,
+    "limit": "0.10",
+    "period": "day",
+    "period_start": "2026-11-07T00:00:00Z",
+    "scope": "project",
+    "spent": "0.061455"
+  }
+}
