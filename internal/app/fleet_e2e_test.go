@@ -97,7 +97,9 @@ func shortLease(cfg *config.Config) {
 
 func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}})
+	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
+	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4})
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -267,8 +269,14 @@ func TestFleetLifecycle(t *testing.T) {
 	starts := e.run.Starts
 	e.startAgent()
 	eventually(t, "runs running again", func() bool { return e.run1(ctrl.ID).Observed == "running" && e.run1(worker.ID).Observed == "running" })
-	// Central restart: pending/sent commands are re-delivered and acknowledged as duplicates.
+	// Central restart: pending/sent commands are re-delivered and acknowledged as duplicates. The restart must stay
+	// inside the lease: once lease + grace pass without central, the agent stops the runs (SM-NODE-007), which is
+	// correct, and they never come back to running.
+	restartAt := time.Now()
 	e.restartCentral()
+	if d := time.Since(restartAt); d >= e.cfg.Nodes.LeaseTTL.D() {
+		t.Fatalf("central restart took %v, not less than the %v lease: the agent may stop the runs before it reconnects", d, e.cfg.Nodes.LeaseTTL.D())
+	}
 	eventually(t, "reconnected after central restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
 	eventually(t, "runs running after central restart", func() bool { return e.run1(worker.ID).Observed == "running" })
 	time.Sleep(500 * time.Millisecond)
