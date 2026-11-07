@@ -9818,10 +9818,14 @@ export interface components {
             variables: components["schemas"]["TemplateVariable"][];
         };
         TemplateFilter: {
+            /** @description Apply the filter only when this variable has a value */
+            if_set?: string;
             /** @enum {string} */
-            op: "eq" | "ne" | "in" | "exists" | "prefix";
+            op: "eq" | "ne" | "in" | "exists" | "absent" | "prefix";
             /** @description Dotted path into the event, e.g. data.repository.full_name */
             path: string;
+            /** @description Apply the filter only when this variable has no value */
+            unless_set?: string;
             value?: string;
             values?: string[];
         };

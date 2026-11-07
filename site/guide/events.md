@@ -27,11 +27,50 @@ Three things are configured separately:
 
 ## Built-in GitHub templates
 
-The **GitHub issues** and **GitHub pull requests** templates follow the go-pulse-github v0.1.0 event contract. In that
-contract the repository is not part of the subject, so the `repository` variable is a payload filter on
-`repository.full_name`, while `account_key` is the subject token. Each template page can test the definition against a
-sample event; the GitHub issues template is pre-filled with the event go-pulse-github builds for its `issues_opened`
-fixture.
+The built-in templates follow the go-pulse-github v0.1.0 event contract, where subjects are
+`evt.github.<account>.webhook.<event>.<action>`. The repository is not part of the subject, so `account_key` is the
+subject token and the repository is a payload filter on `repository.full_name`. Each template page can test the
+definition against a sample event; the GitHub issues template is pre-filled with the event go-pulse-github builds for
+its `issues_opened` fixture.
+
+| Template | Subject (after `evt.github.<account>.webhook.`) | Accepts | Urgency | Correlation |
+|---|---|---|---|---|
+| `github-issue` | `issues.*` | every issue action (opened, edited, closed, reopened, assigned, labeled, …) | normal | `github:<repo>#<number>` |
+| `github-pull-request` | `pull_request.*` | every pull request action (opened, synchronize, closed and merged, reopened, ready_for_review, review_requested, …) | normal | `github:<repo>#<number>` |
+| `github-pr-comment` | `issue_comment.created` | new comments in a pull request's conversation | normal | `github:<repo>#<number>` |
+| `github-issue-comment` | `issue_comment.created` | new comments on issues that are not pull requests | normal | `github:<repo>#<number>` |
+| `github-pr-review` | `pull_request_review.submitted` | submitted reviews: approved, changes requested, commented | normal | `github:<repo>#<number>` |
+| `github-pr-review-comment` | `pull_request_review_comment.created` | new inline comments on a pull request's diff | normal | `github:<repo>#<number>` |
+| `github-workflow-run` | `workflow_run.completed` | completed GitHub Actions runs; by default only `failure`, `timed_out`, `cancelled`, `startup_failure` | high | `github:<repo>@<head sha>` |
+| `github-check-suite` | `check_suite.completed` | completed check suites of any CI app; the same default conclusions | high | `github:<repo>@<head sha>` |
+
+Variables:
+
+| Variable | Templates | Meaning |
+|---|---|---|
+| `account_key` | all, required | the monitored account configured in pulse-github (the subject token) |
+| `repository` | required in `github-issue` and `github-pull-request`, optional in the others | only this repository, as `owner/name` |
+| `owner` | all but `github-issue` and `github-pull-request` | only repositories of this owner |
+| `exclude_author` | all but `github-issue` and `github-pull-request` | ignore events by this login, for example the space's own agent account (agents comment on pull requests too) |
+| `include_bots` | comment and review templates | `true` keeps events by bot accounts; by default they are ignored |
+| `exclude_bots` | CI templates | `true` ignores runs a bot triggered; by default they are kept, since a bot's pull request can fail CI too |
+| `include_successes` | CI templates | `true` accepts every conclusion, including `success`, `neutral` and `skipped` |
+| `app` | `github-check-suite` | only suites of this GitHub App (its slug, e.g. `github-actions`) |
+
+Notes on choosing templates:
+
+- Comments on issues and on pull requests are the same GitHub event, so the two comment templates split it; subscribe
+  to both to hear about every comment.
+- A review with inline comments arrives as one review and one review comment per inline comment. Subscribe to
+  `github-pr-review` alone for one item per review.
+- GitHub Actions runs also produce a check suite, so `github-workflow-run` and `github-check-suite` overlap for Actions;
+  use `github-check-suite` with `app` for another CI, or the workflow run template for Actions' run details. Both
+  correlate on the commit, so reruns of a commit and both templates group together.
+- Edits and deletions are other actions and match none of the comment, review or CI templates. A GitHub redelivery is
+  the same event and creates nothing new.
+- Untrusted text stays out of item titles: titles hold only the repository, number, login, review state, CI
+  conclusion and a short commit SHA. Issue and pull request titles, comments, file paths and workflow and branch names
+  appear only in the body and the raw payload attachment, and instructions never contain event text.
 
 <Shot name="event-template" alt="GitHub issues template with its definition and an accepted sample test" caption="Testing a template with a sample event" />
 
@@ -39,6 +78,11 @@ fixture.
 Templates are data, not code. Placeholders such as `{{data.repository.full_name}}` read the event, its payload and the
 subscription's variables, with a few filters (`default`, `truncate`, `json`, `upper`, `lower`, `oneline`, `code`).
 Rendering is deterministic and bounded, and variables can never add wildcards or extra subject tokens.
+
+Payload filters compare a path with `eq`, `ne`, `in`, `prefix`, `exists` or `absent` (missing or null). A filter can be
+optional: with `"if_set": "repository"` it applies only when the subscription sets `repository`, with
+`"unless_set": "include_bots"` only when that variable is empty. This is how the built-in templates make their
+repository, author, bot and conclusion filters switchable.
 :::
 
 ## Subscribing a space

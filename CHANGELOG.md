@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- More built-in GitHub event templates (ADR-0061), seeded at central's start on new and existing installations:
+  - `github-pr-comment` and `github-issue-comment`: new comments on pull requests and on issues;
+  - `github-pr-review`: submitted reviews (approved, changes requested, commented);
+  - `github-pr-review-comment`: new inline comments on a pull request's diff;
+  - `github-workflow-run` and `github-check-suite`: completed GitHub Actions runs and check suites, by default only
+    failed, timed out, cancelled or startup failures (`include_successes` takes every conclusion).
+
+  Each takes the account and optional `repository`, `owner` and `exclude_author` (for a space's own agent account).
+  Comment and review templates ignore bots unless `include_bots` is set; CI templates can drop them with
+  `exclude_bots`. Comments and reviews correlate with their pull request or issue, CI with its commit. Item titles
+  hold no free text from the event: titles, comments and workflow names are only in the body and the payload.
+- Template filters can be optional: `if_set` applies a filter only when a variable has a value, `unless_set` only
+  when it has none. A new operator `absent` matches a missing or null field.
 - Claude Code settings on harness profiles (ADR-0059, security-relevant): a claude-code profile's `claude_settings` are
   settings.json keys, any keys (permissions, auto mode rules, env, hooks, …). They are set in each run's own
   `settings.json` at launch, and keys taken out of the profile are removed at the next launch. The profile form edits

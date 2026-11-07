@@ -36,11 +36,16 @@ type Variable struct {
 }
 
 // Filter accepts or rejects an event by a payload value. Value and Values may contain {{vars.x}} placeholders only.
+// IfSet and UnlessSet make a filter optional: it applies only when the named variable has a value (IfSet) or has none
+// (UnlessSet), so a subscription can turn a template's filter on or off with its variables. Filters only narrow what a
+// subscription accepts; the subject never depends on them.
 type Filter struct {
-	Path   string   `json:"path" doc:"Dotted path into the event, e.g. data.repository.full_name"`
-	Op     string   `json:"op" enum:"eq,ne,in,exists,prefix"`
-	Value  string   `json:"value,omitempty"`
-	Values []string `json:"values,omitempty"`
+	Path      string   `json:"path" doc:"Dotted path into the event, e.g. data.repository.full_name"`
+	Op        string   `json:"op" enum:"eq,ne,in,exists,absent,prefix"`
+	Value     string   `json:"value,omitempty"`
+	Values    []string `json:"values,omitempty"`
+	IfSet     string   `json:"if_set,omitempty" pattern:"^[a-z][a-z0-9_]{0,31}$" doc:"Apply the filter only when this variable has a value"`
+	UnlessSet string   `json:"unless_set,omitempty" pattern:"^[a-z][a-z0-9_]{0,31}$" doc:"Apply the filter only when this variable has no value"`
 }
 
 // Definition is a template version's content, or a subscription's custom definition.
@@ -63,7 +68,7 @@ var (
 	reVarName   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 	reToken     = regexp.MustCompile(`^[a-z0-9_-]+$`)
 	reVarsOnly  = regexp.MustCompile(`\{\{\s*vars\.([a-z][a-z0-9_]{0,31})\s*\}\}`)
-	filterOps   = map[string]bool{"eq": true, "ne": true, "in": true, "exists": true, "prefix": true}
+	filterOps   = map[string]bool{"eq": true, "ne": true, "in": true, "exists": true, "absent": true, "prefix": true}
 	urgencyVals = map[string]bool{"": true, "low": true, "normal": true, "high": true, "urgent": true}
 )
 
@@ -110,7 +115,12 @@ func (d *Definition) Validate() error {
 			add("filters[%d].path: must be event.… or data.…", i)
 		}
 		if !filterOps[f.Op] {
-			add("filters[%d].op: must be eq, ne, in, exists or prefix", i)
+			add("filters[%d].op: must be eq, ne, in, exists, absent or prefix", i)
+		}
+		for _, c := range [][2]string{{"if_set", f.IfSet}, {"unless_set", f.UnlessSet}} {
+			if _, ok := vars[c[1]]; c[1] != "" && !ok {
+				add("filters[%d].%s: variable %q is not defined", i, c[0], c[1])
+			}
 		}
 		for _, val := range append([]string{f.Value}, f.Values...) {
 			if strings.Count(val, "{{") != len(reVarsOnly.FindAllString(val, -1)) {
@@ -219,6 +229,9 @@ func (d *Definition) Bind(values map[string]string) (*Bound, error) {
 		return reVarsOnly.ReplaceAllStringFunc(s, func(m string) string { return vals[reVarsOnly.FindStringSubmatch(m)[1]] })
 	}
 	for _, f := range d.Filters {
+		if (f.IfSet != "" && vals[f.IfSet] == "") || (f.UnlessSet != "" && vals[f.UnlessSet] != "") {
+			continue // an optional filter this subscription's variables turn off
+		}
 		nf := Filter{Path: f.Path, Op: f.Op, Value: sub(f.Value)}
 		for _, v := range f.Values {
 			nf.Values = append(nf.Values, sub(v))

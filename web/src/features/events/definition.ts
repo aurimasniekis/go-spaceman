@@ -8,7 +8,7 @@ import type { Definition } from '@/api/client'
 
 const VAR_NAME = /^[a-z][a-z0-9_]{0,31}$/
 const VARS_IN = /\{\{\s*vars\.([a-z][a-z0-9_]{0,31})\s*\}\}/g
-const OPS = new Set(['eq', 'ne', 'in', 'exists', 'prefix'])
+const OPS = new Set(['eq', 'ne', 'in', 'exists', 'absent', 'prefix'])
 const URGENCY = new Set(['', 'low', 'normal', 'high', 'urgent'])
 
 /** A small, valid definition to start a template or a custom subscription from. */
@@ -82,7 +82,10 @@ export function parseDefinition(text: string): ParsedDefinition {
       continue
     }
     if (!isString(f.path) || !/^(event|data)(\.|$)/.test(f.path)) add(`filters[${i}].path: must be event.… or data.…`)
-    if (!isString(f.op) || !OPS.has(f.op)) add(`filters[${i}].op: must be eq, ne, in, exists or prefix`)
+    if (!isString(f.op) || !OPS.has(f.op)) add(`filters[${i}].op: must be eq, ne, in, exists, absent or prefix`)
+    for (const k of ['if_set', 'unless_set'] as const) {
+      if (f[k] !== undefined && f[k] !== '' && (!isString(f[k]) || !names.has(f[k]))) add(`filters[${i}].${k}: variable "${String(f[k])}" is not defined`)
+    }
     if (f.op === 'in' && (!Array.isArray(f.values) || f.values.length === 0)) add(`filters[${i}]: in needs values`)
     undefinedVars(`filters[${i}]`, f.value)
     for (const v of Array.isArray(f.values) ? f.values : []) undefinedVars(`filters[${i}]`, v)
