@@ -287,7 +287,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 	}
 	for path, keys := range built.OwnJSON {
-		if err := OwnJSONKeysFile(path, keys); err != nil {
+		if err := OwnJSONKeysFile(log, path, keys); err != nil {
 			fail("write harness settings", err)
 			return
 		}
