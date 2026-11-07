@@ -101,7 +101,7 @@ All variables are optional:
 
 | Variable | Template | Meaning |
 |---|---|---|
-| `project_id` | `harbor-pilot-budget` | only budgets of this Harbor Pilot project, normally the project the space uses; empty for every budget |
+| `project_id` | `harbor-pilot-budget` | only budgets of this Harbor Pilot project id (`prj_…`; events carry ids, so a project name is refused), normally the project the space uses; empty for every budget |
 | `budget_id` | `harbor-pilot-budget` | only this budget |
 | `exceeded_only` | `harbor-pilot-budget` | `true` ignores warnings |
 | `blocking_only` | `harbor-pilot-budget` | `true` keeps only budgets that refuse requests (`enforcement: block`), not warn-only ones |

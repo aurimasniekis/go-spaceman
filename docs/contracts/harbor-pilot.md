@@ -215,7 +215,7 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208`. It needs an `hpa_` token or 
   deployment, and neither is it here.
 - **Values the templates rely on.** Ids are `<prefix>_<26 lowercase ULID characters>` (`internal/platform/ids`:
   `bdg`, `prj`, `wsp`, `cbn`, `acc`, `qmn`, `req`, `pln`, `evt`, …). Resource names, including budget and monitor
-  names, match `[a-z0-9][a-z0-9._-]{0,62}` (`internal/controlplane/kind.go:84`; **live**: a name with spaces gets 422).
+  names, match `[a-z0-9][a-z0-9._-]{0,62}` (`internal/controlplane/kind.go:63`; **live**: a name with spaces gets 422).
   A budget's `spent` and `limit` are decimal strings and `fraction` a number. `access.request.blocked`'s
   `requested_model` is whatever the client sent (**live**: a model name with spaces and `<script>` is echoed) and
   `reason` is free text. **live** + **code**

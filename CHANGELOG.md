@@ -12,7 +12,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including
   blocking-budget refusals; `budget_only` keeps just those). Optional filters narrow by budget, account, monitor or
   binding. Titles and correlation keys hold only Harbor Pilot's ids, names, enums and amounts, checked by each
-  template's input schema; refusal reasons, model names and quota labels appear only in the body and the raw payload.
+  template's input schema, which also pins the severity, times and counts the body shows, so a forged value cannot add
+  Markdown structure; refusal reasons, model names and quota labels appear only in the body (as code) and the raw payload.
   Events without a project are not routed anywhere automatically: a space gets them only by subscribing (Q4 is open).
 - Harbor Pilot connection and per-space settings (ADR-0060, Proposed; HP-T2). Runs don't use the gateway yet (HP-T3/T4).
   - An administrator connects one Harbor Pilot gateway (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`,

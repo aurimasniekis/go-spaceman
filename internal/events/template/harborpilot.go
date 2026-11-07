@@ -22,14 +22,18 @@ const (
 	harborPilotIDChars = `[0-9a-z]{26}`
 	// HarborPilotNamePattern is Harbor Pilot's rule for resource names (budgets, monitors, …).
 	HarborPilotNamePattern = `[a-z0-9][a-z0-9._-]{0,62}`
-	// HarborPilotProjectPattern matches the project id a space's Harbor Pilot settings accept (internal/harborpilot).
-	HarborPilotProjectPattern = `[A-Za-z0-9][A-Za-z0-9._:-]{0,63}`
+	// hpTimePattern is RFC 3339 as Go's time.Time marshals it (Harbor Pilot's occurred_at and reset_at).
+	hpTimePattern = `[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})`
 )
+
+// hpSeverities are Harbor Pilot's event severities (v0.1.3 internal/events/events.go).
+var hpSeverities = []string{"info", "warning", "critical"}
 
 func hpID(prefix string) string { return prefix + "_" + harborPilotIDChars }
 
-// hpSchema is the envelope part every Harbor Pilot template checks: schema version 1, one of names, and the given
-// subjects and data properties.
+// hpSchema is the envelope part every Harbor Pilot template checks: schema version 1, one of names, a known severity,
+// RFC 3339 times, and the given subjects and data properties. Every envelope value a body renders outside a code span
+// is pinned here, so a forged one cannot add Markdown structure (a heading, a list) to the body.
 func hpSchema(names []string, requiredSubjects []string, subjects map[string]any, requiredData []string, data map[string]any) json.RawMessage {
 	dataSchema := map[string]any{"type": "object", "properties": data}
 	if len(requiredData) > 0 {
@@ -42,7 +46,8 @@ func hpSchema(names []string, requiredSubjects []string, subjects map[string]any
 			"schema_version": map[string]any{"const": 1},
 			"id":             map[string]any{"type": "string", "pattern": "^" + hpID("evt") + "$"},
 			"name":           map[string]any{"enum": names},
-			"occurred_at":    map[string]any{"type": "string", "maxLength": 64},
+			"occurred_at":    patternProp(hpTimePattern),
+			"severity":       map[string]any{"enum": hpSeverities},
 			"correlation_id": map[string]any{"type": "string", "pattern": "^" + hpID("[a-z]{3}") + "$"},
 			"subjects":       map[string]any{"type": "object", "required": requiredSubjects, "properties": subjects},
 			"data":           dataSchema,
@@ -72,8 +77,8 @@ func HarborPilotBudget() Definition {
 	return Definition{
 		Subject: "evt.harborpilot.budget.threshold.*",
 		Variables: []Variable{
-			{Name: "project_id", Description: "Only budgets of this Harbor Pilot project (subjects.project_id), normally the space's project; empty for every budget, including binding, workspace, account and global ones",
-				Pattern: HarborPilotProjectPattern, Example: "prj_01hzx0example0000000000000"},
+			{Name: "project_id", Description: "Only budgets of this Harbor Pilot project id (subjects.project_id, prj_<ULID>; a project name never matches, since events carry ids), normally the space's project; empty for every budget, including binding, workspace, account and global ones",
+				Pattern: hpID("prj"), Example: "prj_01hzx0example0000000000000"},
 			{Name: "budget_id", Description: "Only this budget (subjects.budget_id); empty for any budget", Pattern: hpID("bdg"), Example: "bdg_01hzx0example0000000000000"},
 			{Name: "exceeded_only", Pattern: flagPattern, Example: "true",
 				Description: "Set to true to ignore warnings and keep only exhausted budgets (budget.threshold.exceeded)"},
@@ -131,7 +136,9 @@ func HarborPilotQuota() Definition {
 		},
 		InputSchema: hpSchema([]string{"quota.window.exhausted", "quota.window.recovered"}, []string{"monitor_id"},
 			map[string]any{"monitor_id": idProp("qmn"), "account_id": idProp("acc")},
-			[]string{"monitor"}, map[string]any{"monitor": patternProp(HarborPilotNamePattern)}),
+			[]string{"monitor"}, map[string]any{"monitor": patternProp(HarborPilotNamePattern),
+				// reset_at is a *time.Time in Harbor Pilot: null when the provider reported no reset.
+				"reset_at": map[string]any{"type": []string{"string", "null"}, "pattern": "^(?:" + hpTimePattern + ")$"}}),
 		Title: "Harbor Pilot {{data.name}}: monitor {{data.data.monitor}}",
 		Body: "Harbor Pilot quota monitor `{{data.data.monitor}}` reported **{{data.name}}** ({{data.severity}}).\n\n" +
 			"- Window: {{data.data.bucket | default \"(not reported)\" | oneline | truncate 200 | code}}, " +
@@ -166,7 +173,8 @@ func HarborPilotAccessBlocked() Definition {
 		},
 		InputSchema: hpSchema([]string{"access.request.blocked"}, []string{"request_id", "binding_id"},
 			map[string]any{"request_id": idProp("req"), "binding_id": idProp("cbn")},
-			nil, map[string]any{"plan_id": idProp("pln")}),
+			// plan_id is "" when routing fails before it picks a plan (HP v0.1.3 routing.go:133).
+			nil, map[string]any{"plan_id": patternProp(`(?:` + hpID("pln") + `)?`), "excluded": map[string]any{"type": "integer", "minimum": 0}}),
 		Title: "Harbor Pilot blocked request {{data.subjects.request_id}} (binding {{data.subjects.binding_id}})",
 		Body: "Harbor Pilot refused a model request by policy ({{data.severity}}).\n\n" +
 			"- Reason: {{data.data.reason | default \"(not reported)\" | oneline | truncate 500 | code}}\n" +
