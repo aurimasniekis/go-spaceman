@@ -65,7 +65,19 @@ operator sets:
 
 <Shot name="space-harbor-pilot" alt="Harbor Pilot settings for a space: routing enabled, the project id, Codex checked, a 12 hour token lifetime and the budget fallback" caption="A space opting in" />
 
+## Events
+
+Harbor Pilot can publish its events to Pulse: add a Pulse event destination in Harbor Pilot (its Pulse URL, a
+`.creds` file allowed to publish `evt.harborpilot.>`, and the event names to send, for example `budget.*`, `quota.*`
+and `access.request.blocked`). Then subscribe spaces with the built-in templates `harbor-pilot-budget`,
+`harbor-pilot-quota` and `harbor-pilot-access-blocked` ([Events](../guide/events.md#built-in-harbor-pilot-templates)).
+Give each space's budget subscription the same project id as its settings above. Quota events, blocked requests and
+budgets that aren't per project reach only spaces that subscribe to them. A destination only sends events from after
+Harbor Pilot picked it up.
+
 ## Verified
 
 The connection checks were run against a real `harbor-pilot serve --demo` 0.1.3 (with synthetic upstreams), including
-a parent without `tokens:mint` and project checks. No run uses Harbor Pilot yet.
+a parent without `tokens:mint` and project checks. No run uses Harbor Pilot yet. The event templates were tested on
+events captured from the same demo and with its own relay publishing into SpaceMan's Pulse-shaped test server, not a
+production Pulse.

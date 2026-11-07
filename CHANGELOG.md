@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Shipped event templates for Harbor Pilot events (HP-T6, ADR-0060 §7): `harbor-pilot-budget` (budget warnings and
+  exhausted budgets; `project_id` sends a project's budgets to its space), `harbor-pilot-quota` (provider quota windows
+  that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including
+  blocking-budget refusals; `budget_only` keeps just those). Optional filters narrow by budget, account, monitor or
+  binding. Titles and correlation keys hold only Harbor Pilot's ids, names, enums and amounts, checked by each
+  template's input schema; refusal reasons, model names and quota labels appear only in the body and the raw payload.
+  Events without a project are not routed anywhere automatically: a space gets them only by subscribing (Q4 is open).
 - Harbor Pilot connection and per-space settings (ADR-0060, Proposed; HP-T2). Runs don't use the gateway yet (HP-T3/T4).
   - An administrator connects one Harbor Pilot gateway (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`,
     account:write): a gateway URL, an optional URL runs use, a parent token with `tokens:mint` and an optional

@@ -399,6 +399,21 @@ func (g *Gateway) CreateBudget(ctx context.Context, name, projectID, limit strin
 	return o.ID, nil
 }
 
+// CreatePulseDestination creates an enabled Pulse event destination, as the demo administrator: Harbor Pilot's relay
+// then publishes the events matching events (name globs such as budget.*) to the Pulse (NATS) server at url with creds
+// (a .creds file's content, write-only in Harbor Pilot). Loopback servers are allowed (allow_private_network), so a
+// test can point it at an in-process server. It returns the destination's id.
+func (g *Gateway) CreatePulseDestination(ctx context.Context, name, url string, creds []byte, events []string) (string, error) {
+	var o named
+	if err := g.admin.do(ctx, http.MethodPost, "/api/v1/event-destinations", map[string]any{"name": name, "spec": map[string]any{
+		"type": "pulse", "enabled": true, "pulse_url": url, "pulse_source": "harbor-pilot", "allow_private_network": true,
+		"filter": map[string]any{"events": events},
+	}, "secrets": map[string]any{"creds": string(creds)}}, &o, http.StatusCreated); err != nil {
+		return "", fmt.Errorf("event destination: %w", err)
+	}
+	return o.ID, nil
+}
+
 // IssueCredential issues another gateway credential on the provisioned binding, as the demo administrator, with the
 // given scopes (for example a parent without tokens:mint), and returns its id and token.
 func (g *Gateway) IssueCredential(ctx context.Context, name string, scopes []string) (string, string, error) {

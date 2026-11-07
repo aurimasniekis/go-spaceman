@@ -31,7 +31,7 @@ These answer SpaceMan's upstream requests (ADR-0060 Q5); each is detailed in its
 - **0.1.3:** optional `check_budget` on mint (D-043); per-model downgrade of mid-conversation `system` entries
   (D-042); `ref=` and `binding_id` filters on `/usage/series`; a generic 502 for internal mint errors.
 - **Unchanged:** a mint without `check_budget` ignores budgets. The Pulse relay is still not verified against a real
-  go-pulse (by Harbor Pilot or by SpaceMan).
+  `pulsed` deployment (by Harbor Pilot or by SpaceMan); SpaceMan ran it into its Pulse-shaped test server (Events).
 
 ## Credentials and scopes
 - **Gateway credentials:**
@@ -196,9 +196,35 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208`. It needs an `hpa_` token or 
   | `access.request.blocked` | `request_id, binding_id`, no project | `excluded, plan_id, reason, requested_model` | **live**, for the routing 403 (0.1.1) and, since 0.1.2, for every budget 429 (one per refused request, D-040). For a budget refusal `reason` is the budget message text and `excluded` is 0. |
   | `quota.window.exhausted` / `.recovered` | `monitor_id, account_id` | `monitor, bucket, label, reset_at, source` | **code**, `catalog.go:30` |
   | `access.credential.issued` | `credential_id, binding_id` | `child, prefix, scopes` | **live**; the docs say so since 0.1.2 |
-- **Pulse relay not exercised.** The events were read from the API only (`GET /api/v1/events`, which the
-  service-principal token can read); the relay to Pulse was not run. Harbor Pilot 0.1.3 itself still says the relay
-  is not verified against a real go-pulse.
+- **Pulse payload** (`internal/events/relay/pulse.go`, `relay.go:336`). The relay publishes each event with the go-pulse
+  client: subject as above, `ce-type` the event type, the Pulse id the event id (`WithID`), content type
+  `application/json`, and the whole envelope as the payload. So a SpaceMan template reads `data.name`,
+  `data.subjects.*` and `data.data.*`, and a redelivery carries the same id. **live** (2026-11-07, see below)
+- **Pulse destination** (`internal/controlplane/events_specs.go:75`). `POST /api/v1/event-destinations` with
+  `spec {type: "pulse", enabled, pulse_url, pulse_source (default harbor-pilot), allow_private_network, filter {events
+  (name globs), min_severity, subjects}}` and the write-only secret `creds` (a `.creds` file's content; `creds_ref`
+  `file:` is the alternative). Loopback or private servers need `allow_private_network`. **live**
+- **A new destination starts at the outbox head** (`relay.go:168` `Cursor`): the relay creates its cursor the first
+  time it sees the destination (it polls every second), and earlier events are never sent there, unless replayed
+  (`POST /api/v1/event-destinations/{id}/replay`). **live**: events emitted within about two seconds of creating a
+  destination were not delivered.
+- **Relay exercised live, but not against a real `pulsed`.** `internal/events` `TestRealHarborPilotEventsThroughPulse`
+  (opt-in, 2026-11-07) points a real `serve --demo` v0.1.3 at SpaceMan's Pulse-shaped JetStream test server
+  (`pulsetest`, the server devpulse runs: JWT operator mode, the `EVENTS` stream on `evt.>`), and the relay's events
+  reach SpaceMan subscriptions. Harbor Pilot 0.1.3 itself still says its relay is not verified against a real go-pulse
+  deployment, and neither is it here.
+- **Values the templates rely on.** Ids are `<prefix>_<26 lowercase ULID characters>` (`internal/platform/ids`:
+  `bdg`, `prj`, `wsp`, `cbn`, `acc`, `qmn`, `req`, `pln`, `evt`, …). Resource names, including budget and monitor
+  names, match `[a-z0-9][a-z0-9._-]{0,62}` (`internal/controlplane/kind.go:84`; **live**: a name with spaces gets 422).
+  A budget's `spent` and `limit` are decimal strings and `fraction` a number. `access.request.blocked`'s
+  `requested_model` is whatever the client sent (**live**: a model name with spaces and `<script>` is echoed) and
+  `reason` is free text. **live** + **code**
+- **What the demo emits.** Budget warnings and exhaustion (once per budget period; a request that crosses both at once
+  emits only `exceeded`), `access.request.blocked` for budget refusals, and `quota.monitor.auth_failed` for its expired
+  monitor. **No `quota.window.exhausted` or `.recovered`**: the demo's quota buckets are not global, and only global,
+  balance and budget buckets count (`internal/quota/service.go:364`). Those two events are known from code only
+  (`quota/service.go:314-329`: `subjects {monitor_id, account_id when linked}`, `data {monitor, bucket, label,
+  reset_at, source}` and `{monitor, bucket, label}`).
 
 ## Demo seed (v0.1.3)
 - **Fixed names, new ids.** The names are fixed, but every id (ULID) is new on each start. Look ids up by name:
