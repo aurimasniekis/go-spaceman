@@ -150,6 +150,9 @@ type Options struct {
 	Environ []string
 	// StoreBusyTimeout overrides SQLite's busy timeout (fault tests of lock contention; 0 keeps the default).
 	StoreBusyTimeout time.Duration
+	// StoreReaders overrides the store's reader pool size (0 keeps the default, max(4, GOMAXPROCS)). Opening the store
+	// opens and checks every reader connection, which on a many-core host under the race detector takes seconds.
+	StoreReaders int
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -162,7 +165,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	m := metrics.New()
 	st, err := store.Open(ctx, store.Options{DataDir: cfg.DataDir, Logger: obs.Component(log, "store"), Clock: o.Clock, Metrics: m,
-		BusyTimeout: o.StoreBusyTimeout, AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
+		BusyTimeout: o.StoreBusyTimeout, Readers: o.StoreReaders, AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
 	if err != nil {
 		return nil, err
 	}

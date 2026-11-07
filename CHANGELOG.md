@@ -28,6 +28,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   per-run usage by trusted reference, budget refusals and the budget check on run-token mint. Claude Code's default
   model now works through the gateway (K-13 resolved on the demo gateway).
 
+### Fixed
+- Tests: `internal/app` TestFleetLifecycle no longer fails at random with "timed out waiting for runs running after
+  central restart". Reopening the store checks every reader connection, one per CPU by default, and under the race
+  detector on a 32-CPU host that took 5-7 s, longer than the test's 5 s lease plus 1 s grace. The agent then stopped the
+  runs, as it should without central (SM-NODE-007), so they never returned to running. The fleet test central now uses
+  4 readers (new test-only `app.Options.StoreReaders`), and the test fails at once, with the cause, if a restart takes
+  longer than the lease. Product behaviour is unchanged.
+
 ## [0.1.0-rc.9] - 2026-11-07
 
 Ninth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): Claude Code settings on
