@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -81,12 +82,39 @@ func MergeJSONFile(path string, patch map[string]any) error {
 // OwnJSONKeysFile sets SpaceMan's top-level keys in the JSON object in path (see harness.Launch.OwnJSON): each key is
 // set, keys it set at an earlier call and no longer gives are removed, and every other key is kept. The keys it owns
 // are recorded next to the file (<path>.spaceman-keys). Both files are created when missing and replaced atomically.
+//
+// A record that is not a JSON list of strings fails the call: guessing would keep keys an earlier profile set (deny
+// rules or hooks it no longer has). The record is written before the settings, with every key that may be in them
+// (the earlier and the new ones), and narrowed to the new keys after: an interrupted call never leaves a key in the
+// settings that the record does not name, so the next call can still remove it.
 func OwnJSONKeysFile(path string, keys map[string]any) error {
 	record := path + ".spaceman-keys"
 	var before []string
 	if b, err := os.ReadFile(record); err == nil { //nolint:gosec // agent-owned path
-		_ = json.Unmarshal(b, &before)
+		if err := json.Unmarshal(b, &before); err != nil {
+			return fmt.Errorf("%s: not a JSON list of key names: remove it and the keys SpaceMan set in %s", record, filepath.Base(path))
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	owned := make([]string, 0, len(keys))
+	for k := range keys {
+		owned = append(owned, k)
+	}
+	sort.Strings(owned)
+	writeRecord := func(names []string) error {
+		b, err := json.Marshal(names)
+		if err != nil {
+			return err
+		}
+		return writeAtomic(record, b)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	pending := append(slices.Clone(before), owned...)
+	sort.Strings(pending)
+	if err := writeRecord(slices.Compact(pending)); err != nil {
 		return err
 	}
 	if err := editJSONFile(path, func(doc map[string]any) {
@@ -101,13 +129,7 @@ func OwnJSONKeysFile(path string, keys map[string]any) error {
 	}); err != nil {
 		return err
 	}
-	owned := make([]string, 0, len(keys))
-	for k := range keys {
-		owned = append(owned, k)
-	}
-	sort.Strings(owned)
-	b, _ := json.Marshal(owned)
-	return writeAtomic(record, b)
+	return writeRecord(owned)
 }
 
 func editJSONFile(path string, edit func(map[string]any)) error {

@@ -16,6 +16,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   them. Migration 0039.
 
 ### Fixed
+- Saving a harness profile without `claude_settings` keeps the stored settings, read in the save's own transaction; a
+  failed read before the save could clear them.
+- Changes to a profile's `claude_settings` are audited on `profile.created` and `profile.updated` with the changed
+  top-level keys and a sha256 of the new settings, never the values.
+- The node fails a launch when its record of the settings.json keys it owns is corrupt, instead of keeping keys an
+  earlier profile set, and records the keys before writing settings.json.
+- A run that can't be dispatched (`node_too_old`, `account_unavailable`) is now failed and its launch cancelled; ending
+  it used to fail on a database constraint (a NULL session ID), which left the run pending.
+- Profile settings may set endpoint and credential `env` variables, helpers and hooks: recorded as an accepted risk
+  (ADR-0059, THREAT_MODEL T-32).
 - Tests: `internal/keyring` TestLoadKEKSources and `internal/cli` TestTokenSources pass under a restrictive umask (such
   as 077). They now chmod their deliberately world-readable files instead of relying on the mode given to WriteFile,
   which the umask narrows. Product code is unchanged.
