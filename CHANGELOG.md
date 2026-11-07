@@ -34,8 +34,27 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - an opt-in test harness that runs a real `harbor-pilot serve --demo` (`make test-harbor-pilot`, `SPACEMAN_HARBOR_PILOT=1`); the gateway stops with the test binary even when its cleanup never runs, and a cached binary is reinstalled unless it is the pinned build;
   - a recorded spike: Claude Code 2.1.317 and interactive codex-cli 0.166.0 both reach the gateway with only a
     per-run token in their secret environment. Codex needs no login seeding.
+- `SM_CHROMIUM_ARGS`: extra Chromium launch arguments (space-separated) for `make e2e`, `make screenshots` and
+  `make site-check`, for hosts whose sandbox stops Chromium from starting (for example
+  `--no-sandbox --disable-gpu --no-zygote` in a container). Unset by default and in CI.
+
+### Changed
+- Form field descriptions are shown under the field instead of between the label and the field, so fields in one row
+  line up whether or not they have a description. The validation error comes after the description. One theme
+  default (`inputWrapperOrder`) applies it to every form.
+- On a phone the app bar shows only the logo, not the "SpaceMan" name, so it no longer stacks over a page header with
+  the same name.
 
 ### Fixed
+- Terminals: the agent tab strip no longer scrolls vertically or shows scrollbars, and a tab's first line (status
+  dot and name) no longer scrolls out of view on a phone. Tabs keep their content's size; when there are more than fit,
+  the strip scrolls sideways (touch, trackpad or mouse wheel), snapping to tabs, and keeps the selected tab in view.
+- Run header: the turn number and the state no longer get clipped ("#." / "working ·…"); the role name truncates
+  first and the actions wrap to a second row when there is no room. On a phone the header is two rows: who (status,
+  role, turn, state) and the actions (Live/Replay, then Take over, Stop and the details toggle as icon buttons).
+- Terminals on a phone: the page no longer scrolls sideways (a terminal wider than the screen scrolls inside its own
+  box), the run inspector goes under the terminal instead of beside it, the replay controls wrap, and the Terminals
+  workspace's space and agent list is a drawer opened from the space name.
 - Live updates no longer stay "offline" after central restarts. A change feed that the browser gave up on (a 502
   while central restarts, a 401) or that the server ended is reopened with backoff (1 s doubling to 30 s, with jitter,
   reset once it opens): each try re-checks the session first, sending the browser to sign-in when the session is gone,

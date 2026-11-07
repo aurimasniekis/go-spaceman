@@ -37,6 +37,9 @@ export const theme = createTheme({
   spacing: { xs: '6px', sm: '8px', md: '12px', lg: '16px', xl: '24px' },
   cursorType: 'pointer',
   components: {
+    // Descriptions go under the field, not between the label and the field, so inputs in one row stay aligned whether or
+    // not they have a description. The error comes last, under the description.
+    InputWrapper: { defaultProps: { inputWrapperOrder: ['label', 'input', 'description', 'error'] } },
     Button: { defaultProps: { size: 'xs' } },
     // 28 px row actions: 22 px was under the WCAG 2.5.8 target size.
     ActionIcon: { defaultProps: { size: 'md', variant: 'subtle', color: 'gray' } },

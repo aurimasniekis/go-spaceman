@@ -1,4 +1,4 @@
-import { Alert, Button, Group, List, Modal, Stack, Text } from '@mantine/core'
+import { ActionIcon, Alert, Button, Group, List, Modal, Stack, Text, Tooltip } from '@mantine/core'
 import { IconHandStop, IconKeyboard } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -104,7 +104,7 @@ export function useTakeoverInput(spaceId: string, runId: string, run: Run, me: M
  * Who holds the terminal, for everyone watching, with the controls the viewer may use: take over (terminal:takeover,
  * admins by default), release (the holder) or end someone else's takeover.
  */
-export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended, part }: {
+export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended, part, compact }: {
   spaceId: string
   runId: string
   run: Run
@@ -113,6 +113,8 @@ export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended, par
   ended: boolean
   /** button: only the "Take over" button (for a header row); banner: only the one-line takeover banner. Default both. */
   part?: 'button' | 'banner'
+  /** An icon-only button, for narrow screens. */
+  compact?: boolean
 }) {
   const qc = useQueryClient()
   const [confirm, setConfirm] = useState(false)
@@ -173,7 +175,11 @@ export function TakeoverPanel({ spaceId, runId, run, me, canTakeOver, ended, par
     )
   }
   if (!canTakeOver || ended || run.desired !== 'running' || part === 'banner') return null
-  const button = <Button size="xs" variant="default" leftSection={<IconHandStop size={14} />} onClick={() => setConfirm(true)}>Take over</Button>
+  const button = compact ? (
+    <Tooltip label="Take over">
+      <ActionIcon variant="default" aria-label="Take over" onClick={() => setConfirm(true)}><IconHandStop size={16} /></ActionIcon>
+    </Tooltip>
+  ) : <Button size="xs" variant="default" leftSection={<IconHandStop size={14} />} onClick={() => setConfirm(true)}>Take over</Button>
   return (
     <>
       {part === 'button' ? button : <Group justify="flex-end">{button}</Group>}

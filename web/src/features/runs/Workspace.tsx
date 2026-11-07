@@ -1,10 +1,11 @@
-import { ActionIcon, Box, Checkbox, Group, NavLink, ScrollArea, Stack, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core'
-import { IconExternalLink, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconSearch } from '@tabler/icons-react'
+import { ActionIcon, Box, Button, Checkbox, Drawer, Group, NavLink, ScrollArea, Stack, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core'
+import { IconChevronDown, IconExternalLink, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconSearch } from '@tabler/icons-react'
 import { useQueries } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import type { Run, Space } from '@/api/client'
 import { runsQuery, useNodes, useSpaces } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
+import { useNarrow } from '@/lib/media'
 import { isEnded, RunDot, runLabels, runStateText, runTone, sortRuns, type Tone } from './runInfo'
 import { useNow } from './RunWorkbench'
 import { SpaceTerminals } from './SpaceTerminals'
@@ -37,6 +38,13 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
   const [filter, setFilter] = useState('')
   const [runningOnly, setRunningOnly] = useState(false)
   const [tree, setTree] = useState(readTree)
+  // On a phone the space list is a drawer, closed until asked for, and closes again once a space or agent is chosen.
+  const narrow = useNarrow()
+  const [drawer, setDrawer] = useState(false)
+  const choose = (s: string, r?: string) => {
+    setDrawer(false)
+    onSelect(s, r)
+  }
   const visible = useMemo(() => (spaces.data ?? []).filter((s) => s.state !== 'archived').sort((a, b) => a.name.localeCompare(b.name)), [spaces.data])
   const runs = useQueries({ queries: visible.map((s) => runsQuery(s.id)) })
   const bySpace = new Map<string, Run[]>(visible.map((s, i) => [s.id, sortRuns(runs[i]?.data ?? [])]))
@@ -44,6 +52,7 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
   const attention = allLive.filter((r) => runTone(r) === 'attention').length
   // The selected space: the URL's, else the first with a running agent, else the first space.
   const current = spaceId ?? visible.find((s) => (bySpace.get(s.id) ?? []).some((r) => !isEnded(r)))?.id ?? visible[0]?.id
+  const currentName = visible.find((s) => s.id === current)?.name
   const q = filter.trim().toLowerCase()
   const toggleTree = () => setTree((v) => {
     try {
@@ -53,6 +62,33 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
     }
     return !v
   })
+
+  const sidebar = (
+    <>
+      {!narrow && (
+        <Group justify="space-between">
+          <Text fw={600}>Terminals</Text>
+          <Tooltip label="Hide the space list">
+            <ActionIcon aria-label="Hide the space list" onClick={toggleTree}><IconLayoutSidebarLeftCollapse size={16} /></ActionIcon>
+          </Tooltip>
+        </Group>
+      )}
+      <TextInput placeholder="Filter spaces and agents" leftSection={<IconSearch size={14} />} value={filter} onChange={(e) => setFilter(e.currentTarget.value)}
+        aria-label="Filter spaces and agents" />
+      <Checkbox size="xs" label="Running agents only" checked={runningOnly} onChange={(e) => setRunningOnly(e.currentTarget.checked)} />
+      <ScrollArea style={{ flex: 1 }} type="auto">
+        <Stack gap={2}>
+          {visible.map((s) => (
+            <SpaceBranch key={s.id} space={s} runs={bySpace.get(s.id) ?? []} q={q} runningOnly={runningOnly} now={now}
+              active={s.id === current} selectedRun={s.id === current ? runId : undefined} onSelect={choose} />
+          ))}
+        </Stack>
+      </ScrollArea>
+      <Text size="xs" c="dimmed">
+        {(nodes.data ?? []).map((n) => `${n.name} ${n.connected ? '●' : '○'}`).join('  ') || 'No nodes'}
+      </Text>
+    </>
+  )
 
   if (spaces.isSuccess && visible.length === 0) {
     return (
@@ -64,45 +100,35 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
   }
   return (
     <Stack gap={0} style={{ height: 'calc(100vh - 72px)' }}>
-      <Box style={{ display: 'grid', gridTemplateColumns: tree ? '260px minmax(0, 1fr)' : 'minmax(0, 1fr)', gap: 'var(--mantine-spacing-md)', flex: 1, minHeight: 0 }}>
-        {tree && (
+      <Box style={{ display: 'grid', gridTemplateColumns: tree && !narrow ? '260px minmax(0, 1fr)' : 'minmax(0, 1fr)', gap: 'var(--mantine-spacing-md)', flex: 1, minHeight: 0 }}>
+        {tree && !narrow && (
           <Stack gap="xs" style={{ minHeight: 0, borderRight: '1px solid var(--mantine-color-default-border)', paddingRight: 'var(--mantine-spacing-sm)' }}>
-            <Group justify="space-between">
-              <Text fw={600}>Terminals</Text>
-              <Tooltip label="Hide the space list">
-                <ActionIcon aria-label="Hide the space list" onClick={toggleTree}><IconLayoutSidebarLeftCollapse size={16} /></ActionIcon>
-              </Tooltip>
-            </Group>
-            <TextInput placeholder="Filter spaces and agents" leftSection={<IconSearch size={14} />} value={filter} onChange={(e) => setFilter(e.currentTarget.value)}
-              aria-label="Filter spaces and agents" />
-            <Checkbox size="xs" label="Running agents only" checked={runningOnly} onChange={(e) => setRunningOnly(e.currentTarget.checked)} />
-            <ScrollArea style={{ flex: 1 }} type="auto">
-              <Stack gap={2}>
-                {visible.map((s) => (
-                  <SpaceBranch key={s.id} space={s} runs={bySpace.get(s.id) ?? []} q={q} runningOnly={runningOnly} now={now}
-                    active={s.id === current} selectedRun={s.id === current ? runId : undefined} onSelect={onSelect} />
-                ))}
-              </Stack>
-            </ScrollArea>
-            <Text size="xs" c="dimmed">
-              {(nodes.data ?? []).map((n) => `${n.name} ${n.connected ? '●' : '○'}`).join('  ') || 'No nodes'}
-            </Text>
+            {sidebar}
           </Stack>
         )}
         <Stack gap="xs" style={{ minWidth: 0, minHeight: 0, overflow: 'auto' }}>
           {current ? (
             <>
               <Group justify="space-between" wrap="nowrap">
-                <Group gap="xs" wrap="nowrap">
-                  {!tree && (
-                    <Tooltip label="Show the space list">
-                      <ActionIcon aria-label="Show the space list" onClick={toggleTree}><IconLayoutSidebarLeftExpand size={16} /></ActionIcon>
-                    </Tooltip>
-                  )}
-                  <Text fw={600}>{visible.find((s) => s.id === current)?.name}</Text>
-                </Group>
-                <AnchorLink to="/spaces/$spaceId" params={{ spaceId: current }} size="sm">
-                  <Group gap={4}>Open space <IconExternalLink size={12} /></Group>
+                {narrow ? (
+                  // One control for the space name and the space list, instead of a second header with its own toggle.
+                  <Button variant="subtle" color="gray" px={4} fw={600} size="sm" aria-label={`Space: ${currentName ?? ''}. Choose a space or agent`}
+                    leftSection={<IconLayoutSidebarLeftExpand size={16} />} rightSection={<IconChevronDown size={14} />} onClick={() => setDrawer(true)}
+                    styles={{ root: { minWidth: 0 }, label: { overflow: 'hidden', textOverflow: 'ellipsis' } }}>
+                    {currentName}
+                  </Button>
+                ) : (
+                  <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                    {!tree && (
+                      <Tooltip label="Show the space list">
+                        <ActionIcon aria-label="Show the space list" onClick={toggleTree}><IconLayoutSidebarLeftExpand size={16} /></ActionIcon>
+                      </Tooltip>
+                    )}
+                    <Text fw={600} truncate>{currentName}</Text>
+                  </Group>
+                )}
+                <AnchorLink to="/spaces/$spaceId" params={{ spaceId: current }} size="sm" style={{ flexShrink: 0 }}>
+                  <Group gap={4} wrap="nowrap">Open space <IconExternalLink size={12} /></Group>
                 </AnchorLink>
               </Group>
               <SpaceTerminals key={current} spaceId={current} runId={runId} mode={mode} onSelect={(r) => onSelect(current, r)} onMode={onMode} />
@@ -113,8 +139,13 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
       <Group gap="md" px="xs" py={4} mt="xs" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
         <Text size="xs" c="dimmed">{allLive.length} {allLive.length === 1 ? 'agent' : 'agents'} running in {visible.length} {visible.length === 1 ? 'space' : 'spaces'}</Text>
         {attention > 0 && <AnchorLink to="/human" size="xs" c="owlYellow">{attention} waiting for input →</AnchorLink>}
-        <Text size="xs" c="dimmed" ml="auto">[ and ] switch agents</Text>
+        {!narrow && <Text size="xs" c="dimmed" ml="auto">[ and ] switch agents</Text>}
       </Group>
+      {narrow && (
+        <Drawer opened={drawer} onClose={() => setDrawer(false)} title="Terminals" position="left" size="85%">
+          <Stack gap="xs">{sidebar}</Stack>
+        </Drawer>
+      )}
     </Stack>
   )
 }

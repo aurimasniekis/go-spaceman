@@ -68,8 +68,9 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
   if (life.purge) lifecycle.push(<Menu.Item key="purge" color="owlRed" leftSection={<IconTrash size={14} />} onClick={() => setDialog('purge')}>Purge…</Menu.Item>)
   return (
     <>
-      <Group justify="space-between" align="flex-start" wrap="nowrap" mb="xs">
-        <Stack gap={2} style={{ minWidth: 0 }}>
+      {/* The actions wrap under the name when both don't fit (a phone), instead of squeezing the name to a few letters. */}
+      <Group justify="space-between" align="flex-start" wrap="wrap" gap="xs" mb="xs" data-testid="space-header">
+        <Stack gap={2} style={{ minWidth: 0, flex: '1 1 auto' }}>
           <Group gap="xs" wrap="nowrap">
             <Title order={3} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</Title>
             <SpaceState space={s} />
@@ -82,7 +83,7 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
             {s.desired_node_id && s.desired_node_id !== s.node_id && ' · relocating'}
           </Text>
         </Stack>
-        <Group gap="xs" wrap="nowrap">
+        <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0, marginLeft: 'auto' }}>
           {atLeast(role, 'operator') && s.state === 'active' && (
             <Menu position="bottom-end">
               <Menu.Target>

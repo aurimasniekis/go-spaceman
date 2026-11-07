@@ -102,7 +102,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
               <IconLayoutSidebarLeftExpand size={16} />
             </ActionIcon>
             <Logo />
-            <Text fw={600} size="md">SpaceMan</Text>
+            {/* On a phone the logo alone names the app: the page's own header (a space called SpaceMan, say) is right below. */}
+            <Text fw={600} size="md" visibleFrom="sm">SpaceMan</Text>
+            <VisuallyHidden hiddenFrom="sm">SpaceMan</VisuallyHidden>
           </Group>
           <Group gap="sm" wrap="nowrap">
             <LiveIndicator />
