@@ -162,7 +162,20 @@ export type WatchState = 'connecting' | 'live' | 'offline'
 /** What the tab holding the change feed relays to the browser's other tabs. */
 type Relay = { t: 'change'; c: Change; seq: number } | { t: 'gap' } | { t: 'state'; s: WatchState } | { t: 'hello' }
 
-const CHANNEL = 'spaceman-watch'
+/**
+ * The Web Lock and BroadcastChannel the tabs share. Versioned: a tab still running an older build (rc.8 and before)
+ * could hold the lock with a dead stream and never retry, so every tab of the new build would only mirror its
+ * "offline". A new name keeps old tabs out of the new tabs' election; bump it whenever the relay protocol or the
+ * leader's duties change incompatibly.
+ */
+const CHANNEL = 'spaceman-watch.v2'
+
+/** Reconnect backoff after the stream closed for good: 1 s, 2 s, 4 s … ±20 % jitter, never more than 30 s. */
+export const RETRY_BASE_MS = 1000
+export const RETRY_MAX_MS = 30_000
+export function retryDelay(attempt: number, rand: number = Math.random()): number {
+  return Math.min(RETRY_MAX_MS, Math.round(Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** attempt) * (0.8 + 0.4 * rand)))
+}
 
 /**
  * Subscribes to the durable change feed (GET /api/v1/watch, Server-Sent Events). EventSource reconnects by itself and
@@ -170,10 +183,16 @@ const CHANNEL = 'spaceman-watch'
  * because its session is no longer valid (SM-AUTH-007), the session is re-checked: a session that is gone goes to
  * sign-in, a rotated one reconnects.
  *
+ * EventSource gives up for good on a response that isn't a 200 text/event-stream (a 502 while central restarts, a
+ * 401). Such a closed stream, and one the server ended for any other reason, is retried with backoff (retryDelay, reset
+ * once a stream opens): each retry first re-checks the session (sessionStillValid), then reopens the stream from the
+ * last change seen (?after=). It shows "offline" while waiting and "connecting" while trying. The window coming back
+ * online, the leading tab becoming visible, and another tab saying hello retry at once.
+ *
  * One stream serves every tab of the browser: over HTTP/1.1 a browser opens at most six connections to a host, for all
- * its tabs together, and each open stream holds one. The tab holding the Web Lock "spaceman-watch" opens the stream and
- * relays it over a BroadcastChannel; when that tab closes, another one takes the lock and resumes from the last change
- * it saw. Without Web Locks (not a secure context) every tab opens its own stream.
+ * its tabs together, and each open stream holds one. The tab holding the Web Lock CHANNEL opens the stream and relays
+ * it over a BroadcastChannel; when that tab closes, another one takes the lock and resumes from the last change it
+ * saw. Without Web Locks (not a secure context) every tab opens its own stream.
  */
 export function useWatch(enabled: boolean): WatchState {
   const qc = useQueryClient()
@@ -199,15 +218,52 @@ export function useWatch(enabled: boolean): WatchState {
       for (const l of changeListeners) l(c)
     }
 
-    // The stream itself, opened by the leading tab (or by every tab without Web Locks); returns its cleanup.
+    // The stream itself, opened by the leading tab (or by every tab without Web Locks). Returns its cleanup and a
+    // function that retries at once when the stream is down.
     const open = () => {
       let closed = false
-      let es: EventSource | null = null
+      let es: EventSource | null = null // the stream that is open or opening; null while down
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let checking = false // a session check before a retry is in flight
+      let attempt = 0
+      const clearTimer = () => {
+        if (timer !== undefined) clearTimeout(timer)
+        timer = undefined
+      }
+      // The stream is down: show offline and try again after the next backoff step.
+      const later = () => {
+        es = null
+        publish('offline')
+        clearTimer()
+        timer = setTimeout(retry, retryDelay(attempt))
+        attempt++
+      }
+      // Re-checks the session, then reopens the stream; a failed check waits for the next step. A no-op while a stream
+      // is open or opening, or a check is in flight, so calling it at once (online, visible, hello) is always safe.
+      const retry = () => {
+        clearTimer()
+        if (closed || checking || es) return
+        checking = true
+        publish('connecting')
+        void sessionStillValid().then((ok) => {
+          checking = false
+          if (closed) return
+          if (ok) connect()
+          else later()
+        })
+      }
       const connect = () => {
         const src = new EventSource(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : ''}`)
         es = src
-        src.onopen = () => publish('live')
-        src.onerror = () => publish(src.readyState === EventSource.CLOSED ? 'offline' : 'connecting')
+        src.onopen = () => {
+          attempt = 0
+          publish('live')
+        }
+        src.onerror = () => {
+          if (es !== src) return
+          if (src.readyState === EventSource.CLOSED) later()
+          else publish('connecting')
+        }
         src.addEventListener('change', (ev) => {
           const seq = Number((ev as MessageEvent<string>).lastEventId) || 0
           try {
@@ -224,31 +280,47 @@ export function useWatch(enabled: boolean): WatchState {
         })
         src.addEventListener('end', (ev) => {
           src.close()
-          if (endReason(ev) !== 'unauthenticated') {
-            publish('offline')
-            return
-          }
-          publish('connecting')
-          void sessionStillValid().then((ok) => {
-            if (closed) return
-            if (ok) connect()
-            else publish('offline')
-          })
+          if (es !== src) return
+          if (endReason(ev) === 'unauthenticated') {
+            // Re-check the session now: a rotated one reconnects, a gone one goes to sign-in.
+            es = null
+            retry()
+          } else later()
         })
       }
+      // The window coming back online, or the leading tab becoming visible, retries at once (session check first).
+      const now = () => retry()
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') now()
+      }
+      window.addEventListener('online', now)
+      document.addEventListener('visibilitychange', onVisible)
       connect()
-      return () => {
-        closed = true
-        es?.close()
+      return {
+        close: () => {
+          closed = true
+          clearTimer()
+          window.removeEventListener('online', now)
+          document.removeEventListener('visibilitychange', onVisible)
+          es?.close()
+          es = null
+        },
+        now,
       }
     }
 
-    if (!bc) return open()
+    if (!bc) return open().close
+
+    let stream: ReturnType<typeof open> | null = null
 
     bc.onmessage = (ev: MessageEvent<Relay>) => {
       const m = ev.data
       if (m.t === 'hello') {
-        if (leading) bc.postMessage({ t: 'state', s: current.current } satisfies Relay)
+        if (!leading) return
+        bc.postMessage({ t: 'state', s: current.current } satisfies Relay)
+        // A tab opened or reloaded: if this tab's stream is down (a throttled background tab waiting out its backoff),
+        // try again now instead of pinning every tab to "offline".
+        stream?.now()
         return
       }
       if (leading) return
@@ -261,9 +333,11 @@ export function useWatch(enabled: boolean): WatchState {
       .request(CHANNEL, { signal: stop.signal }, () =>
         new Promise<void>((release) => {
           leading = true
-          const close = open()
+          const st = open()
+          stream = st
           stop.signal.addEventListener('abort', () => {
-            close()
+            st.close()
+            stream = null
             leading = false
             release()
           }, { once: true })

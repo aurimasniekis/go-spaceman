@@ -36,6 +36,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     per-run token in their secret environment. Codex needs no login seeding.
 
 ### Fixed
+- Live updates no longer stay "offline" after central restarts. A change feed that the browser gave up on (a 502
+  while central restarts, a 401) or that the server ended is reopened with backoff (1 s doubling to 30 s, with jitter,
+  reset once it opens): each try re-checks the session first, sending the browser to sign-in when the session is gone,
+  and resumes from the last change seen. The header shows "offline" while waiting and "connecting" while trying. The
+  tab holding the stream retries at once when the window comes back online, when it becomes visible again, and when
+  another tab opens or reloads, so a stale background tab can't keep every tab offline. The tabs' lock and channel are
+  now `spaceman-watch.v2`, so tabs still running an older build don't hold the new ones offline.
 - The queue page no longer crashes ("Duplicate options are not supported") when two tasks share a title. Task pickers
   (a task's dependencies, a new task's parent and dependencies) use task IDs as values; a title shared by several
   tasks shows each task's status and the end of its ID. The run launcher's "another role" choice no longer collides
