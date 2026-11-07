@@ -162,7 +162,10 @@ func TestIngestFanOutAndProvenance(t *testing.T) {
 		t.Fatalf("durables %+v %+v", a, b)
 	}
 	f.publish(issueSubject, issueType, issuePayload(t, ""), "")
-	eventually(t, "items in both spaces", func() bool { return len(f.items("spc_a")) == 1 && len(f.items("spc_b")) == 1 })
+	// The item is committed before its delivery is recorded: wait for both.
+	eventually(t, "items in both spaces", func() bool {
+		return len(f.items("spc_a")) == 1 && len(f.items("spc_b")) == 1 && f.outcomes("spc_a", a.ID)[OutcomeAccepted] == 1
+	})
 	it, err := f.inbox.Get(f.ctx, "spc_a", f.items("spc_a")[0].ID)
 	must(t, err)
 	if it.SourceKind != "event" || it.SourceID != a.ID || it.Title != "example-org/tool#42 opened: Bug <script>" || it.CorrelationID != "github:example-org/tool#42" ||
@@ -334,8 +337,8 @@ func TestOwnEventsAreNotReingested(t *testing.T) {
 	eventually(t, "own event filtered", func() bool { return f.outcomes("spc_a", s.ID)[OutcomeFiltered] == 1 })
 	d, err := f.svc.Deliveries(f.ctx, "spc_a", s.ID, 10)
 	must(t, err)
-	if d[0].Detail != OwnOriginDetail || len(f.items("spc_a")) != 0 {
-		t.Fatalf("delivery %+v items %d", d[0], len(f.items("spc_a")))
+	if len(d) == 0 || d[0].Detail != OwnOriginDetail || len(f.items("spc_a")) != 0 {
+		t.Fatalf("delivery %+v items %d", d, len(f.items("spc_a")))
 	}
 	// Another installation's origin is ingested normally.
 	_, err = f.pub.Publish(f.ctx, issueSubject, issueType, issuePayload(t, ""), pulse.WithHeader(outbox.HeaderOrigin, "spaceman-other"), pulse.WithID("evt-other-1"))
