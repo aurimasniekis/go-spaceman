@@ -50,12 +50,14 @@ type APIToken struct {
 	RevokedBy    string     `json:"revoked_by,omitempty"`
 	// ParentTokenID is the API token that issued this one, if any (ADR-0058).
 	ParentTokenID string `json:"parent_token_id,omitempty"`
+	// Purpose is set for internal tokens (ADR-0063), which have no secret and can never be used as a bearer.
+	Purpose string `json:"purpose,omitempty"`
 }
 
 func apiTokenFromRow(r db.ApiToken) *APIToken {
 	t := &APIToken{ID: r.ID, Name: r.Name, UserID: r.UserID, Grants: []authz.Grant{}, Hint: r.Hint,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), NeverExpires: r.NeverExpires == 1, LastUsedIP: r.LastUsedIp.String,
-		RevokedBy: r.RevokedBy.String, ParentTokenID: r.ParentTokenID.String}
+		RevokedBy: r.RevokedBy.String, ParentTokenID: r.ParentTokenID.String, Purpose: r.Purpose}
 	if !t.NeverExpires {
 		v := time.UnixMicro(r.ExpiresAt).UTC()
 		t.ExpiresAt = &v
@@ -101,6 +103,9 @@ func (svc *Service) CreateAPIToken(ctx context.Context, p *Principal, name strin
 		v.Add("expires_in_days", "must be omitted for a token that never expires")
 	case !neverExpires && (ttl < MinAPITokenTTL || ttl > MaxAPITokenTTL):
 		v.Add("expires_in_days", "must be between 1 and 366 days")
+	}
+	if p.Internal() {
+		return nil, "", apperr.New(apperr.CodeForbidden, "an internal token cannot issue tokens")
 	}
 	if p.TokenParentID != "" {
 		return nil, "", apperr.New(apperr.CodeForbidden, "a token issued by another token cannot issue tokens")
@@ -248,7 +253,8 @@ func (svc *Service) RevokeAPIToken(ctx context.Context, actor audit.Actor, id st
 }
 
 // AuthenticateAPIToken resolves a bearer token to a principal acting for the creating user, authorized as both the token
-// and the user. Unknown, revoked and expired tokens, and tokens whose user is disabled, all fail with the same error.
+// and the user. Unknown, revoked and expired tokens, tokens whose user is disabled and internal tokens (ADR-0063) all
+// fail with the same error.
 func (svc *Service) AuthenticateAPIToken(ctx context.Context, token, ip string) (*Principal, error) {
 	if !strings.HasPrefix(token, APITokenPrefix) || len(token) != len(APITokenPrefix)+43 {
 		return nil, ErrUnauthorized
@@ -272,7 +278,7 @@ func (svc *Service) AuthenticateAPIToken(ctx context.Context, token, ip string) 
 		break
 	}
 	now := svc.opts.Clock.Now()
-	if !found || row.RevokedAt.Valid || !now.Before(time.UnixMicro(row.ExpiresAt)) {
+	if !found || row.Purpose != "" || row.RevokedAt.Valid || !now.Before(time.UnixMicro(row.ExpiresAt)) {
 		return nil, ErrUnauthorized
 	}
 	op, err := svc.Get(ctx, row.UserID)

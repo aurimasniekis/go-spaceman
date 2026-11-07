@@ -56,6 +56,9 @@ type Actor struct {
 	// Via names how a user acted when it was not a browser session, e.g. "api_token:atk_…". It is recorded as
 	// the "via" detail, so the event stays attributed to the user.
 	Via string
+	// Run is the agent run the user's authority was exercised for (a SpaceMan MCP call, ADR-0063). It is recorded as
+	// the "run" detail.
+	Run string
 }
 
 // System is the actor for automatic actions (expiry, reconciliation, jobs).
@@ -155,10 +158,15 @@ func (w *Writer) Append(ctx context.Context, tx *store.Tx, ev Event) (string, er
 		}
 	}
 	ev = withCorrelation(ctx, ev)
-	if ev.Actor.Via != "" {
-		d := make(map[string]any, len(ev.Details)+1)
+	if ev.Actor.Via != "" || ev.Actor.Run != "" {
+		d := make(map[string]any, len(ev.Details)+2)
 		maps.Copy(d, ev.Details)
-		d["via"] = ev.Actor.Via
+		if ev.Actor.Via != "" {
+			d["via"] = ev.Actor.Via
+		}
+		if ev.Actor.Run != "" {
+			d["run"] = ev.Actor.Run
+		}
 		ev.Details = d
 	}
 	details, err := canonicalJSON(ev.Details)

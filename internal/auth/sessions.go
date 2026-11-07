@@ -25,6 +25,8 @@ const (
 	MethodToken = "token"
 	// MethodRoot marks a request authenticated with the bootstrap root token.
 	MethodRoot = "root"
+	// MethodInternal marks a principal central built from an internal token for a SpaceMan MCP call (ADR-0063).
+	MethodInternal = "internal"
 )
 
 // Principal is the authenticated user behind a request.
@@ -46,6 +48,11 @@ type Principal struct {
 	TokenID string
 	// TokenParentID is set when that token was itself issued by an API token (ADR-0058).
 	TokenParentID string
+	// TokenPurpose is the purpose of that token: "" for a bearer token, TokenPurposeSpacemanMCP for the internal token
+	// of a SpaceMan MCP server (ADR-0063), which never comes from a request.
+	TokenPurpose string
+	// RunID is the agent run a SpaceMan MCP call acts for (ADR-0063); it is recorded in the audit, never authorized.
+	RunID string
 	// RootTokenID is set when the request used the bootstrap root token (SM-AUTH-005).
 	RootTokenID string
 	tokenHash   []byte
@@ -77,6 +84,10 @@ func (p *Principal) Subjects() []string {
 		return []string{UserSubject(p.User.ID)}
 	}
 }
+
+// Internal reports whether the principal acts through an internal token (a SpaceMan MCP call, ADR-0063) rather than
+// for a request a person or a bearer token made.
+func (p *Principal) Internal() bool { return p != nil && p.TokenPurpose != "" }
 
 // IsRoot reports whether the request used the root token.
 func (p *Principal) IsRoot() bool { return p != nil && p.RootTokenID != "" }

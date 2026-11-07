@@ -111,6 +111,12 @@ func (d *Deps) authorizeOps(api huma.API) func(huma.Context, func(huma.Context))
 			writeHumaProblem(ctx, errLimited())
 			return
 		}
+		if p.Internal() && (rl.Session || rl.UserOnly || rl.Reauth || rl.MFA) {
+			// A SpaceMan MCP call never reaches what needs a person at the keyboard: own-account operations or step-up
+			// (ADR-0063). Bearer tokens skip step-up below; internal tokens must not.
+			writeHumaProblem(ctx, newProblem(403, apperr.CodeForbidden, "this operation is not available through the SpaceMan MCP", nil))
+			return
+		}
 		if rl.UserOnly && p.User == nil {
 			writeHumaProblem(ctx, newProblem(403, apperr.CodeForbidden, "this operation needs a user account, not the root token", nil))
 			return

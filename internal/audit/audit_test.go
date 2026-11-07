@@ -146,3 +146,29 @@ func TestValidation(t *testing.T) {
 		t.Fatal("sensitive details without keyring accepted")
 	}
 }
+
+// A SpaceMan MCP call (ADR-0063) is attributed to the token's owner, with the internal token as "via" and the run as
+// "run", next to the event's own details; the chain still verifies.
+func TestActorViaAndRun(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, w := setup(t)
+	err := s.W().Tx(ctx, func(tx *store.Tx) error {
+		_, err := w.Append(ctx, tx, Event{Actor: Actor{Type: ActorUser, ID: "usr_owner", Via: "spaceman_mcp:atk_x", Run: "run_x"},
+			Action: "space.created", Target: Target{Type: "space", ID: "spc_x"}, Details: map[string]any{"slug": "infra"}})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actor, details string
+	if err := s.ReadDB().QueryRowContext(ctx, `SELECT actor_id, details_json FROM audit_events`).Scan(&actor, &details); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "usr_owner" || details != `{"run":"run_x","slug":"infra","via":"spaceman_mcp:atk_x"}` {
+		t.Fatalf("actor %q details %s", actor, details)
+	}
+	if res, err := Verify(ctx, s.R()); err != nil || !res.OK {
+		t.Fatalf("%+v %v", res, err)
+	}
+}

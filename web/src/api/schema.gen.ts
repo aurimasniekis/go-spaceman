@@ -4616,6 +4616,7 @@ export interface components {
             name: string;
             never_expires: boolean;
             parent_token_id?: string;
+            purpose?: string;
             /** Format: date-time */
             revoked_at?: string;
             revoked_by?: string;

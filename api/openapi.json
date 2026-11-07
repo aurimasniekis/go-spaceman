@@ -1240,6 +1240,9 @@
           "parent_token_id": {
             "type": "string"
           },
+          "purpose": {
+            "type": "string"
+          },
           "revoked_at": {
             "format": "date-time",
             "type": "string"

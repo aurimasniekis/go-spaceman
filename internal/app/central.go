@@ -748,6 +748,10 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		}
 		subjects = []string{auth.RootSubject(by.ID)}
 	case audit.ActorUser:
+		if strings.HasPrefix(by.Via, auth.ViaSpacemanMCP) || by.Run != "" {
+			// An agent acting through a SpaceMan MCP server is never an approver (ADR-0063).
+			return false
+		}
 		u, err := c.Store.R().GetUser(ctx, by.ID)
 		if err != nil || u.DisabledAt.Valid {
 			return false
@@ -759,7 +763,7 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		}
 		if tok, ok := strings.CutPrefix(by.Via, "api_token:"); ok {
 			t, err := c.Store.R().GetAPIToken(ctx, tok)
-			if err != nil || t.RevokedAt.Valid {
+			if err != nil || t.RevokedAt.Valid || t.Purpose != "" {
 				return false
 			}
 			subjects = append([]string{auth.TokenSubject(tok)}, subjects...)

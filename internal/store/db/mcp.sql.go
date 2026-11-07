@@ -89,7 +89,7 @@ func (q *Queries) GetMCPGrantByKey(ctx context.Context, arg GetMCPGrantByKeyPara
 }
 
 const getMCPServer = `-- name: GetMCPServer :one
-SELECT id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json, call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, version FROM mcp_servers WHERE id = ?
+SELECT id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json, call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, version, kind, api_token_id, spaceman_json FROM mcp_servers WHERE id = ?
 `
 
 func (q *Queries) GetMCPServer(ctx context.Context, id string) (McpServer, error) {
@@ -114,12 +114,15 @@ func (q *Queries) GetMCPServer(ctx context.Context, id string) (McpServer, error
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.Kind,
+		&i.ApiTokenID,
+		&i.SpacemanJson,
 	)
 	return i, err
 }
 
 const getMCPServerBySlug = `-- name: GetMCPServerBySlug :one
-SELECT id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json, call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, version FROM mcp_servers WHERE slug = ?
+SELECT id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json, call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, version, kind, api_token_id, spaceman_json FROM mcp_servers WHERE slug = ?
 `
 
 func (q *Queries) GetMCPServerBySlug(ctx context.Context, slug string) (McpServer, error) {
@@ -144,6 +147,9 @@ func (q *Queries) GetMCPServerBySlug(ctx context.Context, slug string) (McpServe
 		&i.CreatedBy,
 		&i.UpdatedAt,
 		&i.Version,
+		&i.Kind,
+		&i.ApiTokenID,
+		&i.SpacemanJson,
 	)
 	return i, err
 }
@@ -295,7 +301,7 @@ func (q *Queries) ListMCPGrantsBySpace(ctx context.Context, spaceID string) ([]M
 }
 
 const listMCPServers = `-- name: ListMCPServers :many
-SELECT id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json, call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, version FROM mcp_servers ORDER BY slug
+SELECT id, slug, name, description, url, headers_enc, header_names_json, headers_version, allow_private, tools_json, call_timeout_ms, max_concurrency, max_result_bytes, enabled, created_at, created_by, updated_at, version, kind, api_token_id, spaceman_json FROM mcp_servers ORDER BY slug
 `
 
 func (q *Queries) ListMCPServers(ctx context.Context) ([]McpServer, error) {
@@ -326,6 +332,9 @@ func (q *Queries) ListMCPServers(ctx context.Context) ([]McpServer, error) {
 			&i.CreatedBy,
 			&i.UpdatedAt,
 			&i.Version,
+			&i.Kind,
+			&i.ApiTokenID,
+			&i.SpacemanJson,
 		); err != nil {
 			return nil, err
 		}

@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- SpaceMan admin MCP groundwork (ADR-0063, Proposed; AM-1/AM-2). Nothing uses it yet.
+  - Internal API tokens: owned by an administrator, scoped like any API token, without a secret, and never accepted as
+    a bearer token. Their calls are audited with the owner, the token (`via spaceman_mcp:<token>`) and the agent run.
+  - Migration 0041 (forward-only) adds the gateway server kind and its internal token, and the token purpose.
 - Harbor Pilot connection and per-space settings (ADR-0060, Proposed; HP-T2). Runs don't use the gateway yet (HP-T3/T4).
   - An administrator connects one Harbor Pilot gateway (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`,
     account:write): a gateway URL, an optional URL runs use, a parent token with `tokens:mint` and an optional

@@ -31,6 +31,9 @@ func Actor(ctx context.Context) audit.Actor {
 		return audit.Actor{Type: audit.ActorSystem, ID: "anonymous"}
 	case p.RootTokenID != "":
 		return audit.Actor{Type: audit.ActorRoot, ID: p.RootTokenID}
+	case p.Internal():
+		// A SpaceMan MCP call (ADR-0063): the owner's authority, through the server's internal token, for a run.
+		return audit.Actor{Type: audit.ActorUser, ID: p.User.ID, Via: auth.ViaSpacemanMCP + p.TokenID, Run: p.RunID}
 	case p.TokenID != "":
 		return audit.Actor{Type: audit.ActorUser, ID: p.User.ID, Via: "api_token:" + p.TokenID}
 	case p.Method == auth.MethodOIDC:
