@@ -695,7 +695,7 @@ func undispatchable(err error) string {
 }
 
 // materialize turns a stored command into the wire message, attaching the run token and secrets to launches and
-// repository SSH keys to clones and fetches (minor ≥ 7, ADR-0057). Stored payloads never hold any of them.
+// repository SSH keys to clones, fetches and relocation clones (minor ≥ 7, ADR-0057). Stored payloads never hold any of them.
 func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, minor int) (proto.Command, error) {
 	msg := proto.Command{CommandID: c.ID, Kind: c.Kind, SpaceID: c.SpaceID, RunID: c.RunID.String, Generation: c.Generation,
 		IdempotencyKey: c.IdempotencyKey, Payload: json.RawMessage(c.PayloadJson)}
@@ -713,6 +713,27 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, minor int) (pro
 			p.Repositories[i].SSHKey = k
 		}
 		msg.Payload = mustJSON(p)
+		return msg, nil
+	}
+	if c.Kind == proto.CmdRelocatePrepare && keys {
+		var p proto.RelocatePreparePayload
+		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
+			return msg, err
+		}
+		keyed := false
+		for i := range p.Repos {
+			if p.Repos[i].Source == nil {
+				continue
+			}
+			k, err := h.RepoKey(ctx, c.SpaceID, p.Repos[i].Source.ID)
+			if err != nil {
+				return msg, err
+			}
+			p.Repos[i].Source.SSHKey, keyed = k, keyed || k != ""
+		}
+		if keyed {
+			msg.Payload = mustJSON(p)
+		}
 		return msg, nil
 	}
 	if c.Kind != proto.CmdLaunch {

@@ -101,7 +101,7 @@ type Recovery struct {
 // repositories with a URL (ADR-0044).
 type RepoSpec struct {
 	Path   string `json:"path" doc:"Folder relative to the space folder"`
-	URL    string `json:"url" doc:"Clone URL; the destination node's own Git authentication is used (no credentials in the URL)"`
+	URL    string `json:"url" doc:"Clone URL (no credentials in the URL); the destination node's own Git authentication is used, or the SpaceMan SSH key of the configured repository at this folder or URL"`
 	Branch string `json:"branch,omitempty"`
 }
 

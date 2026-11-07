@@ -38,11 +38,36 @@ type Payload struct {
 - Delivery is at-least-once, and duplicates can arrive after the JetStream 2-minute window, so **dedup on `publication_id`/`Nats-Msg-Id`**.
 - Ordering is FIFO per account only.
 
+## Webhook events and their resource (code, `internal/events/webhook.go`, rechecked 2026-11-07 at the same revision)
+- Every signature-verified webhook delivery is published: there is no event allowlist. The subject's `<event>` is
+  `X-GitHub-Event` and `<action>` the payload's `action` (or `none`), token-encoded as above.
+- `resource` is taken from the event's primary object (`webhookResources`): `issues` → `issue`; `issue_comment` →
+  `comment` (kind `issue_comment`, so **no number**: the issue or pull request number is `payload.issue.number`);
+  `pull_request` → `pull_request`; `pull_request_review` → `review` and `pull_request_review_comment` → `comment`
+  (no number: use `payload.pull_request.number`); `pull_request_review_thread` → `thread`; `commit_comment`,
+  `discussion`, `discussion_comment`, `release`, `workflow_run`, `workflow_job`, `check_run`, `check_suite`,
+  `deployment`, `deployment_status`, `fork`, `member`, `membership`, `team`, `team_add`, `milestone`, `label`,
+  `installation`, `installation_repositories`, `organization`. `resource.sha` is the object's `head_sha` (workflow
+  runs, jobs, check runs and suites). `push`, `create` and `delete` get kind `ref`. Other events have no resource.
+- `actor` is the webhook `sender` (`{id, login, type}`; `type` is `Bot` for apps). `repository.owner` is
+  `{id, login, type}`.
+- `occurred_at` is set only for listed event/actions, e.g. `issue_comment.created` (`comment.created_at`),
+  `pull_request_review.submitted` (`review.submitted_at`), `pull_request_review_comment.created`,
+  `check_run.completed`, `workflow_job.completed`. `workflow_run.completed` and `check_suite.completed` have none
+  (`ce-time` is the observed time).
+- The dedup key is the delivery ID, so a GitHub redelivery republishes the same `publication_id`.
+
 ## SpaceMan seed templates derived from this contract
-- `github-issue` and `github-pull-request` templates:
+- `github-issue` and `github-pull-request` templates (repository required):
   - variables `account_key` (validated against the regex above) and `repository` (`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`);
   - subject `evt.github.{{account_key}}.webhook.issues.*` or `…pull_request.*`;
   - payload filter `repository.full_name == {{repository}}`.
+- ADR-0061 templates `github-pr-comment`, `github-issue-comment` (`issue_comment.created`, split on
+  `payload.issue.pull_request`), `github-pr-review` (`pull_request_review.submitted`), `github-pr-review-comment`
+  (`pull_request_review_comment.created`), `github-workflow-run` (`workflow_run.completed`) and `github-check-suite`
+  (`check_suite.completed`): repository and owner are optional filters on `repository.full_name` and
+  `repository.owner.login`; author and bot filters read `actor.login` and `actor.type`. Their samples
+  (`internal/events/template/testdata/pulse-github-<event>-<action>*.json`) are derived, not captured.
 - Observed from a running `pulse-github run` (v0.1.0, `TestRealPulseGitHub`, 2026-11-03): the `issues_opened.json` webhook publishes
   on `evt.github.<acct>.webhook.issues.opened` with the headers above, and `push.json` on `….webhook.push.none`. The publication also
   carries `account.github_id` and `github.payload_sha256`, which SpaceMan's derived sample

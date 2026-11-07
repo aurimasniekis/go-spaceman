@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"regexp"
 	"time"
 
@@ -49,12 +50,21 @@ type builtin struct {
 var builtins = []builtin{
 	{"github-issue", "GitHub issues", "Issue events for one repository, from go-pulse-github webhooks (evt.github.<account>.webhook.issues.*).", template.GitHubIssue},
 	{"github-pull-request", "GitHub pull requests", "Pull request events for one repository, from go-pulse-github webhooks (evt.github.<account>.webhook.pull_request.*).", template.GitHubPullRequest},
+	{"github-pr-comment", "GitHub pull request comments", "New comments in pull request conversations (evt.github.<account>.webhook.issue_comment.created on pull requests).", template.GitHubPullRequestComment},
+	{"github-pr-review", "GitHub pull request reviews", "Submitted pull request reviews: approved, changes requested or commented (evt.github.<account>.webhook.pull_request_review.submitted).", template.GitHubPullRequestReview},
+	{"github-pr-review-comment", "GitHub pull request review comments", "New inline comments on pull request diffs (evt.github.<account>.webhook.pull_request_review_comment.created).", template.GitHubPullRequestReviewComment},
+	{"github-issue-comment", "GitHub issue comments", "New comments on issues, not pull requests (evt.github.<account>.webhook.issue_comment.created).", template.GitHubIssueComment},
+	{"github-workflow-run", "GitHub Actions workflow runs", "Completed workflow runs, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.workflow_run.completed).", template.GitHubWorkflowRun},
+	{"github-check-suite", "GitHub check suites", "Completed check suites of any CI app, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.check_suite.completed).", template.GitHubCheckSuite},
 }
 
 // SeedBuiltins creates the built-in templates (published version 1) when they do not exist yet.
 func (svc *Service) SeedBuiltins(ctx context.Context) error {
 	for _, b := range builtins {
-		if _, err := svc.s.R().GetEventTemplateBySlug(ctx, b.slug); err == nil {
+		if r, err := svc.s.R().GetEventTemplateBySlug(ctx, b.slug); err == nil {
+			if r.Builtin != 1 {
+				svc.o.Log.Warn("built-in event template not seeded: a template already uses its slug", slog.String("slug", b.slug))
+			}
 			continue
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err

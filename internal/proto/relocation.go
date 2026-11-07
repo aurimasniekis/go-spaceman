@@ -172,6 +172,12 @@ type RelocateExport struct {
 }
 
 // RelocateRepo is a repository the destination clones from its remote because its state is pushed.
+//
+// Source is the space's configured repository it matches (by path, else by remote URL) when that repository has a
+// SpaceMan SSH key (ADR-0057/0058): the destination then clones from Source.URL with that key and its pinned host
+// keys instead of the node's own Git authentication. Central stores and logs it without the key (Redacted) and adds
+// Source.SSHKey only to the wire message for a node at minor ≥ MinorRepoKeys. Compatibility: the field is optional and
+// needs no minor of its own; an agent that predates it ignores it and clones with the node's own authentication, as before.
 type RelocateRepo struct {
 	Path      string             `json:"path"`
 	Remotes   []GitRemote        `json:"remotes"`
@@ -179,6 +185,7 @@ type RelocateRepo struct {
 	Head      string             `json:"head,omitempty"`
 	Branches  []BranchCheck      `json:"branches"`
 	Worktrees []ExportedWorktree `json:"worktrees"`
+	Source    *RepoSource        `json:"source,omitempty"`
 }
 
 // RelocatePreparePayload asks the destination to materialize the space folder (space.relocate.prepare): clone the
@@ -192,6 +199,20 @@ type RelocatePreparePayload struct {
 	Export       *RelocateExport  `json:"export,omitempty"`
 	Memory       []RelocateMemory `json:"memory"`
 	Blobs        []RelocateBlob   `json:"blobs"`
+}
+
+// Redacted returns a copy without repository keys (for storage and logs).
+func (p RelocatePreparePayload) Redacted() RelocatePreparePayload {
+	repos := make([]RelocateRepo, len(p.Repos))
+	for i, r := range p.Repos {
+		if r.Source != nil {
+			src := r.Source.Redacted()
+			r.Source = &src
+		}
+		repos[i] = r
+	}
+	p.Repos = repos
+	return p
 }
 
 // Release actions.

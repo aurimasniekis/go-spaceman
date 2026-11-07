@@ -6,7 +6,37 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0-rc.9] - 2026-11-07
+
+Ninth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): Claude Code settings on
+harness profiles (ADR-0059) with their review fixes; faster CI and `make check`, with the release workflow gated on
+vet, race tests, coverage, fuzz smoke and the full site check (ADR-0062); a fix for the queue page crashing on
+duplicate task titles; more built-in GitHub event templates and optional template filters (ADR-0061); live updates
+that reconnect after central restarts; terminal and mobile UI fixes, with form descriptions under their fields;
+relocation of spaces whose repositories use SpaceMan SSH keys; and the Harbor Pilot gateway contract with ADR-0060
+(Proposed; documents and an opt-in test harness, no product behaviour). Upgrade central and the node agents. The
+relocation fix needs both: an older agent keeps working, but relocating a space with keyed repositories to it still
+fails. The relocation fix changes no node protocol, but Claude settings on profiles move it to 1.8: a run of a profile
+with `claude_settings` on an older agent fails as `node_too_old`. One migration, 0039 (`claude_settings_json` on
+harness profiles), which is forward-only and cannot be reversed: take a backup before upgrading (central also writes a
+pre-migration snapshot; going back means restoring it). The new event templates are seeded at central's start, not by
+a migration.
+
 ### Added
+- More built-in GitHub event templates (ADR-0061), seeded at central's start on new and existing installations:
+  - `github-pr-comment` and `github-issue-comment`: new comments on pull requests and on issues;
+  - `github-pr-review`: submitted reviews (approved, changes requested, commented);
+  - `github-pr-review-comment`: new inline comments on a pull request's diff;
+  - `github-workflow-run` and `github-check-suite`: completed GitHub Actions runs and check suites, by default only
+    failed, timed out, cancelled or startup failures (`include_successes` takes every conclusion).
+
+  Each takes the account and optional `repository`, `owner` and `exclude_author` (for a space's own agent account).
+  Comment and review templates ignore bots unless `include_bots` is set; CI templates can drop them with
+  `exclude_bots`. Comments and reviews correlate with their pull request or issue, CI with its commit. Item titles
+  hold no free text from the event: titles, comments and workflow names are only in the body and the payload. A
+  built-in whose slug one of your templates already uses is not seeded; central logs a warning naming the slug.
+- Template filters can be optional: `if_set` applies a filter only when a variable has a value, `unless_set` only
+  when it has none. A new operator `absent` matches a missing or null field.
 - Claude Code settings on harness profiles (ADR-0059, security-relevant): a claude-code profile's `claude_settings` are
   settings.json keys, any keys (permissions, auto mode rules, env, hooks, …). They are set in each run's own
   `settings.json` at launch, and keys taken out of the profile are removed at the next launch. The profile form edits
@@ -21,8 +51,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - an opt-in test harness that runs a real `harbor-pilot serve --demo` (`make test-harbor-pilot`, `SPACEMAN_HARBOR_PILOT=1`); the gateway stops with the test binary even when its cleanup never runs, and a cached binary is reinstalled unless it is the pinned build;
   - a recorded spike: Claude Code 2.1.317 and interactive codex-cli 0.166.0 both reach the gateway with only a
     per-run token in their secret environment. Codex needs no login seeding.
+- `SM_CHROMIUM_ARGS`: extra Chromium launch arguments (space-separated) for `make e2e`, `make screenshots` and
+  `make site-check`, for hosts whose sandbox stops Chromium from starting (for example
+  `--no-sandbox --disable-gpu --no-zygote` in a container). Unset by default and in CI.
 
 ### Changed
+- Form field descriptions are shown under the field instead of between the label and the field, so fields in one row
+  line up whether or not they have a description. The validation error comes after the description. One theme
+  default (`inputWrapperOrder`) applies it to every form.
+- On a phone the app bar shows only the logo, not the "SpaceMan" name, so it no longer stacks over a page header with
+  the same name.
 - Faster CI and `make check`:
   - test stores and test centrals start from a database that was migrated once per test binary, instead of applying
     every migration again for each test (about 10 s per store under the race detector);
@@ -38,6 +76,36 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with its accessibility audit pass.
 
 ### Fixed
+- Relocating a space whose repositories use SpaceMan SSH keys no longer fails in Prepare with "Host key verification
+  failed" on a destination without Git credentials of its own. The destination clones such a repository from its
+  configured URL with its key and pinned host keys, as a normal clone does. Central matches each relocated repository
+  to the configured one (by folder, else by remote URL) and puts the key only on the message to the destination
+  agent: stored commands, logs, the journal and the audit never hold it. Repositories without a key clone with the
+  node's own Git authentication as before. An older destination agent ignores the key (no protocol change). A
+  relocation also no longer drops the user name of an `ssh://git@host/…` remote URL.
+- Terminals: the agent tab strip no longer scrolls vertically or shows scrollbars, and a tab's first line (status
+  dot and name) no longer scrolls out of view on a phone. Tabs keep their content's size; when there are more than fit,
+  the strip scrolls sideways (touch, trackpad or mouse wheel), snapping to tabs, and keeps the selected tab in view.
+- Run header: the turn number and the state no longer get clipped ("#." / "working ·…"); the role name truncates
+  first and the actions wrap to a second row when there is no room. On a phone the header is two rows: who (status,
+  role, turn, state) and the actions (Live/Replay, then Take over, Stop and the details toggle as icon buttons).
+- Terminals on a phone: the page no longer scrolls sideways (a terminal wider than the screen scrolls inside its own
+  box), the run inspector goes under the terminal instead of beside it, the replay controls wrap, and the Terminals
+  workspace's space and agent list is a drawer opened from the space name (a long name ends in an ellipsis).
+- Live updates no longer stay "offline" after central restarts. A change feed that the browser gave up on (a 502
+  while central restarts, a 401) or that the server ended is reopened with backoff (1 s doubling to 30 s, with jitter,
+  reset once it opens): each try re-checks the session first, sending the browser to sign-in when the session is gone,
+  and resumes from the last change seen. A stream the server ends as unauthenticated while the session is still valid
+  reconnects at once the first time; when fresh streams keep ending that way, each further reconnect waits for the
+  next backoff step. The header shows "offline" while waiting and "connecting" while trying. The
+  tab holding the stream retries at once when the window comes back online, when it becomes visible again, and when
+  another tab opens or reloads, so a stale background tab can't keep every tab offline. The tabs' lock and channel are
+  now `spaceman-watch.v2`, so tabs still running an older build don't hold the new ones offline.
+- The queue page no longer crashes ("Duplicate options are not supported") when two tasks share a title. Task pickers
+  (a task's dependencies, a new task's parent and dependencies) use task IDs as values; a title shared by several
+  tasks shows each task's status and the end of its ID. The run launcher's "another role" choice no longer collides
+  with a space role named `custom`. The queue route has its own error boundary, and its task drawer and dialogs are
+  contained separately, so a failing part shows an alert with a retry instead of blanking the page.
 - Saving a harness profile without `claude_settings` keeps the stored settings, read in the save's own transaction; a
   failed read before the save could clear them.
 - Changes to a profile's `claude_settings` are audited on `profile.created` and `profile.updated` with the changed
@@ -662,7 +730,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.8...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...HEAD
+[0.1.0-rc.9]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.9
 [0.1.0-rc.8]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.8
 [0.1.0-rc.7]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.7
 [0.1.0-rc.6]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.6

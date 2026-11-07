@@ -11,6 +11,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -43,6 +44,8 @@ type Options struct {
 	DepthFor func(ctx context.Context, spaceID string) int64
 	// Metrics receives the ingestion metrics (bounded labels only). Nil: none.
 	Metrics *metrics.Metrics
+	// Log receives the service's warnings. Nil: discarded.
+	Log *slog.Logger
 }
 
 // Service manages connections, templates and subscriptions, and processes delivered events.
@@ -64,6 +67,9 @@ type Service struct {
 func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, ch *changefeed.Recorder, ib *inbox.Service, att *attachments.Service, o Options) *Service {
 	if o.Clock == nil {
 		o.Clock = clock.System{}
+	}
+	if o.Log == nil {
+		o.Log = slog.New(slog.DiscardHandler)
 	}
 	if o.DeliveryRetention <= 0 {
 		o.DeliveryRetention = 30 * 24 * time.Hour

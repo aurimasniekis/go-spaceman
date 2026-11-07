@@ -16,7 +16,8 @@ describe('parseDefinition', () => {
     const r = parseDefinition(JSON.stringify({
       subject: 'github.{{vars.org}}.>',
       variables: [{ name: 'Org' }, { name: 'repo', pattern: '(' }, { name: 'repo' }],
-      filters: [{ path: 'vars.x', op: 'like' }, { path: 'data.a', op: 'in' }, { path: 'data.b', op: 'eq', value: '{{vars.missing}}' }],
+      filters: [{ path: 'vars.x', op: 'like' }, { path: 'data.a', op: 'in' }, { path: 'data.b', op: 'eq', value: '{{vars.missing}}' },
+        { path: 'data.c', op: 'absent', if_set: 'nope', unless_set: 'repo' }],
       title: '',
       body: '',
       instructions: 'Look at {{data.title}}',
@@ -32,11 +33,20 @@ describe('parseDefinition', () => {
       'variables: "repo" is defined twice',
       'subject: variable "org" is not defined',
       'filters[0].path: must be event.… or data.…',
-      'filters[0].op: must be eq, ne, in, exists or prefix',
+      'filters[0].op: must be eq, ne, in, exists, absent or prefix',
       'filters[1]: in needs values',
       'filters[2]: variable "missing" is not defined',
+      'filters[3].if_set: variable "nope" is not defined',
       'instructions: may only use {{vars.name}} placeholders; event content is untrusted and cannot become instructions',
     ]))
+  })
+
+  it('accepts optional filters that name a variable', () => {
+    const r = parseDefinition(JSON.stringify({
+      subject: 'evt.ops.alert.>', title: 'x', variables: [{ name: 'env' }, { name: 'all', pattern: 'true' }],
+      filters: [{ path: 'data.env', op: 'eq', value: '{{vars.env}}', if_set: 'env' }, { path: 'data.muted', op: 'absent', unless_set: 'all' }],
+    }))
+    expect(r.errors).toEqual([])
   })
 
   it('fills missing lists so the definition can be sent', () => {

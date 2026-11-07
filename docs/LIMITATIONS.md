@@ -39,6 +39,12 @@
   its `issues_opened` and `push` webhook fixtures to a real pulsed (`make test-real-pulse`). Its GitHub App
   installation lookup was answered by a local stand-in serving pulse-github's own test JSON, so the real GitHub API was
   not involved. There is no upstream pull request fixture, so the PR template has no real evidence.
+- **The comment, review and CI templates have no live evidence.** `github-pr-comment`, `github-issue-comment`,
+  `github-pr-review`, `github-pr-review-comment`, `github-workflow-run` and `github-check-suite` (ADR-0061) are tested
+  against payloads derived from GitHub's documented webhook shapes and pulse-github's normalisation code, not against
+  events a live pulse-github published. Lifecycle actions (closed, reopened, ready_for_review, …) keep the existing
+  issue and pull request templates' generic rendering, which still puts the issue or pull request title in the item
+  title.
 - **Paused-space policies cover event items only.** A subscription's `while_paused` (defer, wake or stop, ADR-0049)
   decides about the items it creates. Other inputs of a paused space (operator items, worker messages, schedules,
   task and run notices) still reach a control run that runs under **Hold** at once. A `stop` subscription's durable
@@ -140,6 +146,9 @@
   submodule work trees are inspected only as part of their parent's status.
 - **Credentials in remote URLs are dropped.** The destination clones with its own Git authentication; a remote that only
   works with credentials embedded in its URL fails to clone (the relocation blocks with the error).
+- **The destination gets a keyed repository's key at Prepare.** For a repository with a SpaceMan SSH key, the
+  relocation's destination receives the key in Prepare, before the lease moves, so the destination of a cancelled or
+  failed relocation has held the key in memory. Nothing is stored on that node.
 - **Native sessions are not carried.** Runs on the destination start fresh harness sessions (project continuity only).
 - **Without the source, only central's copies.** The unavailable-source flow restores acknowledged memory, the
   space's configured repositories that have a URL and the repositories the operator lists; everything else on the
@@ -456,6 +465,10 @@
   a queue policy is kept and cross-space settings are reset to the defaults; spaces are archived unless
   `purge_on_destroy` is set. Recreating such an object with the same slug (or a user with the same email) fails until it
   is imported.
+- **Optional template filters are not in the provider yet.** Its definition type has no `if_set` or `unless_set` and
+  refuses unknown fields, so a custom template or subscription definition using them cannot be managed through
+  Terraform, and the `spaceman_event_template` data source drops them when it reads a built-in that has them
+  (ADR-0061). Subscribing to the built-ins by slug works.
 - **Write-only rotation is explicit.** Terraform cannot see a changed write-only secret: bump its `_wo_version`.
 - **Tested against a local central only** (simulated, `make acc` in the provider repository); no Terraform run against a production
   deployment, a real identity provider or a real Pulse deployment is recorded.

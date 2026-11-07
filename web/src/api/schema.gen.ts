@@ -5982,7 +5982,7 @@ export interface components {
             branch?: string;
             /** @description Folder relative to the space folder */
             path: string;
-            /** @description Clone URL; the destination node's own Git authentication is used (no credentials in the URL) */
+            /** @description Clone URL (no credentials in the URL); the destination node's own Git authentication is used, or the SpaceMan SSH key of the configured repository at this folder or URL */
             url: string;
         };
         FleetRetryRelocationInput: {
@@ -9818,10 +9818,14 @@ export interface components {
             variables: components["schemas"]["TemplateVariable"][];
         };
         TemplateFilter: {
+            /** @description Apply the filter only when this variable has a value */
+            if_set?: string;
             /** @enum {string} */
-            op: "eq" | "ne" | "in" | "exists" | "prefix";
+            op: "eq" | "ne" | "in" | "exists" | "absent" | "prefix";
             /** @description Dotted path into the event, e.g. data.repository.full_name */
             path: string;
+            /** @description Apply the filter only when this variable has no value */
+            unless_set?: string;
             value?: string;
             values?: string[];
         };

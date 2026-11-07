@@ -2457,6 +2457,55 @@
   - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` 0.1.1, with a placeholder kept for a
     live run.
 
+### ADR-0061 — More shipped GitHub event templates; optional filters and the `absent` operator
+- **Status:** Accepted, 2026-11-07 (operator request: spaces should react to pull request conversation, reviews, CI and
+  issue comments).
+- **Context:** SpaceMan shipped only `github-issue` and `github-pull-request`. go-pulse-github v0.1.0 publishes every
+  webhook it receives on `evt.github.<account>.webhook.<event>.<action>` with GitHub's payload unchanged, so comments,
+  reviews and CI completions were available but nothing presented them. The template engine could not express what
+  such templates need: a filter that a subscription turns on (one repository or owner, one author to ignore) or off
+  (bots, successful runs), and "this field is missing" (GitHub sends comments on issues and on pull requests as one
+  `issue_comment` event; only a pull request's has `issue.pull_request`).
+- **Decision:**
+  - **Engine.** A filter may name a variable in `if_set` (it applies only when that variable has a value) or
+    `unless_set` (only when it has none). Bind drops the filters a subscription's values turn off, so the bound
+    subscription and its preview show the filters that really apply. A new operator `absent` is the inverse of
+    `exists` (missing or JSON null). Both names must be variables of the definition; the web editor checks the same.
+    Filters still only narrow what a subscription accepts: the subject is untouched (SM-EVT-010), variables are still
+    pattern-checked, and instructions still see only variables.
+  - **Six new built-in templates,** seeded as version 1 at central's start when missing (existing installations get
+    them on upgrade; existing templates are not touched): `github-pr-comment` and `github-issue-comment`
+    (`issue_comment.created`, split on `issue.pull_request`), `github-pr-review` (`pull_request_review.submitted`),
+    `github-pr-review-comment` (`pull_request_review_comment.created`), `github-workflow-run`
+    (`workflow_run.completed`) and `github-check-suite` (`check_suite.completed`).
+  - **Variables.** All six take `account_key` (required) and optional `repository`, `owner` and `exclude_author`
+    (the actor's login, for a space's own agent account). Conversation templates ignore bot actors unless
+    `include_bots` is `true`; CI templates keep them unless `exclude_bots` is `true` (a bot's pull request can fail CI
+    too) and accept only `failure`, `timed_out`, `cancelled` and `startup_failure` unless `include_successes` is
+    `true`. `github-check-suite` has an optional `app` (the suite's app slug). Flags accept only `true`.
+  - **Untrusted text (T-03).** Item titles carry only values GitHub constrains: repository, number, login, review
+    state, CI conclusion and trigger, app slug and a short SHA. Issue and pull request titles, comments, review
+    bodies, file paths, workflow, app and branch names go only into the body (as text or inline code) and the raw
+    payload attachment. Instructions use only variables, as before.
+  - **Correlation and dedup.** Conversation items correlate on `github:<owner>/<repo>#<number>`, the key the
+    `github-pull-request` and `github-issue` templates use, so a pull request's events, comments and reviews group.
+    CI items correlate on `github:<owner>/<repo>@<head_sha>`, so reruns and both CI templates for one commit group.
+    A redelivery is the same event ID and is deduplicated by ingestion as before. Edits and deletions are other
+    actions, which these subjects do not match.
+  - **Not added.** `check_run` and `workflow_job` (one item per job; the suite and the run summarise them),
+    `pull_request_review_thread`, discussions, releases and deployments. Pull request and issue lifecycle actions
+    (closed and merged, reopened, ready_for_review, review_requested, assigned, labeled) are already matched by the
+    existing templates' `*` action and are not duplicated; their rendering stays as it is, because changing a
+    published built-in needs a new version that existing installations would not get.
+- **Consequences:**
+  - The Terraform provider's typed definition (`TemplateFilter`) lacks `if_set` and `unless_set`, and it refuses
+    unknown fields: custom definitions using them cannot be written through it yet, and the new built-ins'
+    definitions lose the fields when read through its data source. That is a provider follow-up.
+  - The existing `github-issue` and `github-pull-request` templates still put the issue or pull request title into
+    the item title. Moving it to the body needs a new published version of each.
+  - The fixtures are derived from GitHub's documented payload shapes and pulse-github's normalisation code, not
+    captured from a live pulse-github (SM-EVT-002 notes).
+
 ### ADR-0062 — CI scope: 250 ms write-transaction guard on hosted runners, path-gated site audit, fuzzing nightly and at release
 - **Status:** Accepted, 2026-11-07 (operator decisions Q1 b, Q2 b and Q3 "nightly and release", after the CI duration
   investigation on PR #15).

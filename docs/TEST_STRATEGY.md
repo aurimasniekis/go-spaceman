@@ -39,6 +39,8 @@
 | `make site-check` | Site build with a dead-link check, screenshot references, Mermaid parsing, API-reference drift, and axe on every site page | real browser |
 | `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` | simulated |
 
+The browser rows (`make e2e`, `make screenshots`, `make site-check`) take `SM_CHROMIUM_ARGS`, extra Chromium launch arguments separated by spaces, for hosts whose sandbox stops Chromium from starting, for example `SM_CHROMIUM_ARGS='--no-sandbox --disable-gpu --no-zygote'` inside a container. It is unset by default and in CI.
+
 ## Fault suite (`make test-fault`)
 
 | Test | Fault | What must hold |

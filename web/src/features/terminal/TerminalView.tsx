@@ -177,7 +177,7 @@ function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
     }
   }, [term, spaceId, runId, attempt, visible])
   return (
-    <Stack gap="xs">
+    <Stack gap="xs" style={{ minWidth: 0 }}>
       <StatusBadges sum={sum} live={state} typing={!!onInput} />
       {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
@@ -264,9 +264,9 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   const download = `${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/recording/download`
 
   return (
-    <Stack gap="xs">
-      <Group justify="space-between" wrap="nowrap">
-        <Group gap="xs" wrap="nowrap">
+    <Stack gap="xs" style={{ minWidth: 0 }}>
+      <Group justify="space-between" wrap="nowrap" gap="xs" data-testid="replay-toolbar">
+        <Group gap="xs" wrap="wrap" style={{ minWidth: 0 }}>
           <Tooltip label="Restart">
             <ActionIcon aria-label="Restart replay" disabled={!records?.length} onClick={() => { seek(0); setPlaying(true) }}>
               <IconPlayerSkipBackFilled size={14} />
@@ -290,7 +290,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
           </Text>
         </Group>
         <Tooltip label="Download (zstd JSONL)">
-          <ActionIcon component="a" href={download} aria-label="Download recording">
+          <ActionIcon style={{ flexShrink: 0 }} component="a" href={download} aria-label="Download recording">
             <IconDownload size={14} />
           </ActionIcon>
         </Tooltip>

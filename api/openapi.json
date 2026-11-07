@@ -5057,7 +5057,7 @@
             "type": "string"
           },
           "url": {
-            "description": "Clone URL; the destination node's own Git authentication is used (no credentials in the URL)",
+            "description": "Clone URL (no credentials in the URL); the destination node's own Git authentication is used, or the SpaceMan SSH key of the configured repository at this folder or URL",
             "type": "string"
           }
         },
@@ -15270,18 +15270,29 @@
       "TemplateFilter": {
         "additionalProperties": false,
         "properties": {
+          "if_set": {
+            "description": "Apply the filter only when this variable has a value",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "type": "string"
+          },
           "op": {
             "enum": [
               "eq",
               "ne",
               "in",
               "exists",
+              "absent",
               "prefix"
             ],
             "type": "string"
           },
           "path": {
             "description": "Dotted path into the event, e.g. data.repository.full_name",
+            "type": "string"
+          },
+          "unless_set": {
+            "description": "Apply the filter only when this variable has no value",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
             "type": "string"
           },
           "value": {

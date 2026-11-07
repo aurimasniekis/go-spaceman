@@ -11,6 +11,7 @@ import { useAppForm } from '@/components/form/appForm'
 import { TakeoverPanel, useTakeoverInput } from '@/features/terminal/Takeover'
 import { TerminalView } from '@/features/terminal/TerminalView'
 import { atLeast, roleIn } from '@/lib/access'
+import { useNarrow } from '@/lib/media'
 import { datetime, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText } from './runInfo'
@@ -54,6 +55,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
   const operator = atLeast(roleIn(me, spaceId), 'operator')
   const canTakeOver = atLeast(roleIn(me, spaceId), 'admin') // terminal:takeover; the API enforces it
   const ended = isEnded(r)
+  const narrow = useNarrow()
   const [inspector, setInspector] = useState(() => (inspectorDefault === undefined ? readInspector() : inspectorDefault))
   const toggle = () => {
     setInspector((v) => {
@@ -92,23 +94,29 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
   return (
     <Stack gap="xs" style={{ minWidth: 0 }}>
       {crumbs}
-      <Group justify="space-between" wrap="nowrap" gap="sm">
-        <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-          <RunDot run={r} size={10} />
-          <Title order={3} style={{ whiteSpace: 'nowrap' }}>{r.role}</Title>
-          <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text>
-          {r.turn > 0 && <Badge variant="light" color="gray">#{r.turn}</Badge>}
-          <Text size="sm" truncate>{runStateText(r, now)}</Text>
-          {r.adopted && <Tooltip label="Adopted from the node after a restart"><Badge color="gray" variant="outline">adopted</Badge></Tooltip>}
+      {/* Who and what on the left, the actions on the right. The role name truncates first; the turn and the state never
+          shrink. On a phone the actions move to a second row of icon buttons. */}
+      <Group justify="space-between" wrap="wrap" gap="xs" data-testid="run-header">
+        <Group gap="xs" wrap="nowrap" data-testid="run-header-who" style={{ minWidth: 0, flex: '1 1 auto' }}>
+          <Box style={{ flexShrink: 0, display: 'flex' }}><RunDot run={r} size={10} /></Box>
+          <Title order={3} data-testid="run-header-role" style={{ minWidth: '4ch', flexShrink: 100, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.role}</Title>
+          {!narrow && <Text size="sm" c="dimmed" truncate style={{ minWidth: 0, flexShrink: 1 }}>{kindLabel(r.kind)} · {harnessLabel(r.harness)}</Text>}
+          {r.turn > 0 && <Badge variant="light" color="gray" data-testid="run-header-turn" style={{ flexShrink: 0, overflow: 'visible' }}>#{r.turn}</Badge>}
+          <Text size="sm" data-testid="run-header-state" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{runStateText(r, now)}</Text>
+          {r.adopted && <Tooltip label="Adopted from the node after a restart"><Badge color="gray" variant="outline" style={{ flexShrink: 0 }}>adopted</Badge></Tooltip>}
         </Group>
-        <Group gap="xs" wrap="nowrap">
+        <Group gap="xs" wrap="nowrap" data-testid="run-header-actions" style={narrow ? { flexBasis: '100%' } : { flexShrink: 0, marginLeft: 'auto' }}>
           <SegmentedControl value={mode} onChange={(v) => onMode(v as 'live' | 'replay')} aria-label="Terminal view"
             data={[{ value: 'live', label: 'Live', disabled: ended }, { value: 'replay', label: 'Replay' }]} />
-          <TakeoverPanel spaceId={spaceId} runId={r.id} run={r} me={me} canTakeOver={canTakeOver} ended={ended} part="button" />
+          <TakeoverPanel spaceId={spaceId} runId={r.id} run={r} me={me} canTakeOver={canTakeOver} ended={ended} part="button" compact={narrow} />
           {operator && !ended && (
             <Menu position="bottom-end">
               <Menu.Target>
-                <Button color="owlRed" variant="light" leftSection={<IconPlayerStop size={14} />} rightSection={<IconChevronDown size={12} />}>Stop</Button>
+                {narrow ? (
+                  <ActionIcon color="owlRed" variant="light" aria-label="Stop"><IconPlayerStop size={16} /></ActionIcon>
+                ) : (
+                  <Button color="owlRed" variant="light" leftSection={<IconPlayerStop size={14} />} rightSection={<IconChevronDown size={12} />}>Stop</Button>
+                )}
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item onClick={() => void stop('interrupt')}>Interrupt (keeps the session resumable)</Menu.Item>
@@ -117,7 +125,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
             </Menu>
           )}
           <Tooltip label={inspector ? 'Hide details' : 'Show details'}>
-            <ActionIcon variant="default" aria-label={inspector ? 'Hide details' : 'Show details'} onClick={toggle}>
+            <ActionIcon variant="default" aria-label={inspector ? 'Hide details' : 'Show details'} onClick={toggle} ml={narrow ? 'auto' : undefined}>
               {inspector ? <IconLayoutSidebarRightCollapse size={16} /> : <IconLayoutSidebarRightExpand size={16} />}
             </ActionIcon>
           </Tooltip>
@@ -127,7 +135,8 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
       <TakeoverPanel spaceId={spaceId} runId={r.id} run={r} me={me} canTakeOver={canTakeOver} ended={ended} part="banner" />
       {r.error && <Alert color="owlRed" title="Run error" p="xs">{r.error}</Alert>}
 
-      <Box style={{ display: 'grid', gridTemplateColumns: inspector ? 'minmax(0, 1fr) 300px' : 'minmax(0, 1fr)', gap: 'var(--mantine-spacing-sm)', alignItems: 'start' }}>
+      {/* On a phone the inspector goes below the terminal instead of beside it. */}
+      <Box data-testid="run-body" style={{ display: 'grid', gridTemplateColumns: inspector && !narrow ? 'minmax(0, 1fr) 300px' : 'minmax(0, 1fr)', gap: 'var(--mantine-spacing-sm)', alignItems: 'start' }}>
         <Stack gap="xs" style={{ minWidth: 0 }}>
           <TerminalView key={`${r.id}:${mode}`} spaceId={spaceId} runId={r.id} mode={mode} onInput={mode === 'live' ? onKeys : null} />
           {ended ? (

@@ -1,6 +1,6 @@
-import { Alert, Box, Button, Group, Menu, ScrollArea, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { Alert, Box, Button, Group, Menu, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { IconChevronDown, IconRocket } from '@tabler/icons-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Run } from '@/api/client'
 import { useRun, useRuns, useSpace } from '@/api/queries'
 import { RunWorkbench, useNow } from './RunWorkbench'
@@ -65,23 +65,21 @@ export function SpaceTerminals({ spaceId, runId, mode, onSelect, onMode }: {
     )
   }
   return (
-    <Stack gap="sm">
+    <Stack gap="sm" style={{ minWidth: 0 }}>
       {space.data?.state === 'paused' && (
         <Alert color="owlYellow" p="xs">The space is paused ({space.data.pause_mode}): {space.data.pause_mode === 'hold' ? 'agents keep running but get no new work.' : 'its agents were stopped.'}</Alert>
       )}
       {live.length === 0 && ended.length > 0 && (
         <Alert color="gray" p="xs" icon={<IconRocket size={16} />}>No agent is running. The tabs below show the last runs; launch control to start again.</Alert>
       )}
-      <Group gap={0} wrap="nowrap" align="stretch" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
-        <ScrollArea type="auto" scrollbarSize={6} style={{ flex: 1 }}>
-          <Group gap={0} wrap="nowrap" role="tablist" aria-label="Agents">
-            {tabs.map((r) => <AgentTab key={r.id} run={r} label={labels.get(r.id) ?? runTitle(r)} active={r.id === selected} now={now} onClick={() => onSelect(r.id)} />)}
-          </Group>
-        </ScrollArea>
+      <Group gap={0} wrap="nowrap" align="stretch" style={{ borderBottom: '1px solid var(--mantine-color-default-border)', minWidth: 0 }}>
+        <TabStrip selected={selected}>
+          {tabs.map((r) => <AgentTab key={r.id} run={r} label={labels.get(r.id) ?? runTitle(r)} active={r.id === selected} now={now} onClick={() => onSelect(r.id)} />)}
+        </TabStrip>
         {ended.length > 0 && (
           <Menu position="bottom-end">
             <Menu.Target>
-              <Button variant="subtle" color="gray" size="xs" my="auto" rightSection={<IconChevronDown size={12} />}>Ended ({ended.length})</Button>
+              <Button variant="subtle" color="gray" size="xs" my="auto" style={{ flexShrink: 0 }} rightSection={<IconChevronDown size={12} />}>Ended ({ended.length})</Button>
             </Menu.Target>
             <Menu.Dropdown>
               {ended.map((r) => (
@@ -99,11 +97,42 @@ export function SpaceTerminals({ spaceId, runId, mode, onSelect, onMode }: {
   )
 }
 
+/**
+ * The agents' tab row. It never scrolls vertically and shows no scrollbar: tabs keep their content's size, and when
+ * there are more than fit, the row scrolls sideways (touch, trackpad, or the mouse wheel), snapping to tabs. The
+ * selected tab is kept in view.
+ */
+function TabStrip({ selected, children }: { selected?: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // A vertical mouse wheel scrolls the row sideways: a mouse has no other way to reach tabs past the edge.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+  useEffect(() => {
+    const tab = ref.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+    tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [selected])
+  return (
+    <Box ref={ref} role="tablist" aria-label="Agents" className="sm-tabstrip"
+      style={{ display: 'flex', flexWrap: 'nowrap', flex: 1, minWidth: 0, overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none' }}>
+      {children}
+    </Box>
+  )
+}
+
 function AgentTab({ run: r, label, active, now, onClick }: { run: Run; label: string; active: boolean; now: number; onClick: () => void }) {
   return (
     <Tooltip label={`${r.role} · ${r.id}${r.started_at ? ` · started ${new Date(r.started_at).toLocaleTimeString()}` : ''}`} openDelay={600}>
     <UnstyledButton role="tab" aria-selected={active} onClick={onClick} px="sm" py={6}
-      style={{ borderBottom: `2px solid ${active ? 'var(--mantine-primary-color-filled)' : 'transparent'}`, marginBottom: -1, minWidth: 150, maxWidth: 240,
+      style={{ borderBottom: `2px solid ${active ? 'var(--mantine-primary-color-filled)' : 'transparent'}`, flex: '0 0 auto', maxWidth: 240,
         background: active ? 'var(--sm-surface)' : undefined }}>
       <Group gap={6} wrap="nowrap">
         <RunDot run={r} />

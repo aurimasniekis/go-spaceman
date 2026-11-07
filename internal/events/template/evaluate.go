@@ -61,8 +61,11 @@ func eventMap(e Event) map[string]any {
 
 func (f Filter) match(root map[string]any) bool {
 	v, ok := Lookup(root, f.Path)
-	if f.Op == "exists" {
+	switch f.Op {
+	case "exists":
 		return ok && v != nil
+	case "absent":
+		return !ok || v == nil
 	}
 	s := stringify(v)
 	switch f.Op {
