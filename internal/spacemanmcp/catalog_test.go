@@ -121,7 +121,7 @@ func TestHardExclusions(t *testing.T) {
 	}
 	for name, want := range map[string]spacemanmcp.Class{
 		"get_space": spacemanmcp.Read, "launch_run": spacemanmcp.Write, "create_task": spacemanmcp.Write,
-		"put_space_harbor_pilot": spacemanmcp.Write, "delete_space_harbor_pilot": spacemanmcp.Write,
+		"put_space_harbor_pilot": spacemanmcp.Dangerous, "delete_space_harbor_pilot": spacemanmcp.Write,
 		"get_harbor_pilot_connection": spacemanmcp.Read, "save_harness_profile": spacemanmcp.Dangerous,
 		"create_account": spacemanmcp.Dangerous, "create_mcp_server": spacemanmcp.Dangerous,
 		"delete_schedule": spacemanmcp.Dangerous, "get_recording": spacemanmcp.SensitiveRead,
@@ -143,6 +143,37 @@ func TestHardExclusions(t *testing.T) {
 	}
 	if e := spacemanmcp.Table["put-harbor-pilot-connection"]; e.Class != spacemanmcp.Dangerous {
 		t.Errorf("put-harbor-pilot-connection falls back to %s, want dangerous", e.Class)
+	}
+}
+
+// Every step-up operation (re-authentication or a second factor, not on the caller's own account) has an explicit
+// Table entry, so that if its rule ever stops needing a step-up it takes a reviewed class instead of whatever a hurried
+// fix picks. The administrator operations (users, sign-in settings and providers, tokens, node enrollment) fall back
+// to Excluded; destructive ones (purges, relocations, retention) to Dangerous.
+func TestStepUpOperationsFallBackToExcluded(t *testing.T) {
+	t.Parallel()
+	s, d := buildSpec(t)
+	n := 0
+	for _, id := range operationIDs(s) {
+		r, _ := d.RuleFor(id)
+		if !(r.Reauth || r.MFA) || r.Session || r.UserOnly {
+			continue
+		}
+		n++
+		if e, ok := spacemanmcp.Table[id]; !ok || e.Class != spacemanmcp.Excluded && e.Class != spacemanmcp.Dangerous {
+			t.Errorf("step-up operation %s falls back to %q: add an explicit Excluded (or Dangerous) entry", id, e.Class)
+		}
+	}
+	for _, id := range []string{"update-user", "disable-user", "enable-user", "issue-link-invite", "link-user-identity",
+		"unlink-user-identity", "set-sign-in-settings", "create-oidc-provider", "update-oidc-provider", "delete-oidc-provider",
+		"add-oidc-mapping", "delete-oidc-mapping", "revoke-root-token", "create-node", "reissue-enrollment", "create-user",
+		"set-user-grants", "issue-reset", "revoke-any-token", "rotate-root-token", "acknowledge-break-glass", "start-takeover"} {
+		if e := spacemanmcp.Table[id]; e.Class != spacemanmcp.Excluded {
+			t.Errorf("%s falls back to %q, want excluded", id, e.Class)
+		}
+	}
+	if n < 20 {
+		t.Errorf("only %d step-up operations", n)
 	}
 }
 

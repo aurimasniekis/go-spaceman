@@ -82,4 +82,18 @@ func TestInProcessHandler(t *testing.T) {
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "not available through the SpaceMan MCP") {
 		t.Fatalf("internal principal on a session rule: %d %s", rec.Code, rec.Body.String())
 	}
+	// Only an internal token's principal may be injected: a bearer token's (which skips step-up) or root's is refused
+	// before any rule runs, even on a Session rule that any signed-in principal passes over HTTP.
+	for name, p := range map[string]*auth.Principal{
+		"bearer":                        {User: &auth.User{ID: "usr_owner"}, SessionID: "atk_ci", TokenID: "atk_ci", Method: auth.MethodToken},
+		"root":                          {RootTokenID: "rtk_1", Method: auth.MethodRoot},
+		"session":                       {User: &auth.User{ID: "usr_owner"}, SessionID: "ses_1", Method: auth.MethodPassword},
+		"root with an internal purpose": {RootTokenID: "rtk_1", TokenPurpose: auth.TokenPurposeSpacemanMCP},
+	} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/auth/me", nil).WithContext(WithInProcessPrincipal(context.Background(), p)))
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "only an internal principal") {
+			t.Errorf("%s principal: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
 }

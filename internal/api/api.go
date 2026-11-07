@@ -19,6 +19,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
@@ -152,7 +153,7 @@ func WithInProcessPrincipal(ctx context.Context, p *auth.Principal) context.Cont
 // InProcessHandler serves the API's operations to callers inside central (the SpaceMan MCP, ADR-0063) with the
 // principal they inject through WithInProcessPrincipal, instead of authenticating a cookie or bearer token. Every
 // operation still runs its rule (authorizeOps), validation, idempotency and audit exactly as over HTTP; a request
-// without a principal is unauthenticated. Only huma operations are served: the watch stream and the raw routes
+// without a principal is unauthenticated, and any principal but an internal token's is forbidden. Only huma operations are served: the watch stream and the raw routes
 // (uploads, downloads, exports) are not.
 func (d *Deps) InProcessHandler() http.Handler {
 	mux := http.NewServeMux()
@@ -161,6 +162,12 @@ func (d *Deps) InProcessHandler() http.Handler {
 		p, _ := r.Context().Value(inProcessPrincipalKey{}).(*auth.Principal)
 		if p == nil {
 			writeProblem(w, errUnauthenticated())
+			return
+		}
+		if !p.Internal() || p.IsRoot() {
+			// Only an internal token's principal (auth.InternalPrincipal) may be injected: any other kind would skip
+			// the internal-principal refusals and, with a token ID, step-up (ADR-0063).
+			writeProblem(w, newProblem(http.StatusForbidden, apperr.CodeForbidden, "only an internal principal may call the API in process", nil))
 			return
 		}
 		ids := []obs.CorrelationID{}

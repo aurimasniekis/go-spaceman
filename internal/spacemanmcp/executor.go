@@ -56,10 +56,14 @@ type Result struct {
 }
 
 // Execute runs a call. Bad arguments and API problems (4xx and 5xx) are tool errors (isError) the model can read; the
-// returned error is only for a call that cannot be made at all (no principal or tool).
+// returned error is only for a call that cannot be made at all (no principal or tool, or a principal that is not an
+// internal token's: the in-process handler skips authentication, so only auth.InternalPrincipal's result may reach it).
 func (e *Executor) Execute(ctx context.Context, c Call) (*mcp.CallToolResult, error) {
 	if c.Principal == nil || c.Tool == nil || e.Handler == nil {
 		return nil, errors.New("spacemanmcp: call without principal, tool or handler")
+	}
+	if !c.Principal.Internal() || c.Principal.IsRoot() {
+		return nil, errors.New("spacemanmcp: call with a principal that is not an internal token's")
 	}
 	req, err := e.request(ctx, c)
 	if err != nil {
@@ -84,7 +88,9 @@ func (e *Executor) Execute(ctx context.Context, c Call) (*mcp.CallToolResult, er
 	case w.size > 0:
 		res.Note = "the response was not JSON"
 	}
-	if w.status >= 400 {
+	if w.status >= 300 {
+		// A redirect is never the operation's answer (the in-process handler serves no redirects of its own; the mux
+		// answers a cleaned path with one), so it is an error too.
 		return toolError(res), nil
 	}
 	return toolResult(res, false), nil
@@ -131,6 +137,10 @@ func (e *Executor) request(ctx context.Context, c Call) (*http.Request, error) {
 		}
 		if !ok || v == "" {
 			return nil, fmt.Errorf("argument %q is required", name)
+		}
+		if v == "." || v == ".." {
+			// PathEscape keeps dot segments, which the mux would clean into another path.
+			return nil, fmt.Errorf("argument %q must not be %q", name, v)
 		}
 		path = strings.ReplaceAll(path, "{"+name+"}", url.PathEscape(v))
 	}
@@ -205,8 +215,12 @@ func (e *Executor) request(ctx context.Context, c Call) (*http.Request, error) {
 
 // IdempotencyKey derives a create's Idempotency-Key from the run, the token, the operation and the canonical
 // arguments, so a retried call (the same arguments from the same run) returns the first call's result instead of
-// creating a duplicate (ADR-0063, threat A8). Distinct arguments get distinct keys.
+// creating a duplicate (ADR-0063, threat A8). Distinct arguments get distinct keys. An internal principal must carry
+// its run: without one, every run on the same token would share keys.
 func IdempotencyKey(p *auth.Principal, t *Tool, args json.RawMessage) (string, error) {
+	if p == nil || p.Internal() && p.RunID == "" {
+		return "", errors.New("an idempotency key needs the calling run")
+	}
 	canon := []byte("null")
 	if len(bytes.TrimSpace(args)) > 0 {
 		var v any

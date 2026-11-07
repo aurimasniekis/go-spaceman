@@ -134,6 +134,42 @@ func TestExecutorErrors(t *testing.T) {
 	if _, err := ex.Execute(ctx, spacemanmcp.Call{Tool: get}); err == nil {
 		t.Error("a call without a principal ran")
 	}
+	// Only an internal token's principal runs a call: a bearer token's would skip step-up, root's every check.
+	for name, p := range map[string]*auth.Principal{
+		"bearer":                        {User: &auth.User{ID: "usr_owner"}, TokenID: "atk_ci", Method: auth.MethodToken},
+		"root":                          {RootTokenID: "rtk_1", Method: auth.MethodRoot},
+		"root with an internal purpose": {RootTokenID: "rtk_1", TokenPurpose: auth.TokenPurposeSpacemanMCP},
+	} {
+		rec = seen{}
+		if _, err := ex.Execute(ctx, spacemanmcp.Call{Principal: p, Tool: get, Args: json.RawMessage(`{"space_id":"spc_x"}`)}); err == nil || rec.method != "" {
+			t.Errorf("%s principal: %v (sent %v)", name, err, rec.method != "")
+		}
+	}
+	// Dot segments survive PathEscape and the mux would clean them into another path: they are refused.
+	for _, v := range []string{".", ".."} {
+		rec = seen{}
+		r, err := ex.Execute(ctx, spacemanmcp.Call{Principal: runPrincipal(), Tool: get, Args: json.RawMessage(`{"space_id":"` + v + `"}`)})
+		if err != nil || !r.IsError || rec.method != "" || result(t, r).Status != 400 {
+			t.Errorf("space_id %q: %v %+v (sent %v)", v, err, r, rec.method != "")
+		}
+	}
+	// A redirect is not the operation's answer: any status from 300 up is a tool error.
+	ex = &spacemanmcp.Executor{Handler: echo(&rec, http.StatusTemporaryRedirect, "")}
+	if r, err := ex.Execute(ctx, spacemanmcp.Call{Principal: runPrincipal(), Tool: get, Args: json.RawMessage(`{"space_id":"spc_x"}`)}); err != nil || !r.IsError || result(t, r).Status != 307 {
+		t.Errorf("307: %v %+v", err, r)
+	}
+	// A create from an internal principal without a run has no idempotency key and is not sent.
+	create, _ := c.Tool("create_space")
+	norun := runPrincipal()
+	norun.RunID = ""
+	if _, err := spacemanmcp.IdempotencyKey(norun, create, nil); err == nil {
+		t.Error("an idempotency key without a run")
+	}
+	rec = seen{}
+	ex = &spacemanmcp.Executor{Handler: echo(&rec, 201, `{}`)}
+	if r, err := ex.Execute(ctx, spacemanmcp.Call{Principal: norun, Tool: create, Args: json.RawMessage(`{"body":{"name":"x","slug":"x"}}`)}); err != nil || !r.IsError || rec.method != "" {
+		t.Errorf("create without a run: %v %+v (sent %v)", err, r, rec.method != "")
+	}
 }
 
 // Results larger than the cap are cut: the status and request ID stay, the body is dropped with a note.

@@ -97,6 +97,8 @@ var Table = map[string]Entry{
 	// Admin.
 	"get-break-glass":     {Read, rRead},
 	"acknowledge-restore": {Excluded, "acknowledging a restore is an operator's confirmation after a recovery"},
+	// Step-up (excluded by its rule); the fallback.
+	"acknowledge-break-glass": {Excluded, "acknowledging a break-glass sign-in is an operator's confirmation"},
 
 	// Approvals.
 	"create-approval-policy": {Excluded, rApproval},
@@ -165,7 +167,7 @@ var Table = map[string]Entry{
 	"delete-harbor-pilot-connection": {Dangerous, rSecret},
 	"get-harbor-pilot-connection":    {Read, rRead},
 	"get-space-harbor-pilot":         {Read, rRead},
-	"put-space-harbor-pilot":         {Write, rSpaceWrite},
+	"put-space-harbor-pilot":         {Dangerous, "chooses which Harbor Pilot project (and spend) a space's runs bill against"},
 	"delete-space-harbor-pilot":      {Write, rSpaceWrite},
 
 	// Human-action policies.
@@ -256,6 +258,9 @@ var Table = map[string]Entry{
 	"list-nodes":     {Read, rRead},
 	"update-node":    {Dangerous, "changes a node's labels, which decide where runs are placed"},
 	"set-node-state": {Dangerous, "drains or disables a node, stopping its runs"},
+	// Step-up (excluded by their rule); the fallback: they return a one-time enrollment secret.
+	"create-node":        {Excluded, "returns a one-time node enrollment secret"},
+	"reissue-enrollment": {Excluded, "returns a one-time node enrollment secret"},
 
 	// Prompts and harness profiles.
 	"create-prompt":          {Write, rDraft},
@@ -335,6 +340,7 @@ var Table = map[string]Entry{
 	"launch-run":     {Write, "launches a run; inherent to operating a space (diagnostic launches are gated in AM-5)"},
 	"list-runs":      {Read, rRead},
 	"stop-run":       {Write, rSpaceWrite},
+	"start-takeover": {Excluded, rTakeover},
 	"end-takeover":   {Excluded, rTakeover},
 	"renew-takeover": {Excluded, rTakeover},
 	"send-input":     {Excluded, rTakeover},
@@ -354,6 +360,13 @@ var Table = map[string]Entry{
 	"get-sign-in-settings": {Excluded, rSignIn},
 	"list-oidc-mappings":   {Excluded, rSignIn},
 	"list-oidc-providers":  {Excluded, rSignIn},
+	// The step-up writes are excluded by their rule; these entries are what they fall back to.
+	"set-sign-in-settings": {Excluded, rSignIn},
+	"create-oidc-provider": {Excluded, rSignIn},
+	"update-oidc-provider": {Excluded, rSignIn},
+	"delete-oidc-provider": {Excluded, rSignIn},
+	"add-oidc-mapping":     {Excluded, rSignIn},
+	"delete-oidc-mapping":  {Excluded, rSignIn},
 
 	// Skills.
 	"create-skill":     {Write, rDraft},
@@ -385,18 +398,30 @@ var Table = map[string]Entry{
 	// System.
 	"get-outbound-events": {Read, rRead},
 
-	// Tokens.
-	"get-root-token":  {Excluded, rTokens},
-	"list-all-tokens": {Excluded, rTokens},
+	// Tokens. The step-up writes are excluded by their rule; these entries are what they fall back to.
+	"get-root-token":    {Excluded, rTokens},
+	"list-all-tokens":   {Excluded, rTokens},
+	"revoke-any-token":  {Excluded, rTokens},
+	"rotate-root-token": {Excluded, rTokens},
+	"revoke-root-token": {Excluded, rTokens},
 
 	// Usage.
 	"get-run-usage":   {Read, rRead},
 	"get-space-usage": {Read, rRead},
 
-	// Users.
+	// Users. The step-up writes are excluded by their rule; these entries are what they fall back to.
 	"get-user":             {Excluded, rUsers},
 	"list-user-identities": {Excluded, rUsers},
 	"list-users":           {Excluded, rUsers},
+	"create-user":          {Excluded, rUsers},
+	"update-user":          {Excluded, rUsers},
+	"set-user-grants":      {Excluded, rUsers},
+	"disable-user":         {Excluded, rUsers},
+	"enable-user":          {Excluded, rUsers},
+	"issue-reset":          {Excluded, rUsers},
+	"issue-link-invite":    {Excluded, rUsers},
+	"link-user-identity":   {Excluded, rUsers},
+	"unlink-user-identity": {Excluded, rUsers},
 }
 
 // Classify returns an operation's effective class and reason, and false when the operation is not classified.
