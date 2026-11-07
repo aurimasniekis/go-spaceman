@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Checkbox, Drawer, Group, Modal, SegmentedControl, Select, Stack, Text, TextInput } from '@mantine/core'
-import { IconArrowRight, IconCheck, IconMessagePlus } from '@tabler/icons-react'
+import { IconArrowRight, IconCheck, IconClock, IconMessagePlus, IconX } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
@@ -11,6 +11,7 @@ import { Composer } from '@/components/composer/Composer'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
+import { pendingSchedule } from '@/features/messages/scheduled'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago, datetime } from '@/lib/format'
@@ -39,11 +40,15 @@ function MessagesPage() {
   const [open, setOpen] = useState<string | null>(null)
   const [onlyMine, setOnlyMine] = useState(false)
   // People and agents by default: SpaceMan's own notifications to control would otherwise bury them (UX review).
-  const [view, setView] = useState<'people' | 'system' | 'all'>('people')
+  const [view, setView] = useState<'people' | 'system' | 'scheduled' | 'all'>('people')
   const all = list.data?.items ?? []
   const isSystem = (m: (typeof all)[number]) => m.from_kind === 'system' || m.kind === 'notification'
   const systemCount = all.filter(isSystem).length
-  const items = all.filter((m) => (view === 'all' || (view === 'system') === isSystem(m)) && (!onlyMine || m.to_kind === 'operators'))
+  const scheduled = all.filter((m) => pendingSchedule(m))
+  const inView = (m: (typeof all)[number]) =>
+    view === 'all' || (view === 'scheduled' ? pendingSchedule(m) : (view === 'system') === isSystem(m))
+  const items = (view === 'scheduled' ? [...scheduled].sort((a, b) => Date.parse(a.deliver_at ?? '') - Date.parse(b.deliver_at ?? '')) : all)
+    .filter((m) => inView(m) && (!onlyMine || m.to_kind === 'operators'))
   const current = all.find((m) => m.id === open) ?? null
   return (
     <>
@@ -53,7 +58,8 @@ function MessagesPage() {
       <Group justify="space-between" mb={6}>
         <Group gap="sm">
           <SegmentedControl size="xs" value={view} onChange={(v) => setView(v as typeof view)} aria-label="Which messages"
-            data={[{ value: 'people', label: 'People and agents' }, { value: 'system', label: `System (${systemCount})` }, { value: 'all', label: 'All' }]} />
+            data={[{ value: 'people', label: 'People and agents' }, { value: 'system', label: `System (${systemCount})` },
+              { value: 'scheduled', label: `Scheduled (${scheduled.length})` }, { value: 'all', label: 'All' }]} />
           <Text size="xs" c="dimmed">{list.data?.operators_pending ?? 0} waiting for operators</Text>
         </Group>
         <Checkbox size="xs" label="Only messages to operators" checked={onlyMine} onChange={(e) => setOnlyMine(e.currentTarget.checked)} />
@@ -66,14 +72,16 @@ function MessagesPage() {
               <Badge variant="light" color={m.kind === 'request' ? 'owlYellow' : m.kind === 'notification' ? 'gray' : 'owlBlue'}>{m.kind}</Badge>
               <Text size="xs" c="dimmed" w={260} truncate>{party(m.from_kind, m.from_id, m.from_label)} <IconArrowRight size={10} /> {party(m.to_kind, m.to_id)}</Text>
               <Text size="sm" style={{ flex: 1 }} truncate>{m.subject}</Text>
-              <Text size="xs" c="dimmed" w={70} ta="right">{ago(m.created_at)}</Text>
-              <Badge color={stateColor[m.state]} variant="light">{m.state}</Badge>
+              {pendingSchedule(m)
+                ? <Badge color="owlYellow" variant="light" leftSection={<IconClock size={10} />} title={`Scheduled for ${datetime(m.deliver_at)}`}>{ago(m.deliver_at)}</Badge>
+                : <Text size="xs" c="dimmed" w={70} ta="right">{ago(m.created_at)}</Text>}
+              <Badge color={stateColor[m.state]} variant="light">{pendingSchedule(m) ? 'scheduled' : m.state}</Badge>
             </Group>
           </Card>
         ))}
         {list.isSuccess && items.length === 0 && (
           <Text size="sm" c="dimmed" ta="center" p="lg">
-            {all.length === 0 ? 'No messages yet.' : view === 'people' ? `No messages between people and agents. ${systemCount} system notifications are under System.` : 'Nothing here.'}
+            {all.length === 0 ? 'No messages yet.' : view === 'scheduled' ? 'No scheduled messages. Control schedules reminders to itself with spaceman_message_send.' : view === 'people' ? `No messages between people and agents. ${systemCount} system notifications are under System.` : 'Nothing here.'}
           </Text>
         )}
       </Stack>
@@ -107,11 +115,17 @@ function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; 
     }
   }
   const open = m.state !== 'resolved'
+  const pending = pendingSchedule(m)
   return (
     <Stack gap="sm">
       <Group gap="xs"><Badge variant="light">{m.kind}</Badge><Badge color={stateColor[m.state]} variant="light">{m.state}</Badge></Group>
       <Text fw={600} size="lg">{m.subject}</Text>
       <Text size="sm" c="dimmed">From {party(m.from_kind, m.from_id, m.from_label)} to {party(m.to_kind, m.to_id)} · {datetime(m.created_at)}</Text>
+      {m.deliver_at && (
+        <Text size="xs" fw={pending ? 600 : undefined} c="dimmed">
+          {pending ? `Scheduled for ${datetime(m.deliver_at)} (${ago(m.deliver_at)}): control is not told before then` : `Scheduled for ${datetime(m.deliver_at)}`}
+        </Text>
+      )}
       <Text size="xs" c="dimmed">
         {m.available_at ? `Available ${ago(m.available_at)}${m.delivered_via ? ` (${m.delivered_via.replace('_', ' ')})` : ''}` : 'Not yet seen by a recipient'}
         {m.acknowledged_at ? ` · acknowledged ${ago(m.acknowledged_at)} by ${m.acknowledged_by}` : ''}
@@ -130,10 +144,16 @@ function MessageDetail({ spaceId, m, canWrite }: { spaceId: string; m: Message; 
               Acknowledge
             </Button>
           )}
-          <Button size="xs" variant="default"
+          {pending && (
+            <Button size="xs" color="owlRed" variant="light" leftSection={<IconX size={14} />}
+              onClick={() => void act(() => api.POST('/spaces/{space_id}/messages/{message_id}/cancel', { params: { path } }).then(unwrap), 'Could not cancel')}>
+              Cancel scheduled message
+            </Button>
+          )}
+          {!pending && <Button size="xs" variant="default"
             onClick={() => void act(() => api.POST('/spaces/{space_id}/messages/{message_id}/resolve', { params: { path }, body: { resolution: 'closed by an operator' } }).then(unwrap), 'Could not resolve')}>
             Resolve
-          </Button>
+          </Button>}
         </Group>
       )}
       {canWrite && m.from_kind === 'run' && (

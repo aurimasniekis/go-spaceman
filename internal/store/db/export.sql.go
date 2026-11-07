@@ -351,7 +351,7 @@ func (q *Queries) ExportMessageStats(ctx context.Context, spaceID string) (Expor
 }
 
 const exportMessages = `-- name: ExportMessages :many
-SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version FROM messages WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages WHERE space_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3
 `
 
 type ExportMessagesParams struct {
@@ -394,6 +394,7 @@ func (q *Queries) ExportMessages(ctx context.Context, arg ExportMessagesParams) 
 			&i.Resolution,
 			&i.CreatedAt,
 			&i.Version,
+			&i.DeliverAt,
 		); err != nil {
 			return nil, err
 		}

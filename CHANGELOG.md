@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Control can schedule a reminder to itself (ADR-0065). `spaceman_message_send` to `control` takes `deliver_at` (RFC
+  3339) or `delay` (e.g. `6h`), from 1 minute to 30 days ahead.
+  - The message stays hidden and doesn't count as work until it's due. Then it wakes control, or starts it within the
+    `control_autostart` limits, and a control started later is told about it once.
+  - Pending reminders: up to 50 per space, and a `dedup_key` returns the pending one.
+  - Control lists them with `spaceman_message_scheduled` and cancels with `spaceman_message_cancel`. Operators use
+    the Messages page's **Scheduled** view, `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel`.
+  - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
 - Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on;
   until then a gateway run's harness gets no model credentials, so don't enable Harbor Pilot for a space yet.
   - A harness a space routes through Harbor Pilot uses no account: a launch that names one is refused, a model outside

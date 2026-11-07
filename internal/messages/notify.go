@@ -73,14 +73,21 @@ func (n *Notifier) Kick() {
 	}
 }
 
-// Run sweeps until ctx ends.
+// Run sweeps until ctx ends: when kicked, every sweepEvery, and when the next scheduled message is due (ADR-0065).
 func (n *Notifier) Run(ctx context.Context) {
-	t := time.NewTicker(sweepEvery)
+	t := time.NewTimer(sweepEvery)
 	defer t.Stop()
 	for {
 		if err := n.Sweep(ctx); err != nil && ctx.Err() == nil {
 			n.log.Warn("notice sweep", obs.Err(err))
 		}
+		if !t.Stop() {
+			select {
+			case <-t.C:
+			default:
+			}
+		}
+		t.Reset(n.nextSweep(ctx))
 		select {
 		case <-ctx.Done():
 			return
@@ -90,6 +97,17 @@ func (n *Notifier) Run(ctx context.Context) {
 	}
 }
 
+// nextSweep is the time until the next sweep: sweepEvery, or sooner when a scheduled message falls due before then.
+func (n *Notifier) nextSweep(ctx context.Context) time.Duration {
+	now := n.svc.now()
+	next, err := n.svc.s.R().NextScheduledMessage(ctx, micros(now))
+	if err != nil || next == 0 {
+		return sweepEvery
+	}
+	d := time.UnixMicro(next).Sub(now) + 10*time.Millisecond // a little after it is due
+	return min(max(d, 10*time.Millisecond), sweepEvery)
+}
+
 // Sweep notifies every idle run that has something waiting.
 func (n *Notifier) Sweep(ctx context.Context) error {
 	runs, err := n.svc.s.R().ListNoticeCandidates(ctx)
@@ -97,7 +115,7 @@ func (n *Notifier) Sweep(ctx context.Context) error {
 		return err
 	}
 	if n.ControlWanted != nil {
-		spaces, err := n.svc.s.R().ListSpacesWantingControl(ctx)
+		spaces, err := n.svc.s.R().ListSpacesWantingControl(ctx, micros(n.svc.now()))
 		if err != nil {
 			return err
 		}
@@ -149,7 +167,7 @@ func inherited(m db.Message, since int64) bool {
 func (n *Notifier) notify(ctx context.Context, r db.ListNoticeCandidatesRow, now time.Time) (bool, error) {
 	sent := false
 	err := n.svc.s.W().TxNamed(ctx, "messages.notice", func(tx *store.Tx) error {
-		msgs, err := tx.Q.ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: r.SpaceID, RunID: r.ID, Role: r.Role, IsControl: b2i(r.Kind == "control"), Lim: 100})
+		msgs, err := tx.Q.ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: r.SpaceID, Now: micros(n.svc.now()), RunID: r.ID, Role: r.Role, IsControl: b2i(r.Kind == "control"), Lim: 100})
 		if err != nil {
 			return err
 		}
