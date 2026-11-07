@@ -19,7 +19,7 @@ Aliases: `hp`.
 
 Connect Harbor Pilot or change the connection (checked with Harbor Pilot first).
 
-Saving mints a probe token with the parent token and revokes it at once: it shows the parent holds tokens:mint, its client binding and expiry, and that the gateway is Harbor Pilot 0.1.3 or later. Tokens come from a file or standard input and are never shown again; omit them to keep the current ones.
+Saving mints a probe token with the parent token and revokes it at once: it shows the parent holds tokens:mint, its client binding and expiry, and that the gateway is Harbor Pilot 0.1.3 or later. Tokens come from a file or standard input and are never shown again; omit them to keep the current ones. Stored tokens are only sent to the address they were entered for: changing --base-url or --run-base-url, or turning on --allow-insecure-http, needs --parent-token (and --service-token or --remove-service-token when one is stored) again. Needs account:write.
 
 ```sh
 spaceman harbor-pilot connect [flags]
@@ -39,11 +39,11 @@ spaceman harbor-pilot connect --base-url https://harbor-pilot.example.com --pare
 | `--base-url` | string |  | gateway origin SpaceMan calls (https unless loopback or --allow-insecure-http) |
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
-| `--parent-token-file` | string |  | parent gateway credential (hpk_…) with tokens:mint; required when connecting (read from this file; never pass secrets as flag values) |
+| `--parent-token-file` | string |  | parent gateway credential (hpk_…) with tokens:mint; required when connecting or changing the gateway URL (read from this file; never pass secrets as flag values) |
 | `--parent-token-stdin` | bool |  | read --parent-token-file's value from standard input instead |
 | `--remove-service-token` | bool |  | remove the service-principal token |
 | `--run-base-url` | string |  | origin runs reach the gateway on, when it differs (needs https) |
-| `--service-token-file` | string |  | service-principal token (hpa_…) with usage.read and config.read (read from this file; never pass secrets as flag values) |
+| `--service-token-file` | string |  | service-principal token (hpa_…) with usage.read and config.read; give it again (or --remove-service-token) when changing the gateway URL (read from this file; never pass secrets as flag values) |
 | `--service-token-stdin` | bool |  | read --service-token-file's value from standard input instead |
 
 ## spaceman harbor-pilot disconnect
@@ -75,6 +75,8 @@ API: `get-harbor-pilot-connection` ([HTTP API](../api)).
 
 Set a space's Harbor Pilot settings (only the flags given change).
 
+Needs space_config:write. The project decides who pays, so setting or changing --project needs account:write (a global administrator); without --project the stored project is kept.
+
 ```sh
 spaceman harbor-pilot set-space [flags]
 ```
@@ -95,7 +97,7 @@ spaceman harbor-pilot set-space --space payments --enabled --project prj_01… -
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--model` | string, repeatable |  | model alias runs may use (default: any) (repeatable or comma-separated) |
 | `--on-budget-status-unavailable` | string |  | proceed or refuse |
-| `--project` | string |  | Harbor Pilot project id runs are charged to (required when enabled) |
+| `--project` | string |  | Harbor Pilot project id runs are charged to (required when enabled; setting or changing it needs account:write) |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--ttl` | integer |  | run token lifetime in seconds, 900 to 604800 (default 86400) |
 
