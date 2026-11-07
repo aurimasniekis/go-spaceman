@@ -1,9 +1,9 @@
-import { IconActivity, IconBrandGit, IconAlertTriangle, IconArrowsExchange, IconDatabaseExport, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconTerminal2, IconUserCircle, IconUsers } from '@tabler/icons-react'
+import { IconActivity, IconAnchor, IconBrandGit, IconAlertTriangle, IconArrowsExchange, IconDatabaseExport, IconBell, IconBolt, IconCreditCard, IconFileText, IconForms, IconShieldCheck, IconSparkles, IconUsersGroup, IconBox, IconKey, IconLayoutDashboard, IconListDetails, IconLogin2, IconPlugConnected, IconServer2, IconTerminal2, IconUserCircle, IconUsers } from '@tabler/icons-react'
 import type { Me } from '@/api/client'
 import { hasGlobal } from './access'
 
 export interface NavItem {
-  to: '/' | '/attention' | '/human' | '/terminals' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/git-keys' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/cross-space' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/account'
+  to: '/' | '/attention' | '/human' | '/terminals' | '/spaces' | '/nodes' | '/events' | '/accounts' | '/git-keys' | '/harbor-pilot' | '/prompts' | '/roles' | '/human-types' | '/approval-policies' | '/cross-space' | '/skills' | '/mcp-servers' | '/users' | '/sign-in-providers' | '/tokens' | '/audit' | '/backups' | '/account'
   label: string
   icon: typeof IconBox
   group: 'Work' | 'Fleet' | 'Configuration' | 'Integrations' | 'Access'
@@ -32,6 +32,7 @@ export const nav: NavItem[] = [
   { to: '/mcp-servers', label: 'MCP servers', icon: IconPlugConnected, group: 'Integrations', global: true },
   { to: '/accounts', label: 'Accounts', icon: IconCreditCard, group: 'Integrations', global: true, admin: true },
   { to: '/git-keys', label: 'Git SSH keys', icon: IconBrandGit, group: 'Integrations', global: true, admin: true },
+  { to: '/harbor-pilot', label: 'Harbor Pilot', icon: IconAnchor, group: 'Integrations', global: true, admin: true },
   { to: '/users', label: 'Users', icon: IconUsers, group: 'Access', global: true },
   { to: '/sign-in-providers', label: 'Sign-in providers', icon: IconLogin2, group: 'Access', global: true, admin: true },
   { to: '/tokens', label: 'API tokens', icon: IconKey, group: 'Access' },

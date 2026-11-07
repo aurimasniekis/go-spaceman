@@ -250,6 +250,17 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/git-ssh-keys/{key_id}/rotate` | `rotate-git-ssh-key` | Replace a shared Git SSH key |
 | `GET` | `/spaces/{space_id}/git-ssh-keys` | `list-space-git-ssh-keys` | The shared Git SSH keys a space's repositories may use |
 
+### harbor-pilot
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `DELETE` | `/harbor-pilot/connection` | `delete-harbor-pilot-connection` | Remove the Harbor Pilot connection |
+| `GET` | `/harbor-pilot/connection` | `get-harbor-pilot-connection` | The Harbor Pilot connection (never its tokens) |
+| `PUT` | `/harbor-pilot/connection` | `put-harbor-pilot-connection` | Connect Harbor Pilot, or replace the connection |
+| `DELETE` | `/spaces/{space_id}/harbor-pilot` | `delete-space-harbor-pilot` | Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) |
+| `GET` | `/spaces/{space_id}/harbor-pilot` | `get-space-harbor-pilot` | A space's Harbor Pilot settings |
+| `PUT` | `/spaces/{space_id}/harbor-pilot` | `put-space-harbor-pilot` | Set a space's Harbor Pilot settings |
+
 ### human-action-policies
 
 | Method | Path | Operation | Summary |

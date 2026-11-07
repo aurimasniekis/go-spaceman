@@ -2304,7 +2304,9 @@
 ### ADR-0060 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
 - **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
   (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default that
-  control proposed. Nothing in this ADR is implemented yet. Contract:
+  control proposed. Implemented so far (HP-T2): the connection and space settings (decision 1; decision 2 for
+  the stored tokens; decision 3's central-side rules) and the version probe of decision 8. Runs don't use them until
+  HP-T3/T4. Contract:
   `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
   the 0.1.3 re-run).
   - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
@@ -2367,7 +2369,9 @@
          refuses the launch otherwise. So a central that skipped the check can't make a node send a token over plain
          HTTP;
        - if central reaches HP on another address than runs do (a loopback HP next to central, say), a separate
-         run-facing URL is configured. Whether that is a `run_base_url` field is settled in HP-T2.
+         run-facing URL is configured: the connection's optional `run_base_url` (HP-T2). Without it, runs use
+         `base_url`, which then has to pass the run-facing rule itself (a loopback `http` `base_url` is refused unless
+         `run_base_url` or `allow_insecure_http` is set).
      - **`allow_insecure_http` exposes child tokens.** With it, every run's token crosses the network path in clear for
        its whole TTL, as does the parent token on central's calls. It is for tests and a trusted local network only,
        and the connection's status says it is set.
@@ -2439,17 +2443,23 @@
        - The Limits page also shows project-level HP usage, labelled with its source.
   8. **Minimum Harbor Pilot version: 0.1.3.** SpaceMan relies on 0.1.2's ref filters, budget-refusal events and
      `system`-role support, and on 0.1.3's `check_budget`. hptest and the contract pin v0.1.3, and the docs state the
-     minimum. No HP API that reports its own version was found at v0.1.3, so how connection validation (HP-T2) detects
-     an older gateway (a feature probe, or an operator statement) is settled there. An older gateway must give a
-     clear refusal, never silently drop `check_budget` or per-run usage.
+     minimum. No HP API that reports its own version was found at v0.1.3, so connection validation detects an older
+     gateway with a feature probe (HP-T2): the validation mint always sends `check_budget` (false). HP decodes the
+     mint body refusing unknown fields, before it checks scopes (`internal/gateway/models.go:230-235` at v0.1.3), so a
+     gateway before 0.1.3 answers 400 `invalid body: json: unknown field "check_budget"`, and the connection is
+     refused as "older than Harbor Pilot 0.1.3". An older gateway is never used without `check_budget` or per-run
+     usage. The probe can't tell a later gateway that dropped the field from an old one; HP's D-043 keeps it.
 - **Consequences (security-relevant):**
   - **Agents can read their own child token.** A leaked one is worth one binding's routing and budget for at most the
     TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
     because HP can't refresh a token inside a running harness. The 24 h default and the per-space maximum of 7 days
     bound this **(Q2)**.
   - **HP clamps a child's TTL to its parent's expiry** (contract: Mint). A parent that expires sooner than a space's TTL
-    silently gives that space's runs shorter tokens, and they lose model access earlier. Validation in HP-T2 warns when
-    the parent's expiry is shorter than an opted-in space's TTL.
+    silently gives that space's runs shorter tokens, and they lose model access earlier. Validation (HP-T2) learns
+    the parent's expiry by minting its probe credential with HP's maximum TTL (7 days) and reading the clamped
+    `expires_at`; the connection and the space settings then warn when the parent expires before an opted-in space's
+    TTL. The probe's token is discarded at once and the credential revoked; if the revoke fails, the credential goes to
+    the durable revocation queue.
   - **Revoking the parent in HP cuts every live run at once.** That gives an emergency stop, and is also a single point of
     failure.
   - **Hard spend limits come only from HP.** SpaceMan's own budgets stay soft (ADR-0036).
@@ -2477,6 +2487,14 @@
       - or both stay as they are, documented as the operator's choice.
     - Whoever edits profiles can already run hooks on the node (ADR-0059), so the decision is about budget
       enforcement, not about a new privilege.
+  - **Who may choose a space's project? Implemented as decided (space_config:write), flagged for review.**
+    - HP-T2 follows decision 2: a space's settings need `space_config:write`, which the space's operators hold. An
+      operator can therefore point their space at any project the connection's binding allows, another space's
+      project included, and so charge that project's budget.
+    - Binding an account to a space needs `account:write` (`AccountRules` in `internal/api/accounts.go`) for the
+      same reason: it hands a credential's spend to the space. Requiring `account:write` for `enabled` and
+      `project_id` (and leaving TTL, harnesses and the budget fallback to space operators) would match that. Not
+      changed without a decision.
 - **Operator questions and answers (asked and answered 2026-11-06):**
   - **Q1, fallback to a direct account:** never.
   - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.

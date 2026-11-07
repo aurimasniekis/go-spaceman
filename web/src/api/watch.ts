@@ -35,6 +35,14 @@ export function applyChange(qc: QueryClient, c: Change) {
       void qc.invalidateQueries({ queryKey: keys.spaceRoles(c.resource_id) })
       void qc.invalidateQueries({ queryKey: keys.spaceHumanTypes(c.resource_id) })
       break
+    case 'harbor_pilot_connection':
+      void qc.invalidateQueries({ queryKey: keys.harborPilot })
+      void qc.invalidateQueries({ queryKey: ['space-harbor-pilot'] })
+      break
+    case 'space_harbor_pilot':
+      void qc.invalidateQueries({ queryKey: keys.spaceHarborPilot(c.resource_id) })
+      void qc.invalidateQueries({ queryKey: keys.harborPilot })
+      break
     case 'account':
       void qc.invalidateQueries({ queryKey: keys.accounts })
       void qc.invalidateQueries({ queryKey: ['space-accounts'] })

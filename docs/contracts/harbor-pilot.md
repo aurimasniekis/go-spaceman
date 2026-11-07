@@ -230,6 +230,27 @@ The three recorded at v0.1.1 are fixed in 0.1.2:
 
 None are known at v0.1.3.
 
+## What SpaceMan's connection validation relies on (HP-T2)
+Checked 2026-11-07 against v0.1.3 by `TestRealHarborPilotConnection` (opt-in) and in the source.
+- **Version probe.** The mint body is decoded with unknown fields refused *before* any scope check
+  (`internal/gateway/models.go:230-235`, **code**). So a mint that sends `"check_budget": false` is refused by any
+  gateway before 0.1.3 with 400 `invalid body: json: unknown field "check_budget"`, whatever the token's scopes, and is
+  accepted by 0.1.3 (**live**). There is no version endpoint (see HP-T1b).
+- **A parent without `tokens:mint`** gets 403 `permission_error` with the message `invalid, expired or revoked gateway
+  credential: parent credential lacks tokens:mint` (`credentials.go:168-170`, wrapped `ErrCredentialInvalid`).
+  **live**, with a credential issued on the test binding with only `gateway:invoke` and `gateway:models`. A child used
+  as the parent gets 403 `child credentials cannot mint further credentials` (**code**).
+- **Parent expiry from a probe.** A child's TTL is shortened to its parent's expiry (`credentials.go:188-190`), so a
+  probe minted with the maximum TTL (604800 s) reveals the parent's expiry in its `expires_at`. **live** for a parent
+  without expiry (`expires_at` = now + 7 days); the clamp itself is **code**.
+- **Projects by id or name.** `GET /api/v1/projects/{id}` takes an id *or a name* (`internal/controlplane/cpapi/cpapi.go:137-139`)
+  and needs `config.read`; a missing project is 404 problem+json. **live**: `web-app` returned its `prj_…` id. A child's
+  `bound_refs.project_id` must be the id: a name is refused with 400 `project must be the client's project or one of
+  its allowed projects` (**live**).
+- **Listing a binding's children.** `GET /api/v1/client-bindings/{id}/credentials?children=true` (`config.read`;
+  `cpapi/extra.go:152-178`) lists child credentials with `parent_id`, `expires_at` and `revoked_at`. **live** with the
+  service-principal token; the test uses it to show the probe credentials were revoked.
+
 ## Test harness: `internal/harborpilot/hptest`
 - **Opt-in.** Set `SPACEMAN_HARBOR_PILOT=1`. The helper uses the binary at `HARBOR_PILOT_BIN`, or else runs
   `go install github.com/aurimasniekis/go-harbor-pilot/cmd/harbor-pilot@v0.1.3` into the user cache directory
@@ -255,7 +276,10 @@ None are known at v0.1.3.
     and has an `access.request.blocked` event;
   - after that spend, a tiny budget on `web-app` (`CreateBudget`) refuses a `check_budget` mint with 429
     `budget_exceeded` naming the budget, while a mint without `check_budget` still succeeds.
+- **Connection checks.** `internal/harborpilot` `TestRealHarborPilotConnection` (same opt-in) validates SpaceMan's
+  connection and space settings against the demo; see "What SpaceMan's connection validation relies on". It uses
+  `IssueCredential` (a parent without `tokens:mint`) and `ActiveChildren` (no probe credential left active).
 - **Status:**
   - v0.1.1: the self-test passed on 2026-11-06 with both a source-built binary and the `go install` path.
-  - v0.1.3: both tests passed on 2026-11-07 with the `go install` binary.
+  - v0.1.3: both tests passed on 2026-11-07 with the `go install` binary, and `TestRealHarborPilotConnection` too.
   - Without the opt-in both are skipped.

@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 
 import AxeBuilder from '@axe-core/playwright'
@@ -48,6 +50,31 @@ async function capture(page: Page, name: string, prepare: () => Promise<void>) {
     await audit(page, name, theme)
     await page.keyboard.press('Escape')
   }
+}
+
+/**
+ * A stand-in Harbor Pilot gateway for the Harbor Pilot screenshots (ADR-0060): on loopback, it answers the four calls
+ * central makes to validate a connection (mint, revoke, budget status, project) with invented data. It only exists so
+ * the connected state can be shown without a real gateway; the integration itself is tested against a real
+ * `harbor-pilot serve --demo` (make test-harbor-pilot).
+ */
+async function fakeHarborPilot(): Promise<{ url: string; server: Server }> {
+  let n = 0
+  const server = createServer((req, res) => {
+    const json = (status: number, body: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)) }
+    req.resume()
+    if (req.method === 'POST' && req.url === '/v1/harbor/credentials') {
+      n++
+      return json(201, { credential: { id: `crd_screenshot${n}`, binding_id: 'bnd_spaceman_runs', parent_id: 'crd_parent', scopes: ['gateway:invoke', 'gateway:models'],
+        bound_refs: {}, expires_at: new Date(Date.now() + 7 * 86400_000).toISOString() }, token: `hpk_probe_${n}` })
+    }
+    if (req.method === 'DELETE' && req.url?.startsWith('/v1/harbor/credentials/')) { res.writeHead(204); return res.end() }
+    if (req.url === '/api/v1/budgets/status') return json(200, { items: [] })
+    if (req.url === '/api/v1/projects/prj_payments') return json(200, { id: 'prj_payments', name: 'payments', spec: { workspace_id: 'wsp_acme' } })
+    return json(404, { title: 'Not Found', status: 404, detail: 'not found' })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, server }
 }
 
 async function enrollmentShot(browser: Browser, email: string, pw: string) {
@@ -536,6 +563,31 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.getByText('github-bot', { exact: true }).click()
     await expect(page.getByText('Public key', { exact: true })).toBeVisible()
   })
+  // Harbor Pilot (ADR-0060): the connect form, the connection once validated, and a space opting in.
+  const hp = await fakeHarborPilot()
+  await capture(page, 'harbor-pilot-connect', async () => {
+    await page.goto('/harbor-pilot')
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.getByLabel('Gateway URL').fill('https://harbor-pilot.example.com')
+    await page.getByLabel('Parent token').fill('hpk_example_parent_token')
+    await page.getByLabel('Service-principal token').fill('hpa_example_service_token')
+  })
+  await api.call('PUT', '/harbor-pilot/connection', { base_url: hp.url, allow_insecure_http: true, parent_token: `hpk_${randomBytes(16).toString('hex')}`,
+    service_token: `hpa_${randomBytes(16).toString('hex')}` })
+  await api.call('PUT', `/spaces/${payments.id}/harbor-pilot`, { enabled: true, project_id: 'prj_payments', harnesses: ['codex'], ttl_seconds: 43200 })
+  await capture(page, 'harbor-pilot', async () => {
+    await page.goto('/harbor-pilot')
+    await expect(page.getByText('bnd_spaceman_runs')).toBeVisible()
+  })
+  await capture(page, 'space-harbor-pilot', async () => {
+    await page.goto(`/spaces/${payments.id}`)
+    await page.getByTestId('space-harbor-pilot').getByRole('button', { name: 'Settings' }).click()
+    await expect(page.getByLabel('Harbor Pilot project id')).toHaveValue('prj_payments')
+  })
+  // Later shots launch runs in this space: take it off Harbor Pilot again and remove the connection.
+  await api.call('DELETE', `/spaces/${payments.id}/harbor-pilot`, undefined, { 'If-Match': '"1"' })
+  await api.call('DELETE', '/harbor-pilot/connection', undefined, { 'If-Match': '"1"' })
+  hp.server.close()
   await capture(page, 'space-accounts', async () => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByRole('button', { name: 'Choose accounts' }).click()

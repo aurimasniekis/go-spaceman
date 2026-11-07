@@ -20,6 +20,9 @@
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
 | `git-ssh-keys` | Repositories | Git SSH keys page: a shared key's public half, the spaces that may use it and the repositories that do (the private half is never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
+| `harbor-pilot-connect` | Harbor Pilot gateway | Connecting Harbor Pilot: gateway URL, optional URL for runs, write-only parent and service-principal tokens, plain HTTP switch | current |
+| `harbor-pilot` | Harbor Pilot gateway | The Harbor Pilot connection: URLs, tokens shown only as set with their versions, the client binding, spaces using it (a stand-in gateway in the capture) | current |
+| `space-harbor-pilot` | Harbor Pilot gateway | A space's Harbor Pilot settings: project, harnesses, run-token lifetime, budget fallback, allowed models | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
 | `space-terminals` | Terminals and recordings | A space's Terminals tab: every agent as a tab with its status, the selected agent's live terminal | current |

@@ -106,6 +106,7 @@ export default withMermaid(
             { text: 'Nodes and leases', link: '/operators/nodes' },
             { text: 'Relocating a space', link: '/operators/relocation' },
             { text: 'Accounts', link: '/operators/accounts' },
+            { text: 'Harbor Pilot gateway', link: '/operators/harbor-pilot' },
             { text: 'Terminals and recordings', link: '/operators/terminals' },
             { text: 'Artifact storage', link: '/operators/storage' },
             { text: 'Backups and restore', link: '/operators/backup' },

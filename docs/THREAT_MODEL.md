@@ -44,7 +44,8 @@ the site's Security page keep them.
 The 2026-11-03 review of these boundaries and of the code is in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 
 ## Assets
-Harness credentials (Claude OAuth tokens, OpenAI/Codex keys); upstream MCP credentials; Pulse `.creds`; node credentials; run credentials;
+Harness credentials (Claude OAuth tokens, OpenAI/Codex keys); the Harbor Pilot parent token (it mints run tokens for every
+opted-in space) and service-principal token (ADR-0060; sealed, write-only, never sent to a node); upstream MCP credentials; Pulse `.creds`; node credentials; run credentials;
 root and API tokens; the KEK and keyring; operator sessions; source code in workspaces; memory and KB repositories; transcripts and
 recordings (may contain secrets); human-action responses (may be sensitive); attachments; the audit log.
 

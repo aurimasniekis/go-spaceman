@@ -85,6 +85,14 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Harbor Pilot gateway
+- **Configured, not yet used by runs.** The connection and the space settings exist (HP-T2), but runs still use accounts:
+  minting a token per run, delivering it and revoking it come with HP-T3/T4 (ADR-0060, Proposed).
+- **Older gateways are detected by a feature probe.** Harbor Pilot has no version endpoint; a gateway that does not know
+  `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
+- **Demo evidence only.** Connection checks ran against a real `harbor-pilot serve --demo` 0.1.3 with synthetic
+  upstreams, not against a production gateway.
+
 ## Usage and transcripts
 - **Codex usage is unknown.** Its records are not verified, so Codex runs show unknown usage (never zero).
 - **Cost figures are the harness's own estimates** at list prices; SpaceMan has no price list and cannot enforce
