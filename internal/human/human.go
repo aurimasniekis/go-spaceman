@@ -229,6 +229,10 @@ type Service struct {
 	// Inbox receives the inbox items of responses when a policy's response_inbox asks for them (SM-INBOX-001,
 	// ADR-0049). Nil: responses are notifications only.
 	Inbox *inbox.Service
+	// ControlAutostart reports, inside the routing transaction, whether a space starts its control for waiting work
+	// (the control_autostart limit, ADR-0056). A response whose run is gone then goes to control even while no control
+	// runs: control is started for it and told about it. Nil: off.
+	ControlAutostart func(ctx context.Context, q *db.Queries, spaceID string) bool
 }
 
 func (svc *Service) pendingLimits(ctx context.Context, q *db.Queries, spaceID string) (int64, int64) {

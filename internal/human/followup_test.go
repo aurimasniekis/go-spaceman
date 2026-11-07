@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 func (f *fx) exec(qs ...string) {
@@ -478,4 +479,38 @@ func TestDeadlineLoop(t *testing.T) {
 	f.svc.Kick() // never blocks
 	f.svc.Kick()
 	_ = json.RawMessage{}
+}
+
+// ADR-0056: with control auto-start on, a response whose run is gone goes to control even while no control runs (it
+// is started for it), when the space can start one; with auto-start off, or with no control to start, to the operators.
+func TestResponsesGoToAControlThatCanBeStarted(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	on := false
+	f.svc.ControlAutostart = func(_ context.Context, _ *db.Queries, spaceID string) bool { return on && spaceID == "spc_a" }
+	ask := func(title string) *Action {
+		return f.create(CreateInput{Type: TypeQuestion, Title: title, Requester: Requester{Kind: "agent", ID: "ins_2", Role: "worker", Run: "run_gone"}})
+	}
+
+	// Auto-start on, but the space never had control and has no control role: nothing can take it.
+	on = true
+	if n := f.answer(ask("a")).Notifications[0]; n.TargetKind != TargetOperators {
+		t.Fatalf("no control to start %+v", n)
+	}
+	// A control ran once and was stopped (an idle stop): auto-start off keeps it with the operators.
+	f.run("run_ctl", "control", "control", "ins_c", "running", "running")
+	f.end("run_ctl")
+	on = false
+	if n := f.answer(ask("b")).Notifications[0]; n.TargetKind != TargetOperators {
+		t.Fatalf("auto-start off %+v", n)
+	}
+	// Auto-start on: it waits for control, pending and waking, which starts control for it.
+	on = true
+	n := f.answer(ask("c")).Notifications[0]
+	if n.TargetKind != TargetControl || n.RouteReason != ReasonRequesterEnded || n.OriginalRun != "run_gone" {
+		t.Fatalf("to a stopped control %+v", n)
+	}
+	if f.count(`SELECT count(*) FROM human_notifications WHERE id = '`+n.ID+`' AND state = 'pending' AND wake = 1`) != 1 {
+		t.Fatal("not pending and waking")
+	}
 }

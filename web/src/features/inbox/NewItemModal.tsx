@@ -78,7 +78,7 @@ export function NewItemModal({ spaceId, opened, onClose, onCreated }: { spaceId:
                     value={f.state.value} onChange={f.handleChange} onBlur={f.handleBlur} />}
                 </form.Field>
               ) : (
-                <Composer key={composerKey} spaceId={spaceId} ariaLabel="Item text" onSubmit={() => void form.handleSubmit()}
+                <Composer key={composerKey} spaceId={spaceId} ariaLabel="Item text" autoFocus onSubmit={() => void form.handleSubmit()}
                   onChange={(v) => { form.setFieldValue('markdown', v.markdown); form.setFieldValue('attachmentIds', v.attachmentIds) }} />
               )
             }
