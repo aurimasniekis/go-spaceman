@@ -1,10 +1,11 @@
-// Package hptest runs a real Harbor Pilot gateway (`harbor-pilot serve --demo`, v0.1.1, docs/contracts/harbor-pilot.md)
+// Package hptest runs a real Harbor Pilot gateway (`harbor-pilot serve --demo`, v0.1.3, docs/contracts/harbor-pilot.md)
 // for opt-in tests. It is enabled with SPACEMAN_HARBOR_PILOT=1. It uses the binary at HARBOR_PILOT_BIN, or else installs
 // the pinned release with `go install`. The gateway listens on loopback with a temporary data directory, and the test's
 // cleanup stops it and deletes that directory.
 //
-// The demo's own `spaceman-runs` binding pins `spaceman.space` and allows no other projects, so it can't be used for
-// SpaceMan's per-run tokens. Provision therefore creates the fixture the integration needs:
+// Since v0.1.2 the demo's own `spaceman-runs` binding pins only `spaceman.fleet`, but hptest keeps a binding of its own
+// so its tests don't depend on the demo seed's fixture or its seeded traffic. Provision creates what the integration
+// needs:
 //   - a `spaceman-test` binding on two demo projects (`allowed_project_ids`) that pins only `spaceman.fleet`;
 //   - a tiny blocking daily budget on the second project;
 //   - a read-only service principal and its `hpa_` token;
@@ -24,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,10 +40,10 @@ import (
 const (
 	EnvOptIn = "SPACEMAN_HARBOR_PILOT"
 	EnvBin   = "HARBOR_PILOT_BIN"
-	Version  = "v0.1.1"
+	Version  = "v0.1.3"
 	Module   = "github.com/aurimasniekis/go-harbor-pilot/cmd/harbor-pilot"
 
-	// The demo seed's public administrator (internal/demo/demo.go at v0.1.1). It only exists in demo.db.
+	// The demo seed's public administrator (internal/demo/demo.go at v0.1.3). It only exists in demo.db.
 	demoAdminEmail    = "admin@example.test"
 	demoAdminPassword = "harbor-pilot-demo" //nolint:gosec // Harbor Pilot's documented, public demo credential
 
@@ -77,7 +79,8 @@ type Gateway struct {
 	ParentID           string
 	ParentToken        string // hpk_…: gateway:invoke, gateway:models, tokens:mint
 
-	hc *http.Client
+	hc    *http.Client
+	admin *admin // the demo administrator's session
 }
 
 // Enabled reports whether the opt-in is set.
@@ -319,7 +322,7 @@ func (a *admin) lookup(ctx context.Context, path, name string) (string, error) {
 			return it.ID, nil
 		}
 	}
-	return "", fmt.Errorf("%s: no %q (not the v0.1.1 demo seed?)", path, name)
+	return "", fmt.Errorf("%s: no %q (not the v0.1.3 demo seed?)", path, name)
 }
 
 // Provision signs in as the demo administrator at base and creates the fixture described in the package comment.
@@ -356,14 +359,10 @@ func Provision(ctx context.Context, base string) (*Gateway, error) {
 		return nil, fmt.Errorf("binding: %w", err)
 	}
 	g.BindingID = o.ID
-	if err := a.do(ctx, http.MethodPost, "/api/v1/budgets", map[string]any{"name": BudgetName, "spec": map[string]any{
-		"scope": "project", "scope_id": g.AltProjectID, "period": "day", "limit": "0.000001", "currency": "USD",
-		"cost_kinds": []string{"actual_api_charge", "estimated_api_charge"}, "enforcement": "block", "warn_at": 0.8,
-		"timezone": "", "enabled": true,
-	}}, &o, http.StatusCreated); err != nil {
-		return nil, fmt.Errorf("budget: %w", err)
+	g.admin = a
+	if g.BudgetID, err = g.CreateBudget(ctx, BudgetName, g.AltProjectID, "0.000001"); err != nil {
+		return nil, err
 	}
-	g.BudgetID = o.ID
 	if err := a.do(ctx, http.MethodPost, "/api/v1/service-principals", map[string]any{"name": SPName, "permissions": SPPerms}, &o, http.StatusCreated); err != nil {
 		return nil, fmt.Errorf("service principal: %w", err)
 	}
@@ -386,12 +385,28 @@ func Provision(ctx context.Context, base string) (*Gateway, error) {
 	return g, nil
 }
 
+// CreateBudget creates an enabled, blocking daily USD budget of limit (a positive decimal) on a project, as the demo
+// administrator, and returns its id.
+func (g *Gateway) CreateBudget(ctx context.Context, name, projectID, limit string) (string, error) {
+	var o named
+	if err := g.admin.do(ctx, http.MethodPost, "/api/v1/budgets", map[string]any{"name": name, "spec": map[string]any{
+		"scope": "project", "scope_id": projectID, "period": "day", "limit": limit, "currency": "USD",
+		"cost_kinds": []string{"actual_api_charge", "estimated_api_charge"}, "enforcement": "block", "warn_at": 0.8,
+		"timezone": "", "enabled": true,
+	}}, &o, http.StatusCreated); err != nil {
+		return "", fmt.Errorf("budget: %w", err)
+	}
+	return o.ID, nil
+}
+
 // MintRequest is the body of POST /v1/harbor/credentials (exactly these fields; Harbor Pilot refuses unknown ones).
+// CheckBudget (v0.1.3, D-043) refuses the mint with 429 budget_exceeded when a blocking budget covering the child is used up.
 type MintRequest struct {
-	Name       string            `json:"name"`
-	Scopes     []string          `json:"scopes,omitempty"`
-	TTLSeconds int               `json:"ttl_seconds,omitempty"`
-	BoundRefs  map[string]string `json:"bound_refs,omitempty"`
+	Name        string            `json:"name"`
+	Scopes      []string          `json:"scopes,omitempty"`
+	TTLSeconds  int               `json:"ttl_seconds,omitempty"`
+	BoundRefs   map[string]string `json:"bound_refs,omitempty"`
+	CheckBudget bool              `json:"check_budget,omitempty"`
 }
 
 // Credential is a minted child credential.
@@ -423,6 +438,50 @@ func (g *Gateway) Mint(ctx context.Context, in MintRequest) (Credential, string,
 		return Credential{}, "", err
 	}
 	return out.Credential, out.Token, nil
+}
+
+// Usage is the part of a GET /api/v1/usage/summary response the tests read.
+type Usage struct {
+	Filters struct {
+		Refs      map[string]string `json:"refs"`
+		BindingID string            `json:"binding_id"`
+	} `json:"filters"`
+	Groups []struct {
+		Key      string `json:"key"`
+		Attempts int64  `json:"attempts"`
+		Tokens   struct {
+			Input  int64 `json:"input"`
+			Output int64 `json:"output"`
+		} `json:"tokens"`
+	} `json:"groups"`
+}
+
+// Attempts is the number of attempts over every group.
+func (u Usage) Attempts() int64 {
+	var n int64
+	for _, g := range u.Groups {
+		n += g.Attempts
+	}
+	return n
+}
+
+// UsageByRef reads the usage summary of the provisioned binding filtered on one trusted reference (v0.1.2+, D-041),
+// with the service token. Only trusted refs are indexed, and a minting credential chooses its runs' values, so the
+// query also filters on the binding.
+func (g *Gateway) UsageByRef(ctx context.Context, key, value string) (Usage, error) {
+	q := url.Values{"ref": {key + ":" + value}, "binding_id": {g.BindingID}}
+	code, body, err := g.Do(ctx, http.MethodGet, "/api/v1/usage/summary?"+q.Encode(), g.ServiceToken, nil)
+	if err != nil {
+		return Usage{}, err
+	}
+	if code != http.StatusOK {
+		return Usage{}, fmt.Errorf("usage summary: status %d: %s", code, errMessage(body))
+	}
+	var u Usage
+	if err := json.Unmarshal(body, &u); err != nil {
+		return Usage{}, fmt.Errorf("usage summary: %w", err)
+	}
+	return u, nil
 }
 
 // Revoke revokes a child credential with the parent token and returns the status (204 when revoked or already revoked).

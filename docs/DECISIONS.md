@@ -2305,7 +2305,12 @@
 - **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
   (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default that
   control proposed. Nothing in this ADR is implemented yet. Contract:
-  `docs/contracts/harbor-pilot.md` (v0.1.1); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike).
+  `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
+  the 0.1.3 re-run).
+  - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
+    by trusted ref, budget refusals as `access.request.blocked`, `system`-role messages (K-13 resolved), the minting
+    credential as `created_by`, and an optional budget check on mint. **The minimum Harbor Pilot version is 0.1.3**
+    (decision 8).
 - **Context:**
   - **What operators want.** Run model traffic should go through Harbor Pilot (HP), a self-hosted LLM gateway. HP gives
     failover, hard per-project spend limits and usage for every harness.
@@ -2322,8 +2327,8 @@
      - **One connection per central.** It is a singleton `harbor_pilot_connection` row and holds:
        - the base URL;
        - the **parent token** (`hpk_`, scopes `gateway:invoke`, `gateway:models`, `tokens:mint`);
-       - an optional **service-principal token** (`hpa_`, `usage.read` + `config.read`, plus `activity.read` once
-         per-run usage exists).
+       - an optional **service-principal token** (`hpa_`, `usage.read` + `config.read` for budget status and per-run
+         usage, plus `activity.read` for request activity and Harbor Pilot's events API).
      - **Each space opts in** through `space_harbor_pilot`, which has these fields:
        - `enabled`;
        - `project_id` (required when enabled);
@@ -2378,6 +2383,14 @@
        fallback to a direct account**, silent or audited **(Q1)**. A harness configured for HP goes only through HP.
      - A launch is refused early when a blocking HP budget covering the space is `exceeded`. HP stays authoritative and
        enforces with 429 mid-run.
+     - **The pre-launch budget check is HP's own: the dispatch mint sends `check_budget: true`** (HP 0.1.3, its
+       D-043). HP then refuses a run whose binding, project, workspace or global blocking budget is used up with 429
+       `budget_exceeded` and the `budget_id`, and the run fails with that reason before its harness starts. This uses
+       HP's own figures and scope rules instead of SpaceMan recomputing which budgets cover the space. The budget
+       status that `LaunchRun` reads still gives the earlier refusal and the Limits page (HP-T5). Two limits stay: HP
+       doesn't check account budgets at mint, and a budget with spend under its limit passes even when the first
+       request is then refused for its own estimate. A mint that fails with 502 (`could not check budgets`) is a mint
+       failure, not a budget refusal.
      - When budget status can't be fetched, the space's `on_budget_status_unavailable` decides: `proceed` (the default;
        the gateway still enforces) or `refuse` **(Q3)**.
   5. **A per-run child token, minted at dispatch** (not in `LaunchRun`; see Alternatives):
@@ -2396,19 +2409,39 @@
        instance's `CODEX_HOME`.
      - **Node protocol.** This needs node protocol minor 9. Gateway launches to older agents are refused with a clear
        reason.
-     - **Model choice.** The run's model must be one the HP plan routes. With HP 0.1.1 it must also be a Claude model
-       whose requests carry no `system`-role messages (spike). How the default is chosen per space is settled in the
-       implementation, through `allowed_model_aliases` or a default model.
+     - **Model choice.** The run's model must be one the HP plan routes. How the default is chosen per space is settled
+       in the implementation, through `allowed_model_aliases` or a default model. Since HP 0.1.2, Claude Code's default
+       model works: its `system`-role messages are accepted (K-13, resolved by the 0.1.3 re-run). HP forwards them
+       unchanged to models not on its no-support list, so a model without support gets the provider's own 400.
   7. **Events and usage.**
      - **Events.** HP events become shipped event templates. Their text is untrusted (T-03).
        - Only project-scoped budget events map to one space.
        - **Unscoped events stay open (Q4).** These are quota, `access.request.blocked`, and binding/workspace/global
          budget events. **Interim default (control's proposal, not the operator's choice): no automatic routing.**
          They reach only the spaces that explicitly subscribe with the template.
-     - **Usage.** HP 0.1.1 can't report usage per run (no filter or grouping by trusted ref).
-       - The Limits page shows project-level HP usage, labelled with its source.
-       - Per-run usage waits for an upstream change **(Q5)**. That request, and the doc mismatches, go to the Harbor
-         Pilot space in SpaceMan as cross-space requests once that space exists, not as GitHub issues filed by agents.
+       - **Budget refusals arrive as `access.request.blocked`** (HP 0.1.2, its D-040): one event per refused request,
+         with `reason` naming the budget, alongside the once-per-period `budget.threshold.exceeded`. The HP-T6
+         templates include it. It carries only `request_id` and `binding_id`, so it is an unscoped event under Q4. A
+         space-level mapping through the request's `trusted_refs.spaceman.space` would need an HP API read per event
+         and is not decided. Its volume (one per refused request) also argues for dedup or a digest.
+     - **Usage: per-run usage is in scope (HP-T5).** HP 0.1.2 filters usage by trusted ref (its D-041).
+       - **Run-end reconcile.** After a gateway run ends, central reads
+         `GET /api/v1/usage/summary?ref=spaceman.run:<run id>&binding_id=<binding>` with the service-principal token,
+         and records the run's usage with source **`harbor-pilot`**: tokens, attempts and HP's cost categories, labelled
+         as gateway-observed figures. `binding_id` is always passed, because ref values are chosen by the minting
+         client and only the binding makes them SpaceMan's.
+       - **What it fills.** It gives Codex runs usage, which today is `unavailable`. It never overwrites usage a harness
+         reported itself (Claude's transcript usage); how both are shown for a Claude run is settled in HP-T5.
+       - **Timing.** HP writes ledger rows as requests finish, so the reconcile runs after the token is revoked (no new
+         requests) and may be retried later; a figure read before the run's last request settled is not final.
+       - **Reading fails or the connection has no service-principal token:** the run keeps its current usage, never a
+         zero.
+       - The Limits page also shows project-level HP usage, labelled with its source.
+  8. **Minimum Harbor Pilot version: 0.1.3.** SpaceMan relies on 0.1.2's ref filters, budget-refusal events and
+     `system`-role support, and on 0.1.3's `check_budget`. hptest and the contract pin v0.1.3, and the docs state the
+     minimum. No HP API that reports its own version was found at v0.1.3, so how connection validation (HP-T2) detects
+     an older gateway (a feature probe, or an operator statement) is settled there. An older gateway must give a
+     clear refusal, never silently drop `check_budget` or per-run usage.
 - **Consequences (security-relevant):**
   - **Agents can read their own child token.** A leaked one is worth one binding's routing and budget for at most the
     TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
@@ -2422,8 +2455,8 @@
   - **Hard spend limits come only from HP.** SpaceMan's own budgets stay soft (ADR-0036).
   - **An HP outage stops new runs** for the harnesses that opted in.
   - **The parent token is long-lived and high-value.** Its protection rests on central's keyring and KEK, as for accounts.
-  - **Evidence ceiling (Q7).** Until a real upstream is available, evidence is "real `serve --demo` 0.1.1 with
-    synthetic upstreams". A live run against a real HP and provider is a placeholder in TRACEABILITY (SM-GW-010); the
+  - **Evidence ceiling (Q7).** Until a real upstream is available, evidence is "real `serve --demo` 0.1.3 with
+    synthetic upstreams" (0.1.1 for the first spike). A live run against a real HP and provider is a placeholder in TRACEABILITY (SM-GW-010); the
     operator says one is coming soon.
 - **Alternatives:**
   - **An account kind:** rejected (above).
@@ -2452,10 +2485,11 @@
     not an operator answer: they are not routed automatically and go only to spaces that explicitly subscribe.
   - **Q5, upstream issues:** yes, through cross-space requests to the Harbor Pilot space in SpaceMan once it exists.
     These cover a ref filter for usage, a service-principal token resource in its provider, project-id outputs in
-    scenario 07, the doc mismatches and the K-13 protocol gap.
+    scenario 07, the doc mismatches and the K-13 protocol gap. Harbor Pilot 0.1.2 (2026-11-07) answered the ref
+    filter, the doc mismatches and K-13; 0.1.3 added `check_budget` on mint.
   - **Q6, per-harness opt-in:** yes, with a `harnesses` list open to any harness HP can serve.
-  - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` 0.1.1, with a placeholder kept for a
-    live run.
+  - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` (0.1.1, then 0.1.3), with a
+    placeholder kept for a live run.
 
 ### ADR-0061 — More shipped GitHub event templates; optional filters and the `absent` operator
 - **Status:** Accepted, 2026-11-07 (operator request: spaces should react to pull request conversation, reviews, CI and
@@ -2574,4 +2608,4 @@
 | K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
 | K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | ADR-0060 acceptance; SM-GW-007, SM-GW-010 | ADR-0060 stays Proposed; Q4 open; live-run placeholder in TRACEABILITY |
-| K-13 | Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works). `docs/contracts/harnesses.md`, Harbor Pilot gateway spike; ADR-0060 §6 (model choice). | Claude Code gateway runs on the default model | Report to the Harbor Pilot space as a cross-space request (Q5); until then a gateway run's model must avoid it |
+| K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |

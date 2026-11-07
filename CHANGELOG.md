@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+- Harbor Pilot groundwork (still no product behaviour) moves to Harbor Pilot v0.1.3, now the minimum version: the
+  contract, `make test-harbor-pilot` (installs and checks v0.1.3) and ADR-0060 (Proposed). The test harness also checks
+  per-run usage by trusted reference, budget refusals and the budget check on run-token mint. Claude Code's default
+  model now works through the gateway (K-13 resolved on the demo gateway).
+
 ## [0.1.0-rc.9] - 2026-11-07
 
 Ninth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): Claude Code settings on
