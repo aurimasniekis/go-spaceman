@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -74,6 +75,42 @@ func scrubEnv(env []string) []string {
 // MergeJSONFile applies patch to the JSON object in path (see harness.Launch.MergeJSON), creating it when missing. The
 // file is replaced atomically and stays 0600.
 func MergeJSONFile(path string, patch map[string]any) error {
+	return editJSONFile(path, func(doc map[string]any) { mergeInto(doc, patch) })
+}
+
+// OwnJSONKeysFile sets SpaceMan's top-level keys in the JSON object in path (see harness.Launch.OwnJSON): each key is
+// set, keys it set at an earlier call and no longer gives are removed, and every other key is kept. The keys it owns
+// are recorded next to the file (<path>.spaceman-keys). Both files are created when missing and replaced atomically.
+func OwnJSONKeysFile(path string, keys map[string]any) error {
+	record := path + ".spaceman-keys"
+	var before []string
+	if b, err := os.ReadFile(record); err == nil { //nolint:gosec // agent-owned path
+		_ = json.Unmarshal(b, &before)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := editJSONFile(path, func(doc map[string]any) {
+		for _, k := range before {
+			if _, still := keys[k]; !still {
+				delete(doc, k)
+			}
+		}
+		for k, v := range keys {
+			doc[k] = v
+		}
+	}); err != nil {
+		return err
+	}
+	owned := make([]string, 0, len(keys))
+	for k := range keys {
+		owned = append(owned, k)
+	}
+	sort.Strings(owned)
+	b, _ := json.Marshal(owned)
+	return writeAtomic(record, b)
+}
+
+func editJSONFile(path string, edit func(map[string]any)) error {
 	doc := map[string]any{}
 	b, err := os.ReadFile(path) //nolint:gosec // agent-owned path
 	switch {
@@ -84,7 +121,7 @@ func MergeJSONFile(path string, patch map[string]any) error {
 	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
-	mergeInto(doc, patch)
+	edit(doc)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err

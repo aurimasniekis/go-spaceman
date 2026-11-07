@@ -363,18 +363,19 @@ type GitSshKeySpace struct {
 }
 
 type HarnessProfile struct {
-	ID           string
-	Slug         string
-	Name         string
-	Harness      string
-	Model        string
-	SettingsJson string
-	Description  string
-	Revision     int64
-	CreatedAt    int64
-	CreatedBy    string
-	UpdatedAt    int64
-	Version      int64
+	ID                 string
+	Slug               string
+	Name               string
+	Harness            string
+	Model              string
+	SettingsJson       string
+	Description        string
+	Revision           int64
+	CreatedAt          int64
+	CreatedBy          string
+	UpdatedAt          int64
+	Version            int64
+	ClaudeSettingsJson string
 }
 
 type HumanAction struct {

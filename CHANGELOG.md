@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Claude Code settings on harness profiles (ADR-0059, security-relevant): a claude-code profile's `claude_settings` are
+  settings.json keys, any keys (permissions, auto mode rules, env, hooks, …). They are set in each run's own
+  `settings.json` at launch, and keys taken out of the profile are removed at the next launch. The profile form edits
+  permissions, auto mode rules (with a switch to keep or replace Claude Code's defaults) and environment variables,
+  and other keys as JSON. `permissions.defaultMode` is held to the permission mode ceiling. Nodes need this release
+  (protocol minor 8); a run of such a profile on an older node fails as `node_too_old` instead of starting without
+  them. Migration 0039.
 - Groundwork for routing run model traffic through a Harbor Pilot gateway (no product behaviour yet):
   - a contract pinned to Harbor Pilot v0.1.1 (`docs/contracts/harbor-pilot.md`);
   - ADR-0059, **Proposed** and security-relevant, with the operator's answers to its design questions recorded (one, routing of unscoped events, still open);

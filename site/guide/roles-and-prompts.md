@@ -59,7 +59,39 @@ Claude Code's permission mode. A **role template** says what a role is: its run 
 
 Editing a profile or template creates a new **revision**; it applies to launches from then on.
 
-Templates can also give a role [skills](./skills): guidance files the harness loads.
+### Claude Code settings
+
+A Claude Code profile also controls its runs' **Claude Code settings**, the keys of Claude Code's `settings.json`.
+SpaceMan sets them in each run's own `settings.json` when it launches, and removes keys you take out at the next
+launch. The profile form has a section for each kind of setting:
+
+- **Permissions:**
+  - the default permission mode;
+  - tool rules such as `Bash(make test:*)` or `Read(./secrets/**)`: **Allow** runs without asking, **Ask** always
+    asks first, **Deny** is refused;
+  - additional directories the run may use.
+- **Auto mode rules** are used when the permission mode is `auto`. Each rule is a sentence for Claude Code's
+  classifier:
+  - **Environment** says what it may trust, such as your Git host, repositories and services;
+  - **Allowed actions** are exceptions to the block rules;
+  - **Block rules** are more actions to block.
+
+  Your rules are added to Claude Code's defaults. Switch on **Replace Claude Code's default rules** to use only yours.
+- **Environment variables** are set for the Claude Code session.
+- **Other settings** takes any other key as JSON, such as `hooks`, `statusLine` or `model`.
+
+<Shot name="claude-settings" alt="The Claude Code profile's settings: permission rules, auto mode environment and allowed actions, and the other sections" caption="Claude Code settings on a profile" />
+
+Things to know:
+
+- **Hooks and status lines run commands** on the node as the agent's user. Anyone who can edit profiles controls them.
+- **Don't put secrets here.** Settings are stored in clear and recorded in each run's manifest; use
+  [harness accounts](/operators/accounts) for credentials.
+- **The central ceiling still applies.** A default permission mode above `harness.max_permission_mode` is lowered to
+  it, and the profile's `permission_mode` setting, when set, wins over the default mode.
+- **Nodes need SpaceMan 0.1.0-rc.9 or later.** On an older node, a run of the profile fails (`node_too_old`) rather
+  than starting without its settings.
+- **In Terraform** they are the profile's `claude_settings`, written with `jsonencode`.
 
 ## Space roles
 

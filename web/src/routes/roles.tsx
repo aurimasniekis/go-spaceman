@@ -8,6 +8,8 @@ import { api, ifMatch, unwrap, type Profile, type RoleTemplate } from '@/api/cli
 import { keys, useMe, useProfiles, usePrompt, usePrompts, useRoleTemplates, useSkills } from '@/api/queries'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
+import { ClaudeSettingsEditor } from '@/features/catalog/ClaudeSettingsEditor'
+import { claudeSettingsForm, claudeSettingsKeys, claudeSettingsValue } from '@/features/catalog/claudeSettings'
 import { SettingsEditor } from '@/features/catalog/SettingsEditor'
 import { hasGlobal } from '@/lib/access'
 
@@ -61,7 +63,12 @@ function RolesPage() {
                     <Table.Td><Text size="sm" fw={500}>{p.name}</Text><Text size="xs" c="dimmed" className="mono">{p.slug}</Text></Table.Td>
                     <Table.Td><Badge variant="light">{p.harness === 'codex' ? 'Codex' : 'Claude Code'}</Badge></Table.Td>
                     <Table.Td><Text size="sm" className="mono">{p.model || '—'}</Text></Table.Td>
-                    <Table.Td><Text size="xs" className="mono">{Object.entries(p.settings).map(([k, v]) => `${k}=${v}`).join(' ') || '—'}</Text></Table.Td>
+                    <Table.Td>
+                      <Text size="xs" className="mono">{Object.entries(p.settings).map(([k, v]) => `${k}=${v}`).join(' ') || '—'}</Text>
+                      {claudeSettingsKeys(p.claude_settings).length > 0 && (
+                        <Text size="xs" c="dimmed" className="mono">settings.json: {claudeSettingsKeys(p.claude_settings).join(', ')}</Text>
+                      )}
+                    </Table.Td>
                     <Table.Td>{p.revision}</Table.Td>
                   </Table.Tr>
                 ))}
@@ -85,14 +92,22 @@ const submitOn = (handle: () => Promise<void>) => (e: React.FormEvent) => {
 function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
   const qc = useQueryClient()
   const [error, setError] = useState('')
+  const [claudeError, setClaudeError] = useState('')
   const form = useForm({
     defaultValues: { slug: p?.slug ?? '', name: p?.name ?? '', harness: (p?.harness ?? 'claude-code') as Profile['harness'], model: p?.model ?? '', description: p?.description ?? '',
-      settings: (p?.settings ?? {}) as Record<string, string> },
+      settings: (p?.settings ?? {}) as Record<string, string>, claude: claudeSettingsForm(p?.claude_settings) },
     onSubmit: async ({ value }) => {
       setError('')
+      const { claude, ...rest } = value
+      setClaudeError('')
+      const cs = rest.harness === 'claude-code' ? claudeSettingsValue(claude) : undefined
+      if (cs && 'error' in cs) {
+        setClaudeError(cs.error)
+        return
+      }
       try {
         unwrap(await api.PUT('/harness-profiles/{profile_id}', { params: { path: { profile_id: p?.id ?? 'new' }, header: { 'If-Match': ifMatch(p?.version ?? 0) } },
-          body: value }))
+          body: { ...rest, claude_settings: cs?.value } }))
         void qc.invalidateQueries({ queryKey: keys.profiles })
         onClose()
       } catch (e) {
@@ -100,6 +115,7 @@ function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
       }
     },
   })
+  const harness = useSelector(form.store, (st) => st.values.harness)
   // Profiles a role template or space role uses cannot be deleted; the server says which (ADR-0051).
   const remove = async () => {
     if (!p) return
@@ -131,6 +147,7 @@ function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
             </form.Field>
           </Group>
           <form.Field name="settings">{(f) => <SettingsEditor value={f.state.value} onChange={(settings) => f.handleChange(settings)} />}</form.Field>
+          {harness === 'claude-code' && <form.Field name="claude">{(f) => <ClaudeSettingsEditor value={f.state.value} onChange={(c) => f.handleChange(c)} error={claudeError} />}</form.Field>}
           <form.Field name="description">{(f) => <Textarea label="Description" autosize minRows={2} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
           {p && <Text size="xs" c="dimmed">Saving creates revision {p.revision + 1}; it applies to later launches.</Text>}
           {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}

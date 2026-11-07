@@ -4874,6 +4874,10 @@ export interface components {
              * @example /api/v1/schemas/CatalogProfile.json
              */
             readonly $schema?: string;
+            /** @description Claude Code settings.json keys for the profile's runs (claude-code profiles only); {} for none */
+            claude_settings: {
+                [key: string]: unknown;
+            };
             description?: string;
             /** @enum {string} */
             harness: "claude-code" | "codex";
@@ -8203,6 +8207,9 @@ export interface components {
              * @example /api/v1/schemas/Preview.json
              */
             readonly $schema?: string;
+            claude_settings?: {
+                [key: string]: unknown;
+            };
             effective: {
                 [key: string]: components["schemas"]["CatalogField"];
             };
@@ -8283,6 +8290,10 @@ export interface components {
              * @example /api/v1/schemas/ProfileInput.json
              */
             readonly $schema?: string;
+            /** @description Claude Code settings.json keys for the profile's runs (claude-code profiles only); omitted on an update keeps the current ones, {} clears them */
+            claude_settings?: {
+                [key: string]: unknown;
+            };
             description?: string;
             /** @enum {string} */
             harness?: "claude-code" | "codex";

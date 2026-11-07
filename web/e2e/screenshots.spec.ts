@@ -145,7 +145,19 @@ test('documentation screenshots', async ({ page, browser }) => {
   await publishPrompt(rev.id)
   type Prof = { id: string }
   const sonnet = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'claude-default', name: 'Claude Code (default model)', harness: 'claude-code', model: '',
-    settings: { permission_mode: 'acceptEdits' }, description: 'Interactive Claude Code; edits accepted, commands asked.' })
+    settings: { permission_mode: 'acceptEdits' }, description: 'Interactive Claude Code; edits accepted, commands asked.',
+    // Claude Code settings.json keys for its runs (ADR-0059): permission rules, what auto mode may trust, one exception
+    // and one extra block rule, an environment variable and a status line.
+    claude_settings: {
+      permissions: { allow: ['Bash(make test:*)'], ask: ['Bash(git push:*)'], deny: ['Read(./secrets/**)'] },
+      autoMode: {
+        environment: ['$defaults', 'Source control: GitHub repositories of example-org; the space repositories are private.'],
+        allow: ['$defaults', 'Pushing feature branches to the space repositories is allowed; main only through pull requests.'],
+        soft_deny: ['$defaults', 'Changing settlement schedules in production.'],
+      },
+      env: { SETTLEMENT_ENV: 'staging' },
+      statusLine: { type: 'command', command: 'echo payments' },
+    } })
   const codexProf = await api.call<Prof>('PUT', '/harness-profiles/new', { slug: 'codex-default', name: 'Codex (default model)', harness: 'codex', model: '', settings: {} })
   // Skills: the built-in HallPass skill and a custom runbook, both given to control.
   type Sk = { id: string; slug: string; versions: { state: string; version: number }[] }
@@ -560,6 +572,15 @@ test('documentation screenshots', async ({ page, browser }) => {
   await capture(page, 'roles', async () => {
     await page.goto('/roles')
     await expect(page.getByRole('cell', { name: /Reviewer/ }).first()).toBeVisible()
+  })
+  await capture(page, 'claude-settings', async () => {
+    await page.goto('/roles')
+    await page.getByRole('tab', { name: /profiles/i }).click()
+    await page.getByRole('cell', { name: /Claude Code \(default model\)/ }).click()
+    await page.getByRole('button', { name: /Permissions/ }).click()
+    await page.getByRole('button', { name: /Auto mode rules/ }).click()
+    await expect(page.getByLabel('Allowed actions rule 1', { exact: true })).toHaveValue(/Pushing feature branches/)
+    await expect(page.getByLabel('Deny rule 1', { exact: true })).toHaveValue('Read(./secrets/**)')
   })
   await capture(page, 'skills', async () => {
     await page.goto('/skills')

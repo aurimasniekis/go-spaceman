@@ -30,8 +30,8 @@ const (
 	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044); 5: memory flush
 	// before a backup (memory.flush / memory.flushed, ADR-0045); 6: terminal takeover (takeover.state, takeover.input,
 	// takeover.ended; SM-UI-004, ADR-0046); 7: repository SSH keys (ssh_key and known_hosts on repository sources,
-	// ADR-0057)
-	MaxMinor = 7
+	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059)
+	MaxMinor = 8
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -372,6 +372,9 @@ type LaunchPayload struct {
 	Repository *RepoSource `json:"repository,omitempty"`
 	// Skills are materialized into the harness's own skills folder when the harness supports it (SM-MCP-004).
 	Skills []Skill `json:"skills,omitempty"`
+	// ClaudeSettings are the profile's Claude Code settings.json keys (minor ≥ 8, ADR-0059), set in the run's own
+	// settings.json. Central dispatches a launch that has them only to a node that negotiated minor 8.
+	ClaudeSettings ClaudeSettings `json:"claude_settings,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
 	AccountRef string `json:"account_ref,omitempty"`
 	// Dream asks the node to prepare a dream workspace (minor ≥ 2, ADR-0027).
