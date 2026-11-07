@@ -51,9 +51,14 @@ stateDiagram-v2
 4. **Export** (only when chosen). The source writes, per repository, a Git bundle of every ref plus snapshot commits of
    uncommitted work and every stash, and an archive of loose files, and uploads them to central. It does not reset,
    commit to a branch, push or delete anything in the source folder.
-5. **Prepare.** The destination clones pushed repositories (with its own Git authentication) and the space's configured
-   `auto` repositories the source never cloned ([Repositories and worktrees](../guide/repositories)), restores exported ones,
-   restores role memory from central, and reports what it has. Central compares every repository's commit and every
+5. **Prepare.** The destination clones pushed repositories and the space's configured `auto` repositories the source
+   never cloned ([Repositories and worktrees](../guide/repositories)), restores exported ones, restores role memory from
+   central, and reports what it has. A repository with a SpaceMan SSH key (its own or a shared one; matched to the
+   space's configured repository by folder, else by remote URL) is cloned from its configured URL with that key and its
+   pinned host keys, as a normal clone is, so the destination needs no Git credentials of its own for it. Central puts
+   the key only on the message to the destination (agents of this release or later); it is never stored with the
+   command, logged or audited. Other repositories are cloned with the destination's own Git authentication. Keyed
+   repositories the source never cloned are cloned by the first repository sync after the move. Central compares every repository's commit and every
    memory head with what it sent. A folder of the same space already on the destination is moved aside, never deleted.
 6. **Finalize.** In one database transaction the space's node becomes the destination and its execution lease moves there
    with a higher generation. The source can no longer run, report or sync anything for the space: whatever it still has is
@@ -97,5 +102,7 @@ refused, as *denied*), `relocation.checked`, `relocation.refused`, `relocation.b
 - Both nodes need an agent that speaks node protocol 1.3 or later.
 - Exports are capped at 4 GiB per relocation. Ignored files (`.gitignore`) are not exported; staged and unstaged changes
   arrive as unstaged changes.
-- Repository URLs with embedded credentials are reported without them; the destination uses its own Git authentication.
+- Repository URLs with embedded credentials are reported without them; the destination uses its own Git authentication,
+  or the repository's SpaceMan SSH key when it has one. An SSH URL keeps its user name (`ssh://git@host/…`).
+- An older destination agent ignores a repository's SpaceMan SSH key and clones with its own Git authentication.
 - See [Known limitations](/reference/limitations) for the rest.

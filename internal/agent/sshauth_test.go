@@ -172,3 +172,72 @@ func TestSSHErrorNamesWhatDecided(t *testing.T) {
 		t.Fatal("other errors pass through")
 	}
 }
+
+// SM-SPACE-005, ADR-0057: a relocation clones a repository with a SpaceMan SSH key from its configured URL with that key
+// and the pinned host keys (the node has no key or known_hosts of its own), puts the source's remote URL back, and
+// leaves no key folder; a repository without a key still clones with the node's own ssh setup.
+func TestRelocationCloneWithRepoKey(t *testing.T) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("ssh is not installed")
+	}
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("SSH_AUTH_SOCK", "")
+	space, bare, seed := reposFixture(t)
+	head := strings.TrimSpace(gitRun(t, seed, "rev-parse", "HEAD"))
+	key, pub := gitsshtest.NewKey(t)
+	addr, known := gitsshtest.Server(t, pub)
+	url := "ssh://git@" + addr + bare
+	// The node's own ssh: records that it ran and refuses the host, as a node user without known_hosts would.
+	marker := filepath.Join(tmp, "node-ssh-ran")
+	fake := filepath.Join(tmp, "node-ssh")
+	writeFile(t, fake, "#!/bin/sh\ntouch '"+marker+"'\necho 'Host key verification failed.' >&2\nexit 255\n")
+	if err := os.Chmod(fake, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_SSH_COMMAND", fake)
+	t.Setenv("GIT_SSH_VARIANT", "ssh")
+	g, err := newProjectGit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	src := &proto.RepoSource{ID: "rep_api", Name: "api", Path: "api", URL: url, DefaultBranch: "main", SSHKey: key, KnownHosts: known}
+
+	// Keyed, the source's origin is the configured URL.
+	rr := proto.RelocateRepo{Path: "api", Remotes: []proto.GitRemote{{Name: "origin", URL: url}}, Branch: "main", Head: head,
+		Branches: []proto.BranchCheck{}, Worktrees: []proto.ExportedWorktree{}, Source: src}
+	pr, err := g.cloneRepo(ctx, space, rr)
+	if err != nil || pr.Head != head || pr.Branch != "main" {
+		t.Fatalf("keyed clone: %+v %v", pr, err)
+	}
+	// Keyed, the source's origin had another URL: cloned from the configured one, origin's URL put back.
+	other := "https://example.invalid/api.git"
+	rr.Path, rr.Remotes = "api2", []proto.GitRemote{{Name: "origin", URL: other}, {Name: "up", URL: "https://example.invalid/up.git"}}
+	if pr, err = g.cloneRepo(ctx, space, rr); err != nil || pr.Head != head {
+		t.Fatalf("keyed clone from the configured URL: %+v %v", pr, err)
+	}
+	if got := strings.TrimSpace(gitRun(t, filepath.Join(space, "api2"), "remote", "get-url", "origin")); got != other {
+		t.Fatalf("origin URL %q, want the source's %q", got, other)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a keyed clone used the node's own ssh")
+	}
+	if left, _ := filepath.Glob(filepath.Join(tmp, "smk-*")); len(left) != 0 {
+		t.Fatalf("key folders left behind: %v", left)
+	}
+
+	// Without a key (no source, or a source without one): the node's own ssh, and its own error wording.
+	for i, s := range []*proto.RepoSource{nil, {ID: "rep_api", Name: "api", Path: "api", URL: url}} {
+		rr := proto.RelocateRepo{Path: "plain" + string(rune('a'+i)), Remotes: []proto.GitRemote{{Name: "origin", URL: url}}, Head: head,
+			Branches: []proto.BranchCheck{}, Worktrees: []proto.ExportedWorktree{}, Source: s}
+		_ = os.Remove(marker)
+		_, err := g.cloneRepo(ctx, space, rr)
+		if err == nil || !strings.Contains(err.Error(), "node's own SSH setup") {
+			t.Fatalf("unkeyed clone %d: %v", i, err)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("unkeyed clone %d did not use the node's own ssh", i)
+		}
+	}
+}

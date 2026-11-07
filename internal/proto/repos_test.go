@@ -70,6 +70,11 @@ func TestRepoKeysOnlySSHAndRedacted(t *testing.T) {
 	if rp.Repositories[0].SSHKey != "" || rp.Repositories[0].ID != "rep_1" || len(rp.Clone) != 1 || p.Repositories[0].SSHKey == "" {
 		t.Fatalf("sync redaction %+v", rp)
 	}
+	pp := RelocatePreparePayload{RelocationID: "rel_1", Repos: []RelocateRepo{{Path: "api", Source: &src}, {Path: "lib"}}}
+	rpp := pp.Redacted()
+	if rpp.Repos[0].Source.SSHKey != "" || rpp.Repos[0].Source.KnownHosts == "" || rpp.Repos[1].Source != nil || pp.Repos[0].Source.SSHKey == "" {
+		t.Fatalf("prepare redaction %+v (original %+v)", rpp.Repos[0].Source, pp.Repos[0].Source)
+	}
 	if !strings.Contains(BuiltinKnownHosts, "github.com ssh-ed25519 ") {
 		t.Fatal("built-in pins lost GitHub's ed25519 key")
 	}

@@ -47,6 +47,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the same name.
 
 ### Fixed
+- Relocating a space whose repositories use SpaceMan SSH keys no longer fails in Prepare with "Host key verification
+  failed" on a destination without Git credentials of its own. The destination clones such a repository from its
+  configured URL with its key and pinned host keys, as a normal clone does. Central matches each relocated repository
+  to the configured one (by folder, else by remote URL) and puts the key only on the message to the destination
+  agent: stored commands, logs, the journal and the audit never hold it. Repositories without a key clone with the
+  node's own Git authentication as before. An older destination agent ignores the key (no protocol change). A
+  relocation also no longer drops the user name of an `ssh://git@host/…` remote URL.
 - Terminals: the agent tab strip no longer scrolls vertically or shows scrollbars, and a tab's first line (status
   dot and name) no longer scrolls out of view on a phone. Tabs keep their content's size; when there are more than fit,
   the strip scrolls sideways (touch, trackpad or mouse wheel), snapping to tabs, and keeps the selected tab in view.

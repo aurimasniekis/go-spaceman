@@ -135,7 +135,8 @@ func (svc *Service) relocStep(ctx context.Context, r db.Relocation) (bool, error
 			return true, svc.blockRelocation(ctx, r, "prepare", err.Error())
 		}
 		return true, svc.s.W().TxNamed(ctx, "fleet.relocation_prepare", func(tx *store.Tx) error {
-			cmd, err := svc.queueRelocationCommand(ctx, tx, r.DestNodeID, r.SpaceID, r.GenerationBefore+1, r.ID, proto.CmdRelocatePrepare, payload)
+			// The stored payload never holds a repository key: the hub adds it to the wire message (materialize).
+			cmd, err := svc.queueRelocationCommand(ctx, tx, r.DestNodeID, r.SpaceID, r.GenerationBefore+1, r.ID, proto.CmdRelocatePrepare, payload.Redacted())
 			if err != nil {
 				return err
 			}
@@ -514,6 +515,15 @@ func (svc *Service) preparePayload(ctx context.Context, r db.Relocation) (proto.
 				Branches: []proto.BranchCheck{}, Worktrees: []proto.ExportedWorktree{}})
 		}
 	}
+	if len(p.Repos) > 0 {
+		configured, err := svc.s.R().ListSpaceRepositories(ctx, r.SpaceID)
+		if err != nil {
+			return p, err
+		}
+		for i := range p.Repos {
+			p.Repos[i].Source = keyedSource(p.Repos[i], configured)
+		}
+	}
 	cols, err := svc.s.R().ListMemoryCollections(ctx, r.SpaceID)
 	if err != nil {
 		return p, err
@@ -549,6 +559,40 @@ func (svc *Service) preparePayload(ctx context.Context, r db.Relocation) (proto.
 		}
 	}
 	return p, nil
+}
+
+// keyedSource returns the configured repository a relocated one matches, by path and else by a remote's URL, when it
+// has a SpaceMan SSH key (its own or a shared one, ADR-0057/0058); nil otherwise, so the destination clones with its
+// own Git authentication as before. The source carries no key: the hub adds it to the wire message only.
+func keyedSource(rr proto.RelocateRepo, configured []db.SpaceRepository) *proto.RepoSource {
+	match := func(cr db.SpaceRepository) bool {
+		return cr.Url != "" && (len(cr.SshKeyEnc) > 0 || cr.GitKeyID != "") && proto.IsSSHURL(cr.Url)
+	}
+	for _, cr := range configured {
+		if cr.Path == rr.Path {
+			if !match(cr) {
+				return nil
+			}
+			return repoSource(cr)
+		}
+	}
+	for _, cr := range configured {
+		if !match(cr) {
+			continue
+		}
+		for _, rm := range rr.Remotes {
+			if rm.URL == cr.Url {
+				return repoSource(cr)
+			}
+		}
+	}
+	return nil
+}
+
+// repoSource is a configured repository as the node receives it, without its key (repos.Source, which fleet cannot import).
+func repoSource(cr db.SpaceRepository) *proto.RepoSource {
+	return &proto.RepoSource{ID: cr.ID, Name: cr.Name, Path: cr.Path, URL: cr.Url, DefaultBranch: cr.DefaultBranch, ClonePolicy: cr.ClonePolicy,
+		KnownHosts: cr.KnownHosts}
 }
 
 func (svc *Service) applyPrepare(ctx context.Context, r db.Relocation, rep proto.RelocationReport) error {

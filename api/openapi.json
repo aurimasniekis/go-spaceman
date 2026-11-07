@@ -5057,7 +5057,7 @@
             "type": "string"
           },
           "url": {
-            "description": "Clone URL; the destination node's own Git authentication is used (no credentials in the URL)",
+            "description": "Clone URL (no credentials in the URL); the destination node's own Git authentication is used, or the SpaceMan SSH key of the configured repository at this folder or URL",
             "type": "string"
           }
         },

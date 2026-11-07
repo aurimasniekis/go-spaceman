@@ -249,3 +249,95 @@ func TestSharedGitKeyEndToEnd(t *testing.T) {
 		t.Fatalf("delete an unused key: %v", err)
 	}
 }
+
+// SM-SPACE-005, ADR-0057 end to end: a space whose repository is reachable only with its SpaceMan SSH key relocates to
+// a node without Git credentials or known_hosts of its own: the destination clones with the key from the prepare
+// command's wire message, at the source's commit; the key is in no stored command or audit entry.
+func TestRelocationWithRepositorySSHKey(t *testing.T) {
+	for _, bin := range []string{"git", "ssh"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " is not installed")
+		}
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("HOME", t.TempDir()) // no ~/.ssh: neither node has a key or known_hosts of its own
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	a, b := e.addNode("node-a"), e.addNode("node-b")
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "keyed-move", Name: "Keyed move", NodeID: a.id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+
+	root := t.TempDir()
+	bare, seed := filepath.Join(root, "api.git"), filepath.Join(root, "seed")
+	gitIn(t, root, "init", "-q", "--bare", "-b", "main", bare)
+	gitIn(t, root, "clone", "-q", bare, seed)
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("private api\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, seed, "checkout", "-q", "-b", "main")
+	gitIn(t, seed, "add", ".")
+	gitIn(t, seed, "commit", "-q", "-m", "init")
+	gitIn(t, seed, "push", "-q", "-u", "origin", "main")
+	head := gitIn(t, seed, "rev-parse", "HEAD")
+
+	var accepted atomic.Value
+	addr, known := gitsshtest.ServerFunc(t, func(k ssh.PublicKey) bool {
+		want, _ := accepted.Load().(string)
+		return want != "" && string(ssh.MarshalAuthorizedKey(k)) == want
+	})
+	r, err := e.c.Repos.Create(ctx, admin, sp.ID, repos.Input{Name: "api", URL: "ssh://git@" + addr + bare, ClonePolicy: proto.CloneOnDemand, KnownHosts: known})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err = e.c.Repos.GenerateSSHKey(ctx, admin, sp.ID, r.ID, r.Version); err != nil {
+		t.Fatal(err)
+	}
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(r.SSHKey.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted.Store(string(ssh.MarshalAuthorizedKey(pub)))
+	if _, err := e.c.Repos.Sync(ctx, admin, sp.ID, repos.SyncInput{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "cloned on the source with the key", func() bool {
+		x, _ := e.c.Repos.Get(ctx, sp.ID, r.ID)
+		return x.Status != nil && x.Status.State == "present"
+	})
+
+	e.pause(sp.ID)
+	if _, err := e.c.Fleet.StartRelocation(ctx, admin, sp.ID, fleet.StartRelocationInput{DestinationNodeID: b.id}); err != nil {
+		t.Fatal(err)
+	}
+	rel := e.waitRelocation(sp.ID, fleet.RelocDone, fleet.RelocBlocked, fleet.RelocFailed)
+	if rel.State != fleet.RelocDone {
+		t.Fatalf("relocation %s: %s %+v", rel.State, rel.Error, rel.Issues)
+	}
+	dest := filepath.Join(b.dir, "spaces", sp.Workdir, "api")
+	if got := gitIn(t, dest, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("destination head %s, source %s", got, head)
+	}
+	if got := gitIn(t, dest, "remote", "get-url", "origin"); got != "ssh://git@"+addr+bare {
+		t.Fatalf("destination origin %s", got)
+	}
+
+	db := e.c.Store.ReadDB()
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM node_commands WHERE kind = ? AND payload_json LIKE '%"source"%'`,
+		proto.CmdRelocatePrepare).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("prepare commands naming the repository's source: %d %v", n, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM node_commands WHERE payload_json LIKE '%PRIVATE KEY%' OR payload_json LIKE '%ssh_key%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("stored commands with a key: %d %v", n, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE details_json LIKE '%PRIVATE KEY%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("audit entries with a key: %d %v", n, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM relocations WHERE report_json LIKE '%PRIVATE KEY%' OR prepare_json LIKE '%PRIVATE KEY%' OR error LIKE '%PRIVATE KEY%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("relocation rows with a key: %d %v", n, err)
+	}
+}
