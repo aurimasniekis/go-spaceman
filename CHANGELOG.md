@@ -7,8 +7,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on;
-  until then a gateway run's harness gets no model credentials, so don't enable Harbor Pilot for a space yet.
+- Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on
+  (protocol minor 9). Until then every launch of a harness a space routes through Harbor Pilot fails as
+  `agent_too_old` before a token is minted, so don't enable Harbor Pilot for a space yet. A gateway run never starts on
+  the node's own login.
   - A harness a space routes through Harbor Pilot uses no account: a launch that names one is refused, a model outside
     the space's allowed aliases is refused, and there is never a fallback to a direct account. A launch is refused
     before it starts when no connection is configured. The run's manifest records the gateway and project.
@@ -20,7 +22,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Every end path queues the token's revocation in its own transaction: the run's reported end, a launch that can't be
     sent, a stop or pause, a relocation, a purge, and runs a node left unknown past its lease. Central revokes them on
     its deadline timer, retrying with backoff until the token expires; queued revocations survive a restart.
-    Replacing the parent token revokes live run tokens with the old parent first (the new one can't).
+    Replacing the parent token first revokes, with the old parent, its live run tokens and its pending revocations
+    (the new one can't), including a token minted while the parent was being replaced. A 404 or 401 counts as revoked
+    only from the parent that minted the token (each token records a fingerprint of its parent). Otherwise the
+    revocation is recorded as failed, audited, shown on the connection (`failed_revocations` and the Harbor Pilot
+    page) and counted in the new `spaceman_gateway_revocations_failed` gauge.
+  - A slow mint never holds up a node's other commands: dispatch waits at most 5 s, then the mint goes on in the
+    background and sends the launch when it is done.
 - Shipped event templates for Harbor Pilot events (HP-T6, ADR-0060 §7): `harbor-pilot-budget` (budget warnings and
   exhausted budgets; `project_id` sends a project's budgets to its space), `harbor-pilot-quota` (provider quota windows
   that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including

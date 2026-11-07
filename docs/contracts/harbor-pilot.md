@@ -293,7 +293,18 @@ Checked 2026-11-07 against v0.1.3 by `internal/app` `TestRealHarborPilotRunToken
   A later mint with it gets 401 `invalid_api_key`, which SpaceMan reports as "the token is invalid, expired or revoked"
   and fails the run as `gateway_unavailable` (**live**).
 - **A new parent can't revoke the old one's children.** Revoke answers 404 for a credential not owned by the caller
-  (see Revoke above; **code**), so SpaceMan revokes live run tokens with the old parent when the parent is replaced.
+  (see Revoke above; **code**). So when the parent is replaced, SpaceMan revokes with the old parent everything it
+  minted that may still be valid, and it treats a 404 or 401 from any parent other than the minting one as a failure.
+- **Bound refs SpaceMan sends** (ADR-0060 decision 5):
+
+  | Key | Value |
+  |---|---|
+  | `spaceman.space` | the space ID |
+  | `spaceman.run` | the run ID |
+  | `spaceman.instance` | the run's instance ID |
+  | `spaceman.task` | the task the run is assigned to (left out when it has none) |
+  | `session` | a fresh Claude Code run: the session ID central chose. A resumed run: the session it resumes. **Any other run, a fresh Codex run for example: the run ID.** |
+  | `project_id` | the space's Harbor Pilot project |
 
 ## Test harness: `internal/harborpilot/hptest`
 - **Opt-in.** Set `SPACEMAN_HARBOR_PILOT=1`. The helper uses the binary at `HARBOR_PILOT_BIN`, or else runs

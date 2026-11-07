@@ -114,6 +114,7 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_runs_active":                           "gauge:harness",
 		"spaceman_runs_started_total":                    "counter:harness,result",
 		"spaceman_runs_ended_total":                      "counter:harness,reason",
+		"spaceman_gateway_revocations_failed":            "gauge:",
 		"spaceman_storage_filesystem_size_bytes":         "gauge:volume",
 		"spaceman_storage_filesystem_avail_bytes":        "gauge:volume",
 		"spaceman_ingest_deliveries_total":               "counter:delivery,origin,result",

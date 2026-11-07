@@ -108,6 +108,7 @@ refused before the delivery history is read.
 | `spaceman_runs_active` | gauge | `harness` | Live runs. |
 | `spaceman_runs_started_total` | counter | `harness`, `result` | Launch outcomes. |
 | `spaceman_runs_ended_total` | counter | `harness`, `reason` | Run ends. |
+| `spaceman_gateway_revocations_failed` | gauge | | Harbor Pilot run or validation tokens whose revocation failed; each stays valid until it expires unless a person revokes it, or its parent, in Harbor Pilot. |
 | `spaceman_build_info` | gauge | `version`, `revision`, `goversion` | Always 1. |
 
 ## Suggested alerts
