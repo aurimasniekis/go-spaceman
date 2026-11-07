@@ -9,17 +9,23 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Added
 - Harbor Pilot connection and per-space settings (ADR-0060, Proposed; HP-T2). Runs don't use the gateway yet (HP-T3/T4).
   - An administrator connects one Harbor Pilot gateway (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`,
-    account:write): a gateway URL, an optional URL runs use, a parent token with `tokens:mint` and an optional
-    service-principal token. Both tokens are sealed and write-only: answers, the audit log and the change feed show only
-    whether each is set and a version counter.
+    account:write; changing or removing it needs a step-up): a gateway URL, an optional URL runs use, a parent token
+    with `tokens:mint` and an optional service-principal token. Both tokens are sealed and write-only: answers, the
+    audit log and the change feed show only whether each is set and a version counter.
+  - Stored tokens are only sent to the address they were entered for: changing the gateway URL or the URL runs use, or
+    newly allowing plain HTTP, needs the tokens again in the same request ("re-enter the tokens when the gateway URL
+    changes", 422, before any call). Central's client uses no proxy and never dials link-local, unspecified or
+    multicast addresses (private and loopback ones stay allowed).
   - Every save is checked with Harbor Pilot: a probe token is minted and revoked at once, which shows the parent can
     mint ("parent token lacks tokens:mint" otherwise), which client binding it belongs to and when it expires; a gateway
     older than Harbor Pilot 0.1.3 is refused. A service-principal token must read budget status and projects.
   - A space opts in on its overview (`/api/v1/spaces/{id}/harbor-pilot`, space_config:write): its Harbor Pilot
-    project (checked with Harbor Pilot), the harnesses routed through it (any harness; default Claude Code and Codex),
+    project (checked with Harbor Pilot; setting or changing it needs account:write, since it decides who pays, and
+    an update without a project keeps the stored one), the harnesses routed through it (any harness; default Claude Code and Codex),
     the run-token lifetime (24 h by default, 15 minutes to 7 days) and what a launch does when budget status can't be
     read (proceed or refuse).
-  - The connection can't be removed while a space uses it. Migration 0040 (forward-only) adds the connection, space
+  - The connection can't be removed while a space uses it or unexpired tokens (run or validation) are live or waiting
+    to be revoked. Migration 0040 (forward-only) adds the connection, space
     settings, run-token and revocation-queue tables.
 
 ### Changed

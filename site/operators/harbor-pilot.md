@@ -41,20 +41,32 @@ Both tokens are sealed with the server's keyring and never shown again: not on t
 the change feed, exports or logs. The page shows only whether each is set, how many times it was replaced, the
 binding and the parent's expiry. To replace a token, enter the new one; leave a field empty to keep the current token.
 
+Stored tokens are only ever sent to the address they were entered for. Changing the gateway URL or the URL runs use, or
+turning on plain HTTP, needs the parent token entered again (and the service-principal token, or removing it, when one
+is set); otherwise SpaceMan refuses the change before calling anyone: "re-enter the tokens when the gateway URL
+changes". Changing or removing the connection also asks you to confirm your sign-in (a step-up), and needs
+`account:write`.
+
+SpaceMan calls the gateway without a proxy and never on link-local (cloud metadata), unspecified or multicast
+addresses. Private and loopback addresses are allowed, since a gateway usually runs on an internal network.
+
 <Shot name="harbor-pilot" alt="Harbor Pilot page: the gateway URL, the parent and service-principal tokens shown only as set with their versions, the client binding, and the space using it" caption="The connection, without its tokens" />
 
 Harbor Pilot shortens a run token's lifetime to its parent's expiry. When the parent expires before a space's run
 tokens would, the connection and that space say so.
 
-The connection can't be removed while a space uses it.
+The connection can't be removed while a space uses it, or while unexpired tokens (run or validation) are live or
+waiting to be revoked: revoking them needs the parent token.
 
 ## Opting a space in
 
 On a space's overview, the **Harbor Pilot** card shows whether the space routes runs through Harbor Pilot. A space
-operator sets:
+operator sets everything but the project:
 
 - **Project**: the Harbor Pilot project id (`prj_…`) the runs are charged to. It must be the binding's project or one
-  of its allowed projects; SpaceMan checks this with Harbor Pilot, and asks for the id when you enter a name.
+  of its allowed projects; SpaceMan checks this with Harbor Pilot, and asks for the id when you enter a name. The
+  project decides who pays, so only an administrator (`account:write`) sets or changes it, as for binding an account
+  to a space; for others the field is read-only. Saving without a project keeps the one already set.
 - **Harnesses**: which harnesses go through Harbor Pilot (any harness it can serve; by default Claude Code and Codex).
   The others keep the space's accounts. For a listed harness there is no fallback to an account.
 - **Run token lifetime**: 24 hours by default, between 15 minutes and 7 days. A run that outlives its token loses model

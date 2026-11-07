@@ -2361,9 +2361,19 @@
      - **Run child tokens.** They are sealed the same way (`harborpilot:run:<run id>`) in `run_gateway_credentials`, so
        an at-least-once dispatch resend reuses the token instead of minting again.
      - **Permissions** go through Casbin:
-       - the connection needs `account:write`;
-       - space settings need `space_config:write`;
+       - the connection needs `account:write`, and its writes (replace, delete) a step-up (recent sign-in and second
+         factor), as event connections do;
+       - space settings need `space_config:write`, except the **project**: setting or changing a space's `project_id`
+         needs `account:write` (a global administrator or the root token), because the project decides who pays, as
+         binding an account to a space does (`set-space-accounts`). The operator decided this on 2026-11-07 (option b
+         of the HP-T2 review). An empty `project_id` on an update keeps the stored project, so a space's operators can
+         still enable, disable or tune their space; the audit entry records `project_changed`;
        - status needs space read.
+     - **Stored tokens go only to the address they were entered for.** A connection write that changes `base_url` or
+       `run_base_url` (scheme, host, port or path), or newly allows insecure HTTP, must carry `parent_token` again, and
+       `service_token` (or `remove_service_token`) when one is stored; otherwise it is refused with 422 before any
+       outbound call. Without this rule, whoever could write the connection (or a stolen administrator session) could
+       point it at their own host and receive the write-only tokens in the validation call (HP-T2 review, finding 1).
   3. **Transport.**
      - **Central's own client** (validation, mint, revoke, budget status): https is required unless the host is
        loopback or `allow_insecure_http` is set (as in ADR-0035).
@@ -2381,7 +2391,12 @@
      - **`allow_insecure_http` exposes child tokens.** With it, every run's token crosses the network path in clear for
        its whole TTL, as does the parent token on central's calls. It is for tests and a trusted local network only,
        and the connection's status says it is set.
-     - Redirects are never followed.
+     - Redirects are never followed, and no proxy is used (one from the environment would see every token).
+     - **SSRF stance.** `base_url` is chosen by an administrator (`account:write`). Central's client refuses to dial
+       link-local (cloud metadata), unspecified and multicast addresses, checked on the resolved address. Private and
+       loopback addresses stay allowed on purpose: a Harbor Pilot gateway usually runs on an internal network. What
+       comes back from a wrong target is bounded (status, error type and a 300-character sanitised message), and the
+       tokens are only ever sent to the address they were entered for (decision 2). THREAT_MODEL T-34 (T-33 is taken by an open branch).
      - Errors keep HP's status, error type and its `error.message`, cut to a fixed bound and treated as untrusted text
        (T-03), so failure reasons stay readable (SM-GW-003). Raw response bodies are never kept.
      - Tokens are never logged.
@@ -2493,14 +2508,16 @@
       - or both stay as they are, documented as the operator's choice.
     - Whoever edits profiles can already run hooks on the node (ADR-0059), so the decision is about budget
       enforcement, not about a new privilege.
-  - **Who may choose a space's project? Implemented as decided (space_config:write), flagged for review.**
-    - HP-T2 follows decision 2: a space's settings need `space_config:write`, which the space's operators hold. An
-      operator can therefore point their space at any project the connection's binding allows, another space's
-      project included, and so charge that project's budget.
-    - Binding an account to a space needs `account:write` (`AccountRules` in `internal/api/accounts.go`) for the
-      same reason: it hands a credential's spend to the space. Requiring `account:write` for `enabled` and
-      `project_id` (and leaving TTL, harnesses and the budget fallback to space operators) would match that. Not
-      changed without a decision.
+  - ~~**Who may choose a space's project?**~~ **Resolved: the operator's decision of 2026-11-07 (option b).**
+    - HP-T2 first let `space_config:write` set the project, so a space's operators could point their space at any
+      project the connection's binding allows, another space's project included, and charge that project's budget.
+    - Now setting or changing `project_id` needs `account:write`, like binding an account to a space (decision 2). The
+      check runs before the project probe (an unauthorised caller causes no call to Harbor Pilot) and again in the
+      write transaction against the stored project.
+    - **Residual risk (accepted, not changed):** a space's operators can still disable Harbor Pilot for their space,
+      or delete its settings. Its runs then go back to the space's direct accounts and SpaceMan's soft budgets
+      (ADR-0036), outside Harbor Pilot's hard limits. Q1 forbids a per-run fallback while the space is enabled, not
+      this. If it matters, `enabled` going from true to false could need `account:write` too.
 - **Operator questions and answers (asked and answered 2026-11-06):**
   - **Q1, fallback to a direct account:** never.
   - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.
