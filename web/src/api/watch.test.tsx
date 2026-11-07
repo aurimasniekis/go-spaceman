@@ -184,6 +184,33 @@ describe('useWatch (one tab, no Web Locks)', () => {
     expect(result.current).toBe('live')
   })
 
+  it('backs off when a server keeps ending fresh streams as unauthenticated', async () => {
+    renderHook(() => useWatch(true), { wrapper })
+    const endNext = async (delay: number) => {
+      act(() => latest().open())
+      act(() => latest().emit('end', '{"reason":"unauthenticated"}'))
+      const n = FakeEventSource.all.length
+      if (delay > 0) {
+        await tick(delay - 1)
+        expect(FakeEventSource.all).toHaveLength(n)
+      }
+      await tick(delay > 0 ? 1 : 0)
+      expect(FakeEventSource.all).toHaveLength(n + 1)
+    }
+    await endNext(0) // the first one reconnects at once
+    await endNext(1000)
+    await endNext(2000)
+    await endNext(4000)
+    expect(assign).not.toHaveBeenCalled()
+
+    // A stream that stayed open for a while ends as unauthenticated: at once again.
+    act(() => latest().open())
+    await tick(RETRY_MAX_MS)
+    act(() => latest().emit('end', '{"reason":"unauthenticated"}'))
+    await tick()
+    expect(FakeEventSource.all).toHaveLength(6)
+  })
+
   it('retries at once when the window comes back online', async () => {
     renderHook(() => useWatch(true), { wrapper })
     act(() => latest().fail())

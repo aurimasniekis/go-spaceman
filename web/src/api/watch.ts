@@ -181,7 +181,7 @@ export function retryDelay(attempt: number, rand: number = Math.random()): numbe
  * Subscribes to the durable change feed (GET /api/v1/watch, Server-Sent Events). EventSource reconnects by itself and
  * resumes with Last-Event-ID; a "gap" (the position was pruned) refetches everything. When the server ends the stream
  * because its session is no longer valid (SM-AUTH-007), the session is re-checked: a session that is gone goes to
- * sign-in, a rotated one reconnects.
+ * sign-in, a rotated one reconnects (at once the first time; repeated quick ends back off like a closed stream).
  *
  * EventSource gives up for good on a response that isn't a 200 text/event-stream (a 502 while central restarts, a
  * 401). Such a closed stream, and one the server ended for any other reason, is retried with backoff (retryDelay, reset
@@ -226,6 +226,10 @@ export function useWatch(enabled: boolean): WatchState {
       let timer: ReturnType<typeof setTimeout> | undefined
       let checking = false // a session check before a retry is in flight
       let attempt = 0
+      // Unauthenticated ends in a row of streams that were open less than RETRY_MAX_MS, and when the last stream
+      // opened: a server that keeps ending fresh streams this way must not make the tab reconnect in a tight loop.
+      let quickEnds = 0
+      let openedAt = 0
       const clearTimer = () => {
         if (timer !== undefined) clearTimeout(timer)
         timer = undefined
@@ -257,6 +261,7 @@ export function useWatch(enabled: boolean): WatchState {
         es = src
         src.onopen = () => {
           attempt = 0
+          openedAt = Date.now()
           publish('live')
         }
         src.onerror = () => {
@@ -282,9 +287,15 @@ export function useWatch(enabled: boolean): WatchState {
           src.close()
           if (es !== src) return
           if (endReason(ev) === 'unauthenticated') {
-            // Re-check the session now: a rotated one reconnects, a gone one goes to sign-in.
+            // Re-check the session: a rotated one reconnects, a gone one goes to sign-in. The first such end of a
+            // stream that was open for a while does it at once; each further quick one waits for the next backoff step.
             es = null
-            retry()
+            quickEnds = Date.now() - openedAt < RETRY_MAX_MS ? quickEnds + 1 : 1
+            if (quickEnds === 1) retry()
+            else {
+              attempt = Math.max(attempt, quickEnds - 2)
+              later()
+            }
           } else later()
         })
       }
