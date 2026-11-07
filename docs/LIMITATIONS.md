@@ -146,6 +146,9 @@
   submodule work trees are inspected only as part of their parent's status.
 - **Credentials in remote URLs are dropped.** The destination clones with its own Git authentication; a remote that only
   works with credentials embedded in its URL fails to clone (the relocation blocks with the error).
+- **The destination gets a keyed repository's key at Prepare.** For a repository with a SpaceMan SSH key, the
+  relocation's destination receives the key in Prepare, before the lease moves, so the destination of a cancelled or
+  failed relocation has held the key in memory. Nothing is stored on that node.
 - **Native sessions are not carried.** Runs on the destination start fresh harness sessions (project continuity only).
 - **Without the source, only central's copies.** The unavailable-source flow restores acknowledged memory, the
   space's configured repositories that have a URL and the repositories the operator lists; everything else on the

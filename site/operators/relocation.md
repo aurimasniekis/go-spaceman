@@ -105,4 +105,6 @@ refused, as *denied*), `relocation.checked`, `relocation.refused`, `relocation.b
 - Repository URLs with embedded credentials are reported without them; the destination uses its own Git authentication,
   or the repository's SpaceMan SSH key when it has one. An SSH URL keeps its user name (`ssh://git@host/…`).
 - An older destination agent ignores a repository's SpaceMan SSH key and clones with its own Git authentication.
+- For a repository with a SpaceMan SSH key, the destination receives the key at Prepare, before the lease moves: the
+  destination of a cancelled or failed relocation has held the key in memory. Nothing is stored on that node.
 - See [Known limitations](/reference/limitations) for the rest.
