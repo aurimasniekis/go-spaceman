@@ -21,6 +21,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 // harness runs a real central (store, keyring, services, HTTP stack) on an httptest server.
@@ -58,6 +59,7 @@ func newHarnessWith(t *testing.T, mod func(*config.Config)) *harness {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	storetest.Seed(t, cfg.DataDir)
 	c, err := app.OpenCentral(context.Background(), cfg, discard(), app.Options{Clock: clk, Environ: []string{}})
 	if err != nil {
 		t.Fatal(err)

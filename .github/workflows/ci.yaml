@@ -18,8 +18,11 @@ env:
   GOTOOLCHAIN: auto
 
 jobs:
+  # The Go checks run as parallel jobs: the race run is the longest, so lint, vet and coverage finish beside it instead of
+  # after it. Each job keeps its own Go cache: setup-go's built-in cache has one key for all of them, so only the first
+  # job to finish would save its (race, non-race or lint) build cache and the others would start cold.
   go:
-    name: go (lint, vet, race tests, coverage, fuzz smoke, traceability)
+    name: go (lint, vet, sqlc drift, analyzer tests, traceability)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,9 +31,15 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: |
-            go.sum
-            tools/go.sum
+          cache: false
+      - name: Go module and build cache (lint)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-lint-${{ runner.os }}-
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
@@ -41,18 +50,85 @@ jobs:
         run: make sqlc-check
       - name: analyzer tests
         run: make tools-test
+      - name: requirement traceability
+        run: make traceability
+
+  race:
+    name: go race tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (race)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-race-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-race-${{ runner.os }}-
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
-        # 290 ms); the 100 ms write-transaction guard is still enforced by the non-race coverage run below.
+        # 290 ms); the write-transaction guard is still enforced by the non-race coverage job (250 ms there, ADR-0062).
         env:
           SM_TEST_TX_MAX: 1s
         run: make race
+
+  coverage:
+    name: go coverage floor
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (coverage)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-coverage-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-coverage-${{ runner.os }}-
       - name: coverage floor
+        # The write-transaction guard (Hallpass HP-DB-004) is 100 ms locally; GitHub's hosted runners are about 1.7x
+        # slower and exceeded it by up to 78 ms on unchanged code, so hosted CI uses 250 ms (ADR-0062).
+        env:
+          SM_TEST_TX_MAX: 250ms
         run: make coverage
-      - name: requirement traceability
-        run: make traceability
-      - name: fuzz smoke
-        run: make fuzz-smoke FUZZTIME=${{ github.event_name == 'schedule' && '10m' || '10s' }}
+
+  # Fuzzing runs nightly (10 minutes per target) and in the release workflow (10 s smoke), not on pull requests or
+  # pushes (ADR-0062).
+  fuzz:
+    name: go fuzz (nightly)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (fuzz)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-fuzz-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-fuzz-${{ runner.os }}-
+      - name: fuzz
+        run: make fuzz-smoke FUZZTIME=10m
 
   web:
     name: web (typecheck, unit tests, build) and API drift
@@ -91,6 +167,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # A pull request checks out its merge commit: with its parents, HEAD^1 is the base it is compared against.
+          fetch-depth: 2
+      # The axe audit (about 4.5 minutes) runs on a pull request only when it changes what the site is built from
+      # (ADR-0062): the site, docs/ (included into site pages), the UI and its audit spec, the OpenAPI document (the API
+      # reference), CHANGELOG.md (the changelog page), the Makefile targets or this workflow. Pushes to main and the
+      # nightly run always audit.
+      - name: does this change need the accessibility audit?
+        id: a11y
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != "pull_request" ]]; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if grep -qE '^(site/|docs/|web/|api/|CHANGELOG\.md$|Makefile$|\.github/workflows/ci\.yaml$)' <<<"$changed"; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "No site, docs, web or API change: the accessibility audit is skipped."
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          fi
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: site/package.json
@@ -104,13 +203,17 @@ jobs:
       - name: install
         working-directory: site
         run: pnpm install --frozen-lockfile
-      - name: install the web tooling (Playwright and axe for the accessibility audit)
-        working-directory: web
-        run: pnpm install --frozen-lockfile
       - name: chromium for the Mermaid check and the accessibility audit
         run: npx --yes playwright@1.64.1 install --with-deps chromium
-      - name: build, Mermaid, accessibility and API reference drift
-        run: make site-check
+      - name: build, Mermaid and API reference drift
+        run: make site-verify
+      - name: install the web tooling (Playwright and axe for the accessibility audit)
+        if: steps.a11y.outputs.run == 'true'
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: accessibility audit (axe, every page, both color schemes)
+        if: steps.a11y.outputs.run == 'true'
+        run: make site-a11y
 
   security:
     name: security (govulncheck, gitleaks)
