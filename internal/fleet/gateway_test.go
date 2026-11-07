@@ -2,6 +2,11 @@ package fleet
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
@@ -277,5 +283,140 @@ func TestGatewayUndispatchableReasons(t *testing.T) {
 	t.Parallel()
 	if undispatchable(ErrGatewayUnavailable) != "gateway_unavailable" || undispatchable(ErrAgentTooOld) != "agent_too_old" {
 		t.Fatal("end reasons")
+	}
+}
+
+// fakeGateway hands out a fixed token; while block is non-nil, Token waits on it (a slow Harbor Pilot).
+type fakeGateway struct {
+	calls atomic.Int32
+	block chan struct{}
+}
+
+func (g *fakeGateway) PreLaunch(context.Context, string, string) error { return nil }
+func (g *fakeGateway) Route(context.Context, *store.Tx, string, string, string, string) (*GatewaySpec, error) {
+	return nil, nil
+}
+func (g *fakeGateway) Token(ctx context.Context, _ *Run, _ string) (map[string]string, error) {
+	g.calls.Add(1)
+	if g.block != nil {
+		select {
+		case <-g.block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return map[string]string{proto.SecretGatewayToken: "hpk_child_fake"}, nil
+}
+
+func launchRow(runID string) db.NodeCommand {
+	return db.NodeCommand{ID: "cmd_" + runID, Kind: proto.CmdLaunch, SpaceID: "spc_a", RunID: sql.NullString{String: runID, Valid: true}, Generation: 1,
+		PayloadJson: `{"harness":"claude-code","role":"implementor","kind":"worker"}`}
+}
+
+// F2 (ADR-0060 Q1): an agent older than proto.MinorGatewayToken would drop the run's token and start the harness on the
+// node user's own login. A gateway launch to it fails as agent_too_old before anything is minted; a node at that minor
+// gets the token in the launch's secrets.
+func TestGatewayLaunchNeedsAgentMinor(t *testing.T) {
+	t.Parallel()
+	e := newGWEnv(t)
+	g := &fakeGateway{}
+	e.svc.opts.Gateway = g
+	e.run("run_1", proto.RunPending)
+	ctx := context.Background()
+	_, err := e.svc.hub.materialize(ctx, launchRow("run_1"), "nod_1", proto.MinorGatewayToken-1)
+	if !errors.Is(err, ErrAgentTooOld) || undispatchable(err) != "agent_too_old" || !strings.Contains(err.Error(), "protocol minor 9") {
+		t.Fatalf("old agent: %v", err)
+	}
+	if g.calls.Load() != 0 {
+		t.Fatal("a token was minted for an agent that would drop it")
+	}
+	if proto.MaxMinor < proto.MinorGatewayToken {
+		// Until HP-T4 ships, no agent negotiates the minor: every gateway launch fails this way.
+		if _, err := e.svc.hub.materialize(ctx, launchRow("run_1"), "nod_1", proto.MaxMinor); !errors.Is(err, ErrAgentTooOld) {
+			t.Fatalf("newest agent before HP-T4: %v", err)
+		}
+	}
+	msg, err := e.svc.hub.materialize(ctx, launchRow("run_1"), "nod_1", proto.MinorGatewayToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p proto.LaunchPayload
+	if err := json.Unmarshal(msg.Payload, &p); err != nil || p.Secrets[proto.SecretGatewayToken] != "hpk_child_fake" || len(p.Secrets) != 1 {
+		t.Fatalf("payload secrets %v %v", p.Secrets, err)
+	}
+}
+
+// F3: a slow mint never holds up the node's dispatch loop. The loop waits at most GatewayMintWait, leaves the launch
+// pending and sends the node's other commands (here a stop of another run); the mint goes on in the background, once,
+// and kicks the loop when it is done, which then sends the launch.
+func TestGatewayMintDoesNotBlockDispatch(t *testing.T) {
+	t.Parallel()
+	e := newGWEnv(t)
+	g := &fakeGateway{block: make(chan struct{})}
+	e.svc.opts.Gateway = g
+	e.svc.opts.GatewayMintWait = 50 * time.Millisecond
+	e.svc.opts.GatewayMinMinor = proto.MaxMinor
+	e.run("run_1", proto.RunPending)
+	e.exec(`UPDATE node_commands SET payload_json = ? WHERE id = 'cmd_run_1'`, launchRow("run_1").PayloadJson)
+	e.exec(`INSERT INTO node_commands (id, node_id, space_id, run_id, generation, kind, idempotency_key, state, payload_json, created_at)
+		VALUES ('cmd_stop', 'nod_1', 'spc_a', 'run_9', 1, 'run.stop', 'stop:run_9', 'pending', '{}', 1)`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &session{nodeID: "nod_1", out: make(chan []byte, 64), kick: make(chan struct{}, 1), done: make(chan struct{}), log: slog.New(slog.DiscardHandler),
+		minor: proto.MaxMinor}
+	defer close(s.done)
+	h := e.svc.hub
+	h.mu.Lock()
+	h.sessions["nod_1"] = s
+	h.mu.Unlock()
+	go h.dispatchLoop(ctx, s)
+	next := func(within time.Duration) proto.Command {
+		t.Helper()
+		deadline := time.After(within)
+		for {
+			select {
+			case b := <-s.out:
+				env, err := proto.Decode(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if env.Type != proto.TypeCommand {
+					continue
+				}
+				var c proto.Command
+				if err := env.Decode(&c); err != nil {
+					t.Fatal(err)
+				}
+				return c
+			case <-deadline:
+				t.Fatalf("no command within %v", within)
+			}
+		}
+	}
+	start := time.Now()
+	s.kick <- struct{}{}
+	if c := next(5 * time.Second); c.CommandID != "cmd_stop" {
+		t.Fatalf("first command sent %s, want the stop", c.CommandID)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("the stop waited %v behind the mint", d)
+	}
+	// Another kick while the mint is still running starts no second mint.
+	s.kick <- struct{}{}
+	time.Sleep(200 * time.Millisecond)
+	if n := g.calls.Load(); n != 1 {
+		t.Fatalf("%d mints started, want 1", n)
+	}
+	close(g.block)
+	for {
+		c := next(5 * time.Second)
+		if c.CommandID == "cmd_run_1" {
+			var p proto.LaunchPayload
+			if err := json.Unmarshal(c.Payload, &p); err != nil || p.Secrets[proto.SecretGatewayToken] != "hpk_child_fake" {
+				t.Fatalf("launch secrets %v %v", p.Secrets, err)
+			}
+			return
+		}
 	}
 }

@@ -20,7 +20,9 @@ import (
 )
 
 // hpRunEnv is a central with a Harbor Pilot connection, a space routing both harnesses through it (with direct
-// accounts bound too, which gateway runs must never get), and a scripted node at the newest protocol minor.
+// accounts bound too, which gateway runs must never get), and a scripted node at the newest protocol minor. Until HP-T4
+// raises MaxMinor to proto.MinorGatewayToken, central is restarted with the gate lowered to MaxMinor so the token's
+// delivery can be checked on the wire (TestHarborPilotGatewayNeedsNewAgent covers the real gate).
 type hpRunEnv struct {
 	e  *fleetEnv
 	sp *fleet.Space
@@ -30,6 +32,10 @@ type hpRunEnv struct {
 func newHPRunEnv(t *testing.T, base, parent, service, project string) *hpRunEnv {
 	t.Helper()
 	e := newFleetEnv(t)
+	if proto.MaxMinor < proto.MinorGatewayToken {
+		e.gatewayMinMinor = proto.MaxMinor
+		e.restartCentral()
+	}
 	e.enroll()
 	ctx := context.Background()
 	nodes, _ := e.c.Fleet.ListNodes(ctx)
@@ -102,6 +108,38 @@ func (h *hpRunEnv) credential(t *testing.T, runID string) (id string, live bool)
 }
 
 var reUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+// F2 (ADR-0060 Q1): with the real gate, a gateway launch to an agent older than proto.MinorGatewayToken (every agent
+// until HP-T4 ships) fails as agent_too_old with a readable reason, before anything is minted: such an agent would drop
+// the token and start the harness on the node user's own login.
+func TestHarborPilotGatewayNeedsNewAgent(t *testing.T) {
+	t.Parallel()
+	f := hpfake.New(t)
+	h := newHPRunEnv(t, f.URL(), f.Parent, f.Service, "prj_web")
+	h.e.gatewayMinMinor = 0
+	h.e.restartCentral()
+	h.dial(t)
+	ctx := context.Background()
+	mints := func() int { n := 0; f.Set(func(x *hpfake.HP) { n = len(x.Bodies) }); return n }
+	base := mints()
+	r, err := h.e.c.Fleet.LaunchRun(ctx, admin, h.sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: "claude-code", Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "failed as agent_too_old", func() bool {
+		x := h.e.run1(r.ID)
+		return x.Observed == "failed" && x.EndReason == "agent_too_old"
+	})
+	if x := h.e.run1(r.ID); !strings.Contains(x.Error, "gateway runs need protocol minor 9") {
+		t.Fatalf("reason %q", x.Error)
+	}
+	if n := mints() - base; n != 0 {
+		t.Fatalf("minted %d tokens for an agent that would drop them", n)
+	}
+	if id, _ := h.credential(t, r.ID); id != "" {
+		t.Fatal("a run credential was stored")
+	}
+}
 
 // SM-GW-003/005 (simulated: hpfake and a scripted node): a Claude Code run in a space that routes it through Harbor
 // Pilot gets exactly its child token on the wire (no account secret, though the space has accounts bound) and a

@@ -390,9 +390,15 @@ type LaunchPayload struct {
 }
 
 // SecretGatewayToken is the LaunchPayload.Secrets key of a gateway run's child token (Harbor Pilot, ADR-0060). Central
-// sets it at dispatch; the harness adapters turn it into the harness's own variables (HP-T4), and nodes that don't know
-// it drop it like any secret their adapter does not allow.
+// sets it at dispatch, only for a node at MinorGatewayToken or later; the harness adapters turn it into the harness's
+// own variables (HP-T4).
 const SecretGatewayToken = "SPACEMAN_GATEWAY_TOKEN"
+
+// MinorGatewayToken is the first minor version whose agent delivers SecretGatewayToken to the harness (HP-T4). An older
+// agent would drop it and start the harness on whatever login the node user has, a fallback to a direct account that
+// ADR-0060 forbids (Q1), so central fails a gateway launch to such a node as agent_too_old before minting. It is above
+// MaxMinor until HP-T4 ships: until then every gateway launch fails that way.
+const MinorGatewayToken = 9
 
 // DefaultRecordingMaxBytes is the recording bound a node applies when the launch names none (512 MiB).
 const DefaultRecordingMaxBytes = 512 << 20
