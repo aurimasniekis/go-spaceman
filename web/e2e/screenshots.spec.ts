@@ -465,6 +465,16 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByText('Live · watch-only')).toBeVisible()
     await page.waitForTimeout(1_500)
   })
+  // Scrolling back through a live terminal without taking it over: the wheel moves the scrollback, "Jump to live" returns.
+  await capture(page, 'terminal-scrollback', async () => {
+    await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
+    await expect(page.getByText('Live · watch-only')).toBeVisible()
+    const box = (await page.getByTestId('terminal').boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 200))
+    await page.mouse.wheel(0, -480)
+    await expect(page.getByTestId('jump-to-live')).toBeVisible()
+    await page.mouse.move(0, 0)
+  })
   // The Terminals workspace (UX review §4.4): every space and its agents beside the selected space's terminals.
   await capture(page, 'terminals-workspace', async () => {
     await page.goto(`/terminals?space=${payments.id}&run=${control.id}`)

@@ -99,6 +99,8 @@ type Central struct {
 	GitKeys *gitkeys.Service
 	// HarborPilot holds the Harbor Pilot connection and space settings (ADR-0060).
 	HarborPilot *harborpilot.Service
+	// HarborPilotRuns is the run-token lifecycle: routing, mint-or-reuse at dispatch, revocation (ADR-0060, HP-T3).
+	HarborPilotRuns *harborpilot.Lifecycle
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
@@ -209,6 +211,14 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		_ = st.Close()
 		return nil, err
 	}
+	// Queued gateway revocations are done on the deadline timer, woken after the commit that queued them.
+	wakeDeadlines := func() {
+		if c.Human != nil {
+			c.Human.Kick()
+		}
+	}
+	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{Log: obs.Component(log, "harborpilot"), Wake: wakeDeadlines})
+	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
@@ -303,7 +313,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return c.Notifier.OnCommandAck(ctx, tx, commandID, result)
 		},
-		Outbox: c.Outbox, Admit: c.Limits.Admit})
+		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines})
 	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
 	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
 		if run.Launch.AccountRef == "" {
@@ -382,7 +392,6 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	c.Fleet.Hub().KBResult = c.KB.OnResult
 	c.GitKeys = gitkeys.New(st, c.Audit, c.Changes, c.Keyring)
-	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{Log: obs.Component(log, "harborpilot")})
 	c.Repos = repos.New(st, c.Audit, c.Changes, c.Fleet, repos.Options{AllowLocalURLs: !cfg.IsProduction(), Keyring: c.Keyring, GitKeys: c.GitKeys, Clock: o.Clock,
 		Log: obs.Component(log, "repos")})
 	c.Fleet.Hub().RepoKey = c.Repos.Key // repository SSH keys go only onto the wire message of a clone or fetch (ADR-0057)
@@ -642,6 +651,9 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "schedules", Next: c.Schedules.Next, Due: c.Schedules.Due},
 		human.Deadline{Name: "task_deadlines", Next: c.Limits.NextDeadline, Due: c.Limits.Deadlines},
 		human.Deadline{Name: "xspace", Next: c.XSpace.NextDeadline, Due: c.XSpace.Expire},
+		// Harbor Pilot run tokens (ADR-0060): queued revocations, and runs a node left unknown past its lease.
+		human.Deadline{Name: "gateway_revocations", Next: c.HarborPilotRuns.NextRevocation, Due: c.HarborPilotRuns.RevokeDue},
+		human.Deadline{Name: "gateway_lease_sweep", Next: c.Fleet.NextGatewayLeaseSweep, Due: c.Fleet.SweepGatewayLeases},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
 		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
 	go c.Notifier.Run(ctx)

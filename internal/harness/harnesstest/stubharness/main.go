@@ -14,6 +14,7 @@
 // (fictional token counts, no cost) where Claude Code keeps it. A "/fullscreen" line prints a full-screen program's
 // start-up the way Claude Code 2.1.317 draws it (alternate screen, mouse and keyboard modes, synchronized output, a
 // path in its banner; fullscreen.bin, with neutral text), which the web terminal must survive being reopened after.
+// A "/lines <n>" line prints n numbered lines first, a reply longer than the screen for scrolling back.
 // Not part of any release.
 package main
 
@@ -57,6 +58,7 @@ func main() {
 		}
 	}
 	writes(prompt)
+	longReply(prompt)
 	if strings.Contains(prompt, "/fullscreen") {
 		_, _ = os.Stdout.Write(fullscreen)
 	}
@@ -73,6 +75,23 @@ func main() {
 	for i := 0; ; i++ {
 		fmt.Fprintf(os.Stdout, "\x1b[36mtick\x1b[0m %d\r\n", i)
 		time.Sleep(time.Second)
+	}
+}
+
+// longReply prints the numbered lines a "/lines <n>" prompt line asks for (at most 5000).
+func longReply(prompt string) {
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/lines ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		for i := 1; i <= min(n, 5000); i++ {
+			fmt.Fprintf(os.Stdout, "reply line %d of %d\r\n", i, n)
+		}
 	}
 }
 

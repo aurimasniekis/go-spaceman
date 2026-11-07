@@ -113,6 +113,9 @@ type Options struct {
 	Timeout time.Duration
 	// Log receives failures nobody else sees (nil: discarded).
 	Log *slog.Logger
+	// Wake is called after a commit that queued credential revocations: it wakes the deadline timer the revoker
+	// (Lifecycle.RevokeDue) runs on. Nil: queued revocations wait for the timer's next round.
+	Wake func()
 }
 
 // Service keeps the connection and the space settings.
@@ -247,10 +250,20 @@ func (svc *Service) queueRevocation(ctx context.Context, cred *Credential, reaso
 	if exp.IsZero() {
 		exp = now.Add(probeTTL * time.Second)
 	}
-	return svc.s.W().TxNamed(ctx, "harborpilot.queue_revocation", func(tx *store.Tx) error {
+	err := svc.s.W().TxNamed(ctx, "harborpilot.queue_revocation", func(tx *store.Tx) error {
 		return tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: cred.ID, Reason: reason, ExpiresAt: exp.UnixMicro(),
 			NextAttemptAt: now.UnixMicro(), RequestedAt: now.UnixMicro()})
 	})
+	if err == nil {
+		svc.wake()
+	}
+	return err
+}
+
+func (svc *Service) wake() {
+	if svc.o.Wake != nil {
+		svc.o.Wake()
+	}
 }
 
 // unrevokedWarning queues a validation credential that could not be revoked and says what became of it. When even the
@@ -435,6 +448,17 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 		}
 	}
 
+	// A new parent can't revoke the children of the old one (Harbor Pilot answers 404), so live run tokens are revoked
+	// now, with the old parent at its old address, before it is replaced (ADR-0060 decision 5).
+	var rotated []rotatedChild
+	if exists && in.ParentToken != "" {
+		if old, err := svc.open(parentAAD(id), cur.ParentTokenEnc, "parent"); err == nil && old != in.ParentToken {
+			if rotated, err = svc.revokeChildren(ctx, cur, old); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	sealedParent, err := svc.kr.Seal(keyring.PurposeCredential, parentAAD(id), []byte(parent))
 	if err != nil {
 		return nil, err
@@ -503,13 +527,19 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 			}
 			return err
 		}
+		for _, r := range rotated {
+			if err := r.record(ctx, tx); err != nil {
+				return err
+			}
+		}
 		if err := svc.changes.Record(ctx, tx, "", "harbor_pilot_connection", id, action, version+1); err != nil {
 			return err
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "harbor_pilot.connection." + action, Target: audit.Target{Type: "harbor_pilot_connection", ID: id},
 			Details: map[string]any{"base_url": base.String(), "run_base_url": in.RunBaseURL, "allow_insecure_http": in.AllowInsecureHTTP,
 				"parent_token_changed": in.ParentToken != "", "parent_token_version": parentVersion, "service_token_changed": in.ServiceToken != "" || in.RemoveServiceToken,
-				"has_service_token": sealedService != nil, "service_token_version": serviceVersion, "binding_id": val.bindingID}})
+				"has_service_token": sealedService != nil, "service_token_version": serviceVersion, "binding_id": val.bindingID,
+				"run_tokens_revoked": len(rotated)}})
 		return err
 	})
 	if err != nil {
@@ -520,7 +550,72 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 		return nil, err
 	}
 	out.Warnings = append(out.Warnings, warnings...)
+	if len(rotated) > 0 {
+		failed := 0
+		for _, r := range rotated {
+			if r.state == "failed" {
+				failed++
+			}
+		}
+		out.Warnings = append(out.Warnings, fmt.Sprintf("The parent token changed: the Harbor Pilot tokens of %d live runs were revoked with the old parent "+
+			"(the new one can't revoke them); those runs have no model access until they are started again.", len(rotated)))
+		if failed > 0 {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("%d of those tokens could not be revoked; revoke the old parent in Harbor Pilot, which ends its children.", failed))
+		}
+	}
 	return out, nil
+}
+
+// rotatedChild is a live run token revoked because the parent token is being replaced.
+type rotatedChild struct {
+	cred       db.RunGatewayCredential
+	state, msg string
+}
+
+// revokeChildren revokes every live run token with the old parent at the connection's stored address (outside any
+// transaction); record stores the outcomes in the connection write's transaction.
+func (svc *Service) revokeChildren(ctx context.Context, cur db.HarborPilotConnection, oldParent string) ([]rotatedChild, error) {
+	live, err := svc.s.R().ListLiveRunGatewayCredentials(ctx)
+	if err != nil || len(live) == 0 {
+		return nil, err
+	}
+	c, err := svc.client(cur.BaseUrl, cur.AllowInsecureHttp == 1)
+	out := make([]rotatedChild, 0, len(live))
+	for _, cred := range live {
+		r := rotatedChild{cred: cred, state: "revoked"}
+		if err == nil {
+			cctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+			rerr := c.Revoke(cctx, oldParent, cred.CredentialID)
+			cancel()
+			switch {
+			case rerr == nil:
+			case IsClass(rerr, ClassNotFound):
+				r.msg = "not found: Harbor Pilot has no such credential of this parent"
+			case IsClass(rerr, ClassUnauthorized):
+				r.msg = "the parent token is invalid, expired or revoked, which ended its children"
+			default:
+				r.state, r.msg = "failed", "the parent token was replaced before this credential could be revoked: "+rerr.Error()
+			}
+		} else {
+			r.state, r.msg = "failed", "the parent token was replaced before this credential could be revoked: the old address is not usable"
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (r rotatedChild) record(ctx context.Context, tx *store.Tx) error {
+	n, err := tx.Q.ClearRunGatewayTokenFor(ctx, db.ClearRunGatewayTokenForParams{RunID: r.cred.RunID, CredentialID: r.cred.CredentialID})
+	if err != nil || n == 0 {
+		return err // already revoked or replaced meanwhile: its own revocation is queued
+	}
+	if err := tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: r.cred.CredentialID, RunID: r.cred.RunID, SpaceID: r.cred.SpaceID,
+		Reason: "parent_rotated", ExpiresAt: r.cred.ExpiresAt, NextAttemptAt: tx.NowMicros(), RequestedAt: tx.NowMicros()}); err != nil {
+		return err
+	}
+	_, err = tx.Q.SetGatewayRevocationDone(ctx, db.SetGatewayRevocationDoneParams{State: r.state, LastError: bounded(r.msg, 500),
+		Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, CredentialID: r.cred.CredentialID})
+	return err
 }
 
 // DeleteConnection removes the connection (version-checked). It is refused while any space routes runs through Harbor
@@ -717,52 +812,54 @@ const projectProbeTTL = 60
 
 // checkProject validates an enabled space's project against the connection: with a service-principal token the project
 // must exist and be given by id, and a probe mint bound to it must succeed (the project is the binding's or one of its
-// allowed projects). It returns the version of the connection it checked against; the caller's transaction makes sure
-// the connection (its binding above all) has not changed since.
-func (svc *Service) checkProject(ctx context.Context, projectID string) (int64, error) {
+// allowed projects). It returns the version of the connection it checked against (the caller's transaction makes sure
+// the connection, its binding above all, has not changed since) and a warning when the probe credential could not be
+// revoked at once.
+func (svc *Service) checkProject(ctx context.Context, projectID string) (int64, string, error) {
 	r, err := svc.s.R().GetHarborPilotConnection(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, errNotConnected
+		return 0, "", errNotConnected
 	} else if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	parent, err := svc.open(parentAAD(r.ID), r.ParentTokenEnc, "parent")
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	service := ""
 	if len(r.ServiceTokenEnc) > 0 {
 		if service, err = svc.open(serviceAAD(r.ID), r.ServiceTokenEnc, "service-principal"); err != nil {
-			return 0, err
+			return 0, "", err
 		}
 	}
 	c, err := svc.client(r.BaseUrl, r.AllowInsecureHttp == 1)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if service != "" {
 		p, err := c.GetProject(ctx, service, projectID)
 		switch {
 		case IsClass(err, ClassNotFound):
-			return 0, validationErr("project_id", "Harbor Pilot has no project %q", projectID)
+			return 0, "", validationErr("project_id", "Harbor Pilot has no project %q", projectID)
 		case err != nil:
-			return 0, hpField("project_id", err)
+			return 0, "", hpField("project_id", err)
 		case p.ID != projectID:
-			return 0, validationErr("project_id", "%q is a project name; use its id %s", projectID, p.ID)
+			return 0, "", validationErr("project_id", "%q is a project name; use its id %s", projectID, p.ID)
 		}
 	}
 	val, err := svc.probeParent(ctx, c, parent, map[string]string{"project_id": projectID}, projectProbeTTL)
 	if err != nil {
 		var he *Error
 		if errors.As(err, &he) && he.Class == ClassInvalid && strings.Contains(he.Message, "project") {
-			return 0, validationErr("project_id", "Harbor Pilot refused project %q for the connection's client binding: it must be the binding's project or one of its allowed projects", projectID)
+			return 0, "", validationErr("project_id", "Harbor Pilot refused project %q for the connection's client binding: it must be the binding's project or one of its allowed projects", projectID)
 		}
-		return 0, hpField("project_id", err)
+		return 0, "", hpField("project_id", err)
 	}
+	warning := ""
 	if val.unrevoked != nil {
-		_ = svc.unrevokedWarning(ctx, val.unrevoked, "project validation")
+		warning = svc.unrevokedWarning(ctx, val.unrevoked, "project validation")
 	}
-	return r.Version, nil
+	return r.Version, warning, nil
 }
 
 func validationErr(field, format string, args ...any) error {
@@ -802,8 +899,9 @@ func (svc *Service) PutSpace(ctx context.Context, actor audit.Actor, spaceID str
 		return nil, errProjectNeedsAdmin
 	}
 	var connVersion int64
+	var warning string
 	if in.Enabled {
-		if connVersion, err = svc.checkProject(ctx, in.ProjectID); err != nil {
+		if connVersion, warning, err = svc.checkProject(ctx, in.ProjectID); err != nil {
 			return nil, err
 		}
 	}
@@ -866,7 +964,11 @@ func (svc *Service) PutSpace(ctx context.Context, actor audit.Actor, spaceID str
 	if err != nil {
 		return nil, err
 	}
-	return svc.GetSpace(ctx, spaceID)
+	out, err := svc.GetSpace(ctx, spaceID)
+	if err == nil && warning != "" {
+		out.Warnings = append(out.Warnings, warning)
+	}
+	return out, err
 }
 
 func checkVersion(exists bool, cur, sent int64) error {

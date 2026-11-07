@@ -1,12 +1,13 @@
-import { ActionIcon, Badge, Box, Group, Loader, SegmentedControl, Slider, Stack, Text, Tooltip } from '@mantine/core'
-import { IconDownload, IconPlayerPauseFilled, IconPlayerPlayFilled, IconPlayerSkipBackFilled } from '@tabler/icons-react'
+import { ActionIcon, Badge, Box, Button, Group, Loader, SegmentedControl, Slider, Stack, Text, Tooltip } from '@mantine/core'
+import { IconArrowDown, IconDownload, IconPlayerPauseFilled, IconPlayerPlayFilled, IconPlayerSkipBackFilled } from '@tabler/icons-react'
 import type { Terminal } from 'ghostty-web'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, unwrap, type RecordingRecord } from '@/api/client'
 import { API_PREFIX } from '@/api/session'
 import { endReason, sessionStillValid } from '@/api/streams'
 import { clock } from '@/lib/format'
-import { createTerminal, disposeTerminal, fitFont, followCursor, wheelScrollsBox } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, followCursor, rowHeight, scrollWithWheelAndTouch } from './ghostty'
+import { jumpToLive, keepingPosition, scrolledAway } from './scroll'
 import { apply, emptySummary, indexAt, MAX_IDLE_MS, offsetMs, renderTo, type RecordingSummary } from './records'
 
 interface Props {
@@ -18,12 +19,19 @@ interface Props {
   onInput?: ((data: string) => void) | null
 }
 
-/** Mounts a ghostty-web terminal into a div and disposes it on unmount. */
-function useTerminal() {
+/**
+ * Mounts a ghostty-web terminal into a div and disposes it on unmount. `input` is the takeover holder's key handler
+ * (null in watch mode): a full-screen program's wheel scrolling goes there, never anywhere while watching.
+ */
+function useTerminal(input: ((data: string) => void) | null = null) {
   const ref = useRef<HTMLDivElement>(null)
   const box = useRef<HTMLDivElement>(null)
   const [term, setTerm] = useState<Terminal | null>(null)
   const [error, setError] = useState('')
+  const inputRef = useRef(input)
+  useEffect(() => {
+    inputRef.current = input
+  }, [input])
   // Keep the columns inside the page: refit when the page or the terminal size changes.
   useEffect(() => {
     if (!term || !box.current) return
@@ -34,7 +42,7 @@ function useTerminal() {
     ro.observe(el)
     const sub = term.onResize(() => requestAnimationFrame(fit))
     const unfollow = followCursor(term, el)
-    const unwheel = wheelScrollsBox(term, el)
+    const unwheel = scrollWithWheelAndTouch(term, el, () => inputRef.current)
     return () => {
       ro.disconnect()
       sub.dispose()
@@ -61,6 +69,42 @@ function useTerminal() {
     }
   }, [])
   return { ref, box, term, error }
+}
+
+/**
+ * Whether the viewer has scrolled up from live output, re-checked when the box or the scrollback moves and as output
+ * arrives, with the action that goes back.
+ */
+function useScrolledAway(term: Terminal | null, box: React.RefObject<HTMLDivElement | null>) {
+  const [away, setAway] = useState(false)
+  useEffect(() => {
+    const el = box.current
+    if (!term || !el) return
+    let frame = 0
+    const check = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        // How many lines the view is up in the scrollback, for tests and assistive tools that can't read the canvas.
+        el.dataset.scrollback = String(Math.round(term.viewportY))
+        setAway(scrolledAway(term, el, rowHeight(term)))
+      })
+    }
+    el.addEventListener('scroll', check, { passive: true })
+    const scrolled = term.onScroll(check)
+    const moved = term.onCursorMove(check)
+    return () => {
+      cancelAnimationFrame(frame)
+      el.removeEventListener('scroll', check)
+      scrolled.dispose()
+      moved.dispose()
+    }
+  }, [term, box])
+  const jump = useCallback(() => {
+    if (!term || !box.current) return
+    jumpToLive(term, box.current, rowHeight(term))
+    setAway(false)
+  }, [term, box])
+  return { away, jump }
 }
 
 type LiveState = 'connecting' | 'live' | 'ended' | 'denied'
@@ -124,7 +168,8 @@ function StatusBadges({ sum, live, typing }: { sum: RecordingSummary; live?: Liv
  * re-checked and either resumes (rotated session) or goes to sign-in.
  */
 function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
-  const { ref, box, term, error } = useTerminal()
+  const { ref, box, term, error } = useTerminal(onInput ?? null)
+  const { away, jump } = useScrolledAway(term, box)
   // Watch-only unless the viewer holds a takeover; ghostty-web reads disableStdin on every key (0.4.0 source).
   useEffect(() => {
     if (!term || !onInput) return
@@ -154,7 +199,8 @@ function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
       const r = JSON.parse((ev as MessageEvent<string>).data) as RecordingRecord
       // EventSource resumes after a reconnect with Last-Event-ID, so a record is never applied twice.
       if (r.seq <= drawn.current.lastSeq) return
-      drawn.current = apply(term, drawn.current, r)
+      // A viewer reading earlier output stays where they are while new output arrives.
+      drawn.current = keepingPosition(term, () => apply(term, drawn.current, r))
       setSum(drawn.current)
     })
     es.addEventListener('end', (ev) => {
@@ -181,8 +227,22 @@ function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
       <StatusBadges sum={sum} live={state} typing={!!onInput} />
       {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
-      <Box ref={box} className="sm-terminal" style={{ overflow: 'auto', maxHeight: '70vh' }}>
-        <div ref={ref} data-testid="terminal" aria-label={onInput ? 'Run terminal (taken over: your keys go to the program)' : 'Run terminal (watch-only)'} />
+      <Box pos="relative" style={{ minWidth: 0 }}>
+        <Box ref={box} className="sm-terminal" style={{ overflow: 'auto', maxHeight: '70vh', overscrollBehavior: 'contain' }}>
+          <div ref={ref} data-testid="terminal" aria-label={onInput ? 'Run terminal (taken over: your keys go to the program)' : 'Run terminal (watch-only)'} />
+        </Box>
+        {away && (
+          <Button
+            size="xs"
+            radius="xl"
+            leftSection={<IconArrowDown size={14} />}
+            onClick={jump}
+            data-testid="jump-to-live"
+            style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 2, boxShadow: 'var(--mantine-shadow-md)' }}
+          >
+            Jump to live
+          </Button>
+        )}
       </Box>
     </Stack>
   )

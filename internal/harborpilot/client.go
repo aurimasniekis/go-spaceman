@@ -210,11 +210,48 @@ func dialControl(_, address string, _ syscall.RawConn) error {
 	return nil
 }
 
-var errDeniedAddr = errors.New("harbor pilot: the gateway address is link-local, unspecified or multicast")
+var errDeniedAddr = errors.New("harbor pilot: the gateway address is link-local, unspecified, multicast or broadcast")
+
+// deniedPrefixes are the ranges central never calls a gateway on, matching the MCP gateway's always-denied list
+// (internal/gateway/egress.go): "this network", link-local (cloud metadata at 169.254.169.254), multicast, broadcast,
+// IPv6 link-local, multicast and unspecified, plus AWS's IPv6 metadata address.
+var deniedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("255.255.255.255/32"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("ff00::/8"),
+	netip.MustParsePrefix("::/128"),
+	netip.MustParsePrefix("fd00:ec2::254/128"),
+}
+
+// IPv6 prefixes that carry an IPv4 address: NAT64 (RFC 6052, its local-use RFC 8215 prefix) in the last 32 bits, and
+// 6to4 (RFC 3056) in bits 16-47. A denied IPv4 address is denied through them too.
+var (
+	nat64Prefixes = []netip.Prefix{netip.MustParsePrefix("64:ff9b::/96"), netip.MustParsePrefix("64:ff9b:1::/48")}
+	sixToFour     = netip.MustParsePrefix("2002::/16")
+)
 
 // deniedAddr reports the addresses central never calls a gateway on.
 func deniedAddr(a netip.Addr) bool {
 	a = a.Unmap()
+	for _, p := range deniedPrefixes {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	if a.Is6() {
+		b := a.As16()
+		for _, p := range nat64Prefixes {
+			if p.Contains(a) {
+				return deniedAddr(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
+			}
+		}
+		if sixToFour.Contains(a) {
+			return deniedAddr(netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}))
+		}
+	}
 	return a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() || a.IsMulticast() || a.IsUnspecified()
 }
 
@@ -346,7 +383,7 @@ func (c *Client) do(ctx context.Context, op, method, path, token string, body an
 		case errors.Is(err, context.Canceled):
 			msg = "the request was cancelled"
 		case errors.Is(err, errDeniedAddr):
-			msg = "the gateway address is link-local, unspecified or multicast, which central never calls"
+			msg = "the gateway address is link-local, unspecified, multicast or broadcast (cloud metadata included), which central never calls"
 		}
 		// The underlying error can name the URL; never the token. Keep only a fixed text.
 		return &Error{Op: op, Class: ClassTransport, Message: msg}

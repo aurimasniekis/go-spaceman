@@ -277,6 +277,24 @@ Checked 2026-11-07 against v0.1.3 by `TestRealHarborPilotConnection` (opt-in) an
   `cpapi/extra.go:152-178`) lists child credentials with `parent_id`, `expires_at` and `revoked_at`. **live** with the
   service-principal token; the test uses it to show the probe credentials were revoked.
 
+## What SpaceMan's run-token lifecycle relies on (HP-T3)
+Checked 2026-11-07 against v0.1.3 by `internal/app` `TestRealHarborPilotRunToken` (opt-in, `make test-harbor-pilot`).
+- **Mint at dispatch.** A child minted with `bound_refs` {`spaceman.space`, `spaceman.run`, `spaceman.instance`,
+  `session`, `project_id`} (plus `spaceman.task` when the run has one) and scopes `gateway:invoke`, `gateway:models`
+  answers `GET /v1/models` with 200 (**live**). The binding provisioned by hptest pins only `spaceman.fleet`, so these
+  keys are accepted.
+- **Reading a credential back.** `GET /api/v1/client-bindings/{binding}/credentials/{id}` (`config.read`;
+  `cpapi/extra.go`, op `get-gateway-credential`) returns its metadata with `bound_refs`, `parent_id` and `scopes`, never
+  its token (**live** with the service-principal token). The test uses it to check the bound refs.
+- **Revoke at the end.** After the run's end and the revoker's `DELETE /v1/harbor/credentials/{id}` with the parent,
+  the child gets 401 on `/v1/models` (**live**).
+- **Revoking the parent.** `DELETE /api/v1/client-bindings/{binding}/credentials/{parent id}` (admin session,
+  `tokens.manage`; op `revoke-gateway-credential`, "Revoke a gateway credential and its children") revokes the parent.
+  A later mint with it gets 401 `invalid_api_key`, which SpaceMan reports as "the token is invalid, expired or revoked"
+  and fails the run as `gateway_unavailable` (**live**).
+- **A new parent can't revoke the old one's children.** Revoke answers 404 for a credential not owned by the caller
+  (see Revoke above; **code**), so SpaceMan revokes live run tokens with the old parent when the parent is replaced.
+
 ## Test harness: `internal/harborpilot/hptest`
 - **Opt-in.** Set `SPACEMAN_HARBOR_PILOT=1`. The helper uses the binary at `HARBOR_PILOT_BIN`, or else runs
   `go install github.com/aurimasniekis/go-harbor-pilot/cmd/harbor-pilot@v0.1.3` into the user cache directory

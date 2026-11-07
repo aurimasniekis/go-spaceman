@@ -189,9 +189,10 @@ test-real-codex:
 # Real Harbor Pilot gateway (docs/contracts/harbor-pilot.md): `harbor-pilot serve --demo` v0.1.3 on loopback in a temp
 # data dir, with its own binding, budget, service principal and parent token (internal/harborpilot/hptest). Uses
 # HARBOR_PILOT_BIN, or installs the pinned release with `go install`. Synthetic upstreams; no provider credentials.
-# internal/events relays the gateway's events through its own Pulse destination into an in-process Pulse-shaped server.
+# internal/events relays the gateway's events through its own Pulse destination into an in-process Pulse-shaped server;
+# internal/app covers the run-token lifecycle (mint at dispatch, revoke at the end) over a scripted node.
 test-harbor-pilot:
-	SPACEMAN_HARBOR_PILOT=1 $(GO) test -count=1 -timeout 15m -run '^TestRealHarborPilot' -v ./internal/harborpilot/... ./internal/events/
+	SPACEMAN_HARBOR_PILOT=1 $(GO) test -count=1 -timeout 15m -run '^TestRealHarborPilot' -v ./internal/harborpilot/... ./internal/events/ ./internal/app/
 
 # Linux/systemd: a Debian 13 container with systemd as PID 1 running the linux release binary and the shipped units.
 test-real-systemd:

@@ -16,6 +16,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     which needs an approval) and a filter by the token's grants.
   - The executor (AM-4): tools run through the API's own handler chain in process, with the internal token's
     principal; retried creates are idempotent, API problems are tool errors and results are capped.
+- Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on;
+  until then a gateway run's harness gets no model credentials, so don't enable Harbor Pilot for a space yet.
+  - A harness a space routes through Harbor Pilot uses no account: a launch that names one is refused, a model outside
+    the space's allowed aliases is refused, and there is never a fallback to a direct account. A launch is refused
+    before it starts when no connection is configured. The run's manifest records the gateway and project.
+  - Each run gets its own child token when its launch is dispatched, bound to the space, run, instance, session (for a
+    fresh Claude Code gateway run, central chooses the session ID) and project, with the space's lifetime. A re-sent launch
+    reuses it; a token that would expire within 5 minutes is replaced. A mint Harbor Pilot refuses fails the run as
+    `gateway_unavailable` with the reason (for example "parent token lacks tokens:mint"); network failures, 5xx and
+    429 are retried three times first.
+  - Every end path queues the token's revocation in its own transaction: the run's reported end, a launch that can't be
+    sent, a stop or pause, a relocation, a purge, and runs a node left unknown past its lease. Central revokes them on
+    its deadline timer, retrying with backoff until the token expires; queued revocations survive a restart.
+    Replacing the parent token revokes live run tokens with the old parent first (the new one can't).
 - Shipped event templates for Harbor Pilot events (HP-T6, ADR-0060 §7): `harbor-pilot-budget` (budget warnings and
   exhausted budgets; `project_id` sends a project's budgets to its space), `harbor-pilot-quota` (provider quota windows
   that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including
@@ -50,9 +64,28 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   contract, `make test-harbor-pilot` (installs and checks v0.1.3) and ADR-0060 (Proposed). The test harness also checks
   per-run usage by trusted reference, budget refusals and the budget check on run-token mint. Claude Code's default
   model now works through the gateway (K-13 resolved on the demo gateway).
+- Claude Code runs start with its classic renderer (`"tui": "default"` in the run's settings) unless the profile's
+  Claude Code settings set `tui`. Its full-screen renderer, which Claude Code otherwise often picks itself, keeps earlier output
+  out of the terminal, so a watcher could not scroll back. Set `"tui": "fullscreen"` in a profile to keep it (ADR-0064).
+  The node applies this default, so it takes nodes on this release or later; runs on older nodes keep Claude Code's
+  own choice, and the profile's resolved settings in the API don't show it.
 - Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
+- A relocation whose source was unavailable marked the source's runs lost without ending them: no `run_ended` event,
+  no end count, and nothing that reacts to a run's end (recordings, KB sessions, control) learnt of it. They now
+  end like runs a node reports ended.
+- Central's Harbor Pilot client also refuses "this network", broadcast and AWS's IPv6 metadata address, and link-local
+  addresses reached through NAT64 or 6to4. A project check's probe token that couldn't be revoked is reported as a
+  warning instead of being dropped silently.
+- Run terminals scroll back without a takeover (operator request). The wheel, and a drag on a phone, scroll through
+  earlier output in the live view without sending anything to the run. While you read, new output no longer pulls you
+  to the bottom, and **Jump to live** returns.
+- During a takeover, the wheel no longer types arrow keys into a full-screen program, which made Claude Code show
+  "Scroll wheel is sending arrow keys". It sends mouse-wheel reports when the program asks for mouse input (ghostty-web
+  0.4.0 turned every wheel step in an alternate screen into arrow keys).
+- The run terminal no longer flickers between two font sizes on some window widths (the font fit now measures the
+  canvas instead of predicting it).
 - Tests: `internal/app` TestFleetLifecycle no longer fails at random with "timed out waiting for runs running after
   central restart". Reopening the store checks every reader connection, one per CPU by default, and under the race
   detector on a 32-CPU host that took 5-7 s, longer than the 5 s lease plus 1 s grace the test then had. The agent then

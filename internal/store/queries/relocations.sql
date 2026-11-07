@@ -88,3 +88,8 @@ WHERE revoked_at IS NULL AND run_id IN (SELECT id FROM runs WHERE space_id = sql
 -- name: CountRunsWithSession :one
 SELECT CAST(count(*) AS INTEGER) AS total, CAST(coalesce(sum(CASE WHEN node_id = sqlc.arg(node_id) THEN 1 ELSE 0 END), 0) AS INTEGER) AS on_node
 FROM runs WHERE space_id = sqlc.arg(space_id) AND session_id = sqlc.arg(session_id);
+
+-- name: ListRunsLostForRelocation :many
+SELECT * FROM runs
+WHERE space_id = sqlc.arg(space_id) AND node_id = sqlc.arg(node_id) AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+ORDER BY id;

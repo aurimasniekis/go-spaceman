@@ -690,6 +690,10 @@ func undispatchable(err error) string {
 		return "account_unavailable"
 	case errors.Is(err, ErrNodeTooOld):
 		return "node_too_old"
+	case errors.Is(err, ErrGatewayUnavailable):
+		return "gateway_unavailable"
+	case errors.Is(err, ErrAgentTooOld):
+		return "agent_too_old"
 	}
 	return ""
 }
@@ -760,13 +764,28 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, minor int) (pro
 		return msg, err
 	}
 	p.RunToken = tok
-	if h.Secrets != nil {
+	if h.Secrets != nil || h.svc.opts.Gateway != nil {
 		run, err := h.svc.GetRun(ctx, c.RunID.String)
 		if err != nil {
 			return msg, err
 		}
-		if p.Secrets, err = h.Secrets(ctx, run); err != nil {
-			return msg, err
+		switch {
+		case run.Launch.Gateway != nil:
+			// A gateway run gets its own child token and never an account's secret (ADR-0060 decision 4, Q1).
+			if h.svc.opts.Gateway == nil {
+				return msg, fmt.Errorf("%w: this central has no gateway configured", ErrGatewayUnavailable)
+			}
+			session := p.SessionID
+			if session == "" {
+				session = run.ID
+			}
+			if p.Secrets, err = h.svc.opts.Gateway.Token(ctx, run, session); err != nil {
+				return msg, err
+			}
+		case h.Secrets != nil:
+			if p.Secrets, err = h.Secrets(ctx, run); err != nil {
+				return msg, err
+			}
 		}
 	}
 	msg.Payload = mustJSON(p)

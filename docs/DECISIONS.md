@@ -2306,13 +2306,18 @@
     too).
   - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
     update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
+  - **Note (2026-11-07, ADR-0064):** SpaceMan adds one key of its own, `"tui": "default"` (Claude Code's classic
+    renderer), when the profile's settings have no `tui`. The full-screen renderer, Claude Code's default for a fresh
+    configuration, keeps earlier output out of the terminal, so watchers couldn't scroll back without a takeover. A
+    profile's `tui` always wins, and the profile's other keys are written unchanged.
 
 ### ADR-0060 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
 - **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
   (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default that
   control proposed. Implemented so far (HP-T2): the connection and space settings (decision 1; decision 2 for
-  the stored tokens; decision 3's central-side rules) and the version probe of decision 8. Runs don't use them until
-  HP-T3/T4. Contract:
+  the stored tokens; decision 3's central-side rules) and the version probe of decision 8. HP-T3: central's side of
+  decisions 4 and 5 (routing without fallback, mint-or-reuse at dispatch, revocation on every end path; see
+  "Implementation notes (HP-T3)" below). Harnesses get the token from HP-T4 on; the budget pre-check is HP-T5. Contract:
   `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
   the 0.1.3 re-run).
   - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
@@ -2527,6 +2532,36 @@
       or delete its settings. Its runs then go back to the space's direct accounts and SpaceMan's soft budgets
       (ADR-0036), outside Harbor Pilot's hard limits. Q1 forbids a per-run fallback while the space is enabled, not
       this. If it matters, `enabled` going from true to false could need `account:write` too.
+- **Implementation notes (HP-T3, 2026-11-07).** Choices made while implementing decisions 4 and 5; none weakens them.
+  - **Hook shape.** `fleet.Options.Gateway` (`fleet.Gateway`, implemented by `harborpilot.Lifecycle`) has three parts:
+    `PreLaunch` before the launch transaction (no connection; the budget part is a `BudgetChecker` that HP-T5 fills),
+    `Route` inside it (instead of account resolution for a routed harness), and `Token` at dispatch. The gateway and
+    project are stored in the run's launch spec (`launch.gateway`) and manifest, so a dispatch uses what the launch
+    decided, and a space that later disables Harbor Pilot doesn't move its pending runs to an account.
+  - **Allowed aliases.** With a non-empty list, a launch must name one of the models; a launch with no model (the
+    harness default) is refused, since central can't tell what it would use.
+  - **Session.** A fresh Claude Code gateway run gets its session ID from central (a UUID chosen after the relocation
+    check), sent with `resume: false`; the run row learns it from the node's report as before, so a run that never
+    started has none and isn't resumed. Codex and resumed runs bind their own session; a fresh Codex run binds the run ID.
+  - **Token storage.** The sealed child token is dropped as soon as its revocation is queued (not when the revocation
+    is done): nothing needs it after its run's end. A row without a token means the run's token is gone, and a later
+    dispatch of that run fails as `gateway_unavailable` instead of minting again. A token minted for a run that was
+    stopped meanwhile is queued for revocation at once.
+  - **Revoker.** It runs on central's deadline timer (ADR-0036), woken by the commit that queued a revocation, at most
+    10 revocations per round with 5 s per call. 204 and 404 settle as revoked; 401 (the parent itself is revoked or
+    expired, which ended its children) settles as revoked and is audited; 403 and other refusals settle as failed and
+    are audited and logged; network failures, 5xx and 429 are retried after 1 s, ×4 each time, at most 5 min, until the
+    credential expires. No human action is raised yet.
+  - **Parent rotation.** Harbor Pilot answers 404 to a parent revoking another parent's child, so queueing these for
+    later would record them as done while they stay valid. Replacing the parent therefore revokes every live run token
+    with the old parent at the stored address before the new one is saved, records the outcomes and warns that those
+    runs have no model access until restarted. One that can't be revoked is recorded as failed with the advice to
+    revoke the old parent in Harbor Pilot (its cascade ends the children).
+  - **Lease loss.** Runs a node left `unknown` keep their tokens while it may come back; once the space's lease has
+    expired by the disconnect grace plus one minute (the node's interrupt grace), the node's lease guard has stopped
+    them and the sweep queues their revocation. The runs stay `unknown`.
+  - **Not yet.** `agent_too_old` is defined but raised only by HP-T4's protocol gate; until HP-T4 a node drops the token
+    (its harness adapter doesn't know `SPACEMAN_GATEWAY_TOKEN`), so a gateway run starts without model credentials.
 - **Operator questions and answers (asked and answered 2026-11-06):**
   - **Q1, fallback to a direct account:** never.
   - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.
@@ -2766,6 +2801,62 @@
   - Secrets that an agent writes through these tools (account keys, event connection secrets) pass through the model's
     context; those operations are dangerous and need an approval.
 
+### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
+- **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a
+  takeover the wheel showed "Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll").
+- **Context:**
+  - Without a `tui` setting, Claude Code 2.1.317 chooses its renderer itself. It picks the full-screen one for a recent
+    install (`fresh_install_on`, once `.claude.json` has a `firstStartVersion`, which every launch after an instance's
+    first has) or when a server-side feature flag says so. The operator's runs used it. That renderer draws in the alternate screen with mouse tracking (DEC modes
+    1000/1002/1003, SGR 1006) and keeps its own virtualized scrollback. The terminal itself never holds earlier output:
+    the recording, the live stream and the browser's terminal have only the current screen.
+  - A watch-only viewer sends no input (SM-UI-004), so they can't ask the program to scroll. The operator had to switch
+    to Replay to read a long reply, and Replay shows the same screens.
+  - ghostty-web 0.4.0 turns every wheel event in an alternate screen into `ESC[A`/`ESC[B` arrow keys, whatever mouse
+    mode the program asked for. In watch mode nothing listens, so the wheel did nothing. During a takeover the arrows
+    reached Claude Code, which answers them with the warning above instead of scrolling.
+  - On a normal screen ghostty-web keeps a 10,000-line scrollback, but it jumps to the bottom on every write, so a
+    viewer reading earlier output was pulled back about once a second.
+- **Decision:**
+  - **Claude Code runs get `"tui": "default"`** (the classic renderer) in the run's `settings.json`, unless the
+    profile's Claude Code settings (ADR-0059) set `tui`. The classic renderer writes to the normal screen, so the
+    output goes into the terminal's scrollback, the recording and the live stream. A profile that sets
+    `"tui": "fullscreen"` keeps the full-screen renderer and accepts that watchers can't scroll back. Verified in the
+    2.1.317 binary: the `tui` setting is checked before the fresh-install default (`settings_off`).
+  - **The node applies the default**, where it writes the run's `settings.json` (`internal/harness/claude.go`), not
+    central. It therefore needs the agent from SpaceMan 0.1.0-rc.10 or later; a run on an older node keeps Claude
+    Code's own choice of renderer. The resolved `claude_settings` that central's API returns are the profile's own and
+    don't show the default.
+  - **The web view handles the wheel and touch itself** (`web/src/features/terminal/scroll.ts`). Scrolling up moves
+    the box around the terminal first, then the scrollback; scrolling down goes back the same way. In an alternate
+    screen, a watch-only viewer sends nothing. A takeover holder sends what a terminal would: SGR (or X10) mouse-wheel
+    reports while the program tracks the mouse, arrow keys only under xterm's alternate-scroll mode 1007 (`ESC O A`/
+    `ESC O B` when the program set application cursor keys, DECCKM; `ESC [ A`/`ESC [ B` otherwise), else nothing.
+    ghostty-web's arrow keys never reach anyone.
+  - The view keeps a scrolled-up viewer on the same lines while output arrives, and shows **Jump to live** until they
+    return to live output.
+- **Alternatives:**
+  - **(a) A client-side scrollback rebuilt from the stream:** a full-screen renderer repaints its screen in place, so
+    lines that scroll out of its view never pass through the terminal as scrolled-off lines. Rebuilding them means
+    guessing from screen diffs, and the guesses would be wrong for any redraw that isn't a plain scroll.
+  - **(b) A server-side scrollback snapshot:** the node has the same screens as the browser; there is nothing more to
+    snapshot.
+  - **(c) A "recent output" pane fed by the transcript:** it would show the conversation, not the terminal, and needs
+    its own view and its own access rules for transcripts in the terminal page.
+  - **`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` in the run's environment:** it has the same effect, but a profile
+    couldn't opt back in without a new setting. `tui` already is one.
+- **Consequences:**
+  - Watchers can scroll back through everything a Claude Code run printed, up to the browser terminal's 10,000-line
+    scrollback, on desktop and on a phone (touch). No input is sent.
+  - Claude Code's classic renderer repaints its input area on the normal screen. The recording is somewhat larger than
+    with the full-screen renderer and the screen may flicker briefly during a repaint. Runs started before this change
+    keep the renderer they started with until they are relaunched.
+  - The `tui` key is SpaceMan's in the run's `settings.json` (ADR-0059): a `/tui fullscreen` typed during a takeover is
+    undone at the next launch. Set it in the profile instead.
+  - Other full-screen programs (and Claude Code with `"tui": "fullscreen"`) still can't be scrolled back while
+    watching; in a takeover the wheel scrolls them the way it would in a desktop terminal (LIMITATIONS, Web UI).
+  - Not security-relevant: watch mode still sends no input, and a takeover holder's wheel reports go through the same
+    audited takeover input as their keys.
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

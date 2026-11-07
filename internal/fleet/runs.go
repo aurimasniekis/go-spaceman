@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
+	"github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
@@ -68,6 +69,8 @@ type LaunchSpec struct {
 	Workspace  string            `json:"workspace,omitempty"`
 	Worktree   *proto.Worktree   `json:"worktree,omitempty"`
 	AccountRef string            `json:"account_ref,omitempty"`
+	// Gateway is set when the run's model traffic goes through an LLM gateway instead of an account (ADR-0060).
+	Gateway *GatewaySpec `json:"gateway,omitempty"`
 }
 
 func runFromRow(r db.Run) *Run {
@@ -167,6 +170,12 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			return nil, err
 		}
 	}
+	// The gateway's network checks (connection, budget) run before the transaction (ADR-0060 decision 4).
+	if svc.opts.Gateway != nil {
+		if err := svc.opts.Gateway.PreLaunch(ctx, spaceID, in.Harness); err != nil {
+			return nil, err
+		}
+	}
 	if in.InstanceID == "" {
 		in.InstanceID = ids.New(ids.Instance)
 	}
@@ -215,7 +224,26 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 				in.SessionID = ""
 			}
 		}
-		if svc.opts.ResolveAccount != nil {
+		// A harness the space routes through an LLM gateway uses no account, never as a fallback either (ADR-0060 Q1).
+		var gw *GatewaySpec
+		if svc.opts.Gateway != nil {
+			if gw, err = svc.opts.Gateway.Route(ctx, tx, spaceID, in.Harness, in.AccountRef, in.Model); err != nil {
+				return err
+			}
+		}
+		// The harness session the launch starts. A fresh Claude Code gateway run gets its session ID from central, chosen
+		// after the relocation check above, so the run's token can be bound to it (ADR-0060 decision 5); the run row
+		// learns it from the node's report, as for any run, so a run that never started has none.
+		session, resume := in.SessionID, in.SessionID != ""
+		if gw != nil {
+			if resolved == nil {
+				resolved = map[string]any{}
+			}
+			resolved["gateway"] = map[string]any{"kind": gw.Kind, "project_id": gw.ProjectID}
+			if session == "" && in.Harness == harness.KindClaude {
+				session = harness.NewUUID()
+			}
+		} else if svc.opts.ResolveAccount != nil {
 			if in.AccountRef, err = svc.opts.ResolveAccount(ctx, tx, spaceID, in.Harness, in.AccountRef); err != nil {
 				return err
 			}
@@ -244,7 +272,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			}
 		}
 		spec := LaunchSpec{Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace, Worktree: in.Worktree,
-			AccountRef: in.AccountRef}
+			AccountRef: in.AccountRef, Gateway: gw}
 		specJSON, _ := json.Marshal(spec)
 		m := map[string]any{"harness": in.Harness, "role": in.Role, "kind": in.Kind, "lease_generation": lease.Generation,
 			"account_ref": in.AccountRef, "model": in.Model, "settings": in.Settings, "dependencies": dependencyVersions(ctx, tx, sp.NodeID, in.Harness)}
@@ -260,8 +288,8 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			}
 			return err
 		}
-		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: in.SessionID,
-			Resume: in.SessionID != "", Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
+		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: session,
+			Resume: resume, Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
 			Worktree: in.Worktree, Repository: source, Skills: in.Skills, ClaudeSettings: in.ClaudeSettings, AccountRef: in.AccountRef, Dream: in.Dream, RecordingMaxBytes: in.RecordingMaxBytes}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
@@ -411,6 +439,9 @@ func (svc *Service) failUndispatched(ctx context.Context, runID, endReason, reas
 		if _, err := tx.Q.RevokeRunCredentials(ctx, db.RevokeRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RunID: r.ID}); err != nil {
 			return err
 		}
+		if _, err := svc.queueGatewayRevocation(ctx, tx, r.ID, RevokeLaunchFail); err != nil {
+			return err
+		}
 		if err := svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1); err != nil {
 			return err
 		}
@@ -475,6 +506,9 @@ func (svc *Service) stopRunTx(ctx context.Context, tx *store.Tx, r db.Run, mode,
 		return err
 	}
 	if _, err := tx.Q.RevokeRunCredentials(ctx, db.RevokeRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RunID: r.ID}); err != nil {
+		return err
+	}
+	if _, err := svc.queueGatewayRevocation(ctx, tx, r.ID, RevokeRunStopped); err != nil {
 		return err
 	}
 	return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
@@ -594,6 +628,9 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			if ended(rep.State) {
 				svc.opts.Metrics.RunEnded(metrics.Harness(r.Harness), metrics.RunEndReason(endReason(rep)))
 				if _, err := tx.Q.RevokeRunCredentials(ctx, db.RevokeRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RunID: r.ID}); err != nil {
+					return err
+				}
+				if _, err := svc.queueGatewayRevocation(ctx, tx, r.ID, RevokeRunEnded); err != nil {
 					return err
 				}
 			}
