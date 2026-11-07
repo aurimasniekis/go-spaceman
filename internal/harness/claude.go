@@ -31,7 +31,7 @@ func (Claude) Detect(ctx context.Context, binary string) proto.HarnessInfo {
 // ClaudeTUI is the Claude Code renderer ("tui" in settings.json) runs get unless their profile sets one (ADR-0064).
 const ClaudeTUI = "default"
 
-var claudePermissionModes =map[string]bool{"default": true, "acceptEdits": true, "plan": true, "auto": true, "dontAsk": true, "bypassPermissions": true}
+var claudePermissionModes = map[string]bool{"default": true, "acceptEdits": true, "plan": true, "auto": true, "dontAsk": true, "bypassPermissions": true}
 
 // Build implements Harness.
 func (Claude) Build(c Context) (Launch, error) {
