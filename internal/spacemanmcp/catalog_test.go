@@ -110,6 +110,8 @@ func TestHardExclusions(t *testing.T) {
 		"move-human-action", "route-human-notification", "takeover-input", "send-input", "end-takeover", "renew-takeover",
 		"list-users", "get-user", "list-all-tokens", "get-root-token", "list-oidc-providers", "get-oidc-test-login",
 		"acknowledge-restore", "upload-attachment",
+		// Session-rule reads, until AM-5 adds a rule flag for reads filtered by the principal.
+		"list-event-connections", "get-attention", "list-pending-human-actions",
 		// Harbor Pilot connection writes need a step-up (dangerous if they ever stop needing one).
 		"put-harbor-pilot-connection", "delete-harbor-pilot-connection",
 	} {
@@ -127,6 +129,16 @@ func TestHardExclusions(t *testing.T) {
 		tl, ok := c.Tool(name)
 		if !ok || tl.Class != want {
 			t.Errorf("%s: %+v, want class %s", name, tl, want)
+		}
+	}
+	// The Session-rule reads filtered by the principal carry the read class they take once AM-5 lets internal principals
+	// call them; until then they are excluded.
+	for _, id := range []string{"list-spaces", "list-event-connections", "get-event-connection", "list-event-templates",
+		"get-event-template", "preview-event-template", "get-attention", "list-account-kinds", "list-limit-definitions",
+		"list-pending-human-actions", "get-restore-state"} {
+		e := spacemanmcp.Table[id]
+		if _, excluded := c.Excluded()[id]; !excluded || e.Class != spacemanmcp.Read || !strings.Contains(e.Reason, "AM-5") {
+			t.Errorf("%s: excluded %v, fallback %+v", id, excluded, e)
 		}
 	}
 	if e := spacemanmcp.Table["put-harbor-pilot-connection"]; e.Class != spacemanmcp.Dangerous {
@@ -218,8 +230,9 @@ func names(ts []*spacemanmcp.Tool) []string {
 	return out
 }
 
-// Presets are deterministic: the same selection always gives the same sorted tools. read ⊂ operate; admin is operate
-// with global grants; no preset offers dangerous or sensitive-read tools unless named; custom offers only names.
+// Presets are deterministic: the same selection always gives the same sorted tools. read ⊂ operate ⊂ admin; admin
+// ("infra") adds the dangerous tools, each flagged approval-required, with global grants; read and operate offer
+// dangerous tools only by name, and no preset offers sensitive reads; custom offers only names.
 func TestPresetsAreDeterministic(t *testing.T) {
 	t.Parallel()
 	c := catalog(t)
@@ -239,8 +252,11 @@ func TestPresetsAreDeterministic(t *testing.T) {
 		}
 		for _, n := range a {
 			tl, _ := c.Tool(n)
-			if tl.Class == spacemanmcp.Dangerous || tl.Class == spacemanmcp.SensitiveRead {
+			if tl.Class == spacemanmcp.SensitiveRead || tl.Class == spacemanmcp.Dangerous && p != spacemanmcp.PresetAdmin {
 				t.Errorf("preset %s offers %s (%s) without naming it", p, n, tl.Class)
+			}
+			if tl.ApprovalRequired() != (tl.Class == spacemanmcp.Dangerous) {
+				t.Errorf("%s (%s): approval required %v", n, tl.Class, tl.ApprovalRequired())
 			}
 		}
 	}
@@ -251,7 +267,22 @@ func TestPresetsAreDeterministic(t *testing.T) {
 			t.Errorf("read tool %s not in operate", n)
 		}
 	}
-	if !slices.Equal(admin, operate) || len(operate) <= len(read) || !slices.Contains(read, "get_space") || slices.Contains(read, "create_task") {
+	for _, n := range operate {
+		if !slices.Contains(admin, n) {
+			t.Errorf("operate tool %s not in admin", n)
+		}
+	}
+	// The admin ("infra") preset offers dangerous tools, each one approval-gated; never sensitive reads.
+	for _, n := range []string{"save_harness_profile", "delete_schedule", "create_account"} {
+		tl, _ := c.Tool(n)
+		if !slices.Contains(admin, n) || slices.Contains(operate, n) || !tl.ApprovalRequired() {
+			t.Errorf("%s: in admin %v, in operate %v, approval required %v", n, slices.Contains(admin, n), slices.Contains(operate, n), tl.ApprovalRequired())
+		}
+	}
+	if slices.Contains(admin, "get_recording") {
+		t.Error("the admin preset offers get_recording without naming it")
+	}
+	if len(admin) <= len(operate) || len(operate) <= len(read) || !slices.Contains(read, "get_space") || slices.Contains(read, "create_task") {
 		t.Errorf("read %d, operate %d, admin %d", len(read), len(operate), len(admin))
 	}
 	if spacemanmcp.DefaultPreset != spacemanmcp.PresetAdmin || spacemanmcp.PresetAdmin.Grants("")[0] != global[0] {

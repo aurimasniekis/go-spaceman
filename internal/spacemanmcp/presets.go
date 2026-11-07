@@ -10,13 +10,15 @@ import (
 // Preset names a server's default tool set and token grants (ADR-0063 §Decision 7).
 type Preset string
 
-// The presets. Dangerous and sensitive-read tools are never part of a preset: a server adds them by name.
+// The presets. Sensitive-read tools are never part of a preset, and dangerous ones only of admin: a server adds them by
+// name. Every dangerous tool needs a person's approval per call, whatever the preset (ApprovalRequired).
 const (
 	// PresetRead offers the read tools, with viewer grants on one space.
 	PresetRead Preset = "read"
 	// PresetOperate offers the read and write tools, with operator grants on one space.
 	PresetOperate Preset = "operate"
-	// PresetAdmin ("infra", the default) offers the read and write tools, with admin grants on every space.
+	// PresetAdmin ("infra", the default) offers the read, write and dangerous tools, with admin grants on every space
+	// (operator decision: full admin, dangerous operations available, each one approved by a person).
 	PresetAdmin Preset = "admin"
 	// PresetCustom offers only the tools a server names.
 	PresetCustom Preset = "custom"
@@ -43,8 +45,10 @@ func (p Preset) Classes() []Class {
 	switch p {
 	case PresetRead:
 		return []Class{Read}
-	case PresetOperate, PresetAdmin:
+	case PresetOperate:
 		return []Class{Read, Write}
+	case PresetAdmin:
+		return []Class{Read, Write, Dangerous}
 	}
 	return nil
 }

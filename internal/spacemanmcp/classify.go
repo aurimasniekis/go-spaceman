@@ -63,12 +63,28 @@ const (
 	rPublish    = "publishes or rolls back what every space's runs execute or render"
 	rPolicy     = "changes who is asked and how for human actions"
 	rRecording  = "reads terminal recordings, which may contain anything a run printed"
+	// rFiltered marks Session-rule reads that return only what the principal's grants reach (filtered in the handler).
+	// The API refuses internal principals on every Session rule today, so they stay excluded until a rule flag tells
+	// them apart from personal operations (AM-5); this entry is the class they then take.
+	rFiltered = "reads only what the principal's grants reach (filtered in the handler); excluded until a rule flag separates it from personal session operations (AM-5)"
 )
 
 // Table is the reviewed classification of every API operation that AutoExcluded does not exclude. An entry for an
 // automatically excluded operation is the class it falls back to if its rule ever stops excluding it.
 // TestEveryOperationIsClassified keeps the table complete: a new operation needs an entry (and a review).
 var Table = map[string]Entry{
+	// Session-rule reads filtered by the principal's grants (excluded now, read once AM-5 adds the rule flag).
+	"list-spaces":                {Read, rFiltered},
+	"list-event-connections":     {Read, rFiltered},
+	"get-event-connection":       {Read, rFiltered},
+	"list-event-templates":       {Read, rFiltered},
+	"get-event-template":         {Read, rFiltered},
+	"preview-event-template":     {Read, rFiltered},
+	"get-attention":              {Read, rFiltered},
+	"list-account-kinds":         {Read, rFiltered},
+	"list-limit-definitions":     {Read, rFiltered},
+	"list-pending-human-actions": {Read, rFiltered},
+
 	// Accounts (credentials for harnesses).
 	"create-account":      {Dangerous, rSecret},
 	"update-account":      {Dangerous, rSecret},
@@ -102,7 +118,7 @@ var Table = map[string]Entry{
 
 	// Backups.
 	"create-backup":     {Write, "creates a backup"},
-	"get-restore-state": {Read, rRead},
+	"get-restore-state": {Read, rFiltered},
 	"list-backups":      {Read, rRead},
 	"verify-backup":     {Write, "verifies a backup; changes nothing but runs work"},
 

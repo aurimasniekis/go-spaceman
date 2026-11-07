@@ -63,6 +63,10 @@ type Tool struct {
 // ReadOnly reports whether the tool only reads.
 func (t *Tool) ReadOnly() bool { return t.Class == Read || t.Class == SensitiveRead }
 
+// ApprovalRequired reports whether every call needs a person's approval, whatever the server's approval setting:
+// dangerous tools always do (ADR-0063 §Decision 7; enforced by the gateway in AM-5).
+func (t *Tool) ApprovalRequired() bool { return t.Class == Dangerous }
+
 // FullName is the tool's name as a run sees it on the server with this slug.
 func (t *Tool) FullName(slug string) string { return slug + Separator + t.Name }
 
