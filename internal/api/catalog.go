@@ -413,12 +413,12 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 					}
 				}
 				b := in.Body
-				cs := proto.ClaudeSettings{}
+				// Left out: nil, which keeps the stored settings on an update (SaveProfile reads them in its transaction).
+				var cs proto.ClaudeSettings
 				if b.ClaudeSettings != nil {
 					cs = *b.ClaudeSettings
-				} else if id != "" {
-					if cur, err := svc.GetProfile(ctx, id); err == nil {
-						cs = cur.ClaudeSettings
+					if cs == nil {
+						cs = proto.ClaudeSettings{}
 					}
 				}
 				p, err := svc.SaveProfile(ctx, Actor(ctx), id, v, catalog.Profile{Slug: b.Slug, Name: b.Name, Harness: b.Harness, Model: b.Model, Settings: b.Settings,

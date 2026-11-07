@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,35 @@ func TestOwnJSONKeysFile(t *testing.T) {
 	}
 	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v %v", fi, err)
+	}
+}
+
+// A corrupt keys record fails instead of guessing which keys SpaceMan set; the record is written before the settings,
+// so a settings write that fails still leaves every key that may be in the settings recorded for the next launch.
+func TestOwnJSONKeysFileRecord(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "settings.json")
+	record := p + ".spaceman-keys"
+	if err := os.WriteFile(record, []byte(`{"hooks": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := OwnJSONKeysFile(p, map[string]any{"permissions": map[string]any{}}); err == nil || !strings.Contains(err.Error(), "not a JSON list") {
+		t.Fatalf("corrupt record: %v", err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("settings written despite a corrupt record: %v", err)
+	}
+	if err := os.WriteFile(record, []byte(`["hooks"]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(`["not an object"]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := OwnJSONKeysFile(p, map[string]any{"permissions": map[string]any{}}); err == nil {
+		t.Fatal("a settings file that is not an object was accepted")
+	}
+	if b, _ := os.ReadFile(record); string(b) != `["hooks","permissions"]` {
+		t.Fatalf("record after a failed settings write: %s", b)
 	}
 }
 
