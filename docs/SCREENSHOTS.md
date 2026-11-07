@@ -25,6 +25,7 @@
 | `space-harbor-pilot` | Harbor Pilot gateway | A space's Harbor Pilot settings: project, harnesses, run-token lifetime, budget fallback, allowed models | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
+| `terminal-scrollback` | Terminals and recordings | Live watch-only terminal scrolled back into earlier output, with Jump to live | current |
 | `space-terminals` | Terminals and recordings | A space's Terminals tab: every agent as a tab with its status, the selected agent's live terminal | current |
 | `terminals-workspace` | Terminals and recordings | The Terminals workspace: spaces and their agents in a sidebar, the selected space's agents as tabs | current |
 | `terminal-takeover` | Terminals and recordings | Live terminal taken over by the signed-in admin, with the takeover banner | current |
