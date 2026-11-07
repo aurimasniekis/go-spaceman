@@ -2431,7 +2431,7 @@
 - **Open points:**
   - **HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces? Not decided.**
     - ADR-0059 lets a claude-code profile's `claude_settings.env` set any variable, `ANTHROPIC_BASE_URL` included. The
-      operator accepted this on 2026-11-07 (THREAT_MODEL T-32, once the profiles fix lands).
+      operator accepted this on 2026-11-07 (ADR-0059 accepted risk, THREAT_MODEL T-32).
     - In a space with HP enabled for Claude Code, a profile `env` could point a run's model traffic away from HP or
       replace its token. Those requests would escape HP's hard budgets and its per-run attribution, so this is a
       budget-bypass consideration, not only a configuration one.
