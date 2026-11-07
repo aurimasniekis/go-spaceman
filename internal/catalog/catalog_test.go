@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -272,6 +273,52 @@ func TestResolution(t *testing.T) {
 	if len(roles) != 1 || roles[0].Revision != 2 {
 		t.Fatalf("roles %+v", roles)
 	}
+}
+
+// A claude-code profile's Claude Code settings are any settings.json keys: stored, returned, given to the profile's runs
+// and their manifest, with permissions.defaultMode under the permission mode ceiling; another harness cannot have
+// them, and saving {} clears them (ADR-0059, SM-PROMPT-006).
+func TestClaudeSettings(t *testing.T) {
+	f := newFx(t)
+	cs := proto.ClaudeSettings{
+		"permissions": map[string]any{"defaultMode": "bypassPermissions", "deny": []any{"Read(./secrets/**)"}},
+		"hooks":       map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "true"}}}}},
+	}
+	prof, err := f.svc.SaveProfile(f.ctx, op, "", 0, Profile{Slug: "claude", Name: "Claude", Harness: "claude-code", ClaudeSettings: cs})
+	must(t, err)
+	if got := prof.ClaudeSettings; got.DefaultMode() != "bypassPermissions" || got["hooks"] == nil {
+		t.Fatalf("stored %+v", got)
+	}
+	_, err = f.svc.SaveProfile(f.ctx, op, "", 0, Profile{Slug: "codex", Name: "Codex", Harness: "codex", ClaudeSettings: cs})
+	code(t, err, apperr.CodeInvalid)
+	_, err = f.svc.SaveProfile(f.ctx, op, prof.ID, prof.Version, Profile{Name: "Claude", ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"N": 1}}})
+	code(t, err, apperr.CodeInvalid)
+
+	tpl, err := f.svc.SaveTemplate(f.ctx, op, "", 0, RoleTemplate{Slug: "w", Name: "W", Kind: "worker", ProfileID: prof.ID})
+	must(t, err)
+	_, err = f.svc.SaveSpaceRole(f.ctx, op, "spc_a", SpaceRole{Name: "w", TemplateID: tpl.ID})
+	must(t, err)
+	r, err := f.svc.Resolve(f.ctx, f.s.R(), f.space(), Launch{Role: "w"})
+	must(t, err)
+	// The ceiling (auto in the fixture) lowers the profile's bypassPermissions, and says the policy decided.
+	if r.ClaudeSettings.DefaultMode() != "auto" || r.ClaudeSettings["hooks"] == nil || r.Manifest["claude_settings"] == nil ||
+		r.Effective["claude_settings.permissions.defaultMode"] != (Field{"auto", OriginPolicy}) || r.Effective["claude_settings"] != (Field{"hooks, permissions", OriginProfile}) {
+		t.Fatalf("resolved %+v %+v", r.ClaudeSettings, r.Effective)
+	}
+	got, err := f.svc.GetProfile(f.ctx, prof.ID)
+	must(t, err)
+	if got.ClaudeSettings.DefaultMode() != "bypassPermissions" {
+		t.Fatal("the ceiling must not change the stored profile")
+	}
+	_, err = f.svc.SaveProfile(f.ctx, op, prof.ID, got.Version, Profile{Name: "Claude", ClaudeSettings: proto.ClaudeSettings{}})
+	must(t, err)
+	r, err = f.svc.Resolve(f.ctx, f.s.R(), f.space(), Launch{Role: "w"})
+	must(t, err)
+	if r.ClaudeSettings != nil || r.Manifest["claude_settings"] != nil {
+		t.Fatalf("cleared settings still resolved: %+v", r.ClaudeSettings)
+	}
+	_, err = f.svc.GetProfile(f.ctx, "hpf_missing")
+	code(t, err, apperr.CodeNotFound)
 }
 
 func TestValidation(t *testing.T) {

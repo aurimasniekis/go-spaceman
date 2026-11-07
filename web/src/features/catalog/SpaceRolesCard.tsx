@@ -8,6 +8,7 @@ import { keys, useMe, useRoleOptions, useSpaceMcp, useSpaceRoles } from '@/api/q
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { atLeast, roleIn } from '@/lib/access'
 import { notifyError, notifyOk } from '@/lib/notify'
+import { claudeSettingsKeys } from './claudeSettings'
 import { SettingsEditor } from './SettingsEditor'
 
 const originColor: Record<string, string> = { builtin: 'gray', profile: 'owlBlue', template: 'owlPurple', space_role: 'owlGreen', launch: 'owlYellow', policy: 'owlRed' }
@@ -108,6 +109,12 @@ function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
       {p.prompt && <Text size="sm">Prompt <b>{p.prompt.slug}</b> v{p.prompt.number} ({p.prompt.pinned ? 'pinned' : 'follows the latest'})</Text>}
       {p.skills.length > 0 && (
         <Text size="sm">Skills: {p.skills.map((sk) => `${sk.slug} v${sk.number}${sk.pinned ? ' (pinned)' : ''}`).join(', ')}</Text>
+      )}
+      {claudeSettingsKeys(p.claude_settings).length > 0 && (
+        <>
+          <Text size="sm" fw={600}>Claude Code settings.json (from the profile, after policy)</Text>
+          <Code block className="mono" tabIndex={0} aria-label="Claude Code settings" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(p.claude_settings, null, 2)}</Code>
+        </>
       )}
       <Text size="sm" fw={600}>System text</Text>
       <Code block className="mono" tabIndex={0} aria-label="System text" style={{ whiteSpace: 'pre-wrap' }}>{p.system_text}</Code>

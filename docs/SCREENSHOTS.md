@@ -69,6 +69,7 @@
 | `prompts` | Prompts | Prompt catalog with kinds, latest versions and provenance | current |
 | `prompt-detail` | Prompts | A prompt's draft editor (with extends) and published versions | current |
 | `roles` | Roles and profiles | Role templates with prompt binding and profile, including the starter set | current |
+| `claude-settings` | Roles and profiles | A Claude Code profile's settings.json editors: permission rules, auto mode environment and allowed actions with the defaults switch, environment variables and other settings | current |
 | `skills` | Skills | Skill catalog with the built-in HallPass skill and a custom skill | current |
 | `approval-policies` | Approval policies | Operations that need a person's approval, with uses, validity and request expiry | current |
 | `approval-enforced` | Human actions | A pending enforced approval: bound operation, run, argument digest and redacted arguments | current |
