@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,18 +39,18 @@ func TestOwnJSONKeysFile(t *testing.T) {
 		must(json.Unmarshal(b, &doc))
 		return doc
 	}
-	must(OwnJSONKeysFile(p, map[string]any{"autoMode": map[string]any{"allow": []string{"a", "b"}}, "hooks": map[string]any{"Stop": []any{}}}))
+	must(OwnJSONKeysFile(nil, p, map[string]any{"autoMode": map[string]any{"allow": []string{"a", "b"}}, "hooks": map[string]any{"Stop": []any{}}}))
 	doc := read()
 	doc["model"] = "opus" // written by Claude Code itself
 	b, _ := json.Marshal(doc)
 	must(os.WriteFile(p, b, 0o600))
-	must(OwnJSONKeysFile(p, map[string]any{"autoMode": map[string]any{"environment": []string{"e"}}}))
+	must(OwnJSONKeysFile(nil, p, map[string]any{"autoMode": map[string]any{"environment": []string{"e"}}}))
 	doc = read()
 	auto := doc["autoMode"].(map[string]any)
 	if doc["model"] != "opus" || doc["hooks"] != nil || auto["allow"] != nil || len(auto["environment"].([]any)) != 1 {
 		t.Fatalf("settings %v", doc)
 	}
-	must(OwnJSONKeysFile(p, map[string]any{}))
+	must(OwnJSONKeysFile(nil, p, map[string]any{}))
 	if doc = read(); len(doc) != 1 || doc["model"] != "opus" {
 		t.Fatalf("after clearing %v", doc)
 	}
@@ -57,8 +59,10 @@ func TestOwnJSONKeysFile(t *testing.T) {
 	}
 }
 
-// A corrupt keys record fails instead of guessing which keys SpaceMan set; the record is written before the settings,
-// so a settings write that fails still leaves every key that may be in the settings recorded for the next launch.
+// A corrupt keys record can't say which keys SpaceMan set: the settings and the record are moved aside with a warning
+// and the launch starts from fresh settings, so no stale key survives and the instance recovers by itself. The record
+// is written before the settings, so a settings write that fails still leaves every key that may be in the settings
+// recorded for the next launch.
 func TestOwnJSONKeysFileRecord(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "settings.json")
@@ -66,19 +70,71 @@ func TestOwnJSONKeysFileRecord(t *testing.T) {
 	if err := os.WriteFile(record, []byte(`{"hooks": true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := OwnJSONKeysFile(p, map[string]any{"permissions": map[string]any{}}); err == nil || !strings.Contains(err.Error(), "not a JSON list") {
+	stale := `{"hooks":{"Stop":[]},"model":"opus"}`
+	if err := os.WriteFile(p, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	if err := OwnJSONKeysFile(log, p, map[string]any{"permissions": map[string]any{}}); err != nil {
 		t.Fatalf("corrupt record: %v", err)
 	}
-	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Fatalf("settings written despite a corrupt record: %v", err)
+	if b, _ := os.ReadFile(p); string(b) != "{\n  \"permissions\": {}\n}" {
+		t.Fatalf("settings after a corrupt record: %s", b)
 	}
+	if b, _ := os.ReadFile(record); string(b) != `["permissions"]` {
+		t.Fatalf("record after a corrupt record: %s", b)
+	}
+	movedSettings, _ := filepath.Glob(p + ".corrupt-*")
+	movedRecord, _ := filepath.Glob(record + ".corrupt-*")
+	if len(movedSettings) != 1 || len(movedRecord) != 1 {
+		t.Fatalf("set aside: settings %v record %v", movedSettings, movedRecord)
+	}
+	if b, _ := os.ReadFile(movedSettings[0]); string(b) != stale {
+		t.Fatalf("moved settings: %s", b)
+	}
+	if b, _ := os.ReadFile(movedRecord[0]); string(b) != `{"hooks": true}` {
+		t.Fatalf("moved record: %s", b)
+	}
+	if l := logs.String(); !strings.Contains(l, "level=WARN") || !strings.Contains(l, movedSettings[0]) || !strings.Contains(l, movedRecord[0]) {
+		t.Fatalf("warning: %s", l)
+	}
+	// Without a settings file, only the record is moved aside.
+	for _, f := range append(movedSettings, movedRecord...) {
+		if err := os.Remove(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte(`nope`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := OwnJSONKeysFile(nil, p, map[string]any{"permissions": map[string]any{}}); err != nil {
+		t.Fatalf("corrupt record without settings: %v", err)
+	}
+	if m, _ := filepath.Glob(record + ".corrupt-*"); len(m) != 1 {
+		t.Fatalf("record set aside %v", m)
+	}
+	// A second set-aside right after the first keeps both copies.
+	if err := os.WriteFile(record, []byte(`nope again`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := OwnJSONKeysFile(nil, p, map[string]any{"permissions": map[string]any{}}); err != nil {
+		t.Fatalf("second corrupt record: %v", err)
+	}
+	if m, _ := filepath.Glob(record + ".corrupt-*"); len(m) != 2 {
+		t.Fatalf("records set aside %v", m)
+	}
+
 	if err := os.WriteFile(record, []byte(`["hooks"]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte(`["not an object"]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := OwnJSONKeysFile(p, map[string]any{"permissions": map[string]any{}}); err == nil {
+	if err := OwnJSONKeysFile(nil, p, map[string]any{"permissions": map[string]any{}}); err == nil {
 		t.Fatal("a settings file that is not an object was accepted")
 	}
 	if b, _ := os.ReadFile(record); string(b) != `["hooks","permissions"]` {

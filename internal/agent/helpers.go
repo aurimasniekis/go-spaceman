@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,16 +84,22 @@ func MergeJSONFile(path string, patch map[string]any) error {
 // set, keys it set at an earlier call and no longer gives are removed, and every other key is kept. The keys it owns
 // are recorded next to the file (<path>.spaceman-keys). Both files are created when missing and replaced atomically.
 //
-// A record that is not a JSON list of strings fails the call: guessing would keep keys an earlier profile set (deny
-// rules or hooks it no longer has). The record is written before the settings, with every key that may be in them
-// (the earlier and the new ones), and narrowed to the new keys after: an interrupted call never leaves a key in the
-// settings that the record does not name, so the next call can still remove it.
-func OwnJSONKeysFile(path string, keys map[string]any) error {
+// A record that is not a JSON list of strings can't say which keys an earlier profile set (deny rules or hooks it no
+// longer has), and guessing could keep them. The settings file and the record are then moved aside
+// (<name>.corrupt-<unix time>), a warning names both, and the call starts from an empty settings file: no stale key
+// survives, and the instance recovers without anyone fixing the node by hand. The record is written before the
+// settings, with every key that may be in them (the earlier and the new ones), and narrowed to the new keys after: an
+// interrupted call never leaves a key in the settings that the record does not name, so the next call can still
+// remove it. log may be nil.
+func OwnJSONKeysFile(log *slog.Logger, path string, keys map[string]any) error {
 	record := path + ".spaceman-keys"
 	var before []string
 	if b, err := os.ReadFile(record); err == nil { //nolint:gosec // agent-owned path
 		if err := json.Unmarshal(b, &before); err != nil {
-			return fmt.Errorf("%s: not a JSON list of key names: remove it and the keys SpaceMan set in %s", record, filepath.Base(path))
+			if err := setAsideCorrupt(log, path, record); err != nil {
+				return err
+			}
+			before = nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -130,6 +137,28 @@ func OwnJSONKeysFile(path string, keys map[string]any) error {
 		return err
 	}
 	return writeRecord(owned)
+}
+
+// setAsideCorrupt moves the settings file and its corrupt keys record out of the way (renamed with a .corrupt-<unix
+// time in nanoseconds> suffix, so a second set-aside within the same second keeps the earlier copies) and logs a
+// warning naming both new paths. A missing settings file is not an error.
+func setAsideCorrupt(log *slog.Logger, path, record string) error {
+	suffix := fmt.Sprintf(".corrupt-%d", time.Now().UnixNano())
+	movedSettings := path + suffix
+	if err := os.Rename(path, movedSettings); errors.Is(err, os.ErrNotExist) {
+		movedSettings = ""
+	} else if err != nil {
+		return fmt.Errorf("%s: corrupt keys record; moving the settings aside: %w", record, err)
+	}
+	movedRecord := record + suffix
+	if err := os.Rename(record, movedRecord); err != nil {
+		return fmt.Errorf("%s: corrupt keys record; moving it aside: %w", record, err)
+	}
+	if log != nil {
+		log.Warn("the record of SpaceMan's settings keys is not a JSON list of key names; settings moved aside and started fresh",
+			slog.String("settings_moved_to", movedSettings), slog.String("record_moved_to", movedRecord))
+	}
+	return nil
 }
 
 func editJSONFile(path string, edit func(map[string]any)) error {

@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Badge, Button, Divider, Drawer, Group, Menu, Stack, Table, TagsInput, Text, Title, Tooltip } from '@mantine/core'
+import { ActionIcon, Alert, Badge, Button, Divider, Drawer, Group, Menu, MultiSelect, Stack, Table, Text, Title, Tooltip } from '@mantine/core'
 import { IconArrowBigUpLines, IconChevronDown, IconPlayerPlay, IconX } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, ifMatch, unwrap, type Task } from '@/api/client'
@@ -11,6 +11,7 @@ import { datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { TaskPriority, TaskStatus, transitions } from './badges'
 import { ReassignForm } from './ReassignForm'
+import { taskOptions } from './taskOptions'
 
 const actionLabel: Record<string, string> = { finish: 'let finish', pause: 'paused', interrupt: 'stopped', preempted: 'preempted' }
 
@@ -152,9 +153,9 @@ export function TaskDrawer({ spaceId, task, tasks, canWrite, onClose }: { spaceI
         <Stack gap={4}>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>Depends on</Text>
           {canWrite ? (
-            <TagsInput aria-label="Depends on" value={t.depends_on.map(titleOf)} data={tasks.filter((x) => x.id !== t.id).map((x) => x.title)}
-              onChange={(titles) => void call(() => api.PUT('/spaces/{space_id}/tasks/{task_id}/dependencies', {
-                params: { path }, body: { depends_on: titles.map((x) => tasks.find((y) => y.title === x)?.id).filter((x): x is string => !!x) },
+            <MultiSelect aria-label="Depends on" searchable value={t.depends_on} data={taskOptions(tasks.filter((x) => x.id !== t.id))}
+              onChange={(ids) => void call(() => api.PUT('/spaces/{space_id}/tasks/{task_id}/dependencies', {
+                params: { path }, body: { depends_on: ids },
               }).then(unwrap), 'Dependencies saved')} />
           ) : (
             <Text size="sm">{t.depends_on.map(titleOf).join(', ') || 'none'}</Text>
