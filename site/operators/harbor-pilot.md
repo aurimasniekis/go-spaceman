@@ -5,8 +5,9 @@ per-project spend limits and usage for every harness. SpaceMan can route a space
 its own short-lived Harbor Pilot token instead of an [account](./accounts), revoked when the run ends.
 
 ::: warning Work in progress
-This page covers the connection and the per-space settings, which you can configure now. Runs don't use them yet:
-minting a token per run, handing it to the harness, and the budget status on the Limits page come in later releases.
+This page covers the connection, the per-space settings and how central mints and revokes run tokens. Handing the
+token to the harness, and the budget status on the Limits page, come in later releases: until then a run routed through
+Harbor Pilot starts without model credentials, so don't opt a space in yet.
 The design is ADR-0060 (Proposed) in [Decisions](../security/decisions).
 :::
 
@@ -47,8 +48,8 @@ is set); otherwise SpaceMan refuses the change before calling anyone: "re-enter 
 changes". Changing or removing the connection also asks you to confirm your sign-in (a step-up), and needs
 `account:write`.
 
-SpaceMan calls the gateway without a proxy and never on link-local (cloud metadata), unspecified or multicast
-addresses. Private and loopback addresses are allowed, since a gateway usually runs on an internal network.
+SpaceMan calls the gateway without a proxy and never on link-local (cloud metadata), unspecified, multicast or
+broadcast addresses, including those reached through NAT64 or 6to4. Private and loopback addresses are allowed, since a gateway usually runs on an internal network.
 
 <Shot name="harbor-pilot" alt="Harbor Pilot page: the gateway URL, the parent and service-principal tokens shown only as set with their versions, the client binding, and the space using it" caption="The connection, without its tokens" />
 
@@ -73,11 +74,33 @@ operator sets everything but the project:
   access, because a running harness can't be given a new one.
 - **When budget status can't be read**: launch anyway (the default; Harbor Pilot still enforces its budgets) or refuse
   the launch.
-- **Allowed models**: optional model aliases runs may use.
+- **Allowed models**: optional model aliases runs may use. With a list, a launch must name one of them (the role's
+  model); a launch without a model is refused.
 
 <Shot name="space-harbor-pilot" alt="Harbor Pilot settings for a space: routing enabled, the project id, Codex checked, a 12 hour token lifetime and the budget fallback" caption="A space opting in" />
 
+## Run tokens
+
+For a harness the space routes through Harbor Pilot:
+
+- **No account, ever.** A launch that names an account is refused, and the run never falls back to one, not even when
+  Harbor Pilot is down. Without a connection, the launch is refused before it starts. The run's manifest records the
+  gateway and the project.
+- **One token per run, minted when its launch is sent to the node.** It can call models (`gateway:invoke`,
+  `gateway:models`) but not mint, lives for the space's run token lifetime, and carries the space, run, instance,
+  session and project (and the run's task) as trusted references, which Harbor Pilot records on every request. A launch
+  sent again (a node reconnecting) gets the same token. If Harbor Pilot refuses the mint, the run fails as
+  `gateway_unavailable` with Harbor Pilot's reason, for example "parent token lacks tokens:mint"; network errors and
+  server errors are retried three times first.
+- **Revoked when the run ends**, whichever way: it exits or fails, it is stopped or the space paused, its launch can't
+  be sent, the space is relocated or purged, or its node stays away past the lease. The revocation is recorded in the
+  same step as the end, so a restart can't lose it, and SpaceMan retries until the token expires.
+- **Replacing the parent token revokes the tokens of running runs** with the old parent first (the new parent can't
+  revoke them). Those runs then have no model access until they are started again, and the page says how many.
+
 ## Verified
 
-The connection checks were run against a real `harbor-pilot serve --demo` 0.1.3 (with synthetic upstreams), including
-a parent without `tokens:mint` and project checks. No run uses Harbor Pilot yet.
+The connection checks and the run-token lifecycle were run against a real `harbor-pilot serve --demo` 0.1.3 (with
+synthetic upstreams): a parent without `tokens:mint`, project checks, a run's token answering `/v1/models` with the
+expected references, the token refused after the run ended, and a revoked parent failing the next run as
+`gateway_unavailable`. The node side is scripted in that test; harnesses don't receive the token yet.

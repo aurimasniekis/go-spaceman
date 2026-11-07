@@ -538,6 +538,73 @@ func (q *Queries) ListRelocationsBySpace(ctx context.Context, arg ListRelocation
 	return items, nil
 }
 
+const listRunsLostForRelocation = `-- name: ListRunsLostForRelocation :many
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs
+WHERE space_id = ?1 AND node_id = ?2 AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+ORDER BY id
+`
+
+type ListRunsLostForRelocationParams struct {
+	SpaceID string
+	NodeID  string
+}
+
+func (q *Queries) ListRunsLostForRelocation(ctx context.Context, arg ListRunsLostForRelocationParams) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listRunsLostForRelocation, arg.SpaceID, arg.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.NodeID,
+			&i.Generation,
+			&i.Kind,
+			&i.Role,
+			&i.Harness,
+			&i.InstanceID,
+			&i.SessionID,
+			&i.Desired,
+			&i.Observed,
+			&i.TerminalID,
+			&i.CoreID,
+			&i.Identity,
+			&i.Pid,
+			&i.ExitCode,
+			&i.EndReason,
+			&i.Error,
+			&i.Status,
+			&i.StatusKind,
+			&i.Turn,
+			&i.Adopted,
+			&i.LaunchJson,
+			&i.ManifestJson,
+			&i.Version,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.ObservedAt,
+			&i.UpdatedAt,
+			&i.RecordingDeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markRunsLostForRelocation = `-- name: MarkRunsLostForRelocation :execrows
 UPDATE runs SET observed = 'lost', desired = 'stopped', end_reason = 'relocated_source_unavailable',
   ended_at = coalesce(ended_at, ?1), version = version + 1, updated_at = ?1

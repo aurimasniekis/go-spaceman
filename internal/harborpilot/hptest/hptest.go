@@ -409,6 +409,29 @@ func (g *Gateway) IssueCredential(ctx context.Context, name string, scopes []str
 	return out.Credential.ID, out.Token, nil
 }
 
+// RevokeParent revokes the provisioned parent credential as the demo administrator. Harbor Pilot revokes its children
+// with it (the cascade), and the parent can no longer mint.
+func (g *Gateway) RevokeParent(ctx context.Context) error {
+	return g.admin.do(ctx, http.MethodDelete, "/api/v1/client-bindings/"+g.BindingID+"/credentials/"+g.ParentID, nil, nil, http.StatusNoContent)
+}
+
+// CredentialInfo reads one credential of the provisioned binding (metadata only, never its token) with the service
+// token, which holds config.read.
+func (g *Gateway) CredentialInfo(ctx context.Context, id string) (Credential, error) {
+	code, body, err := g.Do(ctx, http.MethodGet, "/api/v1/client-bindings/"+g.BindingID+"/credentials/"+id, g.ServiceToken, nil)
+	if err != nil {
+		return Credential{}, err
+	}
+	if code != http.StatusOK {
+		return Credential{}, fmt.Errorf("credential %s: status %d: %s", id, code, errMessage(body))
+	}
+	var c Credential
+	if err := json.Unmarshal(body, &c); err != nil {
+		return Credential{}, err
+	}
+	return c, nil
+}
+
 // ActiveChildren lists the ids of the provisioned parent's child credentials that are neither revoked nor expired
 // (read with the service token, which holds config.read).
 func (g *Gateway) ActiveChildren(ctx context.Context) ([]string, error) {
@@ -456,6 +479,7 @@ type Credential struct {
 	ParentID  string            `json:"parent_id"`
 	Scopes    []string          `json:"scopes"`
 	BoundRefs map[string]string `json:"bound_refs"`
+	RevokedAt *time.Time        `json:"revoked_at,omitempty"`
 	ExpiresAt time.Time         `json:"expires_at"`
 }
 

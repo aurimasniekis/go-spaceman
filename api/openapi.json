@@ -4463,6 +4463,26 @@
         ],
         "type": "object"
       },
+      "FleetGatewaySpec": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "harbor-pilot"
+            ],
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The Harbor Pilot project the run is charged to",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "project_id"
+        ],
+        "type": "object"
+      },
       "FleetIssue": {
         "additionalProperties": false,
         "properties": {
@@ -4585,6 +4605,9 @@
         "properties": {
           "account_ref": {
             "type": "string"
+          },
+          "gateway": {
+            "$ref": "#/components/schemas/FleetGatewaySpec"
           },
           "model": {
             "type": "string"

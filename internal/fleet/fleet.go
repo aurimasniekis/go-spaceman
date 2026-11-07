@@ -79,6 +79,11 @@ type Options struct {
 	// Admit decides inside the launch transaction whether a launch may start (limits and budgets, SM-LIMIT-001); an
 	// error refuses it. Nil: every launch the space and lease allow starts.
 	Admit func(ctx context.Context, tx *store.Tx, a Admission) error
+	// Gateway routes the runs of the harnesses a space opted in through an LLM gateway (Harbor Pilot, ADR-0060). Nil:
+	// every run uses the space's direct accounts.
+	Gateway Gateway
+	// OnGatewayRevocation is called after a commit that queued gateway token revocations (it wakes the revoker).
+	OnGatewayRevocation func()
 }
 
 // Admission is a launch about to be admitted.

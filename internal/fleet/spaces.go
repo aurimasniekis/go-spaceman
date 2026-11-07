@@ -306,6 +306,10 @@ func (svc *Service) PurgeSpace(ctx context.Context, actor audit.Actor, id string
 		if runIDs, err = spaceRunIDs(ctx, tx, id); err != nil {
 			return err
 		}
+		// The revocation queue is not tied to the runs, so it outlives the delete below (ADR-0060 decision 5).
+		if err := svc.queueSpaceGatewayRevocations(ctx, tx, id, RevokePurged); err != nil {
+			return err
+		}
 		for _, q := range []string{
 			`DELETE FROM node_commands WHERE space_id = ?`,
 			`DELETE FROM run_credentials WHERE run_id IN (SELECT id FROM runs WHERE space_id = ?)`,

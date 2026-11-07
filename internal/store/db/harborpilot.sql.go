@@ -10,6 +10,47 @@ import (
 	"database/sql"
 )
 
+const clearRunGatewayToken = `-- name: ClearRunGatewayToken :execrows
+UPDATE run_gateway_credentials SET token_enc = NULL WHERE run_id = ? AND token_enc IS NOT NULL
+`
+
+func (q *Queries) ClearRunGatewayToken(ctx context.Context, runID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearRunGatewayToken, runID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearRunGatewayTokenFor = `-- name: ClearRunGatewayTokenFor :execrows
+UPDATE run_gateway_credentials SET token_enc = NULL WHERE run_id = ? AND credential_id = ? AND token_enc IS NOT NULL
+`
+
+type ClearRunGatewayTokenForParams struct {
+	RunID        string
+	CredentialID string
+}
+
+func (q *Queries) ClearRunGatewayTokenFor(ctx context.Context, arg ClearRunGatewayTokenForParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearRunGatewayTokenFor, arg.RunID, arg.CredentialID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const clearSpaceGatewayTokens = `-- name: ClearSpaceGatewayTokens :execrows
+UPDATE run_gateway_credentials SET token_enc = NULL WHERE space_id = ? AND token_enc IS NOT NULL
+`
+
+func (q *Queries) ClearSpaceGatewayTokens(ctx context.Context, spaceID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearSpaceGatewayTokens, spaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countLiveRunGatewayCredentials = `-- name: CountLiveRunGatewayCredentials :one
 SELECT count(*) FROM run_gateway_credentials WHERE token_enc IS NOT NULL AND expires_at > ?1
 `
@@ -66,6 +107,29 @@ func (q *Queries) DeleteSpaceHarborPilot(ctx context.Context, arg DeleteSpaceHar
 	return result.RowsAffected()
 }
 
+const getGatewayRevocation = `-- name: GetGatewayRevocation :one
+SELECT credential_id, run_id, space_id, reason, expires_at, state, attempts, next_attempt_at, last_error, requested_at, done_at FROM gateway_revocations WHERE credential_id = ?
+`
+
+func (q *Queries) GetGatewayRevocation(ctx context.Context, credentialID string) (GatewayRevocation, error) {
+	row := q.db.QueryRowContext(ctx, getGatewayRevocation, credentialID)
+	var i GatewayRevocation
+	err := row.Scan(
+		&i.CredentialID,
+		&i.RunID,
+		&i.SpaceID,
+		&i.Reason,
+		&i.ExpiresAt,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.RequestedAt,
+		&i.DoneAt,
+	)
+	return i, err
+}
+
 const getHarborPilotConnection = `-- name: GetHarborPilotConnection :one
 SELECT id, singleton, base_url, run_base_url, allow_insecure_http, parent_token_enc, parent_token_version, service_token_enc, service_token_version, binding_id, parent_expires_at, validated_at, created_at, created_by, updated_at, updated_by, version FROM harbor_pilot_connection WHERE singleton = 1
 `
@@ -95,6 +159,24 @@ func (q *Queries) GetHarborPilotConnection(ctx context.Context) (HarborPilotConn
 	return i, err
 }
 
+const getRunGatewayCredential = `-- name: GetRunGatewayCredential :one
+SELECT run_id, space_id, credential_id, token_enc, expires_at, created_at FROM run_gateway_credentials WHERE run_id = ?
+`
+
+func (q *Queries) GetRunGatewayCredential(ctx context.Context, runID string) (RunGatewayCredential, error) {
+	row := q.db.QueryRowContext(ctx, getRunGatewayCredential, runID)
+	var i RunGatewayCredential
+	err := row.Scan(
+		&i.RunID,
+		&i.SpaceID,
+		&i.CredentialID,
+		&i.TokenEnc,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getSpaceHarborPilot = `-- name: GetSpaceHarborPilot :one
 SELECT space_id, enabled, project_id, harnesses_json, ttl_seconds, on_budget_status_unavailable, allowed_model_aliases_json, created_at, created_by, updated_at, updated_by, version FROM space_harbor_pilot WHERE space_id = ?
 `
@@ -117,6 +199,17 @@ func (q *Queries) GetSpaceHarborPilot(ctx context.Context, spaceID string) (Spac
 		&i.Version,
 	)
 	return i, err
+}
+
+const getTaskIDForRun = `-- name: GetTaskIDForRun :one
+SELECT id FROM tasks WHERE assignee_run = ?1 ORDER BY updated_at DESC, id LIMIT 1
+`
+
+func (q *Queries) GetTaskIDForRun(ctx context.Context, runID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getTaskIDForRun, runID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertGatewayRevocation = `-- name: InsertGatewayRevocation :exec
@@ -191,6 +284,31 @@ func (q *Queries) InsertHarborPilotConnection(ctx context.Context, arg InsertHar
 	return err
 }
 
+const insertRunGatewayCredential = `-- name: InsertRunGatewayCredential :exec
+INSERT INTO run_gateway_credentials (run_id, space_id, credential_id, token_enc, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertRunGatewayCredentialParams struct {
+	RunID        string
+	SpaceID      string
+	CredentialID string
+	TokenEnc     []byte
+	ExpiresAt    int64
+	CreatedAt    int64
+}
+
+func (q *Queries) InsertRunGatewayCredential(ctx context.Context, arg InsertRunGatewayCredentialParams) error {
+	_, err := q.db.ExecContext(ctx, insertRunGatewayCredential,
+		arg.RunID,
+		arg.SpaceID,
+		arg.CredentialID,
+		arg.TokenEnc,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const insertSpaceHarborPilot = `-- name: InsertSpaceHarborPilot :exec
 INSERT INTO space_harbor_pilot (space_id, enabled, project_id, harnesses_json, ttl_seconds, on_budget_status_unavailable,
   allowed_model_aliases_json, created_at, created_by, updated_at, updated_by)
@@ -226,6 +344,50 @@ func (q *Queries) InsertSpaceHarborPilot(ctx context.Context, arg InsertSpaceHar
 		arg.UpdatedBy,
 	)
 	return err
+}
+
+const listDueGatewayRevocations = `-- name: ListDueGatewayRevocations :many
+SELECT credential_id, run_id, space_id, reason, expires_at, state, attempts, next_attempt_at, last_error, requested_at, done_at FROM gateway_revocations WHERE state = 'pending' AND next_attempt_at <= ?1 ORDER BY next_attempt_at, credential_id LIMIT ?2
+`
+
+type ListDueGatewayRevocationsParams struct {
+	Now int64
+	Lim int64
+}
+
+func (q *Queries) ListDueGatewayRevocations(ctx context.Context, arg ListDueGatewayRevocationsParams) ([]GatewayRevocation, error) {
+	rows, err := q.db.QueryContext(ctx, listDueGatewayRevocations, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GatewayRevocation{}
+	for rows.Next() {
+		var i GatewayRevocation
+		if err := rows.Scan(
+			&i.CredentialID,
+			&i.RunID,
+			&i.SpaceID,
+			&i.Reason,
+			&i.ExpiresAt,
+			&i.State,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.RequestedAt,
+			&i.DoneAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listEnabledSpaceHarborPilot = `-- name: ListEnabledSpaceHarborPilot :many
@@ -266,6 +428,216 @@ func (q *Queries) ListEnabledSpaceHarborPilot(ctx context.Context) ([]SpaceHarbo
 		return nil, err
 	}
 	return items, nil
+}
+
+const listGatewayLeaseLostRuns = `-- name: ListGatewayLeaseLostRuns :many
+SELECT r.id FROM runs r
+JOIN execution_leases l ON l.space_id = r.space_id
+JOIN run_gateway_credentials c ON c.run_id = r.id
+WHERE r.observed = 'unknown' AND c.token_enc IS NOT NULL AND l.expires_at <= ?1
+ORDER BY r.id
+`
+
+func (q *Queries) ListGatewayLeaseLostRuns(ctx context.Context, before int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listGatewayLeaseLostRuns, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveRunGatewayCredentials = `-- name: ListLiveRunGatewayCredentials :many
+SELECT run_id, space_id, credential_id, token_enc, expires_at, created_at FROM run_gateway_credentials WHERE token_enc IS NOT NULL ORDER BY run_id
+`
+
+func (q *Queries) ListLiveRunGatewayCredentials(ctx context.Context) ([]RunGatewayCredential, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveRunGatewayCredentials)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunGatewayCredential{}
+	for rows.Next() {
+		var i RunGatewayCredential
+		if err := rows.Scan(
+			&i.RunID,
+			&i.SpaceID,
+			&i.CredentialID,
+			&i.TokenEnc,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const nextGatewayLeaseSweep = `-- name: NextGatewayLeaseSweep :one
+SELECT CAST(coalesce(min(l.expires_at), 0) AS INTEGER) FROM execution_leases l
+JOIN runs r ON r.space_id = l.space_id
+JOIN run_gateway_credentials c ON c.run_id = r.id
+WHERE r.observed = 'unknown' AND c.token_enc IS NOT NULL
+`
+
+// Lease loss (HP-T3): runs left unknown by a node that never came back keep live child tokens; the node's lease guard
+// stops them once the lease and its grace pass. The earliest lease expiry among such runs.
+func (q *Queries) NextGatewayLeaseSweep(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextGatewayLeaseSweep)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const nextGatewayRevocation = `-- name: NextGatewayRevocation :one
+SELECT CAST(coalesce(min(next_attempt_at), 0) AS INTEGER) FROM gateway_revocations WHERE state = 'pending'
+`
+
+func (q *Queries) NextGatewayRevocation(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextGatewayRevocation)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const queueRunGatewayRevocation = `-- name: QueueRunGatewayRevocation :execrows
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
+SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2
+FROM run_gateway_credentials c WHERE c.run_id = ?3 AND c.token_enc IS NOT NULL
+ON CONFLICT (credential_id) DO NOTHING
+`
+
+type QueueRunGatewayRevocationParams struct {
+	Reason string
+	Now    int64
+	RunID  string
+}
+
+// Queue a revocation of a run's live child token (in the end path's own transaction); ClearRunGatewayToken then drops
+// the sealed token, which is never needed again.
+func (q *Queries) QueueRunGatewayRevocation(ctx context.Context, arg QueueRunGatewayRevocationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, queueRunGatewayRevocation, arg.Reason, arg.Now, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const queueSpaceGatewayRevocations = `-- name: QueueSpaceGatewayRevocations :execrows
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
+SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2
+FROM run_gateway_credentials c WHERE c.space_id = ?3 AND c.token_enc IS NOT NULL
+ON CONFLICT (credential_id) DO NOTHING
+`
+
+type QueueSpaceGatewayRevocationsParams struct {
+	Reason  string
+	Now     int64
+	SpaceID string
+}
+
+func (q *Queries) QueueSpaceGatewayRevocations(ctx context.Context, arg QueueSpaceGatewayRevocationsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, queueSpaceGatewayRevocations, arg.Reason, arg.Now, arg.SpaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const replaceRunGatewayCredential = `-- name: ReplaceRunGatewayCredential :execrows
+UPDATE run_gateway_credentials SET credential_id = ?1, token_enc = ?2, expires_at = ?3,
+  created_at = ?4
+WHERE run_id = ?5 AND credential_id = ?6 AND token_enc IS NOT NULL
+`
+
+type ReplaceRunGatewayCredentialParams struct {
+	CredentialID    string
+	TokenEnc        []byte
+	ExpiresAt       int64
+	CreatedAt       int64
+	RunID           string
+	OldCredentialID string
+}
+
+func (q *Queries) ReplaceRunGatewayCredential(ctx context.Context, arg ReplaceRunGatewayCredentialParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, replaceRunGatewayCredential,
+		arg.CredentialID,
+		arg.TokenEnc,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+		arg.RunID,
+		arg.OldCredentialID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setGatewayRevocationDone = `-- name: SetGatewayRevocationDone :execrows
+UPDATE gateway_revocations SET state = ?1, attempts = attempts + 1, last_error = ?2, done_at = ?3
+WHERE credential_id = ?4 AND state = 'pending'
+`
+
+type SetGatewayRevocationDoneParams struct {
+	State        string
+	LastError    string
+	Now          sql.NullInt64
+	CredentialID string
+}
+
+func (q *Queries) SetGatewayRevocationDone(ctx context.Context, arg SetGatewayRevocationDoneParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setGatewayRevocationDone,
+		arg.State,
+		arg.LastError,
+		arg.Now,
+		arg.CredentialID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setGatewayRevocationRetry = `-- name: SetGatewayRevocationRetry :execrows
+UPDATE gateway_revocations SET attempts = attempts + 1, last_error = ?1, next_attempt_at = ?2
+WHERE credential_id = ?3 AND state = 'pending'
+`
+
+type SetGatewayRevocationRetryParams struct {
+	LastError     string
+	NextAttemptAt int64
+	CredentialID  string
+}
+
+func (q *Queries) SetGatewayRevocationRetry(ctx context.Context, arg SetGatewayRevocationRetryParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setGatewayRevocationRetry, arg.LastError, arg.NextAttemptAt, arg.CredentialID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateHarborPilotConnection = `-- name: UpdateHarborPilotConnection :execrows

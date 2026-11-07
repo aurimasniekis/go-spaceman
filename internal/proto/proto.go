@@ -389,6 +389,11 @@ type LaunchPayload struct {
 	RunToken string            `json:"run_token,omitempty"`
 }
 
+// SecretGatewayToken is the LaunchPayload.Secrets key of a gateway run's child token (Harbor Pilot, ADR-0060). Central
+// sets it at dispatch; the harness adapters turn it into the harness's own variables (HP-T4), and nodes that don't know
+// it drop it like any secret their adapter does not allow.
+const SecretGatewayToken = "SPACEMAN_GATEWAY_TOKEN"
+
 // DefaultRecordingMaxBytes is the recording bound a node applies when the launch names none (512 MiB).
 const DefaultRecordingMaxBytes = 512 << 20
 

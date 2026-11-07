@@ -5814,6 +5814,12 @@ export interface components {
             /** @description Also give the space the starter roles (control, planner, implementor, reviewer, kb, dreamer) whose templates still exist */
             starter_roles?: boolean;
         };
+        FleetGatewaySpec: {
+            /** @enum {string} */
+            kind: "harbor-pilot";
+            /** @description The Harbor Pilot project the run is charged to */
+            project_id: string;
+        };
         FleetIssue: {
             /** @enum {string} */
             code: "dirty" | "untracked" | "unpushed" | "stash" | "detached" | "no_remote" | "worktree" | "loose_files" | "memory_unsynced" | "recordings_pending" | "transcripts_pending" | "active_runs" | "inspect_error";
@@ -5858,6 +5864,7 @@ export interface components {
         };
         FleetLaunchSpec: {
             account_ref?: string;
+            gateway?: components["schemas"]["FleetGatewaySpec"];
             model?: string;
             prompt?: string;
             settings?: {
