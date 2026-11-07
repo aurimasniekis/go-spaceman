@@ -120,6 +120,7 @@ func (w *wakeEnv) noticed(t *testing.T, run *fleet.Run) {
 // SM-HUM-009, SM-CTRL-002, ADR-0056: a response for a control that is no longer running is work for control. Control
 // is auto-started for it and told about it once; after the acknowledgement no later control is told again.
 func TestHumanResponseStartsControl(t *testing.T) {
+	t.Parallel()
 	w := newWakeEnv(t, 6)
 	w.answer(t)
 	eventually(t, "control started for the response", func() bool { return len(w.controls()) == 1 })
@@ -150,6 +151,7 @@ func TestHumanResponseStartsControl(t *testing.T) {
 // A response that arrives while control cannot be auto-started (here: its starts for the hour are used up) waits for
 // control; the control a person launches later is told about it exactly once.
 func TestHumanResponseReachesAControlStartedLater(t *testing.T) {
+	t.Parallel()
 	w := newWakeEnv(t, 0)
 	w.answer(t)
 	time.Sleep(time.Second)

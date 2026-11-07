@@ -484,6 +484,7 @@ func TestDeadlineLoop(t *testing.T) {
 // ADR-0056: with control auto-start on, a response whose run is gone goes to control even while no control runs (it
 // is started for it), when the space can start one; with auto-start off, or with no control to start, to the operators.
 func TestResponsesGoToAControlThatCanBeStarted(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	on := false
 	f.svc.ControlAutostart = func(_ context.Context, _ *db.Queries, spaceID string) bool { return on && spaceID == "spc_a" }
