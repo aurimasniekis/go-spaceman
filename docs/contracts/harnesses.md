@@ -86,6 +86,74 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
 - **Notify hook:** `notify = [argv…]` in config.toml, called at turn end.
 - **Status:** OSC 7501 emitter present.
 
+## Harbor Pilot gateway spike (2026-11-06)
+
+Evidence for ADR-0060 (Proposed, `docs/DECISIONS.md`); the gateway contract is `docs/contracts/harbor-pilot.md`.
+
+**Setup.**
+- The gateway was Harbor Pilot v0.1.1 `serve --demo` on loopback, with synthetic upstreams and the `hptest` fixture
+  binding (`docs/contracts/harbor-pilot.md`).
+- Each harness got its own child token, minted with the parent token. Its `bound_refs` were `spaceman.space`,
+  `spaceman.run`, `spaceman.instance`, `session` and `project_id`; scopes were `gateway:invoke` and `gateway:models`;
+  the TTL was 1 h.
+- Each harness was started by hand the way a run is: `spaceman-agent launch --secrets-file <0600 JSON> -- <harness argv>`
+  (spaceman-agent v0.1.0-rc.8). It ran in a dedicated tmux server with `env -i`, a fresh `HOME`, a fresh config dir and
+  a working directory.
+- A logging pass-through proxy sat in front of the gateway, to see the requests.
+- Afterwards every token was revoked (204), and each then got 401 on `/v1/models`.
+
+**Claude Code 2.1.317.** The secrets file held only `ANTHROPIC_BASE_URL=<gateway origin>` and `ANTHROPIC_AUTH_TOKEN=<child token>`.
+- **First run: worked, with the existing seeding.**
+  - With the ADR-0021 `.claude.json` seed (`hasCompletedOnboarding`, `theme`, trust for the working directory), the
+    interactive session went straight to the prompt.
+  - There was no login screen and no "use this API key?" question. The banner said "API Usage Billing".
+  - Without the seed, it stopped at the theme picker, as before. So `ANTHROPIC_AUTH_TOKEN` needs no seeding beyond
+    ADR-0021.
+- **Model turn: needs a model choice with this Harbor Pilot.**
+  - With no `--model`, the default model is `claude-opus-5-5`. Claude Code then sends a `system`-role entry inside
+    `messages[]` (the environment block), and Harbor Pilot 0.1.1 refuses it: 400 `messages[1]: role must be user or
+    assistant`. The session showed "API Error: 400 …", and only a side request (`messages` with the `user` role only)
+    went through.
+  - With `--model claude-sonnet-4-5`, every request had only `user` messages, and the turn completed with the demo's
+    synthetic reply.
+  - This is a Harbor Pilot protocol gap (`internal/protocol/anthropic/request.go:242`), not a SpaceMan one.
+- **Attribution: worked.** The Harbor Pilot request detail showed `harness: claude_code`, the `spaceman-test` binding and
+  the project. Its `trusted_refs` were `spaceman.run`, `spaceman.space`, `spaceman.instance`, `session` and
+  `project_id`, plus the binding's `spaceman.fleet`. Claude's own `x-claude-code-session-id` appeared under `claims`
+  (untrusted).
+- **Auto-update.** On the first launch Claude Code auto-updated itself into the fresh `HOME` (`~/.local/bin`; the system
+  binary was unchanged). Later launches set `DISABLE_AUTOUPDATER=1`.
+
+**codex-cli 0.166.0** (npm `@openai/codex@0.166.0`). The secrets file held only `HARBOR_PILOT_TOKEN=<child token>`. The
+argv was `codex --no-daemon` with these five overrides, then `-s read-only -a never -- <prompt>`:
+```
+-c model_provider="harbor-pilot"
+-c model_providers.harbor-pilot.name="Harbor Pilot"
+-c model_providers.harbor-pilot.base_url="<origin>/v1"
+-c model_providers.harbor-pilot.wire_api="responses"
+-c model_providers.harbor-pilot.env_key="HARBOR_PILOT_TOKEN"
+```
+`CODEX_HOME` was fresh, with no `auth.json`.
+- **Login screen: skipped, no seeding needed.** Interactive Codex went straight to the prompt; it never showed "Welcome
+  to Codex … Choose how you want to use Codex" (unlike `OPENAI_API_KEY`, ADR-0054). There was no folder-trust prompt
+  with this sandbox and approval policy. Codex wrote only `[tui] screen_reader_detection_done = true` to `config.toml`,
+  and no `auth.json`.
+- **Model turn: needs a model the plan can route.**
+  - With Codex's default model (`gpt-6.1-sol`), Harbor Pilot answered 403 `no eligible account is available for model
+    gpt-6.1-sol`, because the demo plan has no route for it.
+  - With `-m coding/default` (a plan alias), `/v1/responses` streamed and the turn completed.
+  - Codex then warned "Model metadata for `coding/default` not found. Defaulting to fallback metadata".
+- **Attribution: worked.** The Harbor Pilot request detail showed `trusted_refs.spaceman.run=run_…` and the other bound
+  refs. Codex's own `session-id` header appeared under `claims`. Harbor Pilot labelled the harness `generic`, not `codex`.
+
+**Consequences for SpaceMan's harness adapters (HP-T4):**
+- Both harnesses can be driven through the gateway with only the secret env above. Codex needs no `auth.json` or
+  first-run seeding.
+- A model must be chosen that both the harness sends cleanly and the Harbor Pilot plan routes.
+  - For Codex, a run needs a `-m` the plan routes (a space setting or allowed-alias default).
+  - For Claude with Harbor Pilot 0.1.1, a model whose requests carry no `system`-role messages, until Harbor Pilot
+    accepts them.
+
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |
 |---|---|---|
