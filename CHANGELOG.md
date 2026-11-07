@@ -38,6 +38,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tests also get a 30 s lease as a margin under load, and the test fails at once, with the cause, if a restart takes
   5 s or more. Product behaviour is unchanged.
 
+### Fixed
+- A person's response to a human action whose requester had ended (for example control's own question, answered after
+  control stopped) became undeliverable when no control was running: control was not auto-started for it, and a
+  control started later was not told about it. With control auto-start on, it now goes to control, starts control,
+  and the control (or one launched by hand later) is told once about each unacknowledged response (ADR-0056 note).
+- The "New inbox item" dialog focuses the item text when it opens, instead of the title.
+
 ## [0.1.0-rc.9] - 2026-11-07
 
 Ninth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): Claude Code settings on
