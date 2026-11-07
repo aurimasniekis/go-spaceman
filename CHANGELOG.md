@@ -17,7 +17,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Each takes the account and optional `repository`, `owner` and `exclude_author` (for a space's own agent account).
   Comment and review templates ignore bots unless `include_bots` is set; CI templates can drop them with
   `exclude_bots`. Comments and reviews correlate with their pull request or issue, CI with its commit. Item titles
-  hold no free text from the event: titles, comments and workflow names are only in the body and the payload.
+  hold no free text from the event: titles, comments and workflow names are only in the body and the payload. A
+  built-in whose slug one of your templates already uses is not seeded; central logs a warning naming the slug.
 - Template filters can be optional: `if_set` applies a filter only when a variable has a value, `unless_set` only
   when it has none. A new operator `absent` matches a missing or null field.
 - Claude Code settings on harness profiles (ADR-0059, security-relevant): a claude-code profile's `claude_settings` are
@@ -54,11 +55,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   role, turn, state) and the actions (Live/Replay, then Take over, Stop and the details toggle as icon buttons).
 - Terminals on a phone: the page no longer scrolls sideways (a terminal wider than the screen scrolls inside its own
   box), the run inspector goes under the terminal instead of beside it, the replay controls wrap, and the Terminals
-  workspace's space and agent list is a drawer opened from the space name.
+  workspace's space and agent list is a drawer opened from the space name (a long name ends in an ellipsis).
 - Live updates no longer stay "offline" after central restarts. A change feed that the browser gave up on (a 502
   while central restarts, a 401) or that the server ended is reopened with backoff (1 s doubling to 30 s, with jitter,
   reset once it opens): each try re-checks the session first, sending the browser to sign-in when the session is gone,
-  and resumes from the last change seen. The header shows "offline" while waiting and "connecting" while trying. The
+  and resumes from the last change seen. A stream the server ends as unauthenticated while the session is still valid
+  reconnects at once the first time; when fresh streams keep ending that way, each further reconnect waits for the
+  next backoff step. The header shows "offline" while waiting and "connecting" while trying. The
   tab holding the stream retries at once when the window comes back online, when it becomes visible again, and when
   another tab opens or reloads, so a stale background tab can't keep every tab offline. The tabs' lock and channel are
   now `spaceman-watch.v2`, so tabs still running an older build don't hold the new ones offline.
