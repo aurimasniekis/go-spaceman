@@ -117,6 +117,16 @@ func TestOwnJSONKeysFileRecord(t *testing.T) {
 	if m, _ := filepath.Glob(record + ".corrupt-*"); len(m) != 1 {
 		t.Fatalf("record set aside %v", m)
 	}
+	// A second set-aside right after the first keeps both copies.
+	if err := os.WriteFile(record, []byte(`nope again`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := OwnJSONKeysFile(nil, p, map[string]any{"permissions": map[string]any{}}); err != nil {
+		t.Fatalf("second corrupt record: %v", err)
+	}
+	if m, _ := filepath.Glob(record + ".corrupt-*"); len(m) != 2 {
+		t.Fatalf("records set aside %v", m)
+	}
 
 	if err := os.WriteFile(record, []byte(`["hooks"]`), 0o600); err != nil {
 		t.Fatal(err)

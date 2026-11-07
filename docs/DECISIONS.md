@@ -2295,8 +2295,9 @@
   - A key a run writes into its own settings.json carries over to the next launch unless the profile sets or once set
     that key. The node records the keys it owns before writing settings.json, so an interrupted write never leaves a key
     it set behind. A corrupt record can't say which keys those are: the node then moves settings.json and the record
-    aside (`.corrupt-<unix time>`), logs a warning naming both, and starts from fresh settings, so no stale key survives
-    and the instance recovers without a fix on the node (Claude Code's own keys in that file are set aside too).
+    aside (`.corrupt-<unix nanoseconds>`), logs a warning naming both, and starts from fresh settings, so no stale key
+    survives and the instance recovers without a fix on the node (Claude Code's own keys in that file are set aside
+    too).
   - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
     update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
 

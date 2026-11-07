@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Changes to a profile's `claude_settings` are audited on `profile.created` and `profile.updated` with the changed
   top-level keys and a sha256 of the new settings, never the values.
 - The node records the settings.json keys it owns before writing settings.json. When that record is corrupt, it moves
-  `settings.json` and the record aside (`.corrupt-<unix time>`), logs a warning naming both, and starts from fresh
+  `settings.json` and the record aside (`.corrupt-<unix nanoseconds>`), logs a warning naming both, and starts from fresh
   settings: no key an earlier profile set survives, and the instance recovers without a fix on the node.
 - A run that can't be dispatched (`node_too_old`, `account_unavailable`) is now failed and its launch cancelled; ending
   it used to fail on a database constraint (a NULL session ID), which left the run pending. Its end is handled like a

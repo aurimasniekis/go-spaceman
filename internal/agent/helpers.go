@@ -140,9 +140,10 @@ func OwnJSONKeysFile(log *slog.Logger, path string, keys map[string]any) error {
 }
 
 // setAsideCorrupt moves the settings file and its corrupt keys record out of the way (renamed with a .corrupt-<unix
-// time> suffix) and logs a warning naming both new paths. A missing settings file is not an error.
+// time in nanoseconds> suffix, so a second set-aside within the same second keeps the earlier copies) and logs a
+// warning naming both new paths. A missing settings file is not an error.
 func setAsideCorrupt(log *slog.Logger, path, record string) error {
-	suffix := fmt.Sprintf(".corrupt-%d", time.Now().Unix())
+	suffix := fmt.Sprintf(".corrupt-%d", time.Now().UnixNano())
 	movedSettings := path + suffix
 	if err := os.Rename(path, movedSettings); errors.Is(err, os.ErrNotExist) {
 		movedSettings = ""
