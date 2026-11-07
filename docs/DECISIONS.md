@@ -2610,6 +2610,106 @@
   - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
 
+### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
+- **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design.
+  Implemented so far (AM-2): migration 0041, the internal token and its principal, the audit attribution and the
+  approver exclusion. No server, tool or endpoint uses them yet (AM-3 to AM-10). Requirements SM-MCP-005..009; threat
+  T-33.
+- **Context:**
+  - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
+    manage tasks, limits, roles, schedules and the other things an administrator does with the CLI or the API. Today an
+    agent only has the built-in `spaceman_*` tools (ADR-0012), which are scoped to its own space and run, and the
+    gateway's external HTTP servers (ADR-0023).
+  - Everything the CLI can do is an API operation (ADR-0040), and every operation has an authorization `Rule`. API
+    tokens act for their creator with grants covered by the creator's, are authorized as both token and creator, and
+    skip re-authentication and MFA (only a browser session can step up). There are no service principals.
+  - This hands administrator power to agents, so it is security-relevant: prompt injection into such a space reaches
+    everything the server's grants reach (T-33).
+- **Decision:**
+  1. **Placement.** A new gateway server kind, `spaceman` (`mcp_servers.kind`, default `http`). It runs **in central,
+     in process**. Agents reach it through the existing `spaceman-agent mcp-bridge` → node connection → central tool
+     path, granted per space and role with the existing `mcp_grants`. No new binary, transport or node protocol minor.
+  2. **Identity: a secretless internal API token** (`api_tokens.purpose = 'spaceman_mcp'`), one per server.
+     - Created with the server, in the same transaction, by an administrator. Owner: the creator. Parent: the
+       creator's API token when a token created it. Its grants must be covered by the owner's current grants and, when a
+       token creates it, by that token's grants. A token issued by another token, the root token and an internal
+       principal cannot create one (`auth.CreateInternalTokenTx`).
+     - It has **no secret**: its stored MAC is over a random value that is discarded, and `AuthenticateAPIToken`
+       refuses any row with a purpose, so it can never be presented as a bearer token. There is nothing to mint, store,
+       rotate, deliver or leak: nothing reaches nodes, runs, configuration, the secrets file, the manifest, logs, the
+       audit log, exports, backups or Terraform state.
+     - Per call, central builds the principal from the token ID (`auth.InternalPrincipal`): it fails like a bad bearer
+       token when the token is unknown, not internal, revoked or expired, or its owner is disabled. The principal carries
+       the run (`Principal.RunID`) and is authorized as token **and** owner, as every API token is, so it loses what its
+       owner loses. Revoking the token (Tokens page, or revoking its parent), disabling the owner, deleting or disabling
+       the server (revokes the token in the same transaction, AM-5), revoking the grant or reaching the expiry stops it
+       on the next call.
+     - "Re-issue" revokes the token and mints a new one in one transaction: for grant changes, owner transfer and expiry
+       renewal.
+  3. **Audit.** Calls are attributed to the owner, with `via: spaceman_mcp:<token id>` and `run: <run id>`
+     (`audit.Actor.Run`, `api.Actor`). The gateway's `mcp_server.tool_called` event also gains the operation and class
+     (AM-5).
+  4. **Never an approver.** The approver re-check (SM-APPR-003) refuses any `spaceman_mcp:` actor, any actor with a
+     run, and any internal token named as an API token. The approval operations themselves are excluded (below).
+  5. **Tool surface: one tool per API operation** (operator decision, Q3 a), generated from the build's in-memory API
+     document and the `Rule` table, named `<slug>__<operation_id>`. A reviewed classification puts each operation in
+     `read`, `write`, `dangerous`, `sensitive-read` or `excluded`, and `TestEveryOperationIsClassified` keeps it
+     complete (AM-3). Calls run through the API's own handler chain (authorization, validation, idempotency, audit)
+     with the internal principal (AM-4).
+  6. **Hard exclusions (kept, operator decision).** Never exposed, whatever the server's settings:
+     - every operation whose rule is Public, Session, UserOnly, Reauth or MFA (sign-in, own account, step-up, token
+       creation, user writes, root token, break-glass). The API also refuses an internal principal on these rules
+       directly, although bearer tokens skip step-up (`authorizeOps`);
+     - approvals and approval-policy writes; responding to, assigning, moving or commenting on human actions;
+     - takeover and terminal input;
+     - operations that return a one-time secret (node enrollment);
+     - sign-in provider writes;
+     - SpaceMan MCP management, token operations, and gateway operations that target a `spaceman` server;
+     - restore acknowledgement.
+  7. **Defaults (operator decisions for a trusted infra space).**
+     - **Preset: full admin on all spaces** (`admin@*`), labelled "infra" in the UI. Narrower presets (read-only or
+       operate, one space or all) stay available.
+     - **Grant: the control role** of the chosen space.
+     - **Approvals: none by default, but dangerous tools always need one** (Q1 b): deletes and purges, retention runs,
+       harness profile settings (T-32), diagnostic launches, SSH key generation and rotation, account and event
+       connection secrets, prompt, skill, role template and human-type publication, HTTP MCP server and grant writes,
+       node state and updates, relocations. This needs a synthetic one-use policy in `internal/approvals`
+       (`Gate.Require`, AM-5). Writes can be gated per server.
+     - **Expiry: never** by default (Q2 a); 1–366 days on request.
+     - Only control and worker runs get the tools; KB, dreamer and diagnostic runs never do.
+  8. **External endpoint in this release** (Q4 b, AM-10, SM-MCP-009). Central also serves the tool surface at
+     `/api/v1/mcp` for operators' own MCP clients, authenticated with a bearer API token (never an internal one), with
+     the same classification, exclusions and approval rules.
+  9. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed token
+     ID, owner, expiry and effective tools; no secret attributes), granted with the existing `spaceman_mcp_grant`
+     (AM-9).
+  10. **Numbers:** migration 0041 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
+      `api_tokens.purpose`, forward-only like every migration), T-33, SM-MCP-005..009. No protocol minor.
+- **Alternatives:**
+  - **A first-class service principal** (`svc:<id>`), independent of any person. Access would survive admin turnover
+    without a re-issue, but it roughly doubles the authentication work (new subject kind, grants, management, audit) and
+    adds an identity nobody is accountable for. Rejected for now (Q1).
+  - **Register central's own HTTP API as an ordinary `http` server**, with a bearer token in its sealed headers. It
+    needs a private-address exemption for loopback, keeps a real admin secret at rest, and adds a network hop to itself.
+  - **A node-side binary with the token in the run's secrets file.** It puts an administrator secret within the agent's
+    reach on the node, needs a protocol minor and collides with Harbor Pilot's secrets delivery (ADR-0060).
+  - **Three meta-tools** (search, describe, call) instead of one tool per operation: smaller catalogs, but every call
+    is opaque to approval policies and to the harness's own tool permissions. Revisit if `admin@*` (about 150 tools)
+    strains a harness's context (Q3).
+  - **Read-only, one space, 90-day expiry and writes gated by default** (the plan's recommendation): safer defaults,
+    but the operator chose full admin, no expiry and no approvals for their trusted infra space; dangerous tools stay
+    gated either way.
+- **Consequences:**
+  - With the defaults, an agent in the infra space can do what its owner can, except the hard exclusions and without a
+    person's approval for anything but dangerous tools. Prompt injection into that space is accepted risk T-33.
+  - Access depends on a person: if the owner is disabled or loses grants, the server stops until someone re-issues it.
+  - Tools granted later reach runs launched afterwards; revocation applies on the next call, while a revoked server's
+    tools stay listed until the harness restarts.
+  - A future operation added without a classification fails `TestEveryOperationIsClassified`; a misclassified one is a
+    review risk.
+  - Secrets that an agent writes through these tools (account keys, event connection secrets) pass through the model's
+    context; those operations are dangerous and need an approval.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

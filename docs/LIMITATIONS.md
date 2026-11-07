@@ -178,6 +178,15 @@
   its operation (`mcp.<server>.<tool>` or a prefix such as `mcp.deploys.*`); other calls run at once (ADR-0024).
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
+## SpaceMan MCP (in progress)
+- **Not usable yet.** The identity it acts through (an internal API token, ADR-0063, Proposed) exists, but no server,
+  tool or endpoint uses it yet (AM-3 to AM-10).
+- **Full admin by default, by design.** The default preset is `admin` on every space and the token never expires
+  (operator decisions for a trusted infra space). An agent with these tools can do what its owner can, short of the
+  hard exclusions; prompt injection into that space is accepted risk T-33.
+- **Owned by a person.** The token acts for the admin who created the server: if that admin is disabled or loses
+  grants, the server stops working until it is re-issued by someone else.
+
 ## Skills
 - **Skill loading is verified, not a skill's use.** Codex runs get skills in `$CODEX_HOME/skills` (listed in the model's
   prompt input with codex-cli 0.166.0, no model call), Claude Code runs in `$CLAUDE_CONFIG_DIR/skills`; whether a model

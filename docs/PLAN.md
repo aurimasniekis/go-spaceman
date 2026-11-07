@@ -95,6 +95,25 @@
 | HP-T7 | Terraform resources and the combined example (terraform-provider-spaceman) | SM-GW-009 | todo |
 | HP-T8 | Verification, threat model, limitations, release notes | SM-GW-* | todo |
 
+### AM — SpaceMan admin MCP (operator request 2026-11-07; ADR-0063, Proposed)
+Branch `feat/spaceman-mcp`, one pull request, stacked on `feat/harbor-pilot` (migration 0041 follows Harbor Pilot's
+0040) and retargeted to main once that merges. Operator decisions: default preset `admin@*` ("infra"), default grant the
+control role, no approvals by default but dangerous tools always gated, no expiry by default, one tool per operation,
+the external `/api/v1/mcp` endpoint in this release, Terraform resource `spaceman_admin_mcp_server`, hard exclusions kept.
+
+| WP | Scope | Requirements | Status |
+|---|---|---|---|
+| AM-1 | ADR-0063, THREAT_MODEL T-33, SM-MCP-005..009, LIMITATIONS, plan | SM-MCP-005..009 | implemented (docs; ADR Proposed) |
+| AM-2 | Migration 0041; internal tokens (`CreateInternalToken`, `InternalPrincipal`), bearer refusal, `Principal.RunID`, `Actor.Run` with `Via spaceman_mcp:`, approver re-check, API refusal of personal operations | SM-MCP-006, SM-MCP-008 | implemented, tested (simulated); not wired to servers yet |
+| AM-3 | `internal/spacemanmcp` catalog and classification | SM-MCP-007 | todo |
+| AM-4 | In-process handler and executor | SM-MCP-007 | todo |
+| AM-5 | Gateway kind, create/update/reissue operations, `approvals.Require`, wiring | SM-MCP-005/006/008 | todo |
+| AM-6 | CLI commands, generated API and CLI reference | SM-MCP-005 | todo |
+| AM-7 | Web: "Add SpaceMan MCP" button, modal, drawer, Tokens label | SM-MCP-005 | todo |
+| AM-8 | End-to-end tests, CHANGELOG, SECURITY_REVIEW | SM-MCP-* | todo |
+| AM-9 | Terraform `spaceman_admin_mcp_server` (terraform-provider-spaceman) | SM-MCP-005 | todo |
+| AM-10 | External `/api/v1/mcp` endpoint | SM-MCP-009 | todo |
+
 ## 2. Phase checklist (run at the start and end of each WP)
 
 1. Reread the relevant GOAL.md requirements and the contracts each one touches.
@@ -199,6 +218,7 @@
 | 2026-11-07 | CI | Faster CI (PR #15): test stores start from a once-migrated template (`storetest.Seed`); Go checks as parallel jobs with their own caches. Operator CI decisions (ADR-0062): 250 ms write-transaction guard on hosted runners (100 ms locally), the site's axe audit on PRs only for site/docs/web/API/changelog changes (`make site-verify` always), fuzzing nightly and at release; the release workflow gates on vet, race, coverage, fuzz smoke and the full site check. `make fuzz-smoke` fails on a failing `go list`/`go test -list` | `02d4b40` (`perf(test)`) and `a5f1564` (`ci`), merged in #15; released as `v0.1.0-rc.9` | `TestSeedWritesMigratedPrivateDB`, `TestSeedLeavesExistingDBAlone`; `make fuzz-smoke` (13 targets); `make check`; PR CI |
 | 2026-11-07 | HP-T1b | Harbor Pilot moved to v0.1.3 (2e957c7), the minimum version: contract updated (check_budget on mint, per-run usage by trusted ref, budget refusals as blocked requests with `access.request.blocked`, `created_by`, `system`-role support, demo seed changes; the v0.1.1 doc mismatches fixed upstream). hptest pins v0.1.3 (buildinfo check), gains `UsageByRef`, `CreateBudget` and `MintRequest.CheckBudget`, and a `TestRealHarborPilotRunAccounting` case. K-13 re-run with Claude Code 2.1.317 on `claude-opus-5-5`: resolved on the demo. ADR-0060 (still Proposed): per-run usage in scope (HP-T5 run-end reconcile, source `harbor-pilot`), `check_budget` as the pre-launch check, `access.request.blocked` in HP-T6, minimum version 0.1.3 | this branch (`feat/harbor-pilot`) | `make test-harbor-pilot` against real `serve --demo` v0.1.3; `make check` |
 | 2026-11-07 | HP-T2 | Harbor Pilot connection (singleton; sealed write-only parent and service-principal tokens, AAD bound to the row; `run_base_url`; `allow_insecure_http`) and per-space settings (project, harnesses, TTL 900–604800 s default 86400, `on_budget_status_unavailable`, allowed model aliases), migration 0040 (also the run-token and revocation-queue tables for HP-T3), `internal/harborpilot` client (Mint, Revoke, BudgetStatus, GetProject; no redirects, https rule, bounded sanitised messages), API with If-Match and Casbin rules, admin page and space card. Version detection: the validation mint always sends `check_budget`, which Harbor Pilot before 0.1.3 refuses as an unknown field (ADR-0060 decision 8). Probe credentials are revoked at once (queued for revocation otherwise). HP-T1b review fixes (events polled within the deadline, two contract cites) | this branch (`feat/harbor-pilot`) | unit tests with `hpfake` for every error class; HTTP authz matrix and canary tests (`internal/app/harborpilot_e2e_test.go`); migration from 0039; `TestRealHarborPilotConnection` against real `serve --demo` v0.1.3; web tests; screenshots |
+| 2026-11-07 | AM-1, AM-2 | SpaceMan admin MCP groundwork (ADR-0063, Proposed): SM-MCP-005..009, threat T-33 (accepted risk, trusted infra space), LIMITATIONS and the AM plan. Migration 0041 (forward-only: `mcp_servers.kind`/`api_token_id`/`spaceman_json`, `api_tokens.purpose`). Internal tokens: `auth.CreateInternalToken`/`CreateInternalTokenTx` (owner's current grants and the issuing token's must cover it; no token-issued, root or internal issuer), `auth.InternalPrincipal` (unknown, non-internal, revoked, expired and disabled-owner tokens fail), `AuthenticateAPIToken` refuses any purpose; `Principal.RunID`/`TokenPurpose`, `audit.Actor.Run` (`run` detail), `api.Actor` with `Via spaceman_mcp:<token>`; the approver re-check never counts a SpaceMan MCP actor; the API refuses internal principals on Session, UserOnly, Reauth and MFA rules. Nothing uses them yet | this branch (`feat/spaceman-mcp`, stacked on `feat/harbor-pilot`; see §4 D-12) | `TestInternalTokens`, `TestSpacemanMCPMigrationFrom0040`, `TestActorViaAndRun`, `TestActorOfInternalPrincipal`, `TestInternalPrincipalRefusedForPersonalOperations`, `TestApproverRecheckRefusesSpacemanMCP`; `make check` |
 
 ### Open issues
 - **Intermittent e2e launch stall.** `make e2e` occasionally waits past 20 s for a launched run to show `running`
@@ -229,3 +249,4 @@
 | D-9 | 2026-11-07 | The relocation SSH keys fix on branch `feat/github-event-templates` has a hand-written Conventional Commits 1.0.0 message; `/cc` did **not** produce it. | The `/cc` skill is not available in the SpaceMan worker session. | Use `/cc` where it is available. |
 | D-10 | 2026-11-07 | The HP-T1b commit on branch `feat/harbor-pilot` has a hand-written Conventional Commits 1.0.0 message; `/cc` did **not** produce it. | The `/cc` skill is not available in the SpaceMan worker session. | Use `/cc` where it is available. |
 | D-11 | 2026-11-07 | The HP-T2 commits on branch `feat/harbor-pilot` have hand-written Conventional Commits 1.0.0 messages; `/cc` did **not** produce them. | The `/cc` skill is not available in the SpaceMan worker session. | Use `/cc` where it is available. |
+| D-12 | 2026-11-07 | The AM-1/AM-2 commits on branch `feat/spaceman-mcp` have hand-written Conventional Commits 1.0.0 messages; `/cc` did **not** produce them. | The `/cc` skill is not available in the SpaceMan worker session. | Use `/cc` where it is available. |

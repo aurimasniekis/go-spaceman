@@ -319,6 +319,23 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-MCP-003 Built-in tools: inbox/messages, tasks, artifacts/attachments, memory, control orchestration, KB support, human actions, cross-space requests.
 - SM-MCP-004 Skills are central, versioned, assignable and harness-materialized, including the Hallpass skill. Skills give guidance, not permission.
   No arbitrary install hooks without a trust policy.
+- SM-MCP-005 An administrator can give a space's runs SpaceMan itself as an MCP server (kind `spaceman`): SpaceMan's own
+  API operations as tools, served by central through the gateway and the existing bridge, with no new node protocol.
+  It is managed through the API, CLI, the UI ("Add SpaceMan MCP") and Terraform (`spaceman_admin_mcp_server`) (ADR-0063).
+- SM-MCP-006 A SpaceMan MCP server acts through a secretless internal API token owned by the admin who created it, with
+  role@domain grants covered by the owner's (and by the issuing token's). It can never be presented as a bearer token,
+  is authorized as both token and owner on every call, and stops on the next call when it is revoked or expires, its
+  owner is disabled or loses the grants, or the server is disabled or deleted. No secret reaches nodes, runs,
+  configuration, logs or Terraform state. Its calls are audited with the owner, the token and the run.
+- SM-MCP-007 Tools are one per API operation, generated from the build's API document and a reviewed classification
+  (read, write, dangerous, sensitive-read, excluded) that a test keeps complete. Operations that need a person at the
+  keyboard (sign-in, own account, step-up, tokens, users, approvals and approval policies, human-action responses,
+  takeover and terminal input) and SpaceMan MCP self-management are never exposed. Calls run through the API's own
+  authorization, validation, idempotency and audit. Only control and worker runs get the tools.
+- SM-MCP-008 Dangerous tools always need a human approval, whatever the server's settings; other approvals are a
+  per-server choice. An agent acting through a SpaceMan MCP server never counts as an approver.
+- SM-MCP-009 Central also serves the SpaceMan MCP tool surface at `/api/v1/mcp` to operators' own MCP clients,
+  authenticated with a bearer API token, with the same classification, exclusions and approval rules.
 
 ### SM-MEM — Memory
 - SM-MEM-001 Memory is keyed by (space_id, agent_kind). All instances of a kind share history. KB sessions share KB memory by default with separate conversations.
