@@ -36,6 +36,7 @@ func backupItem(t *testing.T, e *fleetEnv, id string) backup.Item {
 // in the backup's memory bundle; the manifest lists the space as flushed. With the node disconnected, the next backup
 // still succeeds and its manifest names the space's memory as possibly stale.
 func TestBackupFlushesRoleMemoryFirst(t *testing.T) {
+	t.Parallel()
 	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not installed")

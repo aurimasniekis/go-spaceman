@@ -12,6 +12,7 @@ import (
 // ready to launch, a space without the option gets none until it asks, and templates and profiles in use refuse
 // deletion while unused ones go.
 func TestStarterRolesOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	secret, _, _ := h.c.Auth.IssueRootToken(ctx)

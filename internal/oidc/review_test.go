@@ -28,6 +28,7 @@ func (f *fx) ssoGrants(userID string) []string {
 
 // SR-10: self-service account linking needs recent authentication.
 func TestReviewSR10SelfLinkNeedsRecentAuth(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("a@example.com")
 	p := f.localSession(u.Email)
@@ -46,6 +47,7 @@ func TestReviewSR10SelfLinkNeedsRecentAuth(t *testing.T) {
 
 // SR-48: an MFA-pending (limited) administrator session cannot run the SSO test login.
 func TestReviewSR48TestLoginNeedsFullSession(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	res, err := f.auth.Login(f.ctx, auth.LoginInput{Email: "root@corp.example", Password: password, Meta: f.meta})
 	must(t, err)
@@ -62,6 +64,7 @@ func TestReviewSR48TestLoginNeedsFullSession(t *testing.T) {
 
 // SR-03 (b): the TOTP step-up fallback needs an SSO session whose provider allows it.
 func TestReviewSR03TOTPFallbackNeedsProviderOptIn(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("alice@example.com", authz.RoleOperator)
 	pw := f.localSession(u.Email) // enrolls TOTP (operator grants require it)
@@ -90,6 +93,7 @@ func TestReviewSR03TOTPFallbackNeedsProviderOptIn(t *testing.T) {
 // SR-26 (SpaceMan K-11): SSO-sourced grants apply only to SSO sessions. The same user's password session and API
 // tokens act with the manual grants alone.
 func TestReviewSR26SSOGrantsOnlyForSSOSessions(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("v@example.com", authz.RoleViewer)
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -116,6 +120,7 @@ func TestReviewSR26SSOGrantsOnlyForSSOSessions(t *testing.T) {
 
 // SR-26: deleting a provider removes the SSO-sourced grants of the users linked to it; manual grants stay.
 func TestReviewSR26DeleteProviderDropsSSOGrants(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("alice@example.com", authz.RoleViewer)
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -139,6 +144,7 @@ func TestReviewSR26DeleteProviderDropsSSOGrants(t *testing.T) {
 
 // SR-24: fragments that redirect path-cleaning would turn into /api or /auth are refused.
 func TestReviewSR24ReturnToFragment(t *testing.T) {
+	t.Parallel()
 	for _, in := range []string{"/#/../api/v1/me", "/x#/../../auth/oidc/corp/start?purpose=link", "/x#y/../../api", "/a//b"} {
 		if got := SanitizeReturnTo(in); got != "/" {
 			t.Errorf("%q accepted", in)

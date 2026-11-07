@@ -10,6 +10,7 @@ import (
 // sqlc's SQLite engine can leave a named parameter unsubstituted in some positions (seen with `sqlc.arg(x) IN (…)`),
 // which only fails at runtime with a syntax error. Every generated query must be fully substituted.
 func TestGeneratedQueriesFullySubstituted(t *testing.T) {
+	t.Parallel()
 	files, _ := filepath.Glob(filepath.Join("db", "*.go"))
 	for _, f := range files {
 		b, err := os.ReadFile(f)

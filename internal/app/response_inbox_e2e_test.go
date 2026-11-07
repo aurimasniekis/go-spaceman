@@ -15,6 +15,7 @@ import (
 // space (source human_response) that names the action but never carries the answer; control is told about the item.
 // A policy that omits response_inbox (an older client) is stored as off.
 func TestRoutedResponseBecomesInboxItemOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

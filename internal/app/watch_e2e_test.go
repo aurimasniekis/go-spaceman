@@ -17,6 +17,7 @@ import (
 // Last-Event-ID header an EventSource sends on reconnect) and receives exactly the changes it missed, in order; a
 // position beyond the feed (for example after a restore) is reported as a gap and the stream continues from the end.
 func TestWatchResumesFromItsPosition(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, err := h.c.Auth.IssueRootToken(ctx)

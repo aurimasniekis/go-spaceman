@@ -38,6 +38,7 @@ func putSetting(ctx context.Context, s *Store, k, v string) error {
 }
 
 func TestOpenLayoutAndPermissions(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	fi, err := os.Stat(s.Dir())
 	if err != nil || fi.Mode().Perm() != 0o700 {
@@ -61,6 +62,7 @@ func TestOpenLayoutAndPermissions(t *testing.T) {
 
 // Hallpass HP-DB-010: group/world-accessible data dirs are refused.
 func TestRefusesOpenPermissions(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -76,6 +78,7 @@ func TestRefusesOpenPermissions(t *testing.T) {
 
 // Hallpass HP-DB-002: pragmas on every pooled connection; readers are read-only.
 func TestPragmasEveryConnection(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{Readers: 6})
 	ctx := context.Background()
 	if err := VerifyPragmas(ctx, s.rdb, 6, true, DefaultBusyTimeout); err != nil {
@@ -95,6 +98,7 @@ func TestPragmasEveryConnection(t *testing.T) {
 
 // Hallpass HP-DB-006: a second process owner is refused.
 func TestSecondOwnerRefused(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	_, err := Open(context.Background(), Options{DataDir: s.Dir()})
 	if !errors.Is(err, ErrLocked) {
@@ -112,6 +116,7 @@ func TestSecondOwnerRefused(t *testing.T) {
 
 // Hallpass HP-DB-003: concurrent writers never surface SQLITE_BUSY.
 func TestConcurrentWriters(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	var wg sync.WaitGroup
@@ -134,6 +139,7 @@ func TestConcurrentWriters(t *testing.T) {
 }
 
 func TestTxRollbackAndHooks(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	var hooks atomic.Int32
@@ -161,6 +167,7 @@ func TestTxRollbackAndHooks(t *testing.T) {
 }
 
 func TestConstraintClassified(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	err := s.W().Tx(ctx, func(tx *Tx) error {
@@ -199,6 +206,7 @@ func holdWriteLock(t *testing.T, path string, d time.Duration) (released chan st
 
 // Hallpass HP-DB-003: bounded retries with backoff recover from short contention and give up with ErrBusy.
 func TestBusyRetryAndGiveUp(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{BusyTimeout: 5 * time.Millisecond})
 	ctx := context.Background()
 	<-holdWriteLock(t, s.Path(DBFile), 0) // warm up
@@ -216,6 +224,7 @@ func TestBusyRetryAndGiveUp(t *testing.T) {
 }
 
 func TestSnapshotRoundTrip(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	if err := putSetting(ctx, s, "snap", "value"); err != nil {
@@ -261,6 +270,7 @@ const (
 
 // Hallpass HP-DB-005: failing migrations roll back, leave the prior version, and a pre-migration snapshot exists.
 func TestMigrationFailureAndSnapshot(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: migFS(map[string]string{"0001_a.sql": mig1})})
@@ -293,6 +303,7 @@ func TestMigrationFailureAndSnapshot(t *testing.T) {
 
 // Hallpass HP-DB-005: a database migrated by a newer binary is refused.
 func TestSchemaTooNewRefused(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
 	s, err := Open(ctx, Options{DataDir: dir})
@@ -314,6 +325,7 @@ func TestSchemaTooNewRefused(t *testing.T) {
 }
 
 func TestPruneSnapshots(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, ts := range []string{"20260101T000000Z", "20260102T000000Z", "20260103T000000Z", "20260104T000000Z"} {
 		if err := os.WriteFile(filepath.Join(dir, "pre-migrate-0001-0002-"+ts+".db"), nil, 0o600); err != nil {
@@ -329,6 +341,7 @@ func TestPruneSnapshots(t *testing.T) {
 
 // Hallpass HP-DB-008: corruption is detected at startup and the store refuses to open.
 func TestCorruptionRefused(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "data")
 	ctx := context.Background()
 	s, err := Open(ctx, Options{DataDir: dir})
@@ -359,6 +372,7 @@ func TestCorruptionRefused(t *testing.T) {
 }
 
 func TestHealthTransitions(t *testing.T) {
+	t.Parallel()
 	fc := clock.NewFake(time.Unix(1_800_000_000, 0))
 	h := newHealth(fc)
 	h.Observe(fmt.Errorf("%w: x", ErrBusy))
@@ -416,6 +430,7 @@ func TestHealthTransitions(t *testing.T) {
 }
 
 func TestTxObserverAndIncrementalVacuum(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int32
 	s := openTest(t, Options{TxObserver: func(string, time.Duration, error) { calls.Add(1) }})
 	ctx := context.Background()
@@ -445,6 +460,7 @@ func TestTxObserverAndIncrementalVacuum(t *testing.T) {
 // Hallpass HP-DB-011: deleted rows leave free pages; bounded incremental vacuum returns them in steps and the file shrinks
 // once the WAL is checkpointed.
 func TestIncrementalVacuumReturnsFreePages(t *testing.T) {
+	t.Parallel()
 	s := openTest(t, Options{})
 	ctx := context.Background()
 	big := strings.Repeat("x", 8<<10)

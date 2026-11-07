@@ -72,6 +72,7 @@ func question(title string) CreateInput { return CreateInput{Type: TypeQuestion,
 // SM-HUM-009: a response for a requester whose run ended goes to a live successor run, else to control, else to the
 // operators, always with the original run, the previous target and the reason.
 func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true, Clock: f.clk})
 
@@ -118,6 +119,7 @@ func TestResponsesForAnEndedRequesterAreRerouted(t *testing.T) {
 // SM-HUM-009: a response delivered to a live requester whose run ends before acknowledging it is routed on by the
 // deadline loop (also after a restart: the loop's first round does it).
 func TestStrandedNotificationsMoveOn(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.run("run_ctl", "control", "control", "ins_c", "running", "running")
 	a := f.create(question("q"))
@@ -159,6 +161,7 @@ func (f *fx) answer2(a *Action) {
 // SM-HUM-009: with next_launch the response waits for the next run of the requester's agent instance (a resumed
 // session) and is rerouted when none starts within the hold.
 func TestNextLaunchHoldsForTheInstance(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.policy("", TypeQuestion, PolicyFields{MaxReminders: 1, RequesterEnded: EndedNextLaunch, HoldMinutes: 30, WakeIdle: false, RatePerRunHour: 30, RatePerSpaceHour: 300})
 	inst := ids.New(ids.Instance)
@@ -201,6 +204,7 @@ func TestNextLaunchHoldsForTheInstance(t *testing.T) {
 
 // A person can send an undeliverable response to control or to a running role.
 func TestOperatorRoutesAResponse(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.create(question("q"))
 	f.end("run_1")
@@ -229,6 +233,7 @@ func TestOperatorRoutesAResponse(t *testing.T) {
 
 // SM-HUM-009: runs unrelated to an action see its request, never its response, comments or reason.
 func TestResponsesHiddenFromUnrelatedRuns(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.create(question("secret?"))
 	_, err := f.svc.AddComment(f.ctx, op, "spc_a", a.ID, "between us", "Op")
@@ -258,6 +263,7 @@ func TestResponsesHiddenFromUnrelatedRuns(t *testing.T) {
 // SM-HUM-011: reminders re-surface an action on schedule without changing its version or order; escalation raises the
 // priority (never lowers it) and assigns per policy, audited, and the order stays.
 func TestRemindersAndEscalation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true, Clock: f.clk})
 	first := f.create(CreateInput{Type: TypeTodo, Title: "first", Requester: Requester{Kind: "operator", ID: "usr_op"}})
@@ -317,6 +323,7 @@ func TestRemindersAndEscalation(t *testing.T) {
 
 // Policies: the most specific applies as a whole; changes reschedule pending actions; invalid ones are refused.
 func TestPolicyResolution(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	eff := func(space string) map[string]Policy {
 		l, err := f.svc.EffectivePolicies(f.ctx, space)
@@ -408,6 +415,7 @@ func TestPolicyResolution(t *testing.T) {
 
 // SM-HUM-011: rate limits per requester run and per space, by policy, with an error that says waiting is enough.
 func TestRateLimits(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.policy("spc_a", TypeTodo, PolicyFields{MaxReminders: 1, RequesterEnded: EndedReroute, HoldMinutes: 60, WakeIdle: true, RatePerRunHour: 2, RatePerSpaceHour: 3})
 	f.create(CreateInput{Type: TypeTodo, Title: "1"})
@@ -432,6 +440,7 @@ func TestRateLimits(t *testing.T) {
 
 // SM-HUM-011: one timer for the earliest deadline, woken by Kick; extra deadlines (approvals) share it.
 func TestDeadlineLoop(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	if next, err := f.svc.NextDeadline(f.ctx); err != nil || !next.IsZero() {
 		t.Fatalf("empty %v %v", next, err)

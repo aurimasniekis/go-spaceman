@@ -125,6 +125,7 @@ func walk(c *cobra.Command, fn func(*cobra.Command)) {
 // make api commits), offers --idempotency-key exactly where the operation accepts an Idempotency-Key, and offers
 // --if-match only where the operation takes If-Match.
 func TestCommandsMatchTheAPIDocument(t *testing.T) {
+	t.Parallel()
 	live, err := specOnce()
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +174,7 @@ func TestCommandsMatchTheAPIDocument(t *testing.T) {
 // Every operation of the API document has a command or an explicit, documented exclusion (ADR-0040), so a new
 // operation cannot silently stay out of the CLI.
 func TestEveryOperationHasACommand(t *testing.T) {
+	t.Parallel()
 	live, err := specOnce()
 	if err != nil {
 		t.Fatal(err)
@@ -209,6 +211,7 @@ func TestEveryOperationHasACommand(t *testing.T) {
 
 // Secrets are never flag values: no flag carries a token, password, account secret, credentials or headers itself.
 func TestNoSecretFlagValues(t *testing.T) {
+	t.Parallel()
 	root := newRootFor(&App{SpecSource: specOnce})
 	banned := map[string]bool{"token": true, "secret": true, "password": true, "creds": true, "headers": true, "client-secret": true, "api-key": true}
 	walk(root, func(c *cobra.Command) {
@@ -223,6 +226,7 @@ func TestNoSecretFlagValues(t *testing.T) {
 }
 
 func TestClientRules(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		server   string
 		insecure bool
@@ -264,6 +268,7 @@ func TestClientRules(t *testing.T) {
 
 // Redirects are never followed, so the bearer token never leaves the configured origin.
 func TestRedirectsAreNotFollowed(t *testing.T) {
+	t.Parallel()
 	var leaked bool
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		leaked = leaked || r.Header.Get("Authorization") != ""
@@ -281,6 +286,7 @@ func TestRedirectsAreNotFollowed(t *testing.T) {
 }
 
 func TestRetriesAndProblems(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	n := 0
 	f.on("GET /nodes", func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
@@ -353,6 +359,7 @@ func TestRetriesAndProblems(t *testing.T) {
 }
 
 func TestExitCodesAndErrors(t *testing.T) {
+	t.Parallel()
 	for err, want := range map[error]int{
 		nil:                                  ExitOK,
 		errors.New("x"):                      ExitUsage,
@@ -399,6 +406,7 @@ func TestExitCodesAndErrors(t *testing.T) {
 }
 
 func TestTokenSources(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	f.on("GET /auth/me", func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
 		reply(w, 200, map[string]any{"method": "token", "auth": r.Header.Get("Authorization")})
@@ -439,6 +447,7 @@ func TestTokenSources(t *testing.T) {
 }
 
 func TestOutputFormats(t *testing.T) {
+	t.Parallel()
 	body := []byte(`{"items":[{"id":"a","name":"x|y","created_at":"2026-11-03T10:00:00.123Z","tags":["p","q"],"meta":{"k":"v"},"n":3,"ok":true,"long":"` +
 		strings.Repeat("z", 150) + `","nested":[{"a":1}],"multi":"l1\nl2"}],"next_cursor":""}`)
 	v := view{items: "items", cols: []col{c("ID", "id"), c("NAME", "name"), c("AT", "created_at"), c("TAGS", "tags"), c("META", "meta"), c("N", "n"),
@@ -500,6 +509,7 @@ func TestOutputFormats(t *testing.T) {
 }
 
 func TestInputDocuments(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in  string
 		ok  bool
@@ -541,6 +551,7 @@ func TestInputDocuments(t *testing.T) {
 
 // Bodies from --file (JSON or YAML) with flags on top, inputs from standard input, and the input-validation errors.
 func TestFormInputs(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	f.on("POST /spaces/"+spaceID+"/runs", func(w http.ResponseWriter, _ *http.Request, body map[string]any) {
 		reply(w, 201, map[string]any{"id": "run_x", "role": body["role"]})
@@ -584,6 +595,7 @@ func TestFormInputs(t *testing.T) {
 
 // Updates read the object first and send its version as If-Match with the merged body; --if-match overrides it.
 func TestUpdateReadsVersion(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	space := map[string]any{"id": spaceID, "slug": "pay", "name": "Pay", "description": "d", "goals": "", "version": 7, "state": "active",
 		"disconnect_policy": "interrupt", "lease": map[string]any{"generation": 1}}
@@ -642,6 +654,7 @@ func TestUpdateReadsVersion(t *testing.T) {
 // Relocation: the unavailable-source flow needs an explicit acknowledgement, --wait polls until a final state, and a
 // blocked or failed relocation exits 2 after printing its issues.
 func TestRelocation(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	f.json("GET /nodes", 200, map[string]any{"items": []any{map[string]any{"id": nodeID, "name": "n2"}}})
 	base := "/spaces/" + spaceID + "/relocation"
@@ -720,6 +733,7 @@ func TestRelocation(t *testing.T) {
 // Commands whose bodies are built in code: grants, token create with a secret file, limits, task moves, MCP headers,
 // cross-space peers and the audit verification.
 func TestBuiltBodies(t *testing.T) {
+	t.Parallel()
 	f := newFake(t)
 	f.json("GET /spaces", 200, map[string]any{"items": []any{map[string]any{"id": spaceID, "slug": "pay"}}})
 	f.on("POST /tokens", func(w http.ResponseWriter, _ *http.Request, body map[string]any) {
@@ -814,6 +828,7 @@ func TestBuiltBodies(t *testing.T) {
 }
 
 func TestSpecParsing(t *testing.T) {
+	t.Parallel()
 	if _, err := ParseSpec([]byte("{")); err == nil {
 		t.Fatal("bad JSON accepted")
 	}

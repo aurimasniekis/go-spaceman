@@ -14,6 +14,7 @@ import (
 // The guard lives while the space has runs, ends with the space's last run, and the next launch starts a new one
 // before its run (which is parented to it, so dead-daemon enforcement still applies, ADR-0017).
 func TestIdleSpaceKeepsNoLeaseGuard(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()
@@ -78,6 +79,7 @@ func TestIdleSpaceKeepsNoLeaseGuard(t *testing.T) {
 // calls (orchestration, inbox, queue) instead of acting on them itself, starts no worker, and does not replay the
 // refused calls when central returns; managed workers are created only through central.
 func TestNodeDaemonIsNotAController(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	e.enroll()

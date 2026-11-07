@@ -14,6 +14,7 @@ import (
 // a CLI-issued break-glass token signs in, removes the lost factor, hands out a password reset and raises an alert until
 // an administrator acknowledges it; recovery codes can be replaced only after a recent re-authentication with TOTP.
 func TestAPIRecoveryAndReset(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, err := h.c.Auth.IssueRootToken(ctx)

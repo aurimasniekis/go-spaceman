@@ -35,6 +35,7 @@ func item(t *testing.T, st *backup.Status, id string) backup.Item {
 // SM-STORE-005: manual backups through the service, verification, the listing (including a CLI-made backup) and
 // retention by count.
 func TestServiceLocal(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	dir := filepath.Join(t.TempDir(), "backups")
 	svc := f.service(backup.LocalTarget{Dir: dir}, 2)
@@ -95,6 +96,7 @@ func TestServiceLocal(t *testing.T) {
 
 // SM-STORE-002/005 (simulated): backups to S3-compatible storage through the fake bucket; verify and restore from it.
 func TestServiceS3(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	srv := s3test.New(t, "AKIDTEST")
 	cl, err := s3client.New(s3client.Config{Endpoint: srv.URL, Bucket: "sm-backups", PathStyle: true, AccessKeyID: "AKIDTEST", SecretAccessKey: "secret",
@@ -145,6 +147,7 @@ func TestServiceS3(t *testing.T) {
 
 // A failing target records a failed run; the scheduler makes the first backup after FirstDelay with one timer.
 func TestServiceScheduleAndFailure(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	dir := filepath.Join(t.TempDir(), "backups")
 	svc := backup.NewService(f.st, f.kek, f.aw, f.ch, backup.ServiceOptions{Target: backup.LocalTarget{Dir: dir}, Sources: f.sources(), Schedule: true,

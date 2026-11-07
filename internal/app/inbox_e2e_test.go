@@ -13,6 +13,7 @@ import (
 // SM-INBOX-001/002/003, SM-ATT-001 over HTTP: an operator item with an attachment, idempotent creation, the inbox page
 // with counts, optimistic status changes, and read-only access for viewers.
 func TestInboxOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

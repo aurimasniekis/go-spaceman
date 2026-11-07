@@ -15,6 +15,7 @@ import (
 // stored), bounds, installation defaults from the configuration, and schedule management with a timing preview;
 // viewers read, only space configuration writers change.
 func TestLimitsAndSchedulesOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarnessWith(t, func(c *config.Config) { c.Limits.MaxConcurrentRuns = 5; c.Limits.BudgetTokens24h = 1_000_000 })
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

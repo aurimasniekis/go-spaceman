@@ -25,6 +25,7 @@ import (
 // own git worktree, is assigned to the task, and reports review; workers cannot launch runs; control cannot be
 // stopped by control.
 func TestControlLaunchesWorkersInWorktrees(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -124,6 +125,7 @@ func TestControlLaunchesWorkersInWorktrees(t *testing.T) {
 // SM-CTRL-002: control is notified of actionable events, and an unexpectedly ended control run is restarted (resuming
 // its session) within bounds; beyond them SpaceMan stops and raises an urgent human action.
 func TestControlSupervisor(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()
@@ -237,6 +239,7 @@ func TestControlSupervisor(t *testing.T) {
 // idle for its idle time is stopped (not restarted), and the next work starts it again, resuming its session; a busy
 // control is never stopped; with auto-start off, nothing starts.
 func TestControlAutostart(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t, func(c *config.Config) { c.Limits.ControlAutostart, c.Limits.ControlIdleStopMinutes = 1, 1 })
 	e.enroll()
 	e.startAgent()

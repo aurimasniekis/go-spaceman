@@ -22,6 +22,7 @@ import (
 // SeedBuiltins publishes every built-in template once, as version 1 of exactly its definition, and an installation
 // seeded before a template was added gets the new one at its next start without touching the others.
 func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
+	// Not parallel: it swaps the package-level builtins.
 	ctx := context.Background()
 	s := storetest.Open(t, storetest.WithClock(clock.System{}))
 	kr := keyringtest.Load(t, s)
@@ -75,6 +76,7 @@ func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
 // A user's template that already uses a built-in's slug keeps it: the built-in is skipped, with a warning naming the
 // slug, and the other built-ins are seeded without one.
 func TestSeedBuiltinsWarnsWhenASlugIsTaken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := storetest.Open(t, storetest.WithClock(clock.System{}))
 	kr := keyringtest.Load(t, s)

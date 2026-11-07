@@ -18,6 +18,7 @@ import (
 // writes it) and its transcript is uploaded after the run ends; a Codex run's usage stays unknown, not zero.
 // SM-REC-001: the run's recording, transcript and usage are kept apart.
 func TestUsageAndTranscript(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()

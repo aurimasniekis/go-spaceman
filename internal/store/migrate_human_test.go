@@ -33,6 +33,7 @@ func embeddedUpTo(t *testing.T, max string) fs.FS {
 // 0013 rebuilds human_actions (SQLite cannot alter a CHECK constraint): existing actions, their comments and
 // notifications survive with their foreign keys intact, and foreign keys are enforced again afterwards.
 func TestHumanTypesMigrationKeepsData(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0012")})
@@ -89,6 +90,7 @@ func TestHumanTypesMigrationKeepsData(t *testing.T) {
 // notification keeps its requester run as both target and original run, and pending actions have no schedule until
 // central recomputes it (human.Service.Recover).
 func TestHumanFollowupMigrationKeepsData(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0023")})

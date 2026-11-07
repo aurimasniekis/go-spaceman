@@ -68,6 +68,7 @@ func (f *fakeSource) deliver(ctx context.Context, subID string, e template.Event
 // changes, stops it when the subscription is disabled, reports a source that fails or a delivery mode without a
 // source, and an event the fake delivers takes the normal path into the inbox (deduplicated on redelivery).
 func TestManagerUsesSourceInterface(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := storetest.Open(t, storetest.WithClock(clock.System{}))
 	kr := keyringtest.Load(t, s)

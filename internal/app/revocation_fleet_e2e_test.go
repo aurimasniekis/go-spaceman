@@ -24,6 +24,7 @@ import (
 // opened it is revoked. Revoking a viewer never stops the run itself, and a stopped run's credential fails the next
 // tool call.
 func TestTerminalStreamEndsOnRevocation(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	e := newFleetEnv(t)
 	e.cfg.Auth.StreamRevalidate = config.Duration(time.Minute) // only the event-driven path meets revocationBound
 	e.restartCentral()
@@ -168,6 +169,7 @@ func (e *fleetEnv) reenroll(nodeID string) {
 // SM-AUTH-007, SM-NODE-001: a node connection whose credential expired (or was revoked outside central) is closed by
 // the periodic re-check, and the node cannot reconnect with it; disabling the node closes it at once.
 func TestNodeConnectionEndsWithItsCredential(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	e := newFleetEnv(t)
 	e.cfg.Auth.StreamRevalidate = config.Duration(time.Second)
 	e.restartCentral()

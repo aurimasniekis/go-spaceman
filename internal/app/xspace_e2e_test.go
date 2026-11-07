@@ -24,6 +24,7 @@ import (
 // as bravo's disclosure level allows; the request survives a central restart; a knowledge request to charlie is
 // answered by a support session of charlie's KB whose requester is alpha's control run.
 func TestCrossSpaceRequests(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
