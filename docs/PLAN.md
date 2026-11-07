@@ -96,15 +96,15 @@
 | HP-T8 | Verification, threat model, limitations, release notes | SM-GW-* | todo |
 
 ### AM — SpaceMan admin MCP (operator request 2026-11-07; ADR-0063, Proposed)
-Branch `feat/spaceman-mcp`, one pull request, stacked on `feat/harbor-pilot` (migration 0041 follows Harbor Pilot's
-0040) and retargeted to main once that merges. Operator decisions: default preset `admin@*` ("infra"), default grant the
-control role, no approvals by default but dangerous tools always gated, no expiry by default, one tool per operation,
-the external `/api/v1/mcp` endpoint in this release, Terraform resource `spaceman_admin_mcp_server`, hard exclusions kept.
+Branch `feat/spaceman-mcp`, one pull request, stacked on `feat/harbor-pilot` (migration 0042 follows Harbor Pilot's
+0040 and the control reminders' 0041, which land first) and retargeted to main once that merges. Operator decisions:
+default preset `admin@*` ("infra"), default grant the control role, no approvals by default but dangerous tools always
+gated, no expiry by default, one tool per operation, the external `/api/v1/mcp` endpoint in this release, Terraform resource `spaceman_admin_mcp_server`, hard exclusions kept.
 
 | WP | Scope | Requirements | Status |
 |---|---|---|---|
 | AM-1 | ADR-0063, THREAT_MODEL T-33, SM-MCP-005..009, LIMITATIONS, plan | SM-MCP-005..009 | implemented (docs; ADR Proposed) |
-| AM-2 | Migration 0041; internal tokens (`CreateInternalToken`, `InternalPrincipal`), bearer refusal, `Principal.RunID`, `Actor.Run` with `Via spaceman_mcp:`, approver re-check, API refusal of personal operations | SM-MCP-006, SM-MCP-008 | implemented, tested (simulated); not wired to servers yet |
+| AM-2 | Migration 0042 (numbered 0041 until AM-5); internal tokens (`CreateInternalToken`, `InternalPrincipal`), bearer refusal, `Principal.RunID`, `Actor.Run` with `Via spaceman_mcp:`, approver re-check, API refusal of personal operations | SM-MCP-006, SM-MCP-008 | implemented, tested (simulated); not wired to servers yet |
 | AM-3 | `internal/spacemanmcp` catalog and classification | SM-MCP-007 | implemented, tested (simulated); not served to runs yet (AM-5) |
 | AM-4 | In-process handler and executor | SM-MCP-007 | implemented, tested (simulated); not served to runs yet (AM-5) |
 | AM-5 | Gateway kind, create/update/reissue operations, `approvals.Require`, wiring | SM-MCP-005/006/008 | todo |

@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// 0041 adds the SpaceMan MCP columns to a database at 0040 (ADR-0063): existing gateway servers become kind 'http'
+// 0042 adds the SpaceMan MCP columns to a database at 0041 (ADR-0063): existing gateway servers become kind 'http'
 // with no internal token and '{}' settings, existing API tokens get the empty (bearer) purpose, and the new
 // constraints hold: two kinds, two purposes, and an internal token reference that must exist.
-func TestSpacemanMCPMigrationFrom0040(t *testing.T) {
+func TestSpacemanMCPMigrationFrom0041(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
-	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0040")})
+	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0041")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestSpacemanMCPMigrationFrom0040(t *testing.T) {
 	}
 	var n int
 	if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('api_tokens') WHERE name = 'purpose'`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("0040 already has api_tokens.purpose: %d %v", n, err)
+		t.Fatalf("0041 already has api_tokens.purpose: %d %v", n, err)
 	}
 	_ = s.Close()
 

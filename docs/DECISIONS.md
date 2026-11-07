@@ -2680,7 +2680,7 @@
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design;
   question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
-  Implemented so far: migration 0041, the internal token and its principal, the audit attribution and the approver
+  Implemented so far: migration 0042, the internal token and its principal, the audit attribution and the approver
   exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4). No server or endpoint serves
   them yet (AM-5 to AM-10). Requirements SM-MCP-005..009; threat
   T-33.
@@ -2774,8 +2774,9 @@
   9. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed token
      ID, owner, expiry and effective tools; no secret attributes), granted with the existing `spaceman_mcp_grant`
      (AM-9).
-  10. **Numbers:** migration 0041 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
-      `api_tokens.purpose`, forward-only like every migration), T-33, SM-MCP-005..009. No protocol minor.
+  10. **Numbers:** migration 0042 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
+      `api_tokens.purpose`, forward-only like every migration; numbered 0041 until the control reminders took that
+      number), T-33, SM-MCP-005..009. No protocol minor.
 - **Alternatives:**
   - **A first-class service principal** (`svc:<id>`), independent of any person. Access would survive admin turnover
     without a re-issue, but it roughly doubles the authentication work (new subject kind, grants, management, audit) and
