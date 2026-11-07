@@ -2181,6 +2181,12 @@
   - An idle stop interrupts a program that is waiting at its prompt. Work in the middle of a turn is never stopped.
   - Not security-relevant: the launch goes through the same resolution, admission (limits and budgets) and audit as
     any launch, as a system actor.
+- **Note (2026-11-07, human responses):** a response whose requester's run has ended went to control only while a
+  control run was wanted (ADR-0032), so with no control running it became undeliverable: auto-start never saw it, and
+  a control started later was not told about it. With auto-start on, the routing now also sends it to control when the
+  space can start one (it had a control run or has a space role of kind control), as a pending, waking notification.
+  The sweep then starts control for it, and that control, or one an operator launches later, gets one notice per
+  unacknowledged response. With auto-start off, or with no control to start, it stays undeliverable as before.
 
 ### ADR-0057 — Repository SSH keys held by SpaceMan (security-relevant)
 - **Status:** Accepted, 2026-11-05 (operator decision; amends ADR-0044, which offered no SpaceMan-held Git credentials).

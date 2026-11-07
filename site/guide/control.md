@@ -57,7 +57,10 @@ too, including ones an earlier control was told about but never acknowledged.
 
 You do not have to keep control running. When work waits for control and no control run is live, SpaceMan **starts
 control** itself. It does not need a new event: anything waiting for control that no control has seen yet counts, such
-as a new inbox item, a task to decide on, a worker that ended or a message from an agent.
+as a new inbox item, a task to decide on, a worker that ended, a message from an agent, or a person's response to a
+[human action](./human-actions) whose requester has ended (for example control's own question, answered after control
+was stopped). The control that starts, or one an operator launches later, is told once about each response it has
+not acknowledged yet.
 
 - It **resumes the last control run**: the same role, harness, instance and account, and the same session when the
   last run finished at least one turn. A space that never had a control run gets its control role (the space role

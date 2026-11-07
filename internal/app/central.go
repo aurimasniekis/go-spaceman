@@ -328,6 +328,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return v.Get(limits.HumanPending), v.Get(limits.HumanPendingPerRun)
 	}
 	c.Human.Log = obs.Component(log, "human")
+	// A response whose run is gone goes to a control auto-start can start (ADR-0056).
+	c.Human.ControlAutostart = func(ctx context.Context, q *db.Queries, spaceID string) bool {
+		v, err := c.Limits.For(ctx, q, spaceID)
+		return err == nil && v.Get(limits.ControlAutostart) != 0
+	}
 	c.Messages = messages.New(st, c.Audit, c.Changes)
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick

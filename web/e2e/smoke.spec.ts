@@ -147,6 +147,7 @@ test('first run: setup, sign-in, node, space, live run, replay', async ({ page }
   await page.getByRole('navigation', { name: 'Space sections' }).getByRole('link', { name: /Inbox/ }).click()
   await page.getByRole('button', { name: 'New item' }).click()
   const editor = page.getByRole('textbox', { name: 'Item text' })
+  await expect(editor).toBeFocused() // the body is focused when the dialog opens
   await editor.click()
   await page.keyboard.type('Settlement retries fail on weekends')
   await page.keyboard.press('Enter')

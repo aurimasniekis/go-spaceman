@@ -12,6 +12,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   per-run usage by trusted reference, budget refusals and the budget check on run-token mint. Claude Code's default
   model now works through the gateway (K-13 resolved on the demo gateway).
 
+### Fixed
+- A person's response to a human action whose requester had ended (for example control's own question, answered after
+  control stopped) became undeliverable when no control was running: control was not auto-started for it, and a
+  control started later was not told about it. With control auto-start on, it now goes to control, starts control,
+  and the control (or one launched by hand later) is told once about each unacknowledged response (ADR-0056 note).
+- The "New inbox item" dialog focuses the item text when it opens, instead of the title.
+
 ## [0.1.0-rc.9] - 2026-11-07
 
 Ninth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): Claude Code settings on

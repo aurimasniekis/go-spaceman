@@ -151,6 +151,12 @@ ORDER BY created_at DESC LIMIT 1;
 -- name: CountWantedControlRuns :one
 SELECT count(*) FROM runs WHERE space_id = ? AND kind = 'control' AND desired = 'running';
 
+-- name: SpaceHasControl :one
+-- A space control auto-start can start control in: it had a control run, or it has a space role of kind control (ADR-0056).
+SELECT CAST(EXISTS (SELECT 1 FROM runs WHERE runs.space_id = sqlc.arg(space_id) AND runs.kind = 'control')
+  OR EXISTS (SELECT 1 FROM space_roles sr JOIN role_templates t ON t.id = sr.template_id WHERE sr.space_id = sqlc.arg(space_id) AND t.kind = 'control')
+  AS INTEGER) AS has;
+
 -- name: CountHumanActionsByRunSince :one
 SELECT count(*) FROM human_actions WHERE requester_run = ? AND type = ? AND created_at > ?;
 

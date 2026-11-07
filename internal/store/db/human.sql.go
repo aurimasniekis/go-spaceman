@@ -2151,6 +2151,20 @@ func (q *Queries) SetHumanSchedule(ctx context.Context, arg SetHumanSchedulePara
 	return err
 }
 
+const spaceHasControl = `-- name: SpaceHasControl :one
+SELECT CAST(EXISTS (SELECT 1 FROM runs WHERE runs.space_id = ?1 AND runs.kind = 'control')
+  OR EXISTS (SELECT 1 FROM space_roles sr JOIN role_templates t ON t.id = sr.template_id WHERE sr.space_id = ?1 AND t.kind = 'control')
+  AS INTEGER) AS has
+`
+
+// A space control auto-start can start control in: it had a control run, or it has a space role of kind control (ADR-0056).
+func (q *Queries) SpaceHasControl(ctx context.Context, spaceID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, spaceHasControl, spaceID)
+	var has int64
+	err := row.Scan(&has)
+	return has, err
+}
+
 const updateHumanAssignment = `-- name: UpdateHumanAssignment :execrows
 UPDATE human_actions SET assignee = ?1, status = ?2, version = version + 1, updated_at = ?3
 WHERE id = ?4 AND version = ?5 AND status IN ('open', 'in_progress')
