@@ -38,6 +38,22 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   reads `$CLAUDE_CONFIG_DIR/settings.json` as the user settings file. Its `autoMode.environment`, `autoMode.allow` and
   `autoMode.soft_deny` lists with `"$defaults"` keep the built-in rules and add the others (21 + 1, 16 + 1 and 72 + 1
   rules). `hard_deny` isn't configurable. SpaceMan sets the profile's keys there and keeps the rest.
+- **Renderer (ADR-0064, verified 2026-11-07: `strings` on the 2.1.317 binary, and its start-up
+  as recorded in the stub harness's `fullscreen.bin`; no model call):** with no `tui` setting, Claude Code picks the
+  renderer itself: full-screen for a recent install (`fresh_install_on`, needs `firstStartVersion` in `.claude.json`,
+  fewer than 3 upsells seen) or by server-side flags (`gb_on`), else classic. Signed out in an isolated tmux it stayed
+  classic, even on a relaunch; the operator's signed-in runs used the full-screen renderer. That renderer uses the alternate screen
+  (`?1049h`), mouse tracking `?1000h ?1002h ?1003h` with SGR `?1006h`, focus events `?1004h`, synchronized output
+  `?2026h`, and a virtualized scrollback that only the program can scroll (wheel reports, PgUp/PgDn). Arrow keys
+  that look like a scroll wheel (a burst in one direction) make it show "Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll"
+  (`scroll-as-arrows`). `settings.json` `"tui": "default"` selects the classic renderer (`settings_off`, checked before
+  the fresh-install default); `"fullscreen"` forces the full-screen one. `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` (or
+  `CLAUDE_CODE_NO_FLICKER` set false) also forces the classic renderer, and `CLAUDE_CODE_NO_FLICKER=1` forces the full-screen one; both environment
+  variables are checked before `tui` (so a profile's `env` can override it). SpaceMan sets `"tui": "default"` unless the profile sets
+  `tui`. Checked live (isolated tmux, fresh `HOME` and config dir, `DISABLE_AUTOUPDATER=1`, no credentials, no prompt):
+  `"tui": "fullscreen"` gave `alternate_on=1`, `mouse_any_flag=1`, `mouse_sgr_flag=1`; `"tui": "default"` gave 0, 0, 0.
+  The "Scroll wheel is sending arrow keys" hint did not show for bursts of `ESC[A` in an empty, signed-out session
+  (it is in the operator's screenshot of a real run).
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).

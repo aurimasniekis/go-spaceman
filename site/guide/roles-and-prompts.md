@@ -92,6 +92,10 @@ Things to know:
 - **Nodes need SpaceMan 0.1.0-rc.9 or later.** On an older node, a run of the profile fails (`node_too_old`) rather
   than starting without its settings.
 - **In Terraform** they are the profile's `claude_settings`, written with `jsonencode`.
+- **Runs use Claude Code's classic renderer** (`"tui": "default"`) unless the profile sets `tui`, so everything a run
+  prints stays in its terminal and watchers can [scroll back](/operators/terminals#scrolling-back) without taking it
+  over. To use the full-screen renderer instead, add `"tui": "fullscreen"` under **Other settings**; watchers then see
+  only the current screen (ADR-0064).
 
 ## Space roles
 

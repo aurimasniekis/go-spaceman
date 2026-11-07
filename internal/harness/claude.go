@@ -28,6 +28,9 @@ func (Claude) Detect(ctx context.Context, binary string) proto.HarnessInfo {
 	return detect(ctx, KindClaude, binary, []string{CapFixedSessionID, CapResume, CapMCPConfig, CapProgramStatus, CapSafeInput, CapSystemPrompt, CapTranscripts, CapSkills})
 }
 
+// ClaudeTUI is the Claude Code renderer ("tui" in settings.json) runs get unless their profile sets one (ADR-0064).
+const ClaudeTUI = "default"
+
 var claudePermissionModes = map[string]bool{"default": true, "acceptEdits": true, "plan": true, "auto": true, "dontAsk": true, "bypassPermissions": true}
 
 // Build implements Harness.
@@ -88,6 +91,14 @@ func (Claude) Build(c Context) (Launch, error) {
 	own := map[string]any{}
 	for k, v := range p.ClaudeSettings {
 		own[k] = v
+	}
+	// Without a "tui" setting Claude Code may pick its full-screen renderer (alternate screen, its own virtualized
+	// scrollback; its fresh-install default once a config dir has started, or a server-side flag), as the operator's
+	// runs did: the run's terminal would then never hold earlier output, so a watch-only viewer, who sends no input, could
+	// not scroll back. The classic renderer writes to the normal screen and its scrollback. A profile that sets "tui"
+	// (for example "fullscreen") decides itself (ADR-0064, verified with Claude Code 2.1.317).
+	if _, set := own["tui"]; !set {
+		own["tui"] = ClaudeTUI
 	}
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg

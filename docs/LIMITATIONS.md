@@ -321,6 +321,12 @@
 - **Terminals do not fit the browser.** A program runs at the node's terminal size (`runner.terminal_size`, default
   160×48; runs started before that setting keep herdr-core's 200×120). The view scales the font to the width, follows
   the cursor as output arrives, and scrolls with the wheel; a watch-only view never resizes the program (ADR-0052).
+- **Scrolling back reaches only what the terminal keeps.** The live view scrolls back through the browser terminal's
+  scrollback (10,000 lines; a page reload rebuilds it from the stored recording), never by sending the run input. A
+  full-screen program on the alternate screen keeps its history itself, so watchers see only its current screen: Claude
+  Code runs therefore use its classic renderer unless the profile sets `"tui": "fullscreen"`, and other full-screen
+  programs (Codex's alternate screen, editors) are the same. During a takeover the wheel scrolls such a program only
+  when it asks for mouse input (or xterm's alternate-scroll mode) (ADR-0064).
 - **Live views and many tabs over plain HTTP.** A browser opens at most six HTTP/1.1 connections to a host. The change
   feed is shared by all tabs where Web Locks exist (HTTPS, or `localhost`); a hidden tab releases its live terminal after
   5 seconds. Over plain HTTP to another host each tab holds its own feed, so only a few tabs work at once: serve central

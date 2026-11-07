@@ -2306,6 +2306,10 @@
     too).
   - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
     update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
+  - **Note (2026-11-07, ADR-0064):** SpaceMan adds one key of its own, `"tui": "default"` (Claude Code's classic
+    renderer), when the profile's settings have no `tui`. The full-screen renderer, Claude Code's default for a fresh
+    configuration, keeps earlier output out of the terminal, so watchers couldn't scroll back without a takeover. A
+    profile's `tui` always wins, and the profile's other keys are written unchanged.
 
 ### ADR-0060 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
 - **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
@@ -2673,6 +2677,58 @@
   - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
 
+
+### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
+- **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a
+  takeover the wheel showed "Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll").
+- **Context:**
+  - Without a `tui` setting, Claude Code 2.1.317 chooses its renderer itself. It picks the full-screen one for a recent
+    install (`fresh_install_on`, once `.claude.json` has a `firstStartVersion`, which every launch after an instance's
+    first has) or when a server-side feature flag says so. The operator's runs used it. That renderer draws in the alternate screen with mouse tracking (DEC modes
+    1000/1002/1003, SGR 1006) and keeps its own virtualized scrollback. The terminal itself never holds earlier output:
+    the recording, the live stream and the browser's terminal have only the current screen.
+  - A watch-only viewer sends no input (SM-UI-004), so they can't ask the program to scroll. The operator had to switch
+    to Replay to read a long reply, and Replay shows the same screens.
+  - ghostty-web 0.4.0 turns every wheel event in an alternate screen into `ESC[A`/`ESC[B` arrow keys, whatever mouse
+    mode the program asked for. In watch mode nothing listens, so the wheel did nothing. During a takeover the arrows
+    reached Claude Code, which answers them with the warning above instead of scrolling.
+  - On a normal screen ghostty-web keeps a 10,000-line scrollback, but it jumps to the bottom on every write, so a
+    viewer reading earlier output was pulled back about once a second.
+- **Decision:**
+  - **Claude Code runs get `"tui": "default"`** (the classic renderer) in the run's `settings.json`, unless the
+    profile's Claude Code settings (ADR-0059) set `tui`. The classic renderer writes to the normal screen, so the
+    output goes into the terminal's scrollback, the recording and the live stream. A profile that sets
+    `"tui": "fullscreen"` keeps the full-screen renderer and accepts that watchers can't scroll back. Verified in the
+    2.1.317 binary: the `tui` setting is checked before the fresh-install default (`settings_off`).
+  - **The web view handles the wheel and touch itself** (`web/src/features/terminal/scroll.ts`). Scrolling up moves
+    the box around the terminal first, then the scrollback; scrolling down goes back the same way. In an alternate
+    screen, a watch-only viewer sends nothing. A takeover holder sends what a terminal would: SGR (or X10) mouse-wheel
+    reports while the program tracks the mouse, arrow keys only under xterm's alternate-scroll mode 1007, else nothing.
+    ghostty-web's arrow keys never reach anyone.
+  - The view keeps a scrolled-up viewer on the same lines while output arrives, and shows **Jump to live** until they
+    return to live output.
+- **Alternatives:**
+  - **(a) A client-side scrollback rebuilt from the stream:** a full-screen renderer repaints its screen in place, so
+    lines that scroll out of its view never pass through the terminal as scrolled-off lines. Rebuilding them means
+    guessing from screen diffs, and the guesses would be wrong for any redraw that isn't a plain scroll.
+  - **(b) A server-side scrollback snapshot:** the node has the same screens as the browser; there is nothing more to
+    snapshot.
+  - **(c) A "recent output" pane fed by the transcript:** it would show the conversation, not the terminal, and needs
+    its own view and its own access rules for transcripts in the terminal page.
+  - **`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` in the run's environment:** it has the same effect, but a profile
+    couldn't opt back in without a new setting. `tui` already is one.
+- **Consequences:**
+  - Watchers can scroll back through everything a Claude Code run printed, up to the browser terminal's 10,000-line
+    scrollback, on desktop and on a phone (touch). No input is sent.
+  - Claude Code's classic renderer repaints its input area on the normal screen. The recording is somewhat larger than
+    with the full-screen renderer and the screen may flicker briefly during a repaint. Runs started before this change
+    keep the renderer they started with until they are relaunched.
+  - The `tui` key is SpaceMan's in the run's `settings.json` (ADR-0059): a `/tui fullscreen` typed during a takeover is
+    undone at the next launch. Set it in the profile instead.
+  - Other full-screen programs (and Claude Code with `"tui": "fullscreen"`) still can't be scrolled back while
+    watching; in a takeover the wheel scrolls them the way it would in a desktop terminal (LIMITATIONS, Web UI).
+  - Not security-relevant: watch mode still sends no input, and a takeover holder's wheel reports go through the same
+    audited takeover input as their keys.
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
