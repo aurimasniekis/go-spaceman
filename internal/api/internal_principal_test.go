@@ -54,3 +54,32 @@ func TestInternalPrincipalRefusedForPersonalOperations(t *testing.T) {
 		}
 	}
 }
+
+// InProcessHandler (ADR-0063) serves only huma operations, only to a caller that injected a principal: a request
+// without one is unauthenticated (a bearer header is ignored), and neither the watch stream nor raw routes exist on it.
+func TestInProcessHandler(t *testing.T) {
+	t.Parallel()
+	d := &Deps{Raw: []RawRoute{{Pattern: "GET " + Prefix + "/raw", Handler: func(*Deps) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }
+	}}}}
+	h := d.InProcessHandler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer spm_whatever")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get(RequestIDHeader) == "" {
+		t.Fatalf("no principal: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, path := range []string{"/watch", "/raw"} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+path, nil).WithContext(WithInProcessPrincipal(context.Background(), internalPrincipal())))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s: %d", path, rec.Code)
+		}
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/auth/me", nil).WithContext(WithInProcessPrincipal(context.Background(), internalPrincipal())))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "not available through the SpaceMan MCP") {
+		t.Fatalf("internal principal on a session rule: %d %s", rec.Code, rec.Body.String())
+	}
+}

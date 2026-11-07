@@ -169,3 +169,20 @@ func Permissions(r Role) []Permission {
 	}
 	return out
 }
+
+// RoleHas reports whether a role holds perm in some domain: admins hold every permission; a GlobalOnly permission is
+// still only effective in the "*" domain (see Engine.Allowed).
+func RoleHas(r Role, p Permission) bool {
+	if r == RoleAdmin {
+		return true
+	}
+	if !r.Valid() {
+		return false
+	}
+	for _, q := range Permissions(r) {
+		if q.Object == p.Object && q.Action == p.Action {
+			return true
+		}
+	}
+	return false
+}

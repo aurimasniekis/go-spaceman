@@ -193,8 +193,10 @@
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
 ## SpaceMan MCP (in progress)
-- **Not usable yet.** The identity it acts through (an internal API token, ADR-0063, Proposed) exists, but no server,
-  tool or endpoint uses it yet (AM-3 to AM-10).
+- **Not usable yet.** The identity it acts through (an internal API token, ADR-0063, Proposed) and the tool catalog
+  and executor exist, but no server or endpoint serves them yet (AM-5 to AM-10).
+- **No space listing.** Operations whose rule is "any signed-in principal, filtered by grants" (`list-spaces`,
+  event connections and templates, attention) are excluded with the personal ones, so an agent needs a space's ID.
 - **Full admin by default, by design.** The default preset is `admin` on every space and the token never expires
   (operator decisions for a trusted infra space). An agent with these tools can do what its owner can, short of the
   hard exclusions; prompt injection into that space is accepted risk T-33.

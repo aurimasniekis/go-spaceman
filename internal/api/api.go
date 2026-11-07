@@ -25,6 +25,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
@@ -137,6 +138,43 @@ func Register(mux *http.ServeMux, d *Deps) huma.API {
 		f(api, d)
 	}
 	return api
+}
+
+// inProcessPrincipalKey carries the principal of an in-process call. Only InProcessHandler reads it: the HTTP
+// Handler never does, so nothing a client sends can set it.
+type inProcessPrincipalKey struct{}
+
+// WithInProcessPrincipal returns ctx carrying p for a request served by InProcessHandler.
+func WithInProcessPrincipal(ctx context.Context, p *auth.Principal) context.Context {
+	return context.WithValue(ctx, inProcessPrincipalKey{}, p)
+}
+
+// InProcessHandler serves the API's operations to callers inside central (the SpaceMan MCP, ADR-0063) with the
+// principal they inject through WithInProcessPrincipal, instead of authenticating a cookie or bearer token. Every
+// operation still runs its rule (authorizeOps), validation, idempotency and audit exactly as over HTTP; a request
+// without a principal is unauthenticated. Only huma operations are served: the watch stream and the raw routes
+// (uploads, downloads, exports) are not.
+func (d *Deps) InProcessHandler() http.Handler {
+	mux := http.NewServeMux()
+	Register(mux, d)
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, _ := r.Context().Value(inProcessPrincipalKey{}).(*auth.Principal)
+		if p == nil {
+			writeProblem(w, errUnauthenticated())
+			return
+		}
+		ids := []obs.CorrelationID{}
+		if p.User != nil {
+			ids = append(ids, obs.UserID(p.User.ID))
+		}
+		if p.TokenID != "" {
+			ids = append(ids, obs.TokenID(p.TokenID))
+		}
+		ctx := context.WithValue(obs.WithIDs(r.Context(), ids...), principalKey{}, p)
+		mux.ServeHTTP(w, r.WithContext(ctx))
+	})
+	h = d.limitBody(h)
+	return d.withRequest(h)
 }
 
 // Handler returns the complete API handler with its middleware: security headers, request IDs, client IP, body

@@ -22,3 +22,6 @@ func MissingRules(spec *huma.OpenAPI, d *Deps) []string {
 	sort.Strings(missing)
 	return missing
 }
+
+// RuleFor returns the authorization rule of an operation (core or Extra).
+func (d *Deps) RuleFor(op string) (Rule, bool) { return d.ruleFor(op) }

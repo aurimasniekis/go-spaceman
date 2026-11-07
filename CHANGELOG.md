@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Internal API tokens: owned by an administrator, scoped like any API token, without a secret, and never accepted as
     a bearer token. Their calls are audited with the owner, the token (`via spaceman_mcp:<token>`) and the agent run.
   - Migration 0041 (forward-only) adds the gateway server kind and its internal token, and the token purpose.
+  - The tool catalog (AM-3): one tool per API operation, with a reviewed classification (read, write, dangerous,
+    sensitive-read, excluded) of every operation, presets and a filter by the token's grants.
+  - The executor (AM-4): tools run through the API's own handler chain in process, with the internal token's
+    principal; retried creates are idempotent, API problems are tool errors and results are capped.
 - Shipped event templates for Harbor Pilot events (HP-T6, ADR-0060 §7): `harbor-pilot-budget` (budget warnings and
   exhausted budgets; `project_id` sends a project's budgets to its space), `harbor-pilot-quota` (provider quota windows
   that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including

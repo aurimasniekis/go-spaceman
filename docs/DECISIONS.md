@@ -2645,8 +2645,9 @@
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design;
   question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
-  Implemented so far (AM-2): migration 0041, the internal token and its principal, the audit attribution and the
-  approver exclusion. No server, tool or endpoint uses them yet (AM-3 to AM-10). Requirements SM-MCP-005..009; threat
+  Implemented so far: migration 0041, the internal token and its principal, the audit attribution and the approver
+  exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4). No server or endpoint serves
+  them yet (AM-5 to AM-10). Requirements SM-MCP-005..009; threat
   T-33.
 - **Context:**
   - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
@@ -2692,6 +2693,16 @@
      `read`, `write`, `dangerous`, `sensitive-read` or `excluded`, and `TestEveryOperationIsClassified` keeps it
      complete (AM-3). Calls run through the API's own handler chain (authorization, validation, idempotency, audit)
      with the internal principal (AM-4).
+     - Presets (`internal/spacemanmcp`): `read` (read tools; viewer grants on one space), `operate` (read and write
+       tools; operator grants on one space), `admin` (read and write tools; `admin@*`, the default) and `custom` (only
+       named tools). Dangerous and sensitive-read tools are offered only when a server names them. The catalog also
+       hides tools the token's grants can never reach.
+     - Session-rule operations ("any signed-in principal, filtered by grants", such as `list-spaces`) are excluded with
+       the personal ones, because the API refuses internal principals on every Session rule. Offering the harmless ones
+       needs a rule flag that tells them apart (open, AM-5).
+     - Creates get an `Idempotency-Key` derived from the run, the token, the operation and the canonical arguments, so
+       a retried call returns the first result. Problems become tool errors; results above the server's cap are
+       replaced by their size and a note.
   6. **Hard exclusions (kept, operator decision).** Never exposed, whatever the server's settings:
      - every operation whose rule is Public, Session, UserOnly, Reauth or MFA (sign-in, own account, step-up, token
        creation, user writes, root token, break-glass). The API also refuses an internal principal on these rules
