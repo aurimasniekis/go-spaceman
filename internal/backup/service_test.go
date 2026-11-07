@@ -155,7 +155,7 @@ func TestServiceScheduleAndFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(f.ctx)
 	done := make(chan struct{})
 	go func() { svc.Run(ctx); close(done) }()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second) // only bounds a failing test; parallel tests under -race are slow
 	for {
 		st, err := svc.Status(f.ctx)
 		must(t, err)
