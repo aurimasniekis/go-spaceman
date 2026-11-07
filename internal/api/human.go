@@ -16,7 +16,7 @@ import (
 // HumanRules are the authorization rules of the human-action operations. The global list is filtered per space;
 // approval decisions additionally need approval:decide in the action's space.
 var HumanRules = map[string]Rule{
-	"list-pending-human-actions": {Session: true},
+	"list-pending-human-actions": FilteredRead(),
 	"list-human-actions":         InSpace(authz.HumanRead),
 	"get-human-action":           InSpace(authz.HumanRead),
 	"create-human-action":        InSpace(authz.HumanRespond),

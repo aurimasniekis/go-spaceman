@@ -15,7 +15,7 @@ import (
 
 // LimitRules are the authorization rules of the limits model and space schedules (SM-LIMIT-*).
 var LimitRules = map[string]Rule{
-	"list-limit-definitions": {Session: true},
+	"list-limit-definitions": FilteredRead(),
 	"get-space-limits":       InSpace(authz.SpaceConfigRead),
 	"set-space-limits":       InSpace(authz.SpaceConfigWrite),
 	"list-schedules":         InSpace(authz.SpaceConfigRead),

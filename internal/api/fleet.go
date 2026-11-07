@@ -20,7 +20,7 @@ var FleetRules = map[string]Rule{
 	"set-node-state":     StepUp(authz.NodeWrite),
 	"update-node":        Global(authz.NodeWrite),
 
-	"list-spaces":     {Session: true},
+	"list-spaces":     FilteredRead(),
 	"create-space":    Global(authz.SpaceCreate),
 	"get-space":       InSpace(authz.SpaceRead),
 	"update-space":    InSpace(authz.SpaceWrite),

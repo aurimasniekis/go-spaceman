@@ -138,6 +138,22 @@ func TestSpacemanMCPExecutorParity(t *testing.T) {
 		}
 	}
 
+	// A read filtered by the principal's grants (a Session rule with Filtered) is a tool: it lists only the space Vera's
+	// token reaches, as the same read over HTTP does.
+	if res, isErr := call(veraMCP, "list_spaces", map[string]any{}); isErr || res.Status != 200 {
+		t.Fatalf("list_spaces: %+v", res)
+	} else {
+		var l struct {
+			Items []struct {
+				ID string `json:"id"`
+			} `json:"items"`
+		}
+		_ = json.Unmarshal(res.Body, &l)
+		if len(l.Items) != 1 || l.Items[0].ID != a.ID {
+			t.Errorf("list_spaces: %s", res.Body)
+		}
+	}
+
 	// A retried create (same run, same arguments) is the first create, not a second space.
 	adaMCP := principal(ada, adminGrants, "run_ada")
 	args := map[string]any{"body": map[string]any{"slug": "gamma", "name": "Gamma", "node_id": en.Node.ID}}

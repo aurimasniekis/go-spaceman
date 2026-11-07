@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 )
@@ -94,6 +96,42 @@ func TestInProcessHandler(t *testing.T) {
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/auth/me", nil).WithContext(WithInProcessPrincipal(context.Background(), p)))
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "only an internal principal") {
 			t.Errorf("%s principal: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// A Session read filtered by the principal's grants (Rule.Filtered) is open to an internal principal; a personal
+// Session operation is not. Both stay open to an ordinary bearer token.
+func TestInternalPrincipalOnFilteredReads(t *testing.T) {
+	t.Parallel()
+	ok := func(api huma.API, _ *Deps) {
+		for _, id := range []string{"probe-filtered", "probe-personal"} {
+			huma.Register(api, huma.Operation{OperationID: id, Method: http.MethodGet, Path: "/" + id, DefaultStatus: http.StatusNoContent},
+				func(context.Context, *struct{}) (*struct{}, error) { return nil, nil })
+		}
+	}
+	d := &Deps{Extra: []func(huma.API, *Deps){ok}, ExtraRules: map[string]Rule{"probe-filtered": FilteredRead(), "probe-personal": {Session: true}}}
+	h := d.InProcessHandler()
+	mux := http.NewServeMux()
+	Register(mux, d)
+	bearer := &auth.Principal{User: &auth.User{ID: "usr_owner"}, SessionID: "atk_ci", TokenID: "atk_ci", Method: auth.MethodToken}
+	for _, tc := range []struct {
+		path      string
+		internal  int
+		bearerGot int
+	}{
+		{"/probe-filtered", http.StatusNoContent, http.StatusNoContent},
+		{"/probe-personal", http.StatusForbidden, http.StatusNoContent},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+tc.path, nil).WithContext(WithInProcessPrincipal(context.Background(), internalPrincipal())))
+		if rec.Code != tc.internal {
+			t.Errorf("internal %s: %d %s", tc.path, rec.Code, rec.Body.String())
+		}
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+tc.path, nil).WithContext(context.WithValue(context.Background(), principalKey{}, bearer)))
+		if rec.Code != tc.bearerGot {
+			t.Errorf("bearer %s: %d %s", tc.path, rec.Code, rec.Body.String())
 		}
 	}
 }

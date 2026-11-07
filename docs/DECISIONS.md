@@ -2738,12 +2738,10 @@
        them by name. Every dangerous tool is flagged approval-required whatever the preset (`Tool.ApprovalRequired`,
        enforced in AM-5).
      - The catalog also hides tools that the token's grants can never reach.
-     - Session-rule reads are excluded for now. These operations allow "any signed-in principal, filtered by grants",
-       such as `list-spaces`, event connections and templates, and attention. The API refuses internal principals on
-       every Session rule, so these reads are excluded along with the personal operations. The classification already
-       gives them `read`.
-     - AM-5 must add a rule flag for reads filtered by the principal, so that these operations become tools while
-       personal operations (sign-in, MFA, own session) stay excluded.
+     - Session-rule reads filtered by the principal are read tools. These operations allow "any signed-in principal,
+       filtered by grants", such as `list-spaces`, event connections and templates, and attention; their rule carries
+       `Filtered` (`api.FilteredRead`, AM-5). The API refuses internal principals on every other Session rule, so
+       personal operations (sign-in, MFA, own session, own tokens and preferences) stay excluded.
      - Creates get an `Idempotency-Key` derived from the run, the token, the operation and the canonical arguments, so
        a retried call returns the first result. Problems become tool errors; results above the server's cap are
        replaced by their size and a note.

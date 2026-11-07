@@ -100,7 +100,7 @@ func TestHardExclusions(t *testing.T) {
 	c := catalog(t)
 	for _, id := range []string{
 		// Need a person at the keyboard (rule flags).
-		"login", "get-me", "list-spaces", "create-api-token", "revoke-my-token", "create-user", "set-user-grants", "issue-reset",
+		"login", "get-me", "create-api-token", "revoke-my-token", "create-user", "set-user-grants", "issue-reset",
 		"revoke-any-token", "rotate-root-token", "acknowledge-break-glass", "start-takeover", "create-oidc-provider",
 		// One-time secrets.
 		"create-node", "reissue-enrollment",
@@ -110,8 +110,8 @@ func TestHardExclusions(t *testing.T) {
 		"move-human-action", "route-human-notification", "takeover-input", "send-input", "end-takeover", "renew-takeover",
 		"list-users", "get-user", "list-all-tokens", "get-root-token", "list-oidc-providers", "get-oidc-test-login",
 		"acknowledge-restore", "upload-attachment",
-		// Session-rule reads, until AM-5 adds a rule flag for reads filtered by the principal.
-		"list-event-connections", "get-attention", "list-pending-human-actions",
+		// Personal session operations (a filtered read is not one).
+		"logout", "list-my-tokens", "get-notification-preferences",
 		// Harbor Pilot connection writes need a step-up (dangerous if they ever stop needing one).
 		"put-harbor-pilot-connection", "delete-harbor-pilot-connection",
 	} {
@@ -131,14 +131,20 @@ func TestHardExclusions(t *testing.T) {
 			t.Errorf("%s: %+v, want class %s", name, tl, want)
 		}
 	}
-	// The Session-rule reads filtered by the principal carry the read class they take once AM-5 lets internal principals
-	// call them; until then they are excluded.
-	for _, id := range []string{"list-spaces", "list-event-connections", "get-event-connection", "list-event-templates",
+	// The Session-rule reads filtered by the principal (api.FilteredRead) are read tools; they are the only Session
+	// rules that are.
+	filtered := []string{"list-spaces", "list-event-connections", "get-event-connection", "list-event-templates",
 		"get-event-template", "preview-event-template", "get-attention", "list-account-kinds", "list-limit-definitions",
-		"list-pending-human-actions", "get-restore-state"} {
-		e := spacemanmcp.Table[id]
-		if _, excluded := c.Excluded()[id]; !excluded || e.Class != spacemanmcp.Read || !strings.Contains(e.Reason, "AM-5") {
-			t.Errorf("%s: excluded %v, fallback %+v", id, excluded, e)
+		"list-pending-human-actions", "get-restore-state"}
+	for _, id := range filtered {
+		if tl, ok := c.Tool(strings.ReplaceAll(id, "-", "_")); !ok || tl.Class != spacemanmcp.Read {
+			t.Errorf("%s: %+v, want a read tool", id, tl)
+		}
+	}
+	s, d := buildSpec(t)
+	for _, id := range operationIDs(s) {
+		if r, _ := d.RuleFor(id); r.Session && r.Filtered != slices.Contains(filtered, id) {
+			t.Errorf("%s: Filtered %v; review it (a filtered read must return only what the principal's grants reach)", id, r.Filtered)
 		}
 	}
 	if e := spacemanmcp.Table["put-harbor-pilot-connection"]; e.Class != spacemanmcp.Dangerous {

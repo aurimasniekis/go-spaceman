@@ -40,7 +40,7 @@ func AutoExcluded(r api.Rule) (string, bool) {
 		return "needs a recent re-authentication or a second factor: a person at the keyboard (step-up)", true
 	case r.UserOnly:
 		return "acts on the caller's own user account", true
-	case r.Session:
+	case r.Session && !r.Filtered:
 		return "a signed-in principal's own view (session rule); internal principals are refused on it", true
 	}
 	return "", false
@@ -63,17 +63,16 @@ const (
 	rPublish    = "publishes or rolls back what every space's runs execute or render"
 	rPolicy     = "changes who is asked and how for human actions"
 	rRecording  = "reads terminal recordings, which may contain anything a run printed"
-	// rFiltered marks Session-rule reads that return only what the principal's grants reach (filtered in the handler).
-	// The API refuses internal principals on every Session rule today, so they stay excluded until a rule flag tells
-	// them apart from personal operations (AM-5); this entry is the class they then take.
-	rFiltered = "reads only what the principal's grants reach (filtered in the handler); excluded until a rule flag separates it from personal session operations (AM-5)"
+	// rFiltered marks Session-rule reads that return only what the principal's grants reach (filtered in the handler,
+	// api.Rule.Filtered). Internal principals may call them; personal Session operations stay excluded.
+	rFiltered = "reads only what the principal's grants reach (filtered in the handler)"
 )
 
 // Table is the reviewed classification of every API operation that AutoExcluded does not exclude. An entry for an
 // automatically excluded operation is the class it falls back to if its rule ever stops excluding it.
 // TestEveryOperationIsClassified keeps the table complete: a new operation needs an entry (and a review).
 var Table = map[string]Entry{
-	// Session-rule reads filtered by the principal's grants (excluded now, read once AM-5 adds the rule flag).
+	// Session-rule reads filtered by the principal's grants (api.FilteredRead).
 	"list-spaces":                {Read, rFiltered},
 	"list-event-connections":     {Read, rFiltered},
 	"get-event-connection":       {Read, rFiltered},
