@@ -1,14 +1,18 @@
 package events
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
@@ -64,6 +68,37 @@ func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
 	for _, b := range before {
 		if bySlug[b.Slug].ID != b.ID || bySlug[b.Slug].Versions[0].ID != b.Versions[0].ID {
 			t.Errorf("%s was seeded again", b.Slug)
+		}
+	}
+}
+
+// A user's template that already uses a built-in's slug keeps it: the built-in is skipped, with a warning naming the
+// slug, and the other built-ins are seeded without one.
+func TestSeedBuiltinsWarnsWhenASlugIsTaken(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.Open(t, storetest.WithClock(clock.System{}))
+	kr := keyringtest.Load(t, s)
+	aw := audit.NewWriter(kr)
+	ch := changefeed.New(nil)
+	att := attachments.New(s, attachments.NewLocal(t.TempDir()), aw, attachments.Options{})
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	svc := New(s, kr, aw, ch, inbox.New(s, aw, ch, att), att, Options{Metrics: metrics.New(), Log: log})
+
+	mine, err := svc.CreateTemplate(ctx, admin, "github-check-suite", "My check suites", "", template.Definition{Subject: "evt.ci.suite", Title: "Suite"})
+	must(t, err)
+	must(t, svc.SeedBuiltins(ctx))
+	if n := strings.Count(logs.String(), "level=WARN"); n != 1 || !strings.Contains(logs.String(), "slug=github-check-suite") {
+		t.Fatalf("warnings: %q", logs.String())
+	}
+	ts, err := svc.ListTemplates(ctx)
+	must(t, err)
+	if len(ts) != len(builtins) {
+		t.Fatalf("%d templates, %d built-ins", len(ts), len(builtins))
+	}
+	for _, x := range ts {
+		if (x.Slug == "github-check-suite") != (x.ID == mine.ID) || x.Builtin == (x.ID == mine.ID) {
+			t.Errorf("%s: id %s, builtin %v", x.Slug, x.ID, x.Builtin)
 		}
 	}
 }

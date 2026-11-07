@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"regexp"
 	"time"
 
@@ -60,7 +61,10 @@ var builtins = []builtin{
 // SeedBuiltins creates the built-in templates (published version 1) when they do not exist yet.
 func (svc *Service) SeedBuiltins(ctx context.Context) error {
 	for _, b := range builtins {
-		if _, err := svc.s.R().GetEventTemplateBySlug(ctx, b.slug); err == nil {
+		if r, err := svc.s.R().GetEventTemplateBySlug(ctx, b.slug); err == nil {
+			if r.Builtin != 1 {
+				svc.o.Log.Warn("built-in event template not seeded: a template already uses its slug", slog.String("slug", b.slug))
+			}
 			continue
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
