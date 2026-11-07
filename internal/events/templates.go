@@ -53,8 +53,8 @@ var builtins = []builtin{
 	{"github-pr-review", "GitHub pull request reviews", "Submitted pull request reviews: approved, changes requested or commented (evt.github.<account>.webhook.pull_request_review.submitted).", template.GitHubPullRequestReview},
 	{"github-pr-review-comment", "GitHub pull request review comments", "New inline comments on pull request diffs (evt.github.<account>.webhook.pull_request_review_comment.created).", template.GitHubPullRequestReviewComment},
 	{"github-issue-comment", "GitHub issue comments", "New comments on issues, not pull requests (evt.github.<account>.webhook.issue_comment.created).", template.GitHubIssueComment},
-	{"github-workflow-run", "GitHub Actions workflow runs", "Completed workflow runs, by default only failed, timed out or cancelled ones (evt.github.<account>.webhook.workflow_run.completed).", template.GitHubWorkflowRun},
-	{"github-check-suite", "GitHub check suites", "Completed check suites of any CI app, by default only failed, timed out or cancelled ones (evt.github.<account>.webhook.check_suite.completed).", template.GitHubCheckSuite},
+	{"github-workflow-run", "GitHub Actions workflow runs", "Completed workflow runs, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.workflow_run.completed).", template.GitHubWorkflowRun},
+	{"github-check-suite", "GitHub check suites", "Completed check suites of any CI app, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.check_suite.completed).", template.GitHubCheckSuite},
 }
 
 // SeedBuiltins creates the built-in templates (published version 1) when they do not exist yet.
