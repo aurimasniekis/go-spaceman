@@ -2643,7 +2643,8 @@
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
-- **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design.
+- **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design;
+  question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
   Implemented so far (AM-2): migration 0041, the internal token and its principal, the audit attribution and the
   approver exclusion. No server, tool or endpoint uses them yet (AM-3 to AM-10). Requirements SM-MCP-005..009; threat
   T-33.
@@ -2676,14 +2677,17 @@
        owner loses. Revoking the token (Tokens page, or revoking its parent), disabling the owner, deleting or disabling
        the server (revokes the token in the same transaction, AM-5), revoking the grant or reaching the expiry stops it
        on the next call.
+     - A child token's expiry is not bounded by its parent's expiry: only revocation cascades from parent to child.
+       AM-5 will cap the child's TTL at the parent's expiry.
      - "Re-issue" revokes the token and mints a new one in one transaction: for grant changes, owner transfer and expiry
        renewal.
   3. **Audit.** Calls are attributed to the owner, with `via: spaceman_mcp:<token id>` and `run: <run id>`
      (`audit.Actor.Run`, `api.Actor`). The gateway's `mcp_server.tool_called` event also gains the operation and class
      (AM-5).
-  4. **Never an approver.** The approver re-check (SM-APPR-003) refuses any `spaceman_mcp:` actor, any actor with a
-     run, and any internal token named as an API token. The approval operations themselves are excluded (below).
-  5. **Tool surface: one tool per API operation** (operator decision, Q3 a), generated from the build's in-memory API
+  4. **Never an approver.** The approver re-check (SM-APPR-003) refuses any `spaceman_mcp:` actor and any internal
+     token named as an API token. (A decision's stored actor carries no run, so the check keys on `via`.) The approval
+     operations themselves are excluded (below).
+  5. **Tool surface: one tool per API operation** (operator decision on plan question Q8), generated from the build's in-memory API
      document and the `Rule` table, named `<slug>__<operation_id>`. A reviewed classification puts each operation in
      `read`, `write`, `dangerous`, `sensitive-read` or `excluded`, and `TestEveryOperationIsClassified` keeps it
      complete (AM-3). Calls run through the API's own handler chain (authorization, validation, idempotency, audit)
@@ -2702,14 +2706,14 @@
      - **Preset: full admin on all spaces** (`admin@*`), labelled "infra" in the UI. Narrower presets (read-only or
        operate, one space or all) stay available.
      - **Grant: the control role** of the chosen space.
-     - **Approvals: none by default, but dangerous tools always need one** (Q1 b): deletes and purges, retention runs,
+     - **Approvals: none by default, but dangerous tools always need one** (operator decision on plan question Q3): deletes and purges, retention runs,
        harness profile settings (T-32), diagnostic launches, SSH key generation and rotation, account and event
        connection secrets, prompt, skill, role template and human-type publication, HTTP MCP server and grant writes,
        node state and updates, relocations. This needs a synthetic one-use policy in `internal/approvals`
        (`Gate.Require`, AM-5). Writes can be gated per server.
-     - **Expiry: never** by default (Q2 a); 1–366 days on request.
+     - **Expiry: never** by default (operator decision on plan question Q5); 1–366 days on request.
      - Only control and worker runs get the tools; KB, dreamer and diagnostic runs never do.
-  8. **External endpoint in this release** (Q4 b, AM-10, SM-MCP-009). Central also serves the tool surface at
+  8. **External endpoint in this release** (operator decision on plan question Q9; AM-10, SM-MCP-009). Central also serves the tool surface at
      `/api/v1/mcp` for operators' own MCP clients, authenticated with a bearer API token (never an internal one), with
      the same classification, exclusions and approval rules.
   9. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed token
@@ -2720,14 +2724,14 @@
 - **Alternatives:**
   - **A first-class service principal** (`svc:<id>`), independent of any person. Access would survive admin turnover
     without a re-issue, but it roughly doubles the authentication work (new subject kind, grants, management, audit) and
-    adds an identity nobody is accountable for. Rejected for now (Q1).
+    adds an identity nobody is accountable for. Rejected for now (plan question Q1).
   - **Register central's own HTTP API as an ordinary `http` server**, with a bearer token in its sealed headers. It
     needs a private-address exemption for loopback, keeps a real admin secret at rest, and adds a network hop to itself.
   - **A node-side binary with the token in the run's secrets file.** It puts an administrator secret within the agent's
     reach on the node, needs a protocol minor and collides with Harbor Pilot's secrets delivery (ADR-0060).
   - **Three meta-tools** (search, describe, call) instead of one tool per operation: smaller catalogs, but every call
     is opaque to approval policies and to the harness's own tool permissions. Revisit if `admin@*` (about 150 tools)
-    strains a harness's context (Q3).
+    strains a harness's context (plan question Q8).
   - **Read-only, one space, 90-day expiry and writes gated by default** (the plan's recommendation): safer defaults,
     but the operator chose full admin, no expiry and no approvals for their trusted infra space; dangerous tools stay
     gated either way.

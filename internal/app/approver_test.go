@@ -50,7 +50,6 @@ func TestApproverRecheckRefusesSpacemanMCP(t *testing.T) {
 		"user":                    {audit.Actor{Type: audit.ActorUser, ID: u.ID}, true},
 		"bearer token":            {audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "api_token:" + bearer.ID}, true},
 		"spaceman mcp":            {audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: auth.ViaSpacemanMCP + internal.ID}, false},
-		"spaceman mcp, run only":  {audit.Actor{Type: audit.ActorUser, ID: u.ID, Run: "run_x"}, false},
 		"internal token as token": {audit.Actor{Type: audit.ActorUser, ID: u.ID, Via: "api_token:" + internal.ID}, false},
 	} {
 		if got := c.approverStillAuthorized(ctx, tc.by, space); got != tc.want {

@@ -753,7 +753,7 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		}
 		subjects = []string{auth.RootSubject(by.ID)}
 	case audit.ActorUser:
-		if strings.HasPrefix(by.Via, auth.ViaSpacemanMCP) || by.Run != "" {
+		if strings.HasPrefix(by.Via, auth.ViaSpacemanMCP) {
 			// An agent acting through a SpaceMan MCP server is never an approver (ADR-0063).
 			return false
 		}
