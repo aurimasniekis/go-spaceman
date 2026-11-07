@@ -350,8 +350,33 @@ func TestDeleteConnectionWaitsForRunTokens(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// A live run token blocks too (its revocation needs the parent); once it has expired, it no longer does.
+	if err := s.W().TxNamed(ctx, "run token", func(tx *store.Tx) error {
+		for _, q := range []string{
+			`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by, updated_at)
+			 VALUES ('run_1', 'spc_a', 'nod_1', 1, 'worker', 'implementor', 'claude-code', 'ins_1', 'running', 'running', '{}', 0, 't', 0)`,
+			`INSERT INTO run_gateway_credentials (run_id, space_id, credential_id, token_enc, expires_at, created_at) VALUES ('run_1', 'spc_a', 'crd_run', x'00', ?, 0)`,
+		} {
+			if _, err := tx.SQL.ExecContext(ctx, q, time.Now().Add(time.Hour).UnixMicro()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ae = appErr(t, svc.DeleteConnection(ctx, admin, c.Version), apperr.CodePrecondition)
+	if !strings.Contains(ae.Message, "1 unexpired tokens") {
+		t.Fatalf("live run token: %q", ae.Message)
+	}
+	if err := s.W().TxNamed(ctx, "expire run token", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE run_gateway_credentials SET expires_at = 1 WHERE run_id = 'run_1'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.DeleteConnection(ctx, admin, c.Version); err != nil {
-		t.Fatalf("expired pending revocation still blocks: %v", err)
+		t.Fatalf("expired pending revocation or run token still blocks: %v", err)
 	}
 }
 

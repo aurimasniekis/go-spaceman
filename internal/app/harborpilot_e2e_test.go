@@ -10,7 +10,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
@@ -269,4 +271,69 @@ func TestHarborPilotCanaryTokensLeakNowhere(t *testing.T) {
 	if p, err := h.c.HarborPilot.ParentToken(ctx); err != nil || p != parent {
 		t.Fatalf("parent token: %v", err)
 	}
+}
+
+// ADR-0060 decision 2 (HP-T2 review): replacing or deleting the Harbor Pilot connection is a step-up operation
+// (StepUp(AccountWrite)): a global administrator's browser session that signed in more than the reauthentication window
+// ago is refused with reauth_required until it re-authenticates with its password and second factor; reading the
+// connection needs no step-up.
+func TestHarborPilotConnectionNeedsStepUp(t *testing.T) {
+	t.Parallel()
+	for _, op := range []string{"put-harbor-pilot-connection", "delete-harbor-pilot-connection"} {
+		if r := api.HarborPilotRules[op]; !r.Reauth || !r.MFA || r.Perm != authz.AccountWrite {
+			t.Fatalf("%s rule %+v, want StepUp(account:write)", op, r)
+		}
+	}
+	h := newHarness(t)
+	f := hpfake.New(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	const pw = "correct horse battery staple"
+	expect(t, root.do("POST", "/users", map[string]any{"email": "gina@example.com", "display_name": "Gina", "password": pw,
+		"grants": []map[string]string{{"role": "admin", "domain": "*"}}}), 201)
+
+	// Browser sign-in with forced TOTP enrollment.
+	ui := h.client()
+	r := ui.do("POST", "/auth/login", map[string]string{"email": "gina@example.com", "password": pw})
+	expect(t, r, 200)
+	var me api.Me
+	r.json(t, &me)
+	ui.csrf = me.CSRFToken
+	r = ui.do("POST", "/auth/mfa/enroll", nil)
+	expect(t, r, 200)
+	var enr api.TOTPEnrollment
+	r.json(t, &enr)
+	secret, err := auth.DecodeTOTPSecret(enr.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, ui.do("POST", "/auth/mfa/enroll/confirm", map[string]string{"code": auth.TOTPCode(secret, auth.TOTPStep(h.clk.Now()))}), 200)
+	h.clk.Advance(30 * time.Second)
+	r = ui.do("POST", "/auth/mfa/verify", map[string]string{"code": auth.TOTPCode(secret, auth.TOTPStep(h.clk.Now()))})
+	expect(t, r, 200)
+	r.json(t, &me)
+	ui.csrf = me.CSRFToken
+
+	conn := map[string]any{"base_url": f.URL(), "allow_insecure_http": true, "parent_token": f.Parent}
+	expect(t, ui.do("PUT", "/harbor-pilot/connection", conn), 200) // fresh sign-in with MFA: step-up satisfied
+
+	// Later, the session is no longer recent: reading works, replacing and deleting need a step-up.
+	h.clk.Advance(30 * time.Minute)
+	expect(t, ui.do("GET", "/harbor-pilot/connection", nil), 200)
+	for _, c := range []struct {
+		method string
+		body   any
+	}{{"PUT", conn}, {"DELETE", nil}} {
+		if p := ui.do(c.method, "/harbor-pilot/connection", c.body, "If-Match", `"1"`).problem(t); p.Code != "reauth_required" && p.Code != "mfa_required" {
+			t.Fatalf("%s without a step-up: %+v", c.method, p)
+		}
+	}
+	r = ui.do("POST", "/auth/reauth", map[string]string{"password": pw, "code": auth.TOTPCode(secret, auth.TOTPStep(h.clk.Now()))})
+	expect(t, r, 200)
+	r.json(t, &me)
+	ui.csrf = me.CSRFToken
+	expect(t, ui.do("PUT", "/harbor-pilot/connection", conn, "If-Match", `"1"`), 200)
+	expect(t, ui.do("DELETE", "/harbor-pilot/connection", nil, "If-Match", `"2"`), 204)
 }

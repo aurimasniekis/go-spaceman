@@ -228,7 +228,12 @@ func TestClientTransportGuard(t *testing.T) {
 	}
 	for addr, denied := range map[string]bool{
 		"169.254.169.254:80": true, "[fe80::1]:443": true, "0.0.0.0:443": true, "[::]:443": true, "224.0.0.1:443": true,
-		"[ff02::1]:443": true, "[::ffff:169.254.169.254]:80": true,
+		"[ff02::1]:443": true, "[::ffff:169.254.169.254]:80": true, "0.1.2.3:443": true, "255.255.255.255:443": true,
+		// AWS's IPv6 metadata address, and link-local IPv4 reached through NAT64 (both prefixes) and 6to4.
+		"[fd00:ec2::254]:80": true, "[64:ff9b::a9fe:a9fe]:80": true, "[64:ff9b:1::a9fe:a9fe]:80": true, "[2002:a9fe:a9fe::1]:80": true,
+		"[64:ff9b::e000:1]:443": true,
+		// The same translation prefixes to ordinary addresses stay allowed, as does another unique-local address.
+		"[64:ff9b::cb00:7107]:443": false, "[2002:cb00:7107::1]:443": false, "[fd00:ec2::253]:443": false, "[fd12::1]:443": false,
 		"127.0.0.1:443": false, "[::1]:443": false, "10.0.0.5:443": false, "192.168.1.2:443": false, "203.0.113.7:443": false,
 	} {
 		if err := dialControl("tcp", addr, nil); (err != nil) != denied {
