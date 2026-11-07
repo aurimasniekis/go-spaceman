@@ -9,6 +9,7 @@ Central MCP gateway: servers, grants and a space's servers.
 | [`spaceman mcp grant`](#spaceman-mcp-grant) | Which spaces and roles may call an MCP server's tools |
 | [`spaceman mcp server`](#spaceman-mcp-server) | Upstream MCP servers: list, show, add, update, check and delete |
 | [`spaceman mcp space-servers`](#spaceman-mcp-space-servers) | MCP servers granted in a space, with the roles and tools |
+| [`spaceman mcp spaceman`](#spaceman-mcp-spaceman) | SpaceMan MCP servers: SpaceMan's own API as tools for a space's runs (ADR-0063) |
 
 ## spaceman mcp grant
 
@@ -181,4 +182,89 @@ API: `list-space-mcp-grants` ([HTTP API](../api)).
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman mcp spaceman
+
+SpaceMan MCP servers: SpaceMan's own API as tools for a space's runs (ADR-0063).
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman mcp spaceman create`](#spaceman-mcp-spaceman-create) | Add a SpaceMan MCP server with a new internal token owned by you |
+| [`spaceman mcp spaceman reissue`](#spaceman-mcp-spaceman-reissue) | Replace a SpaceMan MCP server's token with a new one owned by you (new grants, expiry or owner) |
+| [`spaceman mcp spaceman update`](#spaceman-mcp-spaceman-update) | Edit a SpaceMan MCP server's tools, approval mode and limits |
+
+## spaceman mcp spaceman create
+
+Add a SpaceMan MCP server with a new internal token owned by you.
+
+The server acts through an internal API token you own, with grants within yours (default: admin on every space) and no secret. Dangerous tools always need a person's approval. Grant the server to a space role (`spaceman mcp grant add`) for its runs to see the tools.
+
+```sh
+spaceman mcp spaceman create <slug> [flags]
+```
+
+API: `create-spaceman-mcp` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman mcp spaceman create infra --name SpaceMan --enabled
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--approval` | string |  | none (default: only dangerous tools need an approval) or writes (write tools too) |
+| `--call-timeout-ms` | integer |  | call timeout |
+| `--description` | string |  | description |
+| `--enabled` | bool |  | enabled |
+| `--expires-in-days` | integer |  | token expiry in days, 1-366 (default: never) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--grant` | string, repeatable |  | grant ROLE[:SPACE] (viewer, operator or admin; SPACE an ID or slug, default * = every space and global administration); default admin on every space with the admin preset (repeatable or comma-separated) |
+| `--idempotency-key` | string |  | Idempotency-Key to send (default: a fresh random key); reuse it to retry this create safely |
+| `--max-concurrency` | integer |  | concurrent calls |
+| `--max-result-bytes` | integer |  | largest result |
+| `--name` | string |  | name |
+| `--preset` | string |  | tool set: read, operate, admin (read, write and dangerous; the default) or custom |
+| `--tool` | string, repeatable |  | add a tool by name (without the slug); dangerous and sensitive-read tools only this way or with admin (repeatable or comma-separated) |
+
+## spaceman mcp spaceman reissue
+
+Replace a SpaceMan MCP server's token with a new one owned by you (new grants, expiry or owner).
+
+```sh
+spaceman mcp spaceman reissue <server> [flags]
+```
+
+API: `get-mcp-server`, `reissue-spaceman-mcp` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--expires-in-days` | integer |  | token expiry in days, 1-366 (default: never) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--grant` | string, repeatable |  | grant ROLE[:SPACE] (viewer, operator or admin; SPACE an ID or slug, default * = every space and global administration); default admin on every space with the admin preset (repeatable or comma-separated) |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+
+## spaceman mcp spaceman update
+
+Edit a SpaceMan MCP server's tools, approval mode and limits.
+
+```sh
+spaceman mcp spaceman update <server> [flags]
+```
+
+API: `get-mcp-server`, `update-spaceman-mcp` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--approval` | string |  | none (default: only dangerous tools need an approval) or writes (write tools too) |
+| `--call-timeout-ms` | integer |  | call timeout |
+| `--description` | string |  | description |
+| `--enabled` | bool |  | enabled |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+| `--max-concurrency` | integer |  | concurrent calls |
+| `--max-result-bytes` | integer |  | largest result |
+| `--name` | string |  | name |
+| `--preset` | string |  | tool set: read, operate, admin (read, write and dangerous; the default) or custom |
+| `--tool` | string, repeatable |  | add a tool by name (without the slug); dangerous and sensitive-read tools only this way or with admin (repeatable or comma-separated) |
 

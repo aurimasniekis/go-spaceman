@@ -5776,6 +5776,14 @@
           "id": {
             "type": "string"
           },
+          "kind": {
+            "description": "http: an external server; spaceman: SpaceMan's own API, served in central (ADR-0063)",
+            "enum": [
+              "http",
+              "spaceman"
+            ],
+            "type": "string"
+          },
           "max_concurrency": {
             "description": "Calls in flight to this server across all runs",
             "format": "int64",
@@ -5792,6 +5800,9 @@
             "description": "Namespace of the server's tools: \u003cslug\u003e__\u003ctool\u003e",
             "type": "string"
           },
+          "spaceman": {
+            "$ref": "#/components/schemas/GatewaySpacemanInfo"
+          },
           "tools": {
             "description": "Upstream tools offered to agents; empty offers every tool",
             "items": {
@@ -5804,7 +5815,7 @@
             "type": "string"
           },
           "url": {
-            "description": "Streamable HTTP endpoint",
+            "description": "Streamable HTTP endpoint; empty for a spaceman server",
             "type": "string"
           },
           "version": {
@@ -5814,6 +5825,7 @@
         },
         "required": [
           "id",
+          "kind",
           "slug",
           "name",
           "url",
@@ -5868,6 +5880,262 @@
           "grant_id",
           "role",
           "tools"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "approval": {
+            "description": "none (the default): only dangerous tools need a person's approval; writes: every write tool does too",
+            "enum": [
+              "none",
+              "writes"
+            ],
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "type": "array"
+          },
+          "never_expires": {
+            "type": "boolean"
+          },
+          "owner_user_id": {
+            "description": "The administrator whose authority the token carries",
+            "type": "string"
+          },
+          "preset": {
+            "description": "Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)",
+            "enum": [
+              "read",
+              "operate",
+              "admin",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "token_id": {
+            "description": "The internal API token the server acts through",
+            "type": "string"
+          },
+          "token_state": {
+            "description": "active, or why the server's tools are refused: re-issue it",
+            "enum": [
+              "active",
+              "revoked",
+              "expired",
+              "owner_disabled"
+            ],
+            "type": "string"
+          },
+          "tools": {
+            "description": "Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 400,
+            "type": "array"
+          }
+        },
+        "required": [
+          "token_id",
+          "owner_user_id",
+          "grants",
+          "never_expires",
+          "token_state"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "approval": {
+            "description": "none (the default): only dangerous tools need a person's approval; writes: every write tool does too",
+            "enum": [
+              "none",
+              "writes"
+            ],
+            "type": "string"
+          },
+          "call_timeout_ms": {
+            "description": "1000-20000; default 20000",
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "expires_in_days": {
+            "description": "1-366; omitted: the token never expires (the default)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "grants": {
+            "description": "The token's grants, covered by yours; default admin on every space (preset admin), required otherwise",
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "max_concurrency": {
+            "description": "1-32; default 4",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_result_bytes": {
+            "description": "1 KiB-4 MiB; default 256 KiB",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "preset": {
+            "description": "Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)",
+            "enum": [
+              "read",
+              "operate",
+              "admin",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "slug": {
+            "description": "Namespace of the server's tools (\u003cslug\u003e__\u003ctool\u003e); fixed after creation",
+            "maxLength": 31,
+            "type": "string"
+          },
+          "tools": {
+            "description": "Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 400,
+            "type": "array"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanToken": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanToken.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_in_days": {
+            "description": "1-366; omitted: the token never expires (the default)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "grants": {
+            "description": "The token's grants, covered by yours; default admin on every space (preset admin), required otherwise",
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "maxItems": 50,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "GatewaySpacemanUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanUpdate.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "approval": {
+            "description": "none (the default): only dangerous tools need a person's approval; writes: every write tool does too",
+            "enum": [
+              "none",
+              "writes"
+            ],
+            "type": "string"
+          },
+          "call_timeout_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_concurrency": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_result_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "preset": {
+            "description": "Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)",
+            "enum": [
+              "read",
+              "operate",
+              "admin",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "tools": {
+            "description": "Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 400,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "enabled"
         ],
         "type": "object"
       },
@@ -20006,6 +20274,66 @@
         ]
       }
     },
+    "/mcp-servers/spaceman": {
+      "post": {
+        "description": "SpaceMan's own API as MCP tools for a space's control and worker runs (ADR-0063). The server acts through a new internal API token owned by you, with grants covered by yours (default: admin on every space) and no secret. Dangerous tools always need a person's approval. Grant the server to a space role for its runs to see the tools.",
+        "operationId": "create-spaceman-mcp",
+        "parameters": [
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewaySpacemanInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayServer"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a SpaceMan MCP server",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
     "/mcp-servers/{server_id}": {
       "delete": {
         "operationId": "delete-mcp-server",
@@ -20330,6 +20658,144 @@
           }
         },
         "summary": "Revoke a grant",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/mcp-servers/{server_id}/reissue": {
+      "post": {
+        "description": "Revokes the server's internal token and mints a new one owned by you, in one step: for new grants, a new expiry or a new owner.",
+        "operationId": "reissue-spaceman-mcp",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewaySpacemanToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayServer"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Re-issue a SpaceMan MCP server's token",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/mcp-servers/{server_id}/spaceman": {
+      "put": {
+        "description": "Changes the tools, the approval mode and the limits. The internal token is unchanged: re-issue the server to change its grants, expiry or owner.",
+        "operationId": "update-spaceman-mcp",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewaySpacemanUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayServer"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Edit a SpaceMan MCP server",
         "tags": [
           "mcp"
         ]

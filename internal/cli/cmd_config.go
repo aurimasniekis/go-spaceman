@@ -359,7 +359,47 @@ func (a *App) mcpCmd() *cobra.Command {
 			}}),
 		a.cmd(opts{use: "revoke", short: "Remove a grant", op: "revoke-mcp-grant", args: pos("server", "grant"), done: "Grant removed."}),
 	)
-	return group("mcp", "Central MCP gateway: servers, grants and a space's servers", nil, servers, grants)
+	sm := func(f *form) {
+		f.str("name", "name", "name").str("description", "description", "description").boolean("enabled", "enabled", "enabled").
+			str("preset", "preset", "tool set: read, operate, admin (read, write and dangerous; the default) or custom").
+			list("tool", "tools", "add a tool by name (without the slug); dangerous and sensitive-read tools only this way or with admin").
+			str("approval", "approval", "none (default: only dangerous tools need an approval) or writes (write tools too)").
+			integer("call-timeout-ms", "call_timeout_ms", "call timeout").integer("max-concurrency", "max_concurrency", "concurrent calls").
+			integer("max-result-bytes", "max_result_bytes", "largest result")
+	}
+	token := func(f *form) {
+		f.list("grant", "grants", grantHelp+"; default admin on every space with the admin preset").
+			integer("expires-in-days", "expires_in_days", "token expiry in days, 1-366 (default: never)")
+	}
+	spacemanBase := func(o map[string]any) map[string]any {
+		b := map[string]any{}
+		for _, k := range []string{"name", "description", "enabled", "call_timeout_ms", "max_concurrency", "max_result_bytes"} {
+			if v, ok := o[k]; ok {
+				b[k] = v
+			}
+		}
+		if s, ok := o["spaceman"].(map[string]any); ok {
+			for _, k := range []string{"preset", "tools", "approval"} {
+				if v, ok := s[k]; ok {
+					b[k] = v
+				}
+			}
+		}
+		return b
+	}
+	spaceman := group("spaceman", "SpaceMan MCP servers: SpaceMan's own API as tools for a space's runs (ADR-0063)", nil,
+		a.cmd(opts{use: "create", short: "Add a SpaceMan MCP server with a new internal token owned by you", op: "create-spaceman-mcp", idem: true,
+			bodyArgs: []string{"slug"},
+			long: "The server acts through an internal API token you own, with grants within yours (default: admin on every space) and no secret. " +
+				"Dangerous tools always need a person's approval. Grant the server to a space role (`spaceman mcp grant add`) for its runs to see the tools.",
+			example: "spaceman mcp spaceman create infra --name SpaceMan --enabled",
+			form:    func(f *form) { sm(f); token(f) }, prepare: a.grantsPrepare}),
+		a.cmd(opts{use: "update", short: "Edit a SpaceMan MCP server's tools, approval mode and limits", op: "update-spaceman-mcp", get: "get-mcp-server",
+			canonical: "server_id", base: spacemanBase, args: pos("server"), form: sm}),
+		a.cmd(opts{use: "reissue", short: "Replace a SpaceMan MCP server's token with a new one owned by you (new grants, expiry or owner)",
+			op: "reissue-spaceman-mcp", get: "get-mcp-server", canonical: "server_id", args: pos("server"), form: token, prepare: a.grantsPrepare}),
+	)
+	return group("mcp", "Central MCP gateway: servers, grants and a space's servers", nil, servers, grants, spaceman)
 }
 
 func (a *App) approvalPolicyCmd() *cobra.Command {

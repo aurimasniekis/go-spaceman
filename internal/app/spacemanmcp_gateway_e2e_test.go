@@ -47,7 +47,7 @@ func TestSpacemanMCPGateway(t *testing.T) {
 	gw := h.c.Gateway
 
 	// Defaults: preset admin, no write approvals, admin on every space, never expiring.
-	srv, err := gw.CreateSpaceman(ctx, adaP, adaA, gateway.SpacemanInput{Slug: "sm", Name: "SpaceMan", Enabled: true})
+	srv, err := gw.CreateSpaceman(ctx, adaP, adaA, gateway.SpacemanInput{Slug: "sm", Name: "SpaceMan"})
 	if err != nil {
 		t.Fatal(err)
 	}

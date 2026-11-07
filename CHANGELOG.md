@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     tools, and an agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through them.
     Reads filtered by the caller's grants (`list-spaces` and ten others) are tools; personal operations are not.
     A revoked token empties the catalog, and calls are refused with the reason.
+  - CLI (AM-6): `spaceman mcp spaceman create`, `update` and `reissue`.
 - Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on;
   until then a gateway run's harness gets no model credentials, so don't enable Harbor Pilot for a space yet.
   - A harness a space routes through Harbor Pilot uses no account: a launch that names one is refused, a model outside

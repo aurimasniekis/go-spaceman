@@ -348,6 +348,9 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/mcp-servers/{server_id}/grants` | `list-mcp-grants` | Spaces and roles granted the server |
 | `POST` | `/mcp-servers/{server_id}/grants` | `add-mcp-grant` | Grant the server to a space role |
 | `DELETE` | `/mcp-servers/{server_id}/grants/{grant_id}` | `revoke-mcp-grant` | Revoke a grant |
+| `POST` | `/mcp-servers/{server_id}/reissue` | `reissue-spaceman-mcp` | Re-issue a SpaceMan MCP server's token |
+| `PUT` | `/mcp-servers/{server_id}/spaceman` | `update-spaceman-mcp` | Edit a SpaceMan MCP server |
+| `POST` | `/mcp-servers/spaceman` | `create-spaceman-mcp` | Add a SpaceMan MCP server |
 | `GET` | `/spaces/{space_id}/mcp-servers` | `list-space-mcp-grants` | MCP servers granted in a space |
 
 ### memory

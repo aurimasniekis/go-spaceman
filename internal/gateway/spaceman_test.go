@@ -134,7 +134,7 @@ func TestSpacemanServers(t *testing.T) {
 	internal := audit.Actor{Type: audit.ActorUser, ID: "usr_admin", Via: auth.ViaSpacemanMCP + "atk_x", Run: "run_c"}
 
 	// Without a backend there is no spaceman kind.
-	_, err := f.svc.CreateSpaceman(f.ctx, p, admin, SpacemanInput{Slug: "sm", Name: "SM", Enabled: true})
+	_, err := f.svc.CreateSpaceman(f.ctx, p, admin, SpacemanInput{Slug: "sm", Name: "SM"})
 	code(t, err, apperr.CodeUnavailable)
 	_, err = f.svc.UpdateSpaceman(f.ctx, admin, "mcp_x", 1, SpacemanUpdate{Name: "x"})
 	code(t, err, apperr.CodeUnavailable)
@@ -162,7 +162,7 @@ func TestSpacemanServers(t *testing.T) {
 		t.Fatalf("refused creates minted %d tokens", len(iss.minted))
 	}
 
-	srv, err := f.svc.CreateSpaceman(f.ctx, p, admin, SpacemanInput{Slug: "sm", Name: "SpaceMan", Enabled: true,
+	srv, err := f.svc.CreateSpaceman(f.ctx, p, admin, SpacemanInput{Slug: "sm", Name: "SpaceMan",
 		SpacemanSettings: SpacemanSettings{Tools: []string{"b", "a", "a"}}})
 	must(t, err)
 	in := iss.minted[0]

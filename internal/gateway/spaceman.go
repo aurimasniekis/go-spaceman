@@ -48,9 +48,9 @@ var spacemanKinds = []string{"control", "worker"}
 
 // SpacemanSettings is a SpaceMan MCP server's tool choice and approval mode.
 type SpacemanSettings struct {
-	Preset   string   `json:"preset" enum:"read,operate,admin,custom" doc:"Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)"`
+	Preset   string   `json:"preset,omitempty" enum:"read,operate,admin,custom" doc:"Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)"`
 	Tools    []string `json:"tools,omitempty" maxItems:"400" doc:"Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset)"`
-	Approval string   `json:"approval" enum:"none,writes" doc:"none (the default): only dangerous tools need a person's approval; writes: every write tool does too"`
+	Approval string   `json:"approval,omitempty" enum:"none,writes" doc:"none (the default): only dangerous tools need a person's approval; writes: every write tool does too"`
 }
 
 // SpacemanGrant is one role@domain grant of a SpaceMan MCP server's internal token.
@@ -78,7 +78,7 @@ type SpacemanInput struct {
 	CallTimeoutMS  int64 `json:"call_timeout_ms,omitempty" doc:"1000-20000; default 20000"`
 	MaxConcurrency int64 `json:"max_concurrency,omitempty" doc:"1-32; default 4"`
 	MaxResultBytes int64 `json:"max_result_bytes,omitempty" doc:"1 KiB-4 MiB; default 256 KiB"`
-	Enabled        bool  `json:"enabled"`
+	Enabled        *bool `json:"enabled,omitempty" doc:"Default true"`
 }
 
 // SpacemanToken is the internal token a SpaceMan MCP server is created or re-issued with.
@@ -197,7 +197,7 @@ func (svc *Service) CreateSpaceman(ctx context.Context, p *auth.Principal, actor
 		return nil, errSelfManagement
 	}
 	base := Input{Slug: in.Slug, Name: in.Name, Description: in.Description, CallTimeoutMS: in.CallTimeoutMS, MaxConcurrency: in.MaxConcurrency,
-		MaxResultBytes: in.MaxResultBytes, Enabled: in.Enabled}
+		MaxResultBytes: in.MaxResultBytes, Enabled: in.Enabled == nil || *in.Enabled}
 	v := base.validate(true, KindSpaceman)
 	svc.normalizeSettings(&in.SpacemanSettings, v)
 	tin := tokenInput(base.Name, in.Preset, in.SpacemanToken, v)

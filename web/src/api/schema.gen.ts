@@ -1054,6 +1054,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mcp-servers/spaceman": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a SpaceMan MCP server
+         * @description SpaceMan's own API as MCP tools for a space's control and worker runs (ADR-0063). The server acts through a new internal API token owned by you, with grants covered by yours (default: admin on every space) and no secret. Dangerous tools always need a person's approval. Grant the server to a space role for its runs to see the tools.
+         */
+        post: operations["create-spaceman-mcp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mcp-servers/{server_id}": {
         parameters: {
             query?: never;
@@ -1129,6 +1149,46 @@ export interface paths {
          * @description Calls in flight finish; the next call of an affected run is refused.
          */
         delete: operations["revoke-mcp-grant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}/reissue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-issue a SpaceMan MCP server's token
+         * @description Revokes the server's internal token and mints a new one owned by you, in one step: for new grants, a new expiry or a new owner.
+         */
+        post: operations["reissue-spaceman-mcp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-servers/{server_id}/spaceman": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Edit a SpaceMan MCP server
+         * @description Changes the tools, the approval mode and the limits. The internal token is unchanged: re-issue the server to change its grants, expiry or owner.
+         */
+        put: operations["update-spaceman-mcp"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6306,6 +6366,11 @@ export interface components {
             headers_version: number;
             id: string;
             /**
+             * @description http: an external server; spaceman: SpaceMan's own API, served in central (ADR-0063)
+             * @enum {string}
+             */
+            kind: "http" | "spaceman";
+            /**
              * Format: int64
              * @description Calls in flight to this server across all runs
              */
@@ -6315,11 +6380,12 @@ export interface components {
             name: string;
             /** @description Namespace of the server's tools: <slug>__<tool> */
             slug: string;
+            spaceman?: components["schemas"]["GatewaySpacemanInfo"];
             /** @description Upstream tools offered to agents; empty offers every tool */
             tools: string[];
             /** Format: date-time */
             updated_at: string;
-            /** @description Streamable HTTP endpoint */
+            /** @description Streamable HTTP endpoint; empty for a spaceman server */
             url: string;
             /** Format: int64 */
             version: number;
@@ -6332,6 +6398,125 @@ export interface components {
             server_id: string;
             slug: string;
             tools: string[];
+        };
+        GatewaySpacemanInfo: {
+            /**
+             * @description none (the default): only dangerous tools need a person's approval; writes: every write tool does too
+             * @enum {string}
+             */
+            approval?: "none" | "writes";
+            /** Format: date-time */
+            expires_at?: string;
+            grants: components["schemas"]["AuthGrantInput"][];
+            never_expires: boolean;
+            /** @description The administrator whose authority the token carries */
+            owner_user_id: string;
+            /**
+             * @description Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)
+             * @enum {string}
+             */
+            preset?: "read" | "operate" | "admin" | "custom";
+            /** @description The internal API token the server acts through */
+            token_id: string;
+            /**
+             * @description active, or why the server's tools are refused: re-issue it
+             * @enum {string}
+             */
+            token_state: "active" | "revoked" | "expired" | "owner_disabled";
+            /** @description Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset) */
+            tools?: string[];
+        };
+        GatewaySpacemanInput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanInput.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description none (the default): only dangerous tools need a person's approval; writes: every write tool does too
+             * @enum {string}
+             */
+            approval?: "none" | "writes";
+            /**
+             * Format: int64
+             * @description 1000-20000; default 20000
+             */
+            call_timeout_ms?: number;
+            description?: string;
+            /** @description Default true */
+            enabled?: boolean;
+            /**
+             * Format: int64
+             * @description 1-366; omitted: the token never expires (the default)
+             */
+            expires_in_days?: number;
+            /** @description The token's grants, covered by yours; default admin on every space (preset admin), required otherwise */
+            grants?: components["schemas"]["AuthGrantInput"][];
+            /**
+             * Format: int64
+             * @description 1-32; default 4
+             */
+            max_concurrency?: number;
+            /**
+             * Format: int64
+             * @description 1 KiB-4 MiB; default 256 KiB
+             */
+            max_result_bytes?: number;
+            name: string;
+            /**
+             * @description Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)
+             * @enum {string}
+             */
+            preset?: "read" | "operate" | "admin" | "custom";
+            /** @description Namespace of the server's tools (<slug>__<tool>); fixed after creation */
+            slug: string;
+            /** @description Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset) */
+            tools?: string[];
+        };
+        GatewaySpacemanToken: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanToken.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description 1-366; omitted: the token never expires (the default)
+             */
+            expires_in_days?: number;
+            /** @description The token's grants, covered by yours; default admin on every space (preset admin), required otherwise */
+            grants?: components["schemas"]["AuthGrantInput"][];
+        };
+        GatewaySpacemanUpdate: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanUpdate.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description none (the default): only dangerous tools need a person's approval; writes: every write tool does too
+             * @enum {string}
+             */
+            approval?: "none" | "writes";
+            /** Format: int64 */
+            call_timeout_ms?: number;
+            description?: string;
+            enabled: boolean;
+            /** Format: int64 */
+            max_concurrency?: number;
+            /** Format: int64 */
+            max_result_bytes?: number;
+            name: string;
+            /**
+             * @description Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)
+             * @enum {string}
+             */
+            preset?: "read" | "operate" | "admin" | "custom";
+            /** @description Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset) */
+            tools?: string[];
         };
         "Get-memory-fileResponse": {
             /**
@@ -12826,6 +13011,43 @@ export interface operations {
             };
         };
     };
+    "create-spaceman-mcp": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result */
+                "Idempotency-Key"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewaySpacemanInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-mcp-server": {
         parameters: {
             query?: never;
@@ -13041,6 +13263,84 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "reissue-spaceman-mcp": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewaySpacemanToken"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "update-spaceman-mcp": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The resource version this update was based on, as "<version>" (required) */
+                "If-Match"?: string;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GatewaySpacemanUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewayServer"];
+                };
             };
             /** @description Error */
             default: {

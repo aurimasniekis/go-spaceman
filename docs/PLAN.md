@@ -108,7 +108,7 @@ gated, no expiry by default, one tool per operation, the external `/api/v1/mcp` 
 | AM-3 | `internal/spacemanmcp` catalog and classification | SM-MCP-007 | implemented, tested (simulated) |
 | AM-4 | In-process handler and executor | SM-MCP-007 | implemented, tested (simulated) |
 | AM-5 | Gateway kind, create/update/reissue operations, `approvals.Require`, wiring; AM-3/AM-4 review fixes; reads filtered by the principal (`api.FilteredRead`) | SM-MCP-005/006/007/008 | implemented, tested (simulated); not yet over the agent bridge (AM-8) |
-| AM-6 | CLI commands, generated API and CLI reference | SM-MCP-005 | todo |
+| AM-6 | CLI commands (`spaceman mcp spaceman create/update/reissue`), generated API and CLI reference | SM-MCP-005 | implemented, tested (simulated) |
 | AM-7 | Web: "Add SpaceMan MCP" button, modal, drawer, Tokens label | SM-MCP-005 | todo |
 | AM-8 | End-to-end tests, CHANGELOG, SECURITY_REVIEW | SM-MCP-* | todo |
 | AM-9 | Terraform `spaceman_admin_mcp_server` (terraform-provider-spaceman) | SM-MCP-005 | todo |
