@@ -13,7 +13,32 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 | `make check` | `go vet`, the custom analyzers, golangci-lint, race-enabled tests, coverage floors and the requirement traceability check |
 | `make web-check` | UI typecheck, unit tests (vitest) and the production build |
 | `make api-check` | Regenerates `api/openapi.json` and the UI's TypeScript types and fails on drift |
-| `make site-check` | Builds this site (dead links, screenshot references), parses every Mermaid diagram and checks the API reference for drift |
+| `make site-check` | Builds this site (dead links, screenshot references), parses every Mermaid diagram, checks the API, CLI and configuration references for drift and audits every page with axe. `make site-verify` runs all of it except the audit; `make site-a11y` runs only the audit, on the built site. |
+| `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` (30 s by default) |
+
+## What CI runs
+
+| Workflow | When | What |
+|---|---|---|
+| `ci` | every pull request and push to `main` | lint, vet, sqlc drift, analyzer tests and traceability; race tests; the coverage floor; the web checks and API drift; `make site-verify`; govulncheck and gitleaks |
+| `ci` | pull requests that change `site/`, `docs/`, `web/`, `api/`, `CHANGELOG.md`, the `Makefile` or `ci.yaml`, and every push to `main` | the site's axe audit (`make site-a11y`) |
+| `ci` | nightly | all of the above with the full audit, and every fuzz target for 10 minutes |
+| `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
+
+Store-backed tests fail when a write transaction takes longer than 100 ms (Hallpass HP-DB-004), or the value of
+`SM_TEST_TX_MAX`. GitHub's hosted runners are slower, so the coverage steps in `ci` and `release` use 250 ms; the race
+steps use 1 s (ADR-0062).
+
+### When a release gate fails
+
+- **`write transaction "…" took … (> 250ms, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
+  (`gh run rerun <run-id> --failed`). Hosted runners have noisy neighbours. If it fails again, or the same transaction
+  shows up in several runs, treat it as a regression: run `make coverage` locally, where the limit is 100 ms, and move
+  the slow work out of the transaction. Don't raise `SM_TEST_TX_MAX` to get a release through.
+- **Fuzz smoke:** the log names the target and the failure. The input file it mentions stays on the runner, so fuzz
+  that target locally (`go test -run '^$' -fuzz '^<FuzzName>$' ./<package>`) until it fails. Fix the code and commit the
+  input that `go test` writes under `testdata/fuzz/<FuzzName>/` as a regression case.
+- **Site check:** the log names the page, the color scheme and the axe rule. Run `make site-check` locally.
 
 ## End-to-end and real suites
 

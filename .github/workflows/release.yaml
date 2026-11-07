@@ -1,7 +1,8 @@
 name: release
 
 # Release pipeline (site/operators/install.md, ADR-0034). Runs only for pushed v* tags and manual dispatch; never on PRs.
-# It builds the linux/amd64 and linux/arm64 archives, SPDX SBOMs and SHA256SUMS, builds and smoke-tests both container
+# Nothing is built until the gates pass: vet, race tests, the coverage floor, the fuzz smoke and the full site check with
+# its accessibility audit (ADR-0062; what to do when one fails: site/development/testing.md). It builds the linux/amd64 and linux/arm64 archives, SPDX SBOMs and SHA256SUMS, builds and smoke-tests both container
 # images, and, for a v* tag only, pushes both images to Docker Hub (when the repository secret DOCKERHUB_TOKEN is set)
 # and attaches the archives, SBOMs and checksums to a DRAFT GitHub release. A maintainer reviews and publishes the draft
 # by hand.
@@ -80,7 +81,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
 
   test:
-    name: vet and race tests (release gate)
+    name: vet, race tests and coverage floor (release gate)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,6 +94,54 @@ jobs:
         env:
           SM_TEST_TX_MAX: 1s # race detector overhead on shared runners; see ci.yaml
         run: make vet race
+      - name: coverage floor (non-race, so the write-transaction guard applies)
+        # 250 ms on GitHub's hosted runners, as in ci.yaml; 100 ms locally (ADR-0062).
+        env:
+          SM_TEST_TX_MAX: 250ms
+        run: make coverage
+
+  fuzz:
+    name: fuzz smoke (release gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: every Fuzz target for 10 s
+        run: make fuzz-smoke FUZZTIME=10s
+
+  site:
+    name: site, Mermaid, API reference drift and full accessibility audit (release gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            site/pnpm-lock.yaml
+            web/pnpm-lock.yaml
+      - name: install (frozen lockfiles)
+        run: |
+          (cd site && pnpm install --frozen-lockfile)
+          (cd web && pnpm install --frozen-lockfile)
+      - name: chromium for the Mermaid check and the accessibility audit
+        run: npx --yes playwright@1.64.1 install --with-deps chromium
+      # Always the full audit, whatever changed since the last release (ADR-0062).
+      - name: build, Mermaid, API reference drift and axe on every page
+        run: make site-check
 
   web:
     name: web UI (web/dist)
@@ -123,7 +172,7 @@ jobs:
 
   binaries:
     name: static binaries, SBOMs, checksums
-    needs: [meta, test, web]
+    needs: [meta, test, fuzz, site, web]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -178,7 +227,7 @@ jobs:
 
   images:
     name: container images (linux/amd64, build and smoke test, no push)
-    needs: [meta, test]
+    needs: [meta, test, fuzz, site]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

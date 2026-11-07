@@ -2506,6 +2506,58 @@
   - The fixtures are derived from GitHub's documented payload shapes and pulse-github's normalisation code, not
     captured from a live pulse-github (SM-EVT-002 notes).
 
+### ADR-0062 — CI scope: 250 ms write-transaction guard on hosted runners, path-gated site audit, fuzzing nightly and at release
+- **Status:** Accepted, 2026-11-07 (operator decisions Q1 b, Q2 b and Q3 "nightly and release", after the CI duration
+  investigation on PR #15).
+- **Context:**
+  - `storetest` fails a test when a successful write transaction takes longer than `MaxTxDuration`: Hallpass
+    HP-DB-004's short-transaction rule, 100 ms by default.
+  - On GitHub's hosted runners the non-race coverage job failed it intermittently on unchanged code, at 101–178 ms. It
+    failed on `main` before PR #15 as well, so each such run needed a manual rerun. The hosted runners run the same
+    tests about 1.7× slower than a developer machine.
+  - With the Go checks split into parallel jobs, the site job's axe audit (one Playwright test, about 4.5 minutes) is
+    the longest step of most pull requests, including ones that change no page.
+  - Fuzz smoke (13 targets × 10 s plus their builds) ran on every pull request and push. Nightly CI already fuzzed each
+    target for 10 minutes. The release workflow ran neither fuzzing nor the site audit.
+- **Decision:**
+  - **Q1 b: the guard is 250 ms on hosted CI.** `SM_TEST_TX_MAX=250ms` is set for the non-race coverage step in
+    `ci.yaml` and in the release workflow's test gate. Both run on GitHub-hosted runners, and the release gate flaked
+    the same way, so it takes the same value. `make check` and plain `go test` keep the 100 ms default. The race steps
+    keep their own relaxed limits (1 s in CI, 500 ms in `make race`). The HP-DB-004 evidence is therefore
+    "100 ms locally, 250 ms on hosted CI".
+  - **Q2 b: on pull requests the axe audit runs only when the site can change.** The audit runs when the PR changes
+    `site/`, `docs/` (included into site pages), `web/` (the audit spec and its tooling), `api/` (the API reference is
+    generated from `api/openapi.json`), `CHANGELOG.md` (the changelog page), the `Makefile` or `ci.yaml`. The changed
+    files are the diff between the PR's merge commit and its base (first parent), computed in the job with `git`. No
+    third-party path-filter action is added. The site build, dead links, screenshot references, Mermaid and the
+    API/CLI/configuration reference drift (`make site-verify`) still run on every PR. Pushes to `main`, the nightly run
+    and the release workflow always run the full audit (`make site-check`).
+  - **Q3: fuzzing runs nightly and at release only.** The PR/push workflow no longer fuzzes. The nightly run fuzzes
+    every target for 10 minutes. The release workflow runs the 10 s smoke as a gate.
+  - **The release workflow gates on all of them.** It builds no archive or image until vet, race tests, the coverage
+    floor (250 ms guard), fuzz smoke and the full site check with the audit have passed.
+- **Alternatives:**
+  - **Keep 100 ms and rerun failed jobs:** a manual step on most days, and it teaches people to rerun red CI.
+  - **Turn the guard off in CI:** it would then be enforced only by whoever runs `make check`.
+  - **The audit on every PR, as before**, or **only nightly:** the first keeps the slowest step on PRs that change no
+    page; the second finds a site regression a day late.
+  - **`dorny/paths-filter`:** one more third-party action with access to the job token, for a single `git diff`.
+- **Consequences:**
+  - A transaction that takes between 100 and 250 ms on a hosted runner no longer fails CI. That is roughly 60–150 ms
+    on a developer machine, and `make check` still fails it there.
+  - What the guard exists to catch still fails at 250 ms: network or file I/O, a wait or an unbounded scan inside a
+    write transaction costs far more than that. I/O in a transaction is also rejected statically by the `txscope`
+    analyzer in every run.
+  - A PR that breaks a page's accessibility only through a file outside the list (say, a Go change that alters
+    generated reference pages without their regenerated output) is caught by the drift check on that PR and by the
+    audit on the next push to `main`, the nightly run or the release.
+  - A fuzz regression is found by the nightly run, at the latest by the release gate.
+  - When a release fails its coverage step with `write transaction … took … (> 250ms …)`, rerun the job first.
+    If it fails again, run that package locally with `make coverage`, which uses the 100 ms default
+    (`site/development/testing.md`).
+  - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
+    enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

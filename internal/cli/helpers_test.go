@@ -22,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 var specOnce = sync.OnceValues(func() ([]byte, error) {
@@ -150,6 +151,7 @@ func startCentral(t *testing.T) *central {
 		t.Fatal(err)
 	}
 	clk := clock.NewFake(time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC))
+	storetest.Seed(t, cfg.DataDir)
 	c, err := app.OpenCentral(context.Background(), cfg, slog.New(slog.DiscardHandler), app.Options{Clock: clk, Environ: []string{}})
 	if err != nil {
 		t.Fatal(err)

@@ -43,13 +43,20 @@ lint:
 tools-test:
 	cd tools && $(GO) test ./...
 
-# Runs every Fuzz* target for FUZZTIME (a smoke run; nightly CI uses FUZZTIME=10m).
+# Runs every Fuzz* target for FUZZTIME (a smoke run; nightly CI uses FUZZTIME=10m). Packages whose test files declare no
+# Fuzz function are skipped before `go test -list`, which would otherwise build every test binary. The package list is
+# captured first and `go test -list` must succeed, so a failing `go list` or a test that doesn't compile fails the target
+# instead of silently fuzzing less; so does finding no target at all.
 fuzz-smoke:
-	@set -e; for pkg in $$($(GO) list ./...); do \
-	  for fz in $$($(GO) test -list '^Fuzz' $$pkg 2>/dev/null | grep '^Fuzz' || true); do \
-	    echo "fuzz $$pkg $$fz"; $(GO) test -run '^$$' -fuzz "^$$fz$$" -fuzztime $(FUZZTIME) $$pkg; \
+	@set -euo pipefail; pkgs="$$($(GO) list -f '{{.ImportPath}} {{.Dir}}' ./...)"; n=0; \
+	while read -r pkg dir; do \
+	  grep -qsE '^func Fuzz' "$$dir"/*_test.go || continue; \
+	  list="$$($(GO) test -list '^Fuzz' "$$pkg")"; \
+	  for fz in $$(grep '^Fuzz' <<<"$$list" || true); do \
+	    echo "fuzz $$pkg $$fz"; $(GO) test -run '^$$' -fuzz "^$$fz$$" -fuzztime $(FUZZTIME) "$$pkg"; n=$$((n+1)); \
 	  done; \
-	done
+	done <<<"$$pkgs"; \
+	echo "fuzz-smoke: $$n targets"; test "$$n" -gt 0
 
 coverage:
 	./scripts/coverage-floor.sh
@@ -196,7 +203,7 @@ test-pulse:
 	$(GO) test -count=1 -timeout 10m -run '^(TestEventsOverHTTP|TestCoreSubscriptionEndToEnd|TestOutboundEventsOverHTTP|TestRunLifecycleEvents|TestBackupRestoreEndToEnd|TestPausedSpaceEventPolicies|TestEventLoopBetweenInstallationsIsBounded)$$' ./internal/app/
 
 # ---- Docs site and screenshots ----
-.PHONY: site site-dev site-check screenshots
+.PHONY: site site-dev site-check site-verify site-a11y screenshots
 site:
 	cd site && pnpm install --frozen-lockfile && pnpm build
 
@@ -205,10 +212,18 @@ site-dev:
 
 # Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, API, CLI and configuration
 # reference drift, and an axe audit of every page in both color schemes.
-site-check: cli-docs config-docs site
+site-check: site-verify
+	$(MAKE) site-a11y
+
+# Everything in site-check except the axe audit (CI runs the audit on pull requests only when the site can change;
+# ADR-0062).
+site-verify: cli-docs config-docs site
 	cd site && pnpm check:mermaid
-	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
 	git diff --exit-code -- site/reference/api.md site/reference/cli site/reference/configuration.md
+
+# The axe audit (WCAG 2.1 A/AA) of every page of the built site (make site) in both color schemes.
+site-a11y:
+	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).
 screenshots:

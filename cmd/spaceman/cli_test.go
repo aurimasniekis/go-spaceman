@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/cli"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
 )
 
 // The committed CLI reference (site/reference/cli) matches the commands of this build. SM_CLI_DOCS=1 rewrites it
@@ -80,6 +81,7 @@ func TestBuiltBinaryAgainstCentral(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	storetest.Seed(t, cfg.DataDir)
 	c, err := app.OpenCentral(context.Background(), cfg, slog.New(slog.DiscardHandler), app.Options{Environ: []string{}})
 	if err != nil {
 		t.Fatal(err)

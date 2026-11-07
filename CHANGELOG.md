@@ -45,6 +45,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   default (`inputWrapperOrder`) applies it to every form.
 - On a phone the app bar shows only the logo, not the "SpaceMan" name, so it no longer stacks over a page header with
   the same name.
+- Faster CI and `make check`:
+  - test stores and test centrals start from a database that was migrated once per test binary, instead of applying
+    every migration again for each test (about 10 s per store under the race detector);
+  - CI runs lint and vet, race tests and the coverage floor as parallel jobs, each with its own Go cache;
+  - `make fuzz-smoke` lists fuzz targets only in packages that declare one, and fails when listing them fails or
+    finds none.
+- CI scope (ADR-0062):
+  - the coverage step allows 250 ms per write transaction on GitHub's hosted runners; locally it stays 100 ms;
+  - on pull requests the site's accessibility audit runs only when site, docs, web, API or changelog files change;
+    the site build, links, Mermaid and reference drift still run every time (`make site-verify`);
+  - fuzzing runs nightly and in the release workflow, not on pull requests.
+- The release workflow builds nothing until vet, race tests, the coverage floor, fuzz smoke and the full site check
+  with its accessibility audit pass.
 
 ### Fixed
 - Relocating a space whose repositories use SpaceMan SSH keys no longer fails in Prepare with "Host key verification
