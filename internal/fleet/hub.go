@@ -122,12 +122,14 @@ func (h *Hub) gatewayToken(ctx context.Context, nodeID string, run *Run, session
 		}
 		h.mints[run.ID] = j
 		h.mintWG.Add(1)
+		stopCtx := h.mintCtx
 		go func() {
 			defer h.mintWG.Done()
 			// Detached from the connection: a mint that already reached Harbor Pilot finishes and is stored (or queued
 			// for revocation), whatever happens to this connection. Only central's shutdown cancels it (StopMints).
-			mctx, cancel := context.WithTimeout(h.mintCtx, mintJobTimeout)
+			mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mintJobTimeout)
 			defer cancel()
+			defer context.AfterFunc(stopCtx, cancel)()
 			_, j.err = gw.Token(mctx, run, session)
 			close(j.done)
 			time.AfterFunc(mintJobKeep, func() { h.dropMint(run.ID, j) })
