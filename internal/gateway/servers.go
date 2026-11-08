@@ -578,6 +578,7 @@ type SpaceServer struct {
 	ServerID string   `json:"server_id"`
 	Slug     string   `json:"slug"`
 	Name     string   `json:"name"`
+	Kind     string   `json:"kind" enum:"http,spaceman"`
 	Enabled  bool     `json:"enabled"`
 	GrantID  string   `json:"grant_id"`
 	Role     string   `json:"role"`
@@ -596,7 +597,7 @@ func (svc *Service) SpaceGrants(ctx context.Context, spaceID string) ([]*SpaceSe
 		if err != nil {
 			continue
 		}
-		out = append(out, &SpaceServer{ServerID: s.ID, Slug: s.Slug, Name: s.Name, Enabled: s.Enabled == 1, GrantID: g.ID, Role: g.Role, Tools: parseList(g.ToolsJson)})
+		out = append(out, &SpaceServer{ServerID: s.ID, Slug: s.Slug, Name: s.Name, Kind: s.Kind, Enabled: s.Enabled == 1, GrantID: g.ID, Role: g.Role, Tools: parseList(g.ToolsJson)})
 	}
 	return out, nil
 }

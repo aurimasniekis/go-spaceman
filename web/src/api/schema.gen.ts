@@ -6453,6 +6453,8 @@ export interface components {
         GatewaySpaceServer: {
             enabled: boolean;
             grant_id: string;
+            /** @enum {string} */
+            kind: "http" | "spaceman";
             name: string;
             role: string;
             server_id: string;

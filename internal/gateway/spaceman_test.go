@@ -243,6 +243,9 @@ func TestSpacemanServers(t *testing.T) {
 	if err != nil || len(m) != 1 || m[0].Kind != KindSpaceman {
 		t.Fatalf("manifest %+v %v", m, err)
 	}
+	if sg, err := f.svc.SpaceGrants(f.ctx, "spc_a"); err != nil || len(sg) != 1 || sg[0].Kind != KindSpaceman {
+		t.Fatalf("space grants %+v %v", sg, err)
+	}
 
 	// Class-named operations: reads and writes go through the policies; dangerous tools (and a diagnostic create here)
 	// always need an approval.
