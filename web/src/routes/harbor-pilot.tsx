@@ -75,6 +75,11 @@ function ConnectionCard({ c }: { c: HarborPilotConnection }) {
           </Field>
           <Field label="Client binding"><Text size="sm" className="mono">{c.binding_id || '—'}</Text></Field>
           <Field label="Validated"><Text size="sm">{ago(c.validated_at)}</Text>{c.allow_insecure_http && <Badge color="owlRed" variant="light" mt={4}>insecure HTTP allowed</Badge>}</Field>
+          <Field label="Failed revocations">
+            {c.failed_revocations > 0
+              ? <Badge color="owlRed" variant="light">{c.failed_revocations} failed</Badge>
+              : <Badge color="owlGreen" variant="light">none</Badge>}
+          </Field>
         </SimpleGrid>
       </Card>
       <Card>

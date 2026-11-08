@@ -46,6 +46,8 @@ type fleetEnv struct {
 	done     chan struct{}
 	// bridge is the agent's MCP bridge socket (short path: unix socket limit).
 	bridge string
+	// gatewayMinMinor is app.Options.GatewayMinMinor of the next startCentral (0: the real gate).
+	gatewayMinMinor int
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
@@ -106,9 +108,14 @@ func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
 	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
 	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4})
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, GatewayMinMinor: e.gatewayMinMinor})
 	if err != nil {
 		e.t.Fatal(err)
+	}
+	// The reader pool must stay small (see above); asserted after every open, so the regression shows as a count, not as
+	// a restart that a loaded host happened to make slow.
+	if n := c.Store.ReadDB().Stats().MaxOpenConnections; n != 4 {
+		e.t.Fatalf("central's store has %d reader connections, want 4: check app.Options.StoreReaders", n)
 	}
 	e.c = c
 	h := c.Handler(c.APIDeps())
@@ -284,10 +291,10 @@ func TestFleetLifecycle(t *testing.T) {
 	// correct, and they never come back to running.
 	restartAt := time.Now()
 	e.restartCentral()
-	// A fixed bound, not the lease: it guards the reader-pool regression (a store opened with one reader per CPU took
-	// 5-7 s to open under -race), which the 30 s longLease would otherwise hide.
-	if d := time.Since(restartAt); d >= 5*time.Second {
-		t.Fatalf("central restart took %v, not less than 5 s: check app.Options.StoreReaders (each reader parses the schema on open)", d)
+	// startCentral asserts the reader pool itself; this loose bound only catches a restart gone pathologically slow
+	// (a reader pool per CPU took 5-7 s under -race; a loaded host can take over 5 s even with 4 readers).
+	if d := time.Since(restartAt); d >= 15*time.Second {
+		t.Fatalf("central restart took %v, not less than 15 s: check app.Options.StoreReaders (each reader parses the schema on open)", d)
 	}
 	eventually(t, "reconnected after central restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
 	eventually(t, "runs running after central restart", func() bool { return e.run1(worker.ID).Observed == "running" })

@@ -63,7 +63,7 @@ func TestRelocationPrepareKeyOnWireOnly(t *testing.T) {
 		asked = append(asked, spaceID+"/"+repoID)
 		return pem, nil
 	}}
-	msg, err := h.materialize(context.Background(), c, proto.MinorRepoKeys)
+	msg, err := h.materialize(context.Background(), c, "nod_1", proto.MinorRepoKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestRelocationPrepareKeyOnWireOnly(t *testing.T) {
 		t.Fatal("materialize changed the stored payload")
 	}
 	// A node older than repository keys gets the payload as stored.
-	if msg, err = h.materialize(context.Background(), c, proto.MinorRepoKeys-1); err != nil || strings.Contains(string(msg.Payload), "PRIVATE KEY") {
+	if msg, err = h.materialize(context.Background(), c, "nod_1", proto.MinorRepoKeys-1); err != nil || strings.Contains(string(msg.Payload), "PRIVATE KEY") {
 		t.Fatalf("old node: %s %v", msg.Payload, err)
 	}
 }

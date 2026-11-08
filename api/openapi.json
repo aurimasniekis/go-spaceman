@@ -6348,6 +6348,11 @@
             },
             "type": "array"
           },
+          "failed_revocations": {
+            "description": "Run and validation tokens whose revocation failed: each stays valid until it expires unless it, or the parent that minted it, is revoked in Harbor Pilot (see the audit log)",
+            "format": "int64",
+            "type": "integer"
+          },
           "has_parent_token": {
             "type": "boolean"
           },
@@ -6410,6 +6415,7 @@
           "binding_id",
           "validated_at",
           "enabled_spaces",
+          "failed_revocations",
           "warnings",
           "created_at",
           "created_by",

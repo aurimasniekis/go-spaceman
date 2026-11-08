@@ -2,7 +2,9 @@ package harborpilot
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +47,16 @@ func serviceAAD(connID string) []byte { return []byte("harborpilot:sp:" + connID
 // RunAAD is the associated data of a run's sealed child token.
 func RunAAD(runID string) []byte { return []byte("harborpilot:run:" + runID) }
 
+// ParentFingerprint identifies the parent token that minted a child credential, so a revocation knows whether the
+// parent it holds is the one that can revoke it: Harbor Pilot answers 404 to any other parent (ADR-0060 decision 5).
+// It is a truncated, domain-separated SHA-256 of a random gateway token, so it reveals nothing usable about the token.
+func ParentFingerprint(parent string) string {
+	h := sha256.Sum256([]byte("spaceman harbor-pilot parent fingerprint\x00" + parent))
+	return hex.EncodeToString(h[:8])
+}
+
+func fpArg(fp string) sql.NullString { return sql.NullString{String: fp, Valid: fp != ""} }
+
 // Connection is the Harbor Pilot connection as the API shows it: never a token, only whether one is set and its
 // version counter.
 type Connection struct {
@@ -60,6 +72,7 @@ type Connection struct {
 	ParentExpiresAt     *time.Time `json:"parent_expires_at,omitempty" doc:"When the parent token expires, if it does"`
 	ValidatedAt         time.Time  `json:"validated_at"`
 	EnabledSpaces       []string   `json:"enabled_spaces" doc:"Spaces that route runs through Harbor Pilot"`
+	FailedRevocations   int64      `json:"failed_revocations" doc:"Run and validation tokens whose revocation failed: each stays valid until it expires unless it, or the parent that minted it, is revoked in Harbor Pilot (see the audit log)"`
 	Warnings            []string   `json:"warnings"`
 	CreatedAt           time.Time  `json:"created_at"`
 	CreatedBy           string     `json:"created_by"`
@@ -188,6 +201,13 @@ func (svc *Service) connOut(ctx context.Context, r db.HarborPilotConnection) (*C
 	for _, e := range enabled {
 		c.EnabledSpaces = append(c.EnabledSpaces, e.SpaceID)
 	}
+	if c.FailedRevocations, err = svc.s.R().CountFailedGatewayRevocations(ctx); err != nil {
+		return nil, err
+	}
+	if c.FailedRevocations > 0 {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("%d token revocations failed: those tokens stay valid until they expire unless they, or the parent that "+
+			"minted them, are revoked in Harbor Pilot (the audit log lists them as harbor_pilot.revocation.failed).", c.FailedRevocations))
+	}
 	if c.AllowInsecureHTTP {
 		c.Warnings = append(c.Warnings, "Insecure HTTP is allowed: the parent token and every run's token cross the network in clear text.")
 	}
@@ -219,6 +239,7 @@ type validation struct {
 	bindingID     string
 	parentExpires *time.Time
 	unrevoked     *Credential // the probe credential could not be revoked
+	parentFP      string      // ParentFingerprint of the parent that minted it
 }
 
 // The probe child lives for Harbor Pilot's maximum, so its expires_at shows whether the parent expires sooner (Harbor
@@ -232,7 +253,7 @@ func (svc *Service) probeParent(ctx context.Context, c *Client, parent string, b
 	if err != nil {
 		return nil, err
 	}
-	v := &validation{bindingID: cred.BindingID}
+	v := &validation{bindingID: cred.BindingID, parentFP: ParentFingerprint(parent)}
 	if !cred.ExpiresAt.IsZero() && cred.ExpiresAt.Before(svc.s.Now().Add(time.Duration(ttl)*time.Second-5*time.Minute)) {
 		t := cred.ExpiresAt.UTC()
 		v.parentExpires = &t
@@ -243,8 +264,9 @@ func (svc *Service) probeParent(ctx context.Context, c *Client, parent string, b
 	return v, nil
 }
 
-// queueRevocation records a credential that could not be revoked at once in the durable revocation queue.
-func (svc *Service) queueRevocation(ctx context.Context, cred *Credential, reason string) error {
+// queueRevocation records a credential that could not be revoked at once in the durable revocation queue, with the
+// fingerprint of the parent that minted it.
+func (svc *Service) queueRevocation(ctx context.Context, cred *Credential, reason, parentFP string) error {
 	now := svc.s.Now()
 	exp := cred.ExpiresAt
 	if exp.IsZero() {
@@ -252,7 +274,7 @@ func (svc *Service) queueRevocation(ctx context.Context, cred *Credential, reaso
 	}
 	err := svc.s.W().TxNamed(ctx, "harborpilot.queue_revocation", func(tx *store.Tx) error {
 		return tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: cred.ID, Reason: reason, ExpiresAt: exp.UnixMicro(),
-			NextAttemptAt: now.UnixMicro(), RequestedAt: now.UnixMicro()})
+			NextAttemptAt: now.UnixMicro(), RequestedAt: now.UnixMicro(), ParentFp: fpArg(parentFP)})
 	})
 	if err == nil {
 		svc.wake()
@@ -268,8 +290,9 @@ func (svc *Service) wake() {
 
 // unrevokedWarning queues a validation credential that could not be revoked and says what became of it. When even the
 // queue can't take it, the credential stays valid until it expires: that is logged and said.
-func (svc *Service) unrevokedWarning(ctx context.Context, cred *Credential, reason string) string {
-	if err := svc.queueRevocation(ctx, cred, reason); err != nil {
+func (svc *Service) unrevokedWarning(ctx context.Context, val *validation, reason string) string {
+	cred := val.unrevoked
+	if err := svc.queueRevocation(ctx, cred, reason, val.parentFP); err != nil {
 		svc.log().Error("harbor pilot validation credential neither revoked nor queued", "credential_id", cred.ID, "reason", reason, "err", err)
 		return "The validation credential " + cred.ID + " could not be revoked, nor queued for revocation; it stays valid until " +
 			cred.ExpiresAt.UTC().Format(time.RFC3339) + " unless it is revoked in Harbor Pilot."
@@ -430,7 +453,7 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 	}
 	var warnings []string
 	if val.unrevoked != nil {
-		warnings = append(warnings, svc.unrevokedWarning(ctx, val.unrevoked, "connection validation"))
+		warnings = append(warnings, svc.unrevokedWarning(ctx, val, "connection validation"))
 	}
 	if service != "" {
 		if _, err := c.BudgetStatus(ctx, service); err != nil {
@@ -448,15 +471,33 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 		}
 	}
 
-	// A new parent can't revoke the children of the old one (Harbor Pilot answers 404), so live run tokens are revoked
-	// now, with the old parent at its old address, before it is replaced (ADR-0060 decision 5).
+	// A new parent can't revoke the children of the old one (Harbor Pilot answers 404), so every credential the old
+	// parent minted that may still be valid (live run tokens and pending revocations) is revoked now, with the old
+	// parent at its old address, before it is replaced (ADR-0060 decision 5). The connection write's transaction checks
+	// that nothing of the old parent's was added meanwhile (a run token minted between the list and the commit) and
+	// revokes those in another round; a mint stored after the commit sees the parent changed and revokes its own
+	// credential (Lifecycle.Token).
+	//
+	// If the connection write then fails (a version conflict, a seal error), the old parent stays while the run tokens
+	// are already revoked: those runs have no model access until they are started again. That fails safe: no token
+	// stays valid that SpaceMan believes revoked.
 	var rotated []rotatedChild
+	oldParent, oldFP := "", ""
 	if exists && in.ParentToken != "" {
 		if old, err := svc.open(parentAAD(id), cur.ParentTokenEnc, "parent"); err == nil && old != in.ParentToken {
-			if rotated, err = svc.revokeChildren(ctx, cur, old); err != nil {
-				return nil, err
-			}
+			oldParent, oldFP = old, ParentFingerprint(old)
 		}
+	}
+	revokeOld := func(skip map[string]bool) error {
+		if oldParent == "" {
+			return nil
+		}
+		more, err := svc.revokeChildren(ctx, cur, oldParent, oldFP, skip)
+		rotated = append(rotated, more...)
+		return err
+	}
+	if err := revokeOld(nil); err != nil {
+		return nil, err
 	}
 
 	sealedParent, err := svc.kr.Seal(keyring.PurposeCredential, parentAAD(id), []byte(parent))
@@ -473,78 +514,132 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 	if val.parentExpires != nil {
 		expires = sql.NullInt64{Int64: val.parentExpires.UnixMicro(), Valid: true}
 	}
-	err = svc.s.W().TxNamed(ctx, "harborpilot.put_connection", func(tx *store.Tx) error {
-		now := tx.NowMicros()
-		row, err := tx.Q.GetHarborPilotConnection(ctx)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			if exists {
-				return errNoConnection
-			}
-		case err != nil:
-			return err
-		case !exists:
-			return apperr.New(apperr.CodeConflict, "a Harbor Pilot connection was created meanwhile; reload and retry")
-		}
-		parentVersion, serviceVersion := int64(1), int64(0)
-		if sealedService != nil {
-			serviceVersion = 1
-		}
-		action := "created"
-		if exists {
-			action = "updated"
-			parentVersion, serviceVersion = row.ParentTokenVersion, row.ServiceTokenVersion
-			if in.ParentToken != "" {
-				parentVersion++
-			}
-			if in.ServiceToken != "" || (in.RemoveServiceToken && len(row.ServiceTokenEnc) > 0) {
-				serviceVersion++
-			}
-			if row.BindingID != "" && row.BindingID != val.bindingID {
-				enabled, err := tx.Q.ListEnabledSpaceHarborPilot(ctx)
+	for round := 1; ; round++ {
+		var missed bool
+		err = svc.s.W().TxNamed(ctx, "harborpilot.put_connection", func(tx *store.Tx) error {
+			missed = false
+			if oldParent != "" {
+				handled := rotatedSet(rotated)
+				left, err := tx.Q.ListParentGatewayCredentials(ctx, fpArg(oldFP))
 				if err != nil {
 					return err
 				}
-				if len(enabled) > 0 {
-					return apperr.New(apperr.CodePrecondition, "the parent token belongs to another client binding (%s, was %s) while %d spaces use Harbor Pilot; "+
-						"use a parent of the same binding, or disable those spaces first", val.bindingID, row.BindingID, len(enabled))
+				for _, r := range left {
+					if !handled[r.CredentialID] {
+						missed = true
+						return errRotationRace
+					}
 				}
 			}
-			n, err := tx.Q.UpdateHarborPilotConnection(ctx, db.UpdateHarborPilotConnectionParams{BaseUrl: base.String(), RunBaseUrl: in.RunBaseURL,
-				AllowInsecureHttp: b2i(in.AllowInsecureHTTP), ParentTokenEnc: sealedParent, ParentTokenVersion: parentVersion, ServiceTokenEnc: sealedService,
-				ServiceTokenVersion: serviceVersion, BindingID: val.bindingID, ParentExpiresAt: expires, Now: now, UpdatedBy: actorRef(actor), ID: id, Version: version})
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				return apperr.New(apperr.CodeConflict, "the connection changed (version %d, you sent %d); reload and retry", row.Version, version)
-			}
-		} else if err := tx.Q.InsertHarborPilotConnection(ctx, db.InsertHarborPilotConnectionParams{ID: id, BaseUrl: base.String(), RunBaseUrl: in.RunBaseURL,
-			AllowInsecureHttp: b2i(in.AllowInsecureHTTP), ParentTokenEnc: sealedParent, ServiceTokenEnc: sealedService, ServiceTokenVersion: serviceVersion,
-			BindingID: val.bindingID, ParentExpiresAt: expires, ValidatedAt: now, CreatedAt: now, CreatedBy: actorRef(actor), UpdatedAt: now, UpdatedBy: actorRef(actor)}); err != nil {
-			if store.IsConstraint(err) {
-				return apperr.New(apperr.CodeConflict, "a Harbor Pilot connection was created meanwhile; reload and retry")
-			}
-			return err
+			return svc.putConnectionTx(ctx, tx, actor, version, exists, id, in, base.String(), val, sealedParent, sealedService, expires, rotated)
+		})
+		if !missed || round >= rotationRounds {
+			break
 		}
-		for _, r := range rotated {
-			if err := r.record(ctx, tx); err != nil {
-				return err
-			}
+		if err := revokeOld(rotatedSet(rotated)); err != nil {
+			return nil, err
 		}
-		if err := svc.changes.Record(ctx, tx, "", "harbor_pilot_connection", id, action, version+1); err != nil {
-			return err
-		}
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "harbor_pilot.connection." + action, Target: audit.Target{Type: "harbor_pilot_connection", ID: id},
-			Details: map[string]any{"base_url": base.String(), "run_base_url": in.RunBaseURL, "allow_insecure_http": in.AllowInsecureHTTP,
-				"parent_token_changed": in.ParentToken != "", "parent_token_version": parentVersion, "service_token_changed": in.ServiceToken != "" || in.RemoveServiceToken,
-				"has_service_token": sealedService != nil, "service_token_version": serviceVersion, "binding_id": val.bindingID,
-				"run_tokens_revoked": len(rotated)}})
-		return err
-	})
+	}
+	if errors.Is(err, errRotationRace) {
+		return nil, apperr.New(apperr.CodeUnavailable, "run tokens kept being minted with the old parent token while it was being replaced; retry")
+	}
 	if err != nil {
 		return nil, err
 	}
+	if len(rotated) > 0 {
+		svc.wake() // the deadline timer re-reads the queue, failed revocations included
+	}
+	return svc.rotationOut(ctx, warnings, rotated)
+}
+
+// rotationRounds bounds the revoke-and-commit rounds of a parent rotation that keeps finding new credentials of the
+// old parent.
+const rotationRounds = 3
+
+var errRotationRace = errors.New("harborpilot: a credential of the old parent was added during the rotation")
+
+func rotatedSet(rs []rotatedChild) map[string]bool {
+	m := make(map[string]bool, len(rs))
+	for _, r := range rs {
+		m[r.cred.CredentialID] = true
+	}
+	return m
+}
+
+// putConnectionTx writes the connection inside PutConnection's transaction and records the rotated children.
+func (svc *Service) putConnectionTx(ctx context.Context, tx *store.Tx, actor audit.Actor, version int64, exists bool, id string, in ConnectionInput, base string,
+	val *validation, sealedParent, sealedService []byte, expires sql.NullInt64, rotated []rotatedChild) error {
+	now := tx.NowMicros()
+	row, err := tx.Q.GetHarborPilotConnection(ctx)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if exists {
+			return errNoConnection
+		}
+	case err != nil:
+		return err
+	case !exists:
+		return apperr.New(apperr.CodeConflict, "a Harbor Pilot connection was created meanwhile; reload and retry")
+	}
+	parentVersion, serviceVersion := int64(1), int64(0)
+	if sealedService != nil {
+		serviceVersion = 1
+	}
+	action := "created"
+	if exists {
+		action = "updated"
+		parentVersion, serviceVersion = row.ParentTokenVersion, row.ServiceTokenVersion
+		if in.ParentToken != "" {
+			parentVersion++
+		}
+		if in.ServiceToken != "" || (in.RemoveServiceToken && len(row.ServiceTokenEnc) > 0) {
+			serviceVersion++
+		}
+		if row.BindingID != "" && row.BindingID != val.bindingID {
+			enabled, err := tx.Q.ListEnabledSpaceHarborPilot(ctx)
+			if err != nil {
+				return err
+			}
+			if len(enabled) > 0 {
+				return apperr.New(apperr.CodePrecondition, "the parent token belongs to another client binding (%s, was %s) while %d spaces use Harbor Pilot; "+
+					"use a parent of the same binding, or disable those spaces first", val.bindingID, row.BindingID, len(enabled))
+			}
+		}
+		n, err := tx.Q.UpdateHarborPilotConnection(ctx, db.UpdateHarborPilotConnectionParams{BaseUrl: base, RunBaseUrl: in.RunBaseURL,
+			AllowInsecureHttp: b2i(in.AllowInsecureHTTP), ParentTokenEnc: sealedParent, ParentTokenVersion: parentVersion, ServiceTokenEnc: sealedService,
+			ServiceTokenVersion: serviceVersion, BindingID: val.bindingID, ParentExpiresAt: expires, Now: now, UpdatedBy: actorRef(actor), ID: id, Version: version})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodeConflict, "the connection changed (version %d, you sent %d); reload and retry", row.Version, version)
+		}
+	} else if err := tx.Q.InsertHarborPilotConnection(ctx, db.InsertHarborPilotConnectionParams{ID: id, BaseUrl: base, RunBaseUrl: in.RunBaseURL,
+		AllowInsecureHttp: b2i(in.AllowInsecureHTTP), ParentTokenEnc: sealedParent, ServiceTokenEnc: sealedService, ServiceTokenVersion: serviceVersion,
+		BindingID: val.bindingID, ParentExpiresAt: expires, ValidatedAt: now, CreatedAt: now, CreatedBy: actorRef(actor), UpdatedAt: now, UpdatedBy: actorRef(actor)}); err != nil {
+		if store.IsConstraint(err) {
+			return apperr.New(apperr.CodeConflict, "a Harbor Pilot connection was created meanwhile; reload and retry")
+		}
+		return err
+	}
+	for _, r := range rotated {
+		if err := r.record(ctx, tx, svc.audit); err != nil {
+			return err
+		}
+	}
+	if err := svc.changes.Record(ctx, tx, "", "harbor_pilot_connection", id, action, version+1); err != nil {
+		return err
+	}
+	_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "harbor_pilot.connection." + action, Target: audit.Target{Type: "harbor_pilot_connection", ID: id},
+		Details: map[string]any{"base_url": base, "run_base_url": in.RunBaseURL, "allow_insecure_http": in.AllowInsecureHTTP,
+			"parent_token_changed": in.ParentToken != "", "parent_token_version": parentVersion, "service_token_changed": in.ServiceToken != "" || in.RemoveServiceToken,
+			"has_service_token": sealedService != nil, "service_token_version": serviceVersion, "binding_id": val.bindingID,
+			"run_tokens_revoked": len(rotated)}})
+	return err
+}
+
+// rotationOut is the connection a write returns, with what became of the old parent's credentials.
+func (svc *Service) rotationOut(ctx context.Context, warnings []string, rotated []rotatedChild) (*Connection, error) {
 	out, err := svc.GetConnection(ctx)
 	if err != nil {
 		return nil, err
@@ -557,8 +652,9 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 				failed++
 			}
 		}
-		out.Warnings = append(out.Warnings, fmt.Sprintf("The parent token changed: the Harbor Pilot tokens of %d live runs were revoked with the old parent "+
-			"(the new one can't revoke them); those runs have no model access until they are started again.", len(rotated)))
+		out.Warnings = append(out.Warnings, fmt.Sprintf("The parent token changed: %d Harbor Pilot tokens minted by the old parent (live run tokens and "+
+			"pending revocations) were revoked with it (the new one can't revoke them); runs whose token was revoked have no model access until they are "+
+			"started again.", len(rotated)))
 		if failed > 0 {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("%d of those tokens could not be revoked; revoke the old parent in Harbor Pilot, which ends its children.", failed))
 		}
@@ -566,55 +662,68 @@ func (svc *Service) PutConnection(ctx context.Context, actor audit.Actor, versio
 	return out, nil
 }
 
-// rotatedChild is a live run token revoked because the parent token is being replaced.
+// rotatedChild is a credential of the old parent (a live run token or a pending revocation) revoked because the parent
+// token is being replaced.
 type rotatedChild struct {
-	cred       db.RunGatewayCredential
+	cred       db.ListParentGatewayCredentialsRow
 	state, msg string
 }
 
-// revokeChildren revokes every live run token with the old parent at the connection's stored address (outside any
-// transaction); record stores the outcomes in the connection write's transaction.
-func (svc *Service) revokeChildren(ctx context.Context, cur db.HarborPilotConnection, oldParent string) ([]rotatedChild, error) {
-	live, err := svc.s.R().ListLiveRunGatewayCredentials(ctx)
-	if err != nil || len(live) == 0 {
+// revokeChildren revokes, with the old parent at the connection's stored address (outside any transaction), every
+// credential the old parent minted that may still be valid, except those in skip; record stores the outcomes in the
+// connection write's transaction. A credential of an unknown parent is tried too, but only a 204 counts for it.
+func (svc *Service) revokeChildren(ctx context.Context, cur db.HarborPilotConnection, oldParent, oldFP string, skip map[string]bool) ([]rotatedChild, error) {
+	all, err := svc.s.R().ListParentGatewayCredentials(ctx, fpArg(oldFP))
+	if err != nil {
 		return nil, err
 	}
+	var creds []db.ListParentGatewayCredentialsRow
+	for _, cr := range all {
+		if !skip[cr.CredentialID] {
+			creds = append(creds, cr)
+		}
+	}
+	if len(creds) == 0 {
+		return nil, nil
+	}
 	c, err := svc.client(cur.BaseUrl, cur.AllowInsecureHttp == 1)
-	out := make([]rotatedChild, 0, len(live))
-	for _, cred := range live {
-		r := rotatedChild{cred: cred, state: "revoked"}
+	out := make([]rotatedChild, 0, len(creds))
+	for _, cred := range creds {
+		r := rotatedChild{cred: cred}
 		if err == nil {
 			cctx, cancel := context.WithTimeout(ctx, revokeTimeout)
 			rerr := c.Revoke(cctx, oldParent, cred.CredentialID)
 			cancel()
-			switch {
-			case rerr == nil:
-			case IsClass(rerr, ClassNotFound):
-				r.msg = "not found: Harbor Pilot has no such credential of this parent"
-			case IsClass(rerr, ClassUnauthorized):
-				r.msg = "the parent token is invalid, expired or revoked, which ended its children"
-			default:
-				r.state, r.msg = "failed", "the parent token was replaced before this credential could be revoked: "+rerr.Error()
-			}
+			r.state, r.msg = revokeOutcome(rerr, cred.Fp == oldFP)
 		} else {
-			r.state, r.msg = "failed", "the parent token was replaced before this credential could be revoked: the old address is not usable"
+			r.msg = "the old address is not usable"
+		}
+		// The old parent is about to be replaced: nothing can retry this revocation later.
+		if r.state == "" {
+			r.state, r.msg = "failed", "the parent token was replaced before this credential could be revoked: "+r.msg
 		}
 		out = append(out, r)
 	}
 	return out, nil
 }
 
-func (r rotatedChild) record(ctx context.Context, tx *store.Tx) error {
-	n, err := tx.Q.ClearRunGatewayTokenFor(ctx, db.ClearRunGatewayTokenForParams{RunID: r.cred.RunID, CredentialID: r.cred.CredentialID})
-	if err != nil || n == 0 {
-		return err // already revoked or replaced meanwhile: its own revocation is queued
-	}
-	if err := tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: r.cred.CredentialID, RunID: r.cred.RunID, SpaceID: r.cred.SpaceID,
-		Reason: "parent_rotated", ExpiresAt: r.cred.ExpiresAt, NextAttemptAt: tx.NowMicros(), RequestedAt: tx.NowMicros()}); err != nil {
+// record stores the outcome of a rotated credential: a live run token is dropped and its revocation recorded, and a
+// pending revocation is settled.
+func (r rotatedChild) record(ctx context.Context, tx *store.Tx, aw *audit.Writer) error {
+	if _, err := tx.Q.ClearRunGatewayTokenFor(ctx, db.ClearRunGatewayTokenForParams{RunID: r.cred.RunID, CredentialID: r.cred.CredentialID}); err != nil {
 		return err
 	}
-	_, err = tx.Q.SetGatewayRevocationDone(ctx, db.SetGatewayRevocationDoneParams{State: r.state, LastError: bounded(r.msg, 500),
+	if err := tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: r.cred.CredentialID, RunID: r.cred.RunID, SpaceID: r.cred.SpaceID,
+		Reason: "parent_rotated", ExpiresAt: r.cred.ExpiresAt, NextAttemptAt: tx.NowMicros(), RequestedAt: tx.NowMicros(), ParentFp: fpArg(r.cred.Fp)}); err != nil {
+		return err
+	}
+	n, err := tx.Q.SetGatewayRevocationDone(ctx, db.SetGatewayRevocationDoneParams{State: r.state, LastError: bounded(r.msg, 500),
 		Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, CredentialID: r.cred.CredentialID})
+	if err != nil || n == 0 || r.state != "failed" {
+		return err
+	}
+	_, err = aw.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "harbor_pilot.revocation.failed", Target: audit.Target{Type: "harbor_pilot_credential", ID: r.cred.CredentialID},
+		Details: map[string]any{"run_id": r.cred.RunID, "space_id": r.cred.SpaceID, "reason": "parent_rotated", "error": bounded(r.msg, 500)}})
 	return err
 }
 
@@ -857,7 +966,7 @@ func (svc *Service) checkProject(ctx context.Context, projectID string) (int64, 
 	}
 	warning := ""
 	if val.unrevoked != nil {
-		warning = svc.unrevokedWarning(ctx, val.unrevoked, "project validation")
+		warning = svc.unrevokedWarning(ctx, val, "project validation")
 	}
 	return r.Version, warning, nil
 }

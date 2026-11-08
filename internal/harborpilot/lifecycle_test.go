@@ -14,6 +14,8 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/harborpilot/hpfake"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics/metricstest"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
@@ -342,7 +344,7 @@ func queueMinted(t *testing.T, svc *Service, f *hpfake.HP) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.queueRevocation(context.Background(), cred, "run_ended"); err != nil {
+	if err := svc.queueRevocation(context.Background(), cred, "run_ended", ParentFingerprint(f.Parent)); err != nil {
 		t.Fatal(err)
 	}
 	return cred.ID
@@ -357,9 +359,10 @@ func revocation(t *testing.T, s *store.Store, id string) (state string, attempts
 	return
 }
 
-// SM-GW-005: the revoker revokes queued credentials with the parent token. 204 and 404 settle as revoked, a failing
-// gateway is retried with backoff until the credential expires (then expired), a refusal is failed and audited, and a
-// revoked parent (401) settles as revoked (its children went with it), audited.
+// SM-GW-005: the revoker revokes queued credentials with the parent token. 204 and 404 (from the parent that minted
+// the credential) settle as revoked, a 404 for a credential of an unknown parent is failed, a failing gateway is
+// retried with backoff until the credential expires (then expired), a refusal is failed and audited, and a revoked
+// parent (401) settles as revoked (its children went with it), audited.
 func TestRevokerOutcomes(t *testing.T) {
 	t.Parallel()
 	svc, s := newSvc(t)
@@ -369,14 +372,19 @@ func TestRevokerOutcomes(t *testing.T) {
 	ctx := context.Background()
 
 	ok := queueMinted(t, svc, f)
-	exec(t, s, `INSERT INTO gateway_revocations (credential_id, reason, expires_at, next_attempt_at, requested_at) VALUES ('crd_unknown', 'run_ended', ?, 0, 0)`,
+	exec(t, s, `INSERT INTO gateway_revocations (credential_id, reason, expires_at, next_attempt_at, requested_at, parent_fp) VALUES ('crd_unknown', 'run_ended', ?, 0, 0, ?)`,
+		time.Now().Add(time.Hour).UnixMicro(), ParentFingerprint(f.Parent))
+	exec(t, s, `INSERT INTO gateway_revocations (credential_id, reason, expires_at, next_attempt_at, requested_at) VALUES ('crd_nofp', 'run_ended', ?, 0, 0)`,
 		time.Now().Add(time.Hour).UnixMicro())
 	exec(t, s, `INSERT INTO gateway_revocations (credential_id, reason, expires_at, next_attempt_at, requested_at) VALUES ('crd_old', 'run_ended', 5, 0, 0)`)
 	exec(t, s, `INSERT INTO gateway_revocations (credential_id, reason, expires_at, next_attempt_at, requested_at) VALUES ('crd_later', 'run_ended', ?, ?, 0)`,
 		time.Now().Add(time.Hour).UnixMicro(), time.Now().Add(time.Minute).UnixMicro())
 	n, err := l.RevokeDue(ctx)
-	if err != nil || n != 3 {
+	if err != nil || n != 4 {
 		t.Fatalf("settled %d %v", n, err)
+	}
+	if st, _, msg, _ := revocation(t, s, "crd_nofp"); st != "failed" || !strings.Contains(msg, "unknown) parent") {
+		t.Fatalf("404 for an unknown parent: %s %q", st, msg)
 	}
 	if st, _, _, _ := revocation(t, s, ok); st != "revoked" || len(f.Unrevoked()) != 0 {
 		t.Fatalf("revoked: %s, unrevoked %v", st, f.Unrevoked())
@@ -451,8 +459,30 @@ func TestRevocationSurvivesRestart(t *testing.T) {
 	}
 }
 
+// rotate replaces the fake's parent with a new one while the old stays valid in Harbor Pilot (nobody revoked it), and
+// writes the new one to the connection.
+func rotate(t *testing.T, svc *Service, f *hpfake.HP, fill string) (*Connection, string) {
+	t.Helper()
+	ctx := context.Background()
+	cur, err := svc.GetConnection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newParent := "hpk_parent_" + strings.Repeat(fill, 24)
+	var old string
+	f.Set(func(h *hpfake.HP) {
+		old, h.Parent, h.OtherParents = h.Parent, newParent, append(h.OtherParents, h.Parent)
+	})
+	out, err := svc.PutConnection(ctx, admin, cur.Version, ConnectionInput{BaseURL: f.URL(), AllowInsecureHTTP: true, ParentToken: newParent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, old
+}
+
 // SM-GW-005 (end-path table, "parent rotated"): a new parent can't revoke the old one's children, so replacing the parent
-// revokes every live run token with the old parent first, records it, and says so.
+// revokes, with the old parent, every live run token and every pending revocation it minted, records it, and says so.
+// Harbor Pilot (hpfake with per-parent ownership) confirms each credential is really revoked.
 func TestParentRotationRevokesLiveRunTokens(t *testing.T) {
 	t.Parallel()
 	svc, s := newSvc(t)
@@ -463,43 +493,187 @@ func TestParentRotationRevokesLiveRunTokens(t *testing.T) {
 	if _, err := l.Token(ctx, gatewayRun(t, s, "run_1"), "run_1"); err != nil {
 		t.Fatal(err)
 	}
-	cur, _ := svc.GetConnection(ctx)
-	// Same binding, another parent. The fake knows one parent at a time: the new one for the validation probe (its mint
-	// and its revoke), then the old one, which must be what revokes the run's token.
-	newParent := "hpk_parent_" + strings.Repeat("n", 24)
-	f.Set(func(h *hpfake.HP) { h.Parent = newParent })
-	var revokedWith string
-	// The fake knows one parent at a time: accept the old one for the child revocation by switching on the probe's revoke.
-	var phase atomic.Int32
-	old := "hpk_parent_" + strings.Repeat("p", 24)
+	// A revocation queued while Harbor Pilot was unreachable, still pending at the rotation.
+	pending := queueMinted(t, svc, f)
+	var revokedWith []string
 	f.Set(func(h *hpfake.HP) {
 		h.Hook = func(r *http.Request) {
 			if r.Method == http.MethodDelete {
-				switch phase.Add(1) {
-				case 1: // the probe's own revoke, with the new parent
-				case 2: // the run token, with the old parent
-					revokedWith = r.Header.Get("Authorization")
-					h.Set(func(h *hpfake.HP) { h.Parent = old })
-				}
+				revokedWith = append(revokedWith, r.Header.Get("Authorization"))
 			}
 		}
 	})
-	out, err := svc.PutConnection(ctx, admin, cur.Version, ConnectionInput{BaseURL: f.URL(), AllowInsecureHTTP: true, ParentToken: newParent})
-	if err != nil {
-		t.Fatal(err)
+	out, old := rotate(t, svc, f, "n")
+	// The probe's own revoke uses the new parent; the two credentials of the old parent use the old one.
+	if len(revokedWith) != 3 || revokedWith[1] != "Bearer "+old || revokedWith[2] != "Bearer "+old {
+		t.Fatalf("revoked with %q, want the old parent for both of its credentials", revokedWith)
 	}
-	if revokedWith != "Bearer "+old {
-		t.Fatalf("run token revoked with %q, want the old parent", revokedWith)
+	if un := f.Unrevoked(); len(un) != 0 {
+		t.Fatalf("Harbor Pilot still has unrevoked credentials %v", un)
 	}
-	if !strings.Contains(strings.Join(out.Warnings, "\n"), "tokens of 1 live runs were revoked") {
-		t.Fatalf("warnings %q", out.Warnings)
+	if !strings.Contains(strings.Join(out.Warnings, "\n"), "2 Harbor Pilot tokens minted by the old parent") || out.FailedRevocations != 0 {
+		t.Fatalf("warnings %q failed %d", out.Warnings, out.FailedRevocations)
 	}
 	if count(t, s, `SELECT count(*) FROM gateway_revocations WHERE run_id = 'run_1' AND reason = 'parent_rotated' AND state = 'revoked'`) != 1 ||
 		count(t, s, `SELECT count(*) FROM run_gateway_credentials WHERE run_id = 'run_1' AND token_enc IS NULL`) != 1 {
 		t.Fatal("rotation not recorded")
 	}
+	if st, _, _, _ := revocation(t, s, pending); st != "revoked" {
+		t.Fatalf("pending revocation of the old parent: %s", st)
+	}
 	if count(t, s, `SELECT count(*) FROM gateway_revocations WHERE state = 'pending'`) != 0 {
 		t.Fatal("rotation left a pending revocation the new parent can't do")
+	}
+}
+
+// F4: when the connection write fails after the old parent's run tokens were revoked (here: the new parent belongs to
+// another binding while a space uses Harbor Pilot), the old parent stays and the run keeps a token that no longer
+// works. That fails safe: no token SpaceMan believes revoked stays valid, and the run only loses model access.
+func TestParentRotationWriteFailureFailsSafe(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{})
+	l := newLifecycle(svc)
+	ctx := context.Background()
+	if _, err := l.Token(ctx, gatewayRun(t, s, "run_1"), "run_1"); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := svc.GetConnection(ctx)
+	newParent := "hpk_parent_" + strings.Repeat("b", 24)
+	f.Set(func(h *hpfake.HP) { h.OtherParents, h.Parent, h.BindingID = []string{h.Parent}, newParent, "bnd_other" })
+	_, err := svc.PutConnection(ctx, admin, cur.Version, ConnectionInput{BaseURL: f.URL(), AllowInsecureHTTP: true, ParentToken: newParent})
+	code(t, err, apperr.CodePrecondition)
+	if un := f.Unrevoked(); len(un) != 0 {
+		t.Fatalf("Harbor Pilot still has unrevoked credentials %v", un)
+	}
+	after, _ := svc.GetConnection(ctx)
+	if after.Version != cur.Version || after.ParentTokenVersion != cur.ParentTokenVersion {
+		t.Fatalf("the connection changed: %+v", after)
+	}
+	if count(t, s, `SELECT count(*) FROM run_gateway_credentials WHERE run_id = 'run_1' AND token_enc IS NOT NULL`) != 1 {
+		t.Fatal("the run's (revoked) token should still be stored: the write rolled back")
+	}
+}
+
+// F1: a queued credential of an earlier parent that the rotation could not see reaches the revoker, which holds the new
+// parent: Harbor Pilot answers 404, which proves nothing about it, so it is recorded as failed, audited, counted in the
+// connection and the metric, never as revoked.
+func TestRevokerForeignParentIsFailed(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	connect(t, svc, f)
+	m := metrics.New()
+	l := NewLifecycle(svc, LifecycleOptions{MintRetry: []time.Duration{0, 0, 0}, Metrics: m})
+	ctx := context.Background()
+	_, old := rotate(t, svc, f, "n")
+	c, err := svc.client(f.URL(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, _, err := c.Mint(ctx, old, MintRequest{Name: "x", Scopes: RunScopes, TTLSeconds: 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.queueRevocation(ctx, cred, "run_ended", ParentFingerprint(old)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := l.RevokeDue(ctx); err != nil || n != 1 {
+		t.Fatalf("settled %d %v", n, err)
+	}
+	if st, _, msg, _ := revocation(t, s, cred.ID); st != "failed" || !strings.Contains(msg, "proves nothing") {
+		t.Fatalf("foreign 404: %s %q", st, msg)
+	}
+	if un := f.Unrevoked(); len(un) != 1 || un[0] != cred.ID {
+		t.Fatalf("the fake shows %v unrevoked; the test expects exactly the foreign credential", un)
+	}
+	if count(t, s, `SELECT count(*) FROM audit_events WHERE action = 'harbor_pilot.revocation.failed' AND target_id = ?`, cred.ID) != 1 {
+		t.Fatal("the failed revocation is not audited")
+	}
+	conn, err := svc.GetConnection(ctx)
+	if err != nil || conn.FailedRevocations != 1 || !strings.Contains(strings.Join(conn.Warnings, "\n"), "1 token revocations failed") {
+		t.Fatalf("connection %+v %v", conn, err)
+	}
+	if v := metricstest.Value(t, m, "spaceman_gateway_revocations_failed"); v != 1 {
+		t.Fatalf("spaceman_gateway_revocations_failed = %v", v)
+	}
+}
+
+// F1: a run token the old parent mints between the rotation's list and its commit is caught by the commit's check and
+// revoked with the old parent in another round.
+func TestParentRotationCatchesATokenMintedDuringIt(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{})
+	l := newLifecycle(svc)
+	ctx := context.Background()
+	if _, err := l.Token(ctx, gatewayRun(t, s, "run_1"), "run_1"); err != nil {
+		t.Fatal(err)
+	}
+	run2 := gatewayRun(t, s, "run_2")
+	cur, err := s.R().GetRunGatewayCredential(ctx, "run_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run1Cred := cur.CredentialID
+	var once sync.Once
+	var mintErr error
+	f.Set(func(h *hpfake.HP) {
+		h.Hook = func(r *http.Request) {
+			// The rotation is revoking run_1's token: a dispatch of run_2 mints with the old parent meanwhile.
+			if r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/"+run1Cred) {
+				once.Do(func() { _, mintErr = l.Token(ctx, run2, "run_2") })
+			}
+		}
+	})
+	out, _ := rotate(t, svc, f, "n")
+	if mintErr != nil {
+		t.Fatal(mintErr)
+	}
+	if un := f.Unrevoked(); len(un) != 0 {
+		t.Fatalf("Harbor Pilot still has unrevoked credentials %v", un)
+	}
+	if !strings.Contains(strings.Join(out.Warnings, "\n"), "2 Harbor Pilot tokens minted by the old parent") {
+		t.Fatalf("warnings %q", out.Warnings)
+	}
+	if count(t, s, `SELECT count(*) FROM run_gateway_credentials WHERE token_enc IS NOT NULL`) != 0 {
+		t.Fatal("a run token of the old parent survived the rotation")
+	}
+}
+
+// F1: a mint in flight when the rotation commits is stored after it: Token sees the parent changed, revokes its
+// credential with the old parent and mints again with the new one.
+func TestRunTokenMintedAcrossARotationIsRedone(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{})
+	l := newLifecycle(svc)
+	ctx := context.Background()
+	run := gatewayRun(t, s, "run_1")
+	var arm atomic.Bool
+	arm.Store(true)
+	var newParent string
+	f.Set(func(h *hpfake.HP) {
+		h.Hook = func(r *http.Request) {
+			if r.Method == http.MethodPost && arm.CompareAndSwap(true, false) {
+				_, _ = rotate(t, svc, f, "n") // commits before the run's mint is answered
+				f.Set(func(h *hpfake.HP) { newParent = h.Parent })
+			}
+		}
+	})
+	sec, err := l.Token(ctx, run, "run_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, err := s.R().GetRunGatewayCredential(ctx, "run_1")
+	if err != nil || !cur.ParentFp.Valid || cur.ParentFp.String != ParentFingerprint(newParent) || sec[proto.SecretGatewayToken] != "hpk_child_"+cur.CredentialID {
+		t.Fatalf("stored %+v %v", cur, err)
+	}
+	if un := f.Unrevoked(); len(un) != 1 || un[0] != cur.CredentialID {
+		t.Fatalf("unrevoked %v, want only the new parent's token %s", un, cur.CredentialID)
 	}
 }
 

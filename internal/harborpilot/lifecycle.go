@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -44,6 +45,8 @@ type LifecycleOptions struct {
 	// MintRetry are the waits before each retry of a mint that failed in a way worth retrying (network, 5xx, 429);
 	// nil: 1 s, 4 s and 10 s.
 	MintRetry []time.Duration
+	// Metrics receives the failed-revocation gauge (nil: none).
+	Metrics *metrics.Metrics
 }
 
 // Lifecycle is the central side of a gateway run's child token (ADR-0060 decisions 4 and 5, SM-GW-003/005): it routes
@@ -206,6 +209,26 @@ func (l *Lifecycle) Token(ctx context.Context, run *fleet.Run, session string) (
 		old = cur.CredentialID // about to expire: replaced below
 	}
 
+	// A parent rotation that commits while the mint is in flight can't see the new credential: it is revoked here with
+	// the parent that minted it, and the mint is done again with the new parent.
+	for attempt := 1; ; attempt++ {
+		sec, err := l.mintAndStore(ctx, run, session, old)
+		if !errors.Is(err, errParentReplaced) {
+			return sec, err
+		}
+		if attempt >= 2 {
+			return nil, unavailable("the Harbor Pilot parent token was replaced while the run's token was minted; start the run again")
+		}
+	}
+}
+
+// errParentReplaced: the connection's parent token was replaced (or the connection removed) while a run token was
+// minted with the old one; the credential was revoked or queued.
+var errParentReplaced = errors.New("harborpilot: the parent token was replaced during the mint")
+
+// mintAndStore mints a run token with the connection's current parent and stores it (replacing old, when set).
+func (l *Lifecycle) mintAndStore(ctx context.Context, run *fleet.Run, session, old string) (map[string]string, error) {
+	q := l.svc.s.R()
 	conn, err := q.GetHarborPilotConnection(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, unavailable("no Harbor Pilot connection is configured")
@@ -240,22 +263,32 @@ func (l *Lifecycle) Token(ctx context.Context, run *fleet.Run, session string) (
 		}
 		return nil, err
 	}
+	fp := ParentFingerprint(parent)
 	sealed, err := l.svc.kr.Seal(keyring.PurposeCredential, RunAAD(run.ID), []byte(tok))
 	if err != nil {
-		l.queueOrphan(ctx, cred, run, fleet.RevokeLaunchFail)
+		l.queueOrphan(ctx, cred, run, fleet.RevokeLaunchFail, fp)
 		return nil, err
 	}
 	exp := cred.ExpiresAt
 	if exp.IsZero() {
 		exp = l.svc.s.Now().Add(time.Duration(ttl) * time.Second)
 	}
-	var stopped bool
+	var stopped, replaced bool
 	err = l.svc.s.W().TxNamed(ctx, "harborpilot.store_run_token", func(tx *store.Tx) error {
-		stopped = false
-		queue := func(id, reason string, expires int64) error {
+		stopped, replaced = false, false
+		queue := func(id, reason string, expires int64, fp string) error {
 			tx.AfterCommit(l.wake)
 			return tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: id, RunID: run.ID, SpaceID: run.SpaceID, Reason: reason,
-				ExpiresAt: expires, NextAttemptAt: tx.NowMicros(), RequestedAt: tx.NowMicros()})
+				ExpiresAt: expires, NextAttemptAt: tx.NowMicros(), RequestedAt: tx.NowMicros(), ParentFp: fpArg(fp)})
+		}
+		// The parent was replaced after the mint: the rotation committed without seeing this credential, so storing it
+		// would leave a token only the old parent can revoke. It is revoked after this transaction. (Re-entering the same
+		// parent also bumps the version: that only costs a second mint.)
+		if now, err := tx.Q.GetHarborPilotConnection(ctx); errors.Is(err, sql.ErrNoRows) || (err == nil && (now.ID != conn.ID || now.ParentTokenVersion != conn.ParentTokenVersion)) {
+			replaced = true
+			return nil
+		} else if err != nil {
+			return err
 		}
 		r, err := tx.Q.GetRun(ctx, run.ID)
 		if err != nil {
@@ -265,37 +298,51 @@ func (l *Lifecycle) Token(ctx context.Context, run *fleet.Run, session string) (
 		// is revoked here.
 		if r.Desired != "running" || r.Observed == proto.RunExited || r.Observed == proto.RunFailed || r.Observed == proto.RunLost {
 			stopped = true
-			return queue(cred.ID, fleet.RevokeRunStopped, exp.UnixMicro())
+			return queue(cred.ID, fleet.RevokeRunStopped, exp.UnixMicro(), fp)
 		}
 		row, err := tx.Q.GetRunGatewayCredential(ctx, run.ID)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			return tx.Q.InsertRunGatewayCredential(ctx, db.InsertRunGatewayCredentialParams{RunID: run.ID, SpaceID: run.SpaceID, CredentialID: cred.ID,
-				TokenEnc: sealed, ExpiresAt: exp.UnixMicro(), CreatedAt: tx.NowMicros()})
+				TokenEnc: sealed, ExpiresAt: exp.UnixMicro(), CreatedAt: tx.NowMicros(), ParentFp: fpArg(fp)})
 		case err != nil:
 			return err
 		case row.TokenEnc == nil:
 			stopped = true
-			return queue(cred.ID, fleet.RevokeRunStopped, exp.UnixMicro())
+			return queue(cred.ID, fleet.RevokeRunStopped, exp.UnixMicro(), fp)
 		case row.CredentialID != old:
 			// Another dispatch stored a token first: keep that one, revoke this one.
-			if err := queue(cred.ID, fleet.RevokeDuplicate, exp.UnixMicro()); err != nil {
+			if err := queue(cred.ID, fleet.RevokeDuplicate, exp.UnixMicro(), fp); err != nil {
 				return err
 			}
 			b, err := l.svc.kr.Open(keyring.PurposeCredential, RunAAD(run.ID), row.TokenEnc)
 			tok = string(b)
 			return err
 		}
-		if err := queue(old, fleet.RevokeReplaced, row.ExpiresAt); err != nil {
+		oldFP := ""
+		if row.ParentFp.Valid {
+			oldFP = row.ParentFp.String
+		}
+		if err := queue(old, fleet.RevokeReplaced, row.ExpiresAt, oldFP); err != nil {
 			return err
 		}
 		_, err = tx.Q.ReplaceRunGatewayCredential(ctx, db.ReplaceRunGatewayCredentialParams{CredentialID: cred.ID, TokenEnc: sealed, ExpiresAt: exp.UnixMicro(),
-			CreatedAt: tx.NowMicros(), RunID: run.ID, OldCredentialID: old})
+			CreatedAt: tx.NowMicros(), ParentFp: fpArg(fp), RunID: run.ID, OldCredentialID: old})
 		return err
 	})
 	if err != nil {
-		l.queueOrphan(ctx, cred, run, fleet.RevokeLaunchFail)
+		l.queueOrphan(ctx, cred, run, fleet.RevokeLaunchFail, fp)
 		return nil, err
+	}
+	if replaced {
+		cctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+		rerr := c.Revoke(cctx, parent, cred.ID)
+		cancel()
+		if st, _ := revokeOutcome(rerr, true); st != "revoked" {
+			// Queued with the old parent's fingerprint: the revoker, holding the new parent, records it as failed and audits it.
+			l.queueOrphan(ctx, cred, run, fleet.RevokeParentReset, fp)
+		}
+		return nil, errParentReplaced
 	}
 	if stopped {
 		// Not a gateway failure: the launch is cancelled with the stop.
@@ -321,10 +368,15 @@ func (l *Lifecycle) mint(ctx context.Context, c *Client, parent string, in MintR
 }
 
 // queueOrphan queues the revocation of a minted credential that could not be stored with its run.
-func (l *Lifecycle) queueOrphan(ctx context.Context, cred *Credential, run *fleet.Run, reason string) {
+func (l *Lifecycle) queueOrphan(ctx context.Context, cred *Credential, run *fleet.Run, reason, parentFP string) {
+	exp := cred.ExpiresAt
+	if exp.IsZero() {
+		exp = l.svc.s.Now().Add(MaxTTLSeconds * time.Second)
+	}
+	ctx = context.WithoutCancel(ctx) // the dispatch's bound may have run out: the credential must still be queued
 	err := l.svc.s.W().TxNamed(ctx, "harborpilot.queue_orphan", func(tx *store.Tx) error {
 		return tx.Q.InsertGatewayRevocation(ctx, db.InsertGatewayRevocationParams{CredentialID: cred.ID, RunID: run.ID, SpaceID: run.SpaceID, Reason: reason,
-			ExpiresAt: cred.ExpiresAt.UnixMicro(), NextAttemptAt: tx.NowMicros(), RequestedAt: tx.NowMicros()})
+			ExpiresAt: exp.UnixMicro(), NextAttemptAt: tx.NowMicros(), RequestedAt: tx.NowMicros(), ParentFp: fpArg(parentFP)})
 	})
 	if err != nil {
 		l.svc.log().Error("harbor pilot run credential neither stored nor queued for revocation", "credential_id", cred.ID, "run_id", run.ID, "err", err)
@@ -346,6 +398,7 @@ const (
 
 // NextRevocation is when the earliest queued revocation is due (zero: none). The deadline timer calls it.
 func (l *Lifecycle) NextRevocation(ctx context.Context) (time.Time, error) {
+	l.refreshFailed(ctx)
 	at, err := l.svc.s.R().NextGatewayRevocation(ctx)
 	if err != nil || at == 0 {
 		return time.Time{}, err
@@ -356,6 +409,8 @@ func (l *Lifecycle) NextRevocation(ctx context.Context) (time.Time, error) {
 // RevokeDue revokes queued credentials that are due, outside any transaction, with the connection's parent token:
 //   - 204: revoked; 404: revoked as far as Harbor Pilot knows (recorded);
 //   - 401: the parent itself is revoked or expired, which revoked its children (recorded, audited);
+//   - a 404 or 401 for a credential another (or an unknown) parent minted proves nothing about it: failed (recorded,
+//     audited, counted in spaceman_gateway_revocations_failed);
 //   - 403 or another refusal: failed (recorded, audited, logged): it needs a person;
 //   - a network failure, 5xx or 429: retried with backoff (1 s, ×4, at most 5 min) until the credential expires, then
 //     recorded as expired.
@@ -370,7 +425,7 @@ func (l *Lifecycle) RevokeDue(ctx context.Context) (int, error) {
 	// Every due row is settled or rescheduled, whatever goes wrong here: a row left due would make the shared deadline
 	// timer fire again at once.
 	var c *Client
-	parent, unusable := "", "no Harbor Pilot connection is configured"
+	parent, parentFP, unusable := "", "", "no Harbor Pilot connection is configured"
 	conn, err := l.svc.s.R().GetHarborPilotConnection(ctx)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -382,6 +437,8 @@ func (l *Lifecycle) RevokeDue(ctx context.Context) (int, error) {
 			unusable = "the parent token can't be opened"
 		} else if c, err = l.svc.client(conn.BaseUrl, conn.AllowInsecureHttp == 1); err != nil {
 			c, unusable = nil, "the connection's address is not usable"
+		} else {
+			parentFP = ParentFingerprint(parent)
 		}
 	}
 	settled := 0
@@ -397,21 +454,7 @@ func (l *Lifecycle) RevokeDue(ctx context.Context) (int, error) {
 			cctx, cancel := context.WithTimeout(ctx, revokeTimeout)
 			err := c.Revoke(cctx, parent, r.CredentialID)
 			cancel()
-			var he *Error
-			switch {
-			case err == nil:
-				state = "revoked"
-			case !errors.As(err, &he):
-				msg = "revoke failed"
-			case he.Class == ClassNotFound:
-				state, msg = "revoked", "not found: Harbor Pilot has no such credential of this parent"
-			case he.Class == ClassUnauthorized:
-				state, msg = "revoked", "the parent token is invalid, expired or revoked, which ended its children"
-			case he.Retryable() || he.Class == ClassProtocol:
-				msg = he.Reason()
-			default:
-				state, msg = "failed", he.Reason()
-			}
+			state, msg = revokeOutcome(err, r.ParentFp.Valid && r.ParentFp.String == parentFP)
 		}
 		if err := l.settle(ctx, r, state, msg, now); err != nil {
 			errs = append(errs, err)
@@ -421,7 +464,45 @@ func (l *Lifecycle) RevokeDue(ctx context.Context) (int, error) {
 			settled++
 		}
 	}
+	if settled > 0 {
+		l.refreshFailed(ctx)
+	}
 	return settled, errors.Join(errs...)
+}
+
+// msgOtherParent prefixes a 404 or 401 answered to a parent that did not mint the credential.
+const msgOtherParent = "another (or an unknown) parent token minted this credential, so Harbor Pilot's answer to the current one proves nothing " +
+	"(revoke the old parent in Harbor Pilot, which ends its children): "
+
+// revokeOutcome classifies the answer to revoking a credential: state "" means retry later. sameParent says whether
+// the parent that asked is the one that minted the credential: a 404 or 401 settles as revoked only then.
+func revokeOutcome(err error, sameParent bool) (state, msg string) {
+	var he *Error
+	switch {
+	case err == nil:
+		return "revoked", ""
+	case !errors.As(err, &he):
+		return "", "revoke failed"
+	case (he.Class == ClassNotFound || he.Class == ClassUnauthorized) && !sameParent:
+		return "failed", msgOtherParent + he.Reason()
+	case he.Class == ClassNotFound:
+		return "revoked", "not found: Harbor Pilot has no such credential of this parent"
+	case he.Class == ClassUnauthorized:
+		return "revoked", "the parent token is invalid, expired or revoked, which ended its children"
+	case he.Retryable() || he.Class == ClassProtocol:
+		return "", he.Reason()
+	}
+	return "failed", he.Reason()
+}
+
+// refreshFailed sets the failed-revocation gauge from the queue.
+func (l *Lifecycle) refreshFailed(ctx context.Context) {
+	if l.o.Metrics == nil {
+		return
+	}
+	if n, err := l.svc.s.R().CountFailedGatewayRevocations(ctx); err == nil {
+		l.o.Metrics.SetGatewayRevocationsFailed(n)
+	}
 }
 
 func (l *Lifecycle) settle(ctx context.Context, r db.GatewayRevocation, state, msg string, now time.Time) error {

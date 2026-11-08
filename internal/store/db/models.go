@@ -355,6 +355,7 @@ type GatewayRevocation struct {
 	LastError     string
 	RequestedAt   int64
 	DoneAt        sql.NullInt64
+	ParentFp      sql.NullString
 }
 
 type GitSshKey struct {
@@ -1117,6 +1118,7 @@ type RunGatewayCredential struct {
 	TokenEnc     []byte
 	ExpiresAt    int64
 	CreatedAt    int64
+	ParentFp     sql.NullString
 }
 
 type RunTakeover struct {

@@ -6597,6 +6597,11 @@ export interface components {
             created_by: string;
             /** @description Spaces that route runs through Harbor Pilot */
             enabled_spaces: string[];
+            /**
+             * Format: int64
+             * @description Run and validation tokens whose revocation failed: each stays valid until it expires unless it, or the parent that minted it, is revoked in Harbor Pilot (see the audit log)
+             */
+            failed_revocations: number;
             has_parent_token: boolean;
             has_service_token: boolean;
             id: string;

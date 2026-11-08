@@ -2548,20 +2548,48 @@
     dispatch of that run fails as `gateway_unavailable` instead of minting again. A token minted for a run that was
     stopped meanwhile is queued for revocation at once.
   - **Revoker.** It runs on central's deadline timer (ADR-0036), woken by the commit that queued a revocation, at most
-    10 revocations per round with 5 s per call. 204 and 404 settle as revoked; 401 (the parent itself is revoked or
-    expired, which ended its children) settles as revoked and is audited; 403 and other refusals settle as failed and
-    are audited and logged; network failures, 5xx and 429 are retried after 1 s, ×4 each time, at most 5 min, until the
-    credential expires. No human action is raised yet.
+    10 revocations per round with 5 s per call. 204 settles as revoked. 404 and 401 settle as revoked only when the
+    parent that asked is the one that minted the credential (a 401 then means the parent itself is revoked or expired,
+    which ended its children; audited). From any other parent they prove nothing and settle as failed. 403 and other
+    refusals settle as failed. Failed rows are audited (`harbor_pilot.revocation.failed`), logged, counted in the
+    connection's `failed_revocations` and on its page, and in the `spaceman_gateway_revocations_failed` gauge. Network
+    failures, 5xx and 429 are retried after 1 s, ×4 each time, at most 5 min, until the credential expires. No human
+    action is raised yet.
+  - **Which parent minted a credential (review F1, 2026-11-07).** `run_gateway_credentials` and `gateway_revocations`
+    record `parent_fp`, the first 8 bytes of a domain-separated SHA-256 of the minting parent token, hex-encoded. The
+    tokens are random, so this reveals nothing usable. NULL means unknown, and only a 204 counts for such a row. The
+    columns are in migration 0040, which is not released yet, so no migration was added.
   - **Parent rotation.** Harbor Pilot answers 404 to a parent revoking another parent's child, so queueing these for
-    later would record them as done while they stay valid. Replacing the parent therefore revokes every live run token
-    with the old parent at the stored address before the new one is saved, records the outcomes and warns that those
-    runs have no model access until restarted. One that can't be revoked is recorded as failed with the advice to
-    revoke the old parent in Harbor Pilot (its cascade ends the children).
+    later would record them as done while they stay valid. Replacing the parent therefore revokes with the old parent,
+    at the stored address, everything it minted that may still be valid: live run tokens and pending revocations (for
+    example ones queued while Harbor Pilot was unreachable). This happens before the new parent is saved. The outcomes
+    are recorded, and the warning says those runs have no model access until restarted. One that can't be revoked is
+    recorded as failed with the advice to revoke the old parent in Harbor Pilot (its cascade ends the children). The
+    window where a run token is minted during the rotation is closed from both sides:
+    - the connection write's transaction lists the old parent's credentials again and, if one is new, runs another
+      revocation round (at most 3, then the write fails with "retry");
+    - a mint whose store transaction finds the parent version changed revokes its own credential with the old parent
+      (queueing it if that fails) and mints again with the new one.
+    If the connection write fails after the revocations (a version conflict, another binding while spaces use Harbor
+    Pilot), the old parent stays and those runs keep tokens that no longer work. That fails safe:
+    `TestParentRotationWriteFailureFailsSafe`.
   - **Lease loss.** Runs a node left `unknown` keep their tokens while it may come back; once the space's lease has
     expired by the disconnect grace plus one minute (the node's interrupt grace), the node's lease guard has stopped
     them and the sweep queues their revocation. The runs stay `unknown`.
-  - **Not yet.** `agent_too_old` is defined but raised only by HP-T4's protocol gate; until HP-T4 a node drops the token
-    (its harness adapter doesn't know `SPACEMAN_GATEWAY_TOKEN`), so a gateway run starts without model credentials.
+  - **Agents before HP-T4 are refused (review F2, 2026-11-07).** A node whose agent doesn't know
+    `SPACEMAN_GATEWAY_TOKEN` drops it, and the harness then starts on whatever login the node user has. That is a
+    fallback to a direct account, which Q1 forbids. A gateway launch to a node below `proto.MinorGatewayToken` (9)
+    therefore fails as `agent_too_old`, before anything is minted. 9 is above `MaxMinor` (8) until HP-T4 ships, so
+    until then every gateway launch fails this way, and opting a space in only makes its routed runs fail.
+    `fleet.Options.GatewayMinMinor` is a code-only seam that lets tests check token delivery over a scripted node.
+  - **Dispatch is never held up by a mint (review F3).** A node's dispatch loop waits at most 5 s
+    (`fleet.Options.GatewayMintWait`) for a token. A slower mint (Harbor Pilot retries take about 75 s at worst) goes
+    on in the background, once per run and bounded to 2 min. The launch stays pending, the node's other commands
+    (stops and kills included) are sent, and the finished mint kicks the loop, which then reuses the stored token.
+  - **Known gaps.** A crash between a successful mint and the transaction that stores the token leaves a child that
+    SpaceMan doesn't track; it stays valid until its TTL. The deadline timer that runs the revoker and the lease-loss
+    sweep runs only in `spaceman serve`; anything queued by another process is done at the next `serve` start. Both
+    are in LIMITATIONS.
 - **Operator questions and answers (asked and answered 2026-11-06):**
   - **Q1, fallback to a direct account:** never.
   - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.

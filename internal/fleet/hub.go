@@ -71,6 +71,75 @@ type Hub struct {
 	// flushes are memory flushes waiting for a node's memory.flushed, by flush ID (ADR-0045).
 	flushMu sync.Mutex
 	flushes map[string]*pendingFlush
+
+	// mints are gateway token mints running in the background, by run ID (Options.GatewayMintWait).
+	mintMu sync.Mutex
+	mints  map[string]*mintJob
+}
+
+// mintJob is a gateway run's token mint the dispatch loop stopped waiting for. It holds only the outcome: once it is
+// done, the next dispatch gets the token from Gateway.Token, which reuses the stored one.
+type mintJob struct {
+	done chan struct{}
+	err  error
+}
+
+// errMintPending: the gateway run's token is still being minted; the launch stays pending until the mint kicks the node.
+var errMintPending = errors.New("the run's gateway token is still being minted")
+
+// Background mint bounds: a mint gets at most mintJobTimeout (Token's own retries take about 75 s at worst), and an
+// outcome no dispatch collects is dropped after mintJobKeep.
+const (
+	mintJobTimeout = 2 * time.Minute
+	mintJobKeep    = 5 * time.Minute
+)
+
+// gatewayToken returns a gateway run's token secrets, waiting at most Options.GatewayMintWait for a mint; a longer one
+// goes on in the background and errMintPending is returned. The background mint kicks the node when it is done.
+func (h *Hub) gatewayToken(ctx context.Context, nodeID string, run *Run, session string) (map[string]string, error) {
+	gw := h.svc.opts.Gateway
+	h.mintMu.Lock()
+	j := h.mints[run.ID]
+	if j == nil {
+		j = &mintJob{done: make(chan struct{})}
+		if h.mints == nil {
+			h.mints = map[string]*mintJob{}
+		}
+		h.mints[run.ID] = j
+		go func() {
+			// Detached from the connection: a mint that already reached Harbor Pilot finishes and is stored (or queued
+			// for revocation), whatever happens to this connection.
+			mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mintJobTimeout)
+			defer cancel()
+			_, j.err = gw.Token(mctx, run, session)
+			close(j.done)
+			time.AfterFunc(mintJobKeep, func() { h.dropMint(run.ID, j) })
+			h.Kick(nodeID)
+		}()
+	}
+	h.mintMu.Unlock()
+	t := time.NewTimer(h.svc.opts.GatewayMintWait)
+	defer t.Stop()
+	select {
+	case <-j.done:
+	case <-t.C:
+		return nil, errMintPending
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	h.dropMint(run.ID, j)
+	if j.err != nil {
+		return nil, j.err
+	}
+	return gw.Token(ctx, run, session) // reuses the token the job stored
+}
+
+func (h *Hub) dropMint(runID string, j *mintJob) {
+	h.mintMu.Lock()
+	if h.mints[runID] == j {
+		delete(h.mints, runID)
+	}
+	h.mintMu.Unlock()
 }
 
 // UsageStore is central's usage and transcript storage as the hub sees it.
@@ -662,12 +731,15 @@ func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
 			continue
 		}
 		for _, c := range cmds {
-			msg, err := h.materialize(ctx, c, s.minor)
+			msg, err := h.materialize(ctx, c, s.nodeID, s.minor)
 			if endReason := undispatchable(err); endReason != "" && c.RunID.Valid {
 				if ferr := h.svc.failUndispatched(ctx, c.RunID.String, endReason, err.Error()); ferr != nil {
 					s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
 				}
 				continue
+			}
+			if errors.Is(err, errMintPending) {
+				continue // the mint kicks this loop when it is done
 			}
 			if err != nil {
 				s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
@@ -700,7 +772,7 @@ func undispatchable(err error) string {
 
 // materialize turns a stored command into the wire message, attaching the run token and secrets to launches and
 // repository SSH keys to clones, fetches and relocation clones (minor ≥ 7, ADR-0057). Stored payloads never hold any of them.
-func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, minor int) (proto.Command, error) {
+func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, minor int) (proto.Command, error) {
 	msg := proto.Command{CommandID: c.ID, Kind: c.Kind, SpaceID: c.SpaceID, RunID: c.RunID.String, Generation: c.Generation,
 		IdempotencyKey: c.IdempotencyKey, Payload: json.RawMessage(c.PayloadJson)}
 	keys := h.RepoKey != nil && minor >= proto.MinorRepoKeys
@@ -775,11 +847,18 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, minor int) (pro
 			if h.svc.opts.Gateway == nil {
 				return msg, fmt.Errorf("%w: this central has no gateway configured", ErrGatewayUnavailable)
 			}
+			// An older agent would drop the token and start the harness on the node user's own login: refused before
+			// anything is minted.
+			if minor < h.svc.opts.GatewayMinMinor {
+				return msg, fmt.Errorf("%w: gateway runs need protocol minor %d, which delivers the run's token to the harness; the node negotiated %d: "+
+					"upgrade its agent", ErrAgentTooOld, h.svc.opts.GatewayMinMinor, minor)
+			}
+			// A non-Claude run (or one that resumes nothing) binds the run ID as its session.
 			session := p.SessionID
 			if session == "" {
 				session = run.ID
 			}
-			if p.Secrets, err = h.svc.opts.Gateway.Token(ctx, run, session); err != nil {
+			if p.Secrets, err = h.gatewayToken(ctx, nodeID, run, session); err != nil {
 				return msg, err
 			}
 		case h.Secrets != nil:

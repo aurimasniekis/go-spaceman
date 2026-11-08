@@ -56,7 +56,9 @@ CREATE TABLE run_gateway_credentials (
   credential_id TEXT NOT NULL UNIQUE,
   token_enc     BLOB,
   expires_at    INTEGER NOT NULL,
-  created_at    INTEGER NOT NULL
+  created_at    INTEGER NOT NULL,
+  -- Fingerprint of the parent token that minted it (ParentFingerprint; NULL: unknown). Only that parent can revoke it.
+  parent_fp     TEXT
 );
 
 -- Durable revocation queue (HP-T3): written in the end path's own transaction, so a crash cannot lose a revocation. Not
@@ -72,9 +74,13 @@ CREATE TABLE gateway_revocations (
   next_attempt_at INTEGER NOT NULL,
   last_error      TEXT NOT NULL DEFAULT '',
   requested_at    INTEGER NOT NULL,
-  done_at         INTEGER
+  done_at         INTEGER,
+  -- Fingerprint of the parent token that minted the credential (NULL: unknown). A 404 or 401 from another parent proves
+  -- nothing about it, so the revoker records that as failed, never as revoked.
+  parent_fp       TEXT
 );
 CREATE INDEX gateway_revocations_due ON gateway_revocations (state, next_attempt_at);
+CREATE INDEX gateway_revocations_parent ON gateway_revocations (parent_fp, state);
 
 -- +goose Down
 SELECT 'forward-only migrations: restore the pre-migration snapshot instead';

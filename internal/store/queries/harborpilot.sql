@@ -40,8 +40,8 @@ WHERE space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
 DELETE FROM space_harbor_pilot WHERE space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
 
 -- name: InsertGatewayRevocation :exec
-INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (credential_id) DO NOTHING;
 
 -- name: CountLiveRunGatewayCredentials :one
@@ -54,18 +54,18 @@ SELECT count(*) FROM gateway_revocations WHERE state = 'pending' AND expires_at 
 SELECT * FROM run_gateway_credentials WHERE run_id = ?;
 
 -- name: InsertRunGatewayCredential :exec
-INSERT INTO run_gateway_credentials (run_id, space_id, credential_id, token_enc, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO run_gateway_credentials (run_id, space_id, credential_id, token_enc, expires_at, created_at, parent_fp) VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: ReplaceRunGatewayCredential :execrows
 UPDATE run_gateway_credentials SET credential_id = sqlc.arg(credential_id), token_enc = sqlc.arg(token_enc), expires_at = sqlc.arg(expires_at),
-  created_at = sqlc.arg(created_at)
+  created_at = sqlc.arg(created_at), parent_fp = sqlc.arg(parent_fp)
 WHERE run_id = sqlc.arg(run_id) AND credential_id = sqlc.arg(old_credential_id) AND token_enc IS NOT NULL;
 
 -- Queue a revocation of a run's live child token (in the end path's own transaction); ClearRunGatewayToken then drops
 -- the sealed token, which is never needed again.
 -- name: QueueRunGatewayRevocation :execrows
-INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
-SELECT c.credential_id, c.run_id, c.space_id, sqlc.arg(reason), c.expires_at, sqlc.arg(now), sqlc.arg(now)
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
+SELECT c.credential_id, c.run_id, c.space_id, sqlc.arg(reason), c.expires_at, sqlc.arg(now), sqlc.arg(now), c.parent_fp
 FROM run_gateway_credentials c WHERE c.run_id = sqlc.arg(run_id) AND c.token_enc IS NOT NULL
 ON CONFLICT (credential_id) DO NOTHING;
 
@@ -73,16 +73,26 @@ ON CONFLICT (credential_id) DO NOTHING;
 UPDATE run_gateway_credentials SET token_enc = NULL WHERE run_id = ? AND token_enc IS NOT NULL;
 
 -- name: QueueSpaceGatewayRevocations :execrows
-INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at)
-SELECT c.credential_id, c.run_id, c.space_id, sqlc.arg(reason), c.expires_at, sqlc.arg(now), sqlc.arg(now)
+INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
+SELECT c.credential_id, c.run_id, c.space_id, sqlc.arg(reason), c.expires_at, sqlc.arg(now), sqlc.arg(now), c.parent_fp
 FROM run_gateway_credentials c WHERE c.space_id = sqlc.arg(space_id) AND c.token_enc IS NOT NULL
 ON CONFLICT (credential_id) DO NOTHING;
 
 -- name: ClearSpaceGatewayTokens :execrows
 UPDATE run_gateway_credentials SET token_enc = NULL WHERE space_id = ? AND token_enc IS NOT NULL;
 
--- name: ListLiveRunGatewayCredentials :many
-SELECT * FROM run_gateway_credentials WHERE token_enc IS NOT NULL ORDER BY run_id;
+-- Every credential a parent token may still have to revoke (parent rotation): live run tokens and pending queued
+-- revocations minted by that parent, or by an unknown one (parent_fp NULL).
+-- name: ListParentGatewayCredentials :many
+SELECT c.credential_id, c.run_id, c.space_id, c.expires_at, CAST(coalesce(c.parent_fp, '') AS TEXT) AS fp
+FROM run_gateway_credentials c WHERE c.token_enc IS NOT NULL AND (c.parent_fp = sqlc.arg(parent_fp) OR c.parent_fp IS NULL)
+UNION
+SELECT g.credential_id, g.run_id, g.space_id, g.expires_at, CAST(coalesce(g.parent_fp, '') AS TEXT) AS fp
+FROM gateway_revocations g WHERE g.state = 'pending' AND (g.parent_fp = sqlc.arg(parent_fp) OR g.parent_fp IS NULL)
+ORDER BY 1;
+
+-- name: CountFailedGatewayRevocations :one
+SELECT count(*) FROM gateway_revocations WHERE state = 'failed';
 
 -- Lease loss (HP-T3): runs left unknown by a node that never came back keep live child tokens; the node's lease guard
 -- stops them once the lease and its grace pass. The earliest lease expiry among such runs.

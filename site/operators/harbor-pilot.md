@@ -6,8 +6,9 @@ its own short-lived Harbor Pilot token instead of an [account](./accounts), revo
 
 ::: warning Work in progress
 This page covers the connection, the per-space settings, how central mints and revokes run tokens, and events. Handing the
-token to the harness, and the budget status on the Limits page, come in later releases: until then a run routed through
-Harbor Pilot starts without model credentials, so don't opt a space in yet.
+token to the harness, and the budget status on the Limits page, come in later releases. Until node agents can hand the
+token over (protocol minor 9), central refuses to start a run routed through Harbor Pilot: it fails as `agent_too_old`
+before any token is minted, and it never starts on the node's own login. So don't opt a space in yet.
 The design is ADR-0060 (Proposed) in [Decisions](../security/decisions).
 :::
 

@@ -86,8 +86,17 @@
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
 ## Harbor Pilot gateway
-- **Configured, not yet used by runs.** The connection and the space settings exist (HP-T2), but runs still use accounts:
-  minting a token per run, delivering it and revoking it come with HP-T3/T4 (ADR-0060, Proposed).
+- **Gateway runs fail until HP-T4.** Central mints, stores and revokes run tokens (HP-T3), but no node agent delivers
+  them to a harness yet (protocol minor 9, HP-T4). Central therefore fails every launch of a routed harness as
+  `agent_too_old` before minting, rather than let the harness start on the node's own login (ADR-0060, Proposed).
+- **A crash right after a mint leaves an untracked token.** If central stops between Harbor Pilot's answer to a mint
+  and the transaction that stores the token, nothing records that child token. It stays valid until its TTL (the
+  space's token lifetime, 24 h by default) unless it, or the parent, is revoked in Harbor Pilot.
+- **Revocations and the lease-loss sweep run only in `spaceman serve`.** They run on serve's deadline timer. A
+  revocation queued by another process (an admin command) waits in the durable queue until the next `serve` runs.
+- **Failed revocations need a person.** A revocation Harbor Pilot refuses, or one whose parent was replaced before it
+  could be done, is audited, counted (connection page, `spaceman_gateway_revocations_failed`) and left to a person;
+  no human action is raised.
 - **Older gateways are detected by a feature probe.** Harbor Pilot has no version endpoint; a gateway that does not know
   `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
 - **Demo evidence only.** Connection checks ran against a real `harbor-pilot serve --demo` 0.1.3 with synthetic
