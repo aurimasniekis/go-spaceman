@@ -104,8 +104,10 @@ func (svc *Service) CreateAPIToken(ctx context.Context, p *Principal, name strin
 	case !neverExpires && (ttl < MinAPITokenTTL || ttl > MaxAPITokenTTL):
 		v.Add("expires_in_days", "must be between 1 and 366 days")
 	}
-	if p.Internal() {
-		return nil, "", apperr.New(apperr.CodeForbidden, "an internal token cannot issue tokens")
+	if p.ViaMCP() {
+		// An internal token, and a bearer token on the external MCP endpoint (defence in depth: the operation is
+		// excluded from both catalogs).
+		return nil, "", apperr.New(apperr.CodeForbidden, "tokens are not issued through the SpaceMan MCP")
 	}
 	if p.TokenParentID != "" {
 		return nil, "", apperr.New(apperr.CodeForbidden, "a token issued by another token cannot issue tokens")

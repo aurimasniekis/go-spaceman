@@ -64,8 +64,8 @@ func (svc *Service) CreateInternalTokenTx(ctx context.Context, tx *store.Tx, p *
 	if p == nil || p.User == nil {
 		return "", apperr.New(apperr.CodeForbidden, "only users can issue API tokens; create a user first")
 	}
-	if p.Internal() {
-		return "", apperr.New(apperr.CodeForbidden, "an internal token cannot issue tokens")
+	if p.ViaMCP() {
+		return "", apperr.New(apperr.CodeForbidden, "tokens are not issued through the SpaceMan MCP")
 	}
 	if p.TokenParentID != "" {
 		return "", apperr.New(apperr.CodeForbidden, "a token issued by another token cannot issue tokens")

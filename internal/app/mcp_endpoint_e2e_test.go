@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -227,7 +229,7 @@ func TestMCPEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if act.RequesterKind != "operator" || !strings.Contains(act.Body, "Another person must decide") {
+	if act.RequesterKind != "operator" || !strings.Contains(act.Body, "Another person must approve") {
 		t.Fatalf("approval request %+v", act)
 	}
 	// The token's own user can't approve: neither through the token nor in another session of theirs.
@@ -292,6 +294,101 @@ func TestMCPEndpoint(t *testing.T) {
 		t.Fatalf("tool call audit results %v", results)
 	}
 
+	// The token's own user may deny or withdraw their client's request, never approve it (above); through the MCP
+	// channel they may do neither.
+	askFor := func(scheduleID string) (*approvals.Approval, *human.Action) {
+		t.Helper()
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "delete_schedule", Arguments: map[string]any{"space_id": alpha.ID, "schedule_id": scheduleID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError || !strings.Contains(callText(t, res), "needs a person's approval") {
+			t.Fatalf("dangerous call for %s: %s", scheduleID, callText(t, res))
+		}
+		l, err := h.c.Approvals.List(ctx, alpha.ID, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range l {
+			if a.Operation == "mcp.endpoint.dangerous.delete_schedule" && a.State == approvals.Pending && strings.Contains(a.ArgsPreview, scheduleID) {
+				act, err := h.c.Human.Get(ctx, alpha.ID, a.HumanActionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return a, act
+			}
+		}
+		t.Fatalf("no pending approval for %s: %+v", scheduleID, l)
+		return nil, nil
+	}
+	stateOf := func(id string) string {
+		t.Helper()
+		l, err := h.c.Approvals.List(ctx, alpha.ID, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range l {
+			if a.ID == id {
+				return a.State
+			}
+		}
+		t.Fatalf("approval %s missing", id)
+		return ""
+	}
+	viaMCP := audit.Actor{Type: audit.ActorUser, ID: olga.ID, Via: "api_token:" + tokenID, Channel: audit.ChannelMCPEndpoint}
+	denyA, denyAct := askFor("sch_deny")
+	if _, err := h.c.Human.Respond(ctx, viaMCP, alpha.ID, denyAct.ID, denyAct.Version, human.RespondInput{Outcome: "denied"}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("denied through the MCP channel: %v", err)
+	}
+	if _, err := h.c.Human.Respond(ctx, audit.Actor{Type: audit.ActorUser, ID: olga.ID}, alpha.ID, denyAct.ID, denyAct.Version,
+		human.RespondInput{Outcome: "denied", Note: "not now"}); err != nil {
+		t.Fatalf("the token's own user denies: %v", err)
+	}
+	if st := stateOf(denyA.ID); st != approvals.Denied {
+		t.Fatalf("denied by the token's own user: %s", st)
+	}
+	cancelA, cancelAct := askFor("sch_cancel")
+	if _, err := h.c.Human.Cancel(ctx, viaMCP, alpha.ID, cancelAct.ID, cancelAct.Version, "no"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("withdrawn through the MCP channel: %v", err)
+	}
+	if _, err := h.c.Human.Cancel(ctx, audit.Actor{Type: audit.ActorUser, ID: olga.ID, Via: "api_token:" + tokenID}, alpha.ID,
+		cancelAct.ID, cancelAct.Version, "not needed"); err != nil {
+		t.Fatalf("the token's own user withdraws: %v", err)
+	}
+	if st := stateOf(cancelA.ID); st != approvals.Revoked {
+		t.Fatalf("withdrawn by the token's own user: %s", st)
+	}
+
+	// A JSON-RPC batch is refused before any of its calls runs (it would get around the per-token rate); a single call
+	// still works.
+	var batch []string
+	for i := range 20 {
+		batch = append(batch, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"create_schedule","arguments":{"space_id":%q,"body":{"name":"batch %d","kind":"cron","cron":"0 9 * * 1","timezone":"UTC","missed":"run_once","target":"inbox","title":"Batch","body":"x"}}}}`, i+1, alpha.ID, i))
+	}
+	for name, body := range map[string]string{"batch": "[" + strings.Join(batch, ",") + "]", "batch after spaces": " \n\t[" + batch[0] + "]"} {
+		if s, msg := postBody(t, ctx, h, secret, body, nil); s != 400 || !strings.Contains(msg, "batch") {
+			t.Fatalf("%s: %d %.200s", name, s, msg)
+		}
+	}
+	countSchedules := func() int {
+		t.Helper()
+		var sp struct {
+			Items []json.RawMessage `json:"items"`
+		}
+		root.do("GET", "/spaces/"+alpha.ID+"/schedules", nil).json(t, &sp)
+		return len(sp.Items)
+	}
+	if n := countSchedules(); n != 0 {
+		t.Fatalf("schedules after a refused batch: %d", n)
+	}
+	if s, msg := postBody(t, ctx, h, secret, batch[0], nil); s != 200 || countSchedules() != 1 {
+		t.Fatalf("single call: %d %s", s, msg)
+	}
+	// An older protocol version (which allows batches) is refused too.
+	if s, _ := postBody(t, ctx, h, secret, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, map[string]string{"Mcp-Protocol-Version": "2025-03-26"}); s != 400 {
+		t.Fatalf("protocol 2025-03-26: %d", s)
+	}
+
 	// Refusals at the edge.
 	post := func(hdr map[string]string, bearer string) int {
 		t.Helper()
@@ -353,4 +450,19 @@ func TestMCPEndpoint(t *testing.T) {
 	if _, err := mcpConnect(ctx, h, secret2); err == nil {
 		t.Fatal("internal token connected")
 	}
+}
+
+// postBody POSTs a raw JSON-RPC body to the external MCP endpoint with a bearer token and returns the status and body.
+func postBody(t *testing.T, ctx context.Context, h *harness, bearer, body string, hdr map[string]string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, h.srv.URL+api.MCPPath, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	res, err := (&http.Client{Transport: bearerTransport{bearer: bearer, extra: hdr}}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b)
 }

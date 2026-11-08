@@ -2902,7 +2902,10 @@
     `Filtered`), UserOnly, Reauth and MFA rules for such a principal, although bearer tokens otherwise skip step-up;
     the hard exclusions keep the same operations out of the catalog; the in-process handler and the executor accept
     this principal (and an internal one) only. Human-action responses and approval decisions refuse an actor on the
-    `mcp_endpoint` channel at the service level (`audit.Actor.MCP`), although the catalog never offers them.
+    `mcp_endpoint` channel at the service level (`audit.Actor.MCP`), although the catalog never offers them. As defence
+    in depth the other service-level refusals written for internal tokens cover the endpoint too: issuing API or
+    internal tokens (`Principal.ViaMCP`), and creating, editing, re-issuing, granting, checking or deleting a SpaceMan
+    MCP server (`audit.Actor.MCP`); none of these is in the endpoint's catalog.
   - **Tool selection: the token's grants as they are.** The endpoint offers the `admin` preset's classes (read, write,
     dangerous) filtered by what the token's grants can reach. Of the two options (a preset stored on the token, or the
     grants as they are), this is the simpler one: it needs no migration, no token setting, no UI or Terraform attribute,
@@ -2919,18 +2922,29 @@
     the decision, a day to decide). Before asking, the endpoint checks that the token may use the tool in that space,
     so nobody is asked about a call the API would refuse. Read and write calls run at once, as the same token's calls
     on the API would.
-    - **Rule: the token's own user never decides it.** Not through the token, not in a browser session, not with
-      another of their tokens: `onFinalized` refuses the decision when the deciding user owns the requesting token, and
-      the gate revokes an approval that such a user decided anyway. The token acts for its user, so the user approving
-      their own client's call adds no second check; a stolen token plus that user's session would otherwise approve
-      itself. Consequence: an installation with one administrator can't run dangerous tools through the endpoint; that
-      person uses the API, CLI or web UI for them.
+    - **Rule: the token's own user never approves it.** Not through the token, not in a browser session, not with
+      another of their tokens: `onFinalized` refuses an approving decision when the deciding user owns the requesting
+      token, and the gate revokes an approval that such a user decided anyway. The token acts for its user, so the user
+      approving their own client's call adds no second check; a stolen token plus that user's session would otherwise
+      approve itself. That user may still **deny** or **withdraw** (cancel) their own client's pending request from
+      a session or the API (not through the MCP channel, which never decides): that only stops the call. Consequence:
+      an installation with one administrator can't run dangerous tools through the endpoint with a user's decision;
+      that person uses the API, CLI or web UI for them.
+    - **Under review (operator decision pending): the root token can approve a token's request.** The rule above
+      matches user decisions only (`audit.ActorUser`), so an approval decided with the root token is accepted, and on
+      a single-admin installation it is the only way to approve the endpoint's dangerous calls. Whether root may decide
+      these approvals, or must be refused like the token's own user, is open; behaviour is unchanged until it is
+      decided.
   - **Diagnostic launch gate:** `authorizeLaunchKind` refuses a diagnostic launch by any `ViaMCP` principal unless the
     call carries `gateway.WithApprovedCall("launch-run")`, which the endpoint sets only after `RequireFor` succeeded
     for that call. A launch by a space role whose template is diagnostic, without `kind`, is refused with the hint.
   - **Edge protection:** the API's own middleware (security headers, request IDs, the body limit
     `http.max_body_bytes`, the failed-bearer limit of 20 per minute per address) and, per token, 5 requests per second
-    with bursts of 50 (429). A request with an `Origin` or `Sec-Fetch-*` header (a browser) is refused, and no CORS
+    with bursts of 50 (429). The limit counts calls because a request carries exactly one JSON-RPC message: a batch
+    (a body whose first non-space byte is `[`) is refused with 400 before any message in it runs, and so is an
+    `Mcp-Protocol-Version` older than 2025-06-18 (the version that dropped batching; the go SDK accepts batches for
+    older or missing versions). A request without the header is accepted, as a client's first request may not send
+    it. A request with an `Origin` or `Sec-Fetch-*` header (a browser) is refused, and no CORS
     headers are ever sent. The MCP SDK's localhost DNS-rebinding check is off: central normally sits behind a reverse
     proxy on the same host, and rebinding needs a browser, which is refused, plus a bearer token, which a page doesn't
     have. The server is stateless (no `Mcp-Session-Id`; GET and DELETE answer 405) and answers in JSON.

@@ -30,8 +30,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - CLI (AM-6): `spaceman mcp spaceman create`, `update` and `reissue`.
   - External MCP endpoint (AM-10, SM-MCP-009): `/api/v1/mcp` serves the same tools over streamable HTTP to your own
     MCP client, with your API token as a bearer and exactly that token's grants. Browser requests, session cookies,
-    the root token and internal tokens are refused, and each token is rate limited. Dangerous calls and diagnostic
-    launches need an approval from someone other than the token's user. Calls are audited via the token on the
+    the root token and internal tokens are refused, and each token is rate limited; each request carries one JSON-RPC
+    message (batches and protocol versions before 2025-06-18 are refused). Dangerous calls and diagnostic launches
+    need an approval from someone other than the token's user, who may only deny or cancel their own client's request. Calls are audited via the token on the
     `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
 - Gateway runs reach their harness (ADR-0060, Proposed; HP-T4; node protocol minor 9). **Update every node of a space
   before opting it in to Harbor Pilot:** a launch to an older agent fails as `agent_too_old` ("gateway runs need

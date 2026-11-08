@@ -132,6 +132,7 @@ func TestSpacemanServers(t *testing.T) {
 	}))
 	p := &auth.Principal{User: &auth.User{ID: "usr_admin"}}
 	internal := audit.Actor{Type: audit.ActorUser, ID: "usr_admin", Via: auth.ViaSpacemanMCP + "atk_x", Run: "run_c"}
+	endpoint := audit.Actor{Type: audit.ActorUser, ID: "usr_admin", Via: "api_token:atk_e", Channel: audit.ChannelMCPEndpoint}
 
 	// Without a backend there is no spaceman kind.
 	_, err := f.svc.CreateSpaceman(f.ctx, p, admin, SpacemanInput{Slug: "sm", Name: "SM"})
@@ -154,10 +155,12 @@ func TestSpacemanServers(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	for _, a := range []audit.Actor{internal} {
+	for _, a := range []audit.Actor{internal, endpoint} {
 		_, err := f.svc.CreateSpaceman(f.ctx, p, a, SpacemanInput{Slug: "sm", Name: "S"})
 		code(t, err, apperr.CodeForbidden)
 	}
+	_, err = f.svc.CreateSpaceman(f.ctx, &auth.Principal{User: p.User, TokenID: "atk_e", MCPEndpoint: true}, admin, SpacemanInput{Slug: "sm", Name: "S"})
+	code(t, err, apperr.CodeForbidden)
 	if len(iss.minted) != 0 {
 		t.Fatalf("refused creates minted %d tokens", len(iss.minted))
 	}
@@ -253,16 +256,21 @@ func TestSpacemanServers(t *testing.T) {
 	}
 
 	// Self-protection: an agent acting through a SpaceMan MCP server never manages one. An http server is unaffected.
-	_, err = f.svc.AddGrant(f.ctx, internal, srv.ID, "spc_b", "*", nil)
-	code(t, err, apperr.CodeForbidden)
+	// Nor does a client on the external MCP endpoint (defence in depth: these tools are not in its catalog).
 	grants, _ := f.svc.Grants(f.ctx, srv.ID)
-	code(t, f.svc.RevokeGrant(f.ctx, internal, srv.ID, grants[0].ID), apperr.CodeForbidden)
-	code(t, f.svc.Delete(f.ctx, internal, srv.ID), apperr.CodeForbidden)
-	_, err = f.svc.Check(f.ctx, internal, srv.ID)
-	code(t, err, apperr.CodeForbidden)
-	_, err = f.svc.UpdateSpaceman(f.ctx, internal, srv.ID, srv.Version, SpacemanUpdate{Name: "x", Enabled: true})
-	code(t, err, apperr.CodeForbidden)
-	_, err = f.svc.ReissueSpaceman(f.ctx, p, internal, srv.ID, srv.Version, SpacemanToken{})
+	for _, a := range []audit.Actor{internal, endpoint} {
+		_, err = f.svc.AddGrant(f.ctx, a, srv.ID, "spc_b", "*", nil)
+		code(t, err, apperr.CodeForbidden)
+		code(t, f.svc.RevokeGrant(f.ctx, a, srv.ID, grants[0].ID), apperr.CodeForbidden)
+		code(t, f.svc.Delete(f.ctx, a, srv.ID), apperr.CodeForbidden)
+		_, err = f.svc.Check(f.ctx, a, srv.ID)
+		code(t, err, apperr.CodeForbidden)
+		_, err = f.svc.UpdateSpaceman(f.ctx, a, srv.ID, srv.Version, SpacemanUpdate{Name: "x", Enabled: true})
+		code(t, err, apperr.CodeForbidden)
+		_, err = f.svc.ReissueSpaceman(f.ctx, p, a, srv.ID, srv.Version, SpacemanToken{})
+		code(t, err, apperr.CodeForbidden)
+	}
+	_, err = f.svc.ReissueSpaceman(f.ctx, &auth.Principal{User: p.User, TokenID: "atk_e", MCPEndpoint: true}, admin, srv.ID, srv.Version, SpacemanToken{})
 	code(t, err, apperr.CodeForbidden)
 	_, err = f.svc.AddGrant(f.ctx, internal, h.ID, "spc_b", "*", nil)
 	must(t, err)

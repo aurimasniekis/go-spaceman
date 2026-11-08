@@ -595,7 +595,7 @@ func (svc *Service) ask(ctx context.Context, p Requester, a db.Approval, pol *db
 	exp := time.UnixMicro(a.RequestExpiresAt).UTC()
 	who := fmt.Sprintf("run `%s` (%s)", a.RequesterRun, a.RequesterRole)
 	if tok, ok := strings.CutPrefix(a.RequesterRun, TokenRequesterPrefix); ok {
-		who = fmt.Sprintf("API token `%s` of %s. Another person must decide: the token's own user cannot", tok, p.Human.Label)
+		who = fmt.Sprintf("API token `%s` of %s. Another person must approve: the token's own user can only deny or withdraw it", tok, p.Human.Label)
 	}
 	body := fmt.Sprintf("SpaceMan will run this only after approval, and only as shown.\n\n- **Operation:** `%s`\n- **Resource:** `%s`\n- **Requested by:** %s\n- **Uses:** %d, within %s of the decision\n- **Argument digest:** `%s`\n\n```json\n%s\n```\n",
 		a.Operation, a.Resource, who, a.UsesAllowed, time.Duration(a.ValidSeconds)*time.Second, a.ArgsDigest, a.ArgsPreview)
@@ -636,15 +636,17 @@ func (svc *Service) onFinalized(ctx context.Context, tx *store.Tx, r db.HumanAct
 	} else if err != nil {
 		return err
 	}
-	if tokID, ok := strings.CutPrefix(a.RequesterRun, TokenRequesterPrefix); ok && actor.Type == audit.ActorUser {
-		// An approval the MCP endpoint asked for is decided by someone else: not the token's own user, in any session
-		// or with any token (ADR-0063 §External endpoint).
+	if tokID, ok := strings.CutPrefix(a.RequesterRun, TokenRequesterPrefix); ok && actor.Type == audit.ActorUser &&
+		status == human.Resolved && outcome == "approved" {
+		// An approval the MCP endpoint asked for is approved by someone else: not the token's own user, in any session
+		// or with any token (ADR-0063 §External endpoint). That user may still deny or withdraw their own client's
+		// request: it only stops the call.
 		tok, err := tx.Q.GetAPIToken(ctx, tokID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err != nil || tok.UserID == actor.ID {
-			return apperr.New(apperr.CodeForbidden, "this approval was asked for with your own API token: another person must decide it")
+			return apperr.New(apperr.CodeForbidden, "this approval was asked for with your own API token: another person must approve it")
 		}
 	}
 	now := tx.NowMicros()

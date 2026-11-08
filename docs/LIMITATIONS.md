@@ -229,10 +229,15 @@
 - **External endpoint (`/api/v1/mcp`): bearer tokens only.** A client must send `Authorization: Bearer
   spaceman_at_…`; there is no OAuth flow, so clients that only support OAuth for remote servers can't connect.
 - **External endpoint: no dangerous tools without a second person.** A dangerous call needs an approval from someone
-  other than the token's user, so an installation with one administrator can't run them through the endpoint (use the
-  API, CLI or web UI). Dangerous tools that act on no space (accounts, Git SSH keys, HTTP MCP servers, harness
+  other than the token's user (that user may only deny or withdraw it), so an installation with one administrator
+  can't run them through the endpoint with a user's approval (use the API, CLI or web UI). Dangerous tools that act on no space (accounts, Git SSH keys, HTTP MCP servers, harness
   profiles, role templates, publishing, installation-wide human policies, node writes) and sensitive reads
   (recordings, transcripts) are not offered there at all.
+- **External endpoint: the root token can approve (under review).** An approval the endpoint asked for can currently be
+  approved with the root token; on a single-admin installation that is the only approval path. Whether root may
+  decide these approvals is an open operator decision (ADR-0063); the behaviour may change.
+- **External endpoint: one message per request.** JSON-RPC batches and protocol versions before 2025-06-18 are
+  refused (400), so the per-token rate limit counts calls.
 - **External endpoint: the token's grants are the selection.** There is no per-token tool preset; issue a token with
   narrower grants for a narrower client.
 

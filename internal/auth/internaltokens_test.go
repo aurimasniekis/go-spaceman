@@ -42,6 +42,7 @@ func TestInternalTokens(t *testing.T) {
 		"empty purpose":   {admin, InternalTokenInput{Name: "x", Grants: grants(authz.RoleAdmin), NeverExpires: true}, apperr.ErrInvalid},
 		"no user":         {&Principal{RootTokenID: "rtk_1"}, spacemanMCP("x", grants(authz.RoleAdmin), 0, true), apperr.ErrForbidden},
 		"internal issuer": {&Principal{User: op, TokenID: "atk_1", TokenPurpose: TokenPurposeSpacemanMCP}, spacemanMCP("x", grants(authz.RoleViewer), 0, true), apperr.ErrForbidden},
+		"endpoint issuer": {&Principal{User: op, TokenID: "atk_1", MCPEndpoint: true}, spacemanMCP("x", grants(authz.RoleViewer), 0, true), apperr.ErrForbidden},
 		"token-issued":    {&Principal{User: op, TokenID: "atk_1", TokenParentID: "atk_0"}, spacemanMCP("x", grants(authz.RoleViewer), 0, true), apperr.ErrForbidden},
 		"empty name":      {admin, spacemanMCP(" ", grants(authz.RoleAdmin), 0, true), apperr.ErrInvalid},
 		"no grants":       {admin, spacemanMCP("x", nil, 0, true), apperr.ErrInvalid},

@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
@@ -57,6 +59,40 @@ func TestMCPEndpointGuard(t *testing.T) {
 			t.Errorf("%s: %d, want %d", name, c, tc.code)
 		}
 	}
+	// One JSON-RPC message per request: a batch never reaches the handler, a single message does with its body intact;
+	// a protocol version that allows batches is refused.
+	post := func(tokenID, body string, hdr map[string]string) (int, string) {
+		got = nil
+		var seen string
+		h := (&Deps{}).mcpEndpoint(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = PrincipalFrom(r.Context())
+			b, _ := io.ReadAll(r.Body)
+			seen = string(b)
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		req := httptest.NewRequest(http.MethodPost, MCPPath, strings.NewReader(body))
+		req = req.WithContext(context.WithValue(req.Context(), principalKey{},
+			&auth.Principal{User: &auth.User{ID: "usr_1"}, TokenID: tokenID, Method: auth.MethodToken}))
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, seen
+	}
+	single := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+	for name, body := range map[string]string{"batch": "[" + single + "," + single + "]", "batch after spaces": " \r\n\t[" + single + "]"} {
+		if c, _ := post("atk_b", body, nil); c != http.StatusBadRequest || got != nil {
+			t.Errorf("%s: %d", name, c)
+		}
+	}
+	if c, seen := post("atk_b", single, map[string]string{"Mcp-Protocol-Version": "2025-06-18"}); c != http.StatusNoContent || seen != single {
+		t.Errorf("single message: %d %q", c, seen)
+	}
+	if c, _ := post("atk_b", single, map[string]string{"Mcp-Protocol-Version": "2025-03-26"}); c != http.StatusBadRequest || got != nil {
+		t.Errorf("protocol 2025-03-26: %d", c)
+	}
+
 	// The per-token rate: the burst passes, then 429; another token is unaffected.
 	other := &auth.Principal{User: &auth.User{ID: "usr_1"}, TokenID: "atk_3", Method: auth.MethodToken}
 	limited := false

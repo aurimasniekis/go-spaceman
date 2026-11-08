@@ -18,7 +18,8 @@ Keep the token out of files you commit: most clients can read it from an environ
 
 ## Claude Code
 
-Checked with Claude Code 2.1.317:
+Checked with Claude Code 2.1.317 against a local test installation: `claude mcp list` reports the server as connected
+and its tools are listed.
 
 ```sh
 export SPACEMAN_TOKEN=spaceman_at_...   # your token
@@ -70,8 +71,9 @@ straight away. The first call creates an [enforced approval](./approvals) in the
 says so; the request appears under **Needs you** for the people who can decide approvals there. Once it is approved,
 the client calls the tool again with **exactly the same arguments**, and it runs once.
 
-**You can't approve your own client's request**, from any session or token of yours: another person has to. If you
-are the only administrator, run dangerous operations from the web UI or the CLI instead.
+**You can't approve your own client's request**, from any session or token of yours: another person has to. You can
+still deny or cancel it, for example when your client asked for something you didn't mean. If you are the only
+administrator, run dangerous operations from the web UI or the CLI instead.
 
 Read and write tools run at once, as the same token's API calls would.
 
@@ -79,7 +81,8 @@ Read and write tools run at once, as the same token's API calls would.
 
 - Browsers can't use the endpoint: requests with an `Origin` or `Sec-Fetch-*` header are refused, and no CORS headers
   are sent. Session cookies, the root token and SpaceMan's internal tokens are refused too.
-- Each token may make 5 requests per second, with bursts of 50; more get `429`. Request bodies are capped by
+- Each token may make 5 requests per second, with bursts of 50; more get `429`. Each request carries one JSON-RPC
+  message: batches (and protocol versions older than 2025-06-18, which allow them) are refused with `400`. Request bodies are capped by
   `http.max_body_bytes`, and repeated failed sign-ins from one address are throttled as for the API.
 - Revoking the token, or the user losing grants or being disabled, stops the client on its next request.
 

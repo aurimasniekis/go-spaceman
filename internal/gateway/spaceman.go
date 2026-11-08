@@ -193,7 +193,7 @@ func (svc *Service) CreateSpaceman(ctx context.Context, p *auth.Principal, actor
 	if svc.Spaceman == nil || svc.Tokens == nil {
 		return nil, errSpacemanUnavailable
 	}
-	if actor.Internal() || p.Internal() {
+	if actor.MCP() || p.ViaMCP() {
 		return nil, errSelfManagement
 	}
 	base := Input{Slug: in.Slug, Name: in.Name, Description: in.Description, CallTimeoutMS: in.CallTimeoutMS, MaxConcurrency: in.MaxConcurrency,
@@ -240,7 +240,7 @@ func (svc *Service) UpdateSpaceman(ctx context.Context, actor audit.Actor, id st
 	if svc.Spaceman == nil {
 		return nil, errSpacemanUnavailable
 	}
-	if actor.Internal() {
+	if actor.MCP() {
 		return nil, errSelfManagement
 	}
 	base := Input{Name: in.Name, Description: in.Description, CallTimeoutMS: in.CallTimeoutMS, MaxConcurrency: in.MaxConcurrency,
@@ -284,7 +284,7 @@ func (svc *Service) ReissueSpaceman(ctx context.Context, p *auth.Principal, acto
 	if svc.Spaceman == nil || svc.Tokens == nil {
 		return nil, errSpacemanUnavailable
 	}
-	if actor.Internal() || p.Internal() {
+	if actor.MCP() || p.ViaMCP() {
 		return nil, errSelfManagement
 	}
 	err := svc.s.W().TxNamed(ctx, "mcp.reissue_spaceman", func(tx *store.Tx) error {
@@ -372,10 +372,11 @@ func (svc *Service) spacemanInfo(ctx context.Context, r db.McpServer) *SpacemanI
 	return info
 }
 
-// refuseInternalOnSpaceman refuses an agent acting through a SpaceMan MCP server on a SpaceMan MCP server: it never
+// refuseInternalOnSpaceman refuses an agent acting through a SpaceMan MCP server (or a client on the external MCP
+// endpoint) on a SpaceMan MCP server: it never
 // grants, revokes, checks or deletes one (ADR-0063, self-protection).
 func refuseInternalOnSpaceman(actor audit.Actor, r db.McpServer) error {
-	if actor.Internal() && r.Kind == KindSpaceman {
+	if actor.MCP() && r.Kind == KindSpaceman {
 		return errSelfManagement
 	}
 	return nil
