@@ -2812,10 +2812,10 @@
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
-- **Status:** **Proposed**, 2026-11-07. Not yet accepted, and it stays Proposed with the implementation complete
-  (AM-8, 2026-11-08): one operator decision is still open, whether the root token may approve the external endpoint's
-  dangerous calls (§External endpoint, "Under review"). It is accepted once that is decided. The operator's other
-  decisions below are recorded with the design; question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
+- **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
+  question numbers (Q1–Q9) refer to the questions of the admin MCP plan. The operator's decisions of 2026-11-08 on the
+  security review (SR-MCP-01) and the final review (F1, F2, F6) are listed under §Operator decisions on the reviews
+  below; none of them changes behaviour.
   Implemented so far: migration 0044, the internal token and its principal, the audit attribution and the approver
   exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4); the gateway kind with its
   create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5); the CLI (AM-6); the
@@ -2925,7 +2925,20 @@
          diagnostic or widen its runs' access with no later launch naming it. All saves are gated, not only the
          widening ones: whether a template is diagnostic or a profile or setting widens access depends on other
          catalog entries that can change after the check, and a per-field comparison would be a second, weaker
-         policy to keep in step. Deleting a space role was already dangerous. A server's `approval` is `none` (default) or `writes` (every write tool needs
+         policy to keep in step. Deleting a space role was already dangerous.
+       - **`launch-run` stays a write, also with overrides** (operator decision 2026-11-08, final-review F2). A
+         launch may override the role's `settings.permission_mode` (still held to the installation's
+         `harness.max_permission_mode` ceiling) or its `account_ref`. Unlike a role save, such an override affects
+         only the run being launched, which the call names and the audit records; it can't make a later launch
+         diagnostic or widen runs nobody asked for, and a diagnostic launch is still gated on its resolved kind. A
+         role save is persistent and reaches every later launch by that role, so it is dangerous; a launch's
+         override is not. Accepted residual risk under T-33.
+       - **Who approves in-run calls** (operator decision 2026-11-08, final-review F1). An in-run call's approval is
+         requested in the run's own space, so anyone with `approval:decide` there may approve it, also when the call
+         acts on another space or on an installation-wide target (an `admin@*` server's dangerous tools). This is
+         deliberate for a trusted infra space, whose operators are trusted with the server's reach; accepted residual
+         risk under T-33.
+       - A server's `approval` is `none` (default) or `writes` (every write tool needs
        an approval too). Without an approval gate, such calls are refused (fail closed). Human-action responses and
        approval decisions refuse an actor acting through a SpaceMan MCP server at the service level as well.
      - **Expiry: never** by default (operator decision on plan question Q5); 1–366 days on request.
@@ -2949,6 +2962,10 @@
 - **External endpoint (AM-10, SM-MCP-009, threat T-38).** `/api/v1/mcp` (`api.MCPPath`) serves the same catalog and
   executor over streamable HTTP to an operator's own MCP client (`internal/spacemanmcp` `Endpoint`). It is not an API
   operation: it is absent from the OpenAPI document and the CLI.
+  - **On by default, no switch** (operator decision 2026-11-08, final-review F6). Every user API token can use the
+    endpoint, within its own grants; there is no configuration setting or per-token flag to turn it off. A token
+    already reaches the same operations on the API, so the endpoint adds no authority; an operator who doesn't want
+    it can keep `/api/v1/mcp` out of the reverse proxy. Accepted with T-38.
   - **Who can call it:** a user's bearer API token, acting as itself (token **and** owner, as on the API). The guard
     (`api.Deps.mcpEndpoint`) refuses a session cookie and the root token (403). Internal tokens
     (`purpose = 'spaceman_mcp'`) never authenticate as bearers (`AuthenticateAPIToken` refuses any purpose, 401), and
@@ -2986,11 +3003,11 @@
       a session or the API (not through the MCP channel, which never decides): that only stops the call. Consequence:
       an installation with one administrator can't run dangerous tools through the endpoint with a user's decision;
       that person uses the API, CLI or web UI for them.
-    - **Under review (operator decision pending): the root token can approve a token's request.** The rule above
-      matches user decisions only (`audit.ActorUser`), so an approval decided with the root token is accepted, and on
-      a single-admin installation it is the only way to approve the endpoint's dangerous calls. Whether root may decide
-      these approvals, or must be refused like the token's own user, is open; behaviour is unchanged until it is
-      decided.
+    - **The root token may approve a token's request** (operator decision 2026-11-08, SR-MCP-01: kept). The rule
+      above matches user decisions only (`audit.ActorUser`), so an approval decided with the root token is accepted.
+      This is the documented path for a single-administrator installation, where no second user exists to approve the
+      endpoint's dangerous calls. The root token is itself refused on the endpoint, so it can't make the call it
+      approves.
   - **Diagnostic launch gate:** `authorizeLaunchKind` refuses a diagnostic launch by any `ViaMCP` principal unless the
     call carries `gateway.WithApprovedCall("launch-run")`, which the endpoint sets only after `RequireFor` succeeded
     for that call. A launch by a space role whose template is diagnostic, without `kind`, is refused with the hint.
@@ -3035,7 +3052,18 @@
   - Secrets that an agent writes through these tools (account keys, event connection secrets) pass through the model's
     context; those operations are dangerous and need an approval.
   - The external endpoint gives an operator's MCP client what the operator's token can do on the API, short of the
-    hard exclusions and with dangerous calls approved by someone else (T-38).
+    hard exclusions and with dangerous calls approved by someone else or the root token (T-38).
+- **Operator decisions on the reviews (2026-11-08).** All four keep the behaviour as built:
+  1. **Root approval kept (SR-MCP-01).** The root token may approve dangerous calls made through `/api/v1/mcp`; this
+     is the documented path for single-administrator installations (§External endpoint).
+  2. **F1, accepted as is.** In-run dangerous calls are approved in the run's own space: any operator there with
+     `approval:decide` may approve admin-scope calls (other spaces, installation-wide targets) made by the infra
+     space's SpaceMan MCP server. Deliberate for the trusted infra space; part of T-33's accepted risk (decision 7).
+  3. **F2, accepted as is.** `launch-run` stays a write, also when it overrides `settings.permission_mode` (up to the
+     installation ceiling) or `account_ref`; diagnostic launches stay gated. Accepted residual risk under T-33; the
+     reasoning beside `save-space-role` (dangerous) is in decision 7.
+  4. **F6, accepted as is.** `/api/v1/mcp` is on by default for every user API token, with no switch (§External
+     endpoint; T-38).
 
 ### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
 - **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a

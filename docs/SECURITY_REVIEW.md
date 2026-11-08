@@ -97,15 +97,15 @@ Severity: **high** means a remote or cross-space compromise without prior access
 
 A review entry for the SpaceMan admin MCP (SM-MCP-005..009, AM-1 to AM-10), written with AM-8 at the end of the work
 stream on branch `feat/spaceman-mcp`. It records how the change sits against the threat model, which rails were checked
-and by which tests, and one open question. It is not a repeat of the M4-08 review method above: each rail was traced
+and by which tests, and the operator's decisions on the open question and the accepted risks. It is not a repeat of the M4-08 review method above: each rail was traced
 from the gateway or endpoint entry point to the API's handler chain and checked against its tests. Labels: **simulated**
 evidence only (in-process central, real agent and bridge, fake runner; the go MCP SDK client over HTTP). No real
 harness has driven the tools through a model yet.
 
 | | |
 |---|---|
-| Threats | **T-33** (an agent in an infra space uses its owner's administrator authority through the tools): accepted risk, operator decision 2026-11-07, for a trusted infra space. **T-38** (an operator's own MCP client on `/api/v1/mcp`, steered by prompt injection or a web page): mitigated as below, one residual open. See [THREAT_MODEL.md](THREAT_MODEL.md). |
-| Result | No finding to fix. One open decision (SR-MCP-01, root approval). ADR-0063 stays **Proposed** until it is decided. |
+| Threats | **T-33** (an agent in an infra space uses its owner's administrator authority through the tools): accepted risk, operator decision 2026-11-07, for a trusted infra space. **T-38** (an operator's own MCP client on `/api/v1/mcp`, steered by prompt injection or a web page): mitigated as below, with accepted residuals. See [THREAT_MODEL.md](THREAT_MODEL.md). |
+| Result | No finding to fix. SR-MCP-01 (root approval) resolved by the operator on 2026-11-08: kept. The final review's F1, F2 and F6 are accepted risks (operator decision 2026-11-08). ADR-0063 is **Accepted** (2026-11-08). |
 
 ### Rails checked
 
@@ -152,13 +152,16 @@ harness has driven the tools through a model yet.
   the token's user in any session or through any of their tokens, and the gate revokes such an approval if one is
   recorded anyway. The user may still deny or withdraw their own client's pending request from a session or the API,
   never through the MCP channel. Consequence: a single-administrator installation can't approve the endpoint's
-  dangerous calls with a user's decision (`TestMCPEndpoint`).
+  dangerous calls with a user's decision; there the root token approves them (SR-MCP-01, kept) (`TestMCPEndpoint`).
 - **Audit.** In-run calls are attributed to the owner with `via spaceman_mcp:<token>` and `run`; the gateway's
   `mcp_server.tool_called` names the run, the server, the operation and the class. The audit chain verifies after the
   end-to-end run (`TestActorViaAndRun`, `TestSpacemanMCPOverBridge`).
 
-### Open
+### Decisions and accepted risks
 
 | ID | Severity | Item | Status |
 |---|---|---|---|
-| SR-MCP-01 | info | **May the root token approve the external endpoint's dangerous calls?** The "token's user never approves" rule matches user decisions only, so a decision made with the root token is accepted. On a single-administrator installation it is the only way to approve those calls; refusing it would also mean those calls can't run there at all. | **open, operator decision pending** (ADR-0063 §External endpoint, "Under review"). Behaviour is unchanged until it is decided; ADR-0063 stays Proposed meanwhile. |
+| SR-MCP-01 | info | **May the root token approve the external endpoint's dangerous calls?** The "token's user never approves" rule matches user decisions only, so a decision made with the root token is accepted. On a single-administrator installation it is the only way to approve those calls; refusing it would also mean those calls can't run there at all. | **Resolved: kept** (operator decision 2026-11-08). The root token may approve them; it is the documented path for single-administrator installations. The root token itself is refused on the endpoint, so it can't make the call it approves (ADR-0063 §External endpoint, T-38). |
+| F1 | info | **Who approves in-run dangerous calls?** An in-run call's approval is requested in the run's own space, so any operator there with `approval:decide` may approve calls of the infra space's SpaceMan MCP server that act on other spaces or on installation-wide targets (`admin@*`). | **Accepted risk** (operator decision 2026-11-08). Deliberate for the trusted infra space, whose operators are trusted with the server's reach; part of T-33's accepted risk (ADR-0063 decision 7). |
+| F2 | info | **`launch-run` is a write, also with overrides.** A launch may override `settings.permission_mode` (held to the installation's `harness.max_permission_mode` ceiling) or `account_ref` without an approval under the default `approval: none`, while `save-space-role` is dangerous. | **Accepted risk** (operator decision 2026-11-08), a residual under T-33. A launch's override affects only the run it starts, which the call names and the audit records; a role save persists and reaches every later launch by that role, so only the save is dangerous. Diagnostic launches stay gated on their resolved kind (ADR-0063 decision 7). |
+| F6 | info | **`/api/v1/mcp` is on by default.** Every user API token can use the endpoint within its grants; there is no setting to turn it off. | **Accepted risk** (operator decision 2026-11-08). The endpoint adds no authority beyond what the token has on the API; an operator who doesn't want it keeps the path out of the reverse proxy (ADR-0063 §External endpoint, T-38). |

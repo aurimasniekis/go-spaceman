@@ -5,6 +5,9 @@ a desktop assistant, a terminal agent) can work with SpaceMan directly. The clie
 [API tokens](../operators/access#api-tokens) and can do exactly what that token can do on the API, with the same
 exclusions and approvals that apply to agents' SpaceMan MCP tools (ADR-0063).
 
+The endpoint is on for every user API token and has no setting to turn it off. If you don't want it reachable, leave
+`/api/v1/mcp` out of your reverse proxy.
+
 ## What you need
 
 - The address of your SpaceMan installation, for example `https://spaceman.example.com`.
@@ -72,10 +75,10 @@ says so; the request appears under **Needs you** for the people who can decide a
 the client calls the tool again with **exactly the same arguments**, and it runs once.
 
 **You can't approve your own client's request**, from any session or token of yours: another person has to. You can
-still deny or cancel it, for example when your client asked for something you didn't mean. If you are the only
-administrator, run dangerous operations from the web UI or the CLI instead.
+still deny or cancel it, for example when your client asked for something you didn't mean.
 
-The root token can currently approve these requests. Whether it should is under review (SR-MCP-01).
+The root token can approve these requests. If you are the only administrator, approve with the root token, or run
+dangerous operations from the web UI or the CLI instead.
 
 Read and write tools run at once, as the same token's API calls would.
 
