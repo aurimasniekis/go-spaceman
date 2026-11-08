@@ -58,8 +58,9 @@ async function capture(page: Page, name: string, prepare: () => Promise<void>) {
  * usage (HP-T5) with invented data. It only exists so the connected state can be shown without a real gateway; the
  * integration itself is tested against a real `harbor-pilot serve --demo` (make test-harbor-pilot).
  */
-async function fakeHarborPilot(): Promise<{ url: string; server: Server }> {
+async function fakeHarborPilot(): Promise<{ url: string; server: Server; mode: (m: 'exceeded' | 'warning' | 'unavailable') => void }> {
   let n = 0
+  let mode: 'exceeded' | 'warning' | 'unavailable' = 'exceeded'
   // Invented budgets covering the payments space: its project's daily budget is used up, the others are not.
   const day0 = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z')
   const day1 = new Date(day0.getTime() + 86400_000)
@@ -74,6 +75,12 @@ async function fakeHarborPilot(): Promise<{ url: string; server: Server }> {
     budget('bdg_spaceman_runs', 'spaceman-runs', 'binding', 'bnd_spaceman_runs', 'day', day0, day1, 'block', 150, 61.05, 'ok'),
     budget('bdg_other_project', 'research-daily', 'project', 'prj_research', 'day', day0, day1, 'block', 10, 12, 'exceeded'),
   ]
+  // The warning state: the project's daily budget near its limit, the workspace's warn-only budget over its own.
+  const warning = [
+    budget('bdg_payments_daily', 'payments-daily', 'project', 'prj_payments', 'day', day0, day1, 'block', 25, 21.37, 'warning'),
+    budget('bdg_acme_monthly', 'acme-monthly', 'workspace', 'wsp_acme', 'month', month0, month1, 'warn', 2000, 2104.6, 'exceeded'),
+    budget('bdg_spaceman_runs', 'spaceman-runs', 'binding', 'bnd_spaceman_runs', 'day', day0, day1, 'block', 150, 61.05, 'ok'),
+  ]
   const server = createServer((req, res) => {
     const json = (status: number, body: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)) }
     req.resume()
@@ -83,7 +90,10 @@ async function fakeHarborPilot(): Promise<{ url: string; server: Server }> {
         bound_refs: {}, expires_at: new Date(Date.now() + 7 * 86400_000).toISOString() }, token: `hpk_probe_${n}` })
     }
     if (req.method === 'DELETE' && req.url?.startsWith('/v1/harbor/credentials/')) { res.writeHead(204); return res.end() }
-    if (req.url === '/api/v1/budgets/status') return json(200, { items: budgets })
+    if (req.url === '/api/v1/budgets/status') {
+      if (mode === 'unavailable') return json(503, { title: 'Service Unavailable', status: 503, detail: 'the ledger is not ready' })
+      return json(200, { items: mode === 'warning' ? warning : budgets })
+    }
     if (req.url?.startsWith('/api/v1/usage/summary')) {
       return json(200, { from: day0.toISOString(), to: new Date().toISOString(), group_by: 'project', totals: [], groups: [{ key: 'prj_payments', label: 'payments',
         attempts: 1843, tokens: { input: 4_210_334, output: 391_220, cache_read: 2_870_112, cache_write: 120_400, reasoning: 0, unknown_usage_attempts: 3 },
@@ -93,7 +103,7 @@ async function fakeHarborPilot(): Promise<{ url: string; server: Server }> {
     return json(404, { title: 'Not Found', status: 404, detail: 'not found' })
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, server }
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, server, mode: (m) => { mode = m } }
 }
 
 async function enrollmentShot(browser: Browser, email: string, pw: string) {
@@ -618,6 +628,21 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}/limits`)
     await expect(page.getByTestId('harbor-pilot-state')).toHaveText('Budget used up: launches refused')
     await expect(page.getByTestId('harbor-pilot-usage')).toBeVisible()
+  })
+  // The warning and unavailable states. Central reuses a budget status read for 30 s (a failed one for 5 s), so each
+  // change waits that out before the page is loaded.
+  hp.mode('warning')
+  await page.waitForTimeout(31_000)
+  await capture(page, 'space-limits-harbor-pilot-warning', async () => {
+    await page.goto(`/spaces/${payments.id}/limits`)
+    await expect(page.getByTestId('harbor-pilot-state')).toHaveText('Warning')
+    await expect(page.getByTestId('harbor-pilot-usage')).toBeVisible()
+  })
+  hp.mode('unavailable')
+  await page.waitForTimeout(31_000)
+  await capture(page, 'space-limits-harbor-pilot-unavailable', async () => {
+    await page.goto(`/spaces/${payments.id}/limits`)
+    await expect(page.getByTestId('harbor-pilot-state')).toHaveText('Status unavailable')
   })
   // Later shots launch runs in this space: take it off Harbor Pilot again and remove the connection.
   await api.call('DELETE', `/spaces/${payments.id}/harbor-pilot`, undefined, { 'If-Match': '"1"' })

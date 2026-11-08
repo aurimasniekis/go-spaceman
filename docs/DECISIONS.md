@@ -2312,14 +2312,27 @@
     profile's `tui` always wins, and the profile's other keys are written unchanged.
 
 ### ADR-0060 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
-- **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
-  (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default that
-  control proposed. Implemented so far (HP-T2): the connection and space settings (decision 1; decision 2 for
-  the stored tokens; decision 3's central-side rules) and the version probe of decision 8. HP-T3: central's side of
-  decisions 4 and 5 (routing without fallback, mint-or-reuse at dispatch, revocation on every end path; see
-  "Implementation notes (HP-T3)" below). HP-T4: decision 6, delivery to the harness on the node (protocol minor 9; see
-  "Implementation notes (HP-T4)" below). HP-T5: the budget pre-check, the Limits card and per-run usage (decisions 4
-  and 7; see "Implementation notes (HP-T5)" below). Contract:
+- **Status:** **Accepted**, 2026-11-08 (HP-T8), with the operator's answers to Q1–Q7 of 2026-11-06 and their later
+  decisions (listed at the end; the points they settle are marked **(Qn)**). Proposed 2026-11-06. Accepted with:
+  - **Project choice: option b** (2026-11-07). Setting or changing a space's `project_id` needs `account:write`, like
+    binding an account to a space (decision 2, "Open points").
+  - **Minimum Harbor Pilot version 0.1.3** (decision 8), checked by the mint probe.
+  - **Q3 as built:** a per-space `on_budget_status_unavailable`, `proceed` by default or `refuse`. Since HP-T8 it also
+    covers SpaceMan's own failures while reading status (a token that can't be opened, a database error), with a fixed
+    reason.
+  - **Q4 stays open.** Where unscoped Harbor Pilot events go (quota, `access.request.blocked`, binding, workspace,
+    account and global budgets) is **not decided** and is not decided by this acceptance. The interim default is
+    control's proposal, not an operator answer: no automatic routing, delivery only to spaces that subscribe
+    (DECISIONS K-12).
+  - **Q7 is not met yet:** all real evidence is `serve --demo` 0.1.3 with synthetic upstreams; a real model provider
+    behind a real gateway is **not verified** (evidence map: RELEASE_READINESS §13).
+  - **Implemented:** HP-T2, the connection and space settings (decision 1; decision 2 for the stored tokens; decision 3's
+  central-side rules) and the version probe of decision 8. HP-T3: central's side of decisions 4 and 5 (routing without
+  fallback, mint-or-reuse at dispatch, revocation on every end path; see "Implementation notes (HP-T3)" below). HP-T4:
+  decision 6, delivery to the harness on the node (protocol minor 9; see "Implementation notes (HP-T4)" below). HP-T5:
+  the budget pre-check, the Limits card and per-run usage (decisions 4 and 7; see "Implementation notes (HP-T5)"
+  below). HP-T6: event templates (§7). HP-T7: Terraform resources and the combined example, in terraform-provider-spaceman.
+  HP-T8: verification, the threat model (T-03, T-05, T-34 to T-37, T-39), LIMITATIONS and release notes. Contract:
   `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
   the 0.1.3 re-run).
   - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
@@ -2514,8 +2527,8 @@
 - **Open points:**
   - ~~**HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces?**~~ **Settled in HP-T4
     (2026-11-08) by control's instruction that no other Anthropic or Claude credential may sit next to the gateway's:
-    the second option, refused, done on the node** (see "Implementation notes (HP-T4)"). The operator can still revisit
-    this when accepting the ADR.
+    the second option, refused, done on the node** (see "Implementation notes (HP-T4)"). Kept as built at acceptance
+    (2026-11-08).
     - ADR-0059 lets a claude-code profile's `claude_settings.env` set any variable, `ANTHROPIC_BASE_URL` included. The
       operator accepted this on 2026-11-07 (ADR-0059 accepted risk, THREAT_MODEL T-32).
     - In a space with HP enabled for Claude Code, a profile `env` could point a run's model traffic away from HP or
@@ -2695,7 +2708,7 @@
     connection's `binding_id`, and `from`/`to` around the run's lifetime. A model whose every request had no
     reported usage gets unknown (nil) token counts. The cost estimate is Harbor Pilot's `actual_api_charge` in USD if
     present, else its `estimated_api_charge`, labelled with its source.
-  - **Numbers.** Migration 0043 (0042 is taken by the admin MCP branch). THREAT_MODEL T-37. PLAN D-18.
+  - **Numbers.** Migration 0043. 0042 is retired and never used: the admin MCP branch (#18) took 0044, and goose runs without `AllowMissing`, so a 0042 landing after 0043 had been applied would fail to migrate. THREAT_MODEL T-37. PLAN D-18.
 
 ### ADR-0061 — More shipped GitHub event templates; optional filters and the `absent` operator
 - **Status:** Accepted, 2026-11-07 (operator request: spaces should react to pull request conversation, reviews, CI and
@@ -3140,5 +3153,5 @@
 | K-9 | ~~Codex ChatGPT-login token materialization (`auth.json`) vs API key.~~ **Resolved 2026-11-03:** the `codex_chatgpt_login` kind, one live copy per account linked into each `CODEX_HOME` (ADR-0053); a real ChatGPT login is not verified (no account). | SM-ACCT-002 | done |
 | K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
-| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | ADR-0060 acceptance; SM-GW-007, SM-GW-010 | ADR-0060 stays Proposed; Q4 open; live-run placeholder in TRACEABILITY |
+| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |

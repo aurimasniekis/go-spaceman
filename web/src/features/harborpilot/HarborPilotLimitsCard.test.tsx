@@ -84,4 +84,20 @@ describe('Harbor Pilot Limits card', () => {
     expect(card).toHaveTextContent('This space refuses launches while budget status is unavailable.')
     expect(screen.queryAllByTestId('harbor-pilot-budget')).toHaveLength(0)
   })
+
+  it('the budget bar is reachable from the keyboard and names the reserved amount', () => {
+    wrap(status({ budgets: [budget({ reserved: '0.30' })] }))
+    const bar = screen.getByTestId('harbor-pilot-budget-bar')
+    expect(bar).toHaveAttribute('tabindex', '0')
+    expect(bar.querySelector('[aria-label]')).toHaveAttribute('aria-label', '25 % used, 0.30 USD reserved by requests in flight')
+  })
+
+  it('error: a failed status read says so instead of showing nothing', async () => {
+    vi.spyOn(api, 'GET').mockResolvedValue({ data: undefined, error: { title: 'Internal Server Error', status: 500, detail: 'status read failed' }, response: new Response(null, { status: 500 }) } as never)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MantineProvider><QueryClientProvider client={qc}><HarborPilotLimitsCard spaceId={SPACE} /></QueryClientProvider></MantineProvider>)
+    const card = await screen.findByTestId('harbor-pilot-limits-error')
+    expect(card).toHaveTextContent("Harbor Pilot status can't be loaded")
+    expect(card).toHaveTextContent('status read failed')
+  })
 })

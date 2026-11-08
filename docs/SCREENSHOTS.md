@@ -24,6 +24,8 @@
 | `harbor-pilot` | Harbor Pilot gateway | The Harbor Pilot connection: URLs, tokens shown only as set with their versions, the client binding, spaces using it (a stand-in gateway in the capture) | current |
 | `space-harbor-pilot` | Harbor Pilot gateway | A space's Harbor Pilot settings: project, harnesses, run-token lifetime, budget fallback, allowed models | current |
 | `space-limits-harbor-pilot` | Harbor Pilot gateway | A space's Limits page with the Harbor Pilot budgets card: covering budgets labelled by source and enforcement, a used-up hard limit refusing launches, project usage over all clients | current |
+| `space-limits-harbor-pilot-warning` | Harbor Pilot gateway | The Harbor Pilot budgets card in its warning state: a hard limit near its limit, a warn-only budget over its own, no launches refused | current |
+| `space-limits-harbor-pilot-unavailable` | Harbor Pilot gateway | The Harbor Pilot budgets card when budget status can't be read: the reason and what launches do meanwhile | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
 | `terminal-scrollback` | Terminals and recordings | Live watch-only terminal scrolled back into earlier output, with Jump to live | current |

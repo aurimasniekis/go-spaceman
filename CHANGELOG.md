@@ -34,42 +34,101 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     message (batches and protocol versions before 2025-06-18 are refused). Dangerous calls and diagnostic launches
     need an approval from someone other than the token's user, who may only deny or cancel their own client's
     request. Calls are audited via the token on the `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
-- Harbor Pilot budgets and usage (ADR-0060, Proposed; HP-T5; migration 0043). They need the connection's
-  service-principal token (`usage.read`, `config.read`).
-  - **Limits page:** a space that routes runs through Harbor Pilot shows a **Harbor Pilot budgets** card. It lists the
-    budgets that cover the space: its project, the project's workspace, the connection's client binding, and global
-    ones. Each budget is labelled as a hard limit or warn only, with its spend, state and reset time. The card's state
-    is within budgets, warning, budget used up or status unavailable. It also shows the project's usage in the
-    current period, labelled **all clients**. The API is `GET /spaces/{id}/harbor-pilot/status`; the CLI is
-    `spaceman harbor-pilot status`.
-  - **Early refusal:** a launch of a routed harness is refused at once when a covering hard-limit budget is used up.
-    The refusal names the budget, its spend and its reset time. Control's automatic start raises "Control could not
-    start" with that reason. Warn-only budgets never refuse. When budget status can't be read, the space's
-    `on_budget_status_unavailable` decides (proceed by default, or refuse).
-  - **Mint check:** the run token's mint asks Harbor Pilot to check its budgets (`check_budget`), so Harbor Pilot can
-    refuse a run before its harness starts.
-  - **Per-run usage:** after a gateway run ends, central reads back what Harbor Pilot recorded for it
-    (`usage/summary?ref=spaceman.run:<run>` with the client binding). It reads about 15 s, 2 min and 10 min after the
-    end, and the last read is final. The figures show on the run's usage as gateway-observed. They become the run's
-    usage (source `harbor-pilot`) only when the harness reported none, as for Codex. A harness's own usage is never
-    overwritten.
-  - **Verified** against `harbor-pilot serve --demo` 0.1.3 (`make test-harbor-pilot`): a tiny budget was used up, then
-    the refusal and the mint refusal checked, and a run's usage was read back.
-- Gateway runs reach their harness (ADR-0060, Proposed; HP-T4; node protocol minor 9). **Update every node of a space
-  before opting it in to Harbor Pilot:** a launch to an older agent fails as `agent_too_old` ("gateway runs need
-  protocol minor 9 …: upgrade its agent") before a token is minted.
-  - Central sends the address runs use (`run_base_url`, or `base_url`) with the run's token. The node checks it
-    itself: https, unless the connection allows plain HTTP, with no loopback exemption.
+- **Harbor Pilot gateway** (ADR-0060, Accepted; SM-GW-001…010). A space can route its runs' model traffic through a
+  self-hosted [Harbor Pilot](https://aurimasniekis.github.io/go-harbor-pilot/) gateway. Each run gets its own
+  short-lived Harbor Pilot token instead of an account, and the token is revoked when the run ends. Harbor Pilot's hard
+  budgets refuse launches early and show on the Limits page, and its events become inbox items. **Upgrade notes:**
+  - Needs **Harbor Pilot 0.1.3** or later.
+  - Migrations 0040 and 0043 are forward-only (0042 is not used).
+  - **Node protocol minor 9:** update every node of a space before opting the space in. A gateway launch to an older
+    agent fails as `agent_too_old` before a token is minted. Spaces that don't opt in need no agent update.
+  - Terraform support is in terraform-provider-spaceman's next release.
+  - There is **no fallback to a direct account** (Q1): while Harbor Pilot is down, a space's routed harnesses can't
+    run. Revoking the parent token in Harbor Pilot is the emergency stop for every gateway run at once.
+  - Verified against `harbor-pilot serve --demo` 0.1.3 with synthetic upstreams only, with real Claude Code 2.1.317
+    and codex-cli 0.166.0 runs through SpaceMan. Not yet verified with a real model provider (evidence map:
+    RELEASE_READINESS §13).
+
+  **Connection** (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`, account:write; a change or removal
+  needs a step-up):
+  - An administrator enters a gateway URL, an optional URL runs use, a parent token with `tokens:mint` and an optional
+    service-principal token (`usage.read`, `config.read`).
+  - Both tokens are sealed and write-only. Answers, the audit log and the change feed show only whether each is set,
+    with a version counter.
+  - Stored tokens go only to the address they were entered for. Changing either URL, or newly allowing plain HTTP,
+    needs the tokens again in the same request (422 before any call).
+  - Central's client needs https except on loopback and follows no redirects. It uses no proxy, and it never dials
+    link-local (cloud metadata included), "this network", unspecified, multicast or broadcast addresses, also not
+    through NAT64 or 6to4.
+  - Every save is checked with Harbor Pilot: a probe token is minted and revoked at once ("parent token lacks
+    tokens:mint" otherwise). The check finds the client binding and the parent's expiry. A gateway older than 0.1.3 is
+    refused.
+  - The connection can't be removed while a space uses it or tokens are live or waiting to be revoked.
+
+  **Space settings** (the space overview, `/api/v1/spaces/{id}/harbor-pilot`, space_config:write):
+  - The Harbor Pilot project, checked with Harbor Pilot. Setting or changing it needs account:write, since it decides
+    who pays.
+  - The harnesses routed through it: any harness, Claude Code and Codex by default.
+  - The run-token lifetime: 24 h by default, from 15 minutes to 7 days.
+  - Optional allowed models.
+  - What a launch does when budget status can't be read: proceed (the default) or refuse.
+
+  **Run tokens:**
+  - A routed harness uses no account. A launch that names one is refused, and so is a model outside the allowed list.
+    The run's manifest records the gateway and the project.
+  - Each run gets its own child token when its launch is dispatched. It can invoke and list models only, and it is
+    bound to the space, run, instance, session, project and task. For a fresh Claude Code run, central chooses the
+    session ID. A re-sent launch reuses the token, and a token that expires within 5 minutes is replaced.
+  - A mint Harbor Pilot refuses fails the run as `gateway_unavailable` with the reason. Network errors, 5xx and 429
+    are retried three times first.
+  - A slow mint never holds up a node's other commands.
+  - Every end path queues the token's revocation in its own transaction: a reported end, an undispatched launch, a
+    stop or pause, a relocation, a purge, and runs a node left unknown past its lease. Central revokes them on its
+    deadline timer, retrying until the token expires, and the queue survives a restart.
+  - Replacing the parent first revokes the old parent's live run tokens. A revocation Harbor Pilot doesn't confirm
+    from the minting parent is recorded as failed, audited, shown on the connection, and counted in the new
+    `spaceman_gateway_revocations_failed` gauge.
+
+  **Delivery to the harness** (the node):
   - The token reaches the harness only through the launcher's secrets file, never the terminal's saved state, the
-    node's records or argv, and no other credential comes with it. Claude Code gets `ANTHROPIC_BASE_URL` and
-    `ANTHROPIC_AUTH_TOKEN`. Codex gets a `harbor-pilot` model provider pointed at the gateway's Responses API, with
-    the token in `HARBOR_PILOT_TOKEN`.
-  - A gateway run fails with a reason when its Claude Code profile settings would add a credential or endpoint:
-    `apiKeyHelper`, `proxyAuthHelper`, the cloud credential helpers, `forceLoginMethod`, or `env` entries named
-    `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_*` or `CLAUDE_CODE_USE_*`. A Claude login stored in the instance's config folder,
-    and a Codex `auth.json` left from an API key or ChatGPT login, are removed before the run starts.
-  - Verified with real Claude Code 2.1.317 and Codex 0.166.0 through SpaceMan against `harbor-pilot serve --demo`
-    0.1.3 (`make test-real-harbor-pilot`). Codex needs a model the Harbor Pilot plan routes: set the role's model.
+    node's records or argv, and no other credential comes with it.
+  - The node checks the run-facing address itself: https unless plain HTTP is allowed, no loopback exemption, a host
+    and a valid port.
+  - Claude Code gets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`. A gateway run fails with a reason when its
+    profile's Claude Code settings would add a credential, an endpoint, a proxy or a TLS override: `apiKeyHelper`,
+    `proxyAuthHelper`, cloud credential helpers, `forceLoginMethod`, or `env` entries such as `ANTHROPIC_*`, every
+    `CLAUDE_CODE_*` outside a short list of output and UI switches, `HTTP(S)_PROXY`, `ALL_PROXY`,
+    `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_OPTIONS`. Set the
+    model on the role. Claude Code's default model works through the gateway: Harbor Pilot accepts its `system`-role
+    messages since 0.1.2.
+  - Codex gets a `harbor-pilot` model provider pointed at the gateway's Responses API, with the token in
+    `HARBOR_PILOT_TOKEN`. It needs a model the Harbor Pilot plan routes, so set the role's model.
+  - A stored Claude login and any Codex `auth.json` in the instance are removed before the run starts.
+
+  **Budgets and usage** (needs the service-principal token):
+  - A space's Limits page gets a **Harbor Pilot budgets** card. It lists the budgets that cover the space (its
+    project, the project's workspace, the client binding, global), each labelled as a hard limit or warn only, with
+    its spend, state and reset time.
+  - The card is in one of four states: within budgets, warning, budget used up, or status unavailable. It shows an
+    error when status can't be loaded. It also shows the project's usage in the current period, labelled **all
+    clients**.
+  - The API is `GET /spaces/{id}/harbor-pilot/status`, and the CLI is `spaceman harbor-pilot status`.
+  - A launch is refused at once when a covering hard-limit budget is used up, naming the budget, its spend and its
+    reset time. Control's automatic start raises "Control could not start" with that reason. Warn-only budgets never
+    refuse.
+  - When status can't be read, the space's setting decides. That includes SpaceMan's own failures, which are logged
+    and shown with a fixed reason. The mint also asks Harbor Pilot to check budgets (`check_budget`).
+  - After a gateway run ends, central reads back what Harbor Pilot recorded for it, about 15 s, 2 min and 10 min
+    after the end. The figures are shown as gateway-observed. They become the run's usage (source `harbor-pilot`)
+    only when the harness reported none, as for Codex.
+  - Usage is never written as zero, not even for an empty read: the run stays unknown.
+
+  **Events:**
+  - New built-in templates: `harbor-pilot-budget` (a project's budgets to its space), `harbor-pilot-quota` and
+    `harbor-pilot-access-blocked` (`budget_only` keeps budget refusals only).
+  - Titles and correlation keys hold only Harbor Pilot's ids, names, enums and amounts, checked by each template's
+    input schema. Free text appears only in the body and the raw payload.
+  - Events without a project are routed nowhere automatically: a space gets them only by subscribing (Q4 is open).
 - Control can schedule a reminder to itself (ADR-0065). `spaceman_message_send` to `control` takes `deliver_at` (RFC
   3339) or `delay` (e.g. `6h`), from 1 minute to 30 days ahead.
   - The message stays hidden and doesn't count as work until it's due. Then it wakes control, or starts it within the
@@ -79,63 +138,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     the Messages page's **Scheduled** view, `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel`, or
     `spaceman message list --scheduled` and `spaceman message cancel`.
   - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
-- Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). A gateway run never starts on the node's own login.
-  - A harness a space routes through Harbor Pilot uses no account: a launch that names one is refused, a model outside
-    the space's allowed aliases is refused, and there is never a fallback to a direct account. A launch is refused
-    before it starts when no connection is configured. The run's manifest records the gateway and project.
-  - Each run gets its own child token when its launch is dispatched, bound to the space, run, instance, session (for a
-    fresh Claude Code gateway run, central chooses the session ID) and project, with the space's lifetime. A re-sent launch
-    reuses it; a token that would expire within 5 minutes is replaced. A mint Harbor Pilot refuses fails the run as
-    `gateway_unavailable` with the reason (for example "parent token lacks tokens:mint"); network failures, 5xx and
-    429 are retried three times first.
-  - Every end path queues the token's revocation in its own transaction: the run's reported end, a launch that can't be
-    sent, a stop or pause, a relocation, a purge, and runs a node left unknown past its lease. Central revokes them on
-    its deadline timer, retrying with backoff until the token expires; queued revocations survive a restart.
-    Replacing the parent token first revokes, with the old parent, its live run tokens and its pending revocations
-    (the new one can't), including a token minted while the parent was being replaced. A 404 or 401 counts as revoked
-    only from the parent that minted the token (each token records a fingerprint of its parent). Otherwise the
-    revocation is recorded as failed, audited, shown on the connection (`failed_revocations` and the Harbor Pilot
-    page) and counted in the new `spaceman_gateway_revocations_failed` gauge.
-  - A slow mint never holds up a node's other commands: dispatch waits at most 5 s, then the mint goes on in the
-    background and sends the launch when it is done. While it runs, later dispatches skip that launch at once, and
-    central's shutdown waits for (then cancels) mints still running before it closes the database.
-  - Failed revocations stay in `failed_revocations` and the gauge only until their tokens expire.
-- Shipped event templates for Harbor Pilot events (HP-T6, ADR-0060 §7): `harbor-pilot-budget` (budget warnings and
-  exhausted budgets; `project_id` sends a project's budgets to its space), `harbor-pilot-quota` (provider quota windows
-  that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including
-  blocking-budget refusals; `budget_only` keeps just those). Optional filters narrow by budget, account, monitor or
-  binding. Titles and correlation keys hold only Harbor Pilot's ids, names, enums and amounts, checked by each
-  template's input schema, which also pins the severity, times and counts the body shows, so a forged value cannot add
-  Markdown structure; refusal reasons, model names and quota labels appear only in the body (as code) and the raw payload.
-  Events without a project are not routed anywhere automatically: a space gets them only by subscribing (Q4 is open).
-- Harbor Pilot connection and per-space settings (ADR-0060, Proposed; HP-T2). Runs don't use the gateway yet (HP-T3/T4).
-  - An administrator connects one Harbor Pilot gateway (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`,
-    account:write; changing or removing it needs a step-up): a gateway URL, an optional URL runs use, a parent token
-    with `tokens:mint` and an optional service-principal token. Both tokens are sealed and write-only: answers, the
-    audit log and the change feed show only whether each is set and a version counter.
-  - Stored tokens are only sent to the address they were entered for: changing the gateway URL or the URL runs use, or
-    newly allowing plain HTTP, needs the tokens again in the same request ("re-enter the tokens when the gateway URL
-    changes", 422, before any call). Central's client uses no proxy and never dials link-local, unspecified or
-    multicast addresses (private and loopback ones stay allowed).
-  - Every save is checked with Harbor Pilot: a probe token is minted and revoked at once, which shows the parent can
-    mint ("parent token lacks tokens:mint" otherwise), which client binding it belongs to and when it expires; a gateway
-    older than Harbor Pilot 0.1.3 is refused. A service-principal token must read budget status and projects.
-  - A space opts in on its overview (`/api/v1/spaces/{id}/harbor-pilot`, space_config:write): its Harbor Pilot
-    project (checked with Harbor Pilot; setting or changing it needs account:write, since it decides who pays, and
-    an update without a project keeps the stored one), the harnesses routed through it (any harness; default Claude Code and Codex),
-    the run-token lifetime (24 h by default, 15 minutes to 7 days) and what a launch does when budget status can't be
-    read (proceed or refuse).
-  - The connection can't be removed while a space uses it or unexpired tokens (run or validation) are live or waiting
-    to be revoked. Migration 0040 (forward-only) adds the connection, space
-    settings, run-token and revocation-queue tables.
 
 ### Changed
 - KB support sessions and dreams refuse a space role that no longer runs as kind kb or dreamer before launching,
   instead of launching a run and killing it.
-- Harbor Pilot groundwork (still no product behaviour) moves to Harbor Pilot v0.1.3, now the minimum version: the
-  contract, `make test-harbor-pilot` (installs and checks v0.1.3) and ADR-0060 (Proposed). The test harness also checks
-  per-run usage by trusted reference, budget refusals and the budget check on run-token mint. Claude Code's default
-  model now works through the gateway (K-13 resolved on the demo gateway).
 - Claude Code runs start with its classic renderer (`"tui": "default"` in the run's settings) unless the profile's
   Claude Code settings set `tui`. Its full-screen renderer, which Claude Code otherwise often picks itself, keeps earlier output
   out of the terminal, so a watcher could not scroll back. Set `"tui": "fullscreen"` in a profile to keep it (ADR-0064).
@@ -151,12 +157,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   direct account with an API key, that account's `OPENAI_API_KEY`/`CODEX_API_KEY`. Run tokens are revoked when their
   run ends, but an account's API key is not: if a node ran Codex with an API-key account on an earlier release,
   rotate that key at the provider.
-- A gateway run's Claude Code settings `env` is checked more strictly: every `CLAUDE_CODE_*` variable except a short
-  list of output and UI switches is refused (2.1.317 has more than 800, some carrying tokens, key file descriptors,
-  base URLs, proxies or client certificates), as are `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (either case),
-  `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_OPTIONS`. Every
-  `ANTHROPIC_*` stays refused, harmless model pins such as `ANTHROPIC_MODEL` included: set the model on the role.
-- The node's gateway address check refuses an address without a host (`https://:443`) or with a port outside 1–65535.
 - With the `next_launch` policy, a person's response to a control that had stopped waited for the whole hold before
   control was started for it. A response held for control's agent instance now counts as work for control, so control
   is started on that instance (within the `control_autostart` limits) and the response is delivered to it. A response
@@ -164,9 +164,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - A relocation whose source was unavailable marked the source's runs lost without ending them: no `run_ended` event,
   no end count, and nothing that reacts to a run's end (recordings, KB sessions, control) learnt of it. They now
   end like runs a node reports ended.
-- Central's Harbor Pilot client also refuses "this network", broadcast and AWS's IPv6 metadata address, and link-local
-  addresses reached through NAT64 or 6to4. A project check's probe token that couldn't be revoked is reported as a
-  warning instead of being dropped silently.
 - Run terminals scroll back without a takeover (operator request). The wheel, and a drag on a phone, scroll through
   earlier output in the live view without sending anything to the run. While you read, new output no longer pulls you
   to the bottom, and **Jump to live** returns.

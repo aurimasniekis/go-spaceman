@@ -90,7 +90,15 @@
 ## Harbor Pilot gateway
 - **Gateway runs need updated agents.** A node agent below protocol minor 9 can't hand the token to a harness, so
   central fails a routed launch to it as `agent_too_old` before minting, rather than let the harness start on the
-  node's own login (ADR-0060, Proposed). Update every node of a space before opting the space in.
+  node's own login (ADR-0060). Update every node of a space before opting the space in.
+- **A Harbor Pilot outage stops the space's gateway runs.** There is no fallback to a direct account (Q1): when
+  Harbor Pilot is down, or its parent token is revoked or expired, every launch of a routed harness fails (at mint, as
+  `gateway_unavailable`), and running runs lose model access. Revoking the parent in Harbor Pilot is the emergency stop
+  for every gateway run at once (THREAT_MODEL T-39), and for the same reason a single point of failure for every
+  opted-in space. Recovery is a new parent saved on the connection; runs that lost access must be relaunched.
+- **No token refresh inside a run.** A run's token lives for the space's token lifetime (24 h by default, 15 min to
+  7 days, Q2). A harness can't be given a new token while it runs, so a run that outlives its token loses model
+  access and must be relaunched. A re-sent launch gets a fresh token only before its harness starts.
 - **Codex's default model may not be routed.** A gateway Codex run without a model uses Codex's own default
   (`gpt-6.1-sol` in 0.166.0), which a Harbor Pilot plan may not route: the demo answers 403 "no eligible account". Set
   the role's model, or the space's allowed models, to one the plan routes. SpaceMan doesn't pick one.
@@ -116,8 +124,18 @@
   no human action is raised.
 - **Older gateways are detected by a feature probe.** Harbor Pilot has no version endpoint; a gateway that does not know
   `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
-- **Demo evidence only.** Connection checks ran against a real `harbor-pilot serve --demo` 0.1.3 with synthetic
-  upstreams, not against a production gateway.
+- **Demo evidence only.** Everything real ran against `harbor-pilot serve --demo` 0.1.3 with its synthetic upstreams:
+  connection checks, run tokens, real Claude Code and Codex runs, budgets, per-run usage, events and the Terraform
+  example. No run has gone through a production gateway to a real model provider (Q7: the operator will provide one;
+  the evidence map is in RELEASE_READINESS §13).
+- **Unscoped Harbor Pilot events have no routing decision.** Where quota, blocked-request and non-project budget events
+  should go is undecided (Q4, DECISIONS K-12); until it is decided they reach only spaces that subscribe.
+- **Harbor Pilot rounds share central's deadline timer.** Revocations, the lease-loss sweep and usage reads run one
+  after another on the timer that also expires human actions and approvals and fires schedules. A revocation
+  call is bounded by 5 s and a usage read by 10 s. A usage round stops asking Harbor Pilot after its first transport
+  failure, but a revocation round still tries each due revocation (at most 10), so a gateway that accepts connections
+  and never answers can delay human-action expiry, reminders and schedules by up to about 50 s per round, again each
+  time the revocations are retried.
 - **The early budget refusal is advisory and up to 30 s old.** SpaceMan reuses a budget status read for 30 s (5 s
   after a failed read), so a budget used up in that window can let a launch through. Harbor Pilot then refuses the
   run's token mint (`check_budget`) or its requests. The check can't see a request in flight that is about to push a
@@ -132,8 +150,17 @@
 - **Per-run usage arrives late and may miss a slow request.** A gateway run's usage is read about 15 s, 2 min and 10 min
   after its end. A request still streaming after the last read is not counted. A run that ended while no
   service-principal token was set gets no usage. A read failing for an hour is given up, and the run keeps what it had.
-  Usage is never written as zero. Harbor Pilot counts requests whose provider reported no usage; their tokens are
-  unknown and not counted.
+  Usage is never written as zero: a read that finds no request for the run (the ledger behind, a binding changed, a
+  run that made no request) stays with the run's gateway figures only, and the run's usage stays unknown, so a gateway
+  run that really made no request is shown as unknown, not zero. Harbor Pilot counts requests whose provider reported
+  no usage; their tokens are unknown and not counted.
+- **Budget status errors on SpaceMan's side follow the unavailable policy.** A service-principal token that can't be
+  opened or a database error while reading the connection counts as "status can't be read": the space's
+  `on_budget_status_unavailable` decides, and the person sees a fixed reason (details only in central's log).
+- **Who may read budget status.** A space's Harbor Pilot status needs only `space_config:read`, and it shows the global
+  and client-binding budgets whose spend sums every space (ADR-0060, by design).
+- **Status refreshes once a minute in the UI.** The Limits card re-reads status every 60 s (central reuses a read for
+  30 s); a failed read shows an error on the card.
 - **Only project budgets map to a space.** The `harbor-pilot-budget` template routes a project-scoped budget to the
   space whose subscription names that project. Quota windows, blocked requests and binding, workspace, account or global
   budgets name no project: they reach only spaces that subscribe to them, and nothing routes them automatically (Q4 is

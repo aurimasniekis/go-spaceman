@@ -79,10 +79,19 @@ func (l *Lifecycle) ReadDueUsage(ctx context.Context) (int, error) {
 	}
 	done := 0
 	var errs []error
+	// A round shares the deadline timer with human-action expiry and the other deadlines, so it is bounded: once a read
+	// fails in transport (Harbor Pilot unreachable, or not answering within usageTimeout), the round's other rows are
+	// rescheduled without asking Harbor Pilot. A gateway that swallows requests costs one timeout per round, not one
+	// per row.
+	unreachable := false
 	for _, r := range due {
 		if c == nil {
 			errs = append(errs, l.usageFailed(ctx, r, "unavailable", unusable, now))
 			done++
+			continue
+		}
+		if unreachable {
+			errs = append(errs, l.usageRetry(ctx, r, "not read: Harbor Pilot did not answer an earlier read in the same round", now.Add(usageBackoff)))
 			continue
 		}
 		cctx, cancel := context.WithTimeout(ctx, usageTimeout)
@@ -95,6 +104,9 @@ func (l *Lifecycle) ReadDueUsage(ctx context.Context) (int, error) {
 			msg := "the read failed"
 			if errors.As(err, &he) {
 				msg = "Harbor Pilot usage could not be read: " + he.Reason()
+			}
+			if !errors.As(err, &he) || he.Class == ClassTransport {
+				unreachable = true
 			}
 			if (errors.As(err, &he) && !he.Retryable()) || now.Sub(ended) >= usageGiveUp {
 				errs = append(errs, l.usageFailed(ctx, r, "failed", msg, now))
@@ -209,6 +221,11 @@ func (l *Lifecycle) storeUsage(ctx context.Context, r db.ListDueGatewayUsageRow,
 			ModelsJson: string(models), CostsJson: string(costs), Attempts: u.Requests, UnknownUsage: u.UnknownUsage, RunID: r.RunID})
 		if err != nil || n == 0 {
 			return err
+		}
+		if u.Requests == 0 {
+			// An empty answer (no request seen yet, ledger lag, or a binding change) is not known zero usage: it is kept
+			// in run_gateway_usage only, and the run's own usage stays as the harness reported it (unknown for Codex).
+			return nil
 		}
 		if err := tx.Q.FillRunUsageFromGateway(ctx, db.FillRunUsageFromGatewayParams{RunID: r.RunID, SpaceID: r.SpaceID, ModelsJson: string(models),
 			EstimateJson: est, Final: b2i(final), Note: note, UpdatedAt: tx.NowMicros()}); err != nil {
