@@ -16,6 +16,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/agent"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
@@ -29,7 +30,7 @@ import (
 // large binary says it is not returned and points to the save tool.
 func TestAttachmentSaveOverBridge(t *testing.T) {
 	// Not parallel: t.Setenv (the bridge reads SPACEMAN_RUN_TOKEN).
-	e := newFleetEnv(t)
+	e := newFleetEnv(t, func(c *config.Config) { c.HTTP.MaxUploadBytes = 64 << 20 })
 	e.enroll()
 	e.startAgent()
 	ctx := context.Background()
@@ -67,6 +68,7 @@ func TestAttachmentSaveOverBridge(t *testing.T) {
 	img, imgID := upload("Screenshot 2026-11-08 at 10.00.00.png", 2<<20)
 	big, bigID := upload("../../../claude/settings.json", 10<<20)
 	abs, absID := upload("/etc/passwd", 600<<10)
+	_, hugeID := upload("huge.bin", 50<<20+1)
 
 	// The harness side: an MCP client on the real stdio bridge.
 	t.Setenv("SPACEMAN_RUN_TOKEN", e.runToken(wrk.ID))
@@ -147,6 +149,29 @@ func TestAttachmentSaveOverBridge(t *testing.T) {
 	res, _ = call(proto.ToolAttachmentSave, map[string]any{"attachment": "att_missing"})
 	if !res.IsError {
 		t.Fatal("saving an unknown attachment succeeded")
+	}
+	// Another space's attachment: central refuses it as for the inline read, so the node can't be used to reach it.
+	osp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "elsewhere", Name: "Elsewhere", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := e.c.Attachments.Upload(ctx, admin, osp.ID, "secret.png", bytes.NewReader(img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, _ = call(proto.ToolAttachmentSave, map[string]any{"attachment": foreign.ID})
+	if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "not found") {
+		t.Fatalf("saving another space's attachment: %+v", res)
+	}
+	// Over the per-save cap: refused, nothing written.
+	res, _ = call(proto.ToolAttachmentSave, map[string]any{"attachment": hugeID})
+	if !res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, "at most") {
+		t.Fatalf("saving over the cap: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(inst, "attachments", wrk.ID, hugeID)); err == nil {
+		if entries, _ := os.ReadDir(filepath.Join(inst, "attachments", wrk.ID, hugeID)); len(entries) > 0 {
+			t.Fatalf("files left after a refused save: %v", entries)
+		}
 	}
 
 	// A stale folder of a run the node no longer knows; the run's own folder goes when it ends.

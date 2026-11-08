@@ -3405,6 +3405,8 @@
     - The size and SHA-256 are checked against central's record before the temporary file is renamed into place. A
       chunk from a different record, a wrong range or a mismatch fails the call and leaves no file.
     - The result is the real path, size, SHA-256, MIME type and name.
+    - One save is at most 50 MiB (above central's default 25 MiB upload limit), so a run can't fill the node's disk
+      through it. A larger attachment is refused before anything is written; ranged reads still work.
   - **Untrusted names.**
     - The uploader's name is reduced to one plain element: the last element (either separator), `[A-Za-z0-9._-]`
       (anything else becomes `_`), no leading dot, at most 100 bytes keeping a short extension, and `attachment` when

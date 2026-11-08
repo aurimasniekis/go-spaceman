@@ -98,7 +98,9 @@ How saving works:
 
 - The node agent serves `spaceman_attachment_save` itself, next to the identity tools. It copies the attachment from
   central in ranged reads over the node's connection, and checks the size and SHA-256 against central's record before
-  the file appears. A file that doesn't match is never left behind.
+  the file appears. A file that doesn't match is never left behind. Central checks the run's space on every chunk, so
+  another space's attachment is "not found" here too. One save is at most 50 MiB (more than the default upload
+  limit); a larger one is refused and can still be read in ranges.
 - The file is saved as `<space folder>/instances/<instance>/attachments/<run>/<attachment>/<name>`, mode `0600`, in
   folders of mode `0700`. That is inside the run's own space folder, which Claude Code runs may read without a
   permission dialog (ADR-0068).

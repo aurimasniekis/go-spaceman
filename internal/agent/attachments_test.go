@@ -68,3 +68,11 @@ func TestInstanceAttachmentsRefusesLinks(t *testing.T) {
 		t.Fatal("a linked instance folder was accepted")
 	}
 }
+
+// A central before ADR-0073 refuses the ranged-read arguments with its strict decoder's message.
+func TestErrUnknownArgument(t *testing.T) {
+	old := bridgeResponse{Code: "validation_failed", Error: `invalid arguments for spaceman_attachment_get: json: unknown field "offset"`}
+	if !errUnknownArgument(old) || errUnknownArgument(bridgeResponse{Code: "not_found", Error: "attachment not found"}) {
+		t.Fatal("old central not recognized")
+	}
+}
