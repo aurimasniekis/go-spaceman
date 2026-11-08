@@ -13,7 +13,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     budgets that cover the space: its project, the project's workspace, the connection's client binding, and global
     ones. Each budget is labelled as a hard limit or warn only, with its spend, state and reset time. The card's state
     is within budgets, warning, budget used up or status unavailable. It also shows the project's usage in the
-    current period, labelled **all clients**. The API is `GET /spaces/{id}/harbor-pilot/status`.
+    current period, labelled **all clients**. The API is `GET /spaces/{id}/harbor-pilot/status`; the CLI is
+    `spaceman harbor-pilot status`.
   - **Early refusal:** a launch of a routed harness is refused at once when a covering hard-limit budget is used up.
     The refusal names the budget, its spend and its reset time. Control's automatic start raises "Control could not
     start" with that reason. Warn-only budgets never refuse. When budget status can't be read, the space's

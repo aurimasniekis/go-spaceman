@@ -108,6 +108,7 @@ func (a *App) harborPilotCmd() *cobra.Command {
 		a.cmd(opts{use: "disconnect", short: "Remove the connection (refused while a space uses it)", op: "delete-harbor-pilot-connection",
 			get: "get-harbor-pilot-connection", confirm: "remove the Harbor Pilot connection", done: "Harbor Pilot connection removed."}),
 		a.cmd(opts{use: "space", short: "A space's Harbor Pilot settings", op: "get-space-harbor-pilot", scoped: true}),
+		a.cmd(opts{use: "status", short: "A space's Harbor Pilot budget status (hard limits) and project usage", op: "get-space-harbor-pilot-status", scoped: true}),
 		a.cmd(opts{use: "set-space", short: "Set a space's Harbor Pilot settings (only the flags given change)", op: "put-space-harbor-pilot",
 			get: "get-space-harbor-pilot", merge: true, optionalIfMatch: true, scoped: true, form: spaceForm,
 			long: "Needs space_config:write. The project decides who pays, so setting or changing --project needs account:write " +

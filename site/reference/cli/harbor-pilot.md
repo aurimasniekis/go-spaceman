@@ -13,6 +13,7 @@ Aliases: `hp`.
 | [`spaceman harbor-pilot get`](#spaceman-harbor-pilot-get) | The connection (never its tokens) |
 | [`spaceman harbor-pilot set-space`](#spaceman-harbor-pilot-set-space) | Set a space's Harbor Pilot settings (only the flags given change) |
 | [`spaceman harbor-pilot space`](#spaceman-harbor-pilot-space) | A space's Harbor Pilot settings |
+| [`spaceman harbor-pilot status`](#spaceman-harbor-pilot-status) | A space's Harbor Pilot budget status (hard limits) and project usage |
 | [`spaceman harbor-pilot unset-space`](#spaceman-harbor-pilot-unset-space) | Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) |
 
 ## spaceman harbor-pilot connect
@@ -110,6 +111,20 @@ spaceman harbor-pilot space [flags]
 ```
 
 API: `get-space-harbor-pilot` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman harbor-pilot status
+
+A space's Harbor Pilot budget status (hard limits) and project usage.
+
+```sh
+spaceman harbor-pilot status [flags]
+```
+
+API: `get-space-harbor-pilot-status` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
