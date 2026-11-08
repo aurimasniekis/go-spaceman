@@ -9,6 +9,7 @@ import (
 // 0043 adds the Harbor Pilot usage read-back table to a database at 0041 without touching existing rows; a row is
 // deleted with its run, and its state is one of the four.
 func TestGatewayUsageMigrationFrom0041(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0041")})

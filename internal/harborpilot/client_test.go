@@ -14,6 +14,7 @@ import (
 )
 
 func TestParseBaseURL(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		raw              string
 		insecure, exempt bool
@@ -62,6 +63,7 @@ func TestParseBaseURL(t *testing.T) {
 // Every failure class SpaceMan distinguishes, from answers in Harbor Pilot 0.1.3's shapes; tokens never appear in an
 // error, and the client keeps no more than a bounded, sanitised message.
 func TestClientErrorClasses(t *testing.T) {
+	t.Parallel()
 	const canary = "hpk_CANARYcanary0123456789"
 	var status atomic.Int64
 	var body atomic.Value
@@ -146,6 +148,7 @@ func TestClientErrorClasses(t *testing.T) {
 
 // Redirects are never followed: a token is never sent to wherever a redirect points.
 func TestClientDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
 	var hit atomic.Bool
 	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit.Store(true) }))
 	defer elsewhere.Close()
@@ -165,6 +168,7 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 // The mint body always carries check_budget (also when false): an older gateway refuses the field, which is how
 // SpaceMan detects it. Every call has a timeout.
 func TestClientMintBodyAndTimeout(t *testing.T) {
+	t.Parallel()
 	f := hpfake.New(t)
 	c, _ := NewClient(f.URL(), ClientOptions{})
 	cred, tok, err := c.Mint(context.Background(), f.Parent, MintRequest{Name: "n", Scopes: RunScopes, TTLSeconds: 900, BoundRefs: map[string]string{"project_id": "prj_web"}})
@@ -205,6 +209,7 @@ func TestClientMintBodyAndTimeout(t *testing.T) {
 }
 
 func TestSanitize(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("x", 1000)
 	if got := Sanitize(long); len([]rune(got)) != maxMessage {
 		t.Fatalf("length %d", len([]rune(got)))

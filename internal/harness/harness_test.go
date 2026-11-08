@@ -239,6 +239,7 @@ func gatewayPayload(p proto.LaunchPayload) proto.LaunchPayload {
 // only through the shim's secrets (never the runner env), its stored login is removed, and the ADR-0021 first-run seed
 // stays. Another credential next to the gateway's, or a settings key that adds one, refuses the launch.
 func TestClaudeGatewayBuild(t *testing.T) {
+	t.Parallel()
 	c := ctxFor(gatewayPayload(proto.LaunchPayload{Prompt: "go", SessionID: "11111111-2222-4333-8444-555555555555",
 		ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"FOO": "bar"}}}))
 	l, err := Claude{}.Build(c)
@@ -301,6 +302,7 @@ func TestClaudeGatewayBuild(t *testing.T) {
 // other CLAUDE_CODE_* (credentials, endpoints, proxies, client certificates, new ones), every ANTHROPIC_* and the
 // proxy and TLS variables in either case are refused.
 func TestClaudeGatewayEnv(t *testing.T) {
+	t.Parallel()
 	refused := []string{
 		"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
 		"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
@@ -330,6 +332,7 @@ func TestClaudeGatewayEnv(t *testing.T) {
 // SM-GW-003 (ADR-0060 decision 6, the HP-T1 spike's shape): a Codex gateway run gets the five model-provider
 // overrides and HARBOR_PILOT_TOKEN through the shim only, no auth.json (any left is removed) and no login.
 func TestCodexGatewayBuild(t *testing.T) {
+	t.Parallel()
 	c := ctxFor(gatewayPayload(proto.LaunchPayload{Prompt: "go", Model: "coding/default", Settings: map[string]string{"sandbox": "read-only"}}))
 	c.Binary = "codex"
 	l, err := Codex{}.Build(c)

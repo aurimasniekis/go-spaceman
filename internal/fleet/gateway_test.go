@@ -359,8 +359,8 @@ func TestGatewayLaunchNeedsAgentMinor(t *testing.T) {
 	}
 }
 
-// F3: a slow mint never holds up the node's dispatch loop. The loop waits at most GatewayMintWait, leaves the launch
-// pending and sends the node's other commands (here a stop of another run); the mint goes on in the background, once,
+// F3: a slow mint holds up the node's dispatch loop for at most GatewayMintWait. The loop waits that long, leaves the
+// launch pending and sends the node's other commands (here a stop of another run); the mint goes on in the background, once,
 // and kicks the loop when it is done, which then sends the launch.
 func TestGatewayMintDoesNotBlockDispatch(t *testing.T) {
 	t.Parallel()

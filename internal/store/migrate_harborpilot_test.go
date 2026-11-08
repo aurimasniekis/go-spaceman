@@ -11,6 +11,7 @@ import (
 // fallback's two values, space settings deleted with their space, and run tokens deleted with their run while the
 // revocation queue (no foreign key) survives.
 func TestHarborPilotMigrationFrom0039(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0039")})
