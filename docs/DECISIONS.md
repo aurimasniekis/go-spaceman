@@ -2668,8 +2668,8 @@
     outside any transaction. A cached read is keyed on the connection's id, version, service-token version and
     address, so a connection write is never answered from an older read.
   - **Refusal.** A covering budget that is enabled, enforced with `block` and `exceeded` refuses the launch in
-    `PreLaunch` with `rate_limited`: `Harbor Pilot budget "<name>" (<scope> <id>) is used up for this <period>:
-    <spent> of <limit> <currency> spent; it resets at <period_end>`. Names and ids are Harbor Pilot's text, so they
+    `PreLaunch` with `rate_limited`, for example: `Harbor Pilot budget "daily" (project prj_web) is used up for
+    this day: 0.12 of 0.10 USD spent; it resets at 2026-11-09T00:00:00Z`. Names and ids are Harbor Pilot's text, so they
     are sanitised and bounded (T-37). Warn-only budgets never refuse. Control's auto-start already turns a launch
     error into "Control could not start" with the error, so nothing was added there. Status that can't be read (no
     service-principal token, a failed read, a failed workspace lookup) follows `on_budget_status_unavailable`:

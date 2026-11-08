@@ -260,6 +260,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/spaces/{space_id}/harbor-pilot` | `delete-space-harbor-pilot` | Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) |
 | `GET` | `/spaces/{space_id}/harbor-pilot` | `get-space-harbor-pilot` | A space's Harbor Pilot settings |
 | `PUT` | `/spaces/{space_id}/harbor-pilot` | `put-space-harbor-pilot` | Set a space's Harbor Pilot settings |
+| `GET` | `/spaces/{space_id}/harbor-pilot/status` | `get-space-harbor-pilot-status` | A space's Harbor Pilot budget status and project usage |
 
 ### human-action-policies
 
