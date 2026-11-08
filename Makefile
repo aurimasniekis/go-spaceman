@@ -241,8 +241,8 @@ site-verify: cli-docs config-docs site
 	git diff --exit-code -- site/reference/api.md site/reference/cli site/reference/configuration.md
 
 # The axe audit (WCAG 2.1 A/AA) of every page of the built site (make site) in both color schemes. The pages are split
-# into SM_A11Y_SHARDS parallel tests (both schemes each), run by as many Playwright workers (one Chromium each); the default is a
-# quarter of the CPUs, between 1 and 8.
+# into SM_A11Y_SHARDS parallel tests (both schemes each), run by as many Playwright workers (one Chromium each); the
+# default is a quarter of the CPUs, between 1 and 8.
 SM_A11Y_SHARDS ?= $(shell n=$$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); s=$$((n / 4)); [ $$s -gt 8 ] && s=8; [ $$s -lt 1 ] && s=1; echo $$s)
 site-a11y:
 	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist SM_A11Y_SHARDS=$(SM_A11Y_SHARDS) pnpm exec playwright test e2e/site-a11y.spec.ts --workers=$(SM_A11Y_SHARDS) --reporter=list
