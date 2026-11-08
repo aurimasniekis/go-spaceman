@@ -75,6 +75,8 @@ the client calls the tool again with **exactly the same arguments**, and it runs
 still deny or cancel it, for example when your client asked for something you didn't mean. If you are the only
 administrator, run dangerous operations from the web UI or the CLI instead.
 
+The root token can currently approve these requests. Whether it should is under review (SR-MCP-01).
+
 Read and write tools run at once, as the same token's API calls would.
 
 ## Limits and refusals

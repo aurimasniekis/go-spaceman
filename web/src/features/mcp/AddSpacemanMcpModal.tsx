@@ -46,6 +46,8 @@ function AddSpacemanMcpForm({ spaceId: initialSpace, fixedSpace, onClose, onCrea
   const [days, setDays] = useState(90)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  // The server once it exists: when granting it failed, the dialog stays open and a retry only grants.
+  const [created, setCreated] = useState<McpServer | null>(null)
   const [key] = useState(idempotencyKey)
 
   const grants = scope === 'custom' ? customGrants : scopeGrants(scope, space)
@@ -70,20 +72,26 @@ function AddSpacemanMcpForm({ spaceId: initialSpace, fixedSpace, onClose, onCrea
     setError('')
     setBusy(true)
     try {
-      const srv = unwrap(await api.POST('/mcp-servers/spaceman', {
+      const srv = created ?? unwrap(await api.POST('/mcp-servers/spaceman', {
         params: { header: { 'Idempotency-Key': key } },
         body: { slug, name, preset, tools: preset === 'custom' ? picked : [], approval: gateWrites ? 'writes' : 'none', grants, expires_in_days: expiryDays(never, days) },
       }))
+      if (!created) {
+        setCreated(srv)
+        void qc.invalidateQueries({ queryKey: keys.mcpServers })
+        void qc.invalidateQueries({ queryKey: keys.tokens })
+      }
       if (space && role) {
         try {
           unwrap(await api.POST('/mcp-servers/{server_id}/grants', { params: { path: { server_id: srv.id } }, body: { space_id: space, role, tools: [] } }))
         } catch (e) {
-          setError(`The server was created, but granting it failed: ${errorMessage(e)}. Grant it from its details.`)
+          // The server exists but no run can use it yet: say so and stay open rather than announce it as added.
+          setError(`${srv.name} was created, but it has no grant yet: granting it failed: ${errorMessage(e)}. Retry, or close and grant it from its details.`)
+          return
         }
+        void qc.invalidateQueries({ queryKey: keys.mcpServers })
+        void qc.invalidateQueries({ queryKey: keys.spaceMcp(space) })
       }
-      void qc.invalidateQueries({ queryKey: keys.mcpServers })
-      void qc.invalidateQueries({ queryKey: keys.tokens })
-      if (space) void qc.invalidateQueries({ queryKey: keys.spaceMcp(space) })
       notifyOk(`${srv.name} added`)
       onCreated?.(srv)
       onClose()
@@ -197,8 +205,10 @@ function AddSpacemanMcpForm({ spaceId: initialSpace, fixedSpace, onClose, onCrea
         </Group>
         {error && <Text c="owlRed" size="sm" role="alert">{error}</Text>}
         <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button type="submit" loading={busy} disabled={!name || slugProblem !== null || !grantsOK || (preset === 'custom' && picked.length === 0)}>Add server</Button>
+          <Button variant="default" onClick={onClose}>{created ? 'Close' : 'Cancel'}</Button>
+          {created
+            ? <Button type="submit" loading={busy} disabled={!space || !role}>Retry grant</Button>
+            : <Button type="submit" loading={busy} disabled={!name || slugProblem !== null || !grantsOK || (preset === 'custom' && picked.length === 0)}>Add server</Button>}
         </Group>
       </Stack>
     </form>

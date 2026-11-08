@@ -24,6 +24,8 @@ import (
 type fakeBackend struct {
 	f     *fx
 	calls []string
+	// refuse makes calls answer like an API refusal (a tool result with isError).
+	refuse bool
 }
 
 var fakeClasses = map[string]string{"list_things": "read", "create_thing": "write", "delete_thing": "dangerous"}
@@ -77,6 +79,9 @@ func (b *fakeBackend) Call(ctx context.Context, t SpacemanTarget, runID, tool st
 		return nil, apperr.New(apperr.CodeForbidden, "the SpaceMan MCP server %q can no longer act: its token was revoked", t.Slug)
 	}
 	b.calls = append(b.calls, runID+":"+tool)
+	if b.refuse {
+		return json.RawMessage(`{"content":[{"type":"text","text":"{\"status\":422}"}],"isError":true}`), nil
+	}
 	return json.RawMessage(`{"content":[]}`), nil
 }
 
@@ -132,6 +137,19 @@ func (g *fakeGate) Gate(_ context.Context, _ *fleet.RunPrincipal, op, _ string, 
 func (g *fakeGate) Require(_ context.Context, _ *fleet.RunPrincipal, op, _ string, _ json.RawMessage) (func(error), error) {
 	g.required = append(g.required, op)
 	return nil, apperr.New(apperr.CodePrecondition, "%s needs a person's approval", op)
+}
+
+// approvingGate approves every call and records how each one finished.
+type approvingGate struct{ finished []error }
+
+func (g *approvingGate) finish(err error) { g.finished = append(g.finished, err) }
+
+func (g *approvingGate) Gate(context.Context, *fleet.RunPrincipal, string, string, json.RawMessage) (func(error), error) {
+	return g.finish, nil
+}
+
+func (g *approvingGate) Require(context.Context, *fleet.RunPrincipal, string, string, json.RawMessage) (func(error), error) {
+	return g.finish, nil
 }
 
 // The spaceman kind in the gateway (ADR-0063): created with its token, granted like any server, offered to control and
@@ -271,6 +289,35 @@ func TestSpacemanServers(t *testing.T) {
 	code(t, err, apperr.CodePrecondition)
 	_, err = f.svc.Call(f.ctx, ctrl, "sm__list_things", nil)
 	must(t, err)
+	f.svc.Gate = gate
+
+	// An approved dangerous call the API refuses (isError) finishes the approval's execution as failed and is audited
+	// as a failed call; the result still reaches the run. An accepted one succeeds.
+	lastCall := func() (outcome, details string) {
+		t.Helper()
+		must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT outcome, details_json FROM audit_events WHERE action = 'mcp_server.tool_called'
+			ORDER BY seq DESC LIMIT 1`).Scan(&outcome, &details))
+		return outcome, details
+	}
+	approving := &approvingGate{}
+	f.svc.Gate, be.refuse = approving, true
+	out, err := f.svc.Call(f.ctx, ctrl, "sm__delete_thing", nil)
+	must(t, err)
+	if !strings.Contains(string(out), `"isError":true`) || len(approving.finished) != 1 || apperr.CodeOf(approving.finished[0]) != apperr.CodeInvalid {
+		t.Fatalf("refused approved call: out %s, finished %v", out, approving.finished)
+	}
+	if o, d := lastCall(); o != audit.OutcomeFailure || !strings.Contains(d, `"result":"api_error"`) {
+		t.Fatalf("refused approved call audited %s %s", o, d)
+	}
+	be.refuse = false
+	_, err = f.svc.Call(f.ctx, ctrl, "sm__delete_thing", nil)
+	must(t, err)
+	if len(approving.finished) != 2 || approving.finished[1] != nil {
+		t.Fatalf("accepted approved call finished %v", approving.finished)
+	}
+	if o, d := lastCall(); o != audit.OutcomeSuccess || !strings.Contains(d, `"result":"ok"`) {
+		t.Fatalf("accepted approved call audited %s %s", o, d)
+	}
 	f.svc.Gate = gate
 
 	// The generic edit refuses a spaceman server, and the spaceman edit refuses an http server.

@@ -160,6 +160,36 @@ describe('Add SpaceMan MCP', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('stays open with a warning when granting the created server fails, and a retry only grants', async () => {
+    const sent: string[] = []
+    let grants = 0
+    net.fetch = (async (input: RequestInfo | URL) => {
+      const path = new URL((input as Request).url).pathname
+      sent.push(path)
+      if (path === '/api/v1/mcp-servers/spaceman') {
+        return new Response(JSON.stringify({ id: 'mcp_1', name: 'SpaceMan', slug: 'spaceman-admin', kind: 'spaceman', version: 1 }), { status: 201, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (grants++ === 0) {
+        return new Response(JSON.stringify({ code: 'invalid', status: 422, title: 'Unprocessable Entity', detail: 'bad role' }), { status: 422, headers: { 'Content-Type': 'application/problem+json' } })
+      }
+      return new Response(JSON.stringify({ id: 'mgr_1' }), { status: 201, headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+    const onCreated = vi.fn()
+    const onClose = vi.fn()
+    wrap(<AddSpacemanMcpModal opened onClose={onClose} spaceId={SPACE} onCreated={onCreated} />, me([{ role: 'admin', domain: '*' }]))
+    await waitFor(() => expect(screen.getByTestId('tool-count')).toHaveTextContent('3 tools'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
+    expect(await screen.findByText(/SpaceMan was created, but it has no grant yet: granting it failed/)).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onCreated).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry grant' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ id: 'mcp_1' })))
+    expect(onClose).toHaveBeenCalled()
+    expect(sent.filter((p) => p === '/api/v1/mcp-servers/spaceman')).toHaveLength(1)
+    expect(sent.filter((p) => p === '/api/v1/mcp-servers/mcp_1/grants')).toHaveLength(2)
+  })
+
   it('does not create the server when the step-up is cancelled', async () => {
     const fetchSpy = vi.fn(async () =>
       new Response(JSON.stringify({ code: 'reauth_required', status: 401, title: 'Unauthorized', detail: 'a recent sign-in is required' }), { status: 401, headers: { 'Content-Type': 'application/problem+json' } }))

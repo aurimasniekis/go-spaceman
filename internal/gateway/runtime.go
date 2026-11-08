@@ -405,12 +405,23 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 	defer release()
 	start := time.Now()
 	out, err := do(ctx)
+	// A SpaceMan tool result with isError is an API refusal (4xx/5xx): the call failed, as the external endpoint records
+	// it, though the result still goes back to the run for the model to read.
+	apiErr := err == nil && srv.Kind == KindSpaceman && toolResultIsError(out)
 	if finish != nil {
-		finish(err)
+		switch {
+		case apiErr:
+			finish(apperr.New(apperr.CodeInvalid, "the operation failed"))
+		default:
+			finish(err)
+		}
 	}
 	outcome, result := "success", "ok"
-	if err != nil {
+	switch {
+	case err != nil:
 		outcome, result = "failure", string(apperr.CodeOf(err))
+	case apiErr:
+		outcome, result = "failure", "api_error"
 	}
 	details["result"], details["duration_ms"] = result, time.Since(start).Milliseconds()
 	svc.rt.log.Info("MCP gateway call", slog.String("run.id", p.RunID), slog.String("mcp.server", srv.Slug), slog.String("mcp.tool", tool),
@@ -426,6 +437,14 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 		svc.rt.log.Error("audit MCP gateway call", slog.Any("error", aerr))
 	}
 	return out, err
+}
+
+// toolResultIsError reports whether a marshalled MCP tool result is marked isError.
+func toolResultIsError(out json.RawMessage) bool {
+	var r struct {
+		IsError bool `json:"isError"`
+	}
+	return json.Unmarshal(out, &r) == nil && r.IsError
 }
 
 func (svc *Service) call(ctx context.Context, p *fleet.RunPrincipal, srv db.McpServer, tool string, args json.RawMessage) (json.RawMessage, error) {
