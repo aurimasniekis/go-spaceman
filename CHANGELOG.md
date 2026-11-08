@@ -26,6 +26,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   cached under the hash of `scripts/install-sqlc.sh` (pinned version and checksums), and its download retries
   transient errors. golangci-lint is built with `go install` through the Go module proxy and cached per version and Go
   toolchain.
+- Local `make race` (and so `make check`) uses go test's cache and reruns only what changed (ADR-0070). CI and the
+  release workflow run `make race RACE_COUNT=1`, so every test still runs there.
+
+### Fixed
+
+- The test guard for short write transactions (Hallpass HP-DB-004) measures how long a transaction holds the write
+  lock, no longer the time it waited for the writer or retried a busy database (ADR-0070). Under load, short
+  transactions that queued behind another writer failed tests on unchanged code. The guard's limits are unchanged;
+  `spaceman_store_tx_duration_seconds` still reports the end-to-end duration.
 
 ## [0.1.0] - 2026-11-08
 
