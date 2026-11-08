@@ -19,9 +19,11 @@ import {
  */
 export function AddSpacemanMcpModal({ opened, onClose, spaceId, onCreated }: { opened: boolean; onClose: () => void; spaceId?: string; onCreated?: (s: McpServer) => void }) {
   const narrow = useNarrow()
+  // The default scope depends on the caller's grants: wait for them.
+  const me = useMe().data
   return (
     <Modal opened={opened} onClose={onClose} title="Add SpaceMan MCP" size="xl" fullScreen={narrow}>
-      {opened && <AddSpacemanMcpForm spaceId={spaceId ?? ''} fixedSpace={spaceId !== undefined} onClose={onClose} onCreated={onCreated} />}
+      {opened && me && <AddSpacemanMcpForm spaceId={spaceId ?? ''} fixedSpace={spaceId !== undefined} onClose={onClose} onCreated={onCreated} />}
     </Modal>
   )
 }
