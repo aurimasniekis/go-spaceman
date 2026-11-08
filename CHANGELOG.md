@@ -41,7 +41,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the account exists (Hallpass HP-AUTH-005, ADR-0071).
 - The test guard for short write transactions (Hallpass HP-DB-004) measures how long a transaction holds the write
   lock, no longer the time it waited for the writer or retried a busy database (ADR-0070). Under load, short
-  transactions that queued behind another writer failed tests on unchanged code. The guard's limits are unchanged;
+  transactions that queued behind another writer failed tests on unchanged code. It takes the longest hold of a
+  transaction's attempts, so an attempt that held the lock for long before a busy rollback still counts, and it now
+  checks failed transactions too (not those whose context ended). The guard's limits are unchanged;
   `spaceman_store_tx_duration_seconds` still reports the end-to-end duration.
 
 ## [0.1.0] - 2026-11-08

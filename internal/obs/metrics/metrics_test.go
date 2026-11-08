@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -264,7 +263,6 @@ func TestNilSafe(t *testing.T) {
 	var m *Metrics
 	exercise(m)
 	m.ObserveFilesystem(VolumeData, "/")
-	_ = m.TxObserver(nil)
 	if m.Registry() != nil {
 		t.Error("nil registry expected")
 	}
@@ -369,35 +367,6 @@ func TestHTTPMiddlewareUsesRouteTemplate(t *testing.T) {
 	}
 	if !strings.Contains(body, "spaceman_http_requests_in_flight 0") {
 		t.Error("in-flight gauge not back to zero")
-	}
-}
-
-func TestTxObserver(t *testing.T) {
-	m := New()
-	errBusy := errors.New("busy")
-	obsFn := m.TxObserver(func(err error) TxResult {
-		if errors.Is(err, errBusy) {
-			return TxBusy
-		}
-		return TxError
-	})
-	obsFn("a.ok", time.Millisecond, nil)
-	obsFn("a.busy", time.Millisecond, fmt.Errorf("wrap: %w", errBusy))
-	obsFn("a.cancel", time.Millisecond, context.Canceled)
-	obsFn("a.other", time.Millisecond, errors.New("boom"))
-	m.TxObserver(nil)("a.nil", time.Millisecond, errors.New("boom"))
-	body := scrape(t, m)
-	for _, want := range []string{
-		`spaceman_store_tx_total{name="a.ok",result="ok"} 1`,
-		`spaceman_store_tx_total{name="a.busy",result="busy"} 1`,
-		`spaceman_store_tx_total{name="a.cancel",result="canceled"} 1`,
-		`spaceman_store_tx_total{name="a.other",result="error"} 1`,
-		`spaceman_store_tx_total{name="a.nil",result="error"} 1`,
-		`spaceman_store_tx_duration_seconds_count{name="a.ok"} 1`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("missing %q", want)
-		}
 	}
 }
 

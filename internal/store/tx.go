@@ -21,11 +21,13 @@ const (
 	txMaxBackoff  = time.Second
 )
 
-// TxObserver receives the lock hold time and final error of each write transaction (ADR-0070). d runs from the moment
-// BEGIN IMMEDIATE acquired the write lock to the end of the commit or rollback of the last attempt, so on success it is
-// how long the transaction held the writer (Hallpass HP-DB-004). Waiting for the writer connection and the lock, and
-// SQLITE_BUSY retries with their backoff, are not included: they are metered as writer wait (HP-DB-003), busy retries
-// and the end-to-end transaction duration. d is zero when the last attempt never acquired the lock.
+// TxObserver receives the lock hold time and final error of each write transaction run through Writer.Tx or TxNamed
+// (ADR-0070). An attempt's hold runs from the moment BEGIN IMMEDIATE acquired the write lock to the end of its commit
+// or rollback; d is the longest hold of all the transaction's attempts, so an attempt that held the writer for long and
+// then rolled back on SQLITE_BUSY is not hidden by a quick retry (Hallpass HP-DB-004). Waiting for the writer
+// connection and the lock, and SQLITE_BUSY retries with their backoff, are not included: they are metered as writer
+// wait (HP-DB-003), busy retries and the end-to-end transaction duration. d is zero when no attempt acquired the lock.
+// Writer.Exec, migrations and snapshots (VACUUM INTO) are not observed.
 type TxObserver func(name string, d time.Duration, err error)
 
 // Writer is the single write connection. All mutations go through Tx.
@@ -71,8 +73,12 @@ func (w *Writer) TxNamed(ctx context.Context, name string, fn func(tx *Tx) error
 		held time.Duration
 	)
 	for attempt := 1; ; attempt++ {
-		var hooks []func()
-		hooks, held, err = w.attempt(ctx, fn)
+		var (
+			hooks []func()
+			h     time.Duration
+		)
+		hooks, h, err = w.attempt(ctx, fn)
+		held = max(held, h) // the longest hold: an earlier attempt may have held the lock longer than the last one
 		if err == nil {
 			w.health.Observe(nil)
 			w.observe(name, time.Since(start), held, nil)

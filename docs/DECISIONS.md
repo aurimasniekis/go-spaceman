@@ -3433,11 +3433,16 @@
   - The race run passed `-count=1`, so every local `make race` (and `make check`) reran every package, even after a
     merge that touched no Go code.
 - **Decision:**
-  - **The observer gets the lock hold time (Q2).** `store.TxObserver` now receives, for the attempt that ended the
-    transaction, the time from `BEGIN IMMEDIATE` returning (the lock is held) to the end of its commit or rollback. On
-    success that is how long the transaction held the writer; it includes the callback and the commit. It is zero when
-    the last attempt never got the lock. The `storetest` guard compares it with `MaxTxDuration` as before, and its
-    message now says `held the write lock for`.
+  - **The observer gets the lock hold time (Q2).** `store.TxObserver` now receives the longest lock hold of the
+    transaction's attempts: for each attempt, the time from `BEGIN IMMEDIATE` returning (the lock is held) to the end
+    of its commit or rollback, callback and commit included. Taking the longest, not the last, keeps an attempt that
+    held the writer for long and then rolled back on `SQLITE_BUSY` from being hidden by a quick retry. It is zero when
+    no attempt got the lock. The `storetest` guard compares it with `MaxTxDuration`, and its message now says `held the
+    write lock for`. The guard checks failed transactions too (it checked only successful ones), except those that
+    ended because their context was canceled or timed out.
+  - **What is observed:** only transactions run through `Writer.Tx` and `Writer.TxNamed`. `Writer.Exec`
+    (maintenance statements such as checkpoints), migrations and snapshots (`VACUUM INTO`) are not, so the guard does
+    not cover them.
   - **Wait and retries stay in metrics.** `spaceman_store_tx_duration_seconds` keeps the end-to-end duration, retries
     and waits included (its help text already said so); writer wait, queue depth and busy retries are unchanged.
   - **Local race runs use go test's cache (Q1).** `make race` passes `-count` only when `RACE_COUNT` is set. CI's race
@@ -3453,7 +3458,8 @@
 - **Consequences:**
   - A transaction that waits behind another writer for longer than the limit no longer fails a test; one that holds
     the writer for longer still does (`internal/store/storetest` `TestGuardCountsLockHoldNotWait`, `internal/store`
-    `TestTxObserverGetsLockHoldTime`). Starvation and queueing show up in the writer-wait metrics instead, and in tests
+    `TestTxObserverGetsLockHoldTime`, `internal/store/storetest` `TestGuardCountsTheLongestAttempt`,
+    `TestGuardChecksFailedTransactions`). Starvation and queueing show up in the writer-wait metrics instead, and in tests
     only when they make something time out.
   - The full non-race suite passes at the 100 ms default (PLAN.md §3). Hold time still includes the commit's fsync
     (`synchronous(FULL)`) and any time the holding goroutine is descheduled, so a heavily loaded machine can still
