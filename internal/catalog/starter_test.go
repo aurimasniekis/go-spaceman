@@ -132,7 +132,8 @@ func TestControlRole(t *testing.T) {
 func TestPromptsRouteQuestionsToHumanActions(t *testing.T) {
 	for _, kind := range []string{"control", "worker", "kb", "dreamer", "diagnostic"} {
 		o := builtinOrientation(kind, "", "Payments")
-		if !strings.Contains(o, "Never ask through an interactive terminal prompt") || !strings.Contains(o, "use spaceman_human_ask") {
+		if !strings.Contains(o, "Never ask through an interactive terminal prompt") || !strings.Contains(o, "use spaceman_human_ask") ||
+			!strings.Contains(o, "use spaceman_attachment_save") { // ADR-0073: large attachments and images
 			t.Fatalf("%s orientation: %s", kind, o)
 		}
 	}

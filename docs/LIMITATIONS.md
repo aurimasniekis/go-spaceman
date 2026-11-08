@@ -495,8 +495,10 @@
   not a reference: that link breaks when the attachment expires (SM-ATT-006).
 - **Exports exclude recordings and transcripts**, and an export is not encrypted (ADR-0045). Download recordings and
   transcripts per run.
-- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB); they are not copied
-  into the run's folder (SM-ATT-005).
+- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB per call, with ranged
+  reads; a larger binary is not returned inline) **or `spaceman_attachment_save`**, which copies the whole file into the
+  run's own folder on the node until the run ends (SM-ATT-005, ADR-0073). Attachments are not copied there unasked.
+  There is no server-side image downscale: the harness's own file reader scales images.
 
 ## Audit and logs
 - **Audit retention trusts its own checkpoint.** After `retention.audit_days` pruned events, verification starts from

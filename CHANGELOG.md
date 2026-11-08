@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- Attachments over 512 KiB (screenshots, for example) now reach agents whole (ADR-0073):
+  - The new `spaceman_attachment_save` tool, served by the node's MCP bridge, saves an attachment of any size as a
+    file in the run's own folder, with its size and SHA-256 checked. The agent then opens it with its own file tools:
+    Claude Code's Read tool shows images, with no permission dialog.
+  - The file name is sanitized, the file is `0600`, and the folder is removed when the run ends.
+  - `spaceman_attachment_get` no longer cuts a file silently. Every result says `truncated`, `offset`,
+    `returned_bytes` and `next_offset`. A large binary file is no longer returned as partial base64, and a large text
+    file comes in chunks. New `offset`/`length` arguments read a range.
+  - Takes a node agent on this release for the save tool. Central and agent can be upgraded in any order; there is no
+    protocol change.
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim

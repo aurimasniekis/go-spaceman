@@ -252,6 +252,8 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	// Saved attachments of this instance's earlier runs that ended without cleaning up (ADR-0073).
+	a.pruneAttachments(ctx, filepath.Join(space, "instances", p.InstanceID), c.RunID)
 	// Harnesses key per-directory state by the real path (macOS: /tmp is /private/tmp).
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
@@ -398,6 +400,7 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 			a.usageFinal(bctx, row)
 		})
 		a.goTrack(func() { a.retireGuard(bctx, row.SpaceID) })
+		a.goTrack(func() { a.removeRunAttachments(bctx, row) })
 	case row.State == proto.RunRunning && (row.Status == "idle" || row.Status == "done") && (prev.Status != row.Status || prev.Turn != row.Turn):
 		a.mem.kick(row)
 		a.usageKick(context.WithoutCancel(ctx), row)
