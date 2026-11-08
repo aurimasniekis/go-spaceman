@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,27 +41,9 @@ func TestDeliverAtMigrationFrom0040(t *testing.T) {
 	if err := s.rdb.QueryRowContext(ctx, `SELECT type FROM pragma_table_info('messages') WHERE name = 'deliver_at'`).Scan(&typ); err != nil || typ != "INTEGER" {
 		t.Fatalf("deliver_at column: %q %v", typ, err)
 	}
-	rows, err := s.rdb.QueryContext(ctx, `SELECT id, deliver_at FROM messages ORDER BY id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for rows.Next() {
-		var id string
-		var at sql.NullInt64
-		if err := rows.Scan(&id, &at); err != nil {
-			t.Fatal(err)
-		}
-		if at.Valid {
-			t.Fatalf("existing message %s has deliver_at %d", id, at.Int64)
-		}
-		got = append(got, id)
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(got, ",") != "msg_1,msg_2" {
-		t.Fatalf("messages after migration: %v", got)
+	var total, scheduled int
+	if err := s.rdb.QueryRowContext(ctx, `SELECT count(*), count(deliver_at) FROM messages`).Scan(&total, &scheduled); err != nil || total != 2 || scheduled != 0 {
+		t.Fatalf("messages after migration: %d, %d with deliver_at, %v", total, scheduled, err)
 	}
 	var sqlText string
 	if err := s.rdb.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'ix_messages_scheduled' AND tbl_name = 'messages'`).Scan(&sqlText); err != nil {
@@ -72,23 +53,29 @@ func TestDeliverAtMigrationFrom0040(t *testing.T) {
 		t.Fatalf("index is not the partial one: %s", sqlText)
 	}
 	// The planner uses it for the due-reminder lookup.
-	plan, err := s.rdb.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT min(deliver_at) FROM messages WHERE deliver_at IS NOT NULL AND state = 'stored' AND deliver_at > 5`)
+	if plan := queryPlan(ctx, t, s, `SELECT min(deliver_at) FROM messages WHERE deliver_at IS NOT NULL AND state = 'stored' AND deliver_at > 5`); !strings.Contains(plan, "ix_messages_scheduled") {
+		t.Fatalf("plan does not use the index:\n%s", plan)
+	}
+}
+
+func queryPlan(ctx context.Context, t *testing.T, s *Store, q string) string {
+	t.Helper()
+	rows, err := s.rdb.QueryContext(ctx, "EXPLAIN QUERY PLAN "+q)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
 	var detail strings.Builder
-	for plan.Next() {
+	for rows.Next() {
 		var id, parent, notused int
 		var d string
-		if err := plan.Scan(&id, &parent, &notused, &d); err != nil {
+		if err := rows.Scan(&id, &parent, &notused, &d); err != nil {
 			t.Fatal(err)
 		}
 		detail.WriteString(d + "\n")
 	}
-	if err := plan.Close(); err != nil {
+	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(detail.String(), "ix_messages_scheduled") {
-		t.Fatalf("plan does not use the index:\n%s", detail.String())
-	}
+	return detail.String()
 }
