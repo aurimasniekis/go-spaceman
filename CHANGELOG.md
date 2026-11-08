@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- **`github-pull-request` version 2** (ADR-0072): `exclude_author` ignores events the space's own agent account caused,
+  and `ignore_updates=true` ignores pushes (`synchronize`) and edits (`edited`), which were most of the pull request
+  items that woke control. `repository` is optional and `owner` is new, as in the ADR-0061 templates, and the pull
+  request title moves from the item title to the body. The site guide (Events) has the steps for switching a
+  subscription, and a custom template that does the same on v0.1.0.
+- Built-in event templates can gain new versions on existing installations: central publishes a built-in's missing
+  versions at start, never over an administrator's own version of it. Subscriptions that follow the latest version
+  move to the new one as on Publish; pinned subscriptions and version 1 are untouched.
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim
