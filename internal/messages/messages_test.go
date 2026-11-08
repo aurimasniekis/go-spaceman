@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring/keyringtest"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -54,6 +55,7 @@ type fx struct {
 	svc *Service
 	n   *Notifier
 	q   *fakeQueue
+	kr  *keyring.Keyring
 }
 
 const (
@@ -68,7 +70,7 @@ func newFx(t *testing.T) *fx {
 	kr := keyringtest.Load(t, s)
 	svc := New(s, audit.NewWriter(kr), changefeed.New(nil))
 	q := &fakeQueue{notices: map[string][]string{}}
-	f := &fx{t: t, ctx: context.Background(), s: s, clk: clk, svc: svc, q: q}
+	f := &fx{t: t, ctx: context.Background(), s: s, clk: clk, svc: svc, q: q, kr: kr}
 	f.n = NewNotifier(svc, q, nil, clk)
 	f.exec(
 		`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`,

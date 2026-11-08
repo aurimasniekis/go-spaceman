@@ -2595,6 +2595,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/messages/{message_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a scheduled message before it is due
+         * @description It is resolved as cancelled and never delivered (ADR-0065).
+         */
+        post: operations["cancel-message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/messages/{message_id}/reply": {
         parameters: {
             query?: never;
@@ -7998,6 +8018,11 @@ export interface components {
             correlation_id?: string;
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: date-time
+             * @description Scheduled for this time: not delivered before it
+             */
+            deliver_at?: string;
             /** @enum {string} */
             delivered_via?: "" | "terminal_notice" | "mcp_fetch" | "operator_view";
             from_id?: string;
@@ -16500,6 +16525,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description Only scheduled messages to control that are not yet due, earliest first */
+                scheduled?: boolean;
             };
             header?: never;
             path: {
@@ -16600,6 +16627,38 @@ export interface operations {
         };
     };
     "ack-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagesMessage"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-message": {
         parameters: {
             query?: never;
             header?: never;

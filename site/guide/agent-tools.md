@@ -40,7 +40,9 @@ Runs of a role granted an external MCP server also see that server's tools in th
 | `spaceman_human_reply` | Answer a clarification request on an action you asked (not a response; the action stays pending) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_human_cancel` | Withdraw a pending action you asked (control: any) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_messages` | Read waiting messages and human responses | ✓ | ✓ | ✓ | ✓ |
-| `spaceman_message_send` | Message control, operators, a role or a run | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_message_send` | Message control, operators, a role or a run; control can schedule a reminder to itself with `deliver_at` or `delay` ([Scheduled messages](./messages#scheduled-messages)) | ✓ | ✓ | ✓ | ✓ |
+| `spaceman_message_scheduled` | List the scheduled messages to control that are not yet due | ✓ | | | |
+| `spaceman_message_cancel` | Cancel a scheduled message before it is due | ✓ | | | |
 | `spaceman_message_reply` | Reply to a message (resolves a request) | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_message_ack` | Acknowledge a message or human response | ✓ | ✓ | ✓ | ✓ |
 | `spaceman_message_resolve` | Close a request you sent or received | ✓ | ✓ | ✓ | ✓ |

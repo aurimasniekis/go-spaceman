@@ -10180,6 +10180,11 @@
             "format": "date-time",
             "type": "string"
           },
+          "deliver_at": {
+            "description": "Scheduled for this time: not delivered before it",
+            "format": "date-time",
+            "type": "string"
+          },
           "delivered_via": {
             "enum": [
               "",
@@ -25782,6 +25787,16 @@
               "minimum": 0,
               "type": "integer"
             }
+          },
+          {
+            "description": "Only scheduled messages to control that are not yet due, earliest first",
+            "explode": false,
+            "in": "query",
+            "name": "scheduled",
+            "schema": {
+              "description": "Only scheduled messages to control that are not yet due, earliest first",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -25969,6 +25984,58 @@
           }
         },
         "summary": "Acknowledge a message addressed to operators",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/spaces/{space_id}/messages/{message_id}/cancel": {
+      "post": {
+        "description": "It is resolved as cancelled and never delivered (ADR-0065).",
+        "operationId": "cancel-message",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagesMessage"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Cancel a scheduled message before it is due",
         "tags": [
           "messages"
         ]
