@@ -170,6 +170,11 @@ UPDATE run_gateway_usage SET state = sqlc.arg(state), failures = failures + 1, n
   last_error = sqlc.arg(last_error), updated_at = sqlc.arg(now)
 WHERE run_id = sqlc.arg(run_id) AND state = 'pending';
 
+-- name: RescheduleGatewayUsage :execrows
+-- A pending read that was skipped (no call was made) moves to a later attempt without counting as a failure.
+UPDATE run_gateway_usage SET next_attempt_at = sqlc.arg(next_attempt_at), last_error = sqlc.arg(last_error), updated_at = sqlc.arg(now)
+WHERE run_id = sqlc.arg(run_id) AND state = 'pending';
+
 -- name: FillRunUsageFromGateway :exec
 -- Gateway-observed usage fills a run's usage only where its harness reported none (no row, or source unavailable), and
 -- updates its own earlier fill. A harness's own usage is never overwritten.

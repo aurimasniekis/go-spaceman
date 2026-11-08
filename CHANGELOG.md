@@ -90,7 +90,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     session ID. A re-sent launch reuses the token, and a token that expires within 5 minutes is replaced.
   - A mint Harbor Pilot refuses fails the run as `gateway_unavailable` with the reason. Network errors, 5xx and 429
     are retried three times first.
-  - A slow mint never holds up a node's other commands.
+  - A slow mint holds up a node's other commands for at most 5 s per new gateway launch: the dispatch pass that
+    starts the mint waits up to `GatewayMintWait` (5 s), then the mint goes on in the background and later passes
+    don't wait for it.
   - Every end path queues the token's revocation in its own transaction: a reported end, an undispatched launch, a
     stop or pause, a relocation, a purge, and runs a node left unknown past its lease. Central revokes them on its
     deadline timer, retrying until the token expires, and the queue survives a restart.

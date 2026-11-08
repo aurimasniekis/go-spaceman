@@ -91,7 +91,7 @@ func (l *Lifecycle) ReadDueUsage(ctx context.Context) (int, error) {
 			continue
 		}
 		if unreachable {
-			errs = append(errs, l.usageRetry(ctx, r, "not read: Harbor Pilot did not answer an earlier read in the same round", now.Add(usageBackoff)))
+			errs = append(errs, l.usageSkip(ctx, r, "not read: Harbor Pilot did not answer an earlier read in the same round", now.Add(usageBackoff)))
 			continue
 		}
 		cctx, cancel := context.WithTimeout(ctx, usageTimeout)
@@ -140,6 +140,16 @@ func (l *Lifecycle) usageFailed(ctx context.Context, r db.ListDueGatewayUsageRow
 func (l *Lifecycle) usageRetry(ctx context.Context, r db.ListDueGatewayUsageRow, msg string, next time.Time) error {
 	return l.svc.s.W().TxNamed(ctx, "harborpilot.usage_retry", func(tx *store.Tx) error {
 		_, err := tx.Q.SetGatewayUsageFailure(ctx, db.SetGatewayUsageFailureParams{State: "pending", NextAttemptAt: next.UnixMicro(), LastError: bounded(msg, 500),
+			Now: tx.NowMicros(), RunID: r.RunID})
+		return err
+	})
+}
+
+// usageSkip reschedules a read that was not attempted. No call was made, so it doesn't count as a failure (and doesn't
+// lengthen the row's backoff).
+func (l *Lifecycle) usageSkip(ctx context.Context, r db.ListDueGatewayUsageRow, msg string, next time.Time) error {
+	return l.svc.s.W().TxNamed(ctx, "harborpilot.usage_skip", func(tx *store.Tx) error {
+		_, err := tx.Q.RescheduleGatewayUsage(ctx, db.RescheduleGatewayUsageParams{NextAttemptAt: next.UnixMicro(), LastError: bounded(msg, 500),
 			Now: tx.NowMicros(), RunID: r.RunID})
 		return err
 	})

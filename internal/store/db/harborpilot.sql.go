@@ -822,6 +822,32 @@ func (q *Queries) ReplaceRunGatewayCredential(ctx context.Context, arg ReplaceRu
 	return result.RowsAffected()
 }
 
+const rescheduleGatewayUsage = `-- name: RescheduleGatewayUsage :execrows
+UPDATE run_gateway_usage SET next_attempt_at = ?1, last_error = ?2, updated_at = ?3
+WHERE run_id = ?4 AND state = 'pending'
+`
+
+type RescheduleGatewayUsageParams struct {
+	NextAttemptAt int64
+	LastError     string
+	Now           int64
+	RunID         string
+}
+
+// A pending read that was skipped (no call was made) moves to a later attempt without counting as a failure.
+func (q *Queries) RescheduleGatewayUsage(ctx context.Context, arg RescheduleGatewayUsageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rescheduleGatewayUsage,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.Now,
+		arg.RunID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setGatewayRevocationDone = `-- name: SetGatewayRevocationDone :execrows
 UPDATE gateway_revocations SET state = ?1, attempts = attempts + 1, last_error = ?2, done_at = ?3
 WHERE credential_id = ?4 AND state = 'pending'

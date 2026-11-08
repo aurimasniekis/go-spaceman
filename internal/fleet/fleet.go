@@ -86,7 +86,7 @@ type Options struct {
 	OnGatewayRevocation func()
 	// GatewayMintWait bounds how long a node's dispatch loop waits for a gateway run's token (default 5 s). A mint that
 	// takes longer goes on in the background; the launch stays pending, the loop moves on to the node's other commands
-	// (stops and kills never wait behind a mint), and the node is kicked when the mint is done.
+	// (only the pass that starts a mint waits for it), and the node is kicked when the mint is done.
 	GatewayMintWait time.Duration
 }
 

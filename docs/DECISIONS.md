@@ -2600,8 +2600,8 @@
     therefore fails as `agent_too_old`, before anything is minted: "gateway runs need protocol minor 9, which delivers
     the run's token to the harness; the node negotiated 8: upgrade its agent". HP-T4 raised `MaxMinor` to 9 and removed
     the test-only `GatewayMinMinor` seam that HP-T3 needed before any agent spoke minor 9.
-  - **Dispatch is never held up by a mint (review F3).** A node's dispatch loop waits at most 5 s
-    (`fleet.Options.GatewayMintWait`) for a token. A slower mint (Harbor Pilot retries take about 75 s at worst) goes
+  - **A mint holds up dispatch for at most 5 s (review F3).** A node's dispatch loop waits at most 5 s
+    (`fleet.Options.GatewayMintWait`) for a new launch's token. A slower mint (Harbor Pilot retries take about 75 s at worst) goes
     on in the background, once per run and bounded to 2 min. The launch stays pending, the node's other commands
     (stops and kills included) are sent, and the finished mint kicks the loop, which then reuses the stored token.
     Only the pass that starts a mint waits for it; while it runs, later passes skip that launch at once, so many slow

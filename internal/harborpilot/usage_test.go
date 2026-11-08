@@ -314,6 +314,11 @@ func TestReadDueUsageUnreachableBoundsRound(t *testing.T) {
 		}
 		if strings.Contains(u.LastError, "earlier read in the same round") {
 			skipped++
+			if u.Failures != 0 {
+				t.Fatalf("%s was skipped (no call made) but counted %d failures", id, u.Failures)
+			}
+		} else if u.Failures != 1 {
+			t.Fatalf("%s was read and failed: %d failures, want 1", id, u.Failures)
 		}
 	}
 	if skipped != 2 {

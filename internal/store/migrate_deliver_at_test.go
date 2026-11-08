@@ -10,6 +10,7 @@ import (
 // 0041 adds messages.deliver_at (ADR-0065) to a database at 0040: the column is added, existing messages keep NULL (so
 // none of them becomes scheduled), and the partial index on pending scheduled messages exists and is used.
 func TestDeliverAtMigrationFrom0040(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0040")})

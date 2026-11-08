@@ -79,6 +79,7 @@ func connect(t *testing.T, svc *Service, f *hpfake.HP) *Connection {
 // SM-GW-001, ADR-0060 decision 2: the tokens are sealed and write-only. A canary token is in no answer, audit entry
 // or change-feed row, and is not stored in plain text; it opens only for the row it was sealed for.
 func TestConnectionTokensAreSealedAndWriteOnly(t *testing.T) {
+	t.Parallel()
 	svc, s := newSvc(t)
 	f := hpfake.New(t)
 	ctx := context.Background()
@@ -136,6 +137,7 @@ func TestConnectionTokensAreSealedAndWriteOnly(t *testing.T) {
 
 // Every write is validated against Harbor Pilot: what it refuses becomes a readable field error, and nothing is stored.
 func TestConnectionValidation(t *testing.T) {
+	t.Parallel()
 	svc, s := newSvc(t)
 	f := hpfake.New(t)
 	ctx := context.Background()
@@ -204,6 +206,7 @@ func TestConnectionValidation(t *testing.T) {
 // Replacing the connection is version-checked; token versions count writes; a parent expiring sooner than an enabled
 // space's token lifetime is warned about; deleting is refused while a space uses Harbor Pilot.
 func TestConnectionLifecycleAndSpaces(t *testing.T) {
+	t.Parallel()
 	svc, _ := newSvc(t)
 	f := hpfake.New(t)
 	ctx := context.Background()
@@ -328,6 +331,7 @@ func TestConnectionLifecycleAndSpaces(t *testing.T) {
 
 // Live run tokens and pending revocations keep the connection: revoking them needs the parent token.
 func TestDeleteConnectionWaitsForRunTokens(t *testing.T) {
+	t.Parallel()
 	svc, s := newSvc(t)
 	f := hpfake.New(t)
 	ctx := context.Background()
