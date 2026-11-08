@@ -28,7 +28,8 @@ type Deadline struct {
 const idleWait = time.Hour
 
 // retryFirst and retryMax bound the backoff after a round in which a job failed: what it left undone (a stranded
-// response, an expiry) is tried again soon, not only at the next deadline or kick, which can be an hour away.
+// response, an expiry) is tried again soon, not only at the next deadline or kick, which can be an hour away, and a
+// job that keeps failing is not retried in a tight loop. While backing off, other deadlines wait for the retry too.
 var retryFirst, retryMax = time.Second, time.Minute
 
 // Kick asks the deadline loop to look again (after a commit that may have changed the earliest deadline, a run that
@@ -60,13 +61,15 @@ func (svc *Service) Run(ctx context.Context, extra ...Deadline) {
 			}
 		case <-t.C:
 		}
-		failed := svc.tick(ctx, extra...)
-		wait := svc.untilNext(ctx, extra)
-		if failed {
+		// After a failed round the backoff alone sets the wait: the failing job's deadline is usually still due, so
+		// waiting for the earliest deadline would run the next round at once, over and over. A kick still wakes it.
+		var wait time.Duration
+		if svc.tick(ctx, extra...) {
 			retry = min(max(2*retry, retryFirst), retryMax)
-			wait = min(wait, retry)
+			wait = retry
 		} else {
 			retry = 0
+			wait = svc.untilNext(ctx, extra)
 		}
 		t.Reset(wait)
 	}

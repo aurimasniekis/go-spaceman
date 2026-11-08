@@ -11,6 +11,7 @@ import (
 // Automatic housekeeping (git gc --auto, git maintenance run --auto) that a fetch or commit starts runs inside the git
 // call, never as a detached background process that keeps writing into the repository after the call returns.
 func TestAutoHousekeepingIsSynchronous(t *testing.T) {
+	t.Parallel()
 	g, err := NewGit()
 	if err != nil {
 		t.Skip("git not installed")

@@ -36,6 +36,10 @@ var ErrCredentialsUnavailable = errors.New("the run's account is no longer usabl
 // the run is failed instead of starting without what it asked for.
 var ErrNodeTooOld = errors.New("the node's agent is too old for this run")
 
+// errBadPayload is returned (wrapped) when a stored command's payload doesn't decode. Stored payloads never change, so
+// retrying can't help: a run's command fails the run as invalid_command.
+var errBadPayload = errors.New("the stored command payload is invalid")
+
 // ToolDispatcher runs an authenticated agent's tool call (ADR-0012). The catalog call (proto.ToolCatalog) returns
 // the run's tools as []proto.AgentTool.
 type ToolDispatcher func(ctx context.Context, p *RunPrincipal, tool string, args json.RawMessage) (json.RawMessage, error)
@@ -843,6 +847,8 @@ func undispatchable(err error) string {
 		return "gateway_unavailable"
 	case errors.Is(err, ErrAgentTooOld):
 		return "agent_too_old"
+	case errors.Is(err, errBadPayload):
+		return "invalid_command"
 	}
 	return ""
 }
@@ -856,7 +862,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	if c.Kind == proto.CmdReposSync && keys {
 		var p proto.ReposSyncPayload
 		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-			return msg, err
+			return msg, fmt.Errorf("%w: %v", errBadPayload, err)
 		}
 		for i := range p.Repositories {
 			k, err := h.RepoKey(ctx, c.SpaceID, p.Repositories[i].ID)
@@ -871,7 +877,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	if c.Kind == proto.CmdRelocatePrepare && keys {
 		var p proto.RelocatePreparePayload
 		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-			return msg, err
+			return msg, fmt.Errorf("%w: %v", errBadPayload, err)
 		}
 		keyed := false
 		for i := range p.Repos {
@@ -894,7 +900,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	}
 	var p proto.LaunchPayload
 	if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-		return msg, err
+		return msg, fmt.Errorf("%w: %v", errBadPayload, err)
 	}
 	// An older agent would ignore the settings and run without the rules they add, deny rules included.
 	if len(p.ClaudeSettings) > 0 && minor < proto.MinorClaudeSettings {
