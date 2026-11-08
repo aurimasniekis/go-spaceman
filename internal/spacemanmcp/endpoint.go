@@ -20,7 +20,6 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
-	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // EndpointApprovalRole is the requester role recorded on approvals the external MCP endpoint asks for.
@@ -66,11 +65,14 @@ type Endpoint struct {
 	// Authz checks, before an approval is asked for, that the token could make the call in that space: nobody is
 	// asked about a call the API would refuse anyway.
 	Authz Authorizer
-	Store *store.Store
-	Audit *audit.Writer
-	Log   *slog.Logger
+	// Record appends one audit event in its own write transaction (central: Store + audit.Writer).
+	Record func(ctx context.Context, ev audit.Event) error
+	Log    *slog.Logger
 	// MaxResultBytes caps a result (DefaultMaxResultBytes when zero).
 	MaxResultBytes int
+
+	// principal reads the caller (api.PrincipalFrom; a test seam).
+	principal func(*http.Request) *auth.Principal
 }
 
 var endpointOptions = &mcp.StreamableHTTPOptions{
@@ -85,7 +87,11 @@ var endpointOptions = &mcp.StreamableHTTPOptions{
 
 // ServeHTTP serves one MCP request for the principal the API's guard passed on.
 func (e *Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p := api.PrincipalFrom(r.Context())
+	from := e.principal
+	if from == nil {
+		from = func(r *http.Request) *auth.Principal { return api.PrincipalFrom(r.Context()) }
+	}
+	p := from(r)
 	if p == nil || !p.MCPEndpoint || p.User == nil || p.TokenID == "" || p.Internal() {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -165,17 +171,17 @@ func (e *Endpoint) call(ctx context.Context, p *auth.Principal, grants []authz.G
 		outcome, result = audit.OutcomeDenied, "approval_required"
 	case err != nil:
 		outcome, result = audit.OutcomeFailure, string(apperr.CodeOf(err))
+		if result == "" {
+			result = "internal"
+		}
 	case res.IsError:
 		outcome, result = audit.OutcomeFailure, "api_error"
 	}
 	details["result"], details["duration_ms"] = result, time.Since(start).Milliseconds()
 	e.log().Info("MCP endpoint call", slog.String("token.id", p.TokenID), slog.String("mcp.tool", tl.Name), slog.String("result", result),
 		slog.Duration("duration", time.Since(start)))
-	if aerr := e.Store.W().TxNamed(context.WithoutCancel(ctx), "mcp_endpoint.call", func(tx *store.Tx) error {
-		_, err := e.Audit.Append(ctx, tx, audit.Event{Actor: endpointActor(p), Action: "mcp_endpoint.tool_called",
-			Target: audit.Target{Type: "api_token", ID: p.TokenID}, Outcome: outcome, Details: details})
-		return err
-	}); aerr != nil {
+	if aerr := e.Record(context.WithoutCancel(ctx), audit.Event{Actor: endpointActor(p), Action: "mcp_endpoint.tool_called",
+		Target: audit.Target{Type: "api_token", ID: p.TokenID}, Outcome: outcome, Details: details}); aerr != nil {
 		e.log().Error("audit MCP endpoint call", slog.Any("error", aerr))
 	}
 	if err != nil {

@@ -511,8 +511,14 @@ func (c *Central) wireSpacemanMCP() error {
 	c.Gateway.Spaceman = &spacemanmcp.Backend{Cat: cat, Handler: h, Tokens: c.Auth}
 	// The external MCP endpoint (ADR-0063 §External endpoint): the same catalog and executor for operators' own MCP
 	// clients, behind the API's guard (api.MCPPath).
-	c.mcpEndpoint = &spacemanmcp.Endpoint{Cat: cat, Handler: h, Tokens: c.Auth, Approvals: c.Approvals, Authz: c.Authz, Store: c.Store,
-		Audit: c.Audit, Log: obs.Component(c.Log, "mcp_endpoint")}
+	c.mcpEndpoint = &spacemanmcp.Endpoint{Cat: cat, Handler: h, Tokens: c.Auth, Approvals: c.Approvals, Authz: c.Authz,
+		Log: obs.Component(c.Log, "mcp_endpoint"),
+		Record: func(ctx context.Context, ev audit.Event) error {
+			return c.Store.W().TxNamed(ctx, "mcp_endpoint.call", func(tx *store.Tx) error {
+				_, err := c.Audit.Append(ctx, tx, ev)
+				return err
+			})
+		}}
 	return nil
 }
 
