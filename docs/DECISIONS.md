@@ -3395,7 +3395,10 @@
   - **Coverage floor in one invocation.** `scripts/coverage-floor.sh` runs one `go test -count=1 -cover` and reads
     each package's summary line. A package fails when go test reports it failed (tests, build or setup), when it
     has no coverage line, or when its coverage is below the floor. A non-zero exit that no package explains fails
-    too.
+    too. `COVERAGE_PARALLEL` (go test `-p`) bounds how many packages run their tests at once. The default is a
+    quarter of the CPUs, at least 1 and at most 8. CI and the release workflow set 1, the concurrency they had
+    before. All 28 at once exceeded the 250 ms write-transaction guard on a 4-core hosted runner, so the guard's
+    calibration (ADR-0062) is kept. The test binaries are built first with full parallelism.
   - **CI tools from caches.** `bin/sqlc` is cached under the hash of `scripts/install-sqlc.sh`, which holds the
     pinned version and SHA-256 sums. A miss installs it as before (checksum verified), with curl retries.
     golangci-lint is built with `go install …@<pinned version>` through the Go module proxy (modules verified

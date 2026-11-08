@@ -17,7 +17,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Faster `make check` (ADR-0069):
   - the coverage floor tests its packages in one `go test -cover` run instead of one run per package (about 150 s
-    down to about 30 s); a failing test, a package below the floor and a package with no coverage line still fail;
+    down to under 30 s on a 32-core machine); a failing test, a package below the floor and a package with no
+    coverage line still fail. `COVERAGE_PARALLEL` sets how many packages test at once (default: a quarter of the
+    CPUs, 1 to 8; CI uses 1, as before, so the write-transaction guard keeps its calibration);
   - `make check` runs its steps fail-fast: vet, custom vet, lint, traceability, analyzer tests, the coverage floor,
     then the race tests.
 - CI no longer downloads sqlc or golangci-lint from GitHub release assets on a cache hit (ADR-0069). `bin/sqlc` is

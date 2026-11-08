@@ -134,6 +134,8 @@ jobs:
         # slower and exceeded it by up to 78 ms on unchanged code, so hosted CI uses 250 ms (ADR-0062).
         env:
           SM_TEST_TX_MAX: 250ms
+          # One package at a time, as before ADR-0069: more at once on a 4-core runner trips the 250 ms guard.
+          COVERAGE_PARALLEL: "1"
         run: make coverage
 
   # Fuzzing runs nightly (10 minutes per target) and in the release workflow (10 s smoke), not on pull requests or
