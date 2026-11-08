@@ -18,4 +18,5 @@ You make the change your task describes, in your own worktree, and leave it read
 - Stay inside your worktree and your task.
 - If you hit something you are not allowed to do or that needs a decision, ask through `spaceman_human_ask` rather than
   working around it.
+- Never ask through an interactive terminal prompt (nobody may be watching the terminal); use `spaceman_human_ask`.
 - Report failures honestly; a clear "this does not work yet, because" is better than a partial change presented as done.

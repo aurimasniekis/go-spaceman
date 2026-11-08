@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
@@ -35,6 +36,52 @@ func (Claude) Detect(ctx context.Context, binary string) proto.HarnessInfo {
 const ClaudeTUI = "default"
 
 var claudePermissionModes = map[string]bool{"default": true, "acceptEdits": true, "plan": true, "auto": true, "dontAsk": true, "bypassPermissions": true}
+
+// ClaudeTerminalPromptTools are the Claude Code tools that ask a person in the run's terminal and wait there for the
+// answer (AskUserQuestion's picker). Nobody may be watching that terminal, so a run asking there stalls silently; agents
+// ask people through spaceman_human_ask instead, which is durable, reminds people and wakes the agent (ADR-0066).
+var ClaudeTerminalPromptTools = []string{"AskUserQuestion"}
+
+// denyTerminalPrompts adds ClaudeTerminalPromptTools to the run's permissions.deny, so Claude Code drops them from the
+// tools the model sees (verified with Claude Code 2.1.317: a whole-tool deny rule removes the tool from the request). A
+// profile opts a tool back in by listing it in its own permissions.allow (a deny would win over that allow, so SpaceMan
+// leaves the deny out). The profile's settings map is never modified: the permissions object is copied.
+func denyTerminalPrompts(own map[string]any) {
+	perms := map[string]any{}
+	if cur, ok := own["permissions"].(map[string]any); ok {
+		for k, v := range cur {
+			perms[k] = v
+		}
+	}
+	allow, deny := stringsOf(perms["allow"]), stringsOf(perms["deny"])
+	added := false
+	for _, tool := range ClaudeTerminalPromptTools {
+		if !slices.Contains(allow, tool) && !slices.Contains(deny, tool) {
+			deny = append(deny, tool)
+			added = true
+		}
+	}
+	if added {
+		perms["deny"] = deny
+		own["permissions"] = perms
+	}
+}
+
+// stringsOf returns a settings list ([]string or a JSON []any of strings, as Validate accepts) as a new []string.
+func stringsOf(v any) []string {
+	var out []string
+	switch l := v.(type) {
+	case []string:
+		out = append(out, l...)
+	case []any:
+		for _, e := range l {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
 
 // Build implements Harness.
 func (Claude) Build(c Context) (Launch, error) {
@@ -112,6 +159,7 @@ func (Claude) Build(c Context) (Launch, error) {
 	if _, set := own["tui"]; !set {
 		own["tui"] = ClaudeTUI
 	}
+	denyTerminalPrompts(own)
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
 	secrets := secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")

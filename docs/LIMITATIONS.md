@@ -298,6 +298,13 @@
   copy; publish the new content as a new version by hand.
 
 ## Human actions
+- **Terminal prompts are denied for Claude Code only** (ADR-0066). Claude Code runs never see `AskUserQuestion`, and
+  every run's orientation says to use `spaceman_human_ask`. Codex's `request_user_input` (Plan mode, or Default mode
+  with its feature flag) is only discouraged by the prompt: SpaceMan sets no override for it yet, because none has
+  been verified against a live Codex session. A harness's own permission dialogs still appear in the terminal.
+- **A run waiting at a terminal prompt raises no attention item.** SpaceMan doesn't detect that a run's terminal has
+  been waiting for input for a long time. Follow-up: raise an attention item when the program status reports a
+  waiting prompt for more than a few minutes.
 - **Approvals are advisory unless a policy gates the operation.** Enforcement covers only operations SpaceMan performs:
   built-in agent tools and gateway tools. Shell commands and a harness's own permission prompts are not intercepted.
 - **Agents call again after approval.** A gated call returns at once with a request; the agent must repeat the call

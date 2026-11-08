@@ -170,6 +170,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
 
 ### Changed
+- **Agents no longer ask in the terminal** (ADR-0066). Claude Code runs get `AskUserQuestion` in the run's
+  `permissions.deny`, so the model never sees the terminal question picker, which left an unattended run waiting
+  silently for an answer typed into its terminal. SpaceMan's orientation and the starter role prompts say to ask through
+  `spaceman_human_ask` instead. A profile that lists `AskUserQuestion` in its own `permissions.allow` keeps the picker.
+  The node adds the deny, so it takes nodes on this release or later. Starter prompts already added to an installation
+  are not rewritten; the orientation reaches every run.
 - KB support sessions and dreams refuse a space role that no longer runs as kind kb or dreamer before launching,
   instead of launching a run and killing it.
 - Claude Code runs start with its classic renderer (`"tui": "default"` in the run's settings) unless the profile's

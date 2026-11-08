@@ -18,6 +18,57 @@ func ctxFor(p proto.LaunchPayload) Context {
 		WorkDir: "/data/spaces/spc_a/work", RunID: "run_1", SpaceID: "spc_a", RunDir: "/data/runs/run_1", Binary: "claude", Payload: p}
 }
 
+// ADR-0066: every SpaceMan-launched Claude Code run, of every kind, has the terminal question picker denied, so the
+// model never sees it and asks people through spaceman_human_ask; a profile opts back in only by allowing it itself.
+func TestClaudeDeniesTerminalPrompts(t *testing.T) {
+	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
+	denied := func(l Launch) []string {
+		p, _ := l.OwnJSON[cfgSettings]["permissions"].(map[string]any)
+		d, _ := p["deny"].([]string)
+		return d
+	}
+	for _, kind := range []string{"control", "worker", "kb", "dreamer", "diagnostic"} {
+		for name, cs := range map[string]proto.ClaudeSettings{
+			"no settings":     nil,
+			"other keys":      {"model": "opus"},
+			"own rules":       {"permissions": map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}, "deny": []string{"WebFetch"}}},
+			"permission mode": proto.ClaudeSettings{}.WithDefaultMode("dontAsk"),
+		} {
+			l, err := Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: kind, ClaudeSettings: cs}))
+			if err != nil {
+				t.Fatalf("%s/%s: %v", kind, name, err)
+			}
+			if !slices.Contains(denied(l), "AskUserQuestion") {
+				t.Fatalf("%s/%s: AskUserQuestion not denied: %v", kind, name, l.OwnJSON[cfgSettings])
+			}
+		}
+	}
+	// The profile's other permission keys and rules are kept, and an existing deny is not repeated.
+	cs := proto.ClaudeSettings{"permissions": map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}, "deny": []any{"WebFetch", "AskUserQuestion"}}}
+	l, err := Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: cs}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], cs["permissions"]) {
+		t.Fatalf("permissions %v", l.OwnJSON[cfgSettings]["permissions"])
+	}
+	cs = proto.ClaudeSettings{"permissions": map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}}}
+	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: cs}))
+	if p := l.OwnJSON[cfgSettings]["permissions"].(map[string]any); p["defaultMode"] != "auto" || !reflect.DeepEqual(p["allow"], []any{"Bash(go test *)"}) ||
+		!reflect.DeepEqual(p["deny"], []string{"AskUserQuestion"}) {
+		t.Fatalf("permissions %v", p)
+	}
+	if _, set := cs["permissions"].(map[string]any)["deny"]; set {
+		t.Fatal("the profile's settings were changed")
+	}
+	// Opt-in: a profile that allows the tool explicitly gets no deny (a deny would win over its allow).
+	cs = proto.ClaudeSettings{"permissions": map[string]any{"allow": []any{"AskUserQuestion"}}}
+	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "control", ClaudeSettings: cs}))
+	if d := denied(l); slices.Contains(d, "AskUserQuestion") || !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], cs["permissions"]) {
+		t.Fatalf("opt-in ignored: %v", l.OwnJSON[cfgSettings])
+	}
+}
+
 func TestClaudeBuild(t *testing.T) {
 	c := ctxFor(proto.LaunchPayload{Prompt: "fix the bug", SystemText: "You are control.", Model: "claude-opus-5-5",
 		Settings: map[string]string{"permission_mode": "acceptEdits"},
@@ -62,9 +113,11 @@ func TestClaudeBuild(t *testing.T) {
 		t.Fatalf("claude state %v", l.MergeJSON)
 	}
 	// The profile's settings.json keys are owned at every launch (ADR-0059), plus the classic renderer when the profile
-	// sets none, so the terminal keeps a scrollback a watch-only viewer can scroll (ADR-0064).
+	// sets none, so the terminal keeps a scrollback a watch-only viewer can scroll (ADR-0064), and the deny of the
+	// terminal question picker (ADR-0066).
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
-	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 1 || keys["tui"] != "default" {
+	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 2 || keys["tui"] != "default" ||
+		!reflect.DeepEqual(keys["permissions"], map[string]any{"deny": []string{"AskUserQuestion"}}) {
 		t.Fatalf("settings keys without settings %v", l.OwnJSON)
 	}
 	cs := proto.ClaudeSettings{"permissions": map[string]any{"deny": []any{"Read(./secrets/**)"}}, "hooks": map[string]any{"Stop": []any{}}}
@@ -75,20 +128,25 @@ func TestClaudeBuild(t *testing.T) {
 	if keys := l.OwnJSON[cfgSettings]; len(keys) != 3 || keys["hooks"] == nil || keys["permissions"] == nil || keys["tui"] != "default" {
 		t.Fatalf("settings keys %v", l.OwnJSON)
 	}
-	// Every profile key is written unchanged, and the profile's own settings are not modified.
+	// Every profile key is written unchanged, except that the deny is added to the profile's own rules, and the
+	// profile's own settings are not modified.
+	if !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], map[string]any{"deny": []string{"Read(./secrets/**)", "AskUserQuestion"}}) {
+		t.Fatalf("permissions %v", l.OwnJSON[cfgSettings]["permissions"])
+	}
 	for k, v := range cs {
-		if !reflect.DeepEqual(l.OwnJSON[cfgSettings][k], v) {
+		if k != "permissions" && !reflect.DeepEqual(l.OwnJSON[cfgSettings][k], v) {
 			t.Fatalf("settings key %s changed: %v", k, l.OwnJSON[cfgSettings][k])
 		}
 	}
-	if _, set := cs["tui"]; set || len(cs) != 2 {
+	if _, set := cs["tui"]; set || len(cs) != 2 || !reflect.DeepEqual(cs["permissions"], map[string]any{"deny": []any{"Read(./secrets/**)"}}) {
 		t.Fatal("the profile's settings were changed")
 	}
 	// A profile that picks a renderer keeps it, whichever it is.
 	for _, tui := range []any{"fullscreen", "default"} {
 		prof := proto.ClaudeSettings{"tui": tui, "model": "opus"}
 		l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: prof}))
-		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus"}) {
+		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus",
+			"permissions": map[string]any{"deny": []string{"AskUserQuestion"}}}) {
 			t.Fatalf("profile renderer %v: %v %v", tui, l.OwnJSON, err)
 		}
 	}
