@@ -121,10 +121,15 @@ func (e *fleetEnv) startCentral() {
 	e.handler.Store(&h)
 }
 
-// restartCentral closes central (dropping every node connection) and opens it again on the same data directory.
+// restartCentral closes central (dropping every node connection) and opens it again on the same data directory. Close
+// returns only once the store's connections are closed, so a Close error (a connection still in use after the drain
+// timeout) fails the test here rather than as SQLITE_BUSY in the next open.
 func (e *fleetEnv) restartCentral() {
+	e.t.Helper()
 	e.srv.CloseClientConnections()
-	_ = e.c.Close()
+	if err := e.c.Close(); err != nil {
+		e.t.Fatalf("close central: %v", err)
+	}
 	e.startCentral()
 }
 
@@ -343,6 +348,28 @@ func TestFleetLifecycle(t *testing.T) {
 	if _, err := e.c.Fleet.SetSpaceState(ctx, admin, sp.ID, s.Version, "active", ""); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Central restarts back to back on the same data directory while a node is connected and reconnecting. Each Close
+// races the node's in-flight requests; the next open must still find the database free (it failed with "storage busy:
+// open database ... SQLITE_BUSY" when Close released the directory before connections still in use had closed, and the
+// writer's first pragma ran without a busy timeout).
+func TestCentralRestartBackToBack(t *testing.T) {
+	// Not parallel: like TestFleetLifecycle, the restarts must stay inside the node lease.
+	e := newFleetEnv(t, longLease)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	nodeID := nodes[0].ID
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
+	for i := range 5 {
+		e.restartCentral()
+		if i%2 == 1 { // every other restart lands while the node is still reconnecting
+			eventually(t, "reconnected after central restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
+		}
+	}
+	eventually(t, "reconnected after the last restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
 }
 
 // SM-NODE-007: without central, the node starts no work and stops running work after lease + grace.

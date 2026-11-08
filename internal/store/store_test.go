@@ -516,3 +516,92 @@ func TestIncrementalVacuumReturnsFreePages(t *testing.T) {
 		t.Fatalf("database did not shrink: %d -> %d bytes", full, after)
 	}
 }
+
+// holdExclusiveFileLock holds an EXCLUSIVE lock on the database file (locking_mode=EXCLUSIVE, as SQLite takes while
+// the last connection of a pool closes and checkpoints the WAL) for d, so that every other connection gets SQLITE_BUSY
+// until its busy handler outlasts it.
+func holdExclusiveFileLock(t *testing.T, path string, d time.Duration) (released chan struct{}) {
+	t.Helper()
+	other, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := other.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"PRAGMA locking_mode=EXCLUSIVE", "BEGIN EXCLUSIVE", "COMMIT"} {
+		if _, err := conn.ExecContext(context.Background(), q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	released = make(chan struct{})
+	go func() {
+		time.Sleep(d)
+		_ = conn.Close()
+		_ = other.Close()
+		close(released)
+	}()
+	return released
+}
+
+// Opening waits out a short lock on the database file instead of failing with SQLITE_BUSY: busy_timeout must be set
+// before the first statement that reads the file (auto_vacuum on the writer), not as one of the _pragma list, which
+// the driver applies after it. Seen as "storage busy: open database" when central reopened its data directory right
+// after closing it.
+func TestOpenWaitsForFileLock(t *testing.T) {
+	t.Parallel()
+	migs := migFS(map[string]string{"0001_a.sql": mig1}) // the full schema only slows these down under -race
+	s := openTest(t, Options{Migrations: migs})
+	if _, err := s.wdb.ExecContext(context.Background(), "INSERT INTO t1 (id) VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	released := holdExclusiveFileLock(t, s.Path(DBFile), 300*time.Millisecond)
+	s2, err := Open(context.Background(), Options{DataDir: s.Dir(), Migrations: migs})
+	if err != nil {
+		t.Fatalf("open while another connection briefly holds the file: %v", err)
+	}
+	<-released
+	_ = s2.Close()
+}
+
+// Close returns only after every connection is closed, including those still in use when it was called; until then
+// the process lock is held, so that a store opened next on the same directory never meets the old connections.
+func TestCloseWaitsForConnectionsInUse(t *testing.T) {
+	t.Parallel()
+	migs := migFS(map[string]string{"0001_a.sql": mig1})
+	s := openTest(t, Options{Migrations: migs})
+	ctx := context.Background()
+	// A connection checked out with no transaction open: the WAL checkpoint in Close does not wait for it.
+	conn, err := s.ReadDB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned (%v) while a reader connection was in use", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := Open(ctx, Options{DataDir: s.Dir(), Migrations: migs}); !errors.Is(err, ErrLocked) {
+		t.Fatalf("process lock released before the connections closed: %v", err)
+	}
+	_ = conn.Close()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close did not return after the reader was released")
+	}
+	s2, err := Open(ctx, Options{DataDir: s.Dir(), Migrations: migs})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	_ = s2.Close()
+}
