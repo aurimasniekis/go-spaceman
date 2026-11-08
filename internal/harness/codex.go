@@ -16,7 +16,8 @@ import (
 //   - isolation: CODEX_HOME=<config>/codex per space and instance
 //   - --no-daemon: required under herdr-core, otherwise commands run outside hc (hc manual)
 //   - -c features.shell_snapshot=false: the snapshot would keep the run's environment, its tokens included, in
-//     $CODEX_HOME/shell_snapshots (verified with codex-cli 0.166.0 `features list`)
+//     $CODEX_HOME/shell_snapshots (verified with codex-cli 0.166.0 `features list`); every launch also removes that
+//     folder, which earlier releases left with the run's environment, a direct account's API key included
 //   - MCP: -c mcp_servers.spaceman.command=… -c mcp_servers.spaceman.args=[…] (TOML overrides)
 //   - session: Codex chooses its own session ID; resume is `codex resume <id>` (the ID is discovered from
 //     $CODEX_HOME/sessions after launch — not a fixed-ID capability)
@@ -110,6 +111,9 @@ func (Codex) Build(c Context) (Launch, error) {
 		SecretEnv:  secretEnv(p.Secrets, "OPENAI_API_KEY", "CODEX_API_KEY"),
 		SessionID:  p.SessionID,
 		LoginLinks: map[string]string{filepath.Join(home, "auth.json"): "auth.json", filepath.Join(home, "auth.lock"): "auth.lock"},
+		// Snapshots written before features.shell_snapshot=false hold that run's environment, an account's
+		// OPENAI_API_KEY/CODEX_API_KEY included: every launch removes them, gateway or not.
+		RemoveDirs: []string{filepath.Join(home, "shell_snapshots")},
 	}
 	if gw != nil {
 		// The gateway is the only credential: no API-key auth.json, no ChatGPT login (gatewayFor refused both secrets),

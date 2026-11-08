@@ -93,6 +93,11 @@ type Launch struct {
 	// a gateway run's harness gets the gateway's token and nothing else (ADR-0060 decision 6). Each is removed (a link
 	// itself, never its target) before the secrets file is written, and the launch fails if one is still there.
 	RemoveFiles []string
+	// RemoveDirs are folders in the harness's config dir that must not exist for this launch, because they may hold
+	// credentials an earlier launch left (Codex's shell snapshots, with an account's API key from a run before
+	// features.shell_snapshot=false). Each is removed with its contents, never following a link (a link is removed
+	// itself), before the secrets file is written, and the launch fails if one is still there.
+	RemoveDirs []string
 	// SessionID is the conversation ID when the harness lets SpaceMan choose it.
 	SessionID string
 }

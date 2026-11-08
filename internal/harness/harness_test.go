@@ -135,6 +135,9 @@ func TestCodexBuild(t *testing.T) {
 	if l.Env["CODEX_HOME"] != "/data/spaces/spc_a/instances/ins_1/codex" || len(l.SecretEnv) != 1 || l.SecretEnv["OPENAI_API_KEY"] != "sk" {
 		t.Fatalf("env %v secrets %v", l.Env, l.SecretEnv)
 	}
+	if !reflect.DeepEqual(l.RemoveDirs, []string{"/data/spaces/spc_a/instances/ins_1/codex/shell_snapshots"}) {
+		t.Fatalf("remove dirs %v", l.RemoveDirs)
+	}
 	// Interactive Codex takes an API key only from a stored login (ADR-0054): the key becomes auth.json in API-key mode.
 	if got := string(l.SecretFiles["/data/spaces/spc_a/instances/ins_1/codex/auth.json"]); got != `{"OPENAI_API_KEY":"sk","auth_mode":"apikey"}` || len(l.SecretFiles) != 1 {
 		t.Fatalf("secret files %v", l.SecretFiles)
@@ -294,6 +297,36 @@ func TestClaudeGatewayBuild(t *testing.T) {
 	}
 }
 
+// HP-T4 review F2: a gateway run's Claude Code settings env may set only the allowlisted CLAUDE_CODE_* switches; every
+// other CLAUDE_CODE_* (credentials, endpoints, proxies, client certificates, new ones), every ANTHROPIC_* and the
+// proxy and TLS variables in either case are refused.
+func TestClaudeGatewayEnv(t *testing.T) {
+	refused := []string{
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+		"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+		"CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER", "CLAUDE_CODE_PROXY_URL",
+		"CLAUDE_CODE_HTTPS_PROXY", "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_SOMETHING_NEW",
+		"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy",
+		"NODE_TLS_REJECT_UNAUTHORIZED", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "NODE_OPTIONS",
+	}
+	for _, k := range refused {
+		p := gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"FOO": "1", k: "x"}}})
+		if _, err := (Claude{}).Build(ctxFor(p)); err == nil || !strings.Contains(err.Error(), "env."+k+" ") {
+			t.Errorf("%s: %v", k, err)
+		}
+	}
+	allowed := map[string]any{"FOO": "1", "NO_PROXY": "example.com", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8000",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_NO_FLICKER": "1"}
+	if _, err := (Claude{}).Build(ctxFor(gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": allowed}}))); err != nil {
+		t.Fatal(err)
+	}
+	// Without a gateway nothing is refused: a direct account's profile keeps its env.
+	if _, err := (Claude{}).Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"HTTPS_PROXY": "http://p"}}})); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // SM-GW-003 (ADR-0060 decision 6, the HP-T1 spike's shape): a Codex gateway run gets the five model-provider
 // overrides and HARBOR_PILOT_TOKEN through the shim only, no auth.json (any left is removed) and no login.
 func TestCodexGatewayBuild(t *testing.T) {
@@ -334,6 +367,9 @@ func TestCodexGatewayBuild(t *testing.T) {
 	if len(l.SecretFiles) != 0 || l.Login != nil || !reflect.DeepEqual(l.RemoveFiles, []string{home + "/auth.json"}) ||
 		l.LoginLinks[home+"/auth.json"] != "auth.json" || l.LoginLinks[home+"/auth.lock"] != "auth.lock" {
 		t.Fatalf("secret files %v login %+v remove %v links %v", l.SecretFiles, l.Login, l.RemoveFiles, l.LoginLinks)
+	}
+	if !reflect.DeepEqual(l.RemoveDirs, []string{home + "/shell_snapshots"}) || !strings.Contains(argv, "-c features.shell_snapshot=false") {
+		t.Fatalf("snapshots: remove dirs %v argv %q", l.RemoveDirs, argv)
 	}
 	for _, secrets := range []map[string]string{
 		{proto.SecretGatewayToken: "hpk", "OPENAI_API_KEY": "sk"},

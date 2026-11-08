@@ -166,3 +166,65 @@ func TestRemoveCredentialFiles(t *testing.T) {
 		t.Fatal("a credential path that could not be removed was accepted")
 	}
 }
+
+// HP-T4 review F1: Codex's old shell snapshots are removed with their contents, never following a link: a link in the
+// folder's place and a link inside it are removed themselves, and their targets stay.
+func TestRemoveCredentialDirs(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "keep.sh")
+	if err := os.WriteFile(target, []byte("export KEEP=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snaps := filepath.Join(dir, "shell_snapshots")
+	if err := os.MkdirAll(filepath.Join(snaps, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snaps, "nested", "s.sh"), []byte("export OPENAI_API_KEY=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(snaps, "file-link.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(snaps, "dir-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCredentialDirs([]string{snaps, filepath.Join(dir, "missing")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(snaps); !os.IsNotExist(err) {
+		t.Fatalf("the folder is still there: %v", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("a link's target was removed: %v", err)
+	}
+
+	// The folder itself is a link to somewhere else: only the link goes.
+	if err := os.Symlink(outside, snaps); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCredentialDirs([]string{snaps}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(snaps); !os.IsNotExist(err) {
+		t.Fatalf("the link is still there: %v", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("the linked folder's contents were removed: %v", err)
+	}
+
+	// A folder that can't be removed fails the launch.
+	if os.Geteuid() == 0 {
+		t.Skip("root can remove anything")
+	}
+	if err := os.MkdirAll(filepath.Join(snaps, "s"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(snaps, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(snaps, 0o700) })
+	if err := removeCredentialDirs([]string{snaps}); err == nil {
+		t.Fatal("a folder that could not be removed was accepted")
+	}
+}

@@ -499,10 +499,10 @@ const (
 	dataReservePercent = 2
 )
 
-// Close closes node connections, then releases storage and the data-directory lock.
 // mintShutdownGrace is how long Close lets background gateway mints finish before it cancels them.
 const mintShutdownGrace = 5 * time.Second
 
+// Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
 	if c.Backups != nil {
 		c.Backups.Wait()

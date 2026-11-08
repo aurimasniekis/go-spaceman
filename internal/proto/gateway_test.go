@@ -21,15 +21,18 @@ func TestGatewayOrigin(t *testing.T) {
 		}
 	}
 	bad := map[GatewayLaunch]string{
-		{Kind: GatewayHarborPilot, BaseURL: "http://127.0.0.1:4000"}:      "plain http",
-		{Kind: GatewayHarborPilot, BaseURL: "http://localhost:4000"}:      "plain http",
-		{Kind: GatewayHarborPilot, BaseURL: "hp.example.com"}:             "absolute",
-		{Kind: GatewayHarborPilot, BaseURL: "ftp://hp.example.com"}:       "absolute",
-		{Kind: GatewayHarborPilot, BaseURL: "https://u:p@hp.example.com"}: "credentials",
-		{Kind: GatewayHarborPilot, BaseURL: "https://hp.example.com/?a"}:  "query",
-		{Kind: GatewayHarborPilot, BaseURL: "https://hp.example.com/#x"}:  "fragment",
-		{Kind: GatewayHarborPilot, BaseURL: ""}:                           "absolute",
-		{Kind: "other", BaseURL: "https://hp.example.com"}:                "unknown kind",
+		{Kind: GatewayHarborPilot, BaseURL: "http://127.0.0.1:4000"}:        "plain http",
+		{Kind: GatewayHarborPilot, BaseURL: "http://localhost:4000"}:        "plain http",
+		{Kind: GatewayHarborPilot, BaseURL: "hp.example.com"}:               "absolute",
+		{Kind: GatewayHarborPilot, BaseURL: "ftp://hp.example.com"}:         "absolute",
+		{Kind: GatewayHarborPilot, BaseURL: "https://u:p@hp.example.com"}:   "credentials",
+		{Kind: GatewayHarborPilot, BaseURL: "https://hp.example.com/?a"}:    "query",
+		{Kind: GatewayHarborPilot, BaseURL: "https://hp.example.com/#x"}:    "fragment",
+		{Kind: GatewayHarborPilot, BaseURL: ""}:                             "absolute",
+		{Kind: GatewayHarborPilot, BaseURL: "https://:443"}:                 "name a host",
+		{Kind: GatewayHarborPilot, BaseURL: "https://hp.example.com:0"}:     "port",
+		{Kind: GatewayHarborPilot, BaseURL: "https://hp.example.com:99999"}: "port",
+		{Kind: "other", BaseURL: "https://hp.example.com"}:                  "unknown kind",
 	}
 	for g, want := range bad {
 		if _, err := g.Origin(); err == nil || !strings.Contains(err.Error(), want) {

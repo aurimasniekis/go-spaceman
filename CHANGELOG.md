@@ -94,9 +94,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
-- Codex runs no longer leave their environment, the run's SpaceMan token included, in the instance's
-  `CODEX_HOME/shell_snapshots`: SpaceMan now turns off Codex's shell snapshot (`features.shell_snapshot=false`). Found
-  with codex-cli 0.166.0; snapshots left by earlier runs stay until the instance's folder is removed.
+- Codex runs no longer leave their environment in the instance's `CODEX_HOME/shell_snapshots`: SpaceMan now turns off
+  Codex's shell snapshot (`features.shell_snapshot=false`), and every Codex launch removes the `shell_snapshots` folder
+  an earlier run left (without following links; the launch fails if it is still there). Found with codex-cli 0.166.0.
+  **Rotate keys:** a Codex run on an earlier release kept its environment there, the run's SpaceMan token and, for a
+  direct account with an API key, that account's `OPENAI_API_KEY`/`CODEX_API_KEY`. Run tokens are revoked when their
+  run ends, but an account's API key is not: if a node ran Codex with an API-key account on an earlier release,
+  rotate that key at the provider.
+- A gateway run's Claude Code settings `env` is checked more strictly: every `CLAUDE_CODE_*` variable except a short
+  list of output and UI switches is refused (2.1.317 has more than 800, some carrying tokens, key file descriptors,
+  base URLs, proxies or client certificates), as are `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (either case),
+  `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_OPTIONS`. Every
+  `ANTHROPIC_*` stays refused, harmless model pins such as `ANTHROPIC_MODEL` included: set the model on the role.
+- The node's gateway address check refuses an address without a host (`https://:443`) or with a port outside 1–65535.
 - With the `next_launch` policy, a person's response to a control that had stopped waited for the whole hold before
   control was started for it. A response held for control's agent instance now counts as work for control, so control
   is started on that instance (within the `control_autostart` limits) and the response is delivered to it. A response
