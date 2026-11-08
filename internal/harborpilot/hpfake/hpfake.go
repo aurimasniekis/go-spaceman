@@ -235,6 +235,12 @@ func (f *HP) filterCovering(w http.ResponseWriter, items, projectID, bindingID s
 		default:
 			continue
 		}
+		if _, ok := b["remaining_e10"]; !ok { // 0.1.4 always sends it
+			lim, _ := b["limit_e10"].(float64)
+			spent, _ := b["spent_e10"].(float64)
+			res, _ := b["reserved_e10"].(float64)
+			b["remaining_e10"] = max(int64(lim-spent-res), 0)
+		}
 		out = append(out, b)
 	}
 	raw, _ := json.Marshal(out)

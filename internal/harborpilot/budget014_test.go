@@ -3,7 +3,9 @@ package harborpilot
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -215,5 +217,127 @@ func TestRefusalPeriods(t *testing.T) {
 	c = Covering{Name: "d", Scope: ScopeProject, ScopeID: "prj_web", Period: "day", Spent: "2.00", Limit: "1.00", Currency: "USD"}
 	if r := Refusal(c); !strings.Contains(r, "until it resets") || strings.Contains(r, "0001-") {
 		t.Fatalf("recurring without end: %q", r)
+	}
+}
+
+// The gateway at the connection's address is downgraded to 0.1.3 while its 0.1.4 version is still cached: the
+// filtered read then answers every budget (0.1.3 ignores the filters). Another project's used-up budget in that answer
+// must not refuse this space's launch: the answer is taken as unfiltered, the cached version dropped, and every budget
+// is evaluated client-side. The next read asks GET /api/v1/system again and stays on the old path.
+func TestFilteredAnswerIgnoredAfterDowngrade(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, _ := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{OnBudgetStatusUnavailable: BudgetRefuse})
+	f.Set(func(h *hpfake.HP) {
+		h.Version, h.BudgetQueries = "0.1.4", nil
+		h.Budgets = items(budgetJSON("bdg_w", "web", ScopeProject, "prj_web", EnforceBlock, BudgetOK, true, 1e10, 1),
+			budgetJSON("bdg_o", "other", ScopeProject, "prj_data", EnforceBlock, BudgetExceeded, true, 1e10, 1e10))
+	})
+	b := newBudgets(svc)
+	set := &SpaceSettings{ProjectID: "prj_web", OnBudgetStatusUnavailable: BudgetRefuse}
+	if gi, err := b.Gateway(ctx); err != nil || !gi.ProjectFilter { // cached as 0.1.4
+		t.Fatalf("gateway %+v %v", gi, err)
+	}
+	f.Set(func(h *hpfake.HP) { h.Version = "" }) // downgraded: 0.1.3 at the same address
+	for range 2 {
+		if err := b.CheckBudget(ctx, "spc_a", set); err != nil {
+			t.Fatalf("another project's budget refused the launch: %v", err)
+		}
+		b.mu.Lock()
+		b.status = nil
+		b.mu.Unlock()
+	}
+	st, err := b.SpaceStatus(ctx, "spc_a")
+	if err != nil || st.State != StatusOK || len(st.Budgets) != 1 || st.Budgets[0].BudgetID != "bdg_w" {
+		t.Fatalf("status %+v %v", st, err)
+	}
+	gi, err := b.Gateway(ctx)
+	if err != nil || gi.Source != "legacy" || gi.ProjectFilter {
+		t.Fatalf("gateway after the downgrade %+v %v", gi, err)
+	}
+	f.Set(func(h *hpfake.HP) {
+		// The filtered read once, then the old path only.
+		want := []string{"binding_id=bnd_fake&project_id=prj_web", "", "", ""}
+		if !slices.Equal(h.BudgetQueries, want) {
+			t.Fatalf("queries %q", h.BudgetQueries)
+		}
+	})
+
+	rem := int64(1)
+	for _, c := range []struct {
+		name string
+		bu   []Budget
+		want bool
+	}{
+		{"filtered", []Budget{{Scope: ScopeGlobal, RemainingE10: &rem}, {Scope: ScopeWorkspace, ScopeID: "wsp_1", RemainingE10: &rem},
+			{Scope: ScopeProject, ScopeID: "prj_web", RemainingE10: &rem}, {Scope: ScopeBinding, ScopeID: "bnd_fake", RemainingE10: &rem}}, false},
+		{"empty", nil, false},
+		{"other project", []Budget{{Scope: ScopeProject, ScopeID: "prj_data", RemainingE10: &rem}}, true},
+		{"other binding", []Budget{{Scope: ScopeBinding, ScopeID: "bnd_other", RemainingE10: &rem}}, true},
+		{"two workspaces", []Budget{{Scope: ScopeWorkspace, ScopeID: "wsp_1", RemainingE10: &rem}, {Scope: ScopeWorkspace, ScopeID: "wsp_2", RemainingE10: &rem}}, true},
+		{"account", []Budget{{Scope: "account", ScopeID: "acc_1", RemainingE10: &rem}}, true},
+		{"0.1.3 item", []Budget{{Scope: ScopeWorkspace, ScopeID: "wsp_other"}}, true},
+	} {
+		if got := unfiltered(c.bu, "prj_web", "bnd_fake"); got != c.want {
+			t.Fatalf("%s: unfiltered %v", c.name, got)
+		}
+	}
+}
+
+// A filtered read answering 404 (the space's project, or the binding, was deleted in Harbor Pilot) falls back to the
+// old path, which still refuses on a used-up global budget enforced with block, even under proceed.
+func TestFilteredNotFoundFallsBack(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, _ := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{})
+	f.Set(func(h *hpfake.HP) {
+		h.Version, h.BudgetQueries = "0.1.4", nil
+		h.Budgets = items(budgetJSON("bdg_g", "everyone", ScopeGlobal, "", EnforceBlock, BudgetExceeded, true, 1e10, 1e10))
+		delete(h.Projects, "prj_web")
+	})
+	ae := appErr(t, newBudgets(svc).CheckBudget(ctx, "spc_a", &SpaceSettings{ProjectID: "prj_web", OnBudgetStatusUnavailable: BudgetProceed}), apperr.CodeRateLimited)
+	if !strings.Contains(ae.Message, `"everyone"`) {
+		t.Fatal(ae.Message)
+	}
+	f.Set(func(h *hpfake.HP) {
+		if !slices.Equal(h.BudgetQueries, []string{"binding_id=bnd_fake&project_id=prj_web", ""}) {
+			t.Fatalf("queries %q", h.BudgetQueries)
+		}
+	})
+}
+
+// A hung gateway delays a launch check by CheckTimeout in all, not by the client timeout once per read; the status is
+// then unavailable and the space's policy decides.
+func TestCheckBudgetBoundedByOneDeadline(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, _ := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{})
+	hang := make(chan struct{})
+	t.Cleanup(func() { close(hang) })
+	f.Set(func(h *hpfake.HP) {
+		h.Version = "0.1.4"
+		h.Hook = func(r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/v1/budgets/") || r.URL.Path == "/api/v1/system" {
+				<-hang
+			}
+		}
+	})
+	b := NewBudgets(svc, BudgetsOptions{CheckTimeout: 200 * time.Millisecond})
+	start := time.Now()
+	ae := appErr(t, b.CheckBudget(ctx, "spc_a", &SpaceSettings{ProjectID: "prj_web", OnBudgetStatusUnavailable: BudgetRefuse}), apperr.CodeUnavailable)
+	if !strings.Contains(ae.Message, "did not answer within 200ms") {
+		t.Fatal(ae.Message)
+	}
+	if err := b.CheckBudget(ctx, "spc_a", &SpaceSettings{ProjectID: "prj_web", OnBudgetStatusUnavailable: BudgetProceed}); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("two checks took %s", d)
 	}
 }

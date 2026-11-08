@@ -176,7 +176,9 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208` (v0.1.4: `:214`). It needs an
   - `project_id` with `scope`, `binding_id` without `project_id`, or `scope_id` without `scope`: 400
     `invalid_request` (**code**). An unknown project or binding: 404 (**live** for the project).
   - A 0.1.3 gateway ignores unknown query parameters (huma) and answers every budget, so SpaceMan sends the filters
-    only after `GET /api/v1/system` answered.
+    only after `GET /api/v1/system` answered. A filtered answer holding another project's or binding's budget, an
+    account budget, two workspaces' or an item without `remaining_e10` is taken as unfiltered (a gateway downgraded while its version was cached):
+    SpaceMan drops the cached version and reads every budget. A filtered 404 falls back to reading every budget too.
 - **Fields of an item:** `budget_id, name, scope (global|workspace|project|binding|account), scope_id, period,
   period_start, period_end, currency, cost_kinds, enforcement (block|warn), enabled, limit_e10, spent_e10, reserved_e10,
   by_kind_e10, fraction, warn_at, projected_spend_e10, state (ok|warning|exceeded|disabled)`. **live**

@@ -58,6 +58,9 @@ type BudgetsOptions struct {
 	Fresh, FailFresh time.Duration
 	// ProjectFresh is how long a project's workspace, and the gateway's version, are reused (default 10 min).
 	ProjectFresh time.Duration
+	// CheckTimeout bounds a whole launch check (default 15 s): every read it makes (version, budget status, a fallback)
+	// together, so a hung gateway delays a launch once, not once per read. When it passes, status is unavailable.
+	CheckTimeout time.Duration
 }
 
 // Budgets reads Harbor Pilot budget status for spaces (ADR-0060 decisions 4 and 7, HP-T5): a cache of
@@ -115,6 +118,9 @@ func NewBudgets(svc *Service, o BudgetsOptions) *Budgets {
 	if o.ProjectFresh <= 0 {
 		o.ProjectFresh = 10 * time.Minute
 	}
+	if o.CheckTimeout <= 0 {
+		o.CheckTimeout = 15 * time.Second
+	}
 	return &Budgets{svc: svc, o: o, covered: map[string]*cached[[]Budget]{}, projects: map[string]*cached[string]{}, usage: map[string]*cached[*ProjectUsage]{}, flights: map[string]*flight{},
 		now: svc.s.Now}
 }
@@ -170,7 +176,8 @@ func (b *Budgets) reader(ctx context.Context) (*reader, error) {
 }
 
 // load returns the cached value under name when it was read with the same key and is fresh, and otherwise reads it
-// once (callers asking meanwhile wait for that read).
+// once (callers asking meanwhile wait for that read). Every caller, the one that started the read too, stops waiting
+// when its ctx ends; the read itself goes on and its result is cached.
 func load[T any](ctx context.Context, b *Budgets, name, key string, s slot[T], fresh time.Duration, read func(context.Context) (T, error)) (T, time.Time, error) {
 	for {
 		b.mu.Lock()
@@ -201,14 +208,27 @@ func load[T any](ctx context.Context, b *Budgets, name, key string, s slot[T], f
 		b.mu.Unlock()
 
 		// The read is shared: one caller's cancelled request doesn't fail the others' (the client bounds it).
-		val, err := read(context.WithoutCancel(ctx))
-		b.mu.Lock()
-		at := b.now()
-		s.set(&cached[T]{key: key, at: at, val: val, err: err})
-		delete(b.flights, name)
-		close(f.done)
-		b.mu.Unlock()
-		return val, at, err
+		var (
+			val T
+			at  time.Time
+			err error
+		)
+		go func() {
+			v, e := read(context.WithoutCancel(ctx))
+			b.mu.Lock()
+			val, at, err = v, b.now(), e
+			s.set(&cached[T]{key: key, at: at, val: val, err: err})
+			delete(b.flights, name)
+			close(f.done)
+			b.mu.Unlock()
+		}()
+		select {
+		case <-f.done:
+			return val, at, err
+		case <-ctx.Done():
+			var zero T
+			return zero, time.Time{}, ctx.Err()
+		}
 	}
 }
 
@@ -232,12 +252,50 @@ func (b *Budgets) coveredStatus(ctx context.Context, r *reader, projectID string
 	}
 	b.mu.Unlock()
 	return load(ctx, b, "covered:"+projectID, r.key, mapSlot(b.covered, projectID), b.o.Fresh, func(ctx context.Context) ([]Budget, error) {
-		items, err := r.c.BudgetStatusCovering(ctx, r.token, projectID, r.binding)
-		if err != nil {
-			return nil, statusErr("budget status for project "+projectID, err)
-		}
-		return items, nil
+		// The error stays Harbor Pilot's, so covering can tell a 404 (the project or binding is gone) from an outage.
+		return r.c.BudgetStatusCovering(ctx, r.token, projectID, r.binding)
 	})
+}
+
+// dropFiltered forgets that the gateway filters by project, and the filtered read of projectID, so the next read asks
+// GET /api/v1/system again.
+func (b *Budgets) dropFiltered(projectID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.system = nil
+	delete(b.covered, projectID)
+}
+
+// unfiltered reports whether a filtered read holds budgets Harbor Pilot 0.1.4 would never return for this project and
+// binding: another project's or binding's, an account's, more than one workspace's, or an item without remaining_e10
+// (which 0.1.4 always sends). That is a gateway older than 0.1.4 answering every budget (it ignores the filters), e.g.
+// one downgraded at the same address while its version was cached.
+func unfiltered(items []Budget, projectID, bindingID string) bool {
+	ws := ""
+	for _, bu := range items {
+		if bu.RemainingE10 == nil {
+			return true
+		}
+		switch bu.Scope {
+		case ScopeProject:
+			if bu.ScopeID != projectID {
+				return true
+			}
+		case ScopeBinding:
+			if bindingID == "" || bu.ScopeID != bindingID {
+				return true
+			}
+		case ScopeWorkspace:
+			if ws != "" && bu.ScopeID != ws {
+				return true
+			}
+			ws = bu.ScopeID
+		case ScopeGlobal:
+		default: // account, or a scope SpaceMan doesn't know: never part of a project's filtered answer
+			return true
+		}
+	}
+	return false
 }
 
 // GatewayInfo is what SpaceMan knows of the connected gateway's version.
@@ -452,13 +510,21 @@ func (b *Budgets) covering(ctx context.Context, projectID string) ([]Covering, t
 		return nil, time.Time{}, nil, err
 	}
 	// Harbor Pilot 0.1.4 or later filters by project itself. When its version can't be read, the old path is tried:
-	// it fails the same way if the gateway is down, and works on any version otherwise.
+	// it fails the same way if the gateway is down, and works on any version otherwise. The old path is also taken when
+	// the filtered read is 404 (the project or binding is gone in Harbor Pilot: global and binding budgets still apply,
+	// and the old path refuses on them as before), and when its answer shows the gateway ignored the filters.
 	if gi, gerr := b.gateway(ctx, r); gerr == nil && gi.ProjectFilter && projectID != "" {
 		items, at, err := b.coveredStatus(ctx, r, projectID)
-		if err != nil {
-			return nil, time.Time{}, r, err
+		switch {
+		case IsClass(err, ClassNotFound):
+		case err != nil:
+			return nil, time.Time{}, r, statusErr("budget status for project "+projectID, err)
+		case unfiltered(items, projectID, r.binding):
+			b.svc.log().Warn("harbor pilot ignored the budget status filters (a gateway older than 0.1.4?): reading every budget", slog.String("project.id", projectID))
+			b.dropFiltered(projectID)
+		default:
+			return coveringFiltered(items, projectID, r.binding), at, r, nil
 		}
-		return coveringFiltered(items, projectID, r.binding), at, r, nil
 	}
 	items, at, err := b.budgetStatus(ctx, r)
 	if err != nil {
@@ -501,7 +567,12 @@ func Refusal(c Covering) string {
 // SpaceMan's own failures on the way (the service-principal token can't be opened, a database read fails): they are
 // logged, and the person sees only a fixed reason.
 func (b *Budgets) CheckBudget(ctx context.Context, spaceID string, s *SpaceSettings) error {
-	cov, _, _, err := b.covering(ctx, s.ProjectID)
+	check, cancel := context.WithTimeout(ctx, b.o.CheckTimeout)
+	defer cancel()
+	cov, _, _, err := b.covering(check, s.ProjectID)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		err = unavailableStatus("Harbor Pilot did not answer within %s", b.o.CheckTimeout)
+	}
 	var ue *errStatusUnavailable
 	if err != nil && !errors.As(err, &ue) && ctx.Err() == nil {
 		b.svc.log().Error("harbor pilot budget check: status can't be read", slog.String("space.id", spaceID), "err", err)

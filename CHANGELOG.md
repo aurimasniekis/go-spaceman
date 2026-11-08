@@ -12,7 +12,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Pilot's `GET /api/v1/system` with the service-principal token; an older gateway shows as "older than 0.1.4". On
   0.1.4 or later, budget status is read for the space's project and client binding only
   (`budgets/status?project_id=…&binding_id=…`), and Harbor Pilot resolves the project's workspace, so SpaceMan no
-  longer reads every budget nor looks projects up. Older gateways keep the previous path.
+  longer reads every budget nor looks projects up. Older gateways keep the previous path, and so does a filtered read
+  that answers 404 (the project or binding is gone in Harbor Pilot) or that holds budgets a 0.1.4 filter never returns
+  (a gateway downgraded while its version was cached): such an answer drops the cached version. A launch's budget
+  check waits at most 15 s for Harbor Pilot in all, not 15 s per read.
 - The Limits card shows one-time budgets (Harbor Pilot 0.1.4 `period: once`): "one time", **Never** or when the window
   ends, **Scheduled** and **Ended** badges, and what is left of each budget.
 

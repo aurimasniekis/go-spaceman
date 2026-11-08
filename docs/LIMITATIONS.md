@@ -129,7 +129,16 @@
   version numbers: a gateway that answers `/api/v1/system` is treated as 0.1.4 or later.
 - **Budget status by project only on 0.1.4 or later.** On 0.1.3 SpaceMan still reads every budget (the list is not
   paginated) and looks the project's workspace up. A 0.1.4 gateway whose version can't be read for a moment (a failed
-  `/api/v1/system` read is retried after 5 s) is read the 0.1.3 way meanwhile.
+  `/api/v1/system` read is retried after 5 s) is read the 0.1.3 way meanwhile. The version is cached for 10 minutes:
+  when the gateway at the same address is downgraded below 0.1.4 meanwhile, it ignores the filters and answers every
+  budget. SpaceMan takes an answer holding another project's or binding's budget, an account budget, two workspaces' or
+  an item without `remaining_e10` (which 0.1.4 always sends) as unfiltered, drops the cached version and reads every
+  budget the 0.1.3 way. A gateway that sends `remaining_e10` but ignores the filters would not be detected when its
+  only foreign budget is one other workspace's. A filtered read that answers 404 (the space's project or the binding
+  was deleted in Harbor Pilot) also falls back to the 0.1.3 path.
+- **The launch check waits at most 15 s.** Every Harbor Pilot read of one launch's budget check (version, budget
+  status, a fallback) shares one 15 s deadline; when it passes, status counts as unavailable and the space's
+  `on_budget_status_unavailable` decides. The read itself goes on in the background and is cached for the next launch.
 - **Inactive and unknown budget states never refuse.** Scheduled, expired, disabled and any state a later Harbor Pilot
   adds are shown but never refuse a launch, so SpaceMan's early check can't refuse more than Harbor Pilot would; Harbor
   Pilot's own mint check and request enforcement still apply.
