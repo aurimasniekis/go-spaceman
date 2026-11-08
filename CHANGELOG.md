@@ -97,6 +97,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Codex runs no longer leave their environment, the run's SpaceMan token included, in the instance's
   `CODEX_HOME/shell_snapshots`: SpaceMan now turns off Codex's shell snapshot (`features.shell_snapshot=false`). Found
   with codex-cli 0.166.0; snapshots left by earlier runs stay until the instance's folder is removed.
+- With the `next_launch` policy, a person's response to a control that had stopped waited for the whole hold before
+  control was started for it. A response held for control's agent instance now counts as work for control, so control
+  is started on that instance (within the `control_autostart` limits) and the response is delivered to it. A response
+  held for a worker's instance still waits for that worker.
 - A relocation whose source was unavailable marked the source's runs lost without ending them: no `run_ended` event,
   no end count, and nothing that reacts to a run's end (recordings, KB sessions, control) learnt of it. They now
   end like runs a node reports ended.
