@@ -6,6 +6,7 @@ import { setSession } from './session'
 export const keys = {
   me: ['me'] as const,
   system: ['system'] as const,
+  systemStatus: ['system', 'status'] as const,
   spaces: ['spaces'] as const,
   space: (id: string) => ['space', id] as const,
   runs: (space: string) => ['runs', space] as const,
@@ -131,6 +132,10 @@ export const systemQuery = queryOptions({
 })
 
 export const useSystem = () => useQuery(systemQuery)
+
+/** This instance's status (system:read, admins; the caller gates it with `enabled`), refreshed while the page is open. */
+export const useSystemStatus = (enabled: boolean) =>
+  useQuery({ queryKey: keys.systemStatus, queryFn: async () => unwrap(await api.GET('/system')), enabled, refetchInterval: 15_000 })
 
 export const useSpaces = () =>
   useQuery({ queryKey: keys.spaces, queryFn: async () => unwrap(await api.GET('/spaces')).items })

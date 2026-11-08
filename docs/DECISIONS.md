@@ -3169,6 +3169,36 @@
   typed into a terminal. The limits on reminders (50 pending, 30 days, auto-start's hourly cap) mean a control can't
   wake itself in a tight loop.
 
+### ADR-0066 — The System page: an administrator's view of the instance; the version stays public
+- **Status:** Accepted, 2026-11-08 (operator request for v0.1.0: a System page like Hallpass's, and a version API).
+- **Context:**
+  - Hallpass's System page shows lockdown, storage, break-glass, version, boot ID, policy version and live counts;
+    Harbor Pilot's "This instance" shows version, public URL, start time, data directory, key ID and schema versions.
+    SpaceMan had the pieces (build info, readiness checks, the attention summary's storage section, `/system/info`) but
+    no single view of the instance.
+  - The public, unauthenticated `get-system-info` (`GET /system/info`) has returned the version since M1: the
+    sign-in and setup pages need it before anyone signs in.
+- **Decision:**
+  - **`get-system` (`GET /system`) needs `system:read`**, which only administrators (and the root token) hold. It
+    returns build info (version, commit, build date, Go version, platform), the start time and uptime, a **boot ID**
+    (`boot_…`, new at every start of central; it is never persisted), the applied and newest database migration, the
+    node protocol range (major, min and max minor), the attention summary's storage section plus the database and WAL
+    sizes, and counts: spaces not archived, active and connected nodes, runs starting/running/stopping, open human
+    actions and connected live-event streams. Counts come from one SQL query; nodes from the fleet's live connection
+    state; no migration.
+  - **No secrets:** no key material, no KEK source or path, no keyring IDs, no tokens. The public URL and the data
+    directory path are shown, because only administrators can read the endpoint.
+  - **The version alone stays public** in `get-system-info`, as before: it is not a relaxation, and the web UI shows it
+    to every signed-in user in the account menu. Hiding it would not hide much (the OpenAPI document carries it too),
+    and the sign-in page needs it.
+  - The admin MCP classifies `get-system` as a read. CLI: `spaceman system status`. Web: **System** under Access,
+    shown to global administrators.
+- **Alternatives:** extending `get-system-info` with an authenticated detail section (one operation with two shapes
+  for two audiences, hard to describe in OpenAPI); serving the detail on the management listener (unauthenticated,
+  private address: no UI, and it would expose the data directory to anything that reaches it).
+- **Consequences:** a new admin-only read with no new authority. The boot ID lets an operator tell a restart from a
+  long-running instance and match logs to a start.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

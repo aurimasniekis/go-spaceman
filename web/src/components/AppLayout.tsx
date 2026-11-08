@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { api, check, unwrap } from '@/api/client'
-import { useHumanPending, useMe } from '@/api/queries'
+import { useHumanPending, useMe, useSystem } from '@/api/queries'
 import { useWatch } from '@/api/watch'
 import { RestoreBanner } from '@/features/backup/RestoreBanner'
 import { NotificationWatcher } from '@/features/notifications/NotificationWatcher'
@@ -55,6 +55,7 @@ function BreakGlassBanner() {
 
 function UserMenu() {
   const me = useMe().data
+  const version = useSystem().data?.version
   const qc = useQueryClient()
   const name = me?.root ? 'root token' : (me?.user?.display_name ?? '—')
   return (
@@ -76,6 +77,13 @@ function UserMenu() {
         >
           Sign out
         </Menu.Item>
+        {version && (
+          <>
+            <Menu.Divider />
+            {/* The version is public (/system/info); administrators find the rest on the System page. */}
+            <Menu.Label data-testid="app-version">SpaceMan <span className="mono">{version}</span></Menu.Label>
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   )

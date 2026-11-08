@@ -427,6 +427,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-OBS-004 Outbound publication goes through a transactional outbox using the verified Pulse contract: stable IDs, versioned payloads,
   correlation and causation, at-least-once delivery, retry and backoff, lag and failure visibility. Human-action lifecycle events carry safe metadata only.
 - SM-OBS-005 Inbound subscriptions are distinct from outbound publication. No external publication inside a DB write transaction.
+- SM-OBS-006 Administrators see the instance's status (version and build, start time, boot ID, schema and node protocol versions, storage health, live counts) on a System page and API, without secrets; the version alone is readable by every client.
 
 ### SM-STORE — Storage, backups and restore
 - SM-STORE-001 Central SQLite plus a node-local durable journal. No multi-writer or network-filesystem SQLite.
@@ -522,3 +523,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-03 | A new installation comes with starter roles (control, planner, implementor, reviewer, kb, dreamer) as editable, deletable examples, so a first space can launch agents without configuring every role by hand. | SM-PROMPT-005 (ADR-0051) |
 | 2026-11-06 | Claude Code runs get their settings.json from their harness profile, with full control (permissions, auto mode, hooks, any key), a proper UI rather than raw JSON for the common parts, and a Terraform provider attribute. | SM-PROMPT-006 (ADR-0059) |
 | 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0060 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |
+| 2026-11-08 | A System page like Hallpass's, plus a version API, for v0.1.0. | SM-OBS-006 (ADR-0066) |

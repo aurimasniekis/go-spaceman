@@ -99,6 +99,7 @@
 | `run-manifest` | Roles and profiles | A run's configuration at launch (manifest) | current |
 | `space-relocate` | Relocating a space | Relocate dialog: destination (a never-connected node is named as not available), dirty-state policy, stop runs, source folder retention | current |
 | `ops-backups` | Backups and restore | Backups page: target, schedule, retention, a verified backup, what backups include and exclude, the data retention card | current |
+| `ops-system` | Observability | System page: readiness, accepting writes, version, commit, boot ID, uptime, schema and node protocol versions, activity counts, public URL, data directory, database and data disk | current |
 | `space-repositories` | Repositories and worktrees | A space's configured repositories with the node's report: remote, default branch, state, changes, unpushed commits, worktrees, last fetch | current |
 | `space-repository-detail` | Repositories and worktrees | A repository's detail: branches with unpushed commits and its worktrees with the runs that own them | current |
 | `space-repository-form` | Repositories and worktrees | Adding a repository: name, folder, clone URL without credentials, default branch, role and clone policy | current |

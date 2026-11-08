@@ -28,6 +28,25 @@ node disk shows on its run.
 
 <Shot name="attention" alt="The Attention page: two spaces with pending human actions and quarantined events, outbound events, backups and central's storage with the data disk's free space" caption="Everything that needs a person" />
 
+## System page
+
+**System** (under Access, for global administrators) is this instance's own status, like Hallpass's System page. It is
+also `GET /api/v1/system` (`system:read`) and `spaceman system status`:
+
+- **Status:** readiness, whether the database accepts writes (the `store.writable` check), the database's health, the
+  version, commit and build date, the **boot ID** (new at every start of central, so a restart is easy to spot and to
+  match with the logs), the start time and uptime, the database schema version (the last applied migration; a warning
+  shows when the binary has a newer one), and the node protocol range central accepts.
+- **Activity:** spaces that are not archived, connected nodes of the active ones, runs starting, running or stopping,
+  open human actions, and connected live-event streams (browser change feeds, terminal and recording streams).
+- **This instance:** the public URL, the data directory, the database and WAL sizes, the data disk's free space, and
+  the Go version and platform.
+
+It names no key material, key path or token. The page refreshes every 15 seconds. The version alone is public: the
+account menu shows it to everyone, and `spaceman system info` (`GET /api/v1/system/info`) reads it without a token.
+
+<Shot name="ops-system" alt="The System page: readiness, accepting writes, version, commit, boot ID, start time, schema version and node protocol range; counts of spaces, nodes, runs, human actions and live streams; the public URL, data directory, database size and data disk" caption="This instance's status" />
+
 ## Labels are bounded
 
 Every label value comes from a fixed list or a capped set of code-defined names (transaction names, job names, OIDC

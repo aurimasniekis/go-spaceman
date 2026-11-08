@@ -2,8 +2,10 @@ package app_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
@@ -54,6 +56,21 @@ func TestSystemStatusOverHTTP(t *testing.T) {
 	if st.Counts != (api.SystemCounts{Spaces: 1, NodesActive: 1, NodesConnected: 0, RunsRunning: 0, HumanPending: 1, LiveStreams: 0}) {
 		t.Fatalf("counts %+v", st.Counts)
 	}
+	// An open change-feed stream is counted.
+	openSSE(t, http.DefaultClient, h.srv.URL+api.Prefix+"/watch", "Authorization", "Bearer "+rootSecret)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var live api.SystemStatus
+		root.do("GET", "/system", nil).json(t, &live)
+		if live.Counts.LiveStreams == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("live streams %d, want 1", live.Counts.LiveStreams)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
 	body := strings.ToLower(string(r.body))
 	for _, needle := range []string{"kek", "keyring", "spaceman_rt_", "spaceman_at_", "secret"} {
 		if strings.Contains(body, needle) {

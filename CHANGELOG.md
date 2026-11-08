@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- **System page and API** (ADR-0066; SM-OBS-006). Administrators see this instance's status on a new **System** page
+  (under Access), with `GET /api/v1/system` (`get-system`, `system:read`) and `spaceman system status`: readiness,
+  whether the database accepts writes, version, commit and build date, a boot ID that changes at every start, start
+  time and uptime, the database schema version, the node protocol range, the database and data-disk sizes, and counts
+  of spaces, connected nodes, running runs, open human actions and live streams. It names no key material, key path
+  or token. The version alone stays public (`get-system-info`) and is now shown in the account menu. The admin MCP
+  offers `get-system` as a read. No migration and no node protocol change.
 - **SpaceMan admin MCP** (ADR-0063, Accepted; SM-MCP-005…009; AM-1 to AM-10). SpaceMan's own API as MCP tools: for
   a space's control and worker runs through a `spaceman` gateway server, and for your own MCP client through the
   external endpoint. An agent in an "infra" space can then administer SpaceMan with an administrator's authority, short

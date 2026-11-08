@@ -1184,6 +1184,11 @@ test('documentation screenshots', async ({ page, browser }) => {
     await expect(page.getByText(/^verified/).first()).toBeVisible()
     await expect(page.getByText('Next daily pass')).toBeVisible() // the retention card (ADR-0045)
   })
+  await capture(page, 'ops-system', async () => {
+    await page.goto('/system')
+    await expect(page.getByTestId('system-status').getByText('Accepting writes')).toBeVisible()
+    await expect(page.getByTestId('system-status').getByText(/^boot_/)).toBeVisible()
+  })
   mkdirSync(join(process.cwd(), 'test-results'), { recursive: true })
   writeFileSync(join(process.cwd(), 'test-results', 'a11y-report.txt'), a11y.join('\n') + '\n')
   expect(a11y, `accessibility violations:\n${a11y.join('\n')}`).toEqual([])
