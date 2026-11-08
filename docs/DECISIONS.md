@@ -3297,8 +3297,9 @@
       (`instances/<own>/claude/projects/*/memory/`) with the same file tools, a deny rule wins over that (verified), and
       permission-rule globs have no "all but one" form (`[!x]` is not negation there). No `Read` deny is added for
       `instances/**`: Claude Code reads its own tool results there.
-    - A space folder or instance name that holds a glob character (`* ? [ ] { } \ !`) gets no directory and no rules,
-      since the rules could not be written exactly (N2).
+    - A space folder that holds a glob character (`* ? [ ] { } \ !`) gets no directory and no rules, since the rules
+      could not be written exactly (N2). A folder under `instances/` named with one is not an instance (SpaceMan's IDs
+      never hold one) and is skipped.
   - **Defence in depth: the node strips dangerous settings keys at every launch.** Before the harness starts, the node
     removes from the instance's `settings.json` every top-level key that runs commands, adds credentials or
     environment, or changes what hooks, plugins, the sandbox or the classifier allow, unless the profile or SpaceMan

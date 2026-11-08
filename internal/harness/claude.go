@@ -178,8 +178,9 @@ const globUnsafe = "*?[]{}\\!"
 // the run's file tools away from the instances' config dirs: Read and Edit for the login files
 // (ClaudeSpaceCredentialFiles), Edit for the harness configuration of every instance (ClaudeSpaceProtectedFiles) and
 // Edit for the whole folder of every other instance that exists at launch (instances, listing the space's instances
-// folder, without the run's own, configDir's name): their settings, memory and transcripts. A space folder or instance
-// name holding a glob character gets no directory and no rules, since the rules could not be written exactly. The
+// folder, without the run's own, configDir's name): their settings, memory and transcripts. A space folder holding a
+// glob character gets no directory and no rules, since the rules could not be written exactly; a folder in instances
+// named with one is not an instance and is skipped. The
 // profile's directories and deny rules come first and are kept, duplicates are dropped and every other permissions key
 // is kept; the profile's settings map is never modified (ADR-0068).
 func addSpaceDirectory(own map[string]any, spaceDir, configDir string, instances []string) {
@@ -189,8 +190,10 @@ func addSpaceDirectory(own map[string]any, spaceDir, configDir string, instances
 	self := filepath.Base(configDir)
 	var others []string
 	for _, id := range instances {
+		// SpaceMan's instance IDs never hold a glob character; a folder named like that is not an instance (a run may
+		// have made it), so it is skipped rather than costing every later launch its directory.
 		if id == "" || id == "." || id == ".." || strings.ContainsAny(id, globUnsafe+"/") {
-			return
+			continue
 		}
 		if id != self && !slices.Contains(others, id) {
 			others = append(others, id)

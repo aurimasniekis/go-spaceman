@@ -172,18 +172,26 @@ func TestClaudeDeniesOtherInstances(t *testing.T) {
 		t.Fatalf("strip %v", l.StripJSON)
 	}
 
-	// N2: glob characters in the space folder or an instance name: no directory and no rules at all.
-	for _, tc := range []struct{ space, inst string }{{"/data/spaces/sp*c", "ins_2"}, {"/data/spaces/s[p]c", "ins_2"}, {"/data/spaces/spc_a", "in?_2"},
-		{"/data/spaces/spc_a", "ins_{2}"}, {"/data/spaces/sp\\c", "ins_2"}, {"/data/spaces/spc!", "ins_2"}} {
+	// N2: glob characters in the space folder: no directory and no rules at all.
+	for _, space := range []string{"/data/spaces/sp*c", "/data/spaces/s[p]c", "/data/spaces/sp?c", "/data/spaces/sp{c}", "/data/spaces/sp\\c", "/data/spaces/spc!"} {
 		c := ctxFor(proto.LaunchPayload{Kind: "worker"})
-		c.SpaceDir, c.SpaceInstances = tc.space, []string{"ins_1", tc.inst}
+		c.SpaceDir, c.SpaceInstances = space, []string{"ins_1", "ins_2"}
 		l, err := Claude{}.Build(c)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if p := l.OwnJSON[cfgSettings]["permissions"].(map[string]any); p["additionalDirectories"] != nil || !reflect.DeepEqual(p["deny"], []string{"AskUserQuestion", "EnterPlanMode"}) {
-			t.Fatalf("%v: %v", tc, p)
+			t.Fatalf("%s: %v", space, p)
 		}
+	}
+	// A folder in instances named with a glob character is not an instance: skipped, the directory and rules stay.
+	c = ctxFor(proto.LaunchPayload{Kind: "worker"})
+	c.SpaceInstances = []string{"ins_1", "ins_2", "x*", "in?_3", "ins_[4]", "a{b}"}
+	l, _ = Claude{}.Build(c)
+	p = l.OwnJSON[cfgSettings]["permissions"].(map[string]any)
+	if !reflect.DeepEqual(p["deny"], append(withCreds("AskUserQuestion", "EnterPlanMode"), "Edit(//data/spaces/spc_a/instances/ins_2/**)")) ||
+		!reflect.DeepEqual(p["additionalDirectories"], []string{"/data/spaces/spc_a"}) {
+		t.Fatalf("glob-named folders: %v", p)
 	}
 }
 

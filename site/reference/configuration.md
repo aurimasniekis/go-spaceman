@@ -193,7 +193,7 @@ Bounds graceful shutdown.
 
 | Key | Default | Environment | Description |
 |---|---|---|---|
-| `shutdown.timeout` | `30s` | `SPACEMAN_SHUTDOWN_TIMEOUT` | How long central waits for requests and background work to finish on stop (1s to 10m). Keep it, plus 13 s for gateway mints and the database close, below the service manager's stop timeout ([shutdown budget](/operators/upgrade#upgrade-central-systemd)). |
+| `shutdown.timeout` | `30s` | `SPACEMAN_SHUTDOWN_TIMEOUT` | How long central waits for requests and background work to finish on stop (1s to 10m). Keep it below the service manager's stop timeout. |
 
 ## Node agent (`spaceman-agent`)
 
