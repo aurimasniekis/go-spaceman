@@ -77,6 +77,12 @@ counted as zero.
 - The cost budget adds up the harnesses' own estimates, with their assumptions (see
   [Usage and transcripts](/guide/usage)).
 
+**Hard limits come from Harbor Pilot.** A space that routes runs through the [Harbor Pilot
+gateway](/operators/harbor-pilot) also shows a **Harbor Pilot budgets** card on this page. Those budgets are enforced by
+Harbor Pilot itself on every request, and a used-up one refuses new launches of the routed harnesses at once, naming
+the budget, its spend and when it resets ([Budgets and usage](/operators/harbor-pilot#budgets-and-usage)). Usage that
+Harbor Pilot reads back for a Codex run counts toward the budgets above like any reported usage.
+
 ## Configuration and API
 
 Installation defaults are the `limits:` section of the configuration file (and `artifacts.space_quota_bytes` for

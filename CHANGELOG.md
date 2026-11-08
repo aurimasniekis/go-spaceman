@@ -32,8 +32,29 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     MCP client, with your API token as a bearer and exactly that token's grants. Browser requests, session cookies,
     the root token and internal tokens are refused, and each token is rate limited; each request carries one JSON-RPC
     message (batches and protocol versions before 2025-06-18 are refused). Dangerous calls and diagnostic launches
-    need an approval from someone other than the token's user, who may only deny or cancel their own client's request. Calls are audited via the token on the
-    `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
+    need an approval from someone other than the token's user, who may only deny or cancel their own client's
+    request. Calls are audited via the token on the `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
+- Harbor Pilot budgets and usage (ADR-0060, Proposed; HP-T5; migration 0043). They need the connection's
+  service-principal token (`usage.read`, `config.read`).
+  - **Limits page:** a space that routes runs through Harbor Pilot shows a **Harbor Pilot budgets** card. It lists the
+    budgets that cover the space: its project, the project's workspace, the connection's client binding, and global
+    ones. Each budget is labelled as a hard limit or warn only, with its spend, state and reset time. The card's state
+    is within budgets, warning, budget used up or status unavailable. It also shows the project's usage in the
+    current period, labelled **all clients**. The API is `GET /spaces/{id}/harbor-pilot/status`; the CLI is
+    `spaceman harbor-pilot status`.
+  - **Early refusal:** a launch of a routed harness is refused at once when a covering hard-limit budget is used up.
+    The refusal names the budget, its spend and its reset time. Control's automatic start raises "Control could not
+    start" with that reason. Warn-only budgets never refuse. When budget status can't be read, the space's
+    `on_budget_status_unavailable` decides (proceed by default, or refuse).
+  - **Mint check:** the run token's mint asks Harbor Pilot to check its budgets (`check_budget`), so Harbor Pilot can
+    refuse a run before its harness starts.
+  - **Per-run usage:** after a gateway run ends, central reads back what Harbor Pilot recorded for it
+    (`usage/summary?ref=spaceman.run:<run>` with the client binding). It reads about 15 s, 2 min and 10 min after the
+    end, and the last read is final. The figures show on the run's usage as gateway-observed. They become the run's
+    usage (source `harbor-pilot`) only when the harness reported none, as for Codex. A harness's own usage is never
+    overwritten.
+  - **Verified** against `harbor-pilot serve --demo` 0.1.3 (`make test-harbor-pilot`): a tiny budget was used up, then
+    the refusal and the mint refusal checked, and a run's usage was read back.
 - Gateway runs reach their harness (ADR-0060, Proposed; HP-T4; node protocol minor 9). **Update every node of a space
   before opting it in to Harbor Pilot:** a launch to an older agent fails as `agent_too_old` ("gateway runs need
   protocol minor 9 …: upgrade its agent") before a token is minted.

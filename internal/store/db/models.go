@@ -1122,6 +1122,23 @@ type RunGatewayCredential struct {
 	ParentFp     sql.NullString
 }
 
+type RunGatewayUsage struct {
+	RunID         string
+	SpaceID       string
+	State         string
+	EndedAt       int64
+	Reads         int64
+	Failures      int64
+	NextAttemptAt int64
+	ReadAt        sql.NullInt64
+	ModelsJson    string
+	CostsJson     string
+	Attempts      int64
+	UnknownUsage  int64
+	LastError     string
+	UpdatedAt     int64
+}
+
 type RunTakeover struct {
 	ID          string
 	RunID       string

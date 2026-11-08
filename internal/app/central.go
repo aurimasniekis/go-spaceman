@@ -102,6 +102,8 @@ type Central struct {
 	HarborPilot *harborpilot.Service
 	// HarborPilotRuns is the run-token lifecycle: routing, mint-or-reuse at dispatch, revocation (ADR-0060, HP-T3).
 	HarborPilotRuns *harborpilot.Lifecycle
+	// HarborPilotBudgets reads Harbor Pilot budget status: the early launch refusal and the Limits page (ADR-0060, HP-T5).
+	HarborPilotBudgets *harborpilot.Budgets
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
@@ -221,7 +223,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		}
 	}
 	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{Log: obs.Component(log, "harborpilot"), Wake: wakeDeadlines})
-	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{Metrics: m})
+	c.HarborPilotBudgets = harborpilot.NewBudgets(c.HarborPilot, harborpilot.BudgetsOptions{})
+	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{Metrics: m, Budget: c.HarborPilotBudgets})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
@@ -576,7 +579,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
@@ -702,6 +705,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		// Harbor Pilot run tokens (ADR-0060): queued revocations, and runs a node left unknown past its lease.
 		human.Deadline{Name: "gateway_revocations", Next: c.HarborPilotRuns.NextRevocation, Due: c.HarborPilotRuns.RevokeDue},
 		human.Deadline{Name: "gateway_lease_sweep", Next: c.Fleet.NextGatewayLeaseSweep, Due: c.Fleet.SweepGatewayLeases},
+		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
+		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
 		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
 	go c.Notifier.Run(ctx)
@@ -783,7 +788,7 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.

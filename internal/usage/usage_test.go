@@ -150,3 +150,45 @@ func TestTranscriptChunks(t *testing.T) {
 		t.Fatalf("transcript state: %+v", u.Transcript)
 	}
 }
+
+// SM-GW-008: a gateway run's read-back is returned with its usage as gateway-observed figures; a node can't claim the
+// harbor-pilot source, and an "unavailable" report never replaces usage Harbor Pilot filled in, while the harness's own
+// figures do.
+func TestGatewayUsage(t *testing.T) {
+	svc, ctx := newSvc(t)
+	if u, _ := svc.ForRun(ctx, "spc_a", runC); u.Gateway != nil {
+		t.Fatal("gateway usage on a run without a read-back")
+	}
+	svc.Report(ctx, "nod_1", proto.UsageReport{RunID: runC, Source: proto.UsageHarborPilot, Final: true})
+	if u, _ := svc.ForRun(ctx, "spc_a", runC); u.Source != proto.UsageUnavailable {
+		t.Fatalf("a node claimed the harbor-pilot source: %+v", u)
+	}
+	if err := svc.s.W().TxNamed(ctx, "seed", func(tx *store.Tx) error {
+		for _, q := range []string{
+			`INSERT INTO run_gateway_usage (run_id, space_id, state, ended_at, reads, next_attempt_at, read_at, models_json, costs_json, attempts, unknown_usage, updated_at)
+				VALUES ('` + runC + `', 'spc_a', 'pending', 0, 1, 0, 5, '[{"model":"coding/default","input_tokens":9,"requests":2}]',
+				'[{"kind":"estimated_api_charge","currency":"USD","amount":"0.01"}]', 2, 1, 5)`,
+			`INSERT INTO run_usage (run_id, space_id, source, models_json, final, note, updated_at) VALUES ('` + runC + `', 'spc_a', 'harbor-pilot', '[{"model":"coding/default","requests":2}]', 0, '', 5)`,
+		} {
+			if _, err := tx.SQL.ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := svc.ForRun(ctx, "spc_a", runC)
+	if err != nil || u.Source != proto.UsageHarborPilot || !u.Known || u.Gateway == nil || u.Gateway.State != "pending" || u.Gateway.Requests != 2 ||
+		u.Gateway.UnknownUsage != 1 || len(u.Gateway.Models) != 1 || len(u.Gateway.Costs) != 1 || u.Gateway.ReadAt == nil || u.Gateway.Source != proto.UsageHarborPilot {
+		t.Fatalf("gateway usage %+v %v", u, err)
+	}
+	svc.Report(ctx, "nod_1", proto.UsageReport{RunID: runC, Source: proto.UsageUnavailable, Final: true})
+	if u, _ := svc.ForRun(ctx, "spc_a", runC); u.Source != proto.UsageHarborPilot {
+		t.Fatalf("unavailable replaced the gateway's figures: %+v", u)
+	}
+	svc.Report(ctx, "nod_1", proto.UsageReport{RunID: runC, Source: proto.UsageClaudeTranscript, Final: true, Models: []proto.ModelUsage{{Model: "m", Requests: 3}}})
+	if u, _ := svc.ForRun(ctx, "spc_a", runC); u.Source != proto.UsageClaudeTranscript || u.Gateway == nil {
+		t.Fatalf("the harness's figures didn't replace the fill: %+v", u)
+	}
+}

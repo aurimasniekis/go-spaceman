@@ -40,3 +40,59 @@ export function gatewayAddressChanged(
   const curRun = origin(current.run_base_url) || origin(current.base_url)
   return base !== origin(current.base_url) || run !== curRun || (insecure && !current.allow_insecure_http)
 }
+
+/** The overall Harbor Pilot status of a space (HP-T5): its badge label and colour. */
+export const STATUS_BADGE: Record<string, { label: string; color: string }> = {
+  ok: { label: 'Within budgets', color: 'owlGreen' },
+  warning: { label: 'Warning', color: 'owlYellow' },
+  exceeded: { label: 'Budget used up: launches refused', color: 'owlRed' },
+  unavailable: { label: 'Status unavailable', color: 'gray' },
+  off: { label: 'Not enabled', color: 'gray' },
+}
+
+/** One budget's state: its badge label and colour. A used-up warn-only budget only warns. */
+export function budgetBadge(state: string, enforcement: string): { label: string; color: string } {
+  switch (state) {
+    case 'exceeded':
+      return enforcement === 'block' ? { label: 'Used up', color: 'owlRed' } : { label: 'Over (warn only)', color: 'owlYellow' }
+    case 'warning':
+      return { label: 'Warning', color: 'owlYellow' }
+    case 'ok':
+      return { label: 'OK', color: 'owlGreen' }
+    case 'disabled':
+      return { label: 'Disabled', color: 'gray' }
+  }
+  return { label: state, color: 'gray' }
+}
+
+/** What a budget covers, e.g. "Project prj_…", "Client binding cbn_…", "Every request". */
+export function scopeLabel(scope: string, scopeID: string): string {
+  switch (scope) {
+    case 'project':
+      return `Project ${scopeID}`
+    case 'workspace':
+      return `Workspace ${scopeID}`
+    case 'binding':
+      return `Client binding ${scopeID}`
+    case 'global':
+      return 'Every request'
+  }
+  return `${scope} ${scopeID}`.trim()
+}
+
+/** How far a budget is used, as a percentage for a progress bar (0-100). */
+export const usedPercent = (fraction: number) => Math.max(0, Math.min(100, Math.round(fraction * 100)))
+
+const COST_KIND: Record<string, string> = {
+  actual_api_charge: 'charged',
+  estimated_api_charge: 'estimated',
+  list_equivalent: 'at list prices',
+  subscription_fee: 'subscription',
+  allocation: 'allocated',
+}
+
+/** A Harbor Pilot cost entry, e.g. "0.0123 USD estimated". Categories are never summed. */
+export const costLabel = (c: { kind: string; currency: string; amount: string }) => `${c.amount} ${c.currency} ${COST_KIND[c.kind] ?? c.kind}`
+
+/** What a project usage window covers: "this day", "this month", or "the last 30 days". */
+export const windowLabel = (w: string) => (w === 'last_30_days' ? 'the last 30 days' : `this ${w}`)

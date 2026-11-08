@@ -6473,6 +6473,194 @@
         ],
         "type": "object"
       },
+      "HarborpilotCostAmount": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "currency",
+          "amount"
+        ],
+        "type": "object"
+      },
+      "HarborpilotCovering": {
+        "additionalProperties": false,
+        "properties": {
+          "blocking": {
+            "description": "Enabled, enforced with block, and used up: launches are refused",
+            "type": "boolean"
+          },
+          "budget_id": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "enforcement": {
+            "description": "block: Harbor Pilot refuses requests once it is used up (a hard limit); warn: it only warns",
+            "enum": [
+              "block",
+              "warn"
+            ],
+            "type": "string"
+          },
+          "fraction": {
+            "description": "(spent + reserved) / limit",
+            "format": "double",
+            "type": "number"
+          },
+          "limit": {
+            "type": "string"
+          },
+          "name": {
+            "description": "Harbor Pilot's budget name (untrusted text)",
+            "type": "string"
+          },
+          "period": {
+            "type": "string"
+          },
+          "period_end": {
+            "description": "When the current period ends and the budget resets",
+            "format": "date-time",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reserved": {
+            "description": "Estimated cost of requests in flight",
+            "type": "string"
+          },
+          "scope": {
+            "description": "What the budget covers: every request, the project's workspace, the space's project, or SpaceMan's client binding",
+            "enum": [
+              "global",
+              "workspace",
+              "project",
+              "binding"
+            ],
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "spent": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "ok",
+              "warning",
+              "exceeded",
+              "disabled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "budget_id",
+          "name",
+          "scope",
+          "scope_id",
+          "period",
+          "period_start",
+          "period_end",
+          "currency",
+          "enforcement",
+          "state",
+          "limit",
+          "spent",
+          "reserved",
+          "fraction",
+          "blocking"
+        ],
+        "type": "object"
+      },
+      "HarborpilotProjectUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_read_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cache_write_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "clients": {
+            "description": "Always all: every client of the project, not only this space's runs",
+            "enum": [
+              "all"
+            ],
+            "type": "string"
+          },
+          "costs": {
+            "description": "Per category and currency; categories are never summed",
+            "items": {
+              "$ref": "#/components/schemas/HarborpilotCostAmount"
+            },
+            "type": "array"
+          },
+          "from": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "input_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "requests": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "to": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "unknown_usage_requests": {
+            "description": "Requests whose usage the provider did not report (not counted as zero)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "window": {
+            "description": "What From covers: the current period of the project's budget (e.g. day), or last_30_days",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "clients",
+          "from",
+          "to",
+          "window",
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "cache_read_tokens",
+          "cache_write_tokens",
+          "unknown_usage_requests",
+          "costs"
+        ],
+        "type": "object"
+      },
       "HarborpilotSpaceInput": {
         "additionalProperties": false,
         "properties": {
@@ -6615,6 +6803,96 @@
           "connected",
           "warnings",
           "version"
+        ],
+        "type": "object"
+      },
+      "HarborpilotSpaceStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/HarborpilotSpaceStatus.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "budgets": {
+            "description": "Budgets covering the space: its project, the project's workspace, the connection's client binding, and global ones",
+            "items": {
+              "$ref": "#/components/schemas/HarborpilotCovering"
+            },
+            "type": "array"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "fetched_at": {
+            "description": "When Harbor Pilot was read (status is reused for 30 s)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "harnesses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "on_budget_status_unavailable": {
+            "enum": [
+              "proceed",
+              "refuse"
+            ],
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "harbor-pilot"
+            ],
+            "type": "string"
+          },
+          "space_id": {
+            "type": "string"
+          },
+          "state": {
+            "description": "exceeded: a covering blocking budget is used up and launches are refused",
+            "enum": [
+              "off",
+              "ok",
+              "warning",
+              "exceeded",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "unavailable": {
+            "description": "Why budget status can't be read",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/HarborpilotProjectUsage"
+          },
+          "usage_unavailable": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "space_id",
+          "source",
+          "state",
+          "connected",
+          "enabled",
+          "project_id",
+          "harnesses",
+          "on_budget_status_unavailable",
+          "budgets"
         ],
         "type": "object"
       },
@@ -16124,6 +16402,10 @@
           "final": {
             "type": "boolean"
           },
+          "gateway": {
+            "$ref": "#/components/schemas/UsageGatewayUsage",
+            "description": "What the LLM gateway (Harbor Pilot) observed for a gateway run, read back after it ended"
+          },
           "harness": {
             "type": "string"
           },
@@ -16172,6 +16454,85 @@
           "models",
           "final",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "UsageGatewayCost": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "description": "Decimal amount",
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "currency",
+          "amount"
+        ],
+        "type": "object"
+      },
+      "UsageGatewayUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "costs": {
+            "description": "Harbor Pilot's cost totals per category and currency (categories are never summed)",
+            "items": {
+              "$ref": "#/components/schemas/UsageGatewayCost"
+            },
+            "type": "array"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ProtoModelUsage"
+            },
+            "type": "array"
+          },
+          "note": {
+            "type": "string"
+          },
+          "read_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "requests": {
+            "description": "Attempts Harbor Pilot recorded",
+            "format": "int64",
+            "type": "integer"
+          },
+          "source": {
+            "description": "Always harbor-pilot",
+            "type": "string"
+          },
+          "state": {
+            "description": "pending: more reads are due, figures may still grow; final: the last read is stored; failed and unavailable: see note",
+            "enum": [
+              "pending",
+              "final",
+              "failed",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "unknown_usage_requests": {
+            "description": "Attempts whose token usage the provider did not report (not counted as zero)",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "state",
+          "models",
+          "costs",
+          "requests",
+          "unknown_usage_requests"
         ],
         "type": "object"
       },
@@ -23578,6 +23939,49 @@
           }
         },
         "summary": "Set a space's Harbor Pilot settings",
+        "tags": [
+          "harbor-pilot"
+        ]
+      }
+    },
+    "/spaces/{space_id}/harbor-pilot/status": {
+      "get": {
+        "description": "The Harbor Pilot budgets covering the space (its project, the project's workspace, the connection's client binding and global budgets; account budgets are left out), with their state, spend, limit and reset time, and the project's usage over all Harbor Pilot clients. Budgets enforced with block are hard limits: a used-up one refuses launches, and Harbor Pilot refuses the requests. Read with the connection's service-principal token and reused for 30 s; state unavailable says why it can't be read.",
+        "operationId": "get-space-harbor-pilot-status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "space_id",
+            "required": true,
+            "schema": {
+              "pattern": "^spc_[0-9a-z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarborpilotSpaceStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "A space's Harbor Pilot budget status and project usage",
         "tags": [
           "harbor-pilot"
         ]

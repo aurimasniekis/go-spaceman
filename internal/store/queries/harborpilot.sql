@@ -137,3 +137,44 @@ SELECT id FROM tasks WHERE assignee_run = sqlc.arg(run_id) ORDER BY updated_at D
 
 -- name: ClearRunGatewayTokenFor :execrows
 UPDATE run_gateway_credentials SET token_enc = NULL WHERE run_id = ? AND credential_id = ? AND token_enc IS NOT NULL;
+
+-- name: QueueRunGatewayUsage :execrows
+INSERT INTO run_gateway_usage (run_id, space_id, ended_at, next_attempt_at, updated_at)
+SELECT c.run_id, c.space_id, sqlc.arg(now), sqlc.arg(next_at), sqlc.arg(now) FROM run_gateway_credentials c WHERE c.run_id = sqlc.arg(run_id)
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: QueueSpaceGatewayUsage :execrows
+INSERT INTO run_gateway_usage (run_id, space_id, ended_at, next_attempt_at, updated_at)
+SELECT c.run_id, c.space_id, sqlc.arg(now), sqlc.arg(next_at), sqlc.arg(now) FROM run_gateway_credentials c
+WHERE c.space_id = sqlc.arg(space_id) AND c.token_enc IS NOT NULL
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: NextGatewayUsageRead :one
+SELECT CAST(COALESCE(MIN(next_attempt_at), 0) AS INTEGER) FROM run_gateway_usage WHERE state = 'pending';
+
+-- name: ListDueGatewayUsage :many
+SELECT u.*, r.created_at AS run_created_at FROM run_gateway_usage u JOIN runs r ON r.id = u.run_id
+WHERE u.state = 'pending' AND u.next_attempt_at <= sqlc.arg(now) ORDER BY u.next_attempt_at LIMIT sqlc.arg(lim);
+
+-- name: GetRunGatewayUsage :one
+SELECT * FROM run_gateway_usage WHERE run_id = ?;
+
+-- name: SetGatewayUsageRead :execrows
+UPDATE run_gateway_usage SET state = sqlc.arg(state), reads = reads + 1, failures = 0, next_attempt_at = sqlc.arg(next_attempt_at),
+  read_at = sqlc.arg(now), models_json = sqlc.arg(models_json), costs_json = sqlc.arg(costs_json), attempts = sqlc.arg(attempts),
+  unknown_usage = sqlc.arg(unknown_usage), last_error = '', updated_at = sqlc.arg(now)
+WHERE run_id = sqlc.arg(run_id) AND state = 'pending';
+
+-- name: SetGatewayUsageFailure :execrows
+UPDATE run_gateway_usage SET state = sqlc.arg(state), failures = failures + 1, next_attempt_at = sqlc.arg(next_attempt_at),
+  last_error = sqlc.arg(last_error), updated_at = sqlc.arg(now)
+WHERE run_id = sqlc.arg(run_id) AND state = 'pending';
+
+-- name: FillRunUsageFromGateway :exec
+-- Gateway-observed usage fills a run's usage only where its harness reported none (no row, or source unavailable), and
+-- updates its own earlier fill. A harness's own usage is never overwritten.
+INSERT INTO run_usage (run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at)
+VALUES (sqlc.arg(run_id), sqlc.arg(space_id), 'harbor-pilot', sqlc.arg(models_json), sqlc.arg(estimate_json), NULL, sqlc.arg(final), sqlc.arg(note), sqlc.arg(updated_at))
+ON CONFLICT (run_id) DO UPDATE SET source = excluded.source, models_json = excluded.models_json, estimate_json = excluded.estimate_json,
+  final = excluded.final, note = excluded.note, updated_at = excluded.updated_at
+WHERE run_usage.source IN ('unavailable', 'harbor-pilot');

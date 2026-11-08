@@ -132,6 +132,17 @@ func TestHarborPilotPermissionsOverHTTP(t *testing.T) {
 	expect(t, op.do("PUT", base, map[string]any{"enabled": false}, "If-Match", `"5"`), 200)
 	expect(t, op.do("PUT", base, map[string]any{"enabled": true}, "If-Match", `"6"`), 200)
 
+	// HP-T5: the space's Harbor Pilot status needs space configuration read; this connection has no service-principal
+	// token, so budget status is unavailable, and says why.
+	r = viewer.do("GET", base+"/status", nil)
+	expect(t, r, 200)
+	var st harborpilot.SpaceStatus
+	r.json(t, &st)
+	if st.State != harborpilot.StatusUnavailable || st.Source != "harbor-pilot" || !strings.Contains(st.Unavailable, "no service-principal token") || st.ProjectID != "prj_web" {
+		t.Fatalf("status %+v", st)
+	}
+	expect(t, other.do("GET", base+"/status", nil), 404)
+
 	// Deleting the connection is refused while a space routes runs through it.
 	expect(t, root.do("DELETE", "/harbor-pilot/connection", nil), 428)
 	if r := root.do("DELETE", "/harbor-pilot/connection", nil, "If-Match", `"2"`); r.status != 409 || !strings.Contains(string(r.body), "route runs through Harbor Pilot") {

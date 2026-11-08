@@ -1953,6 +1953,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/harbor-pilot/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's Harbor Pilot budget status and project usage
+         * @description The Harbor Pilot budgets covering the space (its project, the project's workspace, the connection's client binding and global budgets; account budgets are left out), with their state, spend, limit and reset time, and the project's usage over all Harbor Pilot clients. Budgets enforced with block are hard limits: a used-up one refuses launches, and Harbor Pilot refuses the requests. Read with the connection's service-principal token and reused for 30 s; state unavailable says why it can't be read.
+         */
+        get: operations["get-space-harbor-pilot-status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/human-actions": {
         parameters: {
             query?: never;
@@ -6671,6 +6691,80 @@ export interface components {
             /** @description A Harbor Pilot service-principal token (hpa_…) with usage.read and config.read, for budget status and project checks. Empty keeps the current one, except when the gateway address changes (then send it again or set remove_service_token). Never returned */
             service_token?: string;
         };
+        HarborpilotCostAmount: {
+            amount: string;
+            currency: string;
+            kind: string;
+        };
+        HarborpilotCovering: {
+            /** @description Enabled, enforced with block, and used up: launches are refused */
+            blocking: boolean;
+            budget_id: string;
+            currency: string;
+            /**
+             * @description block: Harbor Pilot refuses requests once it is used up (a hard limit); warn: it only warns
+             * @enum {string}
+             */
+            enforcement: "block" | "warn";
+            /**
+             * Format: double
+             * @description (spent + reserved) / limit
+             */
+            fraction: number;
+            limit: string;
+            /** @description Harbor Pilot's budget name (untrusted text) */
+            name: string;
+            period: string;
+            /**
+             * Format: date-time
+             * @description When the current period ends and the budget resets
+             */
+            period_end: string;
+            /** Format: date-time */
+            period_start: string;
+            /** @description Estimated cost of requests in flight */
+            reserved: string;
+            /**
+             * @description What the budget covers: every request, the project's workspace, the space's project, or SpaceMan's client binding
+             * @enum {string}
+             */
+            scope: "global" | "workspace" | "project" | "binding";
+            scope_id: string;
+            spent: string;
+            /** @enum {string} */
+            state: "ok" | "warning" | "exceeded" | "disabled";
+        };
+        HarborpilotProjectUsage: {
+            /** Format: int64 */
+            cache_read_tokens: number;
+            /** Format: int64 */
+            cache_write_tokens: number;
+            /**
+             * @description Always all: every client of the project, not only this space's runs
+             * @enum {string}
+             */
+            clients: "all";
+            /** @description Per category and currency; categories are never summed */
+            costs: components["schemas"]["HarborpilotCostAmount"][];
+            /** Format: date-time */
+            from: string;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            project_id: string;
+            /** Format: int64 */
+            requests: number;
+            /** Format: date-time */
+            to: string;
+            /**
+             * Format: int64
+             * @description Requests whose usage the provider did not report (not counted as zero)
+             */
+            unknown_usage_requests: number;
+            /** @description What From covers: the current period of the project's budget (e.g. day), or last_30_days */
+            window: string;
+        };
         HarborpilotSpaceInput: {
             /**
              * Format: uri
@@ -6731,6 +6825,39 @@ export interface components {
             /** Format: int64 */
             version: number;
             warnings: string[];
+        };
+        HarborpilotSpaceStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotSpaceStatus.json
+             */
+            readonly $schema?: string;
+            /** @description Budgets covering the space: its project, the project's workspace, the connection's client binding, and global ones */
+            budgets: components["schemas"]["HarborpilotCovering"][];
+            connected: boolean;
+            enabled: boolean;
+            /**
+             * Format: date-time
+             * @description When Harbor Pilot was read (status is reused for 30 s)
+             */
+            fetched_at?: string;
+            harnesses: string[];
+            /** @enum {string} */
+            on_budget_status_unavailable: "proceed" | "refuse";
+            project_id: string;
+            /** @enum {string} */
+            source: "harbor-pilot";
+            space_id: string;
+            /**
+             * @description exceeded: a covering blocking budget is used up and launches are refused
+             * @enum {string}
+             */
+            state: "off" | "ok" | "warning" | "exceeded" | "unavailable";
+            /** @description Why budget status can't be read */
+            unavailable?: string;
+            usage?: components["schemas"]["HarborpilotProjectUsage"];
+            usage_unavailable?: string;
         };
         HttpCookie: {
             Domain: string;
@@ -10292,6 +10419,8 @@ export interface components {
             readonly $schema?: string;
             estimate?: components["schemas"]["ProtoCostEstimate"];
             final: boolean;
+            /** @description What the LLM gateway (Harbor Pilot) observed for a gateway run, read back after it ended */
+            gateway?: components["schemas"]["UsageGatewayUsage"];
             harness?: string;
             kind?: string;
             /** @description Token counts are known */
@@ -10307,6 +10436,37 @@ export interface components {
             transcript?: components["schemas"]["UsageTranscript"];
             /** Format: date-time */
             updated_at: string;
+        };
+        UsageGatewayCost: {
+            /** @description Decimal amount */
+            amount: string;
+            currency: string;
+            kind: string;
+        };
+        UsageGatewayUsage: {
+            /** @description Harbor Pilot's cost totals per category and currency (categories are never summed) */
+            costs: components["schemas"]["UsageGatewayCost"][];
+            models: components["schemas"]["ProtoModelUsage"][];
+            note?: string;
+            /** Format: date-time */
+            read_at?: string;
+            /**
+             * Format: int64
+             * @description Attempts Harbor Pilot recorded
+             */
+            requests: number;
+            /** @description Always harbor-pilot */
+            source: string;
+            /**
+             * @description pending: more reads are due, figures may still grow; final: the last read is stored; failed and unavailable: see note
+             * @enum {string}
+             */
+            state: "pending" | "final" | "failed" | "unavailable";
+            /**
+             * Format: int64
+             * @description Attempts whose token usage the provider did not report (not counted as zero)
+             */
+            unknown_usage_requests: number;
         };
         UsageSummary: {
             /**
@@ -15312,6 +15472,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-space-harbor-pilot-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotSpaceStatus"];
+                };
             };
             /** @description Error */
             default: {

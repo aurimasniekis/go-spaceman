@@ -20,6 +20,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -58,7 +59,7 @@ const (
 // Error is a Harbor Pilot failure. Message is Harbor Pilot's own error message, cut to a fixed bound and sanitised: it
 // is untrusted text (T-03), shown only as part of a reason.
 type Error struct {
-	Op       string // mint, revoke, budget_status, get_project
+	Op       string // mint, revoke, budget_status, get_project, usage_summary
 	Class    Class
 	Status   int    // HTTP status; 0 for a transport failure
 	Type     string // Harbor Pilot's error type (gateway routes), e.g. permission_error
@@ -348,6 +349,83 @@ func (c *Client) GetProject(ctx context.Context, serviceToken, id string) (*Proj
 		return nil, err
 	}
 	return &p, nil
+}
+
+// UsageTokens are a usage group's token counts. UnknownUsage counts attempts whose usage the provider did not report
+// (Harbor Pilot counts them, never assumes zero).
+type UsageTokens struct {
+	Input        int64 `json:"input"`
+	Output       int64 `json:"output"`
+	CacheRead    int64 `json:"cache_read"`
+	CacheWrite   int64 `json:"cache_write"`
+	Reasoning    int64 `json:"reasoning"`
+	UnknownUsage int64 `json:"unknown_usage_attempts"`
+}
+
+// CostAmount is a cost in one category (estimated_api_charge, actual_api_charge, list_equivalent, subscription_fee,
+// allocation) and currency. Amount is a decimal string; categories are never summed together.
+type CostAmount struct {
+	Kind     string `json:"kind"`
+	Currency string `json:"currency"`
+	Amount   string `json:"amount"`
+}
+
+// UsageGroup is one group of a usage summary.
+type UsageGroup struct {
+	Key      string       `json:"key"`
+	Label    string       `json:"label"`
+	Attempts int64        `json:"attempts"`
+	Tokens   UsageTokens  `json:"tokens"`
+	Costs    []CostAmount `json:"costs"`
+}
+
+// UsageSummary is the part of GET /api/v1/usage/summary SpaceMan reads.
+type UsageSummary struct {
+	From    time.Time    `json:"from"`
+	To      time.Time    `json:"to"`
+	GroupBy string       `json:"group_by"`
+	Groups  []UsageGroup `json:"groups"`
+	Totals  []CostAmount `json:"totals"`
+}
+
+// UsageQuery selects a usage summary: a group_by dimension (model, project, …), trusted-ref filters (key → value,
+// at most 4) and a binding, over [From, To) (zero: Harbor Pilot's default, the last 30 days).
+type UsageQuery struct {
+	GroupBy   string
+	Refs      map[string]string
+	BindingID string
+	From, To  time.Time
+}
+
+// UsageSummary reads usage and cost (service-principal token with usage.read; ref filters need Harbor Pilot 0.1.2+).
+func (c *Client) UsageSummary(ctx context.Context, serviceToken string, in UsageQuery) (*UsageSummary, error) {
+	q := url.Values{}
+	if in.GroupBy != "" {
+		q.Set("group_by", in.GroupBy)
+	}
+	keys := make([]string, 0, len(in.Refs))
+	for k := range in.Refs {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		q.Add("ref", k+":"+in.Refs[k])
+	}
+	if in.BindingID != "" {
+		q.Set("binding_id", in.BindingID)
+	}
+	if !in.From.IsZero() {
+		q.Set("from", in.From.UTC().Format(time.RFC3339))
+	}
+	if !in.To.IsZero() {
+		q.Set("to", in.To.UTC().Format(time.RFC3339))
+	}
+	q.Set("limit", "500")
+	var out UsageSummary
+	if err := c.do(ctx, "usage_summary", http.MethodGet, "/api/v1/usage/summary?"+q.Encode(), serviceToken, nil, http.StatusOK, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 const maxBody = 1 << 20

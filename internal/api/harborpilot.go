@@ -21,6 +21,7 @@ var HarborPilotRules = map[string]Rule{
 	"get-space-harbor-pilot":         InSpace(authz.SpaceConfigRead),
 	"put-space-harbor-pilot":         InSpace(authz.SpaceConfigWrite),
 	"delete-space-harbor-pilot":      InSpace(authz.SpaceConfigWrite),
+	"get-space-harbor-pilot-status":  InSpace(authz.SpaceConfigRead),
 }
 
 type harborPilotConnectionOut struct {
@@ -33,8 +34,12 @@ type spaceHarborPilotOut struct {
 	Body *harborpilot.SpaceSettings
 }
 
-// RegisterHarborPilot registers the Harbor Pilot connection and space settings operations.
-func RegisterHarborPilot(svc *harborpilot.Service) func(api huma.API, d *Deps) {
+type spaceHarborPilotStatusOut struct {
+	Body *harborpilot.SpaceStatus
+}
+
+// RegisterHarborPilot registers the Harbor Pilot connection, space settings and status operations.
+func RegisterHarborPilot(svc *harborpilot.Service, budgets *harborpilot.Budgets) func(api huma.API, d *Deps) {
 	return func(api huma.API, d *Deps) {
 		tags := []string{"harbor-pilot"}
 		huma.Register(api, huma.Operation{OperationID: "get-harbor-pilot-connection", Method: http.MethodGet, Path: "/harbor-pilot/connection",
@@ -114,6 +119,20 @@ func RegisterHarborPilot(svc *harborpilot.Service) func(api huma.API, d *Deps) {
 					return nil, d.fail(ctx, "harborpilot.put_space", err)
 				}
 				return &spaceHarborPilotOut{ETag: ETag(s.Version), Body: s}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-space-harbor-pilot-status", Method: http.MethodGet, Path: "/spaces/{space_id}/harbor-pilot/status",
+			Summary: "A space's Harbor Pilot budget status and project usage",
+			Description: "The Harbor Pilot budgets covering the space (its project, the project's workspace, the connection's client binding and " +
+				"global budgets; account budgets are left out), with their state, spend, limit and reset time, and the project's usage over all " +
+				"Harbor Pilot clients. Budgets enforced with block are hard limits: a used-up one refuses launches, and Harbor Pilot refuses the " +
+				"requests. Read with the connection's service-principal token and reused for 30 s; state unavailable says why it can't be read.",
+			Tags: tags},
+			func(ctx context.Context, in *SpacePath) (*spaceHarborPilotStatusOut, error) {
+				st, err := budgets.SpaceStatus(ctx, in.SpaceID)
+				if err != nil {
+					return nil, d.fail(ctx, "harborpilot.space_status", err)
+				}
+				return &spaceHarborPilotStatusOut{Body: st}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "delete-space-harbor-pilot", Method: http.MethodDelete, Path: "/spaces/{space_id}/harbor-pilot",
 			Summary: "Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot)", Tags: tags, DefaultStatus: http.StatusNoContent},

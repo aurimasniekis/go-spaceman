@@ -118,6 +118,22 @@
   `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
 - **Demo evidence only.** Connection checks ran against a real `harbor-pilot serve --demo` 0.1.3 with synthetic
   upstreams, not against a production gateway.
+- **The early budget refusal is advisory and up to 30 s old.** SpaceMan reuses a budget status read for 30 s (5 s
+  after a failed read), so a budget used up in that window can let a launch through. Harbor Pilot then refuses the
+  run's token mint (`check_budget`) or its requests. The check can't see a request in flight that is about to push a
+  budget over its limit. A budget with no spend yet passes even when the first request is then refused for its own
+  estimate (Harbor Pilot's rule). Budgets on an upstream account are not shown or checked, because they cover
+  whichever account serves a request, not a space. Harbor Pilot doesn't check them at mint either.
+- **Workspace budgets need `config.read`.** Finding the project's workspace needs the service-principal token's
+  `config.read`. It is looked up only when a workspace budget exists, and cached for 10 minutes. If the lookup fails,
+  budget status is unavailable for the space, and its `on_budget_status_unavailable` decides.
+- **Project usage counts every client.** The Limits card's project usage is Harbor Pilot's usage of the project over all
+  its clients, not only this space's runs. Several spaces sharing a project see the same figures.
+- **Per-run usage arrives late and may miss a slow request.** A gateway run's usage is read about 15 s, 2 min and 10 min
+  after its end. A request still streaming after the last read is not counted. A run that ended while no
+  service-principal token was set gets no usage. A read failing for an hour is given up, and the run keeps what it had.
+  Usage is never written as zero. Harbor Pilot counts requests whose provider reported no usage; their tokens are
+  unknown and not counted.
 - **Only project budgets map to a space.** The `harbor-pilot-budget` template routes a project-scoped budget to the
   space whose subscription names that project. Quota windows, blocked requests and binding, workspace, account or global
   budgets name no project: they reach only spaces that subscribe to them, and nothing routes them automatically (Q4 is
@@ -134,7 +150,8 @@
   quarantined, not shown.
 
 ## Usage and transcripts
-- **Codex usage is unknown.** Its records are not verified, so Codex runs show unknown usage (never zero).
+- **Codex usage is unknown** unless the run went through Harbor Pilot. Its records are not verified, so direct Codex
+  runs show unknown usage (never zero). Gateway runs get Harbor Pilot's figures after they end (source `harbor-pilot`).
 - **Cost figures are the harness's own estimates** at list prices; SpaceMan has no price list and cannot enforce
   spending limits from usage that arrives after the fact. Budgets (ADR-0036) warn and stop new runs once reported usage
   passes them; runs already started can go past a budget, and runs with unknown usage are not counted.

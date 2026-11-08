@@ -96,12 +96,22 @@ func (e *gwEnv) revoked(id, reason string) {
 	if n := e.count(`SELECT count(*) FROM run_gateway_credentials WHERE run_id = ? AND token_enc IS NOT NULL`, id); n != 0 {
 		e.t.Fatalf("%s: sealed token kept after its revocation was queued", id)
 	}
+	// HP-T5: the same transaction queues the run's usage read-back, once, first due GatewayUsageFirstRead later.
+	if e.count(`SELECT count(*) FROM runs WHERE id = ?`, id) == 1 {
+		if n := e.count(`SELECT count(*) FROM run_gateway_usage WHERE run_id = ? AND state = 'pending' AND next_attempt_at = ended_at + ?`,
+			id, GatewayUsageFirstRead.Microseconds()); n != 1 {
+			e.t.Fatalf("%s: %d usage read-backs queued, want 1", id, n)
+		}
+	}
 }
 
 func (e *gwEnv) notRevoked(id string) {
 	e.t.Helper()
 	if n := e.count(`SELECT count(*) FROM gateway_revocations WHERE run_id = ?`, id); n != 0 {
 		e.t.Fatalf("%s: revocation queued too early", id)
+	}
+	if n := e.count(`SELECT count(*) FROM run_gateway_usage WHERE run_id = ?`, id); n != 0 {
+		e.t.Fatalf("%s: usage read-back queued too early", id)
 	}
 }
 

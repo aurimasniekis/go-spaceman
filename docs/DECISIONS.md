@@ -2318,7 +2318,8 @@
   the stored tokens; decision 3's central-side rules) and the version probe of decision 8. HP-T3: central's side of
   decisions 4 and 5 (routing without fallback, mint-or-reuse at dispatch, revocation on every end path; see
   "Implementation notes (HP-T3)" below). HP-T4: decision 6, delivery to the harness on the node (protocol minor 9; see
-  "Implementation notes (HP-T4)" below). The budget pre-check is HP-T5. Contract:
+  "Implementation notes (HP-T4)" below). HP-T5: the budget pre-check, the Limits card and per-run usage (decisions 4
+  and 7; see "Implementation notes (HP-T5)" below). Contract:
   `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
   the 0.1.3 re-run).
   - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
@@ -2656,6 +2657,45 @@
   - **Q6, per-harness opt-in:** yes, with a `harnesses` list open to any harness HP can serve.
   - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` (0.1.1, then 0.1.3), with a
     placeholder kept for a live run.
+
+- **Implementation notes (HP-T5, 2026-11-08).** Decisions 4 and 7; none weakens them.
+  - **Which budgets cover a space.** Budget status has no filters, so central selects: `project` = the space's
+    project, `workspace` = that project's workspace (looked up with `config.read` only when a workspace budget exists,
+    cached 10 min), `binding` = the connection's client binding (every run token is minted under it, so its trusted
+    refs carry it), and `global`. `account` budgets are left out: they cover whichever upstream account serves a
+    request, not a space, and Harbor Pilot doesn't check them at mint either. A disabled budget is shown as disabled.
+  - **Cache.** One budget status read per connection, reused for 30 s (a failed read for 5 s), single flight, read
+    outside any transaction. A cached read is keyed on the connection's id, version, service-token version and
+    address, so a connection write is never answered from an older read.
+  - **Refusal.** A covering budget that is enabled, enforced with `block` and `exceeded` refuses the launch in
+    `PreLaunch` with `rate_limited`, for example: `Harbor Pilot budget "daily" (project prj_web) is used up for
+    this day: 0.12 of 0.10 USD spent; it resets at 2026-11-09T00:00:00Z`. Names and ids are Harbor Pilot's text, so they
+    are sanitised and bounded (T-37). Warn-only budgets never refuse. Control's auto-start already turns a launch
+    error into "Control could not start" with the error, so nothing was added there. Status that can't be read (no
+    service-principal token, a failed read, a failed workspace lookup) follows `on_budget_status_unavailable`:
+    `proceed` logs and goes on, `refuse` answers `unavailable` with the reason.
+  - **Mint check.** The dispatch mint sends `check_budget: true`. Harbor Pilot's 429 `budget_exceeded` is not retried
+    and fails the run as `gateway_unavailable` with Harbor Pilot's message. Its 502 "could not check budgets" is
+    retried like any 5xx, then fails the run the same way (decision 4: a mint failure, not a budget refusal).
+  - **Status API.** `GET /spaces/{id}/harbor-pilot/status` (space configuration read): the overall state (`off`, `ok`,
+    `warning`, `exceeded`, `unavailable`), the covering budgets with decimal amounts, and the project's usage from
+    `usage/summary?group_by=project` since the start of the project budget's current period (the last 30 days
+    without one). The usage is labelled `clients: all`.
+  - **Per-run usage: how both are shown for a Claude run (the point decision 7 left to HP-T5).** The read-back is kept
+    in its own table (`run_gateway_usage`, migration 0043) and returned as `gateway` on the run's usage, next to
+    what the harness reported. It is written into `run_usage` (source `harbor-pilot`) only when that row is missing
+    or `unavailable`, or is its own earlier fill. A harness's report replaces a fill, even a final one, and a node's
+    `unavailable` report never replaces a fill. A node can't claim the `harbor-pilot` source.
+  - **When.** The end path's transaction queues the read-back next to the revocation (every path that queues a
+    revocation, and also when the token was already given up), first due 15 s later. Reads are at 15 s, 2 min and
+    10 min after the end; each replaces the last, and the third is final. A network failure, 5xx or 429 is retried
+    (30 s, doubling, at most 5 min) until an hour after the end, then the row fails. A refusal fails it at once. No
+    service-principal token or connection settles it as `unavailable`. The reads run on central's deadline timer, at
+    most 10 per round with 10 s per call, like the revoker. Query: `group_by=model`, `ref=spaceman.run:<run>`, the
+    connection's `binding_id`, and `from`/`to` around the run's lifetime. A model whose every request had no
+    reported usage gets unknown (nil) token counts. The cost estimate is Harbor Pilot's `actual_api_charge` in USD if
+    present, else its `estimated_api_charge`, labelled with its source.
+  - **Numbers.** Migration 0043 (0042 is taken by the admin MCP branch). THREAT_MODEL T-37. PLAN D-18.
 
 ### ADR-0061 — More shipped GitHub event templates; optional filters and the `absent` operator
 - **Status:** Accepted, 2026-11-07 (operator request: spaces should react to pull request conversation, reviews, CI and
