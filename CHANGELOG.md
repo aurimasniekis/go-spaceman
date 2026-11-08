@@ -13,7 +13,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   time and uptime, the database schema version, the node protocol range, the database and data-disk sizes, and counts
   of spaces, connected nodes, running runs, open human actions and live streams. It names no key material, key path
   or token. The version alone stays public (`get-system-info`) and is now shown in the account menu. The admin MCP
-  offers `get-system` as a read. No migration and no node protocol change.
+  offers `get-system` as a read. A counts or node-state source that fails shows as `unavailable` (`counts.error`,
+  `counts.nodes_error`) instead of failing the response; build, uptime and storage are still returned. Central logs the
+  boot ID in its `spaceman serving` line. **Migration 0045** (forward-only) adds a partial index over live runs, so
+  the running-runs count doesn't scan every run ever recorded. No node protocol change.
 - **SpaceMan admin MCP** (ADR-0063, Accepted; SM-MCP-005…009; AM-1 to AM-10). SpaceMan's own API as MCP tools: for
   a space's control and worker runs through a `spaceman` gateway server, and for your own MCP client through the
   external endpoint. An agent in an "infra" space can then administer SpaceMan with an administrator's authority, short
@@ -220,6 +223,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
+- The MCP servers page's inline guide link (also behind the server drawer) is underlined, not told apart by colour
+  alone (axe `link-in-text-block`, WCAG 1.4.1). The SpaceMan MCP browser test now runs axe on the list and the drawer.
 - **Opening the database waits out a brief lock instead of failing.** The SQLite busy timeout now applies from a
   connection's first statement. Before, the writer ran its first statement without one, so opening the data directory
   failed at once with `storage busy: open database: database is locked (SQLITE_BUSY)` whenever another connection held

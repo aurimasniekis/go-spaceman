@@ -58,7 +58,7 @@ function McpServersPage() {
       <Text size="xs" c="dimmed" mt="sm">
         Your own MCP client (Claude Code, an IDE) can use SpaceMan’s tools with your API token through the external endpoint{' '}
         <span className="mono">/api/v1/mcp</span>:{' '}
-        <Anchor href="https://aurimasniekis.github.io/go-spaceman/guide/mcp-endpoint" target="_blank" rel="noreferrer" size="xs">
+        <Anchor href="https://aurimasniekis.github.io/go-spaceman/guide/mcp-endpoint" target="_blank" rel="noreferrer" size="xs" underline="always">
           see the guide <IconExternalLink size={10} />
         </Anchor>.
       </Text>

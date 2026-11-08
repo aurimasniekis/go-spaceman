@@ -75,7 +75,8 @@ type SystemStorage struct {
 	WALBytes int64 `json:"wal_bytes"`
 }
 
-// SystemCounts are installation-wide counts.
+// SystemCounts are installation-wide counts. A count source that fails is reported as unavailable instead of failing
+// the whole status, like the schema version: Error covers spaces, runs and human actions, NodesError the node counts.
 type SystemCounts struct {
 	Spaces         int64 `json:"spaces" doc:"Spaces that are not archived"`
 	NodesActive    int64 `json:"nodes_active"`
@@ -83,6 +84,10 @@ type SystemCounts struct {
 	RunsRunning    int64 `json:"runs_running" doc:"Runs starting, running or stopping"`
 	HumanPending   int64 `json:"human_pending" doc:"Open and in-progress human actions"`
 	LiveStreams    int64 `json:"live_streams" doc:"Connected live-event streams (change feed, terminals, recordings)"`
+	// Error is set when spaces, runs_running and human_pending could not be read ("unavailable"; they are then 0).
+	Error string `json:"error,omitempty"`
+	// NodesError is set when nodes_active and nodes_connected could not be read ("unavailable"; they are then 0).
+	NodesError string `json:"nodes_error,omitempty"`
 }
 
 // RegisterSystemStatus registers get-system.
@@ -94,16 +99,14 @@ func RegisterSystemStatus(src *SystemSources) func(api huma.API, d *Deps) {
 				"and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. " +
 				"It contains no key material, key paths or tokens."},
 			func(ctx context.Context, _ *struct{}) (*struct{ Body SystemStatus }, error) {
-				out, err := d.systemStatus(ctx, src)
-				if err != nil {
-					return nil, d.fail(ctx, "system.get", err)
-				}
-				return &struct{ Body SystemStatus }{Body: *out}, nil
+				return &struct{ Body SystemStatus }{Body: *d.systemStatus(ctx, src)}, nil
 			})
 	}
 }
 
-func (d *Deps) systemStatus(ctx context.Context, src *SystemSources) (*SystemStatus, error) {
+// systemStatus never fails: a section whose source errors is reported as unavailable, so an administrator still sees
+// the build, uptime and storage sections when the database or the fleet misbehaves.
+func (d *Deps) systemStatus(ctx context.Context, src *SystemSources) *SystemStatus {
 	if src == nil {
 		src = &SystemSources{}
 	}
@@ -129,20 +132,22 @@ func (d *Deps) systemStatus(ctx context.Context, src *SystemSources) (*SystemSta
 	if src.StoreSizes != nil {
 		out.Storage.DBBytes, out.Storage.WALBytes = src.StoreSizes()
 	}
-	c, err := d.Store.R().SystemCounts(ctx)
-	if err != nil {
-		return nil, err
+	if c, err := d.Store.R().SystemCounts(ctx); err != nil {
+		d.log().WarnContext(ctx, "system status: counts unavailable", "error", err)
+		out.Counts.Error = "unavailable"
+	} else {
+		out.Counts.Spaces, out.Counts.RunsRunning, out.Counts.HumanPending = c.Spaces, c.RunsRunning, c.HumanPending
 	}
-	out.Counts = SystemCounts{Spaces: c.Spaces, RunsRunning: c.RunsRunning, HumanPending: c.HumanPending}
 	if src.Nodes != nil {
-		active, connected, err := src.Nodes(ctx)
-		if err != nil {
-			return nil, err
+		if active, connected, err := src.Nodes(ctx); err != nil {
+			d.log().WarnContext(ctx, "system status: node counts unavailable", "error", err)
+			out.Counts.NodesError = "unavailable"
+		} else {
+			out.Counts.NodesActive, out.Counts.NodesConnected = int64(active), int64(connected)
 		}
-		out.Counts.NodesActive, out.Counts.NodesConnected = int64(active), int64(connected)
 	}
 	if src.LiveStreams != nil {
 		out.Counts.LiveStreams = src.LiveStreams()
 	}
-	return out, nil
+	return out
 }

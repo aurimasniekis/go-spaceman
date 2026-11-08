@@ -1188,6 +1188,8 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto('/system')
     await expect(page.getByTestId('system-status').getByText('Accepting writes')).toBeVisible()
     await expect(page.getByTestId('system-status').getByText(/^boot_/)).toBeVisible()
+    // The first fetch can run before the page's own change feed connects: wait for a refetch (every 15 s) that counts it.
+    await expect(page.getByTestId('system-counts')).toContainText(/Live streams[1-9]/, { timeout: 40_000 })
   })
   mkdirSync(join(process.cwd(), 'test-results'), { recursive: true })
   writeFileSync(join(process.cwd(), 'test-results', 'a11y-report.txt'), a11y.join('\n') + '\n')

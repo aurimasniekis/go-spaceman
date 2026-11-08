@@ -42,7 +42,8 @@ also `GET /api/v1/system` (`system:read`) and `spaceman system status`:
 - **This instance:** the public URL, the data directory, the database and WAL sizes, the data disk's free space, and
   the Go version and platform.
 
-It names no key material, key path or token. The page refreshes every 15 seconds. The version alone is public: the
+It names no key material, key path or token. When the counts or the node state can't be read, those fields show
+**unavailable** and the rest of the page still loads. Central logs the boot ID in its `spaceman serving` line. The page refreshes every 15 seconds. The version alone is public: the
 account menu shows it to everyone, and `spaceman system info` (`GET /api/v1/system/info`) reads it without a token.
 
 <Shot name="ops-system" alt="The System page: readiness, accepting writes, version, commit, boot ID, start time, schema version and node protocol range; counts of spaces, nodes, runs, human actions and live streams; the public URL, data directory, database size and data disk" caption="This instance's status" />

@@ -10351,6 +10351,7 @@ export interface components {
             while_paused?: "defer" | "wake" | "stop";
         };
         SystemCounts: {
+            error?: string;
             /**
              * Format: int64
              * @description Open and in-progress human actions
@@ -10365,6 +10366,7 @@ export interface components {
             nodes_active: number;
             /** Format: int64 */
             nodes_connected: number;
+            nodes_error?: string;
             /**
              * Format: int64
              * @description Runs starting, running or stopping

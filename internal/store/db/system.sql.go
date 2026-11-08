@@ -23,7 +23,8 @@ type SystemCountsRow struct {
 	HumanPending int64
 }
 
-// System status (SM-OBS-006): installation-wide counts for the admin System page, one query.
+// System status (SM-OBS-006): installation-wide counts for the admin System page, one query. runs_running reads the
+// partial index ix_runs_observed_live (migration 0045): keep its IN list identical to the index's WHERE clause.
 func (q *Queries) SystemCounts(ctx context.Context) (SystemCountsRow, error) {
 	row := q.db.QueryRowContext(ctx, systemCounts)
 	var i SystemCountsRow
