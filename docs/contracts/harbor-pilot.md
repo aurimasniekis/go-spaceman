@@ -178,6 +178,13 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208`. It needs an `hpa_` token or 
     never claims or headers. A minting credential chooses its runs' values, so a consumer also filters on
     `binding_id` (or a key its binding pins, such as `spaceman.fleet`) to avoid counting another client's runs that
     reuse a value. SpaceMan always passes `binding_id`. **code** (D-041)
+  - **Response fields SpaceMan reads** (HP-T5; `UsageSummary`, `UsageGroup`, `UsageTokens`, `CostAmount` in
+    `internal/accounting/usageapi/usageapi.go:40-96`): `from`, `to`, `group_by`, `groups[] {key, label, attempts,
+    tokens {input, output, cache_read, cache_write, reasoning, unknown_usage_attempts}, costs[] {kind, currency,
+    amount}}`, `totals[]`. Amounts are decimal strings; cost kinds are `estimated_api_charge`, `actual_api_charge`,
+    `list_equivalent`, `subscription_fee`, `allocation` and are never summed. Without `from` the range is the last 30
+    days before `to` (default now), at most 400 days (`parseRange`, `usageapi.go:642`). **code**; **live**
+    (`TestRealHarborPilotBudgetAndUsage`: `group_by=model` with `ref` and `binding_id`, and `group_by=project`).
   - The first start of 0.1.2 backfills the ref index from stored requests, once. **code**
   - Subscription fees ignore filters. **code**
 - **Harness label.** Claude Code requests were labelled `harness: claude_code`. Codex 0.166.0 requests through a custom

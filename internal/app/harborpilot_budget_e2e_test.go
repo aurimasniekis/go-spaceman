@@ -143,3 +143,60 @@ func TestHarborPilotRunUsageReadBack(t *testing.T) {
 		t.Fatalf("usage %s", b)
 	}
 }
+
+// SM-GW-008 (simulated): a usage read-back still pending when central stops is done by the next central (the queue
+// is durable, and the deadline timer re-arms from the database), and stops after its final read.
+func TestHarborPilotUsageReadBackAfterRestart(t *testing.T) {
+	// Not parallel: restarts central, which must finish within the node lease.
+	f := hpfake.New(t)
+	h := newHPRunEnv(t, f.URL(), f.Parent, f.Service, "prj_web")
+	ctx := context.Background()
+	r, err := h.e.c.Fleet.LaunchRun(ctx, admin, h.sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: "codex", Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.launchCmd(t, r.ID)
+	f.Set(func(x *hpfake.HP) {
+		x.Usage = map[string]string{"spaceman.run:" + r.ID: `{"group_by":"model","groups":[{"key":"coding/default","attempts":3,"tokens":{"input":9,"output":1}}],"totals":[]}`}
+	})
+	h.report(t, r, proto.RunExited, "exited")
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := h.e.c.Store.W().TxNamed(ctx, "test", func(tx *store.Tx) error {
+			_, err := tx.SQL.ExecContext(ctx, q, args...)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() (st string, reads int) {
+		_ = h.e.c.Store.ReadDB().QueryRowContext(ctx, `SELECT state, reads FROM run_gateway_usage WHERE run_id = ?`, r.ID).Scan(&st, &reads)
+		return
+	}
+	eventually(t, "read-back queued", func() bool { st, _ := state(); return st == "pending" })
+	// One read before the restart; two remain.
+	exec(`UPDATE run_gateway_usage SET next_attempt_at = 1 WHERE run_id = ?`, r.ID)
+	if n, err := h.e.c.HarborPilotRuns.ReadDueUsage(ctx); err != nil || n != 1 {
+		t.Fatalf("first read %d %v", n, err)
+	}
+	h.e.restartCentral()
+	if next, err := h.e.c.HarborPilotRuns.NextUsageRead(ctx); err != nil || next.IsZero() {
+		t.Fatalf("the restarted central has nothing due: %v %v", next, err)
+	}
+	for range harborpilot.UsageReads[1:] {
+		exec(`UPDATE run_gateway_usage SET next_attempt_at = 1 WHERE run_id = ? AND state = 'pending'`, r.ID)
+		if n, err := h.e.c.HarborPilotRuns.ReadDueUsage(ctx); err != nil || n != 1 {
+			t.Fatalf("read after restart %d %v", n, err)
+		}
+	}
+	if st, reads := state(); st != "final" || reads != len(harborpilot.UsageReads) {
+		t.Fatalf("after the restart: %s after %d reads", st, reads)
+	}
+	if next, _ := h.e.c.HarborPilotRuns.NextUsageRead(ctx); !next.IsZero() {
+		t.Fatal("still due after the final read")
+	}
+	u, err := h.e.c.Usage.ForRun(ctx, h.sp.ID, r.ID)
+	if err != nil || u.Source != proto.UsageHarborPilot || !u.Final || u.Gateway == nil || u.Gateway.State != "final" || u.Gateway.Requests != 3 {
+		t.Fatalf("usage %+v %v", u, err)
+	}
+}

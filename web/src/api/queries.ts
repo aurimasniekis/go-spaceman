@@ -36,6 +36,7 @@ export const keys = {
   gitKeys: ['git-ssh-keys'] as const,
   harborPilot: ['harbor-pilot'] as const,
   spaceHarborPilot: (space: string) => ['space-harbor-pilot', space] as const,
+  spaceHarborPilotStatus: (space: string) => ['space-harbor-pilot', space, 'status'] as const,
   spaceGitKeys: (space: string) => ['git-ssh-keys', 'space', space] as const,
   accountKinds: ['account-kinds'] as const,
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
@@ -456,6 +457,11 @@ export const useHarborPilot = (enabled = true) =>
 /** A space's Harbor Pilot settings (the defaults when it never opted in). */
 export const useSpaceHarborPilot = (space: string) =>
   useQuery({ queryKey: keys.spaceHarborPilot(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/harbor-pilot', { params: { path: { space_id: space } } })) })
+
+/** A space's Harbor Pilot budget status and project usage (HP-T5). Central reuses a read for 30 s. */
+export const useHarborPilotStatus = (space: string) =>
+  useQuery({ queryKey: keys.spaceHarborPilotStatus(space), refetchInterval: 60_000,
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/harbor-pilot/status', { params: { path: { space_id: space } } })) })
 
 /** The shared Git SSH keys a space's repositories may use. */
 export const useSpaceGitKeys = (space: string) =>

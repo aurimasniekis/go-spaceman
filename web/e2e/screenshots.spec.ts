@@ -53,13 +53,27 @@ async function capture(page: Page, name: string, prepare: () => Promise<void>) {
 }
 
 /**
- * A stand-in Harbor Pilot gateway for the Harbor Pilot screenshots (ADR-0060): on loopback, it answers the four calls
- * central makes to validate a connection (mint, revoke, budget status, project) with invented data. It only exists so
- * the connected state can be shown without a real gateway; the integration itself is tested against a real
- * `harbor-pilot serve --demo` (make test-harbor-pilot).
+ * A stand-in Harbor Pilot gateway for the Harbor Pilot screenshots (ADR-0060): on loopback, it answers the calls central
+ * makes to validate a connection (mint, revoke, budget status, project) and the Limits page's budget status and project
+ * usage (HP-T5) with invented data. It only exists so the connected state can be shown without a real gateway; the
+ * integration itself is tested against a real `harbor-pilot serve --demo` (make test-harbor-pilot).
  */
 async function fakeHarborPilot(): Promise<{ url: string; server: Server }> {
   let n = 0
+  // Invented budgets covering the payments space: its project's daily budget is used up, the others are not.
+  const day0 = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z')
+  const day1 = new Date(day0.getTime() + 86400_000)
+  const month0 = new Date(Date.UTC(day0.getUTCFullYear(), day0.getUTCMonth(), 1))
+  const month1 = new Date(Date.UTC(day0.getUTCFullYear(), day0.getUTCMonth() + 1, 1))
+  const budget = (id: string, name: string, scope: string, scopeID: string, period: string, start: Date, end: Date, enforcement: string, limit: number, spent: number, state: string) => ({
+    budget_id: id, name, scope, scope_id: scopeID, period, period_start: start.toISOString(), period_end: end.toISOString(), currency: 'USD', enforcement, enabled: true,
+    limit_e10: Math.round(limit * 1e10), spent_e10: Math.round(spent * 1e10), reserved_e10: 0, fraction: spent / limit, state })
+  const budgets = [
+    budget('bdg_payments_daily', 'payments-daily', 'project', 'prj_payments', 'day', day0, day1, 'block', 25, 25.42, 'exceeded'),
+    budget('bdg_acme_monthly', 'acme-monthly', 'workspace', 'wsp_acme', 'month', month0, month1, 'warn', 2000, 1312.8, 'ok'),
+    budget('bdg_spaceman_runs', 'spaceman-runs', 'binding', 'bnd_spaceman_runs', 'day', day0, day1, 'block', 150, 61.05, 'ok'),
+    budget('bdg_other_project', 'research-daily', 'project', 'prj_research', 'day', day0, day1, 'block', 10, 12, 'exceeded'),
+  ]
   const server = createServer((req, res) => {
     const json = (status: number, body: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)) }
     req.resume()
@@ -69,7 +83,12 @@ async function fakeHarborPilot(): Promise<{ url: string; server: Server }> {
         bound_refs: {}, expires_at: new Date(Date.now() + 7 * 86400_000).toISOString() }, token: `hpk_probe_${n}` })
     }
     if (req.method === 'DELETE' && req.url?.startsWith('/v1/harbor/credentials/')) { res.writeHead(204); return res.end() }
-    if (req.url === '/api/v1/budgets/status') return json(200, { items: [] })
+    if (req.url === '/api/v1/budgets/status') return json(200, { items: budgets })
+    if (req.url?.startsWith('/api/v1/usage/summary')) {
+      return json(200, { from: day0.toISOString(), to: new Date().toISOString(), group_by: 'project', totals: [], groups: [{ key: 'prj_payments', label: 'payments',
+        attempts: 1843, tokens: { input: 4_210_334, output: 391_220, cache_read: 2_870_112, cache_write: 120_400, reasoning: 0, unknown_usage_attempts: 3 },
+        costs: [{ kind: 'estimated_api_charge', currency: 'USD', amount: '25.42' }] }] })
+    }
     if (req.url === '/api/v1/projects/prj_payments') return json(200, { id: 'prj_payments', name: 'payments', spec: { workspace_id: 'wsp_acme' } })
     return json(404, { title: 'Not Found', status: 404, detail: 'not found' })
   })
@@ -593,6 +612,12 @@ test('documentation screenshots', async ({ page, browser }) => {
     await page.goto(`/spaces/${payments.id}`)
     await page.getByTestId('space-harbor-pilot').getByRole('button', { name: 'Settings' }).click()
     await expect(page.getByLabel('Harbor Pilot project id')).toHaveValue('prj_payments')
+  })
+  // HP-T5: the space's Limits page with its Harbor Pilot budgets (the project's daily budget used up).
+  await capture(page, 'space-limits-harbor-pilot', async () => {
+    await page.goto(`/spaces/${payments.id}/limits`)
+    await expect(page.getByTestId('harbor-pilot-state')).toHaveText('Budget used up: launches refused')
+    await expect(page.getByTestId('harbor-pilot-usage')).toBeVisible()
   })
   // Later shots launch runs in this space: take it off Harbor Pilot again and remove the connection.
   await api.call('DELETE', `/spaces/${payments.id}/harbor-pilot`, undefined, { 'If-Match': '"1"' })

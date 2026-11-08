@@ -81,9 +81,21 @@ func TestReadDueUsageFillsUnavailableUsage(t *testing.T) {
 			t.Fatalf("run usage %+v %v", ru, err)
 		}
 	}
+	// Stopped after the final read: nothing is due any more, and a round reads nothing, even long after.
+	if next, err := l.NextUsageRead(ctx); err != nil || !next.IsZero() {
+		t.Fatalf("still due after the final read: %v %v", next, err)
+	}
+	queries := 0
+	f.Set(func(h *hpfake.HP) { queries = len(h.UsageQueries) })
+	exec(t, s, `UPDATE run_gateway_usage SET next_attempt_at = 1 WHERE run_id = 'run_1'`) // a stale due time changes nothing
 	if n, _ := l.ReadDueUsage(ctx); n != 0 {
 		t.Fatal("read again after the final read")
 	}
+	f.Set(func(h *hpfake.HP) {
+		if len(h.UsageQueries) != queries {
+			t.Error("Harbor Pilot was asked again after the final read")
+		}
+	})
 	var q url.Values
 	f.Set(func(h *hpfake.HP) { q, _ = url.ParseQuery(h.UsageQueries[0]) })
 	if q.Get("ref") != "spaceman.run:run_1" || q.Get("binding_id") != "bnd_fake" || q.Get("group_by") != "model" || q.Get("from") == "" || q.Get("to") == "" {
