@@ -3169,7 +3169,7 @@
   typed into a terminal. The limits on reminders (50 pending, 30 days, auto-start's hourly cap) mean a control can't
   wake itself in a tight loop.
 
-### ADR-0066 — Agents ask people only through human actions: Claude Code's terminal question picker denied by default
+### ADR-0066 — Agents ask people only through human actions: Claude Code's terminal question picker and plan mode denied by default
 - **Status:** Accepted, 2026-11-08 (operator request: a control run asked the operator through Claude Code's
   AskUserQuestion picker in its terminal and then waited there; "we should somehow limit agents from doing this").
 - **Context:**
@@ -3180,15 +3180,21 @@
     reminded per policy, and the answer wakes the agent (SM-HUM-009).
   - Claude Code drops a tool that a whole-tool `permissions.deny` rule names from the tools it sends to the model
     (`filterToolsByDenyRules`). Verified with Claude Code 2.1.317 (2026-11-08, throwaway config dir, a local fake API
-    that recorded each request's tool list): an interactive session offered `AskUserQuestion` in every request without
-    the rule (13 and 25 tools) and in none with it (12 and 24). In print mode Claude Code doesn't offer it at all.
+    that recorded each request's tool list): an interactive session offered `AskUserQuestion` and `EnterPlanMode` in
+    every request without the rule, and neither with it. In print mode Claude Code doesn't offer `AskUserQuestion` at
+    all. The operator checked the same on Claude Code 2.1.319: a denied tool isn't offered to the model.
+  - `EnterPlanMode` switches the run into plan mode, which ends in `ExitPlanMode`'s plan-approval dialog in the
+    terminal. An unattended run waits there too.
 - **Decision:**
-  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets `AskUserQuestion` in
-    `permissions.deny` of the run's own `settings.json`. The adapter adds it after the profile's Claude Code settings
-    (ADR-0059): the profile's other permission keys and deny rules are kept, an existing entry is not repeated, and
-    the profile's stored settings are not changed. The model never sees the tool, so it never tries it.
-  - **Opt-in:** a profile that lists `AskUserQuestion` in its own `permissions.allow` gets no deny (a deny would win
-    over its allow). That is the only way back; the default is not a setting.
+  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets `AskUserQuestion` and
+    `EnterPlanMode` in `permissions.deny` of the run's own `settings.json`. The model never sees the tools, so it never
+    tries them.
+  - **Merge, never replace.** The adapter appends them to the profile's own `permissions.deny` (ADR-0059): the profile's
+    rules come first, in their order, duplicates are dropped (profiles that already deny these tools get each once),
+    and the other permission keys (`allow`, `ask`, `additionalDirectories`, `defaultMode`) are kept as they are. The
+    profile's stored settings are not changed.
+  - **Opt-in, per tool:** a profile that lists one of them in its own `permissions.allow` gets no deny for it (a deny
+    would win over its allow). That is the only way back; the default is not a setting.
   - **Prompts:** SpaceMan's own orientation (the first section of every run's system text) and the starter role prompts
     say "Never ask through an interactive terminal prompt; use spaceman_human_ask". The orientation reaches existing
     installations; starter prompts already seeded are not rewritten (ADR-0051).
@@ -3205,8 +3211,11 @@
     (LIMITATIONS).
 - **Consequences:** no new authority, no protocol change. The deny is written by the node when it builds the launch,
   so it takes nodes on this release or later; runs on older nodes still see the tool, and the profile's resolved
-  settings in the API don't show the deny. Claude Code's own permission dialogs are unchanged (they follow the
-  permission mode).
+  settings in the API don't show the deny. Claude Code's own permission dialogs are unchanged: they follow the
+  permission mode, and `skipAutoPermissionPrompt` only skips the one-time notice shown when auto mode starts (auto mode
+  still asks for `ask` rules, reads outside the working directories, and when its classifier falls back after repeated
+  blocks). A built-in PermissionRequest hook for those is a separate follow-up. A run whose permission mode is `plan`
+  (a profile setting) still starts in plan mode and ends in the `ExitPlanMode` dialog.
 
 ## 2. Open items and unresolved contracts
 

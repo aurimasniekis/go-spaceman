@@ -37,15 +37,18 @@ const ClaudeTUI = "default"
 
 var claudePermissionModes = map[string]bool{"default": true, "acceptEdits": true, "plan": true, "auto": true, "dontAsk": true, "bypassPermissions": true}
 
-// ClaudeTerminalPromptTools are the Claude Code tools that ask a person in the run's terminal and wait there for the
-// answer (AskUserQuestion's picker). Nobody may be watching that terminal, so a run asking there stalls silently; agents
-// ask people through spaceman_human_ask instead, which is durable, reminds people and wakes the agent (ADR-0066).
-var ClaudeTerminalPromptTools = []string{"AskUserQuestion"}
+// ClaudeTerminalPromptTools are the Claude Code tools that end in a person answering in the run's terminal:
+// AskUserQuestion's picker, and EnterPlanMode, whose plan ends in ExitPlanMode's approval dialog. Nobody may be watching
+// that terminal, so a run waiting there stalls silently; agents ask people through spaceman_human_ask instead, which is
+// durable, reminds people and wakes the agent (ADR-0066).
+var ClaudeTerminalPromptTools = []string{"AskUserQuestion", "EnterPlanMode"}
 
-// denyTerminalPrompts adds ClaudeTerminalPromptTools to the run's permissions.deny, so Claude Code drops them from the
-// tools the model sees (verified with Claude Code 2.1.317: a whole-tool deny rule removes the tool from the request). A
-// profile opts a tool back in by listing it in its own permissions.allow (a deny would win over that allow, so SpaceMan
-// leaves the deny out). The profile's settings map is never modified: the permissions object is copied.
+// denyTerminalPrompts appends ClaudeTerminalPromptTools to the run's permissions.deny, so Claude Code drops them from
+// the tools the model sees (verified with Claude Code 2.1.317 and 2.1.319: a whole-tool deny rule removes the tool from
+// the request). The profile's own deny rules come first and are kept, duplicates are dropped, and every other
+// permissions key (allow, ask, additionalDirectories, defaultMode) is kept as it is. A profile opts a tool back in by
+// listing it in its own permissions.allow (a deny would win over that allow, so SpaceMan leaves that tool's deny out).
+// The profile's settings map is never modified: the permissions object is copied.
 func denyTerminalPrompts(own map[string]any) {
 	perms := map[string]any{}
 	if cur, ok := own["permissions"].(map[string]any); ok {
@@ -53,15 +56,19 @@ func denyTerminalPrompts(own map[string]any) {
 			perms[k] = v
 		}
 	}
-	allow, deny := stringsOf(perms["allow"]), stringsOf(perms["deny"])
-	added := false
+	allow := stringsOf(perms["allow"])
+	var deny []string
+	for _, rule := range stringsOf(perms["deny"]) {
+		if !slices.Contains(deny, rule) {
+			deny = append(deny, rule)
+		}
+	}
 	for _, tool := range ClaudeTerminalPromptTools {
 		if !slices.Contains(allow, tool) && !slices.Contains(deny, tool) {
 			deny = append(deny, tool)
-			added = true
 		}
 	}
-	if added {
+	if len(deny) > 0 {
 		perms["deny"] = deny
 		own["permissions"] = perms
 	}

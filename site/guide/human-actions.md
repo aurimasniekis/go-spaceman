@@ -14,10 +14,10 @@ counted.
 
 An agent that needs a person asks with `spaceman_human_ask`. The request is kept, shows up under **Needs you**, reminds
 people per the space's policy, and the answer wakes the agent. SpaceMan tells every run so in its orientation, and
-denies Claude Code's own terminal question picker (`AskUserQuestion`) by default: a run that asked there would wait,
-silently, for an answer typed into its terminal (ADR-0066, and
-[Claude Code settings](./roles-and-prompts#claude-code-settings) to allow it). A harness's own permission dialogs
-still appear in the terminal; the permission mode decides when.
+denies Claude Code's own terminal question picker (`AskUserQuestion`) and plan mode (`EnterPlanMode`, whose plan ends
+in an approval dialog) by default: a run waiting there would wait, silently, for an answer typed into its terminal
+(ADR-0066, and [Claude Code settings](./roles-and-prompts#claude-code-settings) to allow them). A harness's own
+permission dialogs still appear in the terminal; the permission mode decides when.
 
 ## Search, filters and sorting
 
