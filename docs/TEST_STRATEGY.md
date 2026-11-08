@@ -50,10 +50,14 @@ contention trips the write-transaction guard and the timing tests. So the heavy 
 holds one of a fixed number of `flock` slots while the command runs:
 
 - `SM_GATE_SLOTS`: the number of slots, 2 by default on a machine with 16 or more CPUs, otherwise 1. `0` disables
-  the semaphore, and it is off when `CI=true` (each CI job has its own runner).
-- `SM_GATE_LOCK_DIR`: the directory of the lock files, `${XDG_CACHE_HOME:-~/.cache}/spaceman-gates` by default. Every
-  run that should take turns must use the same directory, so a node shared by several users sets it in their common
-  environment.
+  the semaphore, and it is always off when `CI=true` (each CI job has its own runner), even with `SM_GATE_SLOTS` set.
+- `SM_GATE_LOCK_DIR`: the directory of the lock files, `${XDG_CACHE_HOME:-~/.cache}/spaceman-gates` by default
+  (created when missing). Every run that should take turns must use the same directory, so a node shared by several
+  users sets it in their common environment and pre-creates it with mode 1777 (`install -d -m 1777 <dir>`); the
+  script creates the slot files readable by everyone, which is all `flock` needs.
+- Without `flock(1)` (macOS has none by default) the script prints a warning and runs the command without a slot.
+- `scripts/gate-scripts-test.sh` checks the slots and `scripts/race.sh`'s interrupt handling in a few seconds (no Go
+  build): run it after changing either script.
 - `make check` takes one slot for the coverage floor and the race run together; nested heavy targets don't take a second.
 - While every slot is busy the run prints `gate-slot: <target> waiting for a heavy-gate slot (N busy: …)` with what holds
   them, then `got slot … after N s` when it starts. Waiting costs no CPU.

@@ -13,10 +13,14 @@
 #
 # Environment:
 #   SM_GATE_SLOTS     number of slots: default 2 when the machine has 16 or more CPUs, otherwise 1. 0 disables the
-#                     semaphore (the command runs at once); it is also disabled when CI=true (GitHub Actions), where
-#                     every job has its own runner.
+#                     semaphore (the command runs at once); it is always disabled when CI=true (GitHub Actions),
+#                     where every job has its own runner, whatever SM_GATE_SLOTS says.
 #   SM_GATE_LOCK_DIR  directory of the lock files, shared by every agent on the machine
-#                     (default ${XDG_CACHE_HOME:-$HOME/.cache}/spaceman-gates)
+#                     (default ${XDG_CACHE_HOME:-$HOME/.cache}/spaceman-gates, created when missing). For runs of
+#                     several users, pre-create a common directory with mode 1777 (install -d -m 1777 <dir>); the
+#                     slot files are created readable by everyone, which is all flock needs.
+#
+# Without flock(1) (macOS has none by default) it warns and runs the command without a slot.
 #
 # Nested calls (make check holds a slot for coverage and race together) see SM_GATE_HELD and run the command directly.
 set -euo pipefail
@@ -28,14 +32,15 @@ shift
 cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
 default_slots=1
 (( cpus >= 16 )) && default_slots=2
-if [[ "${CI:-}" == "true" && -z "${SM_GATE_SLOTS:-}" ]]; then
-  slots=0
-else
-  slots="${SM_GATE_SLOTS:-$default_slots}"
-fi
+slots="${SM_GATE_SLOTS:-$default_slots}"
 [[ "$slots" =~ ^[0-9]+$ ]] || { echo "gate-slot: SM_GATE_SLOTS must be a non-negative integer" >&2; exit 2; }
+[[ "${CI:-}" == "true" ]] && slots=0
 
 if (( slots == 0 )) || [[ -n "${SM_GATE_HELD:-}" ]]; then
+  exec "$@"
+fi
+if ! command -v flock >/dev/null 2>&1; then
+  echo "gate-slot: warning: flock not found, running $label without a heavy-gate slot" >&2
   exec "$@"
 fi
 
@@ -50,7 +55,8 @@ while :; do
   for (( i = 0; i < slots; i++ )); do
     f="$dir/slot-$i.lock"
     if [[ ! -e "$f" ]]; then
-      : >>"$f"
+      # Can fail when another user created it a moment ago (fs.protected_regular in a sticky directory): then it exists.
+      : 2>/dev/null >>"$f" || true
       chmod a+r "$f" 2>/dev/null || true # readable is enough to lock it, for every user sharing the directory
     fi
     exec {fd}<"$f"

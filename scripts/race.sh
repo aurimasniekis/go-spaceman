@@ -71,6 +71,7 @@ fi
 
 tmp=$(mktemp -d)
 pids=()
+# shellcheck disable=SC2329 # invoked by the EXIT trap
 cleanup() {
   # Interrupted: stop the internal/app runs too, and the test binaries go test started for them.
   for pid in "${pids[@]}"; do
@@ -100,11 +101,17 @@ else
   outs=("$tmp/app.out")
 fi
 
+# The other packages stream their output as they go, but run in the background like the rest: bash runs a trap only
+# between commands, and `wait` returns at once on a trapped signal, so a TERM stops every invocation right away. (A
+# kill -9 of this script can't run the trap: its go test children go on running; stop the process group instead.)
+"$GO" test "${flags[@]}" -parallel "$RACE_PARALLEL" "${others[@]}" &
+others_pid=$!
+pids+=("$others_pid")
 rc=0
-"$GO" test "${flags[@]}" -parallel "$RACE_PARALLEL" "${others[@]}" || rc=$?
+wait "$others_pid" || rc=$?
 summary="other packages done after $(( SECONDS - start )) s (exit $rc)"
 
-for i in "${!pids[@]}"; do
+for (( i = 0; i < ${#names[@]}; i++ )); do
   prc=0
   wait "${pids[$i]}" || prc=$?
   echo "== ${names[$i]}"

@@ -65,7 +65,8 @@ Which check to run when (commands: [site/development/testing.md](site/developmen
 - **Heavy gates take turns on the node:** `race`, `coverage`, `site-a11y`, `e2e` and `screenshots` (and so `make
   check`) wait for a node-wide slot first (`scripts/gate-slot.sh`; `SM_GATE_SLOTS`, default 2 on 16 or more CPUs, and
   `SM_GATE_LOCK_DIR`). A `gate-slot: … waiting for a heavy-gate slot` line means another run on the node holds it: keep
-  working while it waits, and don't bypass it with `SM_GATE_SLOTS=0`. A killed run releases its slot.
+  working while it waits, and don't bypass it with `SM_GATE_SLOTS=0`. A killed run releases its slot. It is off when
+  `CI=true`; a lock dir shared by several users is pre-created with mode 1777.
 - **Only when they are affected:** `make web-check` when `web/` changed. `make site-check` when `site/`, `docs/`, `web/`,
   `api/`, `CHANGELOG.md` or the `Makefile` changed (the rule CI uses for the accessibility audit). `make e2e` when UI
   behavior changed.
