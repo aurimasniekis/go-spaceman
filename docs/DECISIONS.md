@@ -2761,11 +2761,11 @@
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design;
   question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
-  Implemented so far: migration 0042, the internal token and its principal, the audit attribution and the approver
+  Implemented so far: migration 0044, the internal token and its principal, the audit attribution and the approver
   exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4); the gateway kind with its
   create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5); the CLI (AM-6); the
   external endpoint (AM-10, §External endpoint below). The web, bridge end-to-end and Terraform parts follow (AM-7 to
-  AM-9). Requirements SM-MCP-005..009; threats T-33, T-37.
+  AM-9). Requirements SM-MCP-005..009; threats T-33, T-38.
 - **Context:**
   - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
     manage tasks, limits, roles, schedules and the other things an administrator does with the CLI or the API. Today an
@@ -2886,10 +2886,11 @@
   10. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed
       token ID, owner, expiry and effective tools; no secret attributes), granted with the existing `spaceman_mcp_grant`
       (AM-9).
-  11. **Numbers:** migration 0042 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
+  11. **Numbers:** migration 0044 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
       `api_tokens.purpose`, forward-only like every migration; numbered 0041 until the control reminders took that
-      number), T-33, SM-MCP-005..009. No protocol minor.
-- **External endpoint (AM-10, SM-MCP-009, threat T-37).** `/api/v1/mcp` (`api.MCPPath`) serves the same catalog and
+      number, then 0042 until Harbor Pilot's usage migration took 0043), T-33, T-38 (external endpoint),
+      SM-MCP-005..009. No protocol minor.
+- **External endpoint (AM-10, SM-MCP-009, threat T-38).** `/api/v1/mcp` (`api.MCPPath`) serves the same catalog and
   executor over streamable HTTP to an operator's own MCP client (`internal/spacemanmcp` `Endpoint`). It is not an API
   operation: it is absent from the OpenAPI document and the CLI.
   - **Who can call it:** a user's bearer API token, acting as itself (token **and** owner, as on the API). The guard
@@ -2964,7 +2965,7 @@
   - Secrets that an agent writes through these tools (account keys, event connection secrets) pass through the model's
     context; those operations are dangerous and need an approval.
   - The external endpoint gives an operator's MCP client what the operator's token can do on the API, short of the
-    hard exclusions and with dangerous calls approved by someone else (T-37).
+    hard exclusions and with dangerous calls approved by someone else (T-38).
 
 ### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
 - **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a

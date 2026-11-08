@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   worker runs.
   - Internal API tokens: owned by an administrator, scoped like any API token, without a secret, and never accepted as
     a bearer token. Their calls are audited with the owner, the token (`via spaceman_mcp:<token>`) and the agent run.
-  - Migration 0042 (forward-only) adds the gateway server kind and its internal token, and the token purpose.
+  - Migration 0044 (forward-only) adds the gateway server kind and its internal token, and the token purpose.
   - The tool catalog (AM-3): one tool per API operation, with a reviewed classification (read, write, dangerous,
     sensitive-read, excluded) of every operation, presets (the default `admin` preset includes dangerous tools, each of
     which needs an approval) and a filter by the token's grants.

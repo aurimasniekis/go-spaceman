@@ -6,7 +6,8 @@ import (
 	"testing"
 )
 
-// 0042 adds the SpaceMan MCP columns to a database at 0041 (ADR-0063): existing gateway servers become kind 'http'
+// 0044 adds the SpaceMan MCP columns to a database at the migration before it (ADR-0063; 0041 until Harbor Pilot's
+// 0043 lands on this branch, then start from 0043): existing gateway servers become kind 'http'
 // with no internal token and '{}' settings, existing API tokens get the empty (bearer) purpose, and the new
 // constraints hold: two kinds, two purposes, and an internal token reference that must exist exactly for the
 // spaceman kind.
