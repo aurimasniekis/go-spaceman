@@ -2812,13 +2812,16 @@
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
-- **Status:** **Proposed**, 2026-11-07. Not yet accepted. The operator's decisions below are recorded with the design;
-  question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
+- **Status:** **Proposed**, 2026-11-07. Not yet accepted, and it stays Proposed with the implementation complete
+  (AM-8, 2026-11-08): one operator decision is still open, whether the root token may approve the external endpoint's
+  dangerous calls (§External endpoint, "Under review"). It is accepted once that is decided. The operator's other
+  decisions below are recorded with the design; question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
   Implemented so far: migration 0044, the internal token and its principal, the audit attribution and the approver
   exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4); the gateway kind with its
   create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5); the CLI (AM-6); the
-  external endpoint (AM-10, §External endpoint below). The web, bridge end-to-end and Terraform parts follow (AM-7 to
-  AM-9). Requirements SM-MCP-005..009; threats T-33, T-38.
+  external endpoint (AM-10, §External endpoint below); the web (AM-7); the end-to-end test over the run bridge, the
+  CHANGELOG and the security review entry (AM-8). The Terraform resource (AM-9) is in terraform-provider-spaceman
+  PR #12. Requirements SM-MCP-005..009; threats T-33, T-38.
 - **Context:**
   - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
     manage tasks, limits, roles, schedules and the other things an administrator does with the CLI or the API. Today an

@@ -7,42 +7,61 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- SpaceMan admin MCP (ADR-0063, Proposed; AM-1 to AM-7, AM-10): SpaceMan's own API as MCP tools for a space's control and
-  worker runs.
-  - Internal API tokens: owned by an administrator, scoped like any API token, without a secret, and never accepted as
-    a bearer token. Their calls are audited with the owner, the token (`via spaceman_mcp:<token>`) and the agent run.
-  - Migration 0044 (forward-only) adds the gateway server kind and its internal token, and the token purpose.
-  - The tool catalog (AM-3): one tool per API operation, with a reviewed classification (read, write, dangerous,
-    sensitive-read, excluded) of every operation, presets (the default `admin` preset includes dangerous tools, each of
-    which needs an approval) and a filter by the token's grants.
-  - The executor (AM-4): tools run through the API's own handler chain in process, with the internal token's
-    principal; retried creates are idempotent, API problems are tool errors and results are capped.
-  - The `spaceman` gateway server kind (AM-5): `create-spaceman-mcp`, `update-spaceman-mcp` and
-    `reissue-spaceman-mcp` (all need a step-up). The server's internal token is minted with it and revoked when it is
-    re-issued or deleted. Defaults: the `admin` preset, admin on every space, no expiry, no approvals for writes.
-    Dangerous tools and diagnostic launches always need a person's approval (`approvals.Require`, operation
-    `mcp.<slug>.<class>.<tool>`); `approval: writes` gates writes too. The API checks a launch's kind as resolved and
-    refuses a diagnostic launch the gateway did not approve, so a space role of diagnostic kind can't bypass the gate.
-    Saving a space role is dangerous. KB, dreamer and diagnostic runs never see the
-    tools, and an agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through them.
-    Reads filtered by the caller's grants (`list-spaces` and ten others) are tools; personal operations are not.
-    A revoked token empties the catalog, and calls are refused with the reason.
-  - CLI (AM-6): `spaceman mcp spaceman create`, `update` and `reissue`.
-  - Web (AM-7): **Add SpaceMan MCP** on the MCP servers page and on a space's new **MCP servers** card (with that space
-    filled in). The dialog defaults to the slug `spaceman-admin` (`spaceman` is reserved), the control role,
-    "Administer everything (infra)" and no expiry. Scopes beyond your own grants are disabled. Tools come from a preset
-    or a custom pick grouped by area, with dangerous tools flagged and a live count. Dangerous approvals are always on
-    and write approvals are off by default. Adding a server needs a step-up. The server's drawer shows the owner, the
-    token and the effective tools, and asks for confirmation before Re-issue, Disable and Delete. The list badges
-    SpaceMan servers, and the API tokens page labels internal tokens. `GET /mcp-servers/spaceman/tools` (CLI
-    `spaceman mcp spaceman tools`) lists the tools a preset and grants would offer, and a space's MCP servers now
-    carry their `kind`.
-  - External MCP endpoint (AM-10, SM-MCP-009): `/api/v1/mcp` serves the same tools over streamable HTTP to your own
-    MCP client, with your API token as a bearer and exactly that token's grants. Browser requests, session cookies,
-    the root token and internal tokens are refused, and each token is rate limited; each request carries one JSON-RPC
-    message (batches and protocol versions before 2025-06-18 are refused). Dangerous calls and diagnostic launches
-    need an approval from someone other than the token's user, who may only deny or cancel their own client's
-    request. Calls are audited via the token on the `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
+- **SpaceMan admin MCP** (ADR-0063, Proposed; SM-MCP-005…009; AM-1 to AM-10). SpaceMan's own API as MCP tools: for
+  a space's control and worker runs through a `spaceman` gateway server, and for your own MCP client through the
+  external endpoint. An agent in an "infra" space can then administer SpaceMan with an administrator's authority, short
+  of hard exclusions, and with dangerous calls approved by a person. **Upgrade notes:**
+  - **Migration 0044** (forward-only) adds `mcp_servers.kind`, `api_token_id` and `spaceman_json`, and
+    `api_tokens.purpose`. Existing servers become kind `http`; nothing else changes until you add a SpaceMan server.
+  - **New operations:** `create-spaceman-mcp` (`POST /mcp-servers/spaceman`), `update-spaceman-mcp`
+    (`PUT /mcp-servers/{id}/spaceman`) and `reissue-spaceman-mcp` (`POST /mcp-servers/{id}/reissue`), all
+    `mcp:write` with a step-up; `list-spaceman-mcp-tools` (`GET /mcp-servers/spaceman/tools`) previews a preset's
+    tools. MCP servers and a run manifest's `mcp_servers` entries now carry `kind`. CLI: `spaceman mcp spaceman
+    create`, `update`, `reissue` and `tools`.
+  - **External endpoint:** `/api/v1/mcp` is new and on by default for any user API token (see below). If your reverse
+    proxy forwards all of `/api/v1/`, it is reachable wherever the API is.
+  - **Terraform:** the `spaceman_admin_mcp_server` resource is in terraform-provider-spaceman PR #12 (not yet
+    released); grant it with the existing `spaceman_mcp_grant`.
+  - No node protocol change: agents need no update.
+  - Not yet decided (ADR-0063 stays Proposed): whether the root token may approve the external endpoint's dangerous
+    calls. Today it can.
+
+  **Identity:** each SpaceMan server has an internal API token, minted with it, owned by its creator, scoped like any
+  API token (covered by the owner's grants, and by the creating token's, whose expiry it never outlives), and without
+  a secret: it is never accepted as a bearer token and nothing reaches nodes, runs, manifests or Terraform state.
+  Re-issue revokes it and mints a new one in one step (grants, owner, expiry); deleting the server revokes it.
+  Revoking the token, disabling the owner or the server, or revoking the grant stops the tools on the next call, with
+  the reason. Calls are audited as the owner, `via spaceman_mcp:<token>`, with the agent run.
+
+  **Tools:** one tool per API operation, run in process through the API's own handler chain (authorization,
+  validation, idempotency, audit). Every operation has a reviewed class (read, write, dangerous, sensitive-read,
+  excluded), enforced by a test. Presets: `admin` (the default, "infra": read, write and dangerous tools on every
+  space), `operate`, `read` and `custom`. Hard exclusions: sign-in and step-up operations, tokens, approvals and
+  human-action answers, takeover and terminal input, one-time secrets, sign-in providers, SpaceMan MCP management and
+  restore acknowledgement. Retried creates are idempotent, API problems are tool errors and results are capped. Only
+  control and worker runs see the tools.
+
+  **Approvals:** dangerous tools always need a person's approval (operation `mcp.<slug>.<class>.<tool>`, one use for
+  the exact arguments unless a stored policy says otherwise); `approval: writes` gates writes too. The API checks a
+  launch's kind as resolved, so a space role of diagnostic kind can't bypass the gate, and saving a space role is
+  dangerous. An agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through the tools.
+
+  **Web:** **Add SpaceMan MCP** on the MCP servers page and on a space's new **MCP servers** card. The dialog defaults
+  to the slug `spaceman-admin` (`spaceman` is reserved), the control role, "Administer everything (infra)" and no
+  expiry; scopes beyond your own grants are disabled; tools come from a preset or a custom pick grouped by area, with
+  dangerous tools flagged. The server's drawer shows the owner, the token and the effective tools, and confirms
+  Re-issue, Disable and Delete. The API tokens page labels internal tokens.
+
+  **External endpoint** (SM-MCP-009): `/api/v1/mcp` serves the same tools over streamable HTTP to your own MCP client,
+  with your API token as a bearer and exactly that token's grants. Browser requests, session cookies, the root token
+  and internal tokens are refused, and each token is rate limited; each request carries one JSON-RPC message (batches
+  and protocol versions before 2025-06-18 are refused). Dangerous calls and diagnostic launches need an approval from
+  someone other than the token's user, who may only deny or cancel their own client's request. Calls are audited via
+  the token on the `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
+
+  Verified end to end in process (`TestSpacemanMCPOverBridge`: a control run's harness MCP client over the real
+  `mcp-bridge`, node connection and gateway; `TestMCPEndpoint` over real HTTP). Not yet verified with a real harness
+  driving the tools.
 - **Harbor Pilot gateway** (ADR-0060, Accepted; SM-GW-001…010). A space can route its runs' model traffic through a
   self-hosted [Harbor Pilot](https://aurimasniekis.github.io/go-harbor-pilot/) gateway. Each run gets its own
   short-lived Harbor Pilot token instead of an account, and the token is revoked when the run ends. Harbor Pilot's hard

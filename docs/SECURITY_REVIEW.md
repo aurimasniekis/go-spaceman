@@ -2,6 +2,7 @@
 
 > Requirement: SM-SEC-001 (documented boundaries), with the threat model in [THREAT_MODEL.md](THREAT_MODEL.md).
 > Behaviour changes from this review are recorded in ADR-0039 ([DECISIONS.md](DECISIONS.md)).
+> A later entry covers the SpaceMan admin MCP (ADR-0063): [SpaceMan admin MCP](#spaceman-admin-mcp-adr-0063-2026-11-08).
 
 ## Summary
 
@@ -91,3 +92,73 @@ Severity: **high** means a remote or cross-space compromise without prior access
 - Writers that lost records to a failed disk could be renumbered under central's copy (`recording.Writer.SkipTo`).
 - Recorders outlived a stopped agent (SR-I08).
 - A storage-busy API error had no `Retry-After`. It now sends `Retry-After: 1`, and nothing is written, so a retry with the same `Idempotency-Key` creates the resource once.
+
+## SpaceMan admin MCP (ADR-0063, 2026-11-08)
+
+A review entry for the SpaceMan admin MCP (SM-MCP-005..009, AM-1 to AM-10), written with AM-8 at the end of the work
+stream on branch `feat/spaceman-mcp`. It records how the change sits against the threat model, which rails were checked
+and by which tests, and one open question. It is not a repeat of the M4-08 review method above: each rail was traced
+from the gateway or endpoint entry point to the API's handler chain and checked against its tests. Labels: **simulated**
+evidence only (in-process central, real agent and bridge, fake runner; the go MCP SDK client over HTTP). No real
+harness has driven the tools through a model yet.
+
+| | |
+|---|---|
+| Threats | **T-33** (an agent in an infra space uses its owner's administrator authority through the tools): accepted risk, operator decision 2026-11-07, for a trusted infra space. **T-38** (an operator's own MCP client on `/api/v1/mcp`, steered by prompt injection or a web page): mitigated as below, one residual open. See [THREAT_MODEL.md](THREAT_MODEL.md). |
+| Result | No finding to fix. One open decision (SR-MCP-01, root approval). ADR-0063 stays **Proposed** until it is decided. |
+
+### Rails checked
+
+- **Identity (SM-MCP-006).** A SpaceMan server's internal token has no secret and is never accepted as a bearer token
+  (`AuthenticateAPIToken` refuses any purpose). Each call builds the principal from the token ID and is authorized as
+  token **and** owner, so it loses what its owner loses. Revocation, owner disable, grant loss, expiry, server delete
+  and disable all stop it on the next call, with the reason. Tests: `TestInternalTokens`, `TestSpacemanServers`,
+  `TestSpacemanMCPGateway`, `TestSpacemanMCPOverBridge` (token revoked mid-run: the next call through the bridge is
+  refused with "revoked … re-issue", the catalog empties and the run goes on).
+- **Hard exclusions (SM-MCP-007).** Every operation has a reviewed class (`TestEveryOperationIsClassified`). Sign-in,
+  step-up, tokens, users, approvals and approval policies, human-action answers, takeover and terminal input, one-time
+  secrets, sign-in providers, SpaceMan MCP management and restore acknowledgement are never tools
+  (`TestHardExclusions`). The API itself also refuses internal and endpoint principals on Session (unless filtered),
+  UserOnly, Reauth and MFA rules, although bearer tokens otherwise skip step-up
+  (`TestInternalPrincipalRefusedForPersonalOperations`, `TestMCPEndpointGuard`).
+- **Reach.** Only control and worker runs get the tools; KB, dreamer and diagnostic runs never do. A role the server
+  was not granted to sees no tools and is refused (`TestSpacemanMCPGateway`, `TestSpacemanMCPOverBridge`).
+- **Approvals model (SM-MCP-008).** Dangerous tools always need a person's approval, whatever the preset or the
+  server's `approval` setting. Without a stored policy, `approvals.Require` uses a synthetic one-use policy bound to the
+  server and the exact arguments (the request records the run); a stored `mcp.*` policy written by a person replaces it.
+  `approval: writes` gates writes too; the default `none` lets writes run at once (operator decision, the T-33
+  residual). An agent is never an approver: the approver re-check refuses any `spaceman_mcp:` actor or internal token,
+  and human-action responses refuse it at the service level (`TestApproverRecheckRefusesSpacemanMCP`, `TestRequire`).
+  End to end over the bridge, an approved dangerous call runs exactly once (one execution, no uses left) and a replay
+  asks again (`TestSpacemanMCPOverBridge`, `TestSpacemanMCPGateway`). Fail closed: without an approval gate a dangerous
+  call is refused.
+- **Resolved-kind diagnostic gate.** The gateway classes a call by its arguments, but `launch-run` may take its kind
+  from the space role's template, which only the API resolves. The API refuses a diagnostic launch by an internal or
+  endpoint principal unless the call carries the gateway's mark (`gateway.WithApprovedCall("launch-run")`), set only
+  after an approval succeeded for that exact dangerous call. A role-only diagnostic launch is refused with a hint to pass
+  `kind: diagnostic`. Saving a space role is dangerous, so a role can't be turned diagnostic without an approval either
+  (`TestAuthorizeLaunchKind`, `TestSpacemanMCPGateway`).
+- **External endpoint (SM-MCP-009, T-38).** Only a user's bearer API token: session cookies and the root token get
+  403, internal tokens 401. Browser requests (`Origin` or `Sec-Fetch-*`) are refused and no CORS headers are sent.
+  Per-token rate limit 5/s, burst 50, plus the API's body and failed-bearer limits. Every call is audited via the token
+  on the `mcp_endpoint` channel, without arguments or results (`TestMCPEndpoint`, `TestMCPEndpointGuard`).
+- **Batch refusal.** The per-token limit counts requests, so a request must carry one call: a JSON-RPC batch (a body
+  whose first non-space byte is `[`) is refused with 400 before any message in it runs, and so is an
+  `Mcp-Protocol-Version` older than 2025-06-18, the version that dropped batching (the SDK would accept batches for
+  older versions). `TestMCPEndpoint` sends a batch of 20 calls and checks that none ran.
+- **The token's user may deny, never approve.** On the endpoint a dangerous call's approval is bound to the token
+  (`api_token:<id>`) and the exact arguments. The token acts for its user, so that user approving would add no second
+  check (a stolen token plus that user's session would approve itself): `onFinalized` refuses an approving decision by
+  the token's user in any session or through any of their tokens, and the gate revokes such an approval if one is
+  recorded anyway. The user may still deny or withdraw their own client's pending request from a session or the API,
+  never through the MCP channel. Consequence: a single-administrator installation can't approve the endpoint's
+  dangerous calls with a user's decision (`TestMCPEndpoint`).
+- **Audit.** In-run calls are attributed to the owner with `via spaceman_mcp:<token>` and `run`; the gateway's
+  `mcp_server.tool_called` names the run, the server, the operation and the class. The audit chain verifies after the
+  end-to-end run (`TestActorViaAndRun`, `TestSpacemanMCPOverBridge`).
+
+### Open
+
+| ID | Severity | Item | Status |
+|---|---|---|---|
+| SR-MCP-01 | info | **May the root token approve the external endpoint's dangerous calls?** The "token's user never approves" rule matches user decisions only, so a decision made with the root token is accepted. On a single-administrator installation it is the only way to approve those calls; refusing it would also mean those calls can't run there at all. | **open, operator decision pending** (ADR-0063 §External endpoint, "Under review"). Behaviour is unchanged until it is decided; ADR-0063 stays Proposed meanwhile. |

@@ -262,9 +262,12 @@
   its operation (`mcp.<server>.<tool>` or a prefix such as `mcp.deploys.*`); other calls run at once (ADR-0024).
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
-## SpaceMan MCP (in progress)
-- **Not finished.** Servers are managed through the API and CLI and the external endpoint is served (ADR-0063,
-  Proposed), but the web UI, the agent-bridge end-to-end test and Terraform follow (AM-7 to AM-9).
+## SpaceMan MCP
+- **Simulated evidence only; ADR-0063 Proposed.** Servers are managed through the API, the CLI and the web UI, runs use
+  the tools over the agent bridge and the external endpoint is served. All of it is tested in process with the real
+  agent and bridge and a fake runner (`TestSpacemanMCPOverBridge`); no real harness has driven the tools through a
+  model yet. The Terraform resource is in terraform-provider-spaceman PR #12, not yet released. ADR-0063 stays
+  Proposed while the root-approval question below is open.
 - **Full admin by default, by design.** The default preset is `admin` on every space and the token never expires
   (operator decisions for a trusted infra space). An agent with these tools can do what its owner can, short of the
   hard exclusions; prompt injection into that space is accepted risk T-33.
