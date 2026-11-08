@@ -154,23 +154,37 @@ func hasHookCommand(group any, command string) bool {
 // file tools read them without a dialog, so they are denied (ADR-0068).
 var ClaudeSpaceCredentialFiles = []string{"instances/*/claude/.credentials.json", "instances/*/codex/auth.json"}
 
-// ClaudeSpaceProtectedFiles are the files of every instance's config dirs (the run's own included) that configure the
-// harness: settings that can run commands at the next launch (hooks, helpers, env), instructions it loads (CLAUDE.md,
-// agents, commands, skills, output styles), plugins, and Codex's whole config dir. The run's file tools get Edit deny
-// rules for them, so a run can't plant settings in another instance, or in its own, without a dialog (ADR-0068, T-40).
-// They are listed one by one rather than as instances/** because the run's own Claude Code writes its auto memory under
-// its own config dir (projects/*/memory) with the same file tools, and a deny rule wins over that (verified with Claude
-// Code 2.1.317); Claude Code itself writes these files without its tools, so the rules don't stop it.
+// ClaudeSpaceProtectedFiles are the files of every instance's config dirs (the run's own included) that Claude Code
+// loads, runs or restores at a later launch or resume: settings that can run commands (hooks, helpers, env), the cached
+// remote and policy settings, instructions (CLAUDE.md, rules, agents, commands, skills, output styles, workflows,
+// routines, loop.md), plugins, scheduled tasks, shell snapshots and session environment files (sourced by its Bash tool),
+// the projects folder (auto memory and transcripts), agent memory, backups, tasks, todos and file history, and Codex's
+// whole config dir. It mirrors the entries Claude Code 2.1.317 protects in its own config dir, for every instance. The
+// run's file tools get Edit deny rules for them, whatever the number of instances, so a run can't plant settings,
+// instructions or memory in another instance, or in its own, without a dialog (ADR-0068, T-40). The run's own auto
+// memory is written outside the space folder instead (Context.AutoMemoryDir, autoMemoryDirectory), where these rules
+// don't reach. They are listed one by one rather than as instances/** because the run's own file tools write its plan
+// files (plans) and background job folder (jobs) in its config dir, and a deny rule wins over Claude Code's carve-out
+// for them (verified with Claude Code 2.1.317); Claude Code itself writes the listed files without its tools, so the
+// rules don't stop it.
 var ClaudeSpaceProtectedFiles = []string{
 	"instances/*/claude/settings.json", "instances/*/claude/settings.local.json", "instances/*/claude/settings.json.spaceman-keys",
-	"instances/*/claude/.claude.json", "instances/*/claude/CLAUDE.md", "instances/*/claude/agents/**", "instances/*/claude/commands/**",
-	"instances/*/claude/skills/**", "instances/*/claude/plugins/**", "instances/*/claude/output-styles/**", "instances/*/claude/hooks/**",
+	"instances/*/claude/.claude.json", "instances/*/claude/remote-settings.json*", "instances/*/claude/policy-limits.json*",
+	"instances/*/claude/CLAUDE.md", "instances/*/claude/loop.md", "instances/*/claude/rules/**", "instances/*/claude/agents/**",
+	"instances/*/claude/commands/**", "instances/*/claude/skills/**", "instances/*/claude/output-styles/**",
+	"instances/*/claude/workflows/**", "instances/*/claude/routines/**", "instances/*/claude/plugins/**",
+	"instances/*/claude/cowork_plugins/**", "instances/*/claude/hooks/**", "instances/*/claude/scheduled_tasks.json",
+	"instances/*/claude/launch.json", "instances/*/claude/daemon.json", "instances/*/claude/daemon/**",
+	"instances/*/claude/shell-snapshots/**", "instances/*/claude/session-env/**", "instances/*/claude/projects/**",
+	"instances/*/claude/agent-memory/**", "instances/*/claude/backups/**", "instances/*/claude/tasks/**",
+	"instances/*/claude/teams/**", "instances/*/claude/todos/**", "instances/*/claude/file-history/**",
 	"instances/*/codex/**",
 }
 
 // MaxInstanceDenyRules caps the per-instance Edit deny rules a run gets: with more other instances than this, it gets
-// none of them, only the rules for every instance's harness configuration (ClaudeSpaceProtectedFiles) and the key
-// stripping at launch, so other instances' memory and transcripts are then writable (ADR-0068, T-40).
+// none of them, only the rules for every instance's harness configuration, memory and transcripts
+// (ClaudeSpaceProtectedFiles) and the key stripping at launch, so the rest of another instance's folder (plan files,
+// scratch state Claude Code doesn't load at launch) is then writable (ADR-0068, T-40).
 const MaxInstanceDenyRules = 50
 
 // globUnsafe are the characters a path must not hold to be used in a Claude Code permission-rule glob: escaping them is
@@ -183,8 +197,8 @@ const globUnsafe = "*?[]{}\\!"
 // the run's file tools away from the instances' config dirs: Read and Edit for the login files
 // (ClaudeSpaceCredentialFiles), Edit for the harness configuration of every instance (ClaudeSpaceProtectedFiles) and
 // Edit for the whole folder of every other instance that exists at launch (instances, listing the space's instances
-// folder, without the run's own, configDir's name): their settings, memory and transcripts; at most
-// MaxInstanceDenyRules of them, else none. A space folder holding a
+// folder, without the run's own, configDir's name): everything in it; at most MaxInstanceDenyRules of them, else
+// none. A space folder holding a
 // glob character gets no directory and no rules, since the rules could not be written exactly; a folder in instances
 // named with one is not an instance and is skipped. The
 // profile's directories and deny rules come first and are kept, duplicates are dropped and every other permissions key
@@ -207,8 +221,12 @@ func addSpaceDirectory(own map[string]any, spaceDir, configDir string, instances
 	}
 	slices.Sort(others)
 	if len(others) > MaxInstanceDenyRules {
-		// A space with very many instances would get a settings file that grows with each one: the named configuration
-		// paths and the key stripping at launch still cover every instance's settings (T-40).
+		// A space with very many instances would get a settings file that grows with each one. Without these rules the
+		// named paths (ClaudeSpaceProtectedFiles: configuration, instructions, memory, transcripts) and the key stripping at
+		// launch still cover every instance, and so they do for an instance created after this launch, which never gets
+		// a rule of its own. What stays writable then is the rest of another instance's folder, which Claude Code doesn't
+		// load at launch: plan files, background job output and the like (T-40). Glob-named folders were already skipped,
+		// so they don't count towards the cap.
 		others = nil
 	}
 	perms := map[string]any{}
@@ -355,6 +373,12 @@ func (Claude) Build(c Context) (Launch, error) {
 	denyTerminalPrompts(own)
 	denyPermissionDialogs(own, c.AgentBinary)
 	addSpaceDirectory(own, c.SpaceDir, c.ConfigDir, c.SpaceInstances)
+	// The run's own auto memory lives outside the space folder, since every instance's projects folder is denied to
+	// the file tools; Claude Code lets its tools write its auto memory folder without a dialog (verified with Claude
+	// Code 2.1.317). A profile that sets autoMemoryDirectory itself decides (ADR-0068).
+	if _, set := own["autoMemoryDirectory"]; !set && c.AutoMemoryDir != "" {
+		own["autoMemoryDirectory"] = c.AutoMemoryDir
+	}
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
 	secrets := secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")

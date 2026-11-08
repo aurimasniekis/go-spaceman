@@ -115,7 +115,9 @@ Things to know:
     something, put it under **Allow**.
   - **The run's own space folder** in `additionalDirectories` (only that space's folder), so reading the space's plans
     and notes from a checkout doesn't raise a dialog. The Claude Code and Codex login files in it are denied. Other
-    instances' folders, and every instance's settings and other harness configuration, can't be edited.
+    instances' folders, and every instance's settings, instructions (`CLAUDE.md`, rules), memory and transcripts,
+    can't be edited. Each instance's Claude Code auto memory lives outside the space folder, in
+    `<data_dir>/automemory/<space-id>/<instance>` on the node, so no other run can write what it remembers.
 
   Both are added after the profile's own hooks, **Deny** rules and directories, which stay as they are (each entry
   once). Like the other defaults, the node adds these, and the resolved settings don't show them. Three more things

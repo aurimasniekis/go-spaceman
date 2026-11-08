@@ -3287,17 +3287,34 @@
     folder let a run's file tools write other instances' `instances/*/claude/settings.json` with no dialog and no
     classifier (verified live with Claude Code 2.1.317 in `acceptEdits`), and a key planted there (`disableAllHooks`,
     `env.ANTHROPIC_BASE_URL`, `apiKeyHelper`, …) took effect at that instance's next launch. Now:
-    - every instance folder other than the run's own that exists at launch gets `Edit(//<space>/instances/<id>/**)`
-      (its settings, memory and transcripts), up to 50 of them. With more, a run gets none of them, so the settings stay
-      bounded, and only the next two measures apply;
-    - every instance, the run's own included, gets `Edit` deny rules for the files that configure the harness:
-      `claude/settings.json`, `settings.local.json`, the keys record, `.claude.json`, `CLAUDE.md`, `agents/`,
-      `commands/`, `skills/`, `plugins/`, `output-styles/`, `hooks/`, and all of `codex/`. These also cover an instance
-      created after the launch.
-    - The rule is not the simpler `Edit(//<space>/instances/**)`: Claude Code writes its own auto memory
-      (`instances/<own>/claude/projects/*/memory/`) with the same file tools, a deny rule wins over that (verified), and
-      permission-rule globs have no "all but one" form (`[!x]` is not negation there). No `Read` deny is added for
-      `instances/**`: Claude Code reads its own tool results there.
+    - every instance folder other than the run's own that exists at launch gets `Edit(//<space>/instances/<id>/**)`,
+      up to 50 of them. With more, a run gets none of them, so the settings stay bounded, and only the next measures
+      apply;
+    - every instance, the run's own included, gets `Edit` deny rules (`harness.ClaudeSpaceProtectedFiles`) for
+      everything in its config dir that Claude Code loads, runs or restores at a later launch or resume, whatever the
+      number of instances. These also cover an instance created after the launch. The list mirrors the entries Claude
+      Code 2.1.317 protects in its own config dir, for every instance: `claude/settings.json`, `settings.local.json`,
+      the keys record, `.claude.json`, the cached `remote-settings.json*` and `policy-limits.json*`, the instructions
+      (`CLAUDE.md`, `rules/`, `agents/`, `commands/`, `skills/`, `output-styles/`, `workflows/`, `routines/`,
+      `loop.md`), `plugins/`, `cowork_plugins/`, `hooks/`, `scheduled_tasks.json`, `launch.json`, `daemon.json`,
+      `daemon/`, `shell-snapshots/` and `session-env/` (sourced by its Bash tool), `projects/` (auto memory and
+      transcripts), `agent-memory/`, `backups/`, `tasks/`, `teams/`, `todos/`, `file-history/`, and all of `codex/`
+      (review round 2: F1 added `rules/`, F2 `projects/` and the rest, F3 the cached remote and policy settings);
+    - **the run's own auto memory is moved out of the space folder** (round-2 F2). Claude Code loads an instance's auto
+      memory (`MEMORY.md`) into its next run, so writing another instance's memory was persistent prompt injection: a
+      worker reading untrusted text could poison control. The node sets `autoMemoryDirectory` (a key only the profile
+      or SpaceMan may set) to `<data_dir>/automemory/<space-id>/<instance>/projects/<project key>/memory`, outside the
+      space folder and every glob a run can write. Claude Code lets the run's file tools write and read its own auto
+      memory folder there without a dialog, and loads `MEMORY.md` from it (verified live with Claude Code 2.1.317).
+      The project key is Claude Code's own (the main checkout for a linked worktree; non-alphanumerics become `-`). At
+      the instance's first launch on this release the node copies the memory it kept in its config dir
+      (`claude/projects/*/memory`) there under the same keys, folders and regular files only (never symbolic links),
+      and marks the folder done only after a full copy; the old copy stays. A profile that sets `autoMemoryDirectory`
+      itself decides. A relocation's release retains or deletes `automemory/<space-id>` with the space folder;
+    - the rule is not the simpler `Edit(//<space>/instances/**)`: the run's own file tools still write its plan files
+      (`plans/`, plan mode) and background job folder (`jobs/`) in its config dir, a deny rule wins over Claude Code's
+      carve-out for them (verified), and permission-rule globs have no "all but one" form (`[!x]` is not negation
+      there). No `Read` deny is added for `instances/**`: Claude Code reads its own tool results there.
     - A space folder that holds a glob character (`* ? [ ] { } \ !`) gets no directory and no rules, since the rules
       could not be written exactly (N2). A folder under `instances/` named with one is not an instance (SpaceMan's IDs
       never hold one) and is skipped.
@@ -3335,14 +3352,19 @@
   - **What a run's file tools reach.** They reach the run's own space without a dialog. They can read and write the
     space's checkouts and `work/`. They can read other instances' transcripts (`projects/*.jsonl`), settings and
     memory, but not the two login files. They can't write other instances' folders, or any instance's harness
-    configuration (M1 above). This is wider than before. The shell runs as the same OS user, but every shell command
+    configuration, instructions, memory or transcripts (M1 above). They write their own auto memory outside the space
+    folder. This is wider than before. The shell runs as the same OS user, but every shell command
     goes through auto mode's classifier (or a dialog in other modes), so the shell did not already reach these files
     without a check. File tools inside a working directory skip both.
   - **Accepted residuals.**
-    - Reading other instances' transcripts.
-    - Writing the memory and transcripts of an instance created after the run launched, until the run's next launch.
-      Its settings are never writable this way.
-    - In a space with more than 50 other instances, writing every other instance's memory and transcripts.
+    - Reading other instances' transcripts and memory.
+    - Writing what Claude Code doesn't load at launch in the folder of an instance created after the run launched, or
+      of every other instance in a space with more than 50 of them: plan files, background job output and the like.
+      Their settings, instructions, memory and transcripts are never writable this way (round 2 closed cross-instance
+      memory poisoning).
+    - The protected list and `ClaudeUnsafeSettingsKeys` are deny-lists checked against Claude Code 2.1.317: an entry or
+      key a later Claude Code version adds is not covered until it is added (F4; an allow-list is a follow-up in
+      PLAN.md).
   - **Hook precedence and profile hooks** (S2). A profile that sets `disableAllHooks` turns SpaceMan's hook off too.
     When the profile has its own `PermissionRequest` hook, Claude Code runs both. Outside auto mode the first answer
     wins, so a profile hook that allows can win over SpaceMan's deny. In auto mode Claude Code ignores any hook's

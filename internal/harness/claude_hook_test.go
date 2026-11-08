@@ -29,8 +29,11 @@ func withCreds(rules ...string) []string {
 		"Read(//data/spaces/spc_a/instances/*/claude/.credentials.json)", "Edit(//data/spaces/spc_a/instances/*/claude/.credentials.json)",
 		"Read(//data/spaces/spc_a/instances/*/codex/auth.json)", "Edit(//data/spaces/spc_a/instances/*/codex/auth.json)")
 	for _, f := range []string{"claude/settings.json", "claude/settings.local.json", "claude/settings.json.spaceman-keys", "claude/.claude.json",
-		"claude/CLAUDE.md", "claude/agents/**", "claude/commands/**", "claude/skills/**", "claude/plugins/**", "claude/output-styles/**",
-		"claude/hooks/**", "codex/**"} {
+		"claude/remote-settings.json*", "claude/policy-limits.json*", "claude/CLAUDE.md", "claude/loop.md", "claude/rules/**", "claude/agents/**",
+		"claude/commands/**", "claude/skills/**", "claude/output-styles/**", "claude/workflows/**", "claude/routines/**", "claude/plugins/**",
+		"claude/cowork_plugins/**", "claude/hooks/**", "claude/scheduled_tasks.json", "claude/launch.json", "claude/daemon.json", "claude/daemon/**",
+		"claude/shell-snapshots/**", "claude/session-env/**", "claude/projects/**", "claude/agent-memory/**", "claude/backups/**",
+		"claude/tasks/**", "claude/teams/**", "claude/todos/**", "claude/file-history/**", "codex/**"} {
 		rules = append(rules, "Edit(//data/spaces/spc_a/instances/*/"+f+")")
 	}
 	return rules
@@ -144,9 +147,9 @@ func TestClaudePreventsPermissionDialogs(t *testing.T) {
 	}
 }
 
-// ADR-0068 (M1): the run's file tools may not edit the other instances' folders that exist at launch (their settings,
-// memory and transcripts), nor any instance's harness configuration (its own included), while its own folder stays
-// writable for Claude Code's auto memory. A space folder or instance name with a glob character gets no directory.
+// ADR-0068 (M1): the run's file tools may not edit the other instances' folders that exist at launch, nor any
+// instance's harness configuration, instructions, memory and transcripts (its own included); the run's own auto memory
+// is outside the space folder. A space folder or instance name with a glob character gets no directory.
 func TestClaudeDeniesOtherInstances(t *testing.T) {
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
 	c := ctxFor(proto.LaunchPayload{Kind: "worker"})
@@ -202,6 +205,24 @@ func TestClaudeDeniesOtherInstances(t *testing.T) {
 		if len(deny) != want || !slices.Contains(deny, "Edit(//data/spaces/spc_a/instances/*/claude/settings.json)") {
 			t.Fatalf("%d instances: %d rules", n, len(deny))
 		}
+	}
+
+	// The run's own auto memory goes where the node put it (outside the space folder); a profile's own value wins.
+	c = ctxFor(proto.LaunchPayload{Kind: "worker"})
+	c.AutoMemoryDir = "/data/automemory/spc_a/ins_1/projects/-data-spaces-spc_a-repo/memory"
+	l, _ = Claude{}.Build(c)
+	if got := l.OwnJSON[cfgSettings]["autoMemoryDirectory"]; got != c.AutoMemoryDir {
+		t.Fatalf("autoMemoryDirectory %v", got)
+	}
+	c.Payload.ClaudeSettings = map[string]any{"autoMemoryDirectory": "~/mem"}
+	l, _ = Claude{}.Build(c)
+	if got := l.OwnJSON[cfgSettings]["autoMemoryDirectory"]; got != "~/mem" {
+		t.Fatalf("profile autoMemoryDirectory %v", got)
+	}
+	c = ctxFor(proto.LaunchPayload{Kind: "worker"})
+	l, _ = Claude{}.Build(c)
+	if _, set := l.OwnJSON[cfgSettings]["autoMemoryDirectory"]; set {
+		t.Fatal("autoMemoryDirectory set without a folder")
 	}
 
 	// A folder in instances named with a glob character is not an instance: skipped, the directory and rules stay.

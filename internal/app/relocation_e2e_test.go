@@ -281,6 +281,14 @@ func TestRelocationClean(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(a.dir, "spaces", sp.Workdir)); !os.IsNotExist(err) {
 		t.Fatal("the source folder is still in place")
 	}
+	// So is the Claude Code auto memory the earlier run's instance kept outside the space folder (ADR-0068).
+	srcRuns, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 10)
+	if _, err := os.Stat(filepath.Join(retained, "automemory", srcRuns[len(srcRuns)-1].InstanceID, ".migrated")); err != nil {
+		t.Fatalf("retained auto memory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.dir, "automemory", sp.ID)); !os.IsNotExist(err) {
+		t.Fatal("the source's auto memory is still in place")
+	}
 	if e.auditCount("space.relocated", "success") != 1 {
 		t.Fatal("relocation not audited")
 	}

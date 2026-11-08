@@ -272,8 +272,18 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if memDir != "" && !p.Resume {
 		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(memDir, p.Role))
 	}
+	// Claude Code's auto memory is kept outside the space folder, where no other run's file tools reach (ADR-0068).
+	var autoMem string
+	if p.Harness == harness.KindClaude {
+		autoMem, err = PrepareAutoMemory(filepath.Join(space, "instances", p.InstanceID, "claude"), a.autoMemoryDir(c.SpaceID, p.InstanceID), work)
+		if err != nil {
+			fail("prepare auto memory", err)
+			return
+		}
+	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
-		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir})
+		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir,
+		AutoMemoryDir: autoMem})
 	if err != nil {
 		fail("build launch", err)
 		return

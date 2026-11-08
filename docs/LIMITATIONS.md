@@ -323,12 +323,16 @@
   `ExitPlanMode` approval dialog; only `EnterPlanMode` is denied.
 - **A run's file tools reach its whole space folder** (ADR-0068). Every checkout and `work/` is readable and
   writable. Other instances' transcripts (`projects/*.jsonl`), settings and memory are readable but not writable.
-  Every instance's harness configuration is denied to edits, the run's own included. The Claude Code and Codex login
-  files are denied entirely. Two gaps remain:
-  - an instance created after the run started has its memory and transcripts writable by that run until the run's next
-    launch (its settings are not);
-  - in a space with more than 50 other instances, a run gets no per-instance rules, so the memory and transcripts of
-    every other instance are writable;
+  Everything in an instance's config dir that Claude Code loads, runs or restores at a later launch is denied to edits,
+  for every instance, the run's own included, whatever their number: settings, the cached `remote-settings.json` and
+  `policy-limits.json`, instructions (`CLAUDE.md`, `rules/`, agents, commands, skills, …), plugins, hooks, shell
+  snapshots, auto memory and transcripts (`projects/`). The run's own auto memory lives outside the space folder
+  (`<data_dir>/automemory/<space>/<instance>`); the memory an instance kept in its config dir before is copied there
+  at its first launch on this release. The Claude Code and Codex login files are denied entirely. Three gaps remain:
+  - in the folder of an instance created after the run started, and of every other instance in a space with more than
+    50 of them, the files Claude Code doesn't load at launch (plan files, background job output) are writable;
+  - the protected files and the stripped settings keys are deny-lists checked against Claude Code 2.1.317, so an entry
+    a later version adds is not covered until SpaceMan adds it;
   - the node strips dangerous settings keys at every launch, but keeps keys the profile set.
 
   This is wider than before: the shell runs as the same OS user, but each shell command passes auto mode's classifier,

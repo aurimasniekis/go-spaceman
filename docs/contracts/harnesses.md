@@ -90,8 +90,28 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
     directory that is denied by your permission settings."). That covers both `Edit(//<space>/instances/<id>/**)` and
     `Edit(//<space>/instances/*/claude/settings.json)`.
   - **Deny rules also block the run's own auto memory.** Claude Code writes its auto memory to
-    `$CLAUDE_CONFIG_DIR/projects/<cwd with / and . as ->/memory/` with the same `Write` tool, and a deny rule covering
+    `$CLAUDE_CONFIG_DIR/projects/<project key>/memory/` with the same `Write` tool, and a deny rule covering
     that folder refuses it. So `Edit(//<space>/instances/**)` would block the run's own memory.
+  - **Auto memory elsewhere (review round 2, verified live with 2.1.317, `make test-real-claude-cli`).**
+    - `autoMemoryDirectory` in the user `settings.json` (an absolute path; `~/` is expanded; ignored in a checked-in
+      project settings file) replaces the folder. Claude Code names it in the system prompt's "auto memory" section,
+      loads its `MEMORY.md` into the first request, and its `Write` and `Read` tools reach it without a dialog in
+      `acceptEdits` even when it is outside every working directory (its built-in carve-out, "auto memory files are
+      allowed for writing"/"reading").
+    - The default folder's project key: Claude Code keys by the main checkout of the git repository (for a linked
+      worktree, the repository its `.git` file points at), else the working directory. Every UTF-16 code unit other
+      than an ASCII letter or digit becomes `-`; a key over 200 characters is cut there and gets `-` and the base-36
+      absolute value of the path's 32-bit Java-style string hash. Live, the default folder named in the system prompt
+      for a worktree cwd matched `agent.ClaudeProjectKey(agent.ClaudeProjectRoot(cwd))`.
+    - With 52 instances (no per-instance rules), `Edit(//<space>/instances/*/claude/projects/**)` and the other named
+      globs refused writes to another instance's memory, transcript, `rules/`, `CLAUDE.md`, `policy-limits.json`, shell
+      snapshots and session environment, and to the run's own `rules/` and `remote-settings.json` (which Claude Code
+      also asks about on its own, as one of its config files).
+    - The binary protects these entries of its own config dir (they are what SpaceMan denies for every instance):
+      `shell-snapshots`, `session-env`, `plugins`, `hooks`, `skills`, `workflows`, `commands`, `agents`, `routines`,
+      `rules`, `output-styles`, `scheduled_tasks.json`, `launch.json`, `CLAUDE.md`, `projects`, `daemon.json`,
+      `policy-limits.json` (and its `.signature*.json` files), `backups`. Its plan files (`plans/`), scratchpad and
+      background job folder (`jobs/`) are written by the session's own file tools.
   - **Bracket negation doesn't work.** `[!A]` in a rule did not act as "not A" (it matched names starting with `A`).
   - **Hook command failures.** A `PermissionRequest` command hook whose command fails shows the dialog: exit code 2
     does not deny this event. The command `'<bin>' hook permission-request 2>/dev/null || printf '%s' '<deny JSON>'`

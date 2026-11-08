@@ -272,7 +272,8 @@ func TestFleetLifecycle(t *testing.T) {
 		}
 	}
 	// ADR-0068: the run's settings.json has SpaceMan's deny-only PermissionRequest hook, run by the shipped agent binary,
-	// and the run's own space folder (its real path), nothing wider, as an additional directory.
+	// and the run's own space folder (its real path), nothing wider, as an additional directory; every instance's memory
+	// is denied, and the run's own auto memory is outside the space folder.
 	spaceDir, _ := filepath.EvalSymlinks(filepath.Join(e.agentDir, "spaces", sp.Workdir))
 	raw, err := os.ReadFile(filepath.Join(spaceDir, "instances", e.run1(ctrl.ID).InstanceID, "claude", "settings.json"))
 	var settings struct {
@@ -285,11 +286,14 @@ func TestFleetLifecycle(t *testing.T) {
 			AdditionalDirectories []string `json:"additionalDirectories"`
 			Deny                  []string `json:"deny"`
 		} `json:"permissions"`
+		AutoMemoryDirectory string `json:"autoMemoryDirectory"`
 	}
 	if err != nil || json.Unmarshal(raw, &settings) != nil || len(settings.Hooks.PermissionRequest) != 1 ||
 		settings.Hooks.PermissionRequest[0].Hooks[0].Command != hns.ClaudePermissionHookCommand("/usr/bin/true") ||
 		!slices.Equal(settings.Permissions.AdditionalDirectories, []string{spaceDir}) ||
-		!slices.Contains(settings.Permissions.Deny, "Edit(/"+spaceDir+"/instances/*/claude/settings.json)") {
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+spaceDir+"/instances/*/claude/settings.json)") ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+spaceDir+"/instances/*/claude/projects/**)") ||
+		!strings.HasPrefix(settings.AutoMemoryDirectory, filepath.Join(e.agentDir, "automemory", sp.ID, e.run1(ctrl.ID).InstanceID, "projects")+"/") {
 		t.Fatalf("run settings %s %v", raw, err)
 	}
 	if e.run1(ctrl.ID).Launch.AccountRef != accts["claude_oauth_token"] {

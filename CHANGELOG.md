@@ -192,9 +192,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   hook can only deny, never allow, so an `ask` rule now works like a deny. Each run also gets its own space folder
   (`<data_dir>/spaces/<space>`, only that one) in `permissions.additionalDirectories`, with `Read` and `Edit` denied
   for the instances' login files in it. Its file tools can't edit:
-  - other instances' folders (up to 50 other instances; beyond that, only the next item applies);
-  - any instance's settings or other harness configuration (`settings.json`, `.claude.json`, `CLAUDE.md`, agents,
-    commands, skills, plugins, hooks, Codex's config dir).
+  - other instances' folders (up to 50 other instances; beyond that, only the next items apply);
+  - anything in any instance's config dir that Claude Code loads, runs or restores at a later launch, however many
+    instances there are: settings, `.claude.json`, the cached `remote-settings.json` and `policy-limits.json`,
+    instructions (`CLAUDE.md`, `rules/`, agents, commands, skills, output styles), plugins, hooks, shell snapshots,
+    auto memory and transcripts (`projects/`), Codex's config dir;
+  - another instance's auto memory, which its next run would load: each instance's Claude Code auto memory now lives
+    outside the space folder, in `<data_dir>/automemory/<space-id>/<instance>` (set as `autoMemoryDirectory`). The
+    memory an instance kept in its config dir is copied there at its first launch on this release; the old copy
+    stays in place. A relocation retains or deletes it with the space folder.
 
   At every launch the node removes dangerous keys from the instance's `settings.json` unless the profile or SpaceMan
   set them: `disableAllHooks`, `hooks`, `env`, `*Helper`, `statusLine`, `autoMode`, `permissions`, plugin keys and

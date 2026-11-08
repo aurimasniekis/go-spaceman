@@ -64,6 +64,9 @@ type Context struct {
 	Payload proto.LaunchPayload
 	// MemoryDir is the instance's checkout of its role memory ("" when memory is unavailable on the node).
 	MemoryDir string
+	// AutoMemoryDir is the folder for the instance's own Claude Code auto memory of this launch's project, outside the
+	// space folder so no other run's file tools may write it ("" keeps Claude Code's default, ADR-0068).
+	AutoMemoryDir string
 }
 
 // Launch is a built launch.
