@@ -45,7 +45,7 @@ func newRoot() *cobra.Command {
 	g := &globals{}
 	root := &cobra.Command{Use: "spaceman-agent", Short: "SpaceMan node agent", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVarP(&g.configPath, "config", "c", os.Getenv("SPACEMAN_AGENT_CONFIG"), "configuration file (env SPACEMAN_AGENT_CONFIG)")
-	root.AddCommand(versionCmd(), enrollCmd(g), runCmd(g), launchCmd(), leaseGuardCmd(), mcpBridgeCmd())
+	root.AddCommand(versionCmd(), enrollCmd(g), runCmd(g), launchCmd(), leaseGuardCmd(), mcpBridgeCmd(), hookCmd())
 	return root
 }
 
@@ -240,5 +240,18 @@ func mcpBridgeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&run, "run", "", "run ID")
 	cmd.Flags().StringVar(&socket, "socket", "", "agent bridge socket")
+	return cmd
+}
+
+func hookCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "hook", Short: "Internal: hooks SpaceMan sets in the harnesses it launches", Hidden: true}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "permission-request",
+		Short: "Claude Code PermissionRequest hook: deny every permission dialog and point the model at spaceman_human_ask (ADR-0068)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return harness.ClaudePermissionRequestHook(cmd.InOrStdin(), cmd.OutOrStdout())
+		},
+	})
 	return cmd
 }

@@ -180,6 +180,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
 
 ### Changed
+- **No more permission dialogs in Claude Code runs** (ADR-0068, security-relevant). Every run SpaceMan launches, of
+  every kind, gets a `PermissionRequest` hook (`spaceman-agent hook permission-request`, part of the node agent) that
+  denies every permission dialog Claude Code would show and tells the model to ask through `spaceman_human_ask`
+  instead. Even in auto mode, Claude Code shows a dialog for `ask` rules, for reads outside the working directories,
+  and when its classifier falls back after repeated blocks, and nobody answers it in an unattended run.
+  `skipAutoPermissionPrompt` doesn't prevent these dialogs: it only skips the notice shown when auto mode starts. The
+  hook can only deny, never allow, so an `ask` rule now works like a deny. Each run also gets its own space folder
+  (`<data_dir>/spaces/<space>`, only that one) in `permissions.additionalDirectories`, with `Read` and `Edit` denied
+  for the instances' login files in it. Both are merged with the profile's settings: its hooks (any `PermissionRequest`
+  hook or `PreToolUse` guard), deny rules and directories are kept, and nothing is repeated. If your profiles carry a
+  workaround (a dialog-denying hook script, or the whole `spaces/` folder as an additional directory), you can remove
+  it. The node adds both, so they take nodes on this release or later.
 - **Agents no longer ask in the terminal** (ADR-0066). Claude Code runs get `AskUserQuestion` and `EnterPlanMode` in
   the run's `permissions.deny`, so the model never sees the terminal question picker or plan mode (which ends in a
   plan-approval dialog): both left an unattended run waiting silently for an answer typed into its terminal. They are

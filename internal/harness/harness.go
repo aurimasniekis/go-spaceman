@@ -49,6 +49,8 @@ type Context struct {
 	BridgeSocket string
 	// ConfigDir is the instance's harness config root (per space and instance).
 	ConfigDir string
+	// SpaceDir is the run's own space folder (<data_dir>/spaces/<space-dir>); WorkDir is inside it.
+	SpaceDir string
 	// WorkDir is where the program runs (inside the space folder).
 	WorkDir string
 	RunID   string

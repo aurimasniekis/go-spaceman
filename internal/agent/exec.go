@@ -256,6 +256,10 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
 	}
+	spaceReal := space
+	if real, err := filepath.EvalSymlinks(space); err == nil {
+		spaceReal = real
+	}
 	// Role memory (ADR-0025): the instance's checkout, refreshed from the shared history at this safe boundary. A node
 	// without git runs without memory rather than not at all.
 	memDir, err := a.mem.prepare(ctx, c.SpaceID, p.Role, p.InstanceID)
@@ -269,7 +273,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(memDir, p.Role))
 	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
-		WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir})
+		SpaceDir: spaceReal, WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir})
 	if err != nil {
 		fail("build launch", err)
 		return

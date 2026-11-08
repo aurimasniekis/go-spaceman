@@ -16,8 +16,9 @@ An agent that needs a person asks with `spaceman_human_ask`. The request is kept
 people per the space's policy, and the answer wakes the agent. SpaceMan tells every run so in its orientation, and
 denies Claude Code's own terminal question picker (`AskUserQuestion`) and plan mode (`EnterPlanMode`, whose plan ends
 in an approval dialog) by default: a run waiting there would wait, silently, for an answer typed into its terminal
-(ADR-0066, and [Claude Code settings](./roles-and-prompts#claude-code-settings) to allow them). A harness's own
-permission dialogs still appear in the terminal; the permission mode decides when.
+(ADR-0066, and [Claude Code settings](./roles-and-prompts#claude-code-settings) to allow them). Claude Code's own
+permission dialogs are answered with "deny" by a hook SpaceMan adds, whose message points the agent here
+(ADR-0068). Codex's permission dialogs still appear in the terminal; the approval policy decides when.
 
 ## Search, filters and sorting
 

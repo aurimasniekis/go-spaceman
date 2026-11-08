@@ -14,7 +14,7 @@ import (
 )
 
 func ctxFor(p proto.LaunchPayload) Context {
-	return Context{AgentBinary: "/opt/spaceman/spaceman-agent", BridgeSocket: "/run/sm/bridge.sock", ConfigDir: "/data/spaces/spc_a/instances/ins_1",
+	return Context{AgentBinary: "/opt/spaceman/spaceman-agent", BridgeSocket: "/run/sm/bridge.sock", ConfigDir: "/data/spaces/spc_a/instances/ins_1", SpaceDir: "/data/spaces/spc_a",
 		WorkDir: "/data/spaces/spc_a/work", RunID: "run_1", SpaceID: "spc_a", RunDir: "/data/runs/run_1", Binary: "claude", Payload: p}
 }
 
@@ -60,14 +60,14 @@ func TestClaudeDeniesTerminalPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}, "ask": []any{"Bash(git push *)"},
-		"additionalDirectories": []any{"/data/shared"}, "deny": []string{"AskUserQuestion", "WebFetch", "EnterPlanMode"}}
+		"additionalDirectories": []string{"/data/shared", "/data/spaces/spc_a"}, "deny": withCreds("AskUserQuestion", "WebFetch", "EnterPlanMode")}
 	if !reflect.DeepEqual(perms(l), want) {
 		t.Fatalf("permissions %v", perms(l))
 	}
 	// Only the missing tool is added after the profile's rules.
 	cs = proto.ClaudeSettings{"permissions": map[string]any{"defaultMode": "auto", "deny": []any{"EnterPlanMode", "Read(./secrets/**)"}}}
 	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "control", ClaudeSettings: cs}))
-	if p := perms(l); p["defaultMode"] != "auto" || !reflect.DeepEqual(p["deny"], []string{"EnterPlanMode", "Read(./secrets/**)", "AskUserQuestion"}) {
+	if p := perms(l); p["defaultMode"] != "auto" || !reflect.DeepEqual(p["deny"], withCreds("EnterPlanMode", "Read(./secrets/**)", "AskUserQuestion")) {
 		t.Fatalf("permissions %v", p)
 	}
 	// The profile's stored settings are not changed.
@@ -77,7 +77,7 @@ func TestClaudeDeniesTerminalPrompts(t *testing.T) {
 	cs = proto.ClaudeSettings{"permissions": map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}}}
 	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: cs}))
 	if p := perms(l); p["defaultMode"] != "auto" || !reflect.DeepEqual(p["allow"], []any{"Bash(go test *)"}) ||
-		!reflect.DeepEqual(p["deny"], []string{"AskUserQuestion", "EnterPlanMode"}) {
+		!reflect.DeepEqual(p["deny"], withCreds("AskUserQuestion", "EnterPlanMode")) {
 		t.Fatalf("permissions %v", p)
 	}
 	if _, set := cs["permissions"].(map[string]any)["deny"]; set {
@@ -86,12 +86,13 @@ func TestClaudeDeniesTerminalPrompts(t *testing.T) {
 	// Opt-in, per tool: a profile that allows a tool explicitly gets no deny for it (a deny would win over its allow).
 	cs = proto.ClaudeSettings{"permissions": map[string]any{"allow": []any{"AskUserQuestion"}}}
 	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "control", ClaudeSettings: cs}))
-	if p := perms(l); !reflect.DeepEqual(p, map[string]any{"allow": []any{"AskUserQuestion"}, "deny": []string{"EnterPlanMode"}}) {
+	if p := perms(l); !reflect.DeepEqual(p, map[string]any{"allow": []any{"AskUserQuestion"}, "deny": withCreds("EnterPlanMode"),
+		"additionalDirectories": []string{"/data/spaces/spc_a"}}) {
 		t.Fatalf("opt-in ignored: %v", p)
 	}
 	cs = proto.ClaudeSettings{"permissions": map[string]any{"allow": []any{"AskUserQuestion", "EnterPlanMode"}}}
 	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "control", ClaudeSettings: cs}))
-	if !reflect.DeepEqual(perms(l), cs["permissions"]) {
+	if !reflect.DeepEqual(perms(l), map[string]any{"allow": []any{"AskUserQuestion", "EnterPlanMode"}, "deny": withCreds(), "additionalDirectories": []string{"/data/spaces/spc_a"}}) {
 		t.Fatalf("opt-in ignored: %v", perms(l))
 	}
 }
@@ -141,10 +142,10 @@ func TestClaudeBuild(t *testing.T) {
 	}
 	// The profile's settings.json keys are owned at every launch (ADR-0059), plus the classic renderer when the profile
 	// sets none, so the terminal keeps a scrollback a watch-only viewer can scroll (ADR-0064), and the deny of the
-	// terminal question picker (ADR-0066).
+	// terminal question picker (ADR-0066), the no-dialog hook and the run's own space folder (ADR-0068).
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
-	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 2 || keys["tui"] != "default" ||
-		!reflect.DeepEqual(keys["permissions"], map[string]any{"deny": []string{"AskUserQuestion", "EnterPlanMode"}}) {
+	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 3 || keys["tui"] != "default" || !reflect.DeepEqual(keys["hooks"], spacemanHooks()) ||
+		!reflect.DeepEqual(keys["permissions"], map[string]any{"deny": withCreds("AskUserQuestion", "EnterPlanMode"), "additionalDirectories": []string{"/data/spaces/spc_a"}}) {
 		t.Fatalf("settings keys without settings %v", l.OwnJSON)
 	}
 	cs := proto.ClaudeSettings{"permissions": map[string]any{"deny": []any{"Read(./secrets/**)"}}, "hooks": map[string]any{"Stop": []any{}}}
@@ -157,23 +158,28 @@ func TestClaudeBuild(t *testing.T) {
 	}
 	// Every profile key is written unchanged, except that the deny is added to the profile's own rules, and the
 	// profile's own settings are not modified.
-	if !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], map[string]any{"deny": []string{"Read(./secrets/**)", "AskUserQuestion", "EnterPlanMode"}}) {
+	if !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], map[string]any{"deny": withCreds("Read(./secrets/**)", "AskUserQuestion", "EnterPlanMode"),
+		"additionalDirectories": []string{"/data/spaces/spc_a"}}) {
 		t.Fatalf("permissions %v", l.OwnJSON[cfgSettings]["permissions"])
 	}
 	for k, v := range cs {
-		if k != "permissions" && !reflect.DeepEqual(l.OwnJSON[cfgSettings][k], v) {
+		if k != "permissions" && k != "hooks" && !reflect.DeepEqual(l.OwnJSON[cfgSettings][k], v) {
 			t.Fatalf("settings key %s changed: %v", k, l.OwnJSON[cfgSettings][k])
 		}
 	}
-	if _, set := cs["tui"]; set || len(cs) != 2 || !reflect.DeepEqual(cs["permissions"], map[string]any{"deny": []any{"Read(./secrets/**)"}}) {
+	if h := l.OwnJSON[cfgSettings]["hooks"].(map[string]any); !reflect.DeepEqual(h["Stop"], []any{}) || !reflect.DeepEqual(h["PermissionRequest"], spacemanHooks()["PermissionRequest"]) {
+		t.Fatalf("hooks %v", h)
+	}
+	if _, set := cs["tui"]; set || len(cs) != 2 || !reflect.DeepEqual(cs["permissions"], map[string]any{"deny": []any{"Read(./secrets/**)"}}) ||
+		!reflect.DeepEqual(cs["hooks"], map[string]any{"Stop": []any{}}) {
 		t.Fatal("the profile's settings were changed")
 	}
 	// A profile that picks a renderer keeps it, whichever it is.
 	for _, tui := range []any{"fullscreen", "default"} {
 		prof := proto.ClaudeSettings{"tui": tui, "model": "opus"}
 		l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: prof}))
-		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus",
-			"permissions": map[string]any{"deny": []string{"AskUserQuestion", "EnterPlanMode"}}}) {
+		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus", "hooks": spacemanHooks(),
+			"permissions": map[string]any{"deny": withCreds("AskUserQuestion", "EnterPlanMode"), "additionalDirectories": []string{"/data/spaces/spc_a"}}}) {
 			t.Fatalf("profile renderer %v: %v %v", tui, l.OwnJSON, err)
 		}
 	}
