@@ -308,8 +308,9 @@
   copy; publish the new content as a new version by hand.
 
 ## Human actions
-- **Terminal prompts are denied for Claude Code only** (ADR-0066). Claude Code runs never see `AskUserQuestion`, and
-  every run's orientation says to use `spaceman_human_ask`. Codex's `request_user_input` (Plan mode, or Default mode
+- **Terminal prompts are denied for Claude Code only** (ADR-0066). Claude Code runs never see `AskUserQuestion` or
+  `EnterPlanMode`, and every run's orientation says to use `spaceman_human_ask`. A profile gets either tool back by
+  listing it in its own `permissions.allow` (per tool; there is no global switch). Codex's `request_user_input` (Plan mode, or Default mode
   with its feature flag) is only discouraged by the prompt: SpaceMan sets no override for it yet, because none has
   been verified against a live Codex session. A harness's own permission dialogs still appear in the terminal.
 - **Claude Code permission dialogs are denied, not answered** (ADR-0068). `skipAutoPermissionPrompt` only skips the

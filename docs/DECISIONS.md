@@ -3233,7 +3233,9 @@
     node protocol range (major, min and max minor), the attention summary's storage section plus the database and WAL
     sizes, and counts: spaces not archived, active and connected nodes, runs starting/running/stopping, open human
     actions and connected live-event streams. Counts come from one SQL query; nodes from the fleet's live connection
-    state; no migration.
+    state; migration 0045 adds a partial index for the running-runs count. A section whose source fails (the schema
+    version, the counts query, the node state) is reported as `unavailable` instead of failing the whole response.
+    Central logs the boot ID in its `spaceman serving` line.
   - **No secrets:** no key material, no KEK source or path, no keyring IDs, no tokens. The public URL and the data
     directory path are shown, because only administrators can read the endpoint.
   - **The version alone stays public** in `get-system-info`, as before: it is not a relaxation, and the web UI shows it
