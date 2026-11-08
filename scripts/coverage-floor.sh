@@ -2,8 +2,8 @@
 # Enforce the statement-coverage floor for security-critical packages.
 # Packages that do not exist yet are skipped and reported, so the floor applies as soon as a package lands.
 #
-# All packages are tested in one `go test -count=1 -cover` invocation (go test runs them in parallel; about 20 s instead
-# of about 150 s one by one), and each package's result is read from go test's summary lines. A package fails the floor
+# All packages are tested in one `go test -count=1 -cover` invocation, COVERAGE_PARALLEL packages at a time (below),
+# and each package's result is read from go test's summary lines. A package fails the floor
 # when its tests fail (or don't build), when its coverage is below COVERAGE_FLOOR, and when go test reports no coverage
 # for it at all.
 set -euo pipefail
@@ -51,8 +51,23 @@ for pkg in "${PACKAGES[@]}"; do
 done
 [[ ${#present[@]} -gt 0 ]] || { echo "FAIL  no floor package present"; exit 1; }
 
+# How many packages run their tests at once (go test -p). Their store tests enforce the write-transaction guard
+# (SM_TEST_TX_MAX), and too many at once make the CPU contention that trips it: all 28 at once exceeded 250 ms on a
+# 4-core CI runner, which passes one package at a time. The default is a quarter of the CPUs, at least 1 and at most
+# 8; CI sets 1. The test binaries are built first with full parallelism, so the limit only applies to running them.
+cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+default_parallel=$(( cpus / 4 ))
+(( default_parallel < 1 )) && default_parallel=1
+(( default_parallel > 8 )) && default_parallel=8
+PARALLEL="${COVERAGE_PARALLEL:-$default_parallel}"
+[[ "$PARALLEL" =~ ^[1-9][0-9]*$ ]] || { echo "FAIL  COVERAGE_PARALLEL must be a positive integer"; exit 1; }
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+# A build failure here is reported again, per package, by the run below.
+go test -cover -c -o "$tmp" "${present[@]}" >/dev/null 2>&1 || true
+
 status=0
-out=$(go test -count=1 -cover "${present[@]}" 2>&1) || status=$?
+out=$(go test -p "$PARALLEL" -count=1 -cover "${present[@]}" 2>&1) || status=$?
 # Passing packages print one summary line each; a failure prints its test output, which is shown whole.
 if [[ "$status" -ne 0 ]]; then
   echo "$out"
