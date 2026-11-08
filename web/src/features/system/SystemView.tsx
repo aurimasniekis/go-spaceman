@@ -36,6 +36,13 @@ function CardTitle({ children }: { children: ReactNode }) {
   return <Text size="xs" c="dimmed" tt="uppercase" fw={600} mb="xs">{children}</Text>
 }
 
+const Unavailable = () => <Badge color="owlRed" variant="light">unavailable</Badge>
+
+/** A count, or "unavailable" when its source failed (the status degrades that section instead of failing). */
+function Count({ value, error }: { value: ReactNode; error?: string }) {
+  return error ? <Unavailable /> : <Text size="lg" fw={600}>{value}</Text>
+}
+
 function Ok({ ok, yes, no }: { ok: boolean | undefined; yes: string; no: string }) {
   if (ok === undefined) return <Badge color="gray" variant="light">unknown</Badge>
   return <Badge color={ok ? 'owlGreen' : 'owlRed'} variant="light">{ok ? yes : no}</Badge>
@@ -61,7 +68,7 @@ export function SystemView({ s }: { s: SystemStatus }) {
           <Field label="Boot ID"><Text size="sm" className="mono" style={{ wordBreak: 'break-all' }}>{s.boot_id || '—'}</Text></Field>
           <Field label="Started"><Text size="sm">{datetime(s.started_at)}</Text><Text size="xs" c="dimmed">up {uptime(s.uptime_seconds)}</Text></Field>
           <Field label="Database schema">
-            {s.schema.error ? <Badge color="owlRed" variant="light">unavailable</Badge> : (
+            {s.schema.error ? <Unavailable /> : (
               <Group gap={6}><Text size="sm" className="mono">{s.schema.current}</Text>
                 {!schemaOk && <Badge color="owlYellow" variant="light">binary has {s.schema.latest}</Badge>}</Group>
             )}
@@ -72,11 +79,11 @@ export function SystemView({ s }: { s: SystemStatus }) {
       <Card data-testid="system-counts">
         <CardTitle>Activity</CardTitle>
         <SimpleGrid cols={{ base: 2, sm: 3, md: 5 }} spacing="md">
-          <Field label="Spaces"><Text size="lg" fw={600}>{s.counts.spaces}</Text></Field>
-          <Field label="Nodes connected"><Text size="lg" fw={600}>{s.counts.nodes_connected} <Text span size="sm" c="dimmed">of {s.counts.nodes_active}</Text></Text></Field>
-          <Field label="Runs running"><Text size="lg" fw={600}>{s.counts.runs_running}</Text></Field>
-          <Field label="Pending human actions"><Text size="lg" fw={600}>{s.counts.human_pending}</Text></Field>
-          <Field label="Live streams"><Text size="lg" fw={600}>{s.counts.live_streams}</Text></Field>
+          <Field label="Spaces"><Count value={s.counts.spaces} error={s.counts.error} /></Field>
+          <Field label="Nodes connected"><Count value={<>{s.counts.nodes_connected} <Text span size="sm" c="dimmed">of {s.counts.nodes_active}</Text></>} error={s.counts.nodes_error} /></Field>
+          <Field label="Runs running"><Count value={s.counts.runs_running} error={s.counts.error} /></Field>
+          <Field label="Pending human actions"><Count value={s.counts.human_pending} error={s.counts.error} /></Field>
+          <Field label="Live streams"><Count value={s.counts.live_streams} /></Field>
         </SimpleGrid>
       </Card>
       <Card data-testid="system-instance">

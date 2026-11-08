@@ -16032,6 +16032,9 @@
       "SystemCounts": {
         "additionalProperties": false,
         "properties": {
+          "error": {
+            "type": "string"
+          },
           "human_pending": {
             "description": "Open and in-progress human actions",
             "format": "int64",
@@ -16049,6 +16052,9 @@
           "nodes_connected": {
             "format": "int64",
             "type": "integer"
+          },
+          "nodes_error": {
+            "type": "string"
           },
           "runs_running": {
             "description": "Runs starting, running or stopping",

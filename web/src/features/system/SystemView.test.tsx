@@ -59,6 +59,18 @@ describe('System page', () => {
     expect(screen.getByTestId('system-instance')).toHaveTextContent('free space unavailable')
   })
 
+  it('shows unavailable counts instead of zeros when their sources failed', () => {
+    const base = status()
+    wrap(status({ counts: { ...base.counts, spaces: 0, runs_running: 0, human_pending: 0, nodes_active: 0, nodes_connected: 0, error: 'unavailable', nodes_error: 'unavailable' } }))
+    const counts = screen.getByTestId('system-counts')
+    expect(counts).toHaveTextContent('Spacesunavailable')
+    expect(counts).toHaveTextContent('Nodes connectedunavailable')
+    expect(counts).toHaveTextContent('Runs runningunavailable')
+    expect(counts).toHaveTextContent('Pending human actionsunavailable')
+    expect(counts).toHaveTextContent('Live streams6')
+    expect(screen.getByTestId('system-status')).toHaveTextContent('v0.1.0')
+  })
+
   it('formats uptime and reads the writable check', () => {
     expect(uptime(0)).toBe('0s')
     expect(uptime(65)).toBe('1m 5s')
