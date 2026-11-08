@@ -11,6 +11,8 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/agenttools"
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 )
 
@@ -201,6 +203,40 @@ func TestScheduleDedupReuseConflicts(t *testing.T) {
 	must(t, err)
 	if !created {
 		t.Fatal("new key not created")
+	}
+}
+
+// ADR-0065 (review F5): a reminder that fell due while central was down is delivered by the first sweep of the new
+// notifier, without waiting for a timer: Run sweeps before it arms one, and the queries compare against now.
+func TestReminderDueWhileDownDeliveredOnStart(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	f.exec(`UPDATE runs SET status = 'idle' WHERE id = '` + ctrlRun + `'`)
+	m, _, err := f.svc.Send(f.ctx, op, "spc_a", ctrlFrom, SendInput{To: "control", Subject: "Check the deploy", Delay: time.Hour})
+	must(t, err)
+	// Central is down past the due time; a fresh service and notifier over the same database stand for the restart.
+	f.clk.Advance(3 * time.Hour)
+	svc := New(f.s, audit.NewWriter(f.kr), changefeed.New(nil))
+	q := &fakeQueue{notices: map[string][]string{}}
+	n := NewNotifier(svc, q, nil, f.clk)
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); n.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(10 * time.Second)
+	for q.count(ctrlRun) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first sweep after the restart did not notice the due reminder")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	in, err := svc.Fetch(f.ctx, ctrl)
+	must(t, err)
+	if len(in.Messages) != 1 || in.Messages[0].ID != m.ID || in.Messages[0].State != Available {
+		t.Fatalf("delivered %+v", in.Messages)
+	}
+	if q.count(ctrlRun) != 1 {
+		t.Fatalf("notices %d, want 1", q.count(ctrlRun))
 	}
 }
 
