@@ -34,6 +34,39 @@ hold a grant for itself and one for `*`; it gets the tools of both.
   that is already going.
 - A run's configuration at launch records which servers it was granted.
 
+## SpaceMan's own tools
+
+A **SpaceMan MCP server** gives a space's control and worker runs SpaceMan's own API as tools, for example in an
+"infra" space whose agents administer the others (ADR-0063). It runs inside central, so there is no address or header
+to enter. It acts through an internal API token that you own. The token has no secret, so there is nothing to copy or
+leak.
+
+**Integrations → MCP servers → Add SpaceMan MCP**, or **Add SpaceMan MCP** on a space's **MCP servers** card, where
+that space is already filled in. You need `mcp:write`, and adding the server needs a recent sign-in: SpaceMan may ask
+for your password or second factor first. The dialog's defaults:
+
+- **Name and slug:** `SpaceMan` and `spaceman-admin`, so tools appear as `spaceman-admin__list_spaces`. The slug
+  `spaceman` is reserved for the built-in tools.
+- **Grant:** the space's `control` role. Leave the space empty to grant the server later from its details.
+- **Scope:** **Administer everything (infra)**, which is admin on every space with the admin preset. The other scopes
+  are read-only or operate, on the granted space or on all spaces, or custom grants. Scopes beyond your own grants are
+  disabled.
+- **Tools:** the scope's preset (Read, Read + write, Admin), or **Custom**. A custom set is picked from the tools
+  grouped by API area, with dangerous ones flagged. The count shows how many tools runs will see; tools the grants can
+  never reach are left out.
+- **Approvals:** every dangerous call waits for a person's approval, and this can't be turned off. Approval for writes
+  is off unless you turn it on.
+- **Expiry:** never. You can set 1 to 366 days instead.
+
+Click a SpaceMan server in the list (it carries a **SpaceMan** badge) to see its owner, its token, its grants and the
+effective tools. The actions there are **Re-issue** (a new token owned by you, with the same grants), **Disable** and
+**Delete**, and each asks for confirmation first. On **API tokens** the server's token is labelled
+**SpaceMan MCP · internal**. Revoking it there stops the server until it is re-issued. The CLI equivalents are
+`spaceman mcp spaceman create`, `tools`, `update` and `reissue`.
+
+To use the same tools from your own MCP client, such as Claude Code or an IDE, with your own API token, see
+[Your own MCP client](./mcp-endpoint).
+
 ## How calls are handled
 
 ```mermaid

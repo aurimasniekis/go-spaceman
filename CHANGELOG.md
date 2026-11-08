@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- SpaceMan admin MCP (ADR-0063, Proposed; AM-1 to AM-6, AM-10): SpaceMan's own API as MCP tools for a space's control and
+- SpaceMan admin MCP (ADR-0063, Proposed; AM-1 to AM-7, AM-10): SpaceMan's own API as MCP tools for a space's control and
   worker runs.
   - Internal API tokens: owned by an administrator, scoped like any API token, without a secret, and never accepted as
     a bearer token. Their calls are audited with the owner, the token (`via spaceman_mcp:<token>`) and the agent run.
@@ -28,6 +28,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     Reads filtered by the caller's grants (`list-spaces` and ten others) are tools; personal operations are not.
     A revoked token empties the catalog, and calls are refused with the reason.
   - CLI (AM-6): `spaceman mcp spaceman create`, `update` and `reissue`.
+  - Web (AM-7): **Add SpaceMan MCP** on the MCP servers page and on a space's new **MCP servers** card (with that space
+    filled in). The dialog defaults to the slug `spaceman-admin` (`spaceman` is reserved), the control role,
+    "Administer everything (infra)" and no expiry. Scopes beyond your own grants are disabled. Tools come from a preset
+    or a custom pick grouped by area, with dangerous tools flagged and a live count. Dangerous approvals are always on
+    and write approvals are off by default. Adding a server needs a step-up. The server's drawer shows the owner, the
+    token and the effective tools, and asks for confirmation before Re-issue, Disable and Delete. The list badges
+    SpaceMan servers, and the API tokens page labels internal tokens. `GET /mcp-servers/spaceman/tools` (CLI
+    `spaceman mcp spaceman tools`) lists the tools a preset and grants would offer, and a space's MCP servers now
+    carry their `kind`.
   - External MCP endpoint (AM-10, SM-MCP-009): `/api/v1/mcp` serves the same tools over streamable HTTP to your own
     MCP client, with your API token as a bearer and exactly that token's grants. Browser requests, session cookies,
     the root token and internal tokens are refused, and each token is rate limited; each request carries one JSON-RPC
