@@ -3,8 +3,10 @@ package harborpilot
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -231,6 +233,91 @@ func TestReadDueUsageFailures(t *testing.T) {
 	}
 	if next, _ := l.NextUsageRead(ctx); !next.IsZero() {
 		t.Fatalf("still due at %v", next)
+	}
+}
+
+// HP-T5 review: a read that succeeds but finds no request for the run (ledger lag, a binding change, a missing ref) is
+// not known zero usage. It is kept in run_gateway_usage only, through the final read, and the run's usage stays the
+// harness's "unavailable" report, so the run still counts as unknown.
+func TestReadDueUsageEmptyIsNotZero(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t) // no Usage entry: every read answers no groups
+	gatewaySpace(t, svc, f, SpaceInput{})
+	l := newLifecycle(svc)
+	ctx := context.Background()
+	gatewayRun(t, s, "run_1")
+	gatewayRun(t, s, "run_2")
+	exec(t, s, `INSERT INTO run_usage (run_id, space_id, source, final, note, updated_at) VALUES ('run_1', 'spc_a', 'unavailable', 1, 'codex', 0)`)
+	endRun(t, s, "run_1")
+	endRun(t, s, "run_2") // and one whose node never reported usage at all
+	for i := range UsageReads {
+		if n, err := l.ReadDueUsage(ctx); err != nil || n != 2 {
+			t.Fatalf("read %d: %d %v", i, n, err)
+		}
+		for _, id := range []string{"run_1", "run_2"} {
+			u := gwUsage(t, s, id)
+			if u.Reads != int64(i+1) || u.Attempts != 0 || (u.State == "final") != (i == len(UsageReads)-1) {
+				t.Fatalf("read %d %s: %+v", i, id, u)
+			}
+			dueNow(t, s, id)
+		}
+	}
+	ru, err := s.R().GetRunUsage(ctx, "run_1")
+	if err != nil || ru.Source != proto.UsageUnavailable || ru.Note != "codex" {
+		t.Fatalf("an empty read replaced the harness's report: %+v %v", ru, err)
+	}
+	if _, err := s.R().GetRunUsage(ctx, "run_2"); err == nil {
+		t.Fatal("an empty read wrote usage")
+	}
+}
+
+// HP-T5 review: a round is bounded. Once Harbor Pilot fails a read in transport, the round's other due rows are
+// rescheduled without asking it again, so a gateway that swallows requests costs one timeout per round, not one per row.
+func TestReadDueUsageUnreachableBoundsRound(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{})
+	l := newLifecycle(svc)
+	ctx := context.Background()
+	var mu sync.Mutex
+	reads := 0
+	f.Set(func(h *hpfake.HP) {
+		h.Hook = func(r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/v1/usage/") {
+				mu.Lock()
+				reads++
+				mu.Unlock()
+				panic(http.ErrAbortHandler) // the connection is dropped: a transport failure
+			}
+		}
+	})
+	for _, id := range []string{"run_1", "run_2", "run_3"} {
+		gatewayRun(t, s, id)
+		endRun(t, s, id)
+	}
+	if n, err := l.ReadDueUsage(ctx); err != nil || n != 0 {
+		t.Fatalf("%d %v", n, err)
+	}
+	mu.Lock()
+	got := reads
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("Harbor Pilot was asked %d times in one round, want 1", got)
+	}
+	skipped := 0
+	for _, id := range []string{"run_1", "run_2", "run_3"} {
+		u := gwUsage(t, s, id)
+		if u.State != "pending" || u.NextAttemptAt <= s.Now().UnixMicro() {
+			t.Fatalf("%s not rescheduled: %+v", id, u)
+		}
+		if strings.Contains(u.LastError, "earlier read in the same round") {
+			skipped++
+		}
+	}
+	if skipped != 2 {
+		t.Fatalf("skipped %d rows, want 2", skipped)
 	}
 }
 

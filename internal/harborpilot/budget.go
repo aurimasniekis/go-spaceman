@@ -346,10 +346,16 @@ func Refusal(c Covering) string {
 
 // CheckBudget implements BudgetChecker: a launch is refused (rate_limited) when a covering budget enforced with block is
 // used up. Warn-only budgets never refuse. When budget status can't be read, the space's on_budget_status_unavailable
-// decides: proceed (Harbor Pilot still enforces at mint and on every request) or refuse (unavailable).
+// decides: proceed (Harbor Pilot still enforces at mint and on every request) or refuse (unavailable). That includes
+// SpaceMan's own failures on the way (the service-principal token can't be opened, a database read fails): they are
+// logged, and the person sees only a fixed reason.
 func (b *Budgets) CheckBudget(ctx context.Context, spaceID string, s *SpaceSettings) error {
 	cov, _, _, err := b.covering(ctx, s.ProjectID)
 	var ue *errStatusUnavailable
+	if err != nil && !errors.As(err, &ue) && ctx.Err() == nil {
+		b.svc.log().Error("harbor pilot budget check: status can't be read", slog.String("space.id", spaceID), "err", err)
+		err = unavailableStatus("SpaceMan could not read its Harbor Pilot connection or token; see central's log")
+	}
 	switch {
 	case errors.As(err, &ue):
 		if s.OnBudgetStatusUnavailable == BudgetRefuse {

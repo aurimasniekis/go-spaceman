@@ -204,6 +204,35 @@ func TestCheckBudgetStatusUnavailable(t *testing.T) {
 	}
 }
 
+// HP-T5 review: SpaceMan's own failures while reading status (here: a service-principal token that can't be opened)
+// follow on_budget_status_unavailable too, with a fixed reason: proceed by default, refuse when the space says so.
+func TestCheckBudgetOwnFailureFollowsPolicy(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t)
+	f := hpfake.New(t)
+	gatewaySpace(t, svc, f, SpaceInput{})
+	ctx := context.Background()
+	reads := 0
+	f.Set(func(h *hpfake.HP) { reads = h.BudgetReads })
+	exec(t, s, `UPDATE harbor_pilot_connection SET service_token_enc = x'00010203040506070809'`)
+	l := NewLifecycle(svc, LifecycleOptions{Budget: newBudgets(svc)})
+	if err := l.PreLaunch(ctx, "spc_a", "claude-code"); err != nil {
+		t.Fatalf("proceed: %v", err)
+	}
+	// (Set directly: PutSpace would itself need the token to check the project.)
+	exec(t, s, `UPDATE space_harbor_pilot SET on_budget_status_unavailable = 'refuse' WHERE space_id = 'spc_a'`)
+	l = NewLifecycle(svc, LifecycleOptions{Budget: newBudgets(svc)})
+	ae := appErr(t, l.PreLaunch(ctx, "spc_a", "claude-code"), apperr.CodeUnavailable)
+	if !strings.Contains(ae.Message, "could not read its Harbor Pilot connection or token") || !strings.Contains(ae.Message, "on_budget_status_unavailable: refuse") {
+		t.Fatalf("refusal %q", ae.Message)
+	}
+	f.Set(func(h *hpfake.HP) {
+		if h.BudgetReads != reads {
+			t.Error("Harbor Pilot was asked without a usable token")
+		}
+	})
+}
+
 // The status is read once per 30 s however many launches and page loads ask (single flight), and again when the
 // connection changes; a failure is reused only briefly.
 func TestBudgetStatusCache(t *testing.T) {

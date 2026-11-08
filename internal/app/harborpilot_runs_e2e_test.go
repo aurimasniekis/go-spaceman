@@ -281,7 +281,8 @@ func keys(m map[string]string) []string {
 //   - the token on the wire works: GET /v1/models answers 200 with it;
 //   - Harbor Pilot recorded the bound refs SpaceMan sent (space, run, instance, session, project) on the run's credential;
 //   - after the run's reported end and a revoker round, the token gets 401;
-//   - after the parent is revoked in Harbor Pilot, the next launch fails as gateway_unavailable with a readable reason.
+//   - after the parent is revoked in Harbor Pilot, a live run's token gets 401 at once (the cascade: the emergency
+//     stop, THREAT_MODEL T-39), and the next launch fails as gateway_unavailable with a readable reason.
 func TestRealHarborPilotRunToken(t *testing.T) {
 	t.Parallel()
 	g := hptest.Start(t)
@@ -334,8 +335,23 @@ func TestRealHarborPilotRunToken(t *testing.T) {
 		t.Fatalf("/v1/models after the run ended: %d, want 401", code)
 	}
 
+	// The emergency stop (THREAT_MODEL T-39): a run still live when the parent is revoked in Harbor Pilot loses model
+	// access at once through Harbor Pilot's cascade, whatever SpaceMan does.
+	live, err := h.e.c.Fleet.LaunchRun(ctx, admin, h.sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: "claude-code", Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, lp := h.launchCmd(t, live.ID)
+	liveTok := lp.Secrets[proto.SecretGatewayToken]
+	if code := models(liveTok); code != http.StatusOK {
+		t.Fatalf("/v1/models with the live run's token: %d", code)
+	}
+	h.report(t, live, proto.RunRunning, "")
 	if err := g.RevokeParent(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if code := models(liveTok); code != http.StatusUnauthorized {
+		t.Fatalf("/v1/models with a live run's token after the parent was revoked: %d, want 401 (cascade)", code)
 	}
 	r2, err := h.e.c.Fleet.LaunchRun(ctx, admin, h.sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: "codex", Prompt: "go"})
 	if err != nil {

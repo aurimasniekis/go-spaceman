@@ -2,12 +2,22 @@ import { Alert, Badge, Card, Group, Progress, SimpleGrid, Stack, Table, Text, Ti
 import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react'
 import type { HarborPilotStatus } from '@/api/client'
 import { useHarborPilotStatus } from '@/api/queries'
+import { ErrorAlert } from '@/components/ErrorAlert'
 import { ago } from '@/lib/format'
 import { budgetBadge, costLabel, harnessLabel, scopeLabel, STATUS_BADGE, usedPercent, windowLabel } from './format'
 
 /** The Limits page's Harbor Pilot card (HP-T5): nothing when the space doesn't route runs through Harbor Pilot. */
 export function HarborPilotLimitsCard({ spaceId }: { spaceId: string }) {
-  const st = useHarborPilotStatus(spaceId).data
+  const q = useHarborPilotStatus(spaceId)
+  const st = q.data
+  if (!st && q.isError) {
+    return (
+      <Card data-testid="harbor-pilot-limits-error">
+        <Title order={5}>Harbor Pilot budgets</Title>
+        <ErrorAlert error={q.error} title="Harbor Pilot status can't be loaded" />
+      </Card>
+    )
+  }
   if (!st || st.state === 'off') return null
   return <HarborPilotLimits st={st} />
 }
@@ -75,8 +85,12 @@ export function HarborPilotLimits({ st }: { st: HarborPilotStatus }) {
                     </Table.Td>
                     <Table.Td miw={160}>
                       <Text size="sm" style={{ whiteSpace: 'nowrap' }}>{b.spent} of {b.limit} {b.currency}</Text>
-                      <Tooltip label={`${b.reserved} ${b.currency} reserved by requests in flight`}>
-                        <Progress value={usedPercent(b.fraction)} color={bb.color} size="sm" mt={4} aria-label={`${usedPercent(b.fraction)} % used`} />
+                      <Tooltip label={`${b.reserved} ${b.currency} reserved by requests in flight`} events={{ hover: true, focus: true, touch: true }}>
+                        {/* Focusable so keyboard users reach the reserved amount too; the bar's label carries it for screen readers. */}
+                        <div tabIndex={0} data-testid="harbor-pilot-budget-bar">
+                          <Progress value={usedPercent(b.fraction)} color={bb.color} size="sm" mt={4}
+                            aria-label={`${usedPercent(b.fraction)} % used, ${b.reserved} ${b.currency} reserved by requests in flight`} />
+                        </div>
                       </Tooltip>
                     </Table.Td>
                     <Table.Td><Badge color={bb.color} variant="light">{bb.label}</Badge></Table.Td>
