@@ -49,6 +49,11 @@ type Context struct {
 	BridgeSocket string
 	// ConfigDir is the instance's harness config root (per space and instance).
 	ConfigDir string
+	// SpaceDir is the run's own space folder (<data_dir>/spaces/<space-dir>); WorkDir is inside it.
+	SpaceDir string
+	// SpaceInstances are the names of the instance folders in the space's instances folder at launch (the run's own
+	// included), so a harness can keep the run's file tools out of the other instances' folders (ADR-0068).
+	SpaceInstances []string
 	// WorkDir is where the program runs (inside the space folder).
 	WorkDir string
 	RunID   string
@@ -59,6 +64,9 @@ type Context struct {
 	Payload proto.LaunchPayload
 	// MemoryDir is the instance's checkout of its role memory ("" when memory is unavailable on the node).
 	MemoryDir string
+	// AutoMemoryDir is the folder for the instance's own Claude Code auto memory of this launch's project, outside the
+	// space folder so no other run's file tools may write it ("" keeps Claude Code's default, ADR-0068).
+	AutoMemoryDir string
 }
 
 // Launch is a built launch.
@@ -74,6 +82,10 @@ type Launch struct {
 	// paths): each is set, keys SpaceMan set at an earlier launch and no longer gives are removed, and every other key
 	// is kept; a missing file is created (0600). So a key removed from a profile is gone on the next launch (ADR-0059).
 	OwnJSON map[string]map[string]any
+	// StripJSON are top-level keys removed from the same files (keys are absolute paths) unless OwnJSON sets them: patterns
+	// as path.Match takes them ("*Helper"). They are the settings only the profile or SpaceMan may define, so a key planted
+	// in the file between launches (by another run's file tools, say) is gone before the harness reads it (ADR-0068).
+	StripJSON map[string][]string
 	// SkillsRoot is where the harness loads per-user skills from (<root>/<name>/SKILL.md); empty when the harness's skill
 	// loading is not verified, and then skills are not materialized.
 	SkillsRoot string

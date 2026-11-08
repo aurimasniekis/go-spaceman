@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -23,6 +24,13 @@ var GatewayRules = map[string]Rule{
 	"add-mcp-grant":         Global(authz.MCPWrite),
 	"revoke-mcp-grant":      Global(authz.MCPWrite),
 	"list-space-mcp-grants": InSpace(authz.MCPRead),
+	// SpaceMan MCP servers (ADR-0063) hand an administrator's authority to agents: creating, editing and re-issuing one
+	// needs a step-up, like creating an API token.
+	"create-spaceman-mcp":  StepUp(authz.MCPWrite),
+	"update-spaceman-mcp":  StepUp(authz.MCPWrite),
+	"reissue-spaceman-mcp": StepUp(authz.MCPWrite),
+	// The tool picker reads only the build's catalog: no state, no secrets.
+	"list-spaceman-mcp-tools": Global(authz.MCPRead),
 }
 
 // MCPServerPath identifies an MCP server.
@@ -137,7 +145,7 @@ func RegisterGateway(svc *gateway.Service) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "check-mcp-server", Method: http.MethodPost, Path: "/mcp-servers/{server_id}/check",
 			Summary: "Connect to the server and list its tools", Description: "Uses a throwaway session under the same egress policy as runs.", Tags: tags},
 			func(ctx context.Context, in *MCPServerPath) (*struct{ Body *gateway.Discovered }, error) {
-				r, err := svc.Check(ctx, in.ServerID)
+				r, err := svc.Check(ctx, Actor(ctx), in.ServerID)
 				if err != nil {
 					return nil, d.fail(ctx, "mcp.check", err)
 				}
@@ -183,6 +191,80 @@ func RegisterGateway(svc *gateway.Service) func(api huma.API, d *Deps) {
 					return nil, d.fail(ctx, "mcp.revoke", err)
 				}
 				return &struct{}{}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "create-spaceman-mcp", Method: http.MethodPost, Path: "/mcp-servers/spaceman",
+			Summary: "Add a SpaceMan MCP server", Description: "SpaceMan's own API as MCP tools for a space's control and worker runs (ADR-0063). " +
+				"The server acts through a new internal API token owned by you, with grants covered by yours (default: admin on every space) " +
+				"and no secret. Dangerous tools always need a person's approval. Grant the server to a space role for its runs to see the tools.",
+			Tags: tags, DefaultStatus: http.StatusCreated},
+			func(ctx context.Context, in *struct {
+				IdempotencyKey
+				Body gateway.SpacemanInput
+			}) (*mcpServerOut, error) {
+				fp := map[string]any{"slug": in.Body.Slug, "kind": gateway.KindSpaceman}
+				s, _, err := Idempotent(ctx, d, "create-spaceman-mcp", in.IdempotencyKey, fp, false, func() (*gateway.Server, error) {
+					return svc.CreateSpaceman(ctx, PrincipalFrom(ctx), Actor(ctx), in.Body)
+				})
+				if err != nil {
+					return nil, d.fail(ctx, "mcp.create_spaceman", err)
+				}
+				return &mcpServerOut{ETag: ETag(s.Version), Body: s}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "update-spaceman-mcp", Method: http.MethodPut, Path: "/mcp-servers/{server_id}/spaceman",
+			Summary: "Edit a SpaceMan MCP server", Description: "Changes the tools, the approval mode and the limits. The internal token is unchanged: " +
+				"re-issue the server to change its grants, expiry or owner.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				MCPServerPath
+				IfMatch
+				Body gateway.SpacemanUpdate
+			}) (*mcpServerOut, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "mcp.update_spaceman", err)
+				}
+				s, err := svc.UpdateSpaceman(ctx, Actor(ctx), in.ServerID, v, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "mcp.update_spaceman", err)
+				}
+				return &mcpServerOut{ETag: ETag(s.Version), Body: s}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "reissue-spaceman-mcp", Method: http.MethodPost, Path: "/mcp-servers/{server_id}/reissue",
+			Summary: "Re-issue a SpaceMan MCP server's token", Description: "Revokes the server's internal token and mints a new one owned by you, " +
+				"in one step: for new grants, a new expiry or a new owner.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				MCPServerPath
+				IfMatch
+				Body gateway.SpacemanToken
+			}) (*mcpServerOut, error) {
+				v, err := in.Version()
+				if err != nil {
+					return nil, d.fail(ctx, "mcp.reissue_spaceman", err)
+				}
+				s, err := svc.ReissueSpaceman(ctx, PrincipalFrom(ctx), Actor(ctx), in.ServerID, v, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "mcp.reissue_spaceman", err)
+				}
+				return &mcpServerOut{ETag: ETag(s.Version), Body: s}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "list-spaceman-mcp-tools", Method: http.MethodGet, Path: "/mcp-servers/spaceman/tools",
+			Summary: "Tools a SpaceMan MCP server can offer", Description: "Every tool of this build's SpaceMan MCP catalog, marked with what a preset, " +
+				"named tools and token grants would make of it, and how many tools runs would see. It reads no state; the API still checks every call.",
+			Tags: tags},
+			func(ctx context.Context, in *struct {
+				Preset string   `query:"preset" enum:"read,operate,admin,custom" doc:"Default admin"`
+				Tools  []string `query:"tools" maxItems:"400" doc:"Tools named by name, comma-separated"`
+				Grants []string `query:"grants" maxItems:"50" doc:"Token grants as role@domain, comma-separated (domain: a space ID or *)"`
+			}) (*struct{ Body *gateway.SpacemanTools }, error) {
+				grants := make([]gateway.SpacemanGrant, 0, len(in.Grants))
+				for _, g := range in.Grants {
+					role, domain, _ := strings.Cut(g, "@")
+					grants = append(grants, gateway.SpacemanGrant{Role: authz.Role(role), Domain: domain})
+				}
+				out, err := svc.SpacemanTools(gateway.SpacemanSettings{Preset: in.Preset, Tools: in.Tools}, grants)
+				if err != nil {
+					return nil, d.fail(ctx, "mcp.spaceman_tools", err)
+				}
+				return &struct{ Body *gateway.SpacemanTools }{Body: out}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "list-space-mcp-grants", Method: http.MethodGet, Path: "/spaces/{space_id}/mcp-servers",
 			Summary: "MCP servers granted in a space", Tags: tags},

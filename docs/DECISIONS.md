@@ -2811,6 +2811,259 @@
   - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
 
+### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
+- **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
+  question numbers (Q1–Q9) refer to the questions of the admin MCP plan. The operator's decisions of 2026-11-08 on the
+  security review (SR-MCP-01) and the final review (F1, F2, F6) are listed under §Operator decisions on the reviews
+  below; none of them changes behaviour.
+  Implemented so far: migration 0044, the internal token and its principal, the audit attribution and the approver
+  exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4); the gateway kind with its
+  create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5); the CLI (AM-6); the
+  external endpoint (AM-10, §External endpoint below); the web (AM-7); the end-to-end test over the run bridge, the
+  CHANGELOG and the security review entry (AM-8). The Terraform resource (AM-9) is in terraform-provider-spaceman
+  PR #12. Requirements SM-MCP-005..009; threats T-33, T-38.
+- **Context:**
+  - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
+    manage tasks, limits, roles, schedules and the other things an administrator does with the CLI or the API. Today an
+    agent only has the built-in `spaceman_*` tools (ADR-0012), which are scoped to its own space and run, and the
+    gateway's external HTTP servers (ADR-0023).
+  - Everything the CLI can do is an API operation (ADR-0040), and every operation has an authorization `Rule`. API
+    tokens act for their creator with grants covered by the creator's, are authorized as both token and creator, and
+    skip re-authentication and MFA (only a browser session can step up). There are no service principals.
+  - This hands administrator power to agents, so it is security-relevant: prompt injection into such a space reaches
+    everything the server's grants reach (T-33).
+- **Decision:**
+  1. **Placement.** A new gateway server kind, `spaceman` (`mcp_servers.kind`, default `http`). It runs **in central,
+     in process**. Agents reach it through the existing `spaceman-agent mcp-bridge` → node connection → central tool
+     path, granted per space and role with the existing `mcp_grants`. No new binary, transport or node protocol minor.
+  2. **Identity: a secretless internal API token** (`api_tokens.purpose = 'spaceman_mcp'`), one per server.
+     - Created with the server, in the same transaction, by an administrator. Owner: the creator. Parent: the
+       creator's API token when a token created it. Its grants must be covered by the owner's current grants and, when a
+       token creates it, by that token's grants. A token issued by another token, the root token and an internal
+       principal cannot create one (`auth.CreateInternalTokenTx`).
+     - It has **no secret**: its stored MAC is over a random value that is discarded, and `AuthenticateAPIToken`
+       refuses any row with a purpose, so it can never be presented as a bearer token. There is nothing to mint, store,
+       rotate, deliver or leak: nothing reaches nodes, runs, configuration, the secrets file, the manifest, logs, the
+       audit log, exports, backups or Terraform state.
+     - Per call, central builds the principal from the token ID (`auth.InternalPrincipal`): it fails like a bad bearer
+       token when the token is unknown, not internal, revoked or expired, or its owner is disabled. The principal carries
+       the run (`Principal.RunID`) and is authorized as token **and** owner, as every API token is, so it loses what its
+       owner loses. Revoking the token (Tokens page, or revoking its parent), disabling the owner, deleting the server
+       (revokes the token in the same transaction, `auth.RevokeAPITokenTx`), disabling the server (its tools are hidden
+       and calls refused; the token stays, so re-enabling needs no re-issue), revoking the grant or reaching the expiry
+       stops it on the next call.
+     - A child token never outlives its parent: when a token creates the server, the internal token's expiry is capped
+       at that token's (a "never" request becomes the parent's expiry). Revocation also cascades from parent to child.
+     - "Re-issue" revokes the token and mints a new one in one transaction: for grant changes, owner transfer and expiry
+       renewal.
+  3. **Audit.** Calls are attributed to the owner, with `via: spaceman_mcp:<token id>` and `run: <run id>`
+     (`audit.Actor.Run`, `api.Actor`). The gateway's `mcp_server.tool_called` event also gains the operation and class
+     (AM-5).
+  4. **Never an approver.** The approver re-check (SM-APPR-003) refuses any `spaceman_mcp:` actor and any internal
+     token named as an API token. (A decision's stored actor carries no run, so the check keys on `via`.) The approval
+     operations themselves are excluded (below).
+  5. **Tool surface: one tool per API operation** (operator decision on plan question Q8), generated from the build's in-memory API
+     document and the `Rule` table, named `<slug>__<operation_id>`. A reviewed classification puts each operation in
+     `read`, `write`, `dangerous`, `sensitive-read` or `excluded`, and `TestEveryOperationIsClassified` keeps it
+     complete (AM-3). Calls run through the API's own handler chain (authorization, validation, idempotency, audit)
+     with the internal principal (AM-4).
+     - Presets (`internal/spacemanmcp`):
+       - `read`: read tools, viewer grants on one space;
+       - `operate`: read and write tools, operator grants on one space;
+       - `admin`: the default, labelled "infra". Read, write **and dangerous** tools, with `admin@*` (operator
+         decision: full admin, with dangerous operations available and each one approved by a person);
+       - `custom`: only the tools named.
+     - `read` and `operate` add dangerous tools only by name. No preset includes sensitive-read tools; a server adds
+       them by name. Every dangerous tool is flagged approval-required whatever the preset (`Tool.ApprovalRequired`,
+       enforced in AM-5).
+     - The catalog also hides tools that the token's grants can never reach.
+     - Calls run only with an internal token's principal: the in-process handler and the executor refuse any other
+       (a bearer token's would skip step-up). Path values `.` and `..` are refused, and any status from 300 up is a tool
+       error. A create's idempotency key needs the run.
+     - Session-rule reads filtered by the principal are read tools. These operations allow "any signed-in principal,
+       filtered by grants", such as `list-spaces`, event connections and templates, and attention; their rule carries
+       `Filtered` (`api.FilteredRead`, AM-5). The API refuses internal principals on every other Session rule, so
+       personal operations (sign-in, MFA, own session, own tokens and preferences) stay excluded.
+     - Creates get an `Idempotency-Key` derived from the run, the token, the operation and the canonical arguments, so
+       a retried call returns the first result. Problems become tool errors; results above the server's cap are
+       replaced by their size and a note.
+  6. **Hard exclusions (kept, operator decision).** Never exposed, whatever the server's settings:
+     - every operation whose rule is Public, Session, UserOnly, Reauth or MFA (sign-in, own account, step-up, token
+       creation, user writes, root token, break-glass). The API also refuses an internal principal on these rules
+       directly, although bearer tokens skip step-up (`authorizeOps`);
+     - approvals and approval-policy writes; responding to, assigning, moving or commenting on human actions;
+     - takeover and terminal input;
+     - operations that return a one-time secret (node enrollment);
+     - sign-in provider writes;
+     - SpaceMan MCP management (`create-spaceman-mcp`, `update-spaceman-mcp`, `reissue-spaceman-mcp`), token operations,
+       and gateway operations that target a `spaceman` server: the gateway service refuses an actor acting through a
+       SpaceMan MCP server on a `spaceman` server (grant, revoke, check, delete), and `update-mcp-server` refuses a
+       `spaceman` server for everyone;
+     - restore acknowledgement.
+  7. **Defaults (operator decisions for a trusted infra space).**
+     - **Preset: full admin on all spaces** (`admin@*`), labelled "infra" in the UI. Narrower presets (read-only or
+       operate, one space or all) stay available.
+     - **Grant: the control role** of the chosen space.
+     - **Approvals: none by default, but dangerous tools always need one** (operator decision on plan question Q3): deletes and purges, retention runs,
+       harness profile settings (T-32), diagnostic launches, SSH key generation and rotation, account and event
+       connection secrets, prompt, skill, role template and human-type publication, space role saves, HTTP MCP server
+       and grant writes, node state and updates, relocations, and launches of diagnostic runs (`launch_run` with
+       `kind: diagnostic` is classed dangerous per call). `approvals.Require` gates them with a matching policy or,
+       without one, a synthetic one-use policy (policy ID `required`). A stored `mcp.*` policy that matches replaces
+       the synthetic one, so a policy with `uses` above 1 lets one approval cover repeats of the identical call (the
+       digest binds the arguments); policies are written by people only. The approval operation is
+       `mcp.<slug>.<class>.<tool>`, so a policy can name a class (`mcp.infra.write.*`).
+       - **A diagnostic launch is gated on its resolved kind.** The gateway classes a call by its arguments, but
+         `launch-run` may leave `kind` out and take it from the space role's template, which only the API resolves.
+         So the API refuses a diagnostic launch by an internal principal unless the call's context carries the
+         gateway's mark (`gateway.WithApprovedCall`, set only after `approvals.Require` succeeded for that exact
+         dangerous `launch-run` call). A role-only diagnostic launch is refused with a hint to pass
+         `kind: diagnostic`, which the gateway then gates. No other operation resolves a run's kind on the server:
+         schedules and subscriptions create inbox items and tasks, and dream and KB runs have fixed kinds.
+       - **Saving a space role is dangerous** (`save-space-role`). A space role picks the template (its kind),
+         profile, permission mode and settings every launch by that role inherits, so a save can make a role
+         diagnostic or widen its runs' access with no later launch naming it. All saves are gated, not only the
+         widening ones: whether a template is diagnostic or a profile or setting widens access depends on other
+         catalog entries that can change after the check, and a per-field comparison would be a second, weaker
+         policy to keep in step. Deleting a space role was already dangerous.
+       - **`launch-run` stays a write, also with overrides** (operator decision 2026-11-08, final-review F2). A
+         launch may override the role's `settings.permission_mode` (still held to the installation's
+         `harness.max_permission_mode` ceiling) or its `account_ref`. Unlike a role save, such an override affects
+         only the run being launched, which the call names and the audit records; it can't make a later launch
+         diagnostic or widen runs nobody asked for, and a diagnostic launch is still gated on its resolved kind. A
+         role save is persistent and reaches every later launch by that role, so it is dangerous; a launch's
+         override is not. Accepted residual risk under T-33.
+       - **Who approves in-run calls** (operator decision 2026-11-08, final-review F1). An in-run call's approval is
+         requested in the run's own space, so anyone with `approval:decide` there may approve it, also when the call
+         acts on another space or on an installation-wide target (an `admin@*` server's dangerous tools). This is
+         deliberate for a trusted infra space, whose operators are trusted with the server's reach; accepted residual
+         risk under T-33.
+       - A server's `approval` is `none` (default) or `writes` (every write tool needs
+       an approval too). Without an approval gate, such calls are refused (fail closed). Human-action responses and
+       approval decisions refuse an actor acting through a SpaceMan MCP server at the service level as well.
+     - **Expiry: never** by default (operator decision on plan question Q5); 1–366 days on request.
+     - Only control and worker runs get the tools; KB, dreamer and diagnostic runs never do.
+  8. **External endpoint in this release** (operator decision on plan question Q9; AM-10, SM-MCP-009). Central also serves the tool surface at
+     `/api/v1/mcp` for operators' own MCP clients, authenticated with a bearer API token (never an internal one), with
+     the same classification, exclusions and approval rules. The rules are in §External endpoint below.
+  9. **API (AM-5):** `create-spaceman-mcp` (`POST /mcp-servers/spaceman`), `update-spaceman-mcp`
+     (`PUT /mcp-servers/{id}/spaceman`: tools, approval mode, limits) and `reissue-spaceman-mcp`
+     (`POST /mcp-servers/{id}/reissue`: new grants, expiry or owner), all `StepUp(mcp:write)`. Servers carry `kind` and,
+     for a spaceman server, its settings and token (ID, owner, grants, expiry, state). The run manifest's `mcp_servers`
+     entries gain `kind`. A spaceman server can't take the slug `spaceman` (it would read as a built-in `spaceman_*`
+     tool). The database requires a token exactly for the spaceman kind.
+  10. **Terraform:** a new resource `spaceman_admin_mcp_server` (grants, preset, tools, approval, expiry; computed
+      token ID, owner, expiry and effective tools; no secret attributes), granted with the existing `spaceman_mcp_grant`
+      (AM-9).
+  11. **Numbers:** migration 0044 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
+      `api_tokens.purpose`, forward-only like every migration; numbered 0041 until the control reminders took that
+      number, then 0042 until Harbor Pilot's usage migration took 0043), T-33, T-38 (external endpoint),
+      SM-MCP-005..009. No protocol minor.
+- **External endpoint (AM-10, SM-MCP-009, threat T-38).** `/api/v1/mcp` (`api.MCPPath`) serves the same catalog and
+  executor over streamable HTTP to an operator's own MCP client (`internal/spacemanmcp` `Endpoint`). It is not an API
+  operation: it is absent from the OpenAPI document and the CLI.
+  - **On by default, no switch** (operator decision 2026-11-08, final-review F6). Every user API token can use the
+    endpoint, within its own grants; there is no configuration setting or per-token flag to turn it off. A token
+    already reaches the same operations on the API, so the endpoint adds no authority; an operator who doesn't want
+    it can keep `/api/v1/mcp` out of the reverse proxy. Accepted with T-38.
+  - **Who can call it:** a user's bearer API token, acting as itself (token **and** owner, as on the API). The guard
+    (`api.Deps.mcpEndpoint`) refuses a session cookie and the root token (403). Internal tokens
+    (`purpose = 'spaceman_mcp'`) never authenticate as bearers (`AuthenticateAPIToken` refuses any purpose, 401), and
+    the guard refuses a principal with a purpose as well. The guard passes on a copy of the principal marked
+    `MCPEndpoint`; only the guard sets it.
+  - **Same rails as the in-run tools** (`auth.Principal.ViaMCP` covers both): the API refuses Session (unless
+    `Filtered`), UserOnly, Reauth and MFA rules for such a principal, although bearer tokens otherwise skip step-up;
+    the hard exclusions keep the same operations out of the catalog; the in-process handler and the executor accept
+    this principal (and an internal one) only. Human-action responses and approval decisions refuse an actor on the
+    `mcp_endpoint` channel at the service level (`audit.Actor.MCP`), although the catalog never offers them. As defence
+    in depth the other service-level refusals written for internal tokens cover the endpoint too: issuing API or
+    internal tokens (`Principal.ViaMCP`), and creating, editing, re-issuing, granting, checking or deleting a SpaceMan
+    MCP server (`audit.Actor.MCP`); none of these is in the endpoint's catalog.
+  - **Tool selection: the token's grants as they are.** The endpoint offers the `admin` preset's classes (read, write,
+    dangerous) filtered by what the token's grants can reach. Of the two options (a preset stored on the token, or the
+    grants as they are), this is the simpler one: it needs no migration, no token setting, no UI or Terraform attribute,
+    and the grants are already the scope the operator chose for that token; a narrower client gets a narrower token.
+    Two kinds of tool are left out: sensitive reads (recordings, transcripts), which no preset includes; and dangerous
+    tools that act on no space (accounts, Git SSH keys, HTTP MCP servers and grants, harness profiles, role templates,
+    publishing, installation-wide human policies, node writes), because an approval belongs to a space. Those stay on
+    the API, the CLI and the web UI.
+  - **Approvals: dangerous calls always need one, decided by another person.** A dangerous tool, and a `launch_run`
+    asking for `kind: diagnostic`, goes through `approvals.RequireFor` with the operation
+    `mcp.endpoint.dangerous.<tool>`, the resource `api_token:<token id>` and the requester key `api_token:<token id>`
+    (role `mcp_endpoint`): only calls with the same token and the identical arguments can use the approval. A stored
+    policy for that operation sets the uses and lifetimes; without one a synthetic one-use policy does (one hour after
+    the decision, a day to decide). Before asking, the endpoint checks that the token may use the tool in that space,
+    so nobody is asked about a call the API would refuse. Read and write calls run at once, as the same token's calls
+    on the API would.
+    - **Rule: the token's own user never approves it.** Not through the token, not in a browser session, not with
+      another of their tokens: `onFinalized` refuses an approving decision when the deciding user owns the requesting
+      token, and the gate revokes an approval that such a user decided anyway. The token acts for its user, so the user
+      approving their own client's call adds no second check; a stolen token plus that user's session would otherwise
+      approve itself. That user may still **deny** or **withdraw** (cancel) their own client's pending request from
+      a session or the API (not through the MCP channel, which never decides): that only stops the call. Consequence:
+      an installation with one administrator can't run dangerous tools through the endpoint with a user's decision;
+      that person uses the API, CLI or web UI for them.
+    - **The root token may approve a token's request** (operator decision 2026-11-08, SR-MCP-01: kept). The rule
+      above matches user decisions only (`audit.ActorUser`), so an approval decided with the root token is accepted.
+      This is the documented path for a single-administrator installation, where no second user exists to approve the
+      endpoint's dangerous calls. The root token is itself refused on the endpoint, so it can't make the call it
+      approves.
+  - **Diagnostic launch gate:** `authorizeLaunchKind` refuses a diagnostic launch by any `ViaMCP` principal unless the
+    call carries `gateway.WithApprovedCall("launch-run")`, which the endpoint sets only after `RequireFor` succeeded
+    for that call. A launch by a space role whose template is diagnostic, without `kind`, is refused with the hint.
+  - **Edge protection:** the API's own middleware (security headers, request IDs, the body limit
+    `http.max_body_bytes`, the failed-bearer limit of 20 per minute per address) and, per token, 5 requests per second
+    with bursts of 50 (429). The limit counts calls because a request carries exactly one JSON-RPC message: a batch
+    (a body whose first non-space byte is `[`) is refused with 400 before any message in it runs, and so is an
+    `Mcp-Protocol-Version` older than 2025-06-18 (the version that dropped batching; the go SDK accepts batches for
+    older or missing versions). A request without the header is accepted, as a client's first request may not send
+    it. A request with an `Origin` or `Sec-Fetch-*` header (a browser) is refused, and no CORS
+    headers are ever sent. The MCP SDK's localhost DNS-rebinding check is off: central normally sits behind a reverse
+    proxy on the same host, and rebinding needs a browser, which is refused, plus a bearer token, which a page doesn't
+    have. The server is stateless (no `Mcp-Session-Id`; GET and DELETE answer 405) and answers in JSON.
+  - **No derived idempotency key.** A run's retries are deduplicated (decision 5); on the endpoint a person drives the
+    client and a repeated create is meant, as with a CLI command without `--idempotency-key`.
+  - **Audit:** every operation is attributed to the token's user with `via: api_token:<id>` and `channel:
+    mcp_endpoint` (`audit.Actor.Channel`). Each tool call is also audited as `mcp_endpoint.tool_called` (target the
+    token; tool, operation, class, result, duration, and the space of a dangerous call; never arguments or results).
+    Approval requests and uses carry the same actor.
+- **Alternatives:**
+  - **A first-class service principal** (`svc:<id>`), independent of any person. Access would survive admin turnover
+    without a re-issue, but it roughly doubles the authentication work (new subject kind, grants, management, audit) and
+    adds an identity nobody is accountable for. Rejected for now (plan question Q1).
+  - **Register central's own HTTP API as an ordinary `http` server**, with a bearer token in its sealed headers. It
+    needs a private-address exemption for loopback, keeps a real admin secret at rest, and adds a network hop to itself.
+  - **A node-side binary with the token in the run's secrets file.** It puts an administrator secret within the agent's
+    reach on the node, needs a protocol minor and collides with Harbor Pilot's secrets delivery (ADR-0060).
+  - **Three meta-tools** (search, describe, call) instead of one tool per operation: smaller catalogs, but every call
+    is opaque to approval policies and to the harness's own tool permissions. Revisit if `admin@*` (about 150 tools)
+    strains a harness's context (plan question Q8).
+  - **Read-only, one space, 90-day expiry and writes gated by default** (the plan's recommendation): safer defaults,
+    but the operator chose full admin, no expiry and no approvals for their trusted infra space; dangerous tools stay
+    gated either way.
+- **Consequences:**
+  - With the defaults, an agent in the infra space can do what its owner can, except the hard exclusions and without a
+    person's approval for anything but dangerous tools. Prompt injection into that space is accepted risk T-33.
+  - Access depends on a person: if the owner is disabled or loses grants, the server stops until someone re-issues it.
+  - Tools granted later reach runs launched afterwards; revocation applies on the next call, while a revoked server's
+    tools stay listed until the harness restarts.
+  - A future operation added without a classification fails `TestEveryOperationIsClassified`; a misclassified one is a
+    review risk.
+  - Secrets that an agent writes through these tools (account keys, event connection secrets) pass through the model's
+    context; those operations are dangerous and need an approval.
+  - The external endpoint gives an operator's MCP client what the operator's token can do on the API, short of the
+    hard exclusions and with dangerous calls approved by someone else or the root token (T-38).
+- **Operator decisions on the reviews (2026-11-08).** All four keep the behaviour as built:
+  1. **Root approval kept (SR-MCP-01).** The root token may approve dangerous calls made through `/api/v1/mcp`; this
+     is the documented path for single-administrator installations (§External endpoint).
+  2. **F1, accepted as is.** In-run dangerous calls are approved in the run's own space: any operator there with
+     `approval:decide` may approve admin-scope calls (other spaces, installation-wide targets) made by the infra
+     space's SpaceMan MCP server. Deliberate for the trusted infra space; part of T-33's accepted risk (decision 7).
+  3. **F2, accepted as is.** `launch-run` stays a write, also when it overrides `settings.permission_mode` (up to the
+     installation ceiling) or `account_ref`; diagnostic launches stay gated. Accepted residual risk under T-33; the
+     reasoning beside `save-space-role` (dangerous) is in decision 7.
+  4. **F6, accepted as is.** `/api/v1/mcp` is on by default for every user API token, with no switch (§External
+     endpoint; T-38).
 
 ### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
 - **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a
@@ -2835,7 +3088,7 @@
     `"tui": "fullscreen"` keeps the full-screen renderer and accepts that watchers can't scroll back. Verified in the
     2.1.317 binary: the `tui` setting is checked before the fresh-install default (`settings_off`).
   - **The node applies the default**, where it writes the run's `settings.json` (`internal/harness/claude.go`), not
-    central. It therefore needs the agent from SpaceMan 0.1.0-rc.10 or later; a run on an older node keeps Claude
+    central. It therefore needs the agent from SpaceMan 0.1.0 or later; a run on an older node keeps Claude
     Code's own choice of renderer. The resolved `claude_settings` that central's API returns are the profile's own and
     don't show the default.
   - **The web view handles the wheel and touch itself** (`web/src/features/terminal/scroll.ts`). Scrolling up moves
@@ -2915,6 +3168,214 @@
   existing message permissions cover the operator operations, and the content stays untrusted data that is never
   typed into a terminal. The limits on reminders (50 pending, 30 days, auto-start's hourly cap) mean a control can't
   wake itself in a tight loop.
+
+### ADR-0066 — Agents ask people only through human actions: Claude Code's terminal question picker and plan mode denied by default
+- **Status:** Accepted, 2026-11-08 (operator request: a control run asked the operator through Claude Code's
+  AskUserQuestion picker in its terminal and then waited there; "we should somehow limit agents from doing this").
+- **Context:**
+  - Claude Code's `AskUserQuestion` tool draws a picker in the run's terminal and waits for an answer typed there.
+    SpaceMan runs are unattended: nobody may be watching the terminal, nothing reminds anyone, and the run stalls
+    silently. It also holds its slot and its idle-stop timer.
+  - `spaceman_human_ask` (SM-HUM-008) does the same job durably: the action is listed under Needs you, people are
+    reminded per policy, and the answer wakes the agent (SM-HUM-009).
+  - Claude Code drops a tool that a whole-tool `permissions.deny` rule names from the tools it sends to the model
+    (`filterToolsByDenyRules`). Verified with Claude Code 2.1.317 (2026-11-08, throwaway config dir, a local fake API
+    that recorded each request's tool list): an interactive session offered `AskUserQuestion` and `EnterPlanMode` in
+    every request without the rule, and neither with it. In print mode Claude Code doesn't offer `AskUserQuestion` at
+    all. The operator checked the same on Claude Code 2.1.319: a denied tool isn't offered to the model.
+  - `EnterPlanMode` switches the run into plan mode, which ends in `ExitPlanMode`'s plan-approval dialog in the
+    terminal. An unattended run waits there too.
+- **Decision:**
+  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets `AskUserQuestion` and
+    `EnterPlanMode` in `permissions.deny` of the run's own `settings.json`. The model never sees the tools, so it never
+    tries them.
+  - **Merge, never replace.** The adapter appends them to the profile's own `permissions.deny` (ADR-0059): the profile's
+    rules come first, in their order, duplicates are dropped (profiles that already deny these tools get each once),
+    and the other permission keys (`allow`, `ask`, `additionalDirectories`, `defaultMode`) are kept as they are. The
+    profile's stored settings are not changed.
+  - **Opt-in, per tool:** a profile that lists one of them in its own `permissions.allow` gets no deny for it (a deny
+    would win over its allow). That is the only way back; the default is not a setting.
+  - **Prompts:** SpaceMan's own orientation (the first section of every run's system text) and the starter role prompts
+    say "Never ask through an interactive terminal prompt; use spaceman_human_ask". The orientation reaches existing
+    installations; starter prompts already seeded are not rewritten (ADR-0051).
+  - **Codex:** codex-cli 0.166.0 has its own question tool, `request_user_input`, offered in Plan mode and in Default
+    mode only with a feature flag (`default_mode_request_user_input`); found in the binary's strings, not run. Runs start
+    in Default mode, and the orientation tells Codex agents the same. SpaceMan sets no override for it yet (unverified
+    against a live session; LIMITATIONS).
+- **Alternatives:**
+  - **`--disallowedTools AskUserQuestion` on the command line:** the same effect, but a profile could not opt back in,
+    and the run's settings would not show it.
+  - **Prompt guidance only:** the operator's run already had human actions and used the picker anyway.
+  - **Detecting a waiting picker and raising an attention item:** useful for prompts SpaceMan can't deny (a harness's
+    own permission dialog, Codex), but it needs a reliable "waiting for input" signal from the terminal. A follow-up
+    (LIMITATIONS).
+- **Consequences:** no new authority, no protocol change. The deny is written by the node when it builds the launch,
+  so it takes nodes on this release or later; runs on older nodes still see the tool, and the profile's resolved
+  settings in the API don't show the deny. Claude Code's own permission dialogs are unchanged: they follow the
+  permission mode, and `skipAutoPermissionPrompt` only skips the one-time notice shown when auto mode starts (auto mode
+  still asks for `ask` rules, reads outside the working directories, and when its classifier falls back after repeated
+  blocks). A built-in PermissionRequest hook for those is a separate follow-up (since done: ADR-0068). A run whose permission mode is `plan`
+  (a profile setting) still starts in plan mode and ends in the `ExitPlanMode` dialog.
+
+### ADR-0067 — The System page: an administrator's view of the instance; the version stays public
+- **Status:** Accepted, 2026-11-08 (operator request for v0.1.0: a System page like Hallpass's, and a version API).
+- **Context:**
+  - Hallpass's System page shows lockdown, storage, break-glass, version, boot ID, policy version and live counts;
+    Harbor Pilot's "This instance" shows version, public URL, start time, data directory, key ID and schema versions.
+    SpaceMan had the pieces (build info, readiness checks, the attention summary's storage section, `/system/info`) but
+    no single view of the instance.
+  - The public, unauthenticated `get-system-info` (`GET /system/info`) has returned the version since M1: the
+    sign-in and setup pages need it before anyone signs in.
+- **Decision:**
+  - **`get-system` (`GET /system`) needs `system:read`**, which only administrators (and the root token) hold. It
+    returns build info (version, commit, build date, Go version, platform), the start time and uptime, a **boot ID**
+    (`boot_…`, new at every start of central; it is never persisted), the applied and newest database migration, the
+    node protocol range (major, min and max minor), the attention summary's storage section plus the database and WAL
+    sizes, and counts: spaces not archived, active and connected nodes, runs starting/running/stopping, open human
+    actions and connected live-event streams. Counts come from one SQL query; nodes from the fleet's live connection
+    state; migration 0045 adds a partial index for the running-runs count. A section whose source fails (the schema
+    version, the counts query, the node state) is reported as `unavailable` instead of failing the whole response.
+    Central logs the boot ID in its `spaceman serving` line.
+  - **No secrets:** no key material, no KEK source or path, no keyring IDs, no tokens. The public URL and the data
+    directory path are shown, because only administrators can read the endpoint.
+  - **The version alone stays public** in `get-system-info`, as before: it is not a relaxation, and the web UI shows it
+    to every signed-in user in the account menu. Hiding it would not hide much (the OpenAPI document carries it too),
+    and the sign-in page needs it.
+  - The admin MCP classifies `get-system` as a read. CLI: `spaceman system status`. Web: **System** under Access,
+    shown to global administrators.
+- **Alternatives:** extending `get-system-info` with an authenticated detail section (one operation with two shapes
+  for two audiences, hard to describe in OpenAPI); serving the detail on the management listener (unauthenticated,
+  private address: no UI, and it would expose the data directory to anything that reaches it).
+- **Consequences:** a new admin-only read with no new authority. The boot ID lets an operator tell a restart from a
+  long-running instance and match logs to a start.
+
+### ADR-0068 — No permission dialogs in SpaceMan's Claude Code runs: a deny-only PermissionRequest hook and the run's own space folder
+- **Status:** Accepted, 2026-11-08 (operator request for v0.1.0). **Security-relevant change:** each run's file tools may
+  now read and write its own space folder without asking (they previously stopped at a dialog), and every permission
+  dialog is answered with a deny.
+- **Context:**
+  - Every SpaceMan run is unattended, so a Claude Code permission dialog stalls it: nobody types an answer into its
+    terminal, nothing reminds anyone, and the run holds its slot.
+  - In auto mode, Claude Code still shows a dialog in three cases: for an `ask` rule, for a read outside the working
+    directories, and when its classifier falls back to asking after repeated blocks (3 in a row or 20 in total).
+    `skipAutoPermissionPrompt` doesn't help with any of them: it only skips the one-time notice shown when auto mode
+    starts.
+  - Claude Code runs a `PermissionRequest` hook before it shows a dialog. Its input carries `hook_event_name`,
+    `tool_name`, `tool_input` and `permission_suggestions`; its output
+    `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"…"}}}` denies
+    the request and hands the message to the model as the tool's result (`interrupt` unset, so the turn continues). In
+    auto mode a hook can't approve anything (Claude Code ignores an allow there). Checked in Claude Code 2.1.317's
+    hook schema and live (docs/contracts/harnesses.md).
+  - Runs start in a checkout (`worktrees/…`) or in `work/`, so reading the space's own files (plans and notes under
+    `work/`, other checkouts) was a read outside the working directories, and so a dialog.
+  - The operator worked around both through the profiles' `claude_settings` (a PermissionRequest hook script and the
+    node's whole `spaces/` folder as an additional directory). The product should do this itself, and more narrowly.
+- **Decision:**
+  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets a `hooks.PermissionRequest`
+    entry (`matcher` `*`) in its own `settings.json`. The entry runs `'<agent binary>' hook permission-request`, a
+    subcommand of the node agent binary, so nothing extra has to be installed on the node.
+  - **The hook only denies.** Whatever its input (none, malformed, any event), it writes a deny whose message says the
+    run is unattended, not to retry or work around it, and to ask a person with `spaceman_human_ask` or tell its control
+    with `spaceman_message_send`. It names the tool only when the name looks like a tool name. It can never answer
+    "allow", so it can't widen what a run may do. It reads nothing but its input and needs no configuration.
+  - **The run's own space folder** (`<data_dir>/spaces/<space-dir>`, its real path) is added to
+    `permissions.additionalDirectories`, and only that folder, never the node's whole `spaces/` folder.
+  - **Its login files are denied.** The space folder also holds the instances' harness config dirs, which can hold a
+    Claude Code login (`instances/*/claude/.credentials.json`) or a Codex login (`instances/*/codex/auth.json`). Those
+    two paths get `Read` and `Edit` deny rules (verified: such a read fails with "denied by your permission settings").
+  - **Other instances and every instance's harness configuration are not writable** (review fix M1). Adding the space
+    folder let a run's file tools write other instances' `instances/*/claude/settings.json` with no dialog and no
+    classifier (verified live with Claude Code 2.1.317 in `acceptEdits`), and a key planted there (`disableAllHooks`,
+    `env.ANTHROPIC_BASE_URL`, `apiKeyHelper`, …) took effect at that instance's next launch. Now:
+    - every instance folder other than the run's own that exists at launch gets `Edit(//<space>/instances/<id>/**)`,
+      up to 50 of them. With more, a run gets none of them, so the settings stay bounded, and only the next measures
+      apply;
+    - every instance, the run's own included, gets `Edit` deny rules (`harness.ClaudeSpaceProtectedFiles`) for
+      everything in its config dir that Claude Code loads, runs or restores at a later launch or resume, whatever the
+      number of instances. These also cover an instance created after the launch. They, and the login-file rules, are
+      anchored on the node's spaces folder (`Edit(//<data_dir>/spaces/*/instances/*/claude/...)`), so they cover every
+      space's instances: a profile may add the whole spaces folder as a directory (operators did, before this ADR), and
+      another space's instance configuration must not be writable then either (round-2 re-review, verified live). The list mirrors the entries Claude
+      Code 2.1.317 protects in its own config dir, for every instance: `claude/settings.json`, `settings.local.json`,
+      the keys record, `.claude.json`, the cached `remote-settings.json*` and `policy-limits.json*`, the instructions
+      (`CLAUDE.md`, `rules/`, `agents/`, `commands/`, `skills/`, `output-styles/`, `workflows/`, `routines/`,
+      `loop.md`), `plugins/`, `cowork_plugins/`, `hooks/`, `scheduled_tasks.json`, `launch.json`, `daemon.json`,
+      `daemon/`, `shell-snapshots/` and `session-env/` (sourced by its Bash tool), `projects/` (auto memory and
+      transcripts), `agent-memory/`, `backups/`, `tasks/`, `teams/`, `todos/`, `file-history/`, and all of `codex/`
+      (review round 2: F1 added `rules/`, F2 `projects/` and the rest, F3 the cached remote and policy settings);
+    - **the run's own auto memory is moved out of the space folder** (round-2 F2). Claude Code loads an instance's auto
+      memory (`MEMORY.md`) into its next run, so writing another instance's memory was persistent prompt injection: a
+      worker reading untrusted text could poison control. The node sets `autoMemoryDirectory` (a key only the profile
+      or SpaceMan may set) to `<data_dir>/automemory/<space-id>/<instance>/projects/<project key>/memory`, outside the
+      space folder and every glob a run can write. Claude Code lets the run's file tools write and read its own auto
+      memory folder there without a dialog, and loads `MEMORY.md` from it (verified live with Claude Code 2.1.317).
+      The project key is Claude Code's own (the main checkout for a linked worktree; non-alphanumerics become `-`). At
+      the instance's first launch on this release the node copies the memory it kept in its config dir
+      (`claude/projects/*/memory`) there under the same keys, folders and regular files only (never symbolic links),
+      and marks the folder done only after a full copy; the old copy stays. A partly copied file never stays: each file is
+      written to a temporary name and renamed into place. A profile's own `autoMemoryDirectory` is ignored, with a
+      warning in the node's log: a fixed folder shared by the profile's instances would bring cross-instance memory
+      poisoning back. A relocation's release retains or deletes `automemory/<space-id>` with the space folder;
+    - the rule is not the simpler `Edit(//<space>/instances/**)`: the run's own file tools still write its plan files
+      (`plans/`, plan mode) and background job folder (`jobs/`) in its config dir, a deny rule wins over Claude Code's
+      carve-out for them (verified), and permission-rule globs have no "all but one" form (`[!x]` is not negation
+      there). No `Read` deny is added for `instances/**`: Claude Code reads its own tool results there.
+    - A space folder that holds a glob character (`* ? [ ] { } \ !`) gets no directory and no rules, since the rules
+      could not be written exactly (N2). A folder under `instances/` named with one is not an instance (SpaceMan's IDs
+      never hold one) and is skipped.
+  - **Defence in depth: the node strips dangerous settings keys at every launch.** Before the harness starts, the node
+    removes from the instance's `settings.json` every top-level key that runs commands, adds credentials or
+    environment, or changes what hooks, plugins, the sandbox or the classifier allow, unless the profile or SpaceMan
+    set it (`harness.ClaudeUnsafeSettingsKeys`: `disableAllHooks`, `hooks`, `env`, `*Helper`, `*Helpers`,
+    `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `processWrapper`, `statusLine`, `subagentStatusLine`,
+    `fileSuggestion`, `sshHostCommands`, `permissions`, `autoMode`, `sandbox`, the plugin and project-MCP keys,
+    `allowedHttpHookUrls`, `httpHookAllowedEnvVars`, `autoMemoryDirectory`). Keys Claude Code keeps there itself
+    (`feedbackSurveyState`, `model` and the like) stay. A removal is logged with the key names, never the values. It
+    doesn't depend on the keys record, so settings planted in a new instance's folder before its first launch are
+    stripped at that launch too.
+  - **The hook fails closed** (review fix S1). The command is
+    `'<agent>' hook permission-request 2>/dev/null || printf '%s' '<fixed deny>'`. When the binary is missing, crashes or
+    exits non-zero, the run still gets a deny, not a dialog: Claude Code shows the dialog for a failed hook, and exit
+    code 2 doesn't deny this event. A hook that runs past its 30 s timeout still ends at the dialog.
+  - **Merge, never replace** (as in ADR-0066). The profile's own hooks of every event come first, in their order, and
+    SpaceMan's entry is appended to `PermissionRequest` (and not added again when the profile already has it). The
+    profile's directories and deny rules come first, and duplicates are dropped. The profile's stored settings are not
+    changed. A `hooks` value that isn't valid Claude Code settings (not an object, or a `PermissionRequest` value that
+    isn't a list) is replaced.
+- **Alternatives:**
+  - **Prompt guidance only:** the dialog comes from Claude Code, not the model; the model can't avoid an `ask` rule.
+  - **A hook that allows** (approving the dialog's request): it would turn every `ask` rule into an allow and bypass
+    the classifier's fallback. Approval stays with people, through human actions.
+  - **The whole `spaces/` folder** (the operator's workaround): it would let one space's runs read every other space.
+  - **Turning off `permissions.blockReadsOutsideWorkingDirectories` or the sandbox:** much wider than one folder.
+  - **A shell script shipped next to the binary:** another file to install and keep in step.
+- **Consequences:**
+  - A run never waits at a Claude Code permission dialog. A denied request reaches the model as a tool error that
+    names `spaceman_human_ask`.
+  - What was "ask a person in the terminal" (who was usually not there) is now "denied". An `ask` rule therefore
+    works like a deny in SpaceMan runs; a profile that wants the call to happen must allow it.
+  - **What a run's file tools reach.** They reach the run's own space without a dialog. They can read and write the
+    space's checkouts and `work/`. They can read other instances' transcripts (`projects/*.jsonl`), settings and
+    memory, but not the two login files. They can't write other instances' folders, or any instance's harness
+    configuration, instructions, memory or transcripts (M1 above). They write their own auto memory outside the space
+    folder. This is wider than before. The shell runs as the same OS user, but every shell command
+    goes through auto mode's classifier (or a dialog in other modes), so the shell did not already reach these files
+    without a check. File tools inside a working directory skip both.
+  - **Accepted residuals.**
+    - Reading other instances' transcripts and memory.
+    - Writing what Claude Code doesn't load at launch in the folder of an instance created after the run launched, or
+      of every other instance in a space with more than 50 of them: plan files, background job output and the like.
+      Their settings, instructions, memory and transcripts are never writable this way (round 2 closed cross-instance
+      memory poisoning).
+    - The protected list and `ClaudeUnsafeSettingsKeys` are deny-lists checked against Claude Code 2.1.317: an entry or
+      key a later Claude Code version adds is not covered until it is added (F4; an allow-list is a follow-up in
+      PLAN.md).
+  - **Hook precedence and profile hooks** (S2). A profile that sets `disableAllHooks` turns SpaceMan's hook off too.
+    When the profile has its own `PermissionRequest` hook, Claude Code runs both. Outside auto mode the first answer
+    wins, so a profile hook that allows can win over SpaceMan's deny. In auto mode Claude Code ignores any hook's
+    allow. A profile editor is trusted with this (T-32).
+  - The node writes both when it builds the launch, so they take nodes on this release or later. The profile's
+    resolved settings in the API don't show them. Codex is unchanged.
 
 ## 2. Open items and unresolved contracts
 

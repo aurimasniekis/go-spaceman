@@ -25,6 +25,8 @@ const (
 	MethodToken = "token"
 	// MethodRoot marks a request authenticated with the bootstrap root token.
 	MethodRoot = "root"
+	// MethodInternal marks a principal central built from an internal token for a SpaceMan MCP call (ADR-0063).
+	MethodInternal = "internal"
 )
 
 // Principal is the authenticated user behind a request.
@@ -46,6 +48,15 @@ type Principal struct {
 	TokenID string
 	// TokenParentID is set when that token was itself issued by an API token (ADR-0058).
 	TokenParentID string
+	// TokenPurpose is the purpose of that token: "" for a bearer token, TokenPurposeSpacemanMCP for the internal token
+	// of a SpaceMan MCP server (ADR-0063), which never comes from a request.
+	TokenPurpose string
+	// RunID is the agent run a SpaceMan MCP call acts for (ADR-0063); it is recorded in the audit, never authorized.
+	RunID string
+	// MCPEndpoint is set on a bearer API token's principal for a call through the external MCP endpoint
+	// (/api/v1/mcp, ADR-0063): an operator's own MCP client, so a model chooses the call. Only the API's endpoint
+	// guard sets it, on its own copy of the authenticated principal; nothing a client sends can.
+	MCPEndpoint bool
 	// RootTokenID is set when the request used the bootstrap root token (SM-AUTH-005).
 	RootTokenID string
 	tokenHash   []byte
@@ -77,6 +88,15 @@ func (p *Principal) Subjects() []string {
 		return []string{UserSubject(p.User.ID)}
 	}
 }
+
+// Internal reports whether the principal acts through an internal token (a SpaceMan MCP call, ADR-0063) rather than
+// for a request a person or a bearer token made.
+func (p *Principal) Internal() bool { return p != nil && p.TokenPurpose != "" }
+
+// ViaMCP reports whether the principal acts through one of SpaceMan's MCP entry points: a SpaceMan MCP server's
+// internal token (Internal) or a bearer token on the external MCP endpoint (MCPEndpoint). Both get the same rails:
+// nothing that needs a person at the keyboard, and diagnostic launches only after a person's approval.
+func (p *Principal) ViaMCP() bool { return p != nil && (p.TokenPurpose != "" || p.MCPEndpoint) }
 
 // IsRoot reports whether the request used the root token.
 func (p *Principal) IsRoot() bool { return p != nil && p.RootTokenID != "" }

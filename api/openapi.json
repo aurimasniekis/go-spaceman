@@ -1240,6 +1240,9 @@
           "parent_token_id": {
             "type": "string"
           },
+          "purpose": {
+            "type": "string"
+          },
           "revoked_at": {
             "format": "date-time",
             "type": "string"
@@ -2006,6 +2009,32 @@
         },
         "required": [
           "alert"
+        ],
+        "type": "object"
+      },
+      "BuildinfoInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "go_version": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "go_version",
+          "platform"
         ],
         "type": "object"
       },
@@ -5773,6 +5802,14 @@
           "id": {
             "type": "string"
           },
+          "kind": {
+            "description": "http: an external server; spaceman: SpaceMan's own API, served in central (ADR-0063)",
+            "enum": [
+              "http",
+              "spaceman"
+            ],
+            "type": "string"
+          },
           "max_concurrency": {
             "description": "Calls in flight to this server across all runs",
             "format": "int64",
@@ -5789,6 +5826,9 @@
             "description": "Namespace of the server's tools: \u003cslug\u003e__\u003ctool\u003e",
             "type": "string"
           },
+          "spaceman": {
+            "$ref": "#/components/schemas/GatewaySpacemanInfo"
+          },
           "tools": {
             "description": "Upstream tools offered to agents; empty offers every tool",
             "items": {
@@ -5801,7 +5841,7 @@
             "type": "string"
           },
           "url": {
-            "description": "Streamable HTTP endpoint",
+            "description": "Streamable HTTP endpoint; empty for a spaceman server",
             "type": "string"
           },
           "version": {
@@ -5811,6 +5851,7 @@
         },
         "required": [
           "id",
+          "kind",
           "slug",
           "name",
           "url",
@@ -5838,6 +5879,13 @@
           "grant_id": {
             "type": "string"
           },
+          "kind": {
+            "enum": [
+              "http",
+              "spaceman"
+            ],
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -5861,10 +5909,348 @@
           "server_id",
           "slug",
           "name",
+          "kind",
           "enabled",
           "grant_id",
           "role",
           "tools"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "approval": {
+            "description": "none (the default): only dangerous tools need a person's approval; writes: every write tool does too",
+            "enum": [
+              "none",
+              "writes"
+            ],
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "type": "array"
+          },
+          "never_expires": {
+            "type": "boolean"
+          },
+          "owner_user_id": {
+            "description": "The administrator whose authority the token carries",
+            "type": "string"
+          },
+          "preset": {
+            "description": "Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)",
+            "enum": [
+              "read",
+              "operate",
+              "admin",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "token_id": {
+            "description": "The internal API token the server acts through",
+            "type": "string"
+          },
+          "token_state": {
+            "description": "active, or why the server's tools are refused: re-issue it",
+            "enum": [
+              "active",
+              "revoked",
+              "expired",
+              "owner_disabled"
+            ],
+            "type": "string"
+          },
+          "tools": {
+            "description": "Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 400,
+            "type": "array"
+          }
+        },
+        "required": [
+          "token_id",
+          "owner_user_id",
+          "grants",
+          "never_expires",
+          "token_state"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "approval": {
+            "description": "none (the default): only dangerous tools need a person's approval; writes: every write tool does too",
+            "enum": [
+              "none",
+              "writes"
+            ],
+            "type": "string"
+          },
+          "call_timeout_ms": {
+            "description": "1000-20000; default 20000",
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Default true",
+            "type": "boolean"
+          },
+          "expires_in_days": {
+            "description": "1-366; omitted: the token never expires (the default)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "grants": {
+            "description": "The token's grants, covered by yours; default admin on every space (preset admin), required otherwise",
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "max_concurrency": {
+            "description": "1-32; default 4",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_result_bytes": {
+            "description": "1 KiB-4 MiB; default 256 KiB",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "preset": {
+            "description": "Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)",
+            "enum": [
+              "read",
+              "operate",
+              "admin",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "slug": {
+            "description": "Namespace of the server's tools (\u003cslug\u003e__\u003ctool\u003e); fixed after creation",
+            "maxLength": 31,
+            "type": "string"
+          },
+          "tools": {
+            "description": "Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 400,
+            "type": "array"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanToken": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanToken.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_in_days": {
+            "description": "1-366; omitted: the token never expires (the default)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "grants": {
+            "description": "The token's grants, covered by yours; default admin on every space (preset admin), required otherwise",
+            "items": {
+              "$ref": "#/components/schemas/AuthGrantInput"
+            },
+            "maxItems": 50,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "GatewaySpacemanTool": {
+        "additionalProperties": false,
+        "properties": {
+          "class": {
+            "description": "Dangerous tools always need a person's approval per call",
+            "enum": [
+              "read",
+              "write",
+              "dangerous",
+              "sensitive-read"
+            ],
+            "type": "string"
+          },
+          "in_preset": {
+            "description": "The preset offers it without naming it",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Tool name without the slug",
+            "type": "string"
+          },
+          "reachable": {
+            "description": "Some grant can satisfy its authorization rule",
+            "type": "boolean"
+          },
+          "selected": {
+            "description": "The preset offers it or it is named",
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tags": {
+            "description": "The API operation's tags",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "class",
+          "tags",
+          "summary",
+          "in_preset",
+          "selected",
+          "reachable"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanTools": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanTools.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "count": {
+            "description": "Tools runs would see: selected and reachable by the grants",
+            "format": "int64",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GatewaySpacemanTool"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanUpdate.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "approval": {
+            "description": "none (the default): only dangerous tools need a person's approval; writes: every write tool does too",
+            "enum": [
+              "none",
+              "writes"
+            ],
+            "type": "string"
+          },
+          "call_timeout_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_concurrency": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_result_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "preset": {
+            "description": "Tool set: read, operate (read and write), admin (read, write and dangerous; the default) or custom (only the tools named)",
+            "enum": [
+              "read",
+              "operate",
+              "admin",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "tools": {
+            "description": "Tools added by name, without the slug (dangerous and sensitive-read tools are offered only by name or by the admin preset)",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 400,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "enabled"
         ],
         "type": "object"
       },
@@ -15643,6 +16029,54 @@
         ],
         "type": "object"
       },
+      "SystemCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "human_pending": {
+            "description": "Open and in-progress human actions",
+            "format": "int64",
+            "type": "integer"
+          },
+          "live_streams": {
+            "description": "Connected live-event streams (change feed, terminals, recordings)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "nodes_active": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "nodes_connected": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "nodes_error": {
+            "type": "string"
+          },
+          "runs_running": {
+            "description": "Runs starting, running or stopping",
+            "format": "int64",
+            "type": "integer"
+          },
+          "spaces": {
+            "description": "Spaces that are not archived",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "spaces",
+          "nodes_active",
+          "nodes_connected",
+          "runs_running",
+          "human_pending",
+          "live_streams"
+        ],
+        "type": "object"
+      },
       "SystemInfo": {
         "additionalProperties": false,
         "properties": {
@@ -15681,6 +16115,186 @@
           "has_admin",
           "local_login_disabled",
           "direct_provider"
+        ],
+        "type": "object"
+      },
+      "SystemProtocol": {
+        "additionalProperties": false,
+        "properties": {
+          "major": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_minor": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "min_minor": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "min_minor",
+          "max_minor"
+        ],
+        "type": "object"
+      },
+      "SystemSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "latest": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "current",
+          "latest"
+        ],
+        "type": "object"
+      },
+      "SystemStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SystemStatus.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "boot_id": {
+            "description": "Changes at every start of central",
+            "type": "string"
+          },
+          "build": {
+            "$ref": "#/components/schemas/BuildinfoInfo"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/SystemCounts"
+          },
+          "data_dir": {
+            "description": "Central's data directory on its host",
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/SystemProtocol"
+          },
+          "public_url": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/SystemSchema"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/SystemStorage"
+          },
+          "uptime_seconds": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "build",
+          "started_at",
+          "uptime_seconds",
+          "boot_id",
+          "public_url",
+          "data_dir",
+          "schema",
+          "protocol",
+          "storage",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "SystemStorage": {
+        "additionalProperties": false,
+        "properties": {
+          "below_reserve": {
+            "type": "boolean"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionCheck"
+            },
+            "type": "array"
+          },
+          "db_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_available_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_error": {
+            "type": "string"
+          },
+          "disk_reserve_bytes": {
+            "description": "Free space below this degrades readiness",
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_total_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_used_percent": {
+            "format": "double",
+            "type": "number"
+          },
+          "problem": {
+            "description": "Readiness is not ready, the database is not ok, or free space is below the reserve",
+            "type": "boolean"
+          },
+          "readiness": {
+            "description": "ready, degraded, failed, starting or stopping",
+            "type": "string"
+          },
+          "store_reason": {
+            "type": "string"
+          },
+          "store_state": {
+            "enum": [
+              "ok",
+              "degraded",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "wal_bytes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "db_bytes",
+          "wal_bytes",
+          "readiness",
+          "checks",
+          "store_state",
+          "disk_total_bytes",
+          "disk_available_bytes",
+          "disk_used_percent",
+          "disk_reserve_bytes",
+          "below_reserve",
+          "problem"
         ],
         "type": "object"
       },
@@ -20375,6 +20989,144 @@
         ]
       }
     },
+    "/mcp-servers/spaceman": {
+      "post": {
+        "description": "SpaceMan's own API as MCP tools for a space's control and worker runs (ADR-0063). The server acts through a new internal API token owned by you, with grants covered by yours (default: admin on every space) and no secret. Dangerous tools always need a person's approval. Grant the server to a space role for its runs to see the tools.",
+        "operationId": "create-spaceman-mcp",
+        "parameters": [
+          {
+            "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "Retry-safe creation: 8-128 printable ASCII characters; replays within 24 h return the original result",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewaySpacemanInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayServer"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a SpaceMan MCP server",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/mcp-servers/spaceman/tools": {
+      "get": {
+        "description": "Every tool of this build's SpaceMan MCP catalog, marked with what a preset, named tools and token grants would make of it, and how many tools runs would see. It reads no state; the API still checks every call.",
+        "operationId": "list-spaceman-mcp-tools",
+        "parameters": [
+          {
+            "description": "Default admin",
+            "explode": false,
+            "in": "query",
+            "name": "preset",
+            "schema": {
+              "description": "Default admin",
+              "enum": [
+                "read",
+                "operate",
+                "admin",
+                "custom"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tools named by name, comma-separated",
+            "explode": false,
+            "in": "query",
+            "name": "tools",
+            "schema": {
+              "description": "Tools named by name, comma-separated",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 400,
+              "type": "array"
+            }
+          },
+          {
+            "description": "Token grants as role@domain, comma-separated (domain: a space ID or *)",
+            "explode": false,
+            "in": "query",
+            "name": "grants",
+            "schema": {
+              "description": "Token grants as role@domain, comma-separated (domain: a space ID or *)",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewaySpacemanTools"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Tools a SpaceMan MCP server can offer",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
     "/mcp-servers/{server_id}": {
       "delete": {
         "operationId": "delete-mcp-server",
@@ -20699,6 +21451,144 @@
           }
         },
         "summary": "Revoke a grant",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/mcp-servers/{server_id}/reissue": {
+      "post": {
+        "description": "Revokes the server's internal token and mints a new one owned by you, in one step: for new grants, a new expiry or a new owner.",
+        "operationId": "reissue-spaceman-mcp",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewaySpacemanToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayServer"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Re-issue a SpaceMan MCP server's token",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/mcp-servers/{server_id}/spaceman": {
+      "put": {
+        "description": "Changes the tools, the approval mode and the limits. The internal token is unchanged: re-issue the server to change its grants, expiry or owner.",
+        "operationId": "update-spaceman-mcp",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GatewaySpacemanUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayServer"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Edit a SpaceMan MCP server",
         "tags": [
           "mcp"
         ]
@@ -31012,6 +31902,38 @@
         "summary": "The starter roles and whether each one's template still exists",
         "tags": [
           "roles"
+        ]
+      }
+    },
+    "/system": {
+      "get": {
+        "description": "Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.",
+        "operationId": "get-system",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "This instance's status",
+        "tags": [
+          "system"
         ]
       }
     },

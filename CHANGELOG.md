@@ -6,7 +6,105 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-08
+
+First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim
+(docs/RELEASE_READINESS.md §14 lists what was verified, the known issues it ships with and the accepted risks).
+Since v0.1.0-rc.9: the Harbor Pilot gateway (ADR-0060); the SpaceMan admin MCP for control and worker runs and the
+external `/api/v1/mcp` endpoint for your own MCP client (ADR-0063); the System page (ADR-0067); scheduled reminders
+for control (ADR-0065); no terminal questions or plan mode in Claude Code runs (ADR-0066); a deny-only hook in place
+of permission dialogs, with every space's instance files protected and auto memory moved out of the space folder
+(ADR-0068); Claude Code's classic renderer so watchers can scroll back (ADR-0064); and fixes, among them opening and
+closing the database under a brief lock. Tested with Claude Code 2.1.317.
+
+**Upgrade notes** (from v0.1.0-rc.9):
+- **Take a backup first.** Migrations 0040, 0041, 0043, 0044 and 0045 are forward-only (0042 is retired and never
+  used). Central also writes a pre-migration snapshot; going back means restoring it.
+- **Node protocol 1.9.** Upgrade central first, then every node agent. Older agents keep working, but the node-side
+  changes below need agents on this release, and a Harbor Pilot gateway launch to an older agent fails as
+  `agent_too_old`.
+- **New node behaviour in Claude Code runs:**
+  - each instance's auto memory moves to `<data_dir>/automemory/<space>/<instance>/…`; the memory an instance kept in
+    its config dir is copied there at its first launch on this release (the old copy stays);
+  - deny rules protect every space's instance files (settings, instructions, plugins, hooks, auto memory and
+    transcripts) from a run's file tools;
+  - a `PermissionRequest` hook denies every permission dialog, so an `ask` rule now works like a deny;
+  - a profile's own `autoMemoryDirectory` is ignored (the node logs a warning);
+  - stopping central drains for at most 8 s for the database, inside the units' `TimeoutStopSec=45s`.
+- **Check your profiles:** remove any `additionalDirectories` entry that grants the node's whole `spaces/` folder, and
+  any dialog-denying hook script. This release adds the run's own space folder and the hook automatically.
+- `/api/v1/mcp` is on for every user API token; leave it out of your reverse proxy if you don't want it.
+- **Codex users:** if a node ran Codex with an API-key account on an earlier release, rotate that key (see Fixed).
+
 ### Added
+- **System page and API** (ADR-0067; SM-OBS-006). Administrators see this instance's status on a new **System** page
+  (under Access), with `GET /api/v1/system` (`get-system`, `system:read`) and `spaceman system status`: readiness,
+  whether the database accepts writes, version, commit and build date, a boot ID that changes at every start, start
+  time and uptime, the database schema version, the node protocol range, the database and data-disk sizes, and counts
+  of spaces, connected nodes, running runs, open human actions and live streams. It names no key material, key path
+  or token. The version alone stays public (`get-system-info`) and is now shown in the account menu. The admin MCP
+  offers `get-system` as a read. A counts or node-state source that fails shows as `unavailable` (`counts.error`,
+  `counts.nodes_error`) instead of failing the response; build, uptime and storage are still returned. Central logs the
+  boot ID in its `spaceman serving` line. **Migration 0045** (forward-only) adds a partial index over live runs, so
+  the running-runs count doesn't scan every run ever recorded. No node protocol change.
+- **SpaceMan admin MCP** (ADR-0063, Accepted; SM-MCP-005…009; AM-1 to AM-10). SpaceMan's own API as MCP tools: for
+  a space's control and worker runs through a `spaceman` gateway server, and for your own MCP client through the
+  external endpoint. An agent in an "infra" space can then administer SpaceMan with an administrator's authority, short
+  of hard exclusions, and with dangerous calls approved by a person. **Upgrade notes:**
+  - **Migration 0044** (forward-only) adds `mcp_servers.kind`, `api_token_id` and `spaceman_json`, and
+    `api_tokens.purpose`. Existing servers become kind `http`; nothing else changes until you add a SpaceMan server.
+  - **New operations:** `create-spaceman-mcp` (`POST /mcp-servers/spaceman`), `update-spaceman-mcp`
+    (`PUT /mcp-servers/{id}/spaceman`) and `reissue-spaceman-mcp` (`POST /mcp-servers/{id}/reissue`), all
+    `mcp:write` with a step-up; `list-spaceman-mcp-tools` (`GET /mcp-servers/spaceman/tools`) previews a preset's
+    tools. MCP servers and a run manifest's `mcp_servers` entries now carry `kind`. CLI: `spaceman mcp spaceman
+    create`, `update`, `reissue` and `tools`.
+  - **External endpoint:** `/api/v1/mcp` is new and on by default for every user API token, with no setting to turn
+    it off (see below). If your reverse proxy forwards all of `/api/v1/`, it is reachable wherever the API is; leave
+    `/api/v1/mcp` out of the proxy if you don't want it.
+  - **Terraform:** the `spaceman_admin_mcp_server` resource is in terraform-provider-spaceman PR #12 (not yet
+    released); grant it with the existing `spaceman_mcp_grant`.
+  - No node protocol change: agents need no update.
+  - **Approvers:** the root token may approve the external endpoint's dangerous calls (the path for a
+    single-administrator installation). An in-run call's approval is decided in the run's own space, also when the
+    call acts on another space.
+
+  **Identity:** each SpaceMan server has an internal API token, minted with it, owned by its creator, scoped like any
+  API token (covered by the owner's grants, and by the creating token's, whose expiry it never outlives), and without
+  a secret: it is never accepted as a bearer token and nothing reaches nodes, runs, manifests or Terraform state.
+  Re-issue revokes it and mints a new one in one step (grants, owner, expiry); deleting the server revokes it.
+  Revoking the token, disabling the owner or the server, or revoking the grant stops the tools on the next call, with
+  the reason. Calls are audited as the owner, `via spaceman_mcp:<token>`, with the agent run.
+
+  **Tools:** one tool per API operation, run in process through the API's own handler chain (authorization,
+  validation, idempotency, audit). Every operation has a reviewed class (read, write, dangerous, sensitive-read,
+  excluded), enforced by a test. Presets: `admin` (the default, "infra": read, write and dangerous tools on every
+  space), `operate`, `read` and `custom`. Hard exclusions: sign-in and step-up operations, tokens, approvals and
+  human-action answers, takeover and terminal input, one-time secrets, sign-in providers, SpaceMan MCP management and
+  restore acknowledgement. Retried creates are idempotent, API problems are tool errors and results are capped. Only
+  control and worker runs see the tools.
+
+  **Approvals:** dangerous tools always need a person's approval (operation `mcp.<slug>.<class>.<tool>`, one use for
+  the exact arguments unless a stored policy says otherwise); `approval: writes` gates writes too. The API checks a
+  launch's kind as resolved, so a space role of diagnostic kind can't bypass the gate, and saving a space role is
+  dangerous; launching a run is a write, also with a permission mode (up to the ceiling) or account override. An agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through the tools.
+
+  **Web:** **Add SpaceMan MCP** on the MCP servers page and on a space's new **MCP servers** card. The dialog defaults
+  to the slug `spaceman-admin` (`spaceman` is reserved), the control role, "Administer everything (infra)" and no
+  expiry; scopes beyond your own grants are disabled; tools come from a preset or a custom pick grouped by area, with
+  dangerous tools flagged. The server's drawer shows the owner, the token and the effective tools, and confirms
+  Re-issue, Disable and Delete. The API tokens page labels internal tokens.
+
+  **External endpoint** (SM-MCP-009): `/api/v1/mcp` serves the same tools over streamable HTTP to your own MCP client,
+  with your API token as a bearer and exactly that token's grants. Browser requests, session cookies, the root token
+  and internal tokens are refused, and each token is rate limited; each request carries one JSON-RPC message (batches
+  and protocol versions before 2025-06-18 are refused). Dangerous calls and diagnostic launches need an approval from
+  someone other than the token's user, who may only deny or cancel their own client's request; the root token may
+  approve them. Calls are audited via
+  the token on the `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
+
+  Verified end to end in process (`TestSpacemanMCPOverBridge`: a control run's harness MCP client over the real
+  `mcp-bridge`, node connection and gateway; `TestMCPEndpoint` over real HTTP). Not yet verified with a real harness
+  driving the tools.
 - **Harbor Pilot gateway** (ADR-0060, Accepted; SM-GW-001…010). A space can route its runs' model traffic through a
   self-hosted [Harbor Pilot](https://aurimasniekis.github.io/go-harbor-pilot/) gateway. Each run gets its own
   short-lived Harbor Pilot token instead of an account, and the token is revoked when the run ends. Harbor Pilot's hard
@@ -115,6 +213,48 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
 
 ### Changed
+- **No more permission dialogs in Claude Code runs** (ADR-0068, security-relevant). Every run SpaceMan launches, of
+  every kind, gets a `PermissionRequest` hook (`spaceman-agent hook permission-request`, part of the node agent) that
+  denies every permission dialog Claude Code would show and tells the model to ask through `spaceman_human_ask`
+  instead. Even in auto mode, Claude Code shows a dialog for `ask` rules, for reads outside the working directories,
+  and when its classifier falls back after repeated blocks, and nobody answers it in an unattended run.
+  `skipAutoPermissionPrompt` doesn't prevent these dialogs: it only skips the notice shown when auto mode starts. The
+  hook can only deny, never allow, so an `ask` rule now works like a deny. Each run also gets its own space folder
+  (`<data_dir>/spaces/<space>`, only that one) in `permissions.additionalDirectories`, with `Read` and `Edit` denied
+  for the instances' login files in it. Its file tools can't edit:
+  - other instances' folders (up to 50 other instances; beyond that, only the next items apply);
+  - anything in any instance's config dir that Claude Code loads, runs or restores at a later launch, however many
+    instances there are: settings, `.claude.json`, the cached `remote-settings.json` and `policy-limits.json`,
+    instructions (`CLAUDE.md`, `rules/`, agents, commands, skills, output styles), plugins, hooks, shell snapshots,
+    auto memory and transcripts (`projects/`), Codex's config dir;
+  - another instance's auto memory, which its next run would load: each instance's Claude Code auto memory now lives
+    outside the space folder, in `<data_dir>/automemory/<space-id>/<instance>` (set as `autoMemoryDirectory`). The
+    memory an instance kept in its config dir is copied there at its first launch on this release; the old copy
+    stays in place. A relocation retains or deletes it with the space folder. A profile's own
+    `autoMemoryDirectory` is now ignored (the node logs a warning).
+
+  These rules cover every space's instances on the node, also when a profile adds the node's whole `spaces/` folder
+  as a directory.
+
+  At every launch the node removes dangerous keys from the instance's `settings.json` unless the profile or SpaceMan
+  set them: `disableAllHooks`, `hooks`, `env`, `*Helper`, `statusLine`, `autoMode`, `permissions`, plugin keys and
+  similar. The removed key names are logged. Keep such keys in the profile; edits made to an instance's file by hand
+  are removed. The hook fails closed: if the agent binary is missing or fails, its command still prints a deny.
+
+  Both are merged with the profile's settings: its hooks (any `PermissionRequest`
+  hook or `PreToolUse` guard), deny rules and directories are kept, and nothing is repeated. If your profiles carry a
+  workaround (a dialog-denying hook script, or the whole `spaces/` folder as an additional directory), you can remove
+  it. The node adds both, so they take nodes on this release or later.
+- **Agents no longer ask in the terminal** (ADR-0066). Claude Code runs get `AskUserQuestion` and `EnterPlanMode` in
+  the run's `permissions.deny`, so the model never sees the terminal question picker or plan mode (which ends in a
+  plan-approval dialog): both left an unattended run waiting silently for an answer typed into its terminal. They are
+  appended to the profile's own deny rules (duplicates dropped; its other permission keys kept). SpaceMan's orientation
+  and the starter role prompts say to ask through `spaceman_human_ask` instead. A profile that lists one of the tools in
+  its own `permissions.allow` keeps it.
+  The node adds the deny, so it takes nodes on this release or later. Starter prompts already added to an installation
+  are not rewritten; the orientation reaches every run.
+- KB support sessions and dreams refuse a space role that no longer runs as kind kb or dreamer before launching,
+  instead of launching a run and killing it.
 - Claude Code runs start with its classic renderer (`"tui": "default"` in the run's settings) unless the profile's
   Claude Code settings set `tui`. Its full-screen renderer, which Claude Code otherwise often picks itself, keeps earlier output
   out of the terminal, so a watcher could not scroll back. Set `"tui": "fullscreen"` in a profile to keep it (ADR-0064).
@@ -123,6 +263,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
+- The MCP servers page's inline guide link (also behind the server drawer) is underlined, not told apart by colour
+  alone (axe `link-in-text-block`, WCAG 1.4.1). The SpaceMan MCP browser test now runs axe on the list and the drawer.
+- **Opening the database waits out a brief lock instead of failing.** The SQLite busy timeout now applies from a
+  connection's first statement. Before, the writer ran its first statement without one, so opening the data directory
+  failed at once with `storage busy: open database: database is locked (SQLITE_BUSY)` whenever another connection held
+  the file for a moment, for example the last connection of a store that had just closed, while it checkpointed the WAL.
+  Closing the store now also waits until the connections still in use by unfinished requests have closed, and only
+  then releases the data directory's lock. The checkpoint and that wait share one 8 s deadline, so a stop stays inside
+  the units' `TimeoutStopSec=45s` (30 s `shutdown.timeout`, 5 s for gateway mints, 8 s for the database). Past the
+  deadline the lock is released anyway, and central logs `closing central failed`; offline commands log it too. Seen as
+  a flaky central restart in tests.
 - Codex runs no longer leave their environment in the instance's `CODEX_HOME/shell_snapshots`: SpaceMan now turns off
   Codex's shell snapshot (`features.shell_snapshot=false`), and every Codex launch removes the `shell_snapshots` folder
   an earlier run left (without following links; the launch fails if it is still there). Found with codex-cli 0.166.0.
@@ -882,7 +1033,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...v0.1.0
 [0.1.0-rc.9]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.9
 [0.1.0-rc.8]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.8
 [0.1.0-rc.7]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.7

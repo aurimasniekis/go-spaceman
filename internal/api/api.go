@@ -19,12 +19,14 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
@@ -64,6 +66,9 @@ type Deps struct {
 	ExtraRules map[string]Rule
 	// Raw are plain HTTP routes (streams, downloads), authorized per space.
 	Raw []RawRoute
+	// MCP serves the external MCP endpoint (MCPPath, ADR-0063) behind the API's middleware and mcpEndpoint's guard;
+	// nil leaves the path unserved.
+	MCP http.Handler
 	// Ready reports readiness for the public system info.
 	Ready func() bool
 	// ProviderLogoutURL returns where to send the browser after signing out of an SSO session (RP-initiated logout,
@@ -139,6 +144,51 @@ func Register(mux *http.ServeMux, d *Deps) huma.API {
 	return api
 }
 
+// inProcessPrincipalKey carries the principal of an in-process call. Only InProcessHandler reads it: the HTTP
+// Handler never does, so nothing a client sends can set it.
+type inProcessPrincipalKey struct{}
+
+// WithInProcessPrincipal returns ctx carrying p for a request served by InProcessHandler.
+func WithInProcessPrincipal(ctx context.Context, p *auth.Principal) context.Context {
+	return context.WithValue(ctx, inProcessPrincipalKey{}, p)
+}
+
+// InProcessHandler serves the API's operations to callers inside central (the SpaceMan MCP, ADR-0063) with the
+// principal they inject through WithInProcessPrincipal, instead of authenticating a cookie or bearer token. Every
+// operation still runs its rule (authorizeOps), validation, idempotency and audit exactly as over HTTP; a request
+// without a principal is unauthenticated, and any principal but an internal token's or the external MCP endpoint's
+// (auth.Principal.ViaMCP) is forbidden. Only huma operations are served: the watch stream and the raw routes
+// (uploads, downloads, exports) are not.
+func (d *Deps) InProcessHandler() http.Handler {
+	mux := http.NewServeMux()
+	Register(mux, d)
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, _ := r.Context().Value(inProcessPrincipalKey{}).(*auth.Principal)
+		if p == nil {
+			writeProblem(w, errUnauthenticated())
+			return
+		}
+		if !p.ViaMCP() || p.IsRoot() || p.User == nil || p.TokenID == "" {
+			// Only an internal token's principal (auth.InternalPrincipal) or a bearer token's on the external MCP
+			// endpoint may be injected: any other kind would skip the MCP refusals and, with a token ID, step-up
+			// (ADR-0063).
+			writeProblem(w, newProblem(http.StatusForbidden, apperr.CodeForbidden, "only an MCP principal may call the API in process", nil))
+			return
+		}
+		ids := []obs.CorrelationID{}
+		if p.User != nil {
+			ids = append(ids, obs.UserID(p.User.ID))
+		}
+		if p.TokenID != "" {
+			ids = append(ids, obs.TokenID(p.TokenID))
+		}
+		ctx := context.WithValue(obs.WithIDs(r.Context(), ids...), principalKey{}, p)
+		mux.ServeHTTP(w, r.WithContext(ctx))
+	})
+	h = d.limitBody(h)
+	return d.withRequest(h)
+}
+
 // Handler returns the complete API handler with its middleware: security headers, request IDs, client IP, body
 // limit, authentication and the cross-site check. The watch stream and the OpenAPI document are served on the same mux.
 func (d *Deps) Handler() http.Handler {
@@ -147,6 +197,9 @@ func (d *Deps) Handler() http.Handler {
 	mux.Handle("GET "+Prefix+"/watch", d.watchHandler())
 	for _, rt := range d.Raw {
 		mux.Handle(rt.Pattern, d.authorizeRaw(rt))
+	}
+	if d.MCP != nil {
+		mux.Handle(MCPPath, d.mcpEndpoint(d.MCP))
 	}
 	var h http.Handler = mux
 	h = d.authenticate(h)

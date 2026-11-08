@@ -262,6 +262,42 @@
   its operation (`mcp.<server>.<tool>` or a prefix such as `mcp.deploys.*`); other calls run at once (ADR-0024).
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
+## SpaceMan MCP
+- **Simulated evidence only.** Servers are managed through the API, the CLI and the web UI, runs use
+  the tools over the agent bridge and the external endpoint is served. All of it is tested in process with the real
+  agent and bridge and a fake runner (`TestSpacemanMCPOverBridge`); no real harness has driven the tools through a
+  model yet. The Terraform resource is in terraform-provider-spaceman PR #12, not yet released.
+- **Full admin by default, by design.** The default preset is `admin` on every space and the token never expires
+  (operator decisions for a trusted infra space). An agent with these tools can do what its owner can, short of the
+  hard exclusions; prompt injection into that space is accepted risk T-33.
+- **In-run approvals are decided in the run's space.** A dangerous call's approval request appears in the space of the
+  run that made it, and anyone with `approval:decide` there may approve it, also when the call acts on another space
+  or on an installation-wide target. Give `approval:decide` in the infra space only to people trusted with the
+  server's reach (accepted risk, T-33).
+- **Launches are writes, overrides included.** `launch-run` needs no approval under the default `approval: none`,
+  also when it overrides the role's `settings.permission_mode` (up to the installation ceiling) or `account_ref`;
+  only diagnostic launches are gated. Saving a space role is dangerous, because it changes every later launch by
+  that role (accepted risk, T-33). Set `approval: writes` to gate launches too.
+- **Owned by a person.** The token acts for the admin who created the server: if that admin is disabled or loses
+  grants, the server stops working until it is re-issued by someone else.
+- **External endpoint (`/api/v1/mcp`): on for every user API token.** There is no setting to turn it off, globally
+  or per token; a token can do there what it can do on the API. To keep it unreachable, don't forward `/api/v1/mcp`
+  from the reverse proxy (accepted risk, T-38).
+- **External endpoint (`/api/v1/mcp`): bearer tokens only.** A client must send `Authorization: Bearer
+  spaceman_at_…`; there is no OAuth flow, so clients that only support OAuth for remote servers can't connect.
+- **External endpoint: no dangerous tools without a second person.** A dangerous call needs an approval from someone
+  other than the token's user (that user may only deny or withdraw it), so an installation with one administrator
+  can't run them through the endpoint with a user's approval: approve with the root token, or use the API, CLI or
+  web UI. Dangerous tools that act on no space (accounts, Git SSH keys, HTTP MCP servers, harness
+  profiles, role templates, publishing, installation-wide human policies, node writes) and sensitive reads
+  (recordings, transcripts) are not offered there at all.
+- **External endpoint: the root token can approve.** An approval the endpoint asked for can be approved with the root
+  token; on a single-admin installation that is the documented approval path (operator decision, ADR-0063).
+- **External endpoint: one message per request.** JSON-RPC batches and protocol versions before 2025-06-18 are
+  refused (400), so the per-token rate limit counts calls.
+- **External endpoint: the token's grants are the selection.** There is no per-token tool preset; issue a token with
+  narrower grants for a narrower client.
+
 ## Skills
 - **Skill loading is verified, not a skill's use.** Codex runs get skills in `$CODEX_HOME/skills` (listed in the model's
   prompt input with codex-cli 0.166.0, no model call), Claude Code runs in `$CLAUDE_CONFIG_DIR/skills`; whether a model
@@ -272,6 +308,47 @@
   copy; publish the new content as a new version by hand.
 
 ## Human actions
+- **Terminal prompts are denied for Claude Code only** (ADR-0066). Claude Code runs never see `AskUserQuestion` or
+  `EnterPlanMode`, and every run's orientation says to use `spaceman_human_ask`. A profile gets either tool back by
+  listing it in its own `permissions.allow` (per tool; there is no global switch). Codex's `request_user_input` (Plan mode, or Default mode
+  with its feature flag) is only discouraged by the prompt: SpaceMan sets no override for it yet, because none has
+  been verified against a live Codex session. A harness's own permission dialogs still appear in the terminal.
+- **Claude Code permission dialogs are denied, not answered** (ADR-0068). `skipAutoPermissionPrompt` only skips the
+  one-time notice shown when auto mode starts. Auto mode still raises a dialog for `ask` rules, for reads outside the
+  working directories, and when its classifier falls back to asking after repeated blocks. SpaceMan's
+  PermissionRequest hook denies each of them, so an `ask` rule works like a deny in SpaceMan runs: a person can't
+  approve the call from the dialog, and the agent has to ask through `spaceman_human_ask` and then find another way or
+  wait for a profile change. A profile that sets `disableAllHooks` (or a managed `allowManagedHooksOnly`) turns the
+  hook off, and the dialogs stall the run again. A run whose permission mode is `plan` still ends in the
+  `ExitPlanMode` approval dialog; only `EnterPlanMode` is denied.
+- **A run's file tools reach its whole space folder** (ADR-0068). Every checkout and `work/` is readable and
+  writable. Other instances' transcripts (`projects/*.jsonl`), settings and memory are readable but not writable.
+  Everything in an instance's config dir that Claude Code loads, runs or restores at a later launch is denied to edits,
+  for every instance, the run's own included, whatever their number: settings, the cached `remote-settings.json` and
+  `policy-limits.json`, instructions (`CLAUDE.md`, `rules/`, agents, commands, skills, …), plugins, hooks, shell
+  snapshots, auto memory and transcripts (`projects/`). The run's own auto memory lives outside the space folder
+  (`<data_dir>/automemory/<space>/<instance>`); the memory an instance kept in its config dir before is copied there
+  at its first launch on this release. The Claude Code and Codex login files are denied entirely. Three gaps remain:
+  - in the folder of an instance created after the run started, and of every other instance in a space with more than
+    50 of them, the files Claude Code doesn't load at launch (plan files, background job output) are writable;
+  - the protected files and the stripped settings keys are deny-lists checked against Claude Code 2.1.317, so an entry
+    a later version adds is not covered until SpaceMan adds it;
+  - the node strips dangerous settings keys at every launch, but keeps keys the profile set.
+
+  This is wider than before: the shell runs as the same OS user, but each shell command passes auto mode's classifier,
+  which file tools inside a working directory skip. The folder of another space stays outside, and reading it raises a
+  dialog, which the hook denies, unless a profile adds the node's whole spaces folder as a directory: its runs can
+  then read and write other spaces' checkouts too. Every space's instance configuration, instructions, memory and
+  transcripts stay denied to edits even then (the rules cover `<data_dir>/spaces/*`). A profile's own
+  `autoMemoryDirectory` is ignored (the node logs a warning), so instances never share an auto memory folder.
+- **The PermissionRequest hook can still end at the dialog** (ADR-0068):
+  - **Timeout.** A hook that runs past its 30 s timeout ends at the dialog. A missing or failing agent binary does not:
+    the command then prints a fixed deny.
+  - **A profile hook that allows.** When a profile adds its own `PermissionRequest` hook, outside auto mode the first
+    answer wins, so a profile hook that allows can win over SpaceMan's deny.
+- **A run waiting at a terminal prompt raises no attention item.** SpaceMan doesn't detect that a run's terminal has
+  been waiting for input for a long time. Follow-up: raise an attention item when the program status reports a
+  waiting prompt for more than a few minutes.
 - **Approvals are advisory unless a policy gates the operation.** Enforcement covers only operations SpaceMan performs:
   built-in agent tools and gateway tools. Shell commands and a harness's own permission prompts are not intercepted.
 - **Agents call again after approval.** A gated call returns at once with a request; the agent must repeat the call

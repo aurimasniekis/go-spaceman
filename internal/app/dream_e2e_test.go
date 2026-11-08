@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/dream"
@@ -86,6 +88,26 @@ func TestDreamConsolidates(t *testing.T) {
 	cfg, err := e.c.Dreams.Create(ctx, admin, sp.ID, dream.Input{Slug: "nightly", Name: "Nightly", SpaceRole: "dreamer", MemoryRoles: []string{"implementor"}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A configuration whose space role no longer runs as kind dreamer (the role was pointed at a worker template after
+	// the configuration was saved) is refused before any run is launched.
+	wtpl, err := e.c.Catalog.SaveTemplate(ctx, admin, "", 0, catalog.RoleTemplate{Slug: "plain-worker", Name: "Plain worker", Kind: "worker", ProfileID: prof.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := e.c.Dreams.Create(ctx, admin, sp.ID, dream.Input{Slug: "wrong-kind", Name: "Wrong kind", SpaceRole: "not-a-dreamer", MemoryRoles: []string{"implementor"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Catalog.SaveSpaceRole(ctx, admin, sp.ID, catalog.SpaceRole{Name: "not-a-dreamer", TemplateID: wtpl.ID}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 100)
+	if _, err := e.c.Dreams.Start(ctx, admin, sp.ID, wrong.ID); !errors.Is(err, apperr.ErrPrecondition) || !strings.Contains(err.Error(), "kind dreamer") {
+		t.Fatalf("dream with a worker role: %v", err)
+	}
+	if after, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 100); len(after) != len(before) {
+		t.Fatalf("a run was launched for a wrong-kind dream: %d -> %d", len(before), len(after))
 	}
 	// The dreamer's own transcripts are excluded: a transcript in the dream configuration's own instance is never offered.
 	full, _ := e.c.Store.R().GetDreamConfig(ctx, cfg.ID)

@@ -32,6 +32,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInProvidersRouteImport } from './routes/sign-in-providers'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as SpacesRouteImport } from './routes/spaces'
+import { Route as SystemRouteImport } from './routes/system'
 import { Route as TerminalsRouteImport } from './routes/terminals'
 import { Route as TokensRouteImport } from './routes/tokens'
 import { Route as UsersRouteImport } from './routes/users'
@@ -173,6 +174,11 @@ const SkillsRoute = SkillsRouteImport.update({
 const SpacesRoute = SpacesRouteImport.update({
   id: '/spaces',
   path: '/spaces',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SystemRoute = SystemRouteImport.update({
+  id: '/system',
+  path: '/system',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TerminalsRoute = TerminalsRouteImport.update({
@@ -340,6 +346,7 @@ export interface FileRoutesByFullPath {
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
+  '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -390,6 +397,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
+  '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -440,6 +448,7 @@ export interface FileRoutesById {
   '/sign-in-providers': typeof SignInProvidersRoute
   '/skills': typeof SkillsRoute
   '/spaces': typeof SpacesRouteWithChildren
+  '/system': typeof SystemRoute
   '/terminals': typeof TerminalsRoute
   '/tokens': typeof TokensRoute
   '/users': typeof UsersRoute
@@ -494,6 +503,7 @@ export interface FileRouteTypes {
     | '/sign-in-providers'
     | '/skills'
     | '/spaces'
+    | '/system'
     | '/terminals'
     | '/tokens'
     | '/users'
@@ -544,6 +554,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/sign-in-providers'
     | '/skills'
+    | '/system'
     | '/terminals'
     | '/tokens'
     | '/users'
@@ -593,6 +604,7 @@ export interface FileRouteTypes {
     | '/sign-in-providers'
     | '/skills'
     | '/spaces'
+    | '/system'
     | '/terminals'
     | '/tokens'
     | '/users'
@@ -646,6 +658,7 @@ export interface RootRouteChildren {
   SignInProvidersRoute: typeof SignInProvidersRoute
   SkillsRoute: typeof SkillsRoute
   SpacesRoute: typeof SpacesRouteWithChildren
+  SystemRoute: typeof SystemRoute
   TerminalsRoute: typeof TerminalsRoute
   TokensRoute: typeof TokensRoute
   UsersRoute: typeof UsersRoute
@@ -814,6 +827,13 @@ declare module '@tanstack/react-router' {
       path: '/spaces'
       fullPath: '/spaces'
       preLoaderRoute: typeof SpacesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/system': {
+      id: '/system'
+      path: '/system'
+      fullPath: '/system'
+      preLoaderRoute: typeof SystemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/terminals': {
@@ -1123,6 +1143,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInProvidersRoute: SignInProvidersRoute,
   SkillsRoute: SkillsRoute,
   SpacesRoute: SpacesRouteWithChildren,
+  SystemRoute: SystemRoute,
   TerminalsRoute: TerminalsRoute,
   TokensRoute: TokensRoute,
   UsersRoute: UsersRoute,

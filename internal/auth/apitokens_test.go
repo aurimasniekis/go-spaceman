@@ -186,6 +186,13 @@ func TestAPITokensIssuedByTokens(t *testing.T) {
 		t.Fatalf("a child token issued a token: %v", err)
 	}
 
+	// A token on the external MCP endpoint issues no tokens (the operation is excluded from its catalog as well).
+	viaEndpoint := *tfp
+	viaEndpoint.MCPEndpoint = true
+	if _, _, err := f.svc.CreateAPIToken(f.ctx, &viaEndpoint, "via-mcp", grants(authz.RoleViewer), 24*time.Hour, false); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("a token on the MCP endpoint issued a token: %v", err)
+	}
+
 	// The child works while its creator holds the covering grant, not after.
 	second, err := f.svc.Create(f.ctx, sys, CreateInput{Email: "second@example.com", DisplayName: "Second", Grants: grants(authz.RoleAdmin)})
 	must(t, err)

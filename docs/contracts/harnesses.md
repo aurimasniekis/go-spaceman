@@ -54,6 +54,75 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   `"tui": "fullscreen"` gave `alternate_on=1`, `mouse_any_flag=1`, `mouse_sgr_flag=1`; `"tui": "default"` gave 0, 0, 0.
   The "Scroll wheel is sending arrow keys" hint did not show for bursts of `ESC[A` in an empty, signed-out session
   (it is in the operator's screenshot of a real run).
+- **Terminal question picker and plan mode denied (ADR-0066, verified 2026-11-08 with Claude Code 2.1.317, live, no
+  model; the operator checked the same on 2.1.319):** `AskUserQuestion` draws its picker in the terminal and waits
+  there; `EnterPlanMode` leads to `ExitPlanMode`'s approval dialog. A whole-tool rule in `settings.json`
+  `permissions.deny` drops a tool from the tools Claude Code sends (`filterToolsByDenyRules`). Checked in an isolated tmux
+  session (fresh `HOME` and `CLAUDE_CONFIG_DIR`, `DISABLE_AUTOUPDATER=1`, onboarding and folder trust seeded,
+  `ANTHROPIC_BASE_URL` pointing to a local fake API that answered 400 and recorded each request's tool names,
+  `ANTHROPIC_AUTH_TOKEN` a dummy): without the rule every request carried `AskUserQuestion` (13 and 25 tools); with
+  `{"permissions":{"deny":["AskUserQuestion"]}}` none did (12 and 24). With `"deny":["AskUserQuestion","EnterPlanMode"]`
+  neither appeared (12 and 23 tools; `ExitPlanMode` stays listed, as it only acts inside plan mode). Print mode (`-p`)
+  never offers `AskUserQuestion`. SpaceMan appends both rules to the profile's deny list unless the profile allows a
+  tool itself.
+- **PermissionRequest hook and additional directories (ADR-0068, verified 2026-11-08 with Claude Code 2.1.317, live,
+  no model):** the binary's hook schemas (`strings`): input = the common fields (`session_id`, `transcript_path`,
+  `cwd`, `permission_mode`, …) plus `hook_event_name: "PermissionRequest"`, `tool_name`, `tool_input`,
+  `permission_suggestions?`, `mcp_server?`; output `hookSpecificOutput: {hookEventName: "PermissionRequest", decision:
+  {behavior: "allow", updatedInput?, updatedPermissions?} | {behavior: "deny", message?, interrupt?}}`. Only `command`
+  and `http` hooks may answer it (agent and prompt hooks are refused for this event), and in auto mode Claude Code
+  ignores a hook's allow ("a hook cannot approve"). Checked in an isolated tmux session (fresh `HOME` and
+  `CLAUDE_CONFIG_DIR`, `DISABLE_AUTOUPDATER=1`, onboarding and trust seeded, a local fake API that answered with one
+  scripted `tool_use` and recorded the following `tool_result`): without a hook, a `Read` of a file outside the
+  working directory stopped at the "Read outside the working directories" dialog. With
+  `hooks.PermissionRequest = [{matcher: "*", hooks: [{type: "command", command: "'<agent>' hook permission-request"}]}]`
+  the same read, and a `Bash` call matched by an `ask` rule, came back to the model as `is_error` tool results carrying
+  the hook's message; the terminal showed "Denied by PermissionRequest hook". A file under a directory in
+  `permissions.additionalDirectories` was read without a dialog. A deny rule `Read(//<abs path glob>)` (a leading `//`
+  is an absolute path) refused a read there with "File is in a directory that is denied by your permission settings."
+- **Deny rules against other instances, and failing hooks (ADR-0068 review fixes, verified 2026-11-08 with Claude
+  Code 2.1.317, live, no model; `make test-real-claude-cli`):**
+  - **Setup.** Print mode (`-p`) with a local fake API scripting the tool calls, `--permission-mode acceptEdits`, a
+    throwaway HOME, config dir and space folder.
+  - **Without an Edit deny, other instances are writable.** With the space folder in `additionalDirectories`, `Write`
+    and `Edit` to another instance's `claude/settings.json` succeed without a dialog.
+  - **What the deny rules refuse.** `Edit(//<abs glob>)` deny rules refuse `Write` and `Edit` alike ("File is in a
+    directory that is denied by your permission settings."). That covers both `Edit(//<space>/instances/<id>/**)` and
+    `Edit(//<space>/instances/*/claude/settings.json)`.
+  - **Deny rules also block the run's own auto memory.** Claude Code writes its auto memory to
+    `$CLAUDE_CONFIG_DIR/projects/<project key>/memory/` with the same `Write` tool, and a deny rule covering
+    that folder refuses it. So `Edit(//<space>/instances/**)` would block the run's own memory.
+  - **Auto memory elsewhere (review round 2, verified live with 2.1.317, `make test-real-claude-cli`).**
+    - `autoMemoryDirectory` in the user `settings.json` (an absolute path; `~/` is expanded; ignored in a checked-in
+      project settings file) replaces the folder. Claude Code names it in the system prompt's "auto memory" section,
+      loads its `MEMORY.md` into the first request, and its `Write` and `Read` tools reach it without a dialog in
+      `acceptEdits` even when it is outside every working directory (its built-in carve-out, "auto memory files are
+      allowed for writing"/"reading").
+    - The default folder's project key: Claude Code keys by the main checkout of the git repository (for a linked
+      worktree, the repository its `.git` file points at), else the working directory. Every UTF-16 code unit other
+      than an ASCII letter or digit becomes `-`; a key over 200 characters is cut there and gets `-` and the base-36
+      absolute value of the path's 32-bit Java-style string hash. Live, the default folder named in the system prompt
+      for a worktree cwd matched `agent.ClaudeProjectKey(agent.ClaudeProjectRoot(cwd))`.
+    - With 52 instances (no per-instance rules), `Edit(//<space>/instances/*/claude/projects/**)` and the other named
+      globs refused writes to another instance's memory, transcript, `rules/`, `CLAUDE.md`, `policy-limits.json`, shell
+      snapshots and session environment, and to the run's own `rules/` and `remote-settings.json` (which Claude Code
+      also asks about on its own, as one of its config files).
+    - With a profile adding the node's whole spaces folder to `additionalDirectories`, a rule anchored on the run's own
+      space left another space's instance `settings.json`, `CLAUDE.md` and `rules/` writable; anchored on
+      `//<data_dir>/spaces/*/instances/*/claude/...`, the writes are refused (a `*` in the path matches the space).
+    - The binary protects these entries of its own config dir (they are what SpaceMan denies for every instance):
+      `shell-snapshots`, `session-env`, `plugins`, `hooks`, `skills`, `workflows`, `commands`, `agents`, `routines`,
+      `rules`, `output-styles`, `scheduled_tasks.json`, `launch.json`, `CLAUDE.md`, `projects`, `daemon.json`,
+      `policy-limits.json` (and its `.signature*.json` files), `backups`. Its plan files (`plans/`), scratchpad and
+      background job folder (`jobs/`) are written by the session's own file tools.
+  - **Bracket negation doesn't work.** `[!A]` in a rule did not act as "not A" (it matched names starting with `A`).
+  - **Hook command failures.** A `PermissionRequest` command hook whose command fails shows the dialog: exit code 2
+    does not deny this event. The command `'<bin>' hook permission-request 2>/dev/null || printf '%s' '<deny JSON>'`
+    still denies when `<bin>` is missing (the reviewer checked this interactively; `TestRealClaudeCLIDeniesOtherInstances`
+    checks it in print mode).
+  - **Settings keys that run commands** (from the binary's settings schema): `apiKeyHelper`, `otelHeadersHelper`,
+    `proxyAuthHelper`, `policyHelper(s)`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `processWrapper`,
+    `statusLine`, `subagentStatusLine`, `fileSuggestion`, `sshHostCommands`, `hooks`. `autoMemoryDirectory` exists too.
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).
@@ -100,6 +169,11 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   - Not verified: a real ChatGPT login (no account) and a real model turn.
   - Env `OPENAI_API_KEY` and `CODEX_API_KEY` (strings-verified).
 - **Notify hook:** `notify = [argv…]` in config.toml, called at turn end.
+- **Question tool (ADR-0066; code: codex-cli 0.166.0 binary strings, 2026-11-08, not run):** Codex has its own
+  blocking question tool, `request_user_input` (`core/src/tools/handlers/request_user_input.rs`). Its instructions offer it
+  in Plan mode, and in Default mode only with the `default_mode_request_user_input` feature; it is refused in `codex exec`.
+  There is also a `request_user_input_async` variant, and MCP tool approvals can use it (`mcp_tool_call_approval`).
+  SpaceMan runs start in Default mode and set no feature override for it (not verified against a live session).
 - **Status:** OSC 7501 emitter present.
 
 ## Harbor Pilot gateway spike (2026-11-06)

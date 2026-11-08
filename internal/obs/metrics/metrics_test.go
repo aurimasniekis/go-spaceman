@@ -437,3 +437,18 @@ func TestRegister(t *testing.T) {
 		t.Error("duplicate registration must fail")
 	}
 }
+
+// SSEClients reads the live-stream gauge back for the System page (SM-OBS-006).
+func TestSSEClientsReadsTheGauge(t *testing.T) {
+	m := New()
+	m.SSEClientConnected()
+	m.SSEClientConnected()
+	m.SSEClientDisconnected()
+	if n := m.SSEClients(); n != 1 {
+		t.Fatalf("SSEClients = %d, want 1", n)
+	}
+	var nilM *Metrics
+	if nilM.SSEClients() != 0 {
+		t.Fatal("nil metrics should report 0")
+	}
+}

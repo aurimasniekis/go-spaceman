@@ -319,6 +319,23 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-MCP-003 Built-in tools: inbox/messages, tasks, artifacts/attachments, memory, control orchestration, KB support, human actions, cross-space requests.
 - SM-MCP-004 Skills are central, versioned, assignable and harness-materialized, including the Hallpass skill. Skills give guidance, not permission.
   No arbitrary install hooks without a trust policy.
+- SM-MCP-005 An administrator can give a space's runs SpaceMan itself as an MCP server (kind `spaceman`): SpaceMan's own
+  API operations as tools, served by central through the gateway and the existing bridge, with no new node protocol.
+  It is managed through the API, CLI, the UI ("Add SpaceMan MCP") and Terraform (`spaceman_admin_mcp_server`) (ADR-0063).
+- SM-MCP-006 A SpaceMan MCP server acts through a secretless internal API token owned by the admin who created it, with
+  role@domain grants covered by the owner's (and by the issuing token's). It can never be presented as a bearer token,
+  is authorized as both token and owner on every call, and stops on the next call when it is revoked or expires, its
+  owner is disabled or loses the grants, or the server is disabled or deleted. No secret reaches nodes, runs,
+  configuration, logs or Terraform state. Its calls are audited with the owner, the token and the run.
+- SM-MCP-007 Tools are one per API operation, generated from the build's API document and a reviewed classification
+  (read, write, dangerous, sensitive-read, excluded) that a test keeps complete. Operations that need a person at the
+  keyboard (sign-in, own account, step-up, tokens, users, approvals and approval policies, human-action responses,
+  takeover and terminal input) and SpaceMan MCP self-management are never exposed. Calls run through the API's own
+  authorization, validation, idempotency and audit. Only control and worker runs get the tools.
+- SM-MCP-008 Dangerous tools always need a human approval, whatever the server's settings; other approvals are a
+  per-server choice. An agent acting through a SpaceMan MCP server never counts as an approver.
+- SM-MCP-009 Central also serves the SpaceMan MCP tool surface at `/api/v1/mcp` to operators' own MCP clients,
+  authenticated with a bearer API token, with the same classification, exclusions and approval rules.
 
 ### SM-MEM — Memory
 - SM-MEM-001 Memory is keyed by (space_id, agent_kind). All instances of a kind share history. KB sessions share KB memory by default with separate conversations.
@@ -410,6 +427,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-OBS-004 Outbound publication goes through a transactional outbox using the verified Pulse contract: stable IDs, versioned payloads,
   correlation and causation, at-least-once delivery, retry and backoff, lag and failure visibility. Human-action lifecycle events carry safe metadata only.
 - SM-OBS-005 Inbound subscriptions are distinct from outbound publication. No external publication inside a DB write transaction.
+- SM-OBS-006 Administrators see the instance's status (version and build, start time, boot ID, schema and node protocol versions, storage health, live counts) on a System page and API, without secrets; the version alone is readable by every client.
 
 ### SM-STORE — Storage, backups and restore
 - SM-STORE-001 Central SQLite plus a node-local durable journal. No multi-writer or network-filesystem SQLite.
@@ -505,3 +523,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-03 | A new installation comes with starter roles (control, planner, implementor, reviewer, kb, dreamer) as editable, deletable examples, so a first space can launch agents without configuring every role by hand. | SM-PROMPT-005 (ADR-0051) |
 | 2026-11-06 | Claude Code runs get their settings.json from their harness profile, with full control (permissions, auto mode, hooks, any key), a proper UI rather than raw JSON for the common parts, and a Terraform provider attribute. | SM-PROMPT-006 (ADR-0059) |
 | 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0060 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |
+| 2026-11-08 | A System page like Hallpass's, plus a version API, for v0.1.0. | SM-OBS-006 (ADR-0067) |

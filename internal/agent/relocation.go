@@ -712,6 +712,7 @@ func (a *Agent) relocRelease(ctx context.Context, spaceID string, p proto.Reloca
 	}
 	space := a.spaceDir(p.Workdir)
 	memDir := filepath.Join(a.mem.root, spaceID)
+	autoMem := filepath.Join(a.o.DataDir, "automemory", spaceID) // the instances' Claude Code auto memory (ADR-0068)
 	retained := p.Workdir + "-" + shortID(p.RelocationID)
 	res := &proto.ReleaseResult{Action: p.Action}
 	switch p.Action {
@@ -720,26 +721,26 @@ func (a *Agent) relocRelease(ctx context.Context, spaceID string, p proto.Reloca
 		if err := os.MkdirAll(root, 0o700); err != nil {
 			return nil, err
 		}
-		for _, mv := range [][2]string{{space, filepath.Join(root, "space")}, {memDir, filepath.Join(root, "memory")}} {
+		for _, mv := range [][2]string{{space, filepath.Join(root, "space")}, {memDir, filepath.Join(root, "memory")}, {autoMem, filepath.Join(root, "automemory")}} {
 			if exists(mv[0]) && !exists(mv[1]) {
 				if err := os.Rename(mv[0], mv[1]); err != nil {
 					return nil, err
 				}
 			}
 		}
-		note := fmt.Sprintf("# Retained after relocation %s\n\nThe space %s moved to another node on %s. This is its folder and role memory as they were "+
+		note := fmt.Sprintf("# Retained after relocation %s\n\nThe space %s moved to another node on %s. This is its folder, role memory and auto memory as they were "+
 			"here. SpaceMan deletes it when the retention ends or when an operator releases it; until then nothing uses it.\n", p.RelocationID, spaceID,
 			a.now().Format(time.RFC3339))
 		_ = os.WriteFile(filepath.Join(root, "RETAINED.md"), []byte(note), 0o600)
 		res.RetainedAs = retained
 	case proto.ReleaseDelete:
-		for _, dir := range []string{filepath.Join(a.o.DataDir, "retained", retained), space, memDir} {
+		for _, dir := range []string{filepath.Join(a.o.DataDir, "retained", retained), space, memDir, autoMem} {
 			if err := os.RemoveAll(dir); err != nil {
 				return nil, err
 			}
 		}
 	case proto.ReleaseDiscard:
-		for _, dir := range []string{space, memDir} {
+		for _, dir := range []string{space, memDir, autoMem} {
 			if err := os.RemoveAll(dir); err != nil {
 				return nil, err
 			}

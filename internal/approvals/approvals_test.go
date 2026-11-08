@@ -410,3 +410,62 @@ func TestApprovalEventsRecorded(t *testing.T) {
 		t.Fatalf("events %v", got)
 	}
 }
+
+// Require (ADR-0063): an operation that always needs an approval is gated with no policy at all, by a synthetic
+// one-use policy; a matching policy still sets the uses. Class-named SpaceMan MCP operations are valid policy patterns.
+// A decision made through a SpaceMan MCP server is refused.
+func TestRequire(t *testing.T) {
+	f := newFx(t)
+	const op = "mcp.infra.dangerous.delete_space"
+	finish, err := f.svc.Require(f.ctx, run1, op, "mcp_server:mcp_1", json.RawMessage(`{"space_id":"spc_b"}`))
+	if finish != nil || !errors.Is(err, ErrRequired) {
+		t.Fatalf("no approval yet: finish %v, %v", finish != nil, err)
+	}
+	l, err := f.svc.List(f.ctx, "spc_a", 0)
+	must(t, err)
+	if len(l) != 1 || l[0].PolicyID != RequiredPolicyID || l[0].UsesAllowed != 1 || l[0].Operation != op {
+		t.Fatalf("approvals %+v", l)
+	}
+	// No agent decides it, even holding its owner's grants.
+	act, err := f.human.Get(f.ctx, "spc_a", l[0].HumanActionID)
+	must(t, err)
+	agent := audit.Actor{Type: audit.ActorUser, ID: approver.ID, Via: audit.ViaSpacemanMCP + "atk_1", Run: "run_1"}
+	_, err = f.human.Respond(f.ctx, agent, "spc_a", act.ID, act.Version, human.RespondInput{Outcome: "approved"})
+	code(t, err, apperr.CodeForbidden)
+	if err := f.s.W().TxNamed(f.ctx, "finalize", func(tx *store.Tx) error {
+		row, err := tx.Q.GetHumanAction(f.ctx, act.ID)
+		if err != nil {
+			return err
+		}
+		return f.svc.onFinalized(f.ctx, tx, row, "resolved", "approved", agent)
+	}); apperr.CodeOf(err) != apperr.CodeForbidden {
+		t.Fatalf("decision through the SpaceMan MCP: %v", err)
+	}
+	f.decide(l[0], "approved", "")
+	finish, err = f.svc.Require(f.ctx, run1, op, "mcp_server:mcp_1", json.RawMessage(`{"space_id":"spc_b"}`))
+	if err != nil || finish == nil {
+		t.Fatalf("approved: %v", err)
+	}
+	finish(nil)
+	if _, err := f.svc.Require(f.ctx, run1, op, "mcp_server:mcp_1", json.RawMessage(`{"space_id":"spc_b"}`)); !errors.Is(err, ErrRequired) {
+		t.Fatalf("second use of a one-use approval: %v", err)
+	}
+
+	// A class pattern is a valid policy, and it sets the uses of what it matches.
+	f.policy("mcp.infra.write.*", 3)
+	_, err = f.svc.Require(f.ctx, run1, "mcp.infra.write.create_task", "mcp_server:mcp_1", json.RawMessage(`{}`))
+	if !errors.Is(err, ErrRequired) {
+		t.Fatal(err)
+	}
+	l, _ = f.svc.List(f.ctx, "spc_a", 0)
+	if l[0].Operation != "mcp.infra.write.create_task" || l[0].UsesAllowed != 3 || l[0].PolicyID == RequiredPolicyID {
+		t.Fatalf("policy-backed approval %+v", l[0])
+	}
+	for _, bad := range []string{"mcp.infra.everything.*", "mcp.infra.write.create.task"} {
+		_, err := f.svc.CreatePolicy(f.ctx, admin, PolicyInput{SpaceID: "spc_a", Operation: bad})
+		code(t, err, apperr.CodeInvalid)
+	}
+	// Exempt operations can never be required (a run must always be able to ask).
+	_, err = f.svc.Require(f.ctx, run1, "spaceman.human_ask", "spaceman", nil)
+	code(t, err, apperr.CodeInvalid)
+}

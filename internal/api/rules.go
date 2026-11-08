@@ -23,9 +23,17 @@ type Rule struct {
 	Reauth, MFA bool
 	// UserOnly refuses the root token (operations that act on the caller's own user account).
 	UserOnly bool
+	// Filtered marks a Session read that returns only what the principal's grants reach (filtered in the handler), or
+	// a global catalog any signed-in principal may read, as opposed to a personal operation (own profile, sign-out). Internal principals (the SpaceMan MCP, ADR-0063) may
+	// call it; they are refused on every other Session rule.
+	Filtered bool
 }
 
 func public() Rule { return Rule{Public: true} }
+
+// FilteredRead is the rule of a read open to any signed-in principal that returns only what the principal's grants
+// reach (the handler filters by authorization). Unlike a personal Session operation, an internal principal may call it.
+func FilteredRead() Rule { return Rule{Session: true, Filtered: true} }
 
 // Global is the rule of a global operation (domain "*").
 func Global(p authz.Permission) Rule { return Rule{Perm: p} }
@@ -109,6 +117,13 @@ func (d *Deps) authorizeOps(api huma.API) func(huma.Context, func(huma.Context))
 		}
 		if p.Limited && !rl.Limited {
 			writeHumaProblem(ctx, errLimited())
+			return
+		}
+		if p.ViaMCP() && (rl.Session && !rl.Filtered || rl.UserOnly || rl.Reauth || rl.MFA) {
+			// A SpaceMan MCP call never reaches what needs a person at the keyboard: own-account operations or step-up
+			// (ADR-0063). Bearer tokens skip step-up below; internal tokens and the external MCP endpoint must not. Reads filtered by the
+			// principal's grants are not personal and stay open.
+			writeHumaProblem(ctx, newProblem(403, apperr.CodeForbidden, "this operation is not available through the SpaceMan MCP", nil))
 			return
 		}
 		if rl.UserOnly && p.User == nil {

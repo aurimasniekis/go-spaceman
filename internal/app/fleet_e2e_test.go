@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -120,10 +121,15 @@ func (e *fleetEnv) startCentral() {
 	e.handler.Store(&h)
 }
 
-// restartCentral closes central (dropping every node connection) and opens it again on the same data directory.
+// restartCentral closes central (dropping every node connection) and opens it again on the same data directory. Close
+// returns only once the store's connections are closed, so a Close error (a connection still in use after the drain
+// timeout) fails the test here rather than as SQLITE_BUSY in the next open.
 func (e *fleetEnv) restartCentral() {
+	e.t.Helper()
 	e.srv.CloseClientConnections()
-	_ = e.c.Close()
+	if err := e.c.Close(); err != nil {
+		e.t.Fatalf("close central: %v", err)
+	}
 	e.startCentral()
 }
 
@@ -265,6 +271,31 @@ func TestFleetLifecycle(t *testing.T) {
 			t.Fatal("credential in the runner argv")
 		}
 	}
+	// ADR-0068: the run's settings.json has SpaceMan's deny-only PermissionRequest hook, run by the shipped agent binary,
+	// and the run's own space folder (its real path), nothing wider, as an additional directory; every instance's memory
+	// is denied, and the run's own auto memory is outside the space folder.
+	spaceDir, _ := filepath.EvalSymlinks(filepath.Join(e.agentDir, "spaces", sp.Workdir))
+	raw, err := os.ReadFile(filepath.Join(spaceDir, "instances", e.run1(ctrl.ID).InstanceID, "claude", "settings.json"))
+	var settings struct {
+		Hooks struct {
+			PermissionRequest []struct {
+				Hooks []struct{ Command string } `json:"hooks"`
+			} `json:"PermissionRequest"`
+		} `json:"hooks"`
+		Permissions struct {
+			AdditionalDirectories []string `json:"additionalDirectories"`
+			Deny                  []string `json:"deny"`
+		} `json:"permissions"`
+		AutoMemoryDirectory string `json:"autoMemoryDirectory"`
+	}
+	if err != nil || json.Unmarshal(raw, &settings) != nil || len(settings.Hooks.PermissionRequest) != 1 ||
+		settings.Hooks.PermissionRequest[0].Hooks[0].Command != hns.ClaudePermissionHookCommand("/usr/bin/true") ||
+		!slices.Equal(settings.Permissions.AdditionalDirectories, []string{spaceDir}) ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+filepath.Dir(spaceDir)+"/*/instances/*/claude/settings.json)") ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+filepath.Dir(spaceDir)+"/*/instances/*/claude/projects/**)") ||
+		!strings.HasPrefix(settings.AutoMemoryDirectory, filepath.Join(e.agentDir, "automemory", sp.ID, e.run1(ctrl.ID).InstanceID, "projects")+"/") {
+		t.Fatalf("run settings %s %v", raw, err)
+	}
 	if e.run1(ctrl.ID).Launch.AccountRef != accts["claude_oauth_token"] {
 		t.Fatalf("run account %q", e.run1(ctrl.ID).Launch.AccountRef)
 	}
@@ -323,6 +354,28 @@ func TestFleetLifecycle(t *testing.T) {
 	if _, err := e.c.Fleet.SetSpaceState(ctx, admin, sp.ID, s.Version, "active", ""); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Central restarts back to back on the same data directory while a node is connected and reconnecting. Each Close
+// races the node's in-flight requests; the next open must still find the database free (it failed with "storage busy:
+// open database ... SQLITE_BUSY" when Close released the directory before connections still in use had closed, and the
+// writer's first pragma ran without a busy timeout).
+func TestCentralRestartBackToBack(t *testing.T) {
+	// Not parallel: like TestFleetLifecycle, the restarts must stay inside the node lease.
+	e := newFleetEnv(t, longLease)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	nodeID := nodes[0].ID
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
+	for i := range 5 {
+		e.restartCentral()
+		if i%2 == 1 { // every other restart lands while the node is still reconnecting
+			eventually(t, "reconnected after central restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
+		}
+	}
+	eventually(t, "reconnected after the last restart", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodeID); return n.Connected })
 }
 
 // SM-NODE-007: without central, the node starts no work and stops running work after lease + grace.

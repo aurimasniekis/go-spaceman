@@ -26,6 +26,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
   `GET /api/v1/spaces/{space_id}/attachments/{attachment_id}/content` serves an attachment's bytes (raster images inline,
   everything else as a download, always sandboxed), and `GET /api/v1/spaces/{space_id}/runs/{run_id}/transcript` downloads a
   run's stored native transcript (`recording:read`; it may contain secrets and is never rendered).
+- **MCP**: `POST /api/v1/mcp` serves these operations as MCP tools over streamable HTTP to your own MCP client, with an API
+  token as the bearer (outside the OpenAPI document; [guide](../guide/mcp-endpoint)).
 - **Command line**: `spaceman` is a client for these operations ([CLI reference](./cli/)); each command names the operations it calls.
 
 ## Operations
@@ -35,6 +37,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
 | `GET` | `/attention` | `get-attention` | What needs a person |
+| `GET` | `/system` | `get-system` | This instance's status |
 | `GET` | `/system/info` | `get-system-info` | Public system status |
 | `GET` | `/system/outbound-events` | `get-outbound-events` | Outbound event publication status |
 
@@ -349,6 +352,10 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/mcp-servers/{server_id}/grants` | `list-mcp-grants` | Spaces and roles granted the server |
 | `POST` | `/mcp-servers/{server_id}/grants` | `add-mcp-grant` | Grant the server to a space role |
 | `DELETE` | `/mcp-servers/{server_id}/grants/{grant_id}` | `revoke-mcp-grant` | Revoke a grant |
+| `POST` | `/mcp-servers/{server_id}/reissue` | `reissue-spaceman-mcp` | Re-issue a SpaceMan MCP server's token |
+| `PUT` | `/mcp-servers/{server_id}/spaceman` | `update-spaceman-mcp` | Edit a SpaceMan MCP server |
+| `POST` | `/mcp-servers/spaceman` | `create-spaceman-mcp` | Add a SpaceMan MCP server |
+| `GET` | `/mcp-servers/spaceman/tools` | `list-spaceman-mcp-tools` | Tools a SpaceMan MCP server can offer |
 | `GET` | `/spaces/{space_id}/mcp-servers` | `list-space-mcp-grants` | MCP servers granted in a space |
 
 ### memory

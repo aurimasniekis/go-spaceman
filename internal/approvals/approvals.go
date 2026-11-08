@@ -56,7 +56,9 @@ var exempt = []string{"spaceman.whoami", "spaceman.ping", "spaceman.human_ask", 
 	"spaceman.message_resolve"}
 
 var (
-	reOperation = regexp.MustCompile(`^(spaceman\.[a-z0-9_]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.[A-Za-z0-9_-]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.\*|mcp\.\*|spaceman\.\*)$`)
+	// SpaceMan MCP tools (ADR-0063) are mcp.<slug>.<class>.<tool>, so a policy can name a class: mcp.<slug>.write.*.
+	reOperation = regexp.MustCompile(`^(spaceman\.[a-z0-9_]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.[A-Za-z0-9_-]{1,64}|mcp\.[a-z][a-z0-9-]{0,30}\.\*|` +
+		`mcp\.[a-z][a-z0-9-]{0,30}\.(read|write|dangerous|sensitive-read)\.([A-Za-z0-9_-]{1,64}|\*)|mcp\.\*|spaceman\.\*)$`)
 	// Argument fields whose values never appear in previews.
 	reSecretKey = regexp.MustCompile(`(?i)(secret|token|password|passwd|authorization|api[_-]?key|credential|private[_-]?key|cookie)`)
 )
@@ -380,11 +382,76 @@ func (svc *Service) Gate(ctx context.Context, p *fleet.RunPrincipal, op, resourc
 	if err != nil || pol == nil {
 		return nil, err
 	}
+	return svc.gate(ctx, runRequester(p), pol, op, resource, args)
+}
+
+// Requester is who asks for an approval: a run (Gate, Require), or a user's API token on the external MCP endpoint
+// (RequireFor, ADR-0063).
+type Requester struct {
+	SpaceID string
+	// Key binds an approval to its requester (approvals.requester_run): a run ID, or TokenRequesterPrefix + the token
+	// ID. Only calls with the same key can use the approval.
+	Key  string
+	Role string
+	// Actor records the requests and uses in the audit.
+	Actor audit.Actor
+	// Human is the requester the person deciding sees.
+	Human human.Requester
+	// SelfUserID is a user who must never decide the approval (the token's owner); "" for runs.
+	SelfUserID string
+}
+
+// TokenRequesterPrefix starts the Key of an approval an API token asked for through the external MCP endpoint.
+const TokenRequesterPrefix = "api_token:"
+
+func runRequester(p *fleet.RunPrincipal) Requester {
+	return Requester{SpaceID: p.SpaceID, Key: p.RunID, Role: p.Role, Actor: audit.Actor{Type: audit.ActorAgent, ID: p.RunID},
+		Human: human.Requester{Kind: "agent", ID: p.RunID, Role: p.Role, Run: p.RunID, Label: p.Role + " (" + p.Kind + ")"}}
+}
+
+// RequiredPolicyID is the policy ID recorded on approvals that no stored policy asked for: the operation always needs
+// one (Require).
+const RequiredPolicyID = "required"
+
+// requiredPolicy is the policy Require applies when no stored policy matches: one use, valid for an hour after the decision,
+// a day to decide.
+var requiredPolicy = db.ApprovalPolicy{ID: RequiredPolicyID, Operation: "", Uses: 1, ValidSeconds: 3600, RequestTtlSeconds: 86400}
+
+// Require is Gate for an operation that always needs a person's approval, whether or not a policy names it: dangerous
+// SpaceMan MCP tools, and writes of a server set to gate them (ADR-0063). A matching policy still sets the uses and
+// lifetimes; without one, a synthetic one-use policy does. Exempt operations are never required. It never returns
+// (nil, nil).
+func (svc *Service) Require(ctx context.Context, p *fleet.RunPrincipal, op, resource string, args json.RawMessage) (func(error), error) {
+	return svc.RequireFor(ctx, runRequester(p), op, resource, args)
+}
+
+// RequireFor is Require for any requester: the external MCP endpoint's dangerous calls (ADR-0063). An approval asked
+// for by an API token is never decided by the token's owner (onFinalized), nor used if it was.
+func (svc *Service) RequireFor(ctx context.Context, p Requester, op, resource string, args json.RawMessage) (func(error), error) {
+	if p.SpaceID == "" || p.Key == "" {
+		return nil, apperr.New(apperr.CodeInvalid, "%s: an approval needs a space and a requester", op)
+	}
+	if isExempt(op) {
+		return nil, apperr.New(apperr.CodeInvalid, "%s cannot require an approval", op)
+	}
+	pol, err := svc.policyFor(ctx, p.SpaceID, op)
+	if err != nil {
+		return nil, err
+	}
+	if pol == nil {
+		cp := requiredPolicy
+		cp.Operation = op
+		pol = &cp
+	}
+	return svc.gate(ctx, p, pol, op, resource, args)
+}
+
+func (svc *Service) gate(ctx context.Context, p Requester, pol *db.ApprovalPolicy, op, resource string, args json.RawMessage) (func(error), error) {
 	digest, canon, err := Digest(op, resource, args)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := svc.s.R().ListApprovalsByKey(ctx, db.ListApprovalsByKeyParams{SpaceID: p.SpaceID, Operation: op, ArgsDigest: digest, RequesterRun: p.RunID})
+	rows, err := svc.s.R().ListApprovalsByKey(ctx, db.ListApprovalsByKeyParams{SpaceID: p.SpaceID, Operation: op, ArgsDigest: digest, RequesterRun: p.Key})
 	if err != nil {
 		return nil, err
 	}
@@ -394,6 +461,12 @@ func (svc *Service) Gate(ctx context.Context, p *fleet.RunPrincipal, op, resourc
 			continue
 		}
 		by := audit.Actor{Type: a.DecidedByType, ID: a.DecidedBy, Via: a.DecidedVia}
+		if p.SelfUserID != "" && by.Type == audit.ActorUser && by.ID == p.SelfUserID {
+			if err := svc.end(ctx, a, Revoked, "decided by the requesting token's own user"); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if svc.StillAuthorized != nil && !svc.StillAuthorized(ctx, by, a.SpaceID) {
 			if err := svc.end(ctx, a, Revoked, "the person who approved can no longer decide approvals in this space"); err != nil {
 				return nil, err
@@ -434,7 +507,7 @@ var errUsedUp = errors.New("used up")
 
 // use consumes one use of an approval and records the execution start, in one transaction: two calls racing for the
 // last use cannot both run (SM-APPR-003).
-func (svc *Service) use(ctx context.Context, p *fleet.RunPrincipal, a db.Approval) (func(error), error) {
+func (svc *Service) use(ctx context.Context, p Requester, a db.Approval) (func(error), error) {
 	execID := ids.New("apx")
 	err := svc.s.W().TxNamed(ctx, "approvals.use", func(tx *store.Tx) error {
 		n, err := tx.Q.UseApproval(ctx, db.UseApprovalParams{ID: a.ID, Now: tx.NowMicros()})
@@ -450,7 +523,7 @@ func (svc *Service) use(ctx context.Context, p *fleet.RunPrincipal, a db.Approva
 		if err := svc.changes.Record(ctx, tx, a.SpaceID, "approval", a.ID, "updated", 0); err != nil {
 			return err
 		}
-		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorAgent, ID: p.RunID}, Action: "approval.used",
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: p.Actor, Action: "approval.used",
 			Target: audit.Target{Type: "approval", ID: a.ID}, Details: map[string]any{"space_id": a.SpaceID, "operation": a.Operation, "execution": execID}})
 		return err
 	})
@@ -487,19 +560,19 @@ func (svc *Service) finish(ctx context.Context, a db.Approval, execID string, ca
 }
 
 // request stores a new pending approval and asks a person.
-func (svc *Service) request(ctx context.Context, p *fleet.RunPrincipal, pol *db.ApprovalPolicy, op, resource, digest, canon string) (db.Approval, error) {
+func (svc *Service) request(ctx context.Context, p Requester, pol *db.ApprovalPolicy, op, resource, digest, canon string) (db.Approval, error) {
 	id := ids.New(ids.Approval)
 	err := svc.s.W().TxNamed(ctx, "approvals.request", func(tx *store.Tx) error {
 		now := tx.NowMicros()
 		if err := tx.Q.InsertApproval(ctx, db.InsertApprovalParams{ID: id, SpaceID: p.SpaceID, PolicyID: pol.ID, Operation: op, Resource: resource,
-			ArgsDigest: digest, ArgsPreview: preview(canon), RequesterRun: p.RunID, RequesterRole: p.Role, UsesAllowed: pol.Uses, UsesLeft: pol.Uses,
+			ArgsDigest: digest, ArgsPreview: preview(canon), RequesterRun: p.Key, RequesterRole: p.Role, UsesAllowed: pol.Uses, UsesLeft: pol.Uses,
 			ValidSeconds: pol.ValidSeconds, RequestExpiresAt: now + pol.RequestTtlSeconds*1_000_000, CreatedAt: now, UpdatedAt: now}); err != nil {
 			return err
 		}
 		if err := svc.changes.Record(ctx, tx, p.SpaceID, "approval", id, "created", 1); err != nil {
 			return err
 		}
-		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.Actor{Type: audit.ActorAgent, ID: p.RunID}, Action: "approval.requested",
+		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: p.Actor, Action: "approval.requested",
 			Target: audit.Target{Type: "approval", ID: id}, Details: map[string]any{"space_id": p.SpaceID, "operation": op, "digest": digest}})
 		return err
 	})
@@ -518,14 +591,18 @@ func (svc *Service) request(ctx context.Context, p *fleet.RunPrincipal, pol *db.
 
 // ask creates the human action for a pending approval. The dedup key makes it safe to repeat after a crash between
 // storing the approval and asking.
-func (svc *Service) ask(ctx context.Context, p *fleet.RunPrincipal, a db.Approval, pol *db.ApprovalPolicy) error {
+func (svc *Service) ask(ctx context.Context, p Requester, a db.Approval, pol *db.ApprovalPolicy) error {
 	exp := time.UnixMicro(a.RequestExpiresAt).UTC()
-	body := fmt.Sprintf("SpaceMan will run this only after approval, and only as shown.\n\n- **Operation:** `%s`\n- **Resource:** `%s`\n- **Requested by:** run `%s` (%s)\n- **Uses:** %d, within %s of the decision\n- **Argument digest:** `%s`\n\n```json\n%s\n```\n",
-		a.Operation, a.Resource, a.RequesterRun, a.RequesterRole, a.UsesAllowed, time.Duration(a.ValidSeconds)*time.Second, a.ArgsDigest, a.ArgsPreview)
+	who := fmt.Sprintf("run `%s` (%s)", a.RequesterRun, a.RequesterRole)
+	if tok, ok := strings.CutPrefix(a.RequesterRun, TokenRequesterPrefix); ok {
+		who = fmt.Sprintf("API token `%s` of %s. Another person must approve: the token's own user can only deny or withdraw it", tok, p.Human.Label)
+	}
+	body := fmt.Sprintf("SpaceMan will run this only after approval, and only as shown.\n\n- **Operation:** `%s`\n- **Resource:** `%s`\n- **Requested by:** %s\n- **Uses:** %d, within %s of the decision\n- **Argument digest:** `%s`\n\n```json\n%s\n```\n",
+		a.Operation, a.Resource, who, a.UsesAllowed, time.Duration(a.ValidSeconds)*time.Second, a.ArgsDigest, a.ArgsPreview)
 	req, _ := json.Marshal(human.ApprovalRequest{Action: truncate("Run "+a.Operation, 500), Details: "Enforced approval " + a.ID})
-	act, _, err := svc.human.Create(ctx, audit.Actor{Type: audit.ActorAgent, ID: p.RunID}, a.SpaceID, human.CreateInput{Type: human.TypeApproval,
+	act, _, err := svc.human.Create(ctx, p.Actor, a.SpaceID, human.CreateInput{Type: human.TypeApproval,
 		Title: truncate("Approve "+a.Operation, 200), Body: body, Request: req, ExpiresAt: &exp, DedupKey: "approval:" + a.ID, Priority: "high",
-		Requester: human.Requester{Kind: "agent", ID: p.RunID, Role: p.Role, Run: p.RunID, Label: p.Role + " (" + p.Kind + ")"}})
+		Requester: p.Human})
 	if err != nil {
 		return err
 	}
@@ -548,11 +625,29 @@ func (svc *Service) onFinalized(ctx context.Context, tx *store.Tx, r db.HumanAct
 	if r.Type != human.TypeApproval {
 		return nil
 	}
+	if actor.MCP() {
+		// Never an approver (ADR-0063): a model acting through a SpaceMan MCP server or the MCP endpoint cannot decide
+		// an approval.
+		return apperr.New(apperr.CodeForbidden, "an approval is decided by a person, not through the SpaceMan MCP")
+	}
 	a, err := tx.Q.GetApprovalByAction(ctx, r.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // an advisory approval
 	} else if err != nil {
 		return err
+	}
+	if tokID, ok := strings.CutPrefix(a.RequesterRun, TokenRequesterPrefix); ok && actor.Type == audit.ActorUser &&
+		status == human.Resolved && outcome == "approved" {
+		// An approval the MCP endpoint asked for is approved by someone else: not the token's own user, in any session
+		// or with any token (ADR-0063 §External endpoint). That user may still deny or withdraw their own client's
+		// request: it only stops the call.
+		tok, err := tx.Q.GetAPIToken(ctx, tokID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err != nil || tok.UserID == actor.ID {
+			return apperr.New(apperr.CodeForbidden, "this approval was asked for with your own API token: another person must approve it")
+		}
 	}
 	now := tx.NowMicros()
 	var state, reason string

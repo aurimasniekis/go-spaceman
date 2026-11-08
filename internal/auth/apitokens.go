@@ -50,12 +50,14 @@ type APIToken struct {
 	RevokedBy    string     `json:"revoked_by,omitempty"`
 	// ParentTokenID is the API token that issued this one, if any (ADR-0058).
 	ParentTokenID string `json:"parent_token_id,omitempty"`
+	// Purpose is set for internal tokens (ADR-0063), which have no secret and can never be used as a bearer.
+	Purpose string `json:"purpose,omitempty"`
 }
 
 func apiTokenFromRow(r db.ApiToken) *APIToken {
 	t := &APIToken{ID: r.ID, Name: r.Name, UserID: r.UserID, Grants: []authz.Grant{}, Hint: r.Hint,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), NeverExpires: r.NeverExpires == 1, LastUsedIP: r.LastUsedIp.String,
-		RevokedBy: r.RevokedBy.String, ParentTokenID: r.ParentTokenID.String}
+		RevokedBy: r.RevokedBy.String, ParentTokenID: r.ParentTokenID.String, Purpose: r.Purpose}
 	if !t.NeverExpires {
 		v := time.UnixMicro(r.ExpiresAt).UTC()
 		t.ExpiresAt = &v
@@ -101,6 +103,11 @@ func (svc *Service) CreateAPIToken(ctx context.Context, p *Principal, name strin
 		v.Add("expires_in_days", "must be omitted for a token that never expires")
 	case !neverExpires && (ttl < MinAPITokenTTL || ttl > MaxAPITokenTTL):
 		v.Add("expires_in_days", "must be between 1 and 366 days")
+	}
+	if p.ViaMCP() {
+		// An internal token, and a bearer token on the external MCP endpoint (defence in depth: the operation is
+		// excluded from both catalogs).
+		return nil, "", apperr.New(apperr.CodeForbidden, "tokens are not issued through the SpaceMan MCP")
 	}
 	if p.TokenParentID != "" {
 		return nil, "", apperr.New(apperr.CodeForbidden, "a token issued by another token cannot issue tokens")
@@ -201,45 +208,7 @@ func (svc *Service) tokensWithGrants(ctx context.Context, rows []db.ApiToken) ([
 // no-op.
 func (svc *Service) RevokeAPIToken(ctx context.Context, actor audit.Actor, id string) (*APIToken, error) {
 	err := svc.s.W().TxNamed(ctx, "auth.revoke_api_token", func(tx *store.Tx) error {
-		if _, err := tx.Q.GetAPIToken(ctx, id); errors.Is(err, sql.ErrNoRows) {
-			return apperr.New(apperr.CodeNotFound, "API token not found")
-		} else if err != nil {
-			return err
-		}
-		children, err := tx.Q.ListActiveChildAPITokens(ctx, sql.NullString{String: id, Valid: true})
-		if err != nil {
-			return err
-		}
-		for _, tid := range append([]string{id}, children...) {
-			n, err := tx.Q.RevokeAPIToken(ctx, db.RevokeAPITokenParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
-				Actor: sql.NullString{String: actorRef(actor), Valid: true}, ID: tid})
-			if err != nil {
-				return err
-			}
-			if n == 0 {
-				continue
-			}
-			var details map[string]any
-			if tid != id {
-				details = map[string]any{"parent_token_id": id}
-			}
-			if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "api_token.revoked", Target: audit.Target{Type: "api_token", ID: tid},
-				Details: details}); err != nil {
-				return err
-			}
-			if err := tx.Q.DeleteRoleGrantsBySubject(ctx, TokenSubject(tid)); err != nil {
-				return err
-			}
-			revoked := tid
-			svc.revokedAfterCommit(tx, revocation{tokenID: revoked})
-			tx.AfterCommit(func() {
-				if svc.bus != nil {
-					svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTokenRevoked, Key: revoked})
-				}
-			})
-		}
-		svc.reloadAfterCommit(ctx, tx)
-		return nil
+		return svc.RevokeAPITokenTx(ctx, tx, actor, id)
 	})
 	if err != nil {
 		return nil, err
@@ -247,8 +216,53 @@ func (svc *Service) RevokeAPIToken(ctx context.Context, actor audit.Actor, id st
 	return svc.GetAPIToken(ctx, id)
 }
 
+// RevokeAPITokenTx revokes a token and the tokens it issued inside the caller's transaction (a SpaceMan MCP server
+// revokes its internal token when it is re-issued or deleted, ADR-0063). Revoking a revoked token is a no-op.
+func (svc *Service) RevokeAPITokenTx(ctx context.Context, tx *store.Tx, actor audit.Actor, id string) error {
+	if _, err := tx.Q.GetAPIToken(ctx, id); errors.Is(err, sql.ErrNoRows) {
+		return apperr.New(apperr.CodeNotFound, "API token not found")
+	} else if err != nil {
+		return err
+	}
+	children, err := tx.Q.ListActiveChildAPITokens(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return err
+	}
+	for _, tid := range append([]string{id}, children...) {
+		n, err := tx.Q.RevokeAPIToken(ctx, db.RevokeAPITokenParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
+			Actor: sql.NullString{String: actorRef(actor), Valid: true}, ID: tid})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			continue
+		}
+		var details map[string]any
+		if tid != id {
+			details = map[string]any{"parent_token_id": id}
+		}
+		if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "api_token.revoked", Target: audit.Target{Type: "api_token", ID: tid},
+			Details: details}); err != nil {
+			return err
+		}
+		if err := tx.Q.DeleteRoleGrantsBySubject(ctx, TokenSubject(tid)); err != nil {
+			return err
+		}
+		revoked := tid
+		svc.revokedAfterCommit(tx, revocation{tokenID: revoked})
+		tx.AfterCommit(func() {
+			if svc.bus != nil {
+				svc.bus.Publish(eventbus.Event{Topic: eventbus.TopicTokenRevoked, Key: revoked})
+			}
+		})
+	}
+	svc.reloadAfterCommit(ctx, tx)
+	return nil
+}
+
 // AuthenticateAPIToken resolves a bearer token to a principal acting for the creating user, authorized as both the token
-// and the user. Unknown, revoked and expired tokens, and tokens whose user is disabled, all fail with the same error.
+// and the user. Unknown, revoked and expired tokens, tokens whose user is disabled and internal tokens (ADR-0063) all
+// fail with the same error.
 func (svc *Service) AuthenticateAPIToken(ctx context.Context, token, ip string) (*Principal, error) {
 	if !strings.HasPrefix(token, APITokenPrefix) || len(token) != len(APITokenPrefix)+43 {
 		return nil, ErrUnauthorized
@@ -272,7 +286,7 @@ func (svc *Service) AuthenticateAPIToken(ctx context.Context, token, ip string) 
 		break
 	}
 	now := svc.opts.Clock.Now()
-	if !found || row.RevokedAt.Valid || !now.Before(time.UnixMicro(row.ExpiresAt)) {
+	if !found || row.Purpose != "" || row.RevokedAt.Valid || !now.Before(time.UnixMicro(row.ExpiresAt)) {
 		return nil, ErrUnauthorized
 	}
 	op, err := svc.Get(ctx, row.UserID)

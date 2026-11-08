@@ -9,6 +9,7 @@ import { SpaceAccountsCard } from '@/features/accounts/SpaceAccountsCard'
 import { SpaceAttentionCard } from '@/features/attention/SpaceAttentionCard'
 import { SpaceRolesCard } from '@/features/catalog/SpaceRolesCard'
 import { SpaceHarborPilotCard } from '@/features/harborpilot/SpaceHarborPilotCard'
+import { SpaceMcpCard } from '@/features/mcp/SpaceMcpCard'
 import { harnessLabel, isEnded, kindLabel, RunDot, runStateText, runTitle, sortRuns } from '@/features/runs/runInfo'
 import { RelocationCard } from '@/features/spaces/RelocationCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
@@ -80,6 +81,7 @@ function SpacePage() {
       </Card>
 
       <SpaceRolesCard spaceId={s.id} />
+      <SpaceMcpCard spaceId={s.id} />
       <SpaceAccountsCard spaceId={s.id} />
       <SpaceHarborPilotCard spaceId={s.id} />
       <SpaceUsageCard spaceId={s.id} />

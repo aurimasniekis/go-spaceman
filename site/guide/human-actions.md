@@ -10,6 +10,16 @@ counted.
 
 <Shot name="human-global" alt="Needs you page listing a blocking question, an approval, two to-dos and an informational message across two spaces" caption="Everything waiting for a person, across spaces" />
 
+## Agents ask here, not in the terminal
+
+An agent that needs a person asks with `spaceman_human_ask`. The request is kept, shows up under **Needs you**, reminds
+people per the space's policy, and the answer wakes the agent. SpaceMan tells every run so in its orientation, and
+denies Claude Code's own terminal question picker (`AskUserQuestion`) and plan mode (`EnterPlanMode`, whose plan ends
+in an approval dialog) by default: a run waiting there would wait, silently, for an answer typed into its terminal
+(ADR-0066, and [Claude Code settings](./roles-and-prompts#claude-code-settings) to allow them). Claude Code's own
+permission dialogs are answered with "deny" by a hook SpaceMan adds, whose message points the agent here
+(ADR-0068). Codex's permission dialogs still appear in the terminal; the approval policy decides when.
+
 ## Search, filters and sorting
 
 Both lists have a search box and filters above them. The search runs on the server over the title and the Markdown

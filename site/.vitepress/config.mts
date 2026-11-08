@@ -86,6 +86,7 @@ export default withMermaid(
             { text: 'Usage and transcripts', link: '/guide/usage' },
             { text: 'Skills', link: '/guide/skills' },
             { text: 'MCP gateway', link: '/guide/mcp-gateway' },
+            { text: 'Your own MCP client', link: '/guide/mcp-endpoint' },
             { text: 'Events and subscriptions', link: '/guide/events' },
             { text: 'Schedules', link: '/guide/schedules' },
             { text: 'Limits and budgets', link: '/guide/limits' },

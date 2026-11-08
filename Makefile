@@ -160,7 +160,12 @@ PORCH_SRC ?= $(SIBLINGS)/porch
 PULSE_SRC ?= $(SIBLINGS)/pulse
 PULSE_GITHUB_SRC ?= $(SIBLINGS)/pulse-github
 
-.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd test-harbor-pilot test-real-harbor-pilot
+.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd test-harbor-pilot test-real-harbor-pilot test-real-claude-cli
+# The installed Claude Code CLI against the permission rules and hook SpaceMan writes (ADR-0068): print mode, a local
+# fake API that scripts the tool calls, a throwaway HOME and space folder. No model, no credentials, no cost.
+test-real-claude-cli:
+	SPACEMAN_REAL_CLAUDE_CLI=1 $(GO) test -tags real -count=1 -timeout 5m -run '^TestRealClaudeCLI' -v ./test/real/
+
 # Real Porch (built from PORCH_SRC into a temp dir, with Porch's own fake Google upstream): SpaceMan OIDC sign-in.
 test-real-porch:
 	SPACEMAN_REAL_PORCH=1 SPACEMAN_PORCH_SRC=$(PORCH_SRC) $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealPorch' -v ./test/real/

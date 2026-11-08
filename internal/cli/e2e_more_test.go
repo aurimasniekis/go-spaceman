@@ -182,7 +182,13 @@ func newGroupsAgainstCentral(t *testing.T, c *central, e env, adaID string) {
 	cur := writeFile(t, "cur", "correct horse battery staple\n", 0o600)
 	env{server: c.srv.URL, token: secret, stdin: "an even better passphrase\n"}.ok(t, "password", "change", "--current-password-file", cur, "--new-password-stdin")
 
-	// System notices, the outbox and the root token's metadata; the change feed.
+	// The instance's status (SM-OBS-006), system notices, the outbox and the root token's metadata; the change feed.
+	if st := e.obj(t, "system", "status"); !strings.HasPrefix(str(st, "boot_id"), "boot_") || st["schema"] == nil || st["counts"] == nil {
+		t.Fatalf("system status %v", st)
+	}
+	if out := e.ok(t, "system", "status"); !strings.Contains(out, "boot_id") {
+		t.Fatalf("system status table %s", out)
+	}
 	e.ok(t, "system", "outbox")
 	e.ok(t, "system", "restore", "get")
 	e.ok(t, "system", "break-glass", "get")

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -94,7 +95,11 @@ func MergeJSONFile(path string, patch map[string]any) error {
 // settings, with every key that may be in them (the earlier and the new ones), and narrowed to the new keys after: an
 // interrupted call never leaves a key in the settings that the record does not name, so the next call can still
 // remove it. log may be nil.
-func OwnJSONKeysFile(log *slog.Logger, path string, keys map[string]any) error {
+//
+// strip are top-level keys (path.Match patterns, see harness.Launch.StripJSON) removed from the file unless keys sets
+// them: settings only SpaceMan or the profile may define, planted in the file between launches. A removal is logged
+// with the key names (never their values).
+func OwnJSONKeysFile(log *slog.Logger, path string, keys map[string]any, strip ...string) error {
 	record := path + ".spaceman-keys"
 	var before []string
 	if b, err := os.ReadFile(record); err == nil { //nolint:gosec // agent-owned path
@@ -133,6 +138,17 @@ func OwnJSONKeysFile(log *slog.Logger, path string, keys map[string]any) error {
 				delete(doc, k)
 			}
 		}
+		var stripped []string
+		for k := range doc {
+			if _, ours := keys[k]; !ours && matchesAny(strip, k) {
+				delete(doc, k)
+				stripped = append(stripped, k)
+			}
+		}
+		if len(stripped) > 0 && log != nil {
+			sort.Strings(stripped)
+			log.Warn("removed settings keys that only the profile or SpaceMan may set", slog.String("path", path), slog.Any("keys", stripped))
+		}
 		for k, v := range keys {
 			doc[k] = v
 		}
@@ -140,6 +156,16 @@ func OwnJSONKeysFile(log *slog.Logger, path string, keys map[string]any) error {
 		return err
 	}
 	return writeRecord(owned)
+}
+
+// matchesAny reports whether name matches one of the path.Match patterns (a malformed pattern matches nothing).
+func matchesAny(patterns []string, name string) bool {
+	for _, p := range patterns {
+		if ok, _ := path.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // setAsideCorrupt moves the settings file and its corrupt keys record out of the way (renamed with a .corrupt-<unix

@@ -126,3 +126,24 @@ func TestControlRole(t *testing.T) {
 		t.Fatalf("control role: %q", name)
 	}
 }
+
+// ADR-0066: SpaceMan's own orientation (every run kind) and every starter prompt tell the agent to ask people through
+// spaceman_human_ask, never through an interactive terminal prompt.
+func TestPromptsRouteQuestionsToHumanActions(t *testing.T) {
+	for _, kind := range []string{"control", "worker", "kb", "dreamer", "diagnostic"} {
+		o := builtinOrientation(kind, "", "Payments")
+		if !strings.Contains(o, "Never ask through an interactive terminal prompt") || !strings.Contains(o, "use spaceman_human_ask") {
+			t.Fatalf("%s orientation: %s", kind, o)
+		}
+	}
+	for _, r := range StarterRoles {
+		if !strings.HasSuffix(r.prompt, ".md") {
+			continue // the dreamer uses the built-in dream prompt, after the orientation
+		}
+		b, err := starterFS.ReadFile("builtin/starter/" + r.prompt)
+		must(t, err)
+		if !strings.Contains(string(b), "Never ask through an interactive terminal prompt") || !strings.Contains(string(b), "`spaceman_human_ask`") {
+			t.Errorf("starter prompt %s does not route questions to spaceman_human_ask", r.prompt)
+		}
+	}
+}

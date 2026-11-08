@@ -73,7 +73,7 @@ Every command accepts these.
 | [`spaceman session`](./session) | Your sign-in sessions: list and revoke |
 | [`spaceman skill`](./skill) | Skill catalog: list, show, create, draft and publish |
 | [`spaceman space`](./space) | Spaces: create, edit, pause, archive, purge, relocate and usage |
-| [`spaceman system`](./system) | A running central: version, backups, outbox, restore and break-glass notices, root token |
+| [`spaceman system`](./system) | A running central: version, status, backups, outbox, restore and break-glass notices, root token |
 | [`spaceman task`](./task) | The execution queue: tasks, blockers, dependencies, escalation, decisions and policy (--space) |
 | [`spaceman token`](./token) | API tokens: list, create and revoke |
 | [`spaceman user`](./user) | Users: list, show, create, disable, enable, grants, reset tokens and identities |

@@ -38,6 +38,7 @@ type ApiToken struct {
 	LastUsedIp    sql.NullString
 	RevokedAt     sql.NullInt64
 	RevokedBy     sql.NullString
+	Purpose       string
 }
 
 type Approval struct {
@@ -724,6 +725,9 @@ type McpServer struct {
 	CreatedBy       string
 	UpdatedAt       int64
 	Version         int64
+	Kind            string
+	ApiTokenID      sql.NullString
+	SpacemanJson    string
 }
 
 type MemoryCollection struct {

@@ -144,8 +144,8 @@ WHERE hash = sqlc.arg(hash) AND kind = 'invite' AND used_at IS NULL AND expires_
 SELECT * FROM one_time_tokens WHERE hash = ? AND kind = 'invite';
 
 -- name: InsertAPIToken :exec
-INSERT INTO api_tokens (id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO api_tokens (id, name, user_id, mac, hint, created_at, expires_at, never_expires, parent_token_id, purpose)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetAPITokenByMAC :one
 SELECT * FROM api_tokens WHERE mac = ?;

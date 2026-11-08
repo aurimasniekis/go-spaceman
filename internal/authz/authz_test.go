@@ -244,3 +244,21 @@ func TestHoldsRole(t *testing.T) {
 		}
 	}
 }
+
+// RoleHas matches the policy: admins hold everything, operators inherit viewers', unknown roles hold nothing.
+func TestRoleHas(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		r    Role
+		p    Permission
+		want bool
+	}{
+		{RoleViewer, SpaceRead, true}, {RoleViewer, QueueWrite, false}, {RoleOperator, SpaceRead, true},
+		{RoleOperator, QueueWrite, true}, {RoleOperator, NodeWrite, false}, {RoleAdmin, NodeWrite, true},
+		{RoleAdmin, TerminalTakeover, true}, {Role("owner"), SpaceRead, false},
+	} {
+		if got := RoleHas(tc.r, tc.p); got != tc.want {
+			t.Errorf("RoleHas(%s, %s) = %v", tc.r, tc.p, got)
+		}
+	}
+}

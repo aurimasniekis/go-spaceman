@@ -46,6 +46,13 @@ journalctl -u spaceman -o cat | grep -E 'migration|snapshot|serving|error'
 curl -fsS http://127.0.0.1:9090/readyz
 ```
 
+**Shutdown budget.** On SIGTERM central stops in three steps, one after the other: requests and background work get
+up to `shutdown.timeout` (30 s by default), background gateway token mints get 5 s, and the database gets 8 s for its
+final checkpoint and for connections still in use. That is at most 43 s, inside the unit's `TimeoutStopSec=45s` (and the
+compose file's `stop_grace_period: 45s`). If a database connection is still in use after its 8 s, central releases the
+data-directory lock anyway and logs `closing central failed` with the number of connections; the next start is not
+affected. If you raise `shutdown.timeout`, raise `TimeoutStopSec` by the same amount.
+
 While central is down, nodes keep their runs going for the lease plus `nodes.disconnect_grace`, then apply each space's
 disconnect policy ([Nodes and leases](/operators/nodes)). Keep the downtime shorter than that, or pause spaces first.
 
@@ -69,7 +76,7 @@ its capability inventory.
 ## Upgrade with containers
 
 ```sh
-docker compose stop spaceman                       # stop_grace_period 45 s covers the 30 s shutdown
+docker compose stop spaceman                       # stop_grace_period 45 s covers the shutdown budget below
 SM_VERSION=NEW docker compose up -d
 docker compose logs -f spaceman
 ```

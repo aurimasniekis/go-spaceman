@@ -9,6 +9,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
+	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 )
 
 // FleetRules are the authorization rules of the node, space and run operations.
@@ -20,7 +21,7 @@ var FleetRules = map[string]Rule{
 	"set-node-state":     StepUp(authz.NodeWrite),
 	"update-node":        Global(authz.NodeWrite),
 
-	"list-spaces":     {Session: true},
+	"list-spaces":     FilteredRead(),
 	"create-space":    Global(authz.SpaceCreate),
 	"get-space":       InSpace(authz.SpaceRead),
 	"update-space":    InSpace(authz.SpaceWrite),
@@ -281,18 +282,7 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 			}) (*struct{ Body *fleet.Run }, error) {
 				r, _, err := Idempotent(ctx, d, "launch-run:"+in.SpaceID, in.IdempotencyKey, in.Body, false, func() (*fleet.Run, error) {
 					li := in.Body
-					// launch-run needs run:control; a diagnostic launch (the kind may come from the space role) also needs
-					// run:diagnose (SM-CTRL-004, ADR-0050).
-					li.AuthorizeKind = func(kind string) error {
-						if kind != "diagnostic" {
-							return nil
-						}
-						p := PrincipalFrom(ctx)
-						if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.RunDiag) {
-							return apperr.New(apperr.CodeForbidden, "diagnostic launches need run:diagnose")
-						}
-						return nil
-					}
+					li.AuthorizeKind = func(kind string) error { return d.authorizeLaunchKind(ctx, in.SpaceID, kind) }
 					return f.LaunchRun(ctx, Actor(ctx), in.SpaceID, li)
 				})
 				if err != nil {
@@ -346,4 +336,25 @@ func (d *Deps) spaceRun(ctx context.Context, f *fleet.Service, spaceID, runID st
 		return nil, newProblem(http.StatusNotFound, "not_found", "run not found", nil)
 	}
 	return r, nil
+}
+
+// authorizeLaunchKind checks the caller may launch a run of the resolved kind. launch-run needs run:control; a
+// diagnostic launch (the kind may come from the space role) also needs run:diagnose (SM-CTRL-004, ADR-0050). An
+// agent's SpaceMan MCP call (an internal principal), or a call through the external MCP endpoint, launches a diagnostic
+// run only when that call was approved as dangerous (gateway.WithApprovedCall, set by the gateway or the endpoint): both
+// class a call by its arguments, and this checks the kind as resolved, so a space role of diagnostic kind can't slip
+// past the approval (ADR-0063).
+func (d *Deps) authorizeLaunchKind(ctx context.Context, spaceID, kind string) error {
+	if kind != "diagnostic" {
+		return nil
+	}
+	p := PrincipalFrom(ctx)
+	if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), spaceID, authz.RunDiag) {
+		return apperr.New(apperr.CodeForbidden, "diagnostic launches need run:diagnose")
+	}
+	if p.ViaMCP() && gateway.ApprovedCall(ctx) != "launch-run" {
+		return apperr.New(apperr.CodeForbidden,
+			"a diagnostic launch through SpaceMan MCP needs a person's approval: call launch_run with kind \"diagnostic\" so it is gated")
+	}
+	return nil
 }

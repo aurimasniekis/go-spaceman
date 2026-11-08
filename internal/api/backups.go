@@ -17,7 +17,7 @@ var BackupRules = map[string]Rule{
 	"list-backups":        Global(authz.SystemRead),
 	"create-backup":       Global(authz.BackupRun),
 	"verify-backup":       Global(authz.BackupRun),
-	"get-restore-state":   {Session: true},
+	"get-restore-state":   FilteredRead(),
 	"acknowledge-restore": Global(authz.SystemWrite),
 }
 

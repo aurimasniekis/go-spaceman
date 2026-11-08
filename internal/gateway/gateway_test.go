@@ -217,19 +217,19 @@ func TestServerConfig(t *testing.T) {
 		t.Fatalf("grant count %d", got.Grants)
 	}
 	// "*" grants everything, so a reviewer gets every tool.
-	m, err := f.svc.ForManifest(f.ctx, "spc_a", "reviewer")
+	m, err := f.svc.ForManifest(f.ctx, "spc_a", "reviewer", "worker")
 	must(t, err)
 	if len(m) != 1 || m[0].Slug != "up" || len(m[0].Tools) != 0 {
 		t.Fatalf("manifest: %+v", m)
 	}
 	code(t, f.svc.RevokeGrant(f.ctx, admin, "mcp_other", g.ID), apperr.CodeNotFound)
 	must(t, f.svc.RevokeGrant(f.ctx, admin, s.ID, g.ID))
-	m, err = f.svc.ForManifest(f.ctx, "spc_a", "reviewer")
+	m, err = f.svc.ForManifest(f.ctx, "spc_a", "reviewer", "worker")
 	must(t, err)
 	if len(m) != 1 || strings.Join(m[0].Tools, ",") != "echo" {
 		t.Fatalf("manifest after revoke: %+v", m)
 	}
-	if m, _ := f.svc.ForManifest(f.ctx, "spc_a", "control"); len(m) != 0 {
+	if m, _ := f.svc.ForManifest(f.ctx, "spc_a", "control", "control"); len(m) != 0 {
 		t.Fatalf("control has no grant: %+v", m)
 	}
 	_ = g2
@@ -379,7 +379,7 @@ func TestGatewayCalls(t *testing.T) {
 	}
 
 	// Check lists the tools with a throwaway session.
-	d, err := f.svc.Check(f.ctx, s.ID)
+	d, err := f.svc.Check(f.ctx, admin, s.ID)
 	must(t, err)
 	if !d.OK || d.Server != "fake-upstream 1.0" || len(d.Tools) != 6 {
 		t.Fatalf("check: %+v", d)
@@ -392,7 +392,7 @@ func TestGatewayCalls(t *testing.T) {
 	if f.svc.Sessions() != 0 {
 		t.Fatal("check left a session open")
 	}
-	_, err = f.svc.Check(f.ctx, "mcp_missing")
+	_, err = f.svc.Check(f.ctx, admin, "mcp_missing")
 	code(t, err, apperr.CodeNotFound)
 }
 
@@ -466,7 +466,7 @@ func TestEgressPolicy(t *testing.T) {
 	port := u.srv.URL[strings.LastIndex(u.srv.URL, ":"):]
 	for _, host := range []string{"https://127.0.0.1", "https://localhost"} {
 		s := f.server(Input{Slug: "s" + strings.ReplaceAll(strings.TrimPrefix(host, "https://"), ".", ""), URL: host + port})
-		d, err := f.svc.Check(f.ctx, s.ID)
+		d, err := f.svc.Check(f.ctx, admin, s.ID)
 		must(t, err)
 		if d.OK || !strings.Contains(d.Error, "egress policy") {
 			t.Fatalf("%s: %+v", host, d)
@@ -479,7 +479,7 @@ func TestEgressPolicy(t *testing.T) {
 	}))
 	t.Cleanup(redir.Close)
 	s := f.server(Input{Slug: "redir", URL: redir.URL, AllowPrivate: true})
-	d, err := f.svc.Check(f.ctx, s.ID)
+	d, err := f.svc.Check(f.ctx, admin, s.ID)
 	must(t, err)
 	if d.OK {
 		t.Fatal("a redirect was followed")

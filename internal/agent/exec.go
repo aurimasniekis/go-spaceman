@@ -256,6 +256,10 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
 	}
+	spaceReal := space
+	if real, err := filepath.EvalSymlinks(space); err == nil {
+		spaceReal = real
+	}
 	// Role memory (ADR-0025): the instance's checkout, refreshed from the shared history at this safe boundary. A node
 	// without git runs without memory rather than not at all.
 	memDir, err := a.mem.prepare(ctx, c.SpaceID, p.Role, p.InstanceID)
@@ -268,8 +272,21 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if memDir != "" && !p.Resume {
 		p.SystemText = strings.TrimSpace(p.SystemText + "\n\n" + memoryNote(memDir, p.Role))
 	}
+	// Claude Code's auto memory is kept outside the space folder, where no other run's file tools reach (ADR-0068).
+	var autoMem string
+	if p.Harness == harness.KindClaude {
+		if _, set := p.ClaudeSettings["autoMemoryDirectory"]; set {
+			log.Warn("the profile's autoMemoryDirectory is ignored: SpaceMan keeps each instance's auto memory in its own folder")
+		}
+		autoMem, err = PrepareAutoMemory(filepath.Join(space, "instances", p.InstanceID, "claude"), a.autoMemoryDir(c.SpaceID, p.InstanceID), work)
+		if err != nil {
+			fail("prepare auto memory", err)
+			return
+		}
+	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
-		WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir})
+		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir,
+		AutoMemoryDir: autoMem})
 	if err != nil {
 		fail("build launch", err)
 		return
@@ -287,7 +304,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 	}
 	for path, keys := range built.OwnJSON {
-		if err := OwnJSONKeysFile(log, path, keys); err != nil {
+		if err := OwnJSONKeysFile(log, path, keys, built.StripJSON[path]...); err != nil {
 			fail("write harness settings", err)
 			return
 		}
@@ -673,4 +690,20 @@ func (a *Agent) startRecorder(ctx context.Context, row runRow) {
 		}()
 		a.record(rctx, row)
 	}()
+}
+
+// spaceInstances lists the instance folders of a space (the names in <space>/instances), for the harness's rules that keep a
+// run out of the other instances' folders (ADR-0068). A folder that can't be listed has none.
+func spaceInstances(space string) []string {
+	entries, err := os.ReadDir(filepath.Join(space, "instances"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	return out
 }
