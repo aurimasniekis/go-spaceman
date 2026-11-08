@@ -23,8 +23,8 @@ type Rule struct {
 	Reauth, MFA bool
 	// UserOnly refuses the root token (operations that act on the caller's own user account).
 	UserOnly bool
-	// Filtered marks a Session read that returns only what the principal's grants reach (filtered in the handler), as
-	// opposed to a personal operation (own profile, sign-out). Internal principals (the SpaceMan MCP, ADR-0063) may
+	// Filtered marks a Session read that returns only what the principal's grants reach (filtered in the handler), or
+	// a global catalog any signed-in principal may read, as opposed to a personal operation (own profile, sign-out). Internal principals (the SpaceMan MCP, ADR-0063) may
 	// call it; they are refused on every other Session rule.
 	Filtered bool
 }

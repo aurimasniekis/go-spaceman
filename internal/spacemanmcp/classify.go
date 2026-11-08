@@ -64,6 +64,16 @@ const (
 	rPolicy     = "changes who is asked and how for human actions"
 	rRecording  = "reads terminal recordings, which may contain anything a run printed"
 	rSelf       = "SpaceMan MCP servers hand an administrator's authority to agents: managed by people only"
+	// rSpaceRole: a space role decides what a launch by role runs (its template's kind, profile, permission mode and
+	// settings), so saving one can make a role diagnostic or widen its runs' access without any later launch saying so.
+	// Every save is dangerous rather than only the widening ones: whether a template is diagnostic or a profile or
+	// setting widens access is resolved from other catalog entries, which can change after the check.
+	rSpaceRole = "points a space role at any role template and profile and sets its permission mode and settings: it can " +
+		"make a role diagnostic or widen what its runs may do, and every later launch by that role inherits it"
+	// rLaunch: a diagnostic launch is dangerous. The gateway classes it by its kind argument; the API checks the kind as
+	// resolved (a space role may set it) and refuses a diagnostic launch the gateway did not approve.
+	rLaunch = "launches a run; inherent to operating a space (a diagnostic launch, by argument or by its role's kind, " +
+		"needs a person's approval)"
 	// rFiltered marks Session-rule reads that return only what the principal's grants reach (filtered in the handler,
 	// api.Rule.Filtered). Internal principals may call them; personal Session operations stay excluded.
 	rFiltered = "reads only what the principal's grants reach (filtered in the handler)"
@@ -338,11 +348,11 @@ var Table = map[string]Entry{
 	"list-starter-roles":   {Read, rRead},
 	"preview-space-role":   {Read, rRead},
 	"save-role-template":   {Dangerous, rPublish},
-	"save-space-role":      {Write, rSpaceWrite},
+	"save-space-role":      {Dangerous, rSpaceRole},
 
 	// Runs.
 	"get-run":        {Read, rRead},
-	"launch-run":     {Write, "launches a run; inherent to operating a space (diagnostic launches are gated in AM-5)"},
+	"launch-run":     {Write, rLaunch},
 	"list-runs":      {Read, rRead},
 	"stop-run":       {Write, rSpaceWrite},
 	"start-takeover": {Excluded, rTakeover},

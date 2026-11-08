@@ -355,6 +355,7 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 	op, always := "mcp."+slug+"."+tool, false
 	details := map[string]any{"space_id": p.SpaceID, "tool": tool}
 	do := func(ctx context.Context) (json.RawMessage, error) { return svc.call(ctx, p, srv, tool, args) }
+	class := ""
 	if srv.Kind == KindSpaceman {
 		// SpaceMan MCP (ADR-0063): the operation names the tool's class, so policies can gate a class
 		// (mcp.<slug>.write.*); dangerous tools, and writes of a server that gates them, always need an approval.
@@ -362,8 +363,8 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 			return nil, errSpacemanUnavailable
 		}
 		t := target(srv)
-		class, ok := svc.Spaceman.Class(t, tool, args)
-		if !ok {
+		var ok bool
+		if class, ok = svc.Spaceman.Class(t, tool, args); !ok {
 			return nil, apperr.New(apperr.CodeNotFound, "%s does not offer %s", slug, tool)
 		}
 		op, always = spacemanGate(t, class, tool)
@@ -380,6 +381,11 @@ func (svc *Service) Call(ctx context.Context, p *fleet.RunPrincipal, name string
 	case always:
 		if finish, err = svc.Gate.Require(ctx, p, op, "mcp_server:"+srv.ID, args); err != nil {
 			return nil, err
+		}
+		if class == classDangerous {
+			// The API refuses a diagnostic launch by an internal principal unless this call was approved as dangerous:
+			// the kind may come from the space role, which only the API resolves (ADR-0063).
+			ctx = WithApprovedCall(ctx, strings.ReplaceAll(tool, "_", "-"))
 		}
 	default:
 		// Approval policies (ADR-0024) bind the server by ID: a server recreated under the same slug needs new approvals.

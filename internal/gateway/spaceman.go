@@ -406,6 +406,22 @@ func (svc *Service) spacemanCatalog(ctx context.Context, g granted) []proto.Agen
 	return out
 }
 
+type approvedCallKey struct{}
+
+// WithApprovedCall marks ctx as carrying one SpaceMan MCP call of the API operation operationID that a person approved
+// as dangerous (approvals.Require succeeded for this exact call). Only the gateway sets it, after the approval and only
+// for that call's context. The API reads it where an effect is resolved on the server: a diagnostic launch by an
+// internal principal is refused without it (ADR-0063).
+func WithApprovedCall(ctx context.Context, operationID string) context.Context {
+	return context.WithValue(ctx, approvedCallKey{}, operationID)
+}
+
+// ApprovedCall returns the operation ID of the approved dangerous call ctx carries, or "".
+func ApprovedCall(ctx context.Context) string {
+	op, _ := ctx.Value(approvedCallKey{}).(string)
+	return op
+}
+
 // errNeedsApprovalGate refuses a call that needs an approval when no approval gate is configured: fail closed.
 func errNeedsApprovalGate(op string) error {
 	return apperr.New(apperr.CodePrecondition, "%s needs a person's approval, and approvals are not available", op)

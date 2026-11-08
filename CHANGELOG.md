@@ -21,7 +21,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     `reissue-spaceman-mcp` (all need a step-up). The server's internal token is minted with it and revoked when it is
     re-issued or deleted. Defaults: the `admin` preset, admin on every space, no expiry, no approvals for writes.
     Dangerous tools and diagnostic launches always need a person's approval (`approvals.Require`, operation
-    `mcp.<slug>.<class>.<tool>`); `approval: writes` gates writes too. KB, dreamer and diagnostic runs never see the
+    `mcp.<slug>.<class>.<tool>`); `approval: writes` gates writes too. The API checks a launch's kind as resolved and
+    refuses a diagnostic launch the gateway did not approve, so a space role of diagnostic kind can't bypass the gate.
+    Saving a space role is dangerous. KB, dreamer and diagnostic runs never see the
     tools, and an agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through them.
     Reads filtered by the caller's grants (`list-spaces` and ten others) are tools; personal operations are not.
     A revoked token empties the catalog, and calls are refused with the reason.

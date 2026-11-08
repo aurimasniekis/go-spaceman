@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
+	"github.com/aurimasniekis/go-spaceman/internal/catalog"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
@@ -190,6 +191,52 @@ func TestSpacemanMCPGateway(t *testing.T) {
 	}
 	if r, body := result(raw); !r.IsError || body["status"] != float64(404) {
 		t.Fatalf("approved delete of a missing schedule: %s", raw)
+	}
+
+	// A diagnostic launch whose kind comes from the space role (no kind argument) is classed write by the gateway, but
+	// the API checks the resolved kind and refuses it without an approved dangerous call. With kind "diagnostic" it is
+	// gated, and once approved it passes the kind check (it then fails only because no node is connected).
+	tpl, err := h.c.Catalog.SaveTemplate(ctx, adaA, "", 0, catalog.RoleTemplate{Slug: "doctor", Name: "Doctor", Kind: "diagnostic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.c.Catalog.SaveSpaceRole(ctx, adaA, sp.ID, catalog.SpaceRole{Name: "diag", TemplateID: tpl.ID}); err != nil {
+		t.Fatal(err)
+	}
+	roleOnly := json.RawMessage(`{"space_id":"` + sp.ID + `","body":{"role":"diag","harness":"claude-code"}}`)
+	raw, err = gw.Call(ctx, ctrl, "sm__launch_run", roleOnly)
+	if err != nil {
+		t.Fatalf("role-only diagnostic launch: %v", err)
+	}
+	if r, body := result(raw); !r.IsError || body["status"] != float64(403) || !strings.Contains(string(raw), "approval") {
+		t.Fatalf("role-only diagnostic launch ran without an approval: %s", raw)
+	}
+	explicit := json.RawMessage(`{"space_id":"` + sp.ID + `","body":{"kind":"diagnostic","role":"diag","harness":"claude-code"}}`)
+	if _, err := gw.Call(ctx, ctrl, "sm__launch_run", explicit); !errors.Is(err, approvals.ErrRequired) {
+		t.Fatalf("explicit diagnostic launch without an approval: %v", err)
+	}
+	l, _ = h.c.Approvals.List(ctx, sp.ID, 50)
+	for _, a := range l {
+		if a.Operation != "mcp.sm.dangerous.launch_run" || a.State != approvals.Pending {
+			continue
+		}
+		if act, err = h.c.Human.Get(ctx, sp.ID, a.HumanActionID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.c.Human.Respond(ctx, adaA, sp.ID, act.ID, act.Version, human.RespondInput{Outcome: "approved"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err = gw.Call(ctx, ctrl, "sm__launch_run", explicit)
+	if err != nil {
+		t.Fatalf("approved diagnostic launch: %v", err)
+	}
+	if _, body := result(raw); body["status"] == float64(403) {
+		t.Fatalf("approved diagnostic launch refused by the kind check: %s", raw)
+	}
+	// Saving a space role is dangerous: it can point a role at a diagnostic template or widen its runs.
+	if _, err := gw.Call(ctx, ctrl, "sm__save_space_role", json.RawMessage(`{"space_id":"`+sp.ID+`","name":"diag2","body":{"template_id":"`+tpl.ID+`"}}`)); !errors.Is(err, approvals.ErrRequired) {
+		t.Fatalf("save_space_role without an approval: %v", err)
 	}
 
 	// approval: writes gates write tools too.

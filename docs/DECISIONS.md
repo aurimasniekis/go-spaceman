@@ -2796,11 +2796,26 @@
      - **Grant: the control role** of the chosen space.
      - **Approvals: none by default, but dangerous tools always need one** (operator decision on plan question Q3): deletes and purges, retention runs,
        harness profile settings (T-32), diagnostic launches, SSH key generation and rotation, account and event
-       connection secrets, prompt, skill, role template and human-type publication, HTTP MCP server and grant writes,
-       node state and updates, relocations, and launches of diagnostic runs (`launch_run` with `kind: diagnostic` is
-       classed dangerous per call). `approvals.Require` gates them with a matching policy or, without one, a synthetic
-       one-use policy (policy ID `required`). The approval operation is `mcp.<slug>.<class>.<tool>`, so a policy can
-       name a class (`mcp.infra.write.*`). A server's `approval` is `none` (default) or `writes` (every write tool needs
+       connection secrets, prompt, skill, role template and human-type publication, space role saves, HTTP MCP server
+       and grant writes, node state and updates, relocations, and launches of diagnostic runs (`launch_run` with
+       `kind: diagnostic` is classed dangerous per call). `approvals.Require` gates them with a matching policy or,
+       without one, a synthetic one-use policy (policy ID `required`). A stored `mcp.*` policy that matches replaces
+       the synthetic one, so a policy with `uses` above 1 lets one approval cover repeats of the identical call (the
+       digest binds the arguments); policies are written by people only. The approval operation is
+       `mcp.<slug>.<class>.<tool>`, so a policy can name a class (`mcp.infra.write.*`).
+       - **A diagnostic launch is gated on its resolved kind.** The gateway classes a call by its arguments, but
+         `launch-run` may leave `kind` out and take it from the space role's template, which only the API resolves.
+         So the API refuses a diagnostic launch by an internal principal unless the call's context carries the
+         gateway's mark (`gateway.WithApprovedCall`, set only after `approvals.Require` succeeded for that exact
+         dangerous `launch-run` call). A role-only diagnostic launch is refused with a hint to pass
+         `kind: diagnostic`, which the gateway then gates. No other operation resolves a run's kind on the server:
+         schedules and subscriptions create inbox items and tasks, and dream and KB runs have fixed kinds.
+       - **Saving a space role is dangerous** (`save-space-role`). A space role picks the template (its kind),
+         profile, permission mode and settings every launch by that role inherits, so a save can make a role
+         diagnostic or widen its runs' access with no later launch naming it. All saves are gated, not only the
+         widening ones: whether a template is diagnostic or a profile or setting widens access depends on other
+         catalog entries that can change after the check, and a per-field comparison would be a second, weaker
+         policy to keep in step. Deleting a space role was already dangerous. A server's `approval` is `none` (default) or `writes` (every write tool needs
        an approval too). Without an approval gate, such calls are refused (fail closed). Human-action responses and
        approval decisions refuse an actor acting through a SpaceMan MCP server at the service level as well.
      - **Expiry: never** by default (operator decision on plan question Q5); 1–366 days on request.
