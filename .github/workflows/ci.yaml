@@ -24,6 +24,8 @@ jobs:
   go:
     name: go (lint, vet, sqlc drift, analyzer tests, traceability)
     runs-on: ubuntu-24.04
+    env:
+      GOLANGCI_LINT_VERSION: v2.15.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,12 +42,41 @@ jobs:
             ~/go/pkg/mod
           key: go-lint-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
           restore-keys: go-lint-${{ runner.os }}-
+      # Tool downloads from GitHub release assets failed with 504s often enough to fail whole runs, so neither tool is
+      # fetched from there on a cache hit. golangci-lint is built with `go install` through the Go module proxy (module
+      # checksums verified against the checksum database) and cached per version and Go toolchain; the action then only
+      # runs it (install-mode: none). sqlc is the pinned, checksum-verified release binary (scripts/install-sqlc.sh),
+      # cached under the hash of that script, which holds the version and the checksums.
+      - name: Go toolchain version (golangci-lint cache key)
+        id: gover
+        run: echo "version=$(go env GOVERSION)" >>"$GITHUB_OUTPUT"
+      - name: golangci-lint binary cache
+        id: golangci-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/golangci-lint
+          key: golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.gover.outputs.version }}
+      - name: install golangci-lint (Go module proxy)
+        if: steps.golangci-cache.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/.local/golangci-lint" go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+      - name: golangci-lint version check
+        run: |
+          set -euo pipefail
+          echo "$HOME/.local/golangci-lint" >>"$GITHUB_PATH"
+          out="$("$HOME/.local/golangci-lint/golangci-lint" version)"
+          echo "$out"
+          grep -qE "has version v?${GOLANGCI_LINT_VERSION#v} " <<<"$out"
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.15.0
+          install-mode: none
       - name: vet
         run: make vet custom-vet
+      - name: sqlc binary cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin/sqlc
+          key: sqlc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-sqlc.sh') }}
       - name: sqlc drift check
         run: make sqlc-check
       - name: analyzer tests

@@ -20,6 +20,7 @@
 
 | Command | Suite | Evidence |
 |---|---|---|
+| `make check-fast` | The inner-loop gate: vet, the custom analyzers, golangci-lint, traceability, the analyzer tests and `go test ./...` without `-race` and with go test's cache (only changed packages and their dependents run again); `sqlc-check` and `api-check` when their inputs changed since the merge base. `make check` (race, the coverage floor) runs once before pushing ([AGENTS.md](../AGENTS.md), "Gates") | simulated |
 | `make test` / `make race` (in `make check`) | Unit and in-process end-to-end tests of every package, including `internal/app`: central on a real HTTP server, a node agent with the in-memory runner, real Git, real SQLite | simulated |
 | `make test-fault` | `test/fault` (build tag `fault`): crashes, a full disk, interrupted recordings, disconnects, partitions, corrupted state, database contention (below) | simulated; central's crash is a real `SIGKILL` of a child process |
 | `make test-pulse` | Pulse/NATS integration: `internal/events/...` and `internal/outbox`, plus the central end-to-end event paths, against an embedded nats-server with the real go-pulse SDK | simulated; no `pulsed` |

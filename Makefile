@@ -7,7 +7,7 @@ LDFLAGS := -s -w -X github.com/aurimasniekis/go-spaceman/internal/buildinfo.Vers
 FUZZTIME ?= 30s
 TAGS ?=
 
-.PHONY: all build build-ui test race lint vet custom-vet fuzz-smoke coverage vuln tools-test generate check clean traceability
+.PHONY: all build build-ui test race lint vet custom-vet fuzz-smoke coverage vuln tools-test generate check check-fast clean traceability
 
 all: check build
 
@@ -74,7 +74,22 @@ vuln:
 generate:
 	$(GO) generate ./...
 
-check: vet custom-vet lint race tools-test coverage traceability
+# The pre-push gate (AGENTS.md "Gates"). Ordered to fail fast: the static checks, then the non-race coverage floor
+# (about 20 s, and it already runs most security-critical tests), then the race run, which takes most of the time.
+check: vet custom-vet lint traceability tools-test coverage race
+
+# The inner-loop gate: the static checks and every test without the race detector and with go test's cache, so only
+# packages whose code, dependencies or test inputs changed run again (seconds when nothing changed). The sqlc and
+# OpenAPI drift checks run only when their inputs changed since the merge base (scripts/changed.sh). It does not
+# replace `make check`, which runs once before pushing.
+check-fast: vet custom-vet lint traceability tools-test
+	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -timeout 15m ./...
+	@rc=0; ./scripts/changed.sh '^(internal/store/(migrations|queries)/|sqlc\.yaml$$)' || rc=$$?; \
+	if [ $$rc -ne 1 ]; then $(MAKE) sqlc-check; \
+	else echo "check-fast: sqlc-check skipped (no change in internal/store/migrations, internal/store/queries or sqlc.yaml)"; fi
+	@rc=0; ./scripts/changed.sh '^(internal/api/|api/openapi\.json$$|web/src/api/)' || rc=$$?; \
+	if [ $$rc -ne 1 ]; then $(MAKE) api-check; \
+	else echo "check-fast: api-check skipped (no change in internal/api, api/openapi.json or web/src/api)"; fi
 
 clean:
 	rm -rf $(BIN)

@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `make check-fast`, the inner-loop gate (ADR-0069): vet, the custom analyzers, golangci-lint, traceability, the
+  analyzer tests and every Go test without the race detector, from go test's cache. With nothing changed it takes
+  seconds. `sqlc-check` and `api-check` run only when their inputs changed since the merge base
+  (`scripts/changed.sh`). AGENTS.md has a new "Gates" section on which check to run when.
+
+### Changed
+
+- Faster `make check` (ADR-0069):
+  - the coverage floor tests its packages in one `go test -cover` run instead of one run per package (about 150 s
+    down to about 30 s); a failing test, a package below the floor and a package with no coverage line still fail;
+  - `make check` runs its steps fail-fast: vet, custom vet, lint, traceability, analyzer tests, the coverage floor,
+    then the race tests.
+- CI no longer downloads sqlc or golangci-lint from GitHub release assets on a cache hit (ADR-0069). `bin/sqlc` is
+  cached under the hash of `scripts/install-sqlc.sh` (pinned version and checksums), and its download retries
+  transient errors. golangci-lint is built with `go install` through the Go module proxy and cached per version and Go
+  toolchain.
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim
