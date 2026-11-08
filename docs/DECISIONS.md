@@ -3505,7 +3505,12 @@
     `coverage`, `check-fast`, `check`, CI and the release gate).
   - **The wall-clock comparison moves to `TestLoginTimingWallClock`**, with the same rounds and band. It runs only with
     `SPACEMAN_LOGIN_TIMING=1` (`make test-login-timing`), and skips under `-race` and `-cover`. CI runs it as its own
-    job (`login-timing`) on every pull request and push, alone on its runner.
+    job (`login-timing`) on every pull request and push, alone on its runner, and the release workflow runs the same
+    job as a gate before `binaries` and `images`.
+  - **The equal reads are tested deterministically.** `TestLoginReadsSameForUnknownAccounts` records every query a
+    failed login runs through the store's readers (`storetest.WithReadObserver`) for a known and an unknown account,
+    and requires the same sequence, including the `GetLocalCredential` read. With that read removed from the unknown
+    path again, it fails.
 - **Alternatives:**
   - **Widen the band:** a band wide enough for a loaded node (0.6–1.6) no longer tells a real asymmetry from noise
     either. What matters, a missing or cheaper dummy hash (orders of magnitude), the deterministic check already
@@ -3519,7 +3524,20 @@
     `make test-login-timing` on a quiet machine.
   - A change that makes one path much faster or slower still fails the deterministic check, unless it keeps exactly one
     same-parameter verification. A small asymmetry outside the verification (like the extra read fixed here) shows
-    only in the clock job, and only once it exceeds the band.
+    only in the clock job, and only once it exceeds the band. An extra or missing read before the verification also
+    fails `TestLoginReadsSameForUnknownAccounts`.
+  - **Residual risk (accepted, not changed):**
+    - **Argon2id verification variance.** The verification is CPU-bound and its run time varies with scheduling and
+      load (0.67–1.11 between two same-parameter hashes in the measurements above). That noise hides small
+      differences rather than revealing the account, but it also means the clock check only bounds the asymmetry, it
+      does not prove it is zero.
+    - **Network and remote timing are not measured.** The ±25% band is checked in-process on a quiet runner. Timing as
+      seen over the network, through proxies, or on a loaded production host is not tested; the bound only applies on
+      a quiet machine.
+    - **Accounts hashed with older parameters.** The dummy hash uses `CurrentParams`. An account whose stored hash
+      still has an older parameter set verifies at that set's cost until its next successful login rehashes it, so
+      for such an account a failed login can take measurably longer or shorter than one for an unknown account. This
+      lasts only while older-parameter hashes remain, and the deterministic check covers accounts on the current set.
 
 ## 2. Open items and unresolved contracts
 
