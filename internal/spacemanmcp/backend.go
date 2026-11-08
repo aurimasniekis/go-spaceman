@@ -40,6 +40,25 @@ func (b *Backend) Validate(s gateway.SpacemanSettings) error {
 	return err
 }
 
+// Tools lists every tool a server can offer, marked with what settings s and the grants make of it (the UI's tool
+// picker). An unknown preset or tool name fails like Validate.
+func (b *Backend) Tools(s gateway.SpacemanSettings, grants []authz.Grant) ([]gateway.SpacemanTool, error) {
+	if err := b.Validate(s); err != nil {
+		return nil, err
+	}
+	preset := Preset(s.Preset)
+	if preset == "" {
+		preset = DefaultPreset
+	}
+	all := b.Cat.Tools()
+	out := make([]gateway.SpacemanTool, 0, len(all))
+	for _, t := range all {
+		out = append(out, gateway.SpacemanTool{Name: t.Name, Class: string(t.Class), Tags: append([]string{}, t.Tags...), Summary: t.Summary,
+			InPreset: slices.Contains(preset.Classes(), t.Class), Selected: selected(s, t), Reachable: Reachable(t, grants)})
+	}
+	return out, nil
+}
+
 // selected reports whether a server offers a tool (before the grant filter): its preset's classes or its named tools.
 func selected(s gateway.SpacemanSettings, t *Tool) bool {
 	preset := Preset(s.Preset)

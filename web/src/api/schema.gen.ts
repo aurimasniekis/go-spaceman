@@ -1074,6 +1074,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mcp-servers/spaceman/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tools a SpaceMan MCP server can offer
+         * @description Every tool of this build's SpaceMan MCP catalog, marked with what a preset, named tools and token grants would make of it, and how many tools runs would see. It reads no state; the API still checks every call.
+         */
+        get: operations["list-spaceman-mcp-tools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mcp-servers/{server_id}": {
         parameters: {
             query?: never;
@@ -6528,6 +6548,38 @@ export interface components {
             expires_in_days?: number;
             /** @description The token's grants, covered by yours; default admin on every space (preset admin), required otherwise */
             grants?: components["schemas"]["AuthGrantInput"][];
+        };
+        GatewaySpacemanTool: {
+            /**
+             * @description Dangerous tools always need a person's approval per call
+             * @enum {string}
+             */
+            class: "read" | "write" | "dangerous" | "sensitive-read";
+            /** @description The preset offers it without naming it */
+            in_preset: boolean;
+            /** @description Tool name without the slug */
+            name: string;
+            /** @description Some grant can satisfy its authorization rule */
+            reachable: boolean;
+            /** @description The preset offers it or it is named */
+            selected: boolean;
+            summary: string;
+            /** @description The API operation's tags */
+            tags: string[];
+        };
+        GatewaySpacemanTools: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/GatewaySpacemanTools.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Tools runs would see: selected and reachable by the grants
+             */
+            count: number;
+            items: components["schemas"]["GatewaySpacemanTool"][];
         };
         GatewaySpacemanUpdate: {
             /**
@@ -13225,6 +13277,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-spaceman-mcp-tools": {
+        parameters: {
+            query?: {
+                /** @description Default admin */
+                preset?: "read" | "operate" | "admin" | "custom";
+                /** @description Tools named by name, comma-separated */
+                tools?: string[];
+                /** @description Token grants as role@domain, comma-separated (domain: a space ID or *) */
+                grants?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GatewaySpacemanTools"];
                 };
             };
             /** @description Error */

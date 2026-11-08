@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -119,6 +120,26 @@ type SpacemanBackend interface {
 	Class(t SpacemanTarget, tool string, args json.RawMessage) (string, bool)
 	// Call runs one tool call with the server's internal token for the run. A refused token is an error with a reason.
 	Call(ctx context.Context, t SpacemanTarget, runID, tool string, args json.RawMessage) (json.RawMessage, error)
+	// Tools lists every tool a SpaceMan MCP server can offer, marked with what settings s and the grants would make of
+	// it, for the UI's tool picker. An unknown preset or tool name fails like Validate.
+	Tools(s SpacemanSettings, grants []authz.Grant) ([]SpacemanTool, error)
+}
+
+// SpacemanTool is one tool a SpaceMan MCP server can offer, as the tool picker shows it (no schemas, no secrets).
+type SpacemanTool struct {
+	Name      string   `json:"name" doc:"Tool name without the slug"`
+	Class     string   `json:"class" enum:"read,write,dangerous,sensitive-read" doc:"Dangerous tools always need a person's approval per call"`
+	Tags      []string `json:"tags" doc:"The API operation's tags"`
+	Summary   string   `json:"summary"`
+	InPreset  bool     `json:"in_preset" doc:"The preset offers it without naming it"`
+	Selected  bool     `json:"selected" doc:"The preset offers it or it is named"`
+	Reachable bool     `json:"reachable" doc:"Some grant can satisfy its authorization rule"`
+}
+
+// SpacemanTools is the tool picker's answer: every tool, and how many runs would see.
+type SpacemanTools struct {
+	Items []SpacemanTool `json:"items"`
+	Count int            `json:"count" doc:"Tools runs would see: selected and reachable by the grants"`
 }
 
 // TokenIssuer mints and revokes internal tokens inside the gateway's transactions (auth.Service).
@@ -380,6 +401,41 @@ func refuseInternalOnSpaceman(actor audit.Actor, r db.McpServer) error {
 		return errSelfManagement
 	}
 	return nil
+}
+
+// SpacemanTools lists the tools a SpaceMan MCP server with settings s and token grants would offer (ADR-0063), for the
+// tool picker. It reads no state: the API still checks every call with the server's token.
+func (svc *Service) SpacemanTools(s SpacemanSettings, grants []SpacemanGrant) (*SpacemanTools, error) {
+	if svc.Spaceman == nil {
+		return nil, errSpacemanUnavailable
+	}
+	v := &apperr.Validation{}
+	if s.Preset == "" {
+		s.Preset = "admin"
+	}
+	ag := make([]authz.Grant, 0, len(grants))
+	for i, g := range grants {
+		if !g.Role.Valid() || g.Domain == "" {
+			v.Add(fmt.Sprintf("grants[%d]", i), "must be viewer, operator or admin on a space ID or \"*\"")
+			continue
+		}
+		ag = append(ag, authz.Grant{Role: g.Role, Domain: g.Domain})
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+	items, err := svc.Spaceman.Tools(s, ag)
+	if err != nil {
+		v.Add("tools", "%s", err.Error())
+		return nil, v.Err()
+	}
+	out := &SpacemanTools{Items: items}
+	for _, t := range items {
+		if t.Selected && t.Reachable {
+			out.Count++
+		}
+	}
+	return out, nil
 }
 
 // spacemanKindAllowed reports whether runs of kind may see SpaceMan MCP servers.

@@ -155,3 +155,46 @@ func TestBackend(t *testing.T) {
 		}
 	}
 }
+
+// The tool picker lists every offerable tool with its class and tags, marked with what the preset, named tools and
+// grants make of it: a viewer token reaches no writes, and named dangerous tools are selected but not in the preset.
+func TestBackendTools(t *testing.T) {
+	t.Parallel()
+	const space = "spc_0000000000000000000000000x"
+	b := &spacemanmcp.Backend{Cat: catalog(t)}
+	if _, err := b.Tools(gateway.SpacemanSettings{Tools: []string{"respond_human_action"}}, nil); err == nil {
+		t.Error("an excluded tool was accepted")
+	}
+	tools, err := b.Tools(gateway.SpacemanSettings{Preset: "read", Tools: []string{"delete_schedule"}}, []authz.Grant{{Role: authz.RoleViewer, Domain: space}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != len(catalog(t).Tools()) {
+		t.Fatalf("%d tools, want every offerable one", len(tools))
+	}
+	by := map[string]gateway.SpacemanTool{}
+	for _, tl := range tools {
+		by[tl.Name] = tl
+		if tl.Class == "excluded" || len(tl.Tags) == 0 || tl.Summary == "" {
+			t.Errorf("tool %+v", tl)
+		}
+	}
+	if g := by["get_space"]; !g.InPreset || !g.Selected || !g.Reachable || g.Class != "read" {
+		t.Errorf("get_space: %+v", g)
+	}
+	if c := by["create_task"]; c.InPreset || c.Selected || c.Reachable || c.Class != "write" {
+		t.Errorf("create_task: %+v", c)
+	}
+	if d := by["delete_schedule"]; d.InPreset || !d.Selected || d.Reachable || d.Class != "dangerous" {
+		t.Errorf("delete_schedule: %+v", d)
+	}
+	admin, err := b.Tools(gateway.SpacemanSettings{}, []authz.Grant{{Role: authz.RoleAdmin, Domain: authz.Global}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range admin {
+		if want := tl.Class != "sensitive-read"; tl.InPreset != want || !tl.Reachable {
+			t.Errorf("admin preset: %+v", tl)
+		}
+	}
+}

@@ -354,6 +354,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/mcp-servers/{server_id}/reissue` | `reissue-spaceman-mcp` | Re-issue a SpaceMan MCP server's token |
 | `PUT` | `/mcp-servers/{server_id}/spaceman` | `update-spaceman-mcp` | Edit a SpaceMan MCP server |
 | `POST` | `/mcp-servers/spaceman` | `create-spaceman-mcp` | Add a SpaceMan MCP server |
+| `GET` | `/mcp-servers/spaceman/tools` | `list-spaceman-mcp-tools` | Tools a SpaceMan MCP server can offer |
 | `GET` | `/spaces/{space_id}/mcp-servers` | `list-space-mcp-grants` | MCP servers granted in a space |
 
 ### memory

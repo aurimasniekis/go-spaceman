@@ -191,6 +191,7 @@ SpaceMan MCP servers: SpaceMan's own API as tools for a space's runs (ADR-0063).
 |---|---|
 | [`spaceman mcp spaceman create`](#spaceman-mcp-spaceman-create) | Add a SpaceMan MCP server with a new internal token owned by you |
 | [`spaceman mcp spaceman reissue`](#spaceman-mcp-spaceman-reissue) | Replace a SpaceMan MCP server's token with a new one owned by you (new grants, expiry or owner) |
+| [`spaceman mcp spaceman tools`](#spaceman-mcp-spaceman-tools) | Tools a SpaceMan MCP server can offer, for a preset, named tools and grants |
 | [`spaceman mcp spaceman update`](#spaceman-mcp-spaceman-update) | Edit a SpaceMan MCP server's tools, approval mode and limits |
 
 ## spaceman mcp spaceman create
@@ -243,6 +244,22 @@ API: `get-mcp-server`, `reissue-spaceman-mcp` ([HTTP API](../api)).
 | `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
 | `--grant` | string, repeatable |  | grant ROLE[:SPACE] (viewer, operator or admin; SPACE an ID or slug, default * = every space and global administration); default admin on every space with the admin preset (repeatable or comma-separated) |
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
+
+## spaceman mcp spaceman tools
+
+Tools a SpaceMan MCP server can offer, for a preset, named tools and grants.
+
+```sh
+spaceman mcp spaceman tools [flags]
+```
+
+API: `list-spaceman-mcp-tools` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman mcp spaceman tools --preset operate --grants operator@spc_123
+```
 
 ## spaceman mcp spaceman update
 

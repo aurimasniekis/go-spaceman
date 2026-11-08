@@ -46,6 +46,9 @@ type Tool struct {
 	Class  Class
 	Reason string
 	Rule   api.Rule
+	// Summary is the operation's summary; Tags are its OpenAPI tags (the UI groups tools by them).
+	Summary string
+	Tags    []string
 	// Description is the operation's summary and description, with the class.
 	Description string
 	// InputSchema is a self-contained JSON Schema object: path and query parameters, body and if_match.
@@ -162,9 +165,10 @@ func (c *Catalog) Excluded() map[string]string {
 }
 
 type operation struct {
-	OperationID string `json:"operationId"`
-	Summary     string `json:"summary"`
-	Description string `json:"description"`
+	OperationID string   `json:"operationId"`
+	Summary     string   `json:"summary"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
 	Parameters  []struct {
 		Name        string `json:"name"`
 		In          string `json:"in"`
@@ -180,7 +184,7 @@ type operation struct {
 
 func newTool(op operation, method, path string, rule api.Rule, e Entry, components map[string]any) (*Tool, error) {
 	t := &Tool{Name: strings.ReplaceAll(op.OperationID, "-", "_"), OperationID: op.OperationID, Method: method, Path: path,
-		Class: e.Class, Reason: e.Reason, Rule: rule}
+		Class: e.Class, Reason: e.Reason, Rule: rule, Summary: op.Summary, Tags: append([]string{}, op.Tags...)}
 	if !reToolName.MatchString(t.Name) {
 		return nil, fmt.Errorf("tool name %q is not [a-z][a-z0-9_]*", t.Name)
 	}

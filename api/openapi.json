@@ -6071,6 +6071,87 @@
         },
         "type": "object"
       },
+      "GatewaySpacemanTool": {
+        "additionalProperties": false,
+        "properties": {
+          "class": {
+            "description": "Dangerous tools always need a person's approval per call",
+            "enum": [
+              "read",
+              "write",
+              "dangerous",
+              "sensitive-read"
+            ],
+            "type": "string"
+          },
+          "in_preset": {
+            "description": "The preset offers it without naming it",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Tool name without the slug",
+            "type": "string"
+          },
+          "reachable": {
+            "description": "Some grant can satisfy its authorization rule",
+            "type": "boolean"
+          },
+          "selected": {
+            "description": "The preset offers it or it is named",
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tags": {
+            "description": "The API operation's tags",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "class",
+          "tags",
+          "summary",
+          "in_preset",
+          "selected",
+          "reachable"
+        ],
+        "type": "object"
+      },
+      "GatewaySpacemanTools": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/GatewaySpacemanTools.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "count": {
+            "description": "Tools runs would see: selected and reachable by the grants",
+            "format": "int64",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GatewaySpacemanTool"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "count"
+        ],
+        "type": "object"
+      },
       "GatewaySpacemanUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -20701,6 +20782,84 @@
           }
         },
         "summary": "Add a SpaceMan MCP server",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/mcp-servers/spaceman/tools": {
+      "get": {
+        "description": "Every tool of this build's SpaceMan MCP catalog, marked with what a preset, named tools and token grants would make of it, and how many tools runs would see. It reads no state; the API still checks every call.",
+        "operationId": "list-spaceman-mcp-tools",
+        "parameters": [
+          {
+            "description": "Default admin",
+            "explode": false,
+            "in": "query",
+            "name": "preset",
+            "schema": {
+              "description": "Default admin",
+              "enum": [
+                "read",
+                "operate",
+                "admin",
+                "custom"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tools named by name, comma-separated",
+            "explode": false,
+            "in": "query",
+            "name": "tools",
+            "schema": {
+              "description": "Tools named by name, comma-separated",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 400,
+              "type": "array"
+            }
+          },
+          {
+            "description": "Token grants as role@domain, comma-separated (domain: a space ID or *)",
+            "explode": false,
+            "in": "query",
+            "name": "grants",
+            "schema": {
+              "description": "Token grants as role@domain, comma-separated (domain: a space ID or *)",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewaySpacemanTools"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Tools a SpaceMan MCP server can offer",
         "tags": [
           "mcp"
         ]

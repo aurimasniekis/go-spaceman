@@ -59,6 +59,19 @@ func (b *fakeBackend) Class(_ SpacemanTarget, tool string, args json.RawMessage)
 	return c, ok
 }
 
+func (b *fakeBackend) Tools(s SpacemanSettings, grants []authz.Grant) ([]SpacemanTool, error) {
+	if err := b.Validate(s); err != nil {
+		return nil, err
+	}
+	var out []SpacemanTool
+	for _, name := range []string{"create_thing", "delete_thing", "list_things"} {
+		c := fakeClasses[name]
+		in := c == "read" || s.Preset == "admin"
+		out = append(out, SpacemanTool{Name: name, Class: c, InPreset: in, Selected: in || slices.Contains(s.Tools, name), Reachable: len(grants) > 0 && (c == "read" || grants[0].Role != authz.RoleViewer)})
+	}
+	return out, nil
+}
+
 func (b *fakeBackend) Call(ctx context.Context, t SpacemanTarget, runID, tool string, _ json.RawMessage) (json.RawMessage, error) {
 	if !b.usable(ctx, t) {
 		return nil, apperr.New(apperr.CodeForbidden, "the SpaceMan MCP server %q can no longer act: its token was revoked", t.Slug)
@@ -140,8 +153,35 @@ func TestSpacemanServers(t *testing.T) {
 	_, err = f.svc.UpdateSpaceman(f.ctx, admin, "mcp_x", 1, SpacemanUpdate{Name: "x"})
 	code(t, err, apperr.CodeUnavailable)
 
+	_, err = f.svc.SpacemanTools(SpacemanSettings{}, nil)
+	code(t, err, apperr.CodeUnavailable)
+
 	be, iss, gate := &fakeBackend{f: f}, &fakeIssuer{}, &fakeGate{}
 	f.svc.Spaceman, f.svc.Tokens, f.svc.Gate = be, iss, gate
+
+	// The tool picker: the preset defaults to admin, and the count is the selected tools the grants reach.
+	tools, err := f.svc.SpacemanTools(SpacemanSettings{}, []SpacemanGrant{{Role: authz.RoleAdmin, Domain: authz.Global}})
+	must(t, err)
+	if len(tools.Items) != 3 || tools.Count != 3 {
+		t.Fatalf("admin tools = %+v", tools)
+	}
+	tools, err = f.svc.SpacemanTools(SpacemanSettings{Preset: "read", Tools: []string{"delete_thing"}}, []SpacemanGrant{{Role: authz.RoleViewer, Domain: "spc_a"}})
+	must(t, err)
+	if tools.Count != 1 || !tools.Items[1].Selected || tools.Items[1].Reachable {
+		t.Fatalf("viewer tools = %+v", tools)
+	}
+	for name, c := range map[string]struct {
+		s SpacemanSettings
+		g []SpacemanGrant
+	}{
+		"excluded tool": {SpacemanSettings{Tools: []string{"respond_human_action"}}, nil},
+		"bad role":      {SpacemanSettings{}, []SpacemanGrant{{Role: "owner", Domain: "*"}}},
+		"no domain":     {SpacemanSettings{}, []SpacemanGrant{{Role: authz.RoleAdmin}}},
+	} {
+		if _, err := f.svc.SpacemanTools(c.s, c.g); apperr.CodeOf(err) != apperr.CodeInvalid {
+			t.Errorf("tools %s: %v", name, err)
+		}
+	}
 
 	for name, in := range map[string]SpacemanInput{
 		"slug spaceman":     {Slug: "spaceman", Name: "S"},

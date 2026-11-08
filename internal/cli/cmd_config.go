@@ -399,6 +399,9 @@ func (a *App) mcpCmd() *cobra.Command {
 			canonical: "server_id", base: spacemanBase, args: pos("server"), form: sm}),
 		a.cmd(opts{use: "reissue", short: "Replace a SpaceMan MCP server's token with a new one owned by you (new grants, expiry or owner)",
 			op: "reissue-spaceman-mcp", get: "get-mcp-server", canonical: "server_id", args: pos("server"), form: token, prepare: a.grantsPrepare}),
+		a.cmd(opts{use: "tools", short: "Tools a SpaceMan MCP server can offer, for a preset, named tools and grants", op: "list-spaceman-mcp-tools",
+			example: "spaceman mcp spaceman tools --preset operate --grants operator@spc_123",
+			view:    view{items: "items", cols: []col{c("TOOL", "name"), c("CLASS", "class"), c("SELECTED", "selected"), c("REACHABLE", "reachable"), c("SUMMARY", "summary")}}}),
 	)
 	return group("mcp", "Central MCP gateway: servers, grants and a space's servers", nil, servers, grants, spaceman)
 }

@@ -239,6 +239,8 @@ var Table = map[string]Entry{
 	"create-spaceman-mcp":  {Excluded, rSelf},
 	"update-spaceman-mcp":  {Excluded, rSelf},
 	"reissue-spaceman-mcp": {Excluded, rSelf},
+	// The tool picker for people creating a server.
+	"list-spaceman-mcp-tools": {Excluded, rSelf},
 
 	// MCP gateway.
 	"add-mcp-grant":         {Dangerous, rMCP},
