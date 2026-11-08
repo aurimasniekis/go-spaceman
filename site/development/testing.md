@@ -10,7 +10,8 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 
 | Command | What it runs |
 |---|---|
-| `make check` | `go vet`, the custom analyzers, golangci-lint, race-enabled tests, coverage floors and the requirement traceability check |
+| `make check-fast` | The inner loop: `go vet`, the custom analyzers, golangci-lint, the traceability check, the analyzer tests and every Go test without the race detector, from go test's cache (only what changed runs again). `make sqlc-check` and `make api-check` run when their inputs changed since the merge base with `origin/main`. |
+| `make check` | The gate to run once before pushing: `go vet`, the custom analyzers, golangci-lint, the requirement traceability check, the analyzer tests, the coverage floor (one `go test -cover` run over the security-critical packages) and the race-enabled tests, in that order, stopping at the first failure |
 | `make web-check` | UI typecheck, unit tests (vitest) and the production build |
 | `make api-check` | Regenerates `api/openapi.json` and the UI's TypeScript types and fails on drift |
 | `make site-check` | Builds this site (dead links, screenshot references), parses every Mermaid diagram, checks the API, CLI and configuration references for drift and audits every page with axe. `make site-verify` runs all of it except the audit; `make site-a11y` runs only the audit, on the built site. |

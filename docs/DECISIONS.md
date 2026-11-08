@@ -3377,6 +3377,41 @@
   - The node writes both when it builds the launch, so they take nodes on this release or later. The profile's
     resolved settings in the API don't show them. Codex is unchanged.
 
+### ADR-0069 — Tiered local gates, a one-run coverage floor and cached CI tools
+- **Status:** Accepted, 2026-11-08 (gate wait-time work, subtasks T1, T2 and T10). Not a relaxation: every check in
+  `make check` and in CI still runs. The coverage floor applies to the same packages with the same rules.
+- **Context:**
+  - Agents spent much of their time waiting for `make check` (about 13.5 minutes on a 32-core node). It ran a median
+    of twice and up to nine times per task.
+  - The coverage floor ran 28 packages one `go test` at a time (154 s); the same packages in one invocation take
+    about 20 s.
+  - CI's lint job failed whole runs on GitHub 504s while downloading golangci-lint or sqlc release assets.
+- **Decision:**
+  - **Two local gates.** `make check-fast` is for iterating: vet, custom vet, lint, traceability, the analyzer tests
+    and `go test ./...` without `-race` and with the test cache, plus `sqlc-check`/`api-check` when their inputs
+    changed since the merge base. `make check` is the pre-push gate. It runs once per task on the final tree and
+    checks what it checked before, now fail-fast: vet, custom vet, lint, traceability, analyzer tests, coverage,
+    race. AGENTS.md "Gates" says which to run when.
+  - **Coverage floor in one invocation.** `scripts/coverage-floor.sh` runs one `go test -count=1 -cover` and reads
+    each package's summary line. A package fails when go test reports it failed (tests, build or setup), when it
+    has no coverage line, or when its coverage is below the floor. A non-zero exit that no package explains fails
+    too.
+  - **CI tools from caches.** `bin/sqlc` is cached under the hash of `scripts/install-sqlc.sh`, which holds the
+    pinned version and SHA-256 sums. A miss installs it as before (checksum verified), with curl retries.
+    golangci-lint is built with `go install …@<pinned version>` through the Go module proxy (modules verified
+    against the checksum database), cached per version, OS, architecture and Go toolchain. A step checks the
+    binary's version before the action runs it (`install-mode: none`). The release workflow downloads neither tool.
+- **Alternatives:** `install-mode: goinstall` in the action (it rebuilds golangci-lint from source on every run,
+  because the Go module cache key doesn't cover it); caching the golangci-lint release archive (still a GitHub release
+  download on a miss); making local `make race` use the test cache (operator question Q1 of the plan, not decided
+  here).
+- **Consequences:**
+  - A cached sqlc binary is not re-verified on a hit: the checksum covers the release archive, which a hit doesn't
+    download. The cache entry was written by a run of this repository after verification. Actions caches are
+    scoped to the branch, so a pull request can't plant one for `main` (THREAT_MODEL T-41).
+  - `check-fast` passing is not a pre-push signal: race tests and the strict coverage run happen only in `make check`
+    and CI.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
