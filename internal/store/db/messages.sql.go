@@ -652,13 +652,16 @@ SELECT s.id FROM spaces s
 WHERE s.state = 'active'
   AND (EXISTS (SELECT 1 FROM messages m WHERE m.space_id = s.id AND m.to_kind = 'control' AND m.state = 'stored'
       AND (m.deliver_at IS NULL OR m.deliver_at <= ?1))
-    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.target_kind = 'control' AND n.state = 'pending' AND n.wake = 1))
+    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.state = 'pending' AND n.wake = 1
+      AND (n.target_kind = 'control' OR (n.target_kind = 'instance' AND n.target_instance = (SELECT c.instance_id FROM runs c
+        WHERE c.space_id = s.id AND c.kind = 'control' ORDER BY c.created_at DESC, c.id DESC LIMIT 1)))))
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.space_id = s.id AND r.kind = 'control'
     AND (r.desired = 'running' OR r.observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')))
 `
 
-// Active spaces where something waits for control that no control has seen (a stored message to control that is due, or a pending
-// human response that wakes it) and no control run is authoritative (the ux_runs_one_control condition).
+// Active spaces where something waits for control that no control has seen (a stored message to control that is due, a pending
+// human response that wakes it, or one held for the next launch of control's agent instance: the instance of the space's
+// latest control run, which auto-start resumes) and no control run is authoritative (the ux_runs_one_control condition).
 func (q *Queries) ListSpacesWantingControl(ctx context.Context, now sql.NullInt64) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, listSpacesWantingControl, now)
 	if err != nil {
