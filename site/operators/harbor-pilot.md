@@ -4,12 +4,13 @@
 per-project spend limits and usage for every harness. SpaceMan can route a space's runs through it: each run then gets
 its own short-lived Harbor Pilot token instead of an [account](./accounts), revoked when the run ends.
 
-::: warning Work in progress
-This page covers the connection, the per-space settings, run tokens and how runs get them, budgets and usage, and
-events. Terraform support comes in a later release. Runs routed through Harbor Pilot need node agents at protocol minor
-9 (this release): central refuses to send one to an older agent, which fails it as `agent_too_old` before any token is
-minted, so it never starts on the node's own login. Update every node of a space before opting the space in.
-The design is ADR-0060 (Proposed) in [Decisions](../security/decisions).
+::: warning Before you opt a space in
+Runs routed through Harbor Pilot need node agents at protocol minor 9 (this release): central refuses to send one to
+an older agent, which fails it as `agent_too_old` before any token is minted, so it never starts on the node's own
+login. Update every node of a space before opting the space in. There is no fallback to a direct account: while Harbor
+Pilot is down, the space's routed harnesses can't run. Everything here was verified against Harbor Pilot's demo
+gateway with synthetic upstreams, not yet with a real model provider (see [Verified](#verified)). The design is
+ADR-0060 (Accepted) in [Decisions](../security/decisions); Terraform support is in the provider's next release.
 :::
 
 SpaceMan needs **Harbor Pilot 0.1.3 or later**.
@@ -113,6 +114,16 @@ For a harness the space routes through Harbor Pilot:
     HTTP.
 - **Replacing the parent token revokes the tokens of running runs** with the old parent first (the new parent can't
   revoke them). Those runs then have no model access until they are started again, and the page says how many.
+- **A token can't be refreshed inside a run.** A run that outlives the space's token lifetime loses model access and
+  must be started again; choose the lifetime for your longest runs.
+
+### Emergency stop
+
+To cut every gateway run's model access at once, **revoke the parent token in Harbor Pilot**. Harbor Pilot revokes
+every run token minted from it, so running runs are refused on their next request, whatever SpaceMan is doing (even
+with central down). New launches then fail as `gateway_unavailable` and never fall back to an account. To stop one
+run, stop it in SpaceMan, or revoke its credential in Harbor Pilot (its references name the space and run). To resume,
+create a new parent in Harbor Pilot, save it on the connection, and start the runs again.
 
 ## Budgets and usage
 
@@ -144,13 +155,17 @@ moment ago can still let a launch through; Harbor Pilot then refuses its mint or
 
 <Shot name="space-limits-harbor-pilot" alt="A space's Limits page with the Harbor Pilot budgets card: the project's daily budget used up and launches refused, a warn-only workspace budget and the client binding's budget within limits, and the project's usage today over all clients" caption="Harbor Pilot budgets on a space's Limits page" />
 
+<Shot name="space-limits-harbor-pilot-warning" alt="The Harbor Pilot budgets card in the warning state: the project's daily hard limit near its limit and the workspace's warn-only budget over its own, with no launches refused" caption="A warning: a budget near its limit, or a warn-only one over it" />
+
+<Shot name="space-limits-harbor-pilot-unavailable" alt="The Harbor Pilot budgets card when budget status can't be read: the reason from Harbor Pilot and what launches do meanwhile" caption="Budget status unavailable" />
+
 **Per-run usage.** After a routed run ends, SpaceMan reads what Harbor Pilot recorded for that run (requests, tokens per
 model and Harbor Pilot's cost), filtered on the run and the connection's client binding. It reads three times, about
 15 seconds, 2 minutes and 10 minutes after the end, because Harbor Pilot records a request when it finishes; the last
 read is final. The figures are shown on the run's usage as **gateway-observed**. They become the run's usage (source
 `harbor-pilot`) only when the harness reported none, as for Codex; Claude Code's own transcript figures are kept and
 the gateway's are shown beside them. Without a service-principal token, nothing is read and the run's usage stays
-unknown, never zero.
+unknown, never zero. A read that finds no request for the run leaves its usage unknown too.
 
 ## Events
 
@@ -168,7 +183,8 @@ Against a real `harbor-pilot serve --demo` 0.1.3 (with synthetic upstreams):
 
 - the connection checks: a parent without `tokens:mint`, project checks;
 - the run-token lifecycle with a scripted node: a run's token answering `/v1/models` with the expected references, the
-  token refused after the run ended, and a revoked parent failing the next run as `gateway_unavailable`;
+  token refused after the run ended, and the emergency stop: revoking the parent refused a live run's token at once and
+  failed the next run as `gateway_unavailable`;
 - budgets and usage: a tiny hard-limit budget used up by the project's traffic shows as used up with its spend, the
   launch is refused naming it, and Harbor Pilot refuses the run's token mint; a run's two requests read back as its
   usage with source `harbor-pilot`;
@@ -176,6 +192,9 @@ Against a real `harbor-pilot serve --demo` 0.1.3 (with synthetic upstreams):
   started with only the gateway's variables, Harbor Pilot recorded each request with the client binding and the space,
   run and session references, the run's two turns were grouped in one Harbor Pilot session, no token was stored at
   rest, and the token was refused (401) once the run was stopped.
+
+- Terraform: the provider's acceptance tests, the combined Harbor Pilot and SpaceMan example included, against the same
+  demo gateway.
 
 A real model provider behind Harbor Pilot was not used. The event templates were tested on events captured from the
 same demo and with its own relay publishing into SpaceMan's Pulse-shaped test server, not a production Pulse.

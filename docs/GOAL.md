@@ -140,7 +140,7 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-ACCT-005 Secrets are write-only and excluded from logs, events, resolved manifests and API reads. Docs state that privileged node operators can read runtime secrets.
 - SM-ACCT-006 Rotation affects subsequent launches.
 
-### SM-GW — LLM gateway (Harbor Pilot; operator addition, §9; design in ADR-0060, Proposed)
+### SM-GW — LLM gateway (Harbor Pilot; operator addition, §9; design in ADR-0060, Accepted 2026-11-08)
 - SM-GW-001 **Connection.** One Harbor Pilot connection per central holds:
   - the base URL;
   - a parent token with `tokens:mint`;

@@ -3,7 +3,7 @@
 Pinned to **Harbor Pilot v0.1.3**, commit `2e957c71bf160660588a6468bfe7cc1ed855e3ca`
 (`github.com/aurimasniekis/go-harbor-pilot`, tag `v0.1.3`, released 2026-11-07). File paths below are in that
 repository at that revision; `D-0nn` are Harbor Pilot's own decisions in its `docs/DECISIONS.md`. SpaceMan's design on
-top of it is ADR-0060 (Proposed) in `docs/DECISIONS.md`. **SpaceMan's minimum Harbor Pilot version is 0.1.3.**
+top of it is ADR-0060 (Accepted) in `docs/DECISIONS.md`. **SpaceMan's minimum Harbor Pilot version is 0.1.3.**
 
 **How this was established:**
 - 2026-11-06, v0.1.1 (commit `68d6eae`): the tag was built from source, `harbor-pilot serve --demo` ran on loopback
