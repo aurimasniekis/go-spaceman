@@ -3392,7 +3392,10 @@
 - **Decision:**
   - **Ranged inline reads.** `spaceman_attachment_get` takes optional `offset` and `length` (at most 1 MiB,
     `proto.AttachmentChunkBytes`; 512 KiB when no range is given). Every result says `truncated`, `offset`,
-    `returned_bytes`, `next_offset` when more follows, and a `note` on how to get the rest.
+    `returned_bytes`, `next_offset` when more follows, and a `note` on how to get the rest. `offset` given (0
+    included) makes a ranged read. `next_offset` is present exactly when `truncated` is; after a ranged or partial
+    read it is past `offset`, so following it always makes progress (review S2: a short `length` on multibyte text
+    once returned 0 bytes; now a chunk that can't be cut on a character boundary goes whole, as base64).
     - A **binary** file over 512 KiB asked for without a range is **not returned inline**: just its record,
       `truncated: true`, and a note pointing to `spaceman_attachment_save`.
     - **Text** comes back in chunks cut on a character boundary.
@@ -3412,9 +3415,24 @@
       (anything else becomes `_`), no leading dot, at most 100 bytes keeping a short extension, and `attachment` when
       nothing is left.
     - The attachment ID must be a valid `att_` ID, and the run and instance IDs valid too.
-    - Writes, renames and removals go through an `os.Root` on the attachments folder, so a link the run planted
-      inside it can't lead outside it. An `attachments` folder (or instance folder) that is itself a link is refused.
-  - **Cleanup.** The run's folder is removed when the run ends. A launch of the instance removes the folders of runs
+    - **No run-writable folder is resolved by path** (review M1). The run can rename folders and plant links
+      anywhere in its space folder: its file tools may write there (ADR-0068) and its shell runs as the node's user.
+      The first version checked the attachments folder with `Lstat` and then opened it by path, and a run that swapped
+      the folder for a link between the two won the race (the save wrote into the link's target; the prune emptied
+      it). Now the node opens an `os.Root` on its own `<data_dir>/spaces` folder (outside every space folder; a run's
+      file tools are not given it) and walks `<space>`, `instances`, `<instance>` and `attachments` one level at a
+      time, each relative to the open handle above. Each level is opened first and checked after: `Lstat` through the
+      parent handle must show a real folder and `os.SameFile` must match the opened handle, so a link in place before,
+      between or after the two steps is refused, never followed (an `os.Root` alone would follow a link that stays
+      inside it, for example to the instance's own `claude/` folder). Every later mkdir, write, rename, listing and
+      removal is relative to the final handle. Residual: a run that can rename folders can move the opened folder
+      elsewhere while a save is writing; the save then writes the attachment's bytes, under its sanitized name, into
+      that moved folder, and a prune removes only entries of that folder. Both are things such a run could already do
+      itself.
+  - **Cleanup.** The run's folder is removed when the run ends, including runs the node finds lost or never started
+    when it reconciles with its runner after a restart (review S1). A save re-checks that the run is still running
+    before and after renaming its file into place, and removes it when the run has ended meanwhile (S4), and one save
+    is bounded as a whole by `saveTimeout`, 10 minutes (S3). A launch of the instance removes the folders of runs
     that ended or that the journal no longer knows. The folder is per run because nothing stops two runs of one
     instance.
   - The built-in orientation tells every run to use `spaceman_attachment_save` for images and anything over 512 KiB.

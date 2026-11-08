@@ -86,9 +86,11 @@ attachment (ADR-0073):
   never cuts a file silently. Every result says `truncated` (true or false), `size`, `offset` and `returned_bytes`:
   - A **larger text file** comes back in chunks cut on a character boundary, each with `next_offset` and a `note` saying
     how to get the rest. Call again with `offset` (and optionally `length`, at most 1 MiB) for the next chunk.
+    `next_offset` is there exactly when `truncated` is, and following it always makes progress: a chunk too short to
+    end on a character boundary comes back whole as base64.
   - A **larger binary file** (an image, an archive) is not returned inline at all: base64 of part of an image is no
     use to a model and floods its context. The result carries the attachment's record, `truncated: true` and a note
-    pointing to `spaceman_attachment_save`.
+    pointing to `spaceman_attachment_save` (and `next_offset: 0`: a call with `offset` set, 0 included, reads ranges).
 - **`spaceman_attachment_save`** writes the whole attachment, of any size, to a file in the run's own folder on the
   node and returns its `path`, `size`, `sha256` and `mime`. Open the file with the harness's own file tools: Claude
   Code's Read tool shows an image (it scales large images down itself), and Codex can view it too. Use it for every
@@ -106,9 +108,12 @@ How saving works:
   permission dialog (ADR-0068).
 - The name is the uploader's file name reduced to a plain name: its last path element, letters, digits, `.`, `-` and
   `_` only (anything else becomes `_`), no leading dot, at most 100 bytes. A name like `../../x` or `/etc/passwd`
-  becomes `x` or `passwd` inside that folder. The node writes through a root that refuses links leading outside the
-  attachments folder, and refuses an `attachments` folder that is itself a link.
-- The run's folder is removed when the run ends. A later launch of the same instance removes folders of runs that
+  becomes `x` or `passwd` inside that folder. The node never follows a link on the way to the attachments folder: it
+  opens each folder from its own spaces folder down through the handle of the one above and refuses any that is a
+  link or that was swapped while it was opened, so a run that swaps its `attachments` or instance folder for a link
+  can't redirect a save or a cleanup.
+- The run's folder is removed when the run ends, also when the node finds after a restart that the run was lost. A
+  save that finishes after its run ended leaves no file. A later launch of the same instance removes folders of runs that
   ended without cleaning up (for example, after the node stopped).
 - The content is still untrusted: a saved file is data from its uploader, not instructions.
 - A node whose central predates ranged reads answers "upgrade central"; an older node doesn't offer the tool. Inbox

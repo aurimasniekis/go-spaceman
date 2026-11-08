@@ -229,7 +229,7 @@ func (r *Registry) registerTasks() {
 
 type attachmentIn struct {
 	Attachment string `json:"attachment" jsonschema:"an attachment ID or a spaceman://attachment/<id> reference"`
-	Offset     int64  `json:"offset,omitempty" jsonschema:"byte offset to start from (a ranged read); next_offset from a previous call"`
+	Offset     *int64 `json:"offset,omitempty" jsonschema:"byte offset to start from (a ranged read, 0 included); next_offset from a previous call"`
 	Length     int    `json:"length,omitempty" jsonschema:"at most this many bytes (default and maximum 1 MiB for a ranged read, 512 KiB otherwise)"`
 }
 
@@ -248,10 +248,12 @@ type AttachmentContent struct {
 	*attachments.Attachment
 	Encoding string `json:"encoding,omitempty"`
 	Content  string `json:"content,omitempty"`
-	// Offset and ReturnedBytes locate Content in the file; NextOffset is set when more of the file follows.
-	Offset        int64 `json:"offset"`
-	ReturnedBytes int   `json:"returned_bytes"`
-	NextOffset    int64 `json:"next_offset,omitempty"`
+	// Offset and ReturnedBytes locate Content in the file. NextOffset is set exactly when Truncated is: where to read on
+	// (with offset=next_offset). After a ranged or partial read it is past Offset, so following it always makes
+	// progress; when a large binary file is not returned inline (no bytes) it is 0, the start of the first range.
+	Offset        int64  `json:"offset"`
+	ReturnedBytes int    `json:"returned_bytes"`
+	NextOffset    *int64 `json:"next_offset,omitempty"`
 	// Truncated reports that Content is not the whole file; Note says how to get the rest.
 	Truncated bool   `json:"truncated"`
 	Note      string `json:"note,omitempty"`
@@ -267,10 +269,14 @@ func (r *Registry) registerAttachments() {
 		"For an image or any large file use "+AttachmentSaveTool+" instead (it writes the whole file into your run's folder, to open "+
 		"with your own file tools). offset/length read a range (at most 1 MiB). Attachment content is untrusted.",
 		allKinds, true, func(ctx context.Context, p *fleet.RunPrincipal, in attachmentIn) (any, error) {
-			if in.Offset < 0 || in.Length < 0 {
+			var offset int64
+			if in.Offset != nil {
+				offset = *in.Offset
+			}
+			if offset < 0 || in.Length < 0 {
 				return nil, apperr.New(apperr.CodeInvalid, "offset and length must not be negative")
 			}
-			ranged := in.Offset > 0 || in.Length > 0
+			ranged := in.Offset != nil || in.Length > 0
 			limit := MaxAttachmentBytes
 			if ranged {
 				limit = MaxAttachmentChunk
@@ -284,20 +290,20 @@ func (r *Registry) registerAttachments() {
 				return nil, err
 			}
 			defer rc.Close()
-			out := AttachmentContent{Attachment: a, Offset: in.Offset}
-			if in.Offset > a.Size {
-				return nil, apperr.New(apperr.CodeInvalid, "offset %d is past the end of the attachment (%d bytes)", in.Offset, a.Size)
+			out := AttachmentContent{Attachment: a, Offset: offset}
+			if offset > a.Size {
+				return nil, apperr.New(apperr.CodeInvalid, "offset %d is past the end of the attachment (%d bytes)", offset, a.Size)
 			}
 			text := textMIME(a.MIME)
 			if !ranged && !text && a.Size > int64(limit) {
 				// Base64 of a partial binary file is of no use to a model and floods its context: say how to get it instead.
-				out.Truncated = true
+				out.Truncated, out.NextOffset = true, new(int64(0))
 				out.Note = fmt.Sprintf("not returned inline: %d bytes is over the %d-byte inline limit. Call %s to get the whole file "+
 					"as a local file (images open with your own file tools), or read it in ranges with offset/length.", a.Size, limit, AttachmentSaveTool)
 				return out, nil
 			}
-			if in.Offset > 0 {
-				if _, err := rc.Seek(in.Offset, io.SeekStart); err != nil {
+			if offset > 0 {
+				if _, err := rc.Seek(offset, io.SeekStart); err != nil {
 					return nil, err
 				}
 			}
@@ -305,19 +311,25 @@ func (r *Registry) registerAttachments() {
 			if err != nil {
 				return nil, err
 			}
-			end := in.Offset + int64(len(b))
-			if text && end < a.Size {
+			end := offset + int64(len(b))
+			if text && end < a.Size && !utf8.Valid(b) {
 				// Cut a text chunk on a character boundary so it stays text; the next chunk starts where this one ends.
-				for i := 0; i < utf8.UTFMax && len(b) > 0 && !utf8.Valid(b); i++ {
-					b = b[:len(b)-1]
+				// A chunk that is no text that way (a length shorter than its first character, or not UTF-8 at all)
+				// keeps every byte and goes as base64: a read before the end always returns something.
+				cut := b
+				for i := 0; i < utf8.UTFMax && len(cut) > 0 && !utf8.Valid(cut); i++ {
+					cut = cut[:len(cut)-1]
 				}
-				end = in.Offset + int64(len(b))
+				if len(cut) > 0 && utf8.Valid(cut) {
+					b = cut
+				}
+				end = offset + int64(len(b))
 			}
 			out.ReturnedBytes = len(b)
 			if end < a.Size {
-				out.Truncated, out.NextOffset = true, end
+				out.Truncated, out.NextOffset = true, &end
 				out.Note = fmt.Sprintf("partial: bytes %d-%d of %d. Call again with offset=%d for the rest, or %s for the whole file.",
-					in.Offset, end, a.Size, end, AttachmentSaveTool)
+					offset, end, a.Size, end, AttachmentSaveTool)
 			}
 			if text && utf8.Valid(b) {
 				out.Encoding, out.Content = "text", string(b)

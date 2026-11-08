@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - `spaceman_attachment_get` no longer cuts a file silently. Every result says `truncated`, `offset`,
     `returned_bytes` and `next_offset`. A large binary file is no longer returned as partial base64, and a large text
     file comes in chunks. New `offset`/`length` arguments read a range.
+  - The node never resolves a folder the run can write by path on the way to the attachments folder, so a run that
+    swaps a folder for a link can't redirect a save or a cleanup (security review M1). Saved files of runs found lost
+    after a node restart are removed too, a save that outlives its run leaves no file, and a ranged read of text
+    always returns bytes before the end of the file (`next_offset` is present whenever `truncated` is).
   - Takes a node agent on this release for the save tool. Central and agent can be upgraded in any order; there is no
     protocol change.
 

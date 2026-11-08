@@ -148,7 +148,8 @@ func (a *Agent) bridgeCall(ctx context.Context, req bridgeRequest) bridgeRespons
 // bridgeTimeout bounds a forwarded call end to end (central's own deadline is shorter).
 const bridgeTimeout = 30 * time.Second
 
-// saveTimeout bounds a whole ToolAttachmentSave (many forwarded ranged reads, each bounded by bridgeTimeout).
+// saveTimeout bounds a whole ToolAttachmentSave (many forwarded ranged reads, each bounded by bridgeTimeout): the
+// node gives up after it, and the bridge waits a little longer for the node's answer.
 const saveTimeout = 10 * time.Minute
 
 // forwardTool sends a tool call to central over the node connection and waits for its result (ADR-0012). Central
@@ -292,7 +293,7 @@ func addAttachmentSave(s *mcp.Server, call func(context.Context, string, json.Ra
 	type in struct {
 		Attachment string `json:"attachment" jsonschema:"an attachment ID or a spaceman://attachment/<id> reference"`
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: proto.ToolAttachmentSave, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	mcp.AddTool(s, &mcp.Tool{Name: proto.ToolAttachmentSave, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false},
 		Description: "Save a whole attachment of your space (spaceman://attachment/<id>), of any size, as a file in your run's own folder on this node, " +
 			"and get its path, size, SHA-256 and type. Then open the file with your own file tools (an image can be viewed with your file " +
 			"Read tool). Use this for images and for anything over 512 KiB, which spaceman_attachment_get does not return whole. The file is " +

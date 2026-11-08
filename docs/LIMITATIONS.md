@@ -498,7 +498,9 @@
 - **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB per call, with ranged
   reads; a larger binary is not returned inline) **or `spaceman_attachment_save`**, which copies the whole file into the
   run's own folder on the node until the run ends (SM-ATT-005, ADR-0073). Attachments are not copied there unasked.
-  There is no server-side image downscale: the harness's own file reader scales images.
+  There is no server-side image downscale: the harness's own file reader scales images. A saved file stays until its
+  run ends; files of a run that ended while its node agent was not running are removed when the node reconciles at
+  its next start, or at the instance's next launch. A node that never starts again leaves them on disk.
 
 ## Audit and logs
 - **Audit retention trusts its own checkpoint.** After `retention.audit_days` pruned events, verification starts from

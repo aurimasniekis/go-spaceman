@@ -253,7 +253,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 	}
 	// Saved attachments of this instance's earlier runs that ended without cleaning up (ADR-0073).
-	a.pruneAttachments(ctx, filepath.Join(space, "instances", p.InstanceID), c.RunID)
+	a.pruneAttachments(ctx, l.Workdir, p.InstanceID, c.RunID)
 	// Harnesses key per-directory state by the real path (macOS: /tmp is /private/tmp).
 	if real, err := filepath.EvalSymlinks(work); err == nil {
 		work = real
@@ -517,9 +517,11 @@ func (a *Agent) reconcileRunner(ctx context.Context) error {
 			// re-delivery is a duplicate, so mark it failed rather than starting it silently.
 			r.State, r.Error = proto.RunFailed, "agent restarted before the process started"
 			_ = a.j.updateRun(ctx, r)
+			a.removeRunAttachments(ctx, r)
 		default:
 			r.State, r.Reason = proto.RunLost, "process not found in the runner"
 			_ = a.j.updateRun(ctx, r)
+			a.removeRunAttachments(ctx, r)
 		}
 	}
 	return nil
