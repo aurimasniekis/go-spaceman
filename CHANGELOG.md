@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`RACE_APP_SPLIT`).
 - The Makefile's browser targets take `SM_CHROMIUM_ARGS` from the environment (nothing when it is unset, as in CI), and
   the site targets add `--single-process` to a non-empty value.
+- `make lint` waits for another golangci-lint run on the machine (`--allow-serial-runners`) instead of failing with
+  "parallel golangci-lint is running", so `make check` runs started together in different worktrees both get through.
 - The heavy gates (`race`, `coverage`, `site-a11y`, `e2e`, `e2e-browsers`, `screenshots`) take a slot of a node-wide
   `flock` semaphore first, so several runs on one machine take turns instead of contending (ADR-0069,
   `scripts/gate-slot.sh`). `SM_GATE_SLOTS` (default 2 on 16 or more CPUs, otherwise 1; `0` disables it, and it is off
