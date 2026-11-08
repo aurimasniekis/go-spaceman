@@ -22,6 +22,7 @@ import (
 // SeedBuiltins publishes every built-in template once, as version 1 of exactly its definition, and an installation
 // seeded before a template was added gets the new one at its next start without touching the others.
 func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
+	// Not parallel: it swaps the package-level builtins.
 	ctx := context.Background()
 	s := storetest.Open(t, storetest.WithClock(clock.System{}))
 	kr := keyringtest.Load(t, s)
@@ -50,7 +51,7 @@ func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
 		bySlug[x.Slug] = x
 	}
 	want := []string{"github-issue", "github-pull-request", "github-pr-comment", "github-pr-review", "github-pr-review-comment",
-		"github-issue-comment", "github-workflow-run", "github-check-suite"}
+		"github-issue-comment", "github-workflow-run", "github-check-suite", "harbor-pilot-budget", "harbor-pilot-quota", "harbor-pilot-access-blocked"}
 	if len(ts) != len(want) || len(builtins) != len(want) {
 		t.Fatalf("%d templates, %d built-ins", len(ts), len(builtins))
 	}
@@ -64,6 +65,9 @@ func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
 		if builtins[i].slug != slug || string(got) != string(exp) {
 			t.Errorf("%s: stored definition differs from the built-in", slug)
 		}
+		if notes := x.Versions[0].Notes; strings.HasPrefix(slug, "harbor-pilot-") != strings.Contains(notes, "Harbor Pilot v0.1.3") {
+			t.Errorf("%s: notes %q", slug, notes)
+		}
 	}
 	for _, b := range before {
 		if bySlug[b.Slug].ID != b.ID || bySlug[b.Slug].Versions[0].ID != b.Versions[0].ID {
@@ -75,6 +79,7 @@ func TestSeedBuiltinsSeedsEveryTemplate(t *testing.T) {
 // A user's template that already uses a built-in's slug keeps it: the built-in is skipped, with a warning naming the
 // slug, and the other built-ins are seeded without one.
 func TestSeedBuiltinsWarnsWhenASlugIsTaken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	s := storetest.Open(t, storetest.WithClock(clock.System{}))
 	kr := keyringtest.Load(t, s)

@@ -85,6 +85,7 @@ func userToken(t *testing.T, a *auth.Service, email string, grants []auth.GrantI
 // confirm and an operator can (If-Match); when the incident ends, automatic resumption runs the preempted task again,
 // and control is told each step through its durable notifications.
 func TestIncidentPolicyEndToEnd(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()
@@ -183,6 +184,7 @@ func toControlMsg(e *fleetEnv, spaceID, subject string) bool {
 // operators and admins hold and viewers do not, and the launch is audited with its kind — also when the kind comes
 // from the space role rather than the request.
 func TestOperatorRestartsControlAndDiagnostics(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()

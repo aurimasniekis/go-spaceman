@@ -6,6 +6,158 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- **Harbor Pilot gateway** (ADR-0060, Accepted; SM-GW-001…010). A space can route its runs' model traffic through a
+  self-hosted [Harbor Pilot](https://aurimasniekis.github.io/go-harbor-pilot/) gateway. Each run gets its own
+  short-lived Harbor Pilot token instead of an account, and the token is revoked when the run ends. Harbor Pilot's hard
+  budgets refuse launches early and show on the Limits page, and its events become inbox items. **Upgrade notes:**
+  - Needs **Harbor Pilot 0.1.3** or later.
+  - Migrations 0040 and 0043 are forward-only (0042 is not used).
+  - **Node protocol minor 9:** update every node of a space before opting the space in. A gateway launch to an older
+    agent fails as `agent_too_old` before a token is minted. Spaces that don't opt in need no agent update.
+  - Terraform support is in terraform-provider-spaceman's next release.
+  - There is **no fallback to a direct account** (Q1): while Harbor Pilot is down, a space's routed harnesses can't
+    run. Revoking the parent token in Harbor Pilot is the emergency stop for every gateway run at once.
+  - Verified against `harbor-pilot serve --demo` 0.1.3 with synthetic upstreams only, with real Claude Code 2.1.317
+    and codex-cli 0.166.0 runs through SpaceMan. Not yet verified with a real model provider (evidence map:
+    RELEASE_READINESS §13).
+
+  **Connection** (Integrations → Harbor Pilot, `/api/v1/harbor-pilot/connection`, account:write; a change or removal
+  needs a step-up):
+  - An administrator enters a gateway URL, an optional URL runs use, a parent token with `tokens:mint` and an optional
+    service-principal token (`usage.read`, `config.read`).
+  - Both tokens are sealed and write-only. Answers, the audit log and the change feed show only whether each is set,
+    with a version counter.
+  - Stored tokens go only to the address they were entered for. Changing either URL, or newly allowing plain HTTP,
+    needs the tokens again in the same request (422 before any call).
+  - Central's client needs https except on loopback and follows no redirects. It uses no proxy, and it never dials
+    link-local (cloud metadata included), "this network", unspecified, multicast or broadcast addresses, also not
+    through NAT64 or 6to4.
+  - Every save is checked with Harbor Pilot: a probe token is minted and revoked at once ("parent token lacks
+    tokens:mint" otherwise). The check finds the client binding and the parent's expiry. A gateway older than 0.1.3 is
+    refused.
+  - The connection can't be removed while a space uses it or tokens are live or waiting to be revoked.
+
+  **Space settings** (the space overview, `/api/v1/spaces/{id}/harbor-pilot`, space_config:write):
+  - The Harbor Pilot project, checked with Harbor Pilot. Setting or changing it needs account:write, since it decides
+    who pays.
+  - The harnesses routed through it: any harness, Claude Code and Codex by default.
+  - The run-token lifetime: 24 h by default, from 15 minutes to 7 days.
+  - Optional allowed models.
+  - What a launch does when budget status can't be read: proceed (the default) or refuse.
+
+  **Run tokens:**
+  - A routed harness uses no account. A launch that names one is refused, and so is a model outside the allowed list.
+    The run's manifest records the gateway and the project.
+  - Each run gets its own child token when its launch is dispatched. It can invoke and list models only, and it is
+    bound to the space, run, instance, session, project and task. For a fresh Claude Code run, central chooses the
+    session ID. A re-sent launch reuses the token, and a token that expires within 5 minutes is replaced.
+  - A mint Harbor Pilot refuses fails the run as `gateway_unavailable` with the reason. Network errors, 5xx and 429
+    are retried three times first.
+  - A slow mint holds up a node's other commands for at most 5 s per new gateway launch: the dispatch pass that
+    starts the mint waits up to `GatewayMintWait` (5 s), then the mint goes on in the background and later passes
+    don't wait for it.
+  - Every end path queues the token's revocation in its own transaction: a reported end, an undispatched launch, a
+    stop or pause, a relocation, a purge, and runs a node left unknown past its lease. Central revokes them on its
+    deadline timer, retrying until the token expires, and the queue survives a restart.
+  - Replacing the parent first revokes the old parent's live run tokens. A revocation Harbor Pilot doesn't confirm
+    from the minting parent is recorded as failed, audited, shown on the connection, and counted in the new
+    `spaceman_gateway_revocations_failed` gauge.
+
+  **Delivery to the harness** (the node):
+  - The token reaches the harness only through the launcher's secrets file, never the terminal's saved state, the
+    node's records or argv, and no other credential comes with it.
+  - The node checks the run-facing address itself: https unless plain HTTP is allowed, no loopback exemption, a host
+    and a valid port.
+  - Claude Code gets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`. A gateway run fails with a reason when its
+    profile's Claude Code settings would add a credential, an endpoint, a proxy or a TLS override: `apiKeyHelper`,
+    `proxyAuthHelper`, cloud credential helpers, `forceLoginMethod`, or `env` entries such as `ANTHROPIC_*`, every
+    `CLAUDE_CODE_*` outside a short list of output and UI switches, `HTTP(S)_PROXY`, `ALL_PROXY`,
+    `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_OPTIONS`. Set the
+    model on the role. Claude Code's default model works through the gateway: Harbor Pilot accepts its `system`-role
+    messages since 0.1.2.
+  - Codex gets a `harbor-pilot` model provider pointed at the gateway's Responses API, with the token in
+    `HARBOR_PILOT_TOKEN`. It needs a model the Harbor Pilot plan routes, so set the role's model.
+  - A stored Claude login and any Codex `auth.json` in the instance are removed before the run starts.
+
+  **Budgets and usage** (needs the service-principal token):
+  - A space's Limits page gets a **Harbor Pilot budgets** card. It lists the budgets that cover the space (its
+    project, the project's workspace, the client binding, global), each labelled as a hard limit or warn only, with
+    its spend, state and reset time.
+  - The card is in one of four states: within budgets, warning, budget used up, or status unavailable. It shows an
+    error when status can't be loaded. It also shows the project's usage in the current period, labelled **all
+    clients**.
+  - The API is `GET /spaces/{id}/harbor-pilot/status`, and the CLI is `spaceman harbor-pilot status`.
+  - A launch is refused at once when a covering hard-limit budget is used up, naming the budget, its spend and its
+    reset time. Control's automatic start raises "Control could not start" with that reason. Warn-only budgets never
+    refuse.
+  - When status can't be read, the space's setting decides. That includes SpaceMan's own failures, which are logged
+    and shown with a fixed reason. The mint also asks Harbor Pilot to check budgets (`check_budget`).
+  - After a gateway run ends, central reads back what Harbor Pilot recorded for it, about 15 s, 2 min and 10 min
+    after the end. The figures are shown as gateway-observed. They become the run's usage (source `harbor-pilot`)
+    only when the harness reported none, as for Codex.
+  - Usage is never written as zero, not even for an empty read: the run stays unknown.
+
+  **Events:**
+  - New built-in templates: `harbor-pilot-budget` (a project's budgets to its space), `harbor-pilot-quota` and
+    `harbor-pilot-access-blocked` (`budget_only` keeps budget refusals only).
+  - Titles and correlation keys hold only Harbor Pilot's ids, names, enums and amounts, checked by each template's
+    input schema. Free text appears only in the body and the raw payload.
+  - Events without a project are routed nowhere automatically: a space gets them only by subscribing (Q4 is open).
+- Control can schedule a reminder to itself (ADR-0065). `spaceman_message_send` to `control` takes `deliver_at` (RFC
+  3339) or `delay` (e.g. `6h`), from 1 minute to 30 days ahead.
+  - The message stays hidden and doesn't count as work until it's due. Then it wakes control, or starts it within the
+    `control_autostart` limits, and a control started later is told about it once.
+  - Pending reminders: up to 50 per space, and a `dedup_key` returns the pending one.
+  - Control lists them with `spaceman_message_scheduled` and cancels with `spaceman_message_cancel`. Operators use
+    the Messages page's **Scheduled** view, `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel`, or
+    `spaceman message list --scheduled` and `spaceman message cancel`.
+  - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
+
+### Changed
+- Claude Code runs start with its classic renderer (`"tui": "default"` in the run's settings) unless the profile's
+  Claude Code settings set `tui`. Its full-screen renderer, which Claude Code otherwise often picks itself, keeps earlier output
+  out of the terminal, so a watcher could not scroll back. Set `"tui": "fullscreen"` in a profile to keep it (ADR-0064).
+  The node applies this default, so it takes nodes on this release or later; runs on older nodes keep Claude Code's
+  own choice, and the profile's resolved settings in the API don't show it.
+- Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
+
+### Fixed
+- Codex runs no longer leave their environment in the instance's `CODEX_HOME/shell_snapshots`: SpaceMan now turns off
+  Codex's shell snapshot (`features.shell_snapshot=false`), and every Codex launch removes the `shell_snapshots` folder
+  an earlier run left (without following links; the launch fails if it is still there). Found with codex-cli 0.166.0.
+  **Rotate keys:** a Codex run on an earlier release kept its environment there, the run's SpaceMan token and, for a
+  direct account with an API key, that account's `OPENAI_API_KEY`/`CODEX_API_KEY`. Run tokens are revoked when their
+  run ends, but an account's API key is not: if a node ran Codex with an API-key account on an earlier release,
+  rotate that key at the provider.
+- With the `next_launch` policy, a person's response to a control that had stopped waited for the whole hold before
+  control was started for it. A response held for control's agent instance now counts as work for control, so control
+  is started on that instance (within the `control_autostart` limits) and the response is delivered to it. A response
+  held for a worker's instance still waits for that worker.
+- A relocation whose source was unavailable marked the source's runs lost without ending them: no `run_ended` event,
+  no end count, and nothing that reacts to a run's end (recordings, KB sessions, control) learnt of it. They now
+  end like runs a node reports ended.
+- Run terminals scroll back without a takeover (operator request). The wheel, and a drag on a phone, scroll through
+  earlier output in the live view without sending anything to the run. While you read, new output no longer pulls you
+  to the bottom, and **Jump to live** returns.
+- During a takeover, the wheel no longer types arrow keys into a full-screen program, which made Claude Code show
+  "Scroll wheel is sending arrow keys". It sends mouse-wheel reports when the program asks for mouse input (ghostty-web
+  0.4.0 turned every wheel step in an alternate screen into arrow keys).
+- The run terminal no longer flickers between two font sizes on some window widths (the font fit now measures the
+  canvas instead of predicting it).
+- Tests: `internal/app` TestFleetLifecycle no longer fails at random with "timed out waiting for runs running after
+  central restart". Reopening the store checks every reader connection, one per CPU by default, and under the race
+  detector on a 32-CPU host that took 5-7 s, longer than the 5 s lease plus 1 s grace the test then had. The agent then
+  stopped the runs, as it should without central (SM-NODE-007), so they never returned to running. The fleet test
+  central now uses 4 readers (new test-only `app.Options.StoreReaders`), which brings a restart to about 1 s; restart
+  tests also get a 30 s lease as a margin under load, and the test fails at once, with the cause, if a restart takes
+  5 s or more. Product behaviour is unchanged.
+- A person's response to a human action whose requester had ended (for example control's own question, answered after
+  control stopped) became undeliverable when no control was running: control was not auto-started for it, and a
+  control started later was not told about it. With control auto-start on, it now goes to control, starts control,
+  and the control (or one launched by hand later) is told once about each unacknowledged response (ADR-0056 note).
+- The "New inbox item" dialog focuses the item text when it opens, instead of the title.
+
 ## [0.1.0-rc.9] - 2026-11-07
 
 Ninth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): Claude Code settings on

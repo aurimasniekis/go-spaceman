@@ -15,6 +15,7 @@ import (
 // The dispatch loop fails the run as node_too_old and cancels its launch instead of retrying it (this used to leave the
 // run pending: ending it wrote a NULL session ID).
 func TestClaudeSettingsLaunchFailsOnOldNode(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	ctx := context.Background()

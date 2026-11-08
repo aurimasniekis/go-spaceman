@@ -16,7 +16,8 @@ import (
 // worker's run ends before it read the answer. The answer survives, is routed to control with its provenance, wakes
 // control when it is idle, and is never shown to another worker.
 func TestHumanResponseRoutedWhenTheRequesterEnds(t *testing.T) {
-	e := newFleetEnv(t)
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
+	e := newFleetEnv(t, longLease)
 	e.enroll()
 	e.startAgent()
 	ctx := context.Background()

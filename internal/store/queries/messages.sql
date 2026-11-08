@@ -14,6 +14,7 @@ SELECT * FROM messages WHERE space_id = ? ORDER BY created_at DESC LIMIT ?;
 -- name: ListMessagesFor :many
 SELECT * FROM messages
 WHERE space_id = sqlc.arg(space_id) AND state IN ('stored', 'available')
+  AND (deliver_at IS NULL OR deliver_at <= sqlc.arg(now))
   AND ((to_kind = 'run' AND to_id = sqlc.arg(run_id)) OR (to_kind = 'role' AND to_id = sqlc.arg(role)) OR (to_kind = 'control' AND sqlc.arg(is_control) = 1))
 ORDER BY created_at LIMIT sqlc.arg(lim);
 
@@ -76,11 +77,44 @@ WHERE desired = 'running' AND observed = 'running' AND status IN ('idle', 'done'
 SELECT id, space_id, version FROM messages WHERE notice_command = ?;
 
 -- name: ListSpacesWantingControl :many
--- Active spaces where something waits for control that no control has seen (a stored message to control, or a pending
--- human response that wakes it) and no control run is authoritative (the ux_runs_one_control condition).
+-- Active spaces where something waits for control that no control has seen (a stored message to control that is due, a pending
+-- human response that wakes it, or one held for the next launch of control's agent instance: the instance of the space's
+-- latest control run, which auto-start resumes) and no control run is authoritative (the ux_runs_one_control condition).
 SELECT s.id FROM spaces s
 WHERE s.state = 'active'
-  AND (EXISTS (SELECT 1 FROM messages m WHERE m.space_id = s.id AND m.to_kind = 'control' AND m.state = 'stored')
-    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.target_kind = 'control' AND n.state = 'pending' AND n.wake = 1))
+  AND (EXISTS (SELECT 1 FROM messages m WHERE m.space_id = s.id AND m.to_kind = 'control' AND m.state = 'stored'
+      AND (m.deliver_at IS NULL OR m.deliver_at <= sqlc.arg(now)))
+    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.state = 'pending' AND n.wake = 1
+      AND (n.target_kind = 'control' OR (n.target_kind = 'instance' AND n.target_instance = (SELECT c.instance_id FROM runs c
+        WHERE c.space_id = s.id AND c.kind = 'control' ORDER BY c.created_at DESC, c.id DESC LIMIT 1)))))
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.space_id = s.id AND r.kind = 'control'
     AND (r.desired = 'running' OR r.observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')));
+
+-- Scheduled messages (ADR-0065): a stored message whose deliver_at is in the future is not delivered, noticed or
+-- counted as waiting work until that time.
+
+-- name: SetMessageDeliverAt :exec
+UPDATE messages SET deliver_at = sqlc.arg(deliver_at) WHERE id = sqlc.arg(id) AND state = 'stored';
+
+-- name: ListScheduledMessages :many
+SELECT * FROM messages
+WHERE space_id = sqlc.arg(space_id) AND state = 'stored' AND deliver_at > sqlc.arg(now)
+ORDER BY deliver_at, id LIMIT sqlc.arg(lim);
+
+-- name: CountScheduledMessages :one
+SELECT count(*) FROM messages WHERE space_id = sqlc.arg(space_id) AND state = 'stored' AND deliver_at > sqlc.arg(now);
+
+-- name: GetScheduledByDedup :one
+SELECT * FROM messages
+WHERE space_id = sqlc.arg(space_id) AND state = 'stored' AND deliver_at > sqlc.arg(now) AND dedup_key = sqlc.arg(dedup_key)
+ORDER BY created_at LIMIT 1;
+
+-- name: NextScheduledMessage :one
+-- The earliest due time of a scheduled message in an active space (the notifier sweeps then; 0: none).
+SELECT CAST(coalesce(min(m.deliver_at), 0) AS INTEGER) FROM messages m
+WHERE m.state = 'stored' AND m.deliver_at > sqlc.arg(now)
+  AND EXISTS (SELECT 1 FROM spaces s WHERE s.id = m.space_id AND s.state = 'active');
+
+-- name: CancelScheduledMessage :execrows
+UPDATE messages SET state = 'resolved', resolved_at = sqlc.arg(now), resolution = sqlc.arg(resolution), version = version + 1
+WHERE id = sqlc.arg(id) AND state = 'stored' AND deliver_at > sqlc.arg(now);

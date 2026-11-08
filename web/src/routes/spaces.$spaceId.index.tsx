@@ -8,6 +8,7 @@ import { RunState } from '@/components/StatusBadge'
 import { SpaceAccountsCard } from '@/features/accounts/SpaceAccountsCard'
 import { SpaceAttentionCard } from '@/features/attention/SpaceAttentionCard'
 import { SpaceRolesCard } from '@/features/catalog/SpaceRolesCard'
+import { SpaceHarborPilotCard } from '@/features/harborpilot/SpaceHarborPilotCard'
 import { harnessLabel, isEnded, kindLabel, RunDot, runStateText, runTitle, sortRuns } from '@/features/runs/runInfo'
 import { RelocationCard } from '@/features/spaces/RelocationCard'
 import { SpaceUsageCard } from '@/features/usage/UsageCards'
@@ -80,6 +81,7 @@ function SpacePage() {
 
       <SpaceRolesCard spaceId={s.id} />
       <SpaceAccountsCard spaceId={s.id} />
+      <SpaceHarborPilotCard spaceId={s.id} />
       <SpaceUsageCard spaceId={s.id} />
 
       <Tabs defaultValue="runs" keepMounted={false}>

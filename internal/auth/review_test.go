@@ -42,6 +42,7 @@ func (f *fx) session(opID, method string, meta SessionMeta) (string, *Principal)
 // SR-01: a password alone (an MFA-pending session) can neither confirm nor restart enrollment over a confirmed
 // factor, not even with a replayed valid code, and enrollment failures are throttled.
 func TestReviewSR01ConfirmNeedsVerifiedFactor(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	f.loginEnrolled(op.Email)
@@ -102,6 +103,7 @@ func TestReviewSR01ConfirmNeedsVerifiedFactor(t *testing.T) {
 
 // SR-03: enrollment, ReauthTOTP and VerifyMFA never refresh a stale session's authentication.
 func TestReviewSR03NoRecentAuthBypass(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	// (a) a stale SSO session cannot enroll its own factor to pass reauth gates.
@@ -152,6 +154,7 @@ func TestReviewSR03NoRecentAuthBypass(t *testing.T) {
 
 // SR-04: starting and abandoning a re-enrollment keeps the confirmed factor working.
 func TestReviewSR04AbandonedReenrollment(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	_, p := f.loginEnrolled(op.Email)
@@ -190,6 +193,7 @@ func TestReviewSR04AbandonedReenrollment(t *testing.T) {
 
 // SR-05: wrong passwords and codes on reauthentication and password change are throttled and audited.
 func TestReviewSR05ReauthThrottle(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	_, p := f.loginEnrolled(op.Email)
@@ -233,6 +237,7 @@ func TestReviewSR05ReauthThrottle(t *testing.T) {
 // SR-07: redeeming break-glass revokes other sessions, removes the lost factor, forces re-enrollment, issues a
 // reset token, and failed redemptions are throttled and audited.
 func TestReviewSR07RecoveryRedeem(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	oldTok, _ := f.loginEnrolled(op.Email)
@@ -281,6 +286,7 @@ func TestReviewSR07RecoveryRedeem(t *testing.T) {
 
 // SR-26 (DECISIONS K-11): SSO-sourced grants do not apply to password sessions or API tokens, only to SSO sessions.
 func TestReviewSR26SSOGrantsOnlyForSSOSessions(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -320,6 +326,7 @@ func TestReviewSR26SSOGrantsOnlyForSSOSessions(t *testing.T) {
 
 // SR-27: a privilege elevation is granted only to new sessions.
 func TestReviewSR27ElevationRevokesSessions(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	admin := f.bootstrap()
 	actor := audit.Actor{Type: audit.ActorUser, ID: admin.ID}
@@ -341,6 +348,7 @@ func TestReviewSR27ElevationRevokesSessions(t *testing.T) {
 
 // SR-09 support: Validate checks a session without extending its idle timer.
 func TestReviewValidateDoesNotTouch(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	tok, _ := f.session(op.ID, MethodOIDC, SessionMeta{})
@@ -359,6 +367,7 @@ func TestReviewValidateDoesNotTouch(t *testing.T) {
 // SR-07: a break-glass session re-authenticates with the account's password and new factor once its 5-minute window
 // has passed; it stays a break-glass session.
 func TestReviewSR07BreakGlassReauth(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	tok, _, err := f.svc.IssueRecoveryLogin(f.ctx, op.ID, "")

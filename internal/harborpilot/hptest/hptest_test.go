@@ -3,9 +3,11 @@ package hptest
 import (
 	"context"
 	"debug/buildinfo"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -94,6 +96,151 @@ func TestRealHarborPilotSelfTest(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(g.DataDir, "demo.db")); err != nil {
 		t.Fatalf("demo database not in the temporary data dir: %v", err)
 	}
+}
+
+// message sends one small Anthropic Messages request with tok and returns the status.
+func message(t *testing.T, g *Gateway, tok string) int {
+	t.Helper()
+	code, _, err := g.Do(context.Background(), http.MethodPost, "/v1/messages", tok, map[string]any{
+		"model": "coding/default", "max_tokens": 16, "messages": []map[string]any{{"role": "user", "content": "hello"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code
+}
+
+// usageTest checks per-run usage (v0.1.2+, D-041): two runs' tokens bind different spaceman.run values, and the usage
+// summary filtered on each value (and the binding) counts only that run's requests.
+func usageTest(t *testing.T, g *Gateway) {
+	t.Helper()
+	ctx := context.Background()
+	want := map[string]int64{"run_hptest_a": 1, "run_hptest_b": 2}
+	for run, n := range want {
+		tok := runToken(t, g, run, g.ProjectID)
+		for range n {
+			if code := message(t, g, tok); code != http.StatusOK {
+				t.Fatalf("%s: messages status %d", run, code)
+			}
+		}
+	}
+	for run, n := range want {
+		var u Usage
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			var err error
+			if u, err = g.UsageByRef(ctx, "spaceman.run", run); err != nil {
+				t.Fatal(err)
+			}
+			if u.Attempts() >= n || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if u.Attempts() != n || u.Filters.Refs["spaceman.run"] != run || u.Filters.BindingID != g.BindingID {
+			t.Fatalf("%s: usage %+v (want %d attempts, filters echoed)", run, u, n)
+		}
+	}
+	if u, err := g.UsageByRef(ctx, "spaceman.run", "run_hptest_none"); err != nil || u.Attempts() != 0 {
+		t.Fatalf("usage of a run without requests: %+v %v", u, err)
+	}
+}
+
+// runToken mints a run's child token bound to project.
+func runToken(t *testing.T, g *Gateway, run, project string) string {
+	t.Helper()
+	_, tok, err := g.Mint(context.Background(), MintRequest{Name: "hptest " + run, Scopes: []string{"gateway:invoke"}, TTLSeconds: 900,
+		BoundRefs: map[string]string{"spaceman.space": "spc_hptest", "spaceman.run": run, "project_id": project}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+// budgetTest checks budget refusals (v0.1.2+, D-040) and the mint-time budget check (v0.1.3, D-043):
+//   - a request over the second project's tiny blocking budget gets 429 and is recorded as blocked (budget_exceeded),
+//     with an access.request.blocked event for it;
+//   - after usageTest spent on the first project, a tiny budget there refuses a check_budget mint with 429
+//     budget_exceeded naming the budget, while a mint without check_budget still succeeds.
+func budgetTest(t *testing.T, g *Gateway) {
+	t.Helper()
+	ctx := context.Background()
+	const run = "run_hptest_over"
+	if code := message(t, g, runToken(t, g, run, g.AltProjectID)); code != http.StatusTooManyRequests {
+		t.Fatalf("request over a blocking budget: status %d (want 429)", code)
+	}
+	// The request row is written by Harbor Pilot's telemetry writer after the response, so wait for it.
+	q := url.Values{"ref": {"spaceman.run:" + run}, "binding_id": {g.BindingID}}
+	var reqs struct {
+		Items []struct {
+			ID        string `json:"id"`
+			Status    string `json:"status"`
+			ErrorKind string `json:"error_kind"`
+		} `json:"items"`
+	}
+	var (
+		code int
+		body []byte
+		err  error
+	)
+	// The request row and its event are written after the response: poll both within one deadline.
+	deadline := time.Now().Add(15 * time.Second)
+	for ; ; time.Sleep(200 * time.Millisecond) {
+		code, body, err = g.Do(ctx, http.MethodGet, "/api/v1/activity/requests?"+q.Encode(), g.ServiceToken, nil)
+		if err != nil || code != http.StatusOK || json.Unmarshal(body, &reqs) != nil || len(reqs.Items) > 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	if err != nil || code != http.StatusOK || len(reqs.Items) != 1 ||
+		reqs.Items[0].Status != "blocked" || reqs.Items[0].ErrorKind != "budget_exceeded" {
+		t.Fatalf("activity of the refused run: %d %v %+v", code, err, reqs)
+	}
+	var evs struct {
+		Items []struct {
+			Envelope struct {
+				Name     string            `json:"name"`
+				Subjects map[string]string `json:"subjects"`
+			} `json:"envelope"`
+		} `json:"items"`
+	}
+	blocked := false
+	for ; !blocked; time.Sleep(200 * time.Millisecond) {
+		code, body, err = g.Do(ctx, http.MethodGet, "/api/v1/events?limit=50", g.ServiceToken, nil)
+		if err != nil || code != http.StatusOK || json.Unmarshal(body, &evs) != nil {
+			t.Fatalf("events: %d %v", code, err)
+		}
+		for _, e := range evs.Items {
+			blocked = blocked || (e.Envelope.Name == "access.request.blocked" && e.Envelope.Subjects["request_id"] == reqs.Items[0].ID &&
+				e.Envelope.Subjects["binding_id"] == g.BindingID)
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+	}
+	if !blocked {
+		t.Fatal("no access.request.blocked event for the budget refusal")
+	}
+
+	id, err := g.CreateBudget(ctx, "spaceman-test-spent", g.ProjectID, "0.000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := map[string]string{"spaceman.run": "run_hptest_check", "project_id": g.ProjectID}
+	if _, _, err := g.Mint(ctx, MintRequest{Name: "hptest check_budget", BoundRefs: refs, CheckBudget: true}); err == nil ||
+		!strings.Contains(err.Error(), "status 429") || !strings.Contains(err.Error(), "budget_exceeded") || !strings.Contains(err.Error(), id) {
+		t.Fatalf("check_budget mint over a used-up budget: %v (want 429 budget_exceeded naming %s)", err, id)
+	}
+	if _, _, err := g.Mint(ctx, MintRequest{Name: "hptest no check", BoundRefs: refs}); err != nil {
+		t.Fatalf("mint without check_budget: %v", err)
+	}
+}
+
+// TestRealHarborPilotRunAccounting checks per-run usage and budget refusals against a real `harbor-pilot serve --demo`
+// (opt-in, make test-harbor-pilot).
+func TestRealHarborPilotRunAccounting(t *testing.T) {
+	g := Start(t)
+	usageTest(t, g)
+	budgetTest(t, g)
 }
 
 func TestStartSkipsWithoutOptIn(t *testing.T) {
@@ -285,6 +432,41 @@ func TestMintAndRevokeErrors(t *testing.T) {
 	g.URL = srv2.URL
 	if _, _, err := g.Mint(context.Background(), MintRequest{Name: "x"}); err == nil {
 		t.Fatal("decoded a non-JSON mint response")
+	}
+}
+
+func TestUsageByRefAndCreateBudget(t *testing.T) {
+	srv := httptest.NewServer(newFake())
+	defer srv.Close()
+	ctx := context.Background()
+	g, err := Provision(ctx, srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := g.UsageByRef(ctx, "spaceman.run", "run_1")
+	if err != nil || u.Attempts() != 3 || u.Filters.Refs["spaceman.run"] != "run_1" || u.Filters.BindingID != g.BindingID {
+		t.Fatalf("%+v %v", u, err)
+	}
+	if id, err := g.CreateBudget(ctx, "b", g.ProjectID, "1"); err != nil || id == "" {
+		t.Fatalf("%q %v", id, err)
+	}
+	g.ServiceToken = "hpa_wrong"
+	if _, err := g.UsageByRef(ctx, "spaceman.run", "run_1"); err == nil || !strings.Contains(err.Error(), "status 401") {
+		t.Fatalf("usage with a bad service token: %v", err)
+	}
+	g.admin.csrf = "wrong"
+	if _, err := g.CreateBudget(ctx, "b", g.ProjectID, "1"); err == nil || !strings.Contains(err.Error(), "status 403") {
+		t.Fatalf("budget without CSRF: %v", err)
+	}
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("not json")) }))
+	defer srv2.Close()
+	g.URL = srv2.URL
+	if _, err := g.UsageByRef(ctx, "spaceman.run", "run_1"); err == nil {
+		t.Fatal("decoded a non-JSON summary")
+	}
+	g.URL = "http://127.0.0.1:1"
+	if _, err := g.UsageByRef(ctx, "spaceman.run", "run_1"); err == nil {
+		t.Fatal("read usage from an unreachable gateway")
 	}
 }
 

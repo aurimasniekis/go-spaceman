@@ -31,6 +31,7 @@ import (
 // what open items use, audits every deletion and records it in the change feed. A space export is a plaintext ZIP of
 // the space's records and files, admins only, refused over the space's export limit.
 func TestRetentionAndExportOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarnessWith(t, func(c *config.Config) { c.Limits.RetentionHumanActionsDays = 30 })
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
@@ -190,6 +191,7 @@ func maxChangeSeq(t *testing.T, h *harness) int64 {
 // SM-OBS-003 over HTTP: the audit log pages forward from a durable position (after=, next_after), and once retention
 // pruned events past a reader's position the page carries a gap like the change feed's; the chain still verifies.
 func TestAuditForwardCursorAndRetentionGap(t *testing.T) {
+	t.Parallel()
 	h := newHarnessWith(t, func(c *config.Config) { c.Retention.AuditDays = 30 })
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
@@ -258,6 +260,7 @@ func TestAuditForwardCursorAndRetentionGap(t *testing.T) {
 // SM-REC-003 with a real agent: the space's recording quota reaches the node at launch, and recording retention deletes
 // central's copy of an ended run's recording (audited, in the change feed), never an active run's.
 func TestRecordingQuotaAndRetention(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	e.enroll()
 	e.startAgent()

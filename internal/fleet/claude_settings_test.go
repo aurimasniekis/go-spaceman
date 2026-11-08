@@ -16,7 +16,7 @@ func TestClaudeSettingsNeedMinor8(t *testing.T) {
 	payload, _ := json.Marshal(proto.LaunchPayload{Harness: "claude-code", Role: "implementor", Kind: "worker",
 		ClaudeSettings: proto.ClaudeSettings{"permissions": map[string]any{"deny": []string{"Bash(rm:*)"}}}})
 	c := db.NodeCommand{ID: "cmd_1", Kind: proto.CmdLaunch, SpaceID: "spc_a", PayloadJson: string(payload)}
-	_, err := (&Hub{}).materialize(context.Background(), c, proto.MinorClaudeSettings-1)
+	_, err := (&Hub{}).materialize(context.Background(), c, "nod_1", proto.MinorClaudeSettings-1)
 	if !errors.Is(err, ErrNodeTooOld) || undispatchable(err) != "node_too_old" {
 		t.Fatalf("old node: %v", err)
 	}

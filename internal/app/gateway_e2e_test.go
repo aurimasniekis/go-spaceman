@@ -30,6 +30,7 @@ import (
 // gets the upstream's result as the upstream sent it; it never sees the server's address or credentials. Another role
 // sees nothing, and the run's upstream session ends with the run.
 func TestGatewayOverBridge(t *testing.T) {
+	// Not parallel: t.Setenv changes the process environment.
 	var gotAuth []string
 	up := mcp.NewServer(&mcp.Implementation{Name: "tickets", Version: "1.0"}, nil)
 	type in struct {
@@ -150,6 +151,7 @@ func mustJSON(t *testing.T, v any) []byte {
 // approval request; the upstream is not called. After a person approves, the same call runs exactly once; changed
 // arguments need a new approval. Approval and execution are recorded separately.
 func TestGatedGatewayCall(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int32
 	up := mcp.NewServer(&mcp.Implementation{Name: "deploys", Version: "1.0"}, nil)
 	type in struct {

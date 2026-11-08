@@ -14,6 +14,7 @@ import (
 
 // Hallpass HP-DB-003/004/011: write transactions, busy retries, writer wait and DB/WAL sizes are exported.
 func TestWriterMetrics(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	s := openTest(t, Options{Metrics: m, BusyTimeout: 5 * time.Millisecond})
 	ctx := context.Background()
@@ -50,6 +51,7 @@ func TestWriterMetrics(t *testing.T) {
 
 // Hallpass HP-DB-003: write transactions waiting for the single writer connection are visible as queue depth.
 func TestWriterQueueDepth(t *testing.T) {
+	t.Parallel()
 	m := metrics.New()
 	s := openTest(t, Options{Metrics: m, BusyTimeout: 10 * time.Second})
 	ctx := context.Background()
@@ -74,6 +76,7 @@ func TestWriterQueueDepth(t *testing.T) {
 }
 
 func TestTxResultClassification(t *testing.T) {
+	t.Parallel()
 	for err, want := range map[error]metrics.TxResult{
 		nil: metrics.TxOK, context.Canceled: metrics.TxCanceled, ErrBusy: metrics.TxBusy, ErrFull: metrics.TxFull, ErrIO: metrics.TxIO,
 		ErrCorrupt: metrics.TxCorrupt, ErrConstraint: metrics.TxConstraint, ErrConflict: metrics.TxConflict, sql.ErrNoRows: metrics.TxNotFound,

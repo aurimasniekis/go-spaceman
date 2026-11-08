@@ -9,6 +9,7 @@ import (
 )
 
 func TestLocalFilesystemAccepted(t *testing.T) {
+	t.Parallel()
 	if err := CheckLocalFilesystem(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
@@ -17,6 +18,7 @@ func TestLocalFilesystemAccepted(t *testing.T) {
 // Hallpass HP-DB-007: set SPACEMAN_TEST_NETFS_DIR to a directory on a network/FUSE filesystem (make test-netfs runs this in
 // Docker, where the bind-mounted source tree is FUSE) to verify the refusal end to end.
 func TestNetworkFilesystemRefused(t *testing.T) {
+	t.Parallel()
 	base := os.Getenv("SPACEMAN_TEST_NETFS_DIR")
 	if base == "" {
 		t.Skip("SPACEMAN_TEST_NETFS_DIR not set")

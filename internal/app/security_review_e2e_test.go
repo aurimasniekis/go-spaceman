@@ -12,6 +12,7 @@ import (
 // Security review SR-L06/SR-L07: deleting a transcript needs the same step-up as deleting a recording, and a viewer may
 // ask the queue what is next but not store the decision.
 func TestReviewDeleteStepUpAndQueueRecord(t *testing.T) {
+	t.Parallel()
 	rec, tr := api.RecordingRules["delete-recording"], api.UsageRules["delete-transcript"]
 	if !tr.Reauth || !tr.MFA || tr.Perm != rec.Perm || !tr.Space {
 		t.Fatalf("delete-transcript rule %+v, want the delete-recording step-up %+v", tr, rec)

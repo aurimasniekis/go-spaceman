@@ -20,8 +20,15 @@
 | `accounts` | Accounts | Accounts page: credential kinds, harness, bound spaces, rotation age (secrets never shown) | current |
 | `git-ssh-keys` | Repositories | Git SSH keys page: a shared key's public half, the spaces that may use it and the repositories that do (the private half is never shown) | current |
 | `space-accounts` | Accounts | Choosing a space's accounts and the default per harness | current |
+| `harbor-pilot-connect` | Harbor Pilot gateway | Connecting Harbor Pilot: gateway URL, optional URL for runs, write-only parent and service-principal tokens, plain HTTP switch | current |
+| `harbor-pilot` | Harbor Pilot gateway | The Harbor Pilot connection: URLs, tokens shown only as set with their versions, the client binding, spaces using it (a stand-in gateway in the capture) | current |
+| `space-harbor-pilot` | Harbor Pilot gateway | A space's Harbor Pilot settings: project, harnesses, run-token lifetime, budget fallback, allowed models | current |
+| `space-limits-harbor-pilot` | Harbor Pilot gateway | A space's Limits page with the Harbor Pilot budgets card: covering budgets labelled by source and enforcement, a used-up hard limit refusing launches, project usage over all clients | current |
+| `space-limits-harbor-pilot-warning` | Harbor Pilot gateway | The Harbor Pilot budgets card in its warning state: a hard limit near its limit, a warn-only budget over its own, no launches refused | current |
+| `space-limits-harbor-pilot-unavailable` | Harbor Pilot gateway | The Harbor Pilot budgets card when budget status can't be read: the reason and what launches do meanwhile | current |
 | `run-launch` | First node and space | Launch run form | current |
 | `terminal-live` | Site landing, Terminals and recordings | Live watch-only terminal | current |
+| `terminal-scrollback` | Terminals and recordings | Live watch-only terminal scrolled back into earlier output, with Jump to live | current |
 | `space-terminals` | Terminals and recordings | A space's Terminals tab: every agent as a tab with its status, the selected agent's live terminal | current |
 | `terminals-workspace` | Terminals and recordings | The Terminals workspace: spaces and their agents in a sidebar, the selected space's agents as tabs | current |
 | `terminal-takeover` | Terminals and recordings | Live terminal taken over by the signed-in admin, with the takeover banner | current |

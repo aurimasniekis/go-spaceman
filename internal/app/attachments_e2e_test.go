@@ -46,6 +46,7 @@ func (c *client) raw(method, path string, body io.Reader, hdr ...string) resp {
 // SM-ATT-002/004 over HTTP: multipart upload with idempotency, metadata, safe serving (raster images inline, SVG and
 // HTML downloaded with a neutral type, nosniff and a sandbox CSP), space-scoped authorization and the size limit.
 func TestAttachmentsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

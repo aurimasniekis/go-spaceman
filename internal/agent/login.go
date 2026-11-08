@@ -140,3 +140,45 @@ func writeSecretFiles(files map[string][]byte) error {
 	}
 	return nil
 }
+
+// removeCredentialFiles removes credential files a launch must not have (harness.Launch.RemoveFiles): a link itself,
+// never its target. It fails when one is still there afterwards, so the launch never starts next to it.
+func removeCredentialFiles(paths []string) error {
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s is still there", filepath.Base(path))
+		}
+	}
+	return nil
+}
+
+// removeCredentialDirs removes folders that may hold credentials (harness.Launch.RemoveDirs) with their contents. A
+// link at the path is removed itself, never followed, and os.RemoveAll never follows a link inside the folder (it
+// unlinks it; on Linux it walks with openat and O_NOFOLLOW). It fails when one is still there afterwards, so the
+// launch never starts next to it.
+func removeCredentialDirs(paths []string) error {
+	for _, path := range paths {
+		fi, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if fi.IsDir() {
+			err = os.RemoveAll(path)
+		} else {
+			err = os.Remove(path) // a link or a file in the folder's place: only the entry itself
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s is still there", filepath.Base(path))
+		}
+	}
+	return nil
+}

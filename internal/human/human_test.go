@@ -86,6 +86,7 @@ func (f *fx) create(in CreateInput) *Action {
 
 // SM-HUM-003/005: each type has its own outcomes, lifecycle and outcome are separate, responses are final.
 func TestTypeSpecificResponses(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	q := f.create(CreateInput{Type: TypeQuestion, Title: "Which DB?", Request: json.RawMessage(`{"options":["sqlite","postgres"]}`)})
 	if q.Status != Open || q.Outcome != "" {
@@ -127,6 +128,7 @@ func TestTypeSpecificResponses(t *testing.T) {
 }
 
 func TestCreateValidation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	for name, in := range map[string]CreateInput{
 		"no title":        {Type: TypeTodo, Requester: agent},
@@ -153,6 +155,7 @@ func TestCreateValidation(t *testing.T) {
 
 // SM-HUM-008: a repeated request with the same dedup key returns the original.
 func TestDedup(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a, created, err := f.svc.Create(f.ctx, op, "spc_a", CreateInput{Type: TypeTodo, Title: "one", DedupKey: "k", Requester: agent})
 	must(t, err)
@@ -165,6 +168,7 @@ func TestDedup(t *testing.T) {
 
 // SM-HUM-007: of concurrent responses exactly one wins.
 func TestConcurrentResponsesOneWins(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.create(CreateInput{Type: TypeApproval, Title: "Merge?", Request: json.RawMessage(`{"action":"merge"}`)})
 	var wg sync.WaitGroup
@@ -199,6 +203,7 @@ func TestConcurrentResponsesOneWins(t *testing.T) {
 // SM-HUM-010: a blocking action blocks only its task; a response unblocks it without changing the task's state;
 // expiry leaves the task blocked.
 func TestBlockingAffectsOnlyTheTask(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	t1, _, err := f.q.Create(f.ctx, op, "spc_a", queue.CreateInput{Title: "t1", Status: queue.Ready})
 	must(t, err)
@@ -241,6 +246,7 @@ func TestBlockingAffectsOnlyTheTask(t *testing.T) {
 
 // SM-HUM-006: comments are discussion, never responses; cancellation is a final status without an outcome.
 func TestCommentsAssignCancel(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.create(CreateInput{Type: TypeTodo, Title: "Check logs"})
 	c, err := f.svc.AddComment(f.ctx, op, "spc_a", a.ID, "looking", "Op")
@@ -283,6 +289,7 @@ func TestCommentsAssignCancel(t *testing.T) {
 }
 
 func TestOrderingListsAndCounts(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.create(CreateInput{Type: TypeTodo, Title: "a"})
 	b := f.create(CreateInput{Type: TypeQuestion, Title: "b"})
@@ -338,6 +345,7 @@ func TestOrderingListsAndCounts(t *testing.T) {
 
 // SM-HUM-011: per-run pending limits bound a misbehaving agent.
 func TestRequesterLimit(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	for range MaxPendingPerRequester {
 		f.create(CreateInput{Type: TypeTodo, Title: "x"})
@@ -351,6 +359,7 @@ func TestRequesterLimit(t *testing.T) {
 // SM-OBS-004, SM-HUI-007: the lifecycle of a human action (created, resolved, cancelled, expired) is published with safe
 // metadata only. The title, body, request, response, note and reasons never reach the outbox.
 func TestLifecycleEventsCarrySafeMetadataOnly(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.Outbox = outbox.New(f.s, outbox.Options{Enabled: true, Clock: f.clk})
 	secret := []string{"TITLE-SECRET", "BODY-SECRET", "REQUEST-SECRET", "ANSWER-SECRET", "NOTE-SECRET", "REASON-SECRET"}

@@ -22,6 +22,7 @@ func (f *fx) allowed(p *Principal, dom string, perm authz.Permission) bool {
 // creator and are authorized as both token and creator, so they lose whatever the creator loses, and stop entirely when
 // revoked, expired or when the creator is disabled.
 func TestAPITokens(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	p := &Principal{User: op}
@@ -133,6 +134,7 @@ func TestAPITokens(t *testing.T) {
 // A token issued without expiry keeps working past any expiry and still stops when revoked; it cannot be combined
 // with an expiry.
 func TestAPITokenNeverExpires(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	sys := audit.Actor{Type: audit.ActorUser, ID: op.ID}
@@ -158,6 +160,7 @@ func TestAPITokenNeverExpires(t *testing.T) {
 // A token may issue child tokens within its own scope; a child cannot issue tokens; revoking the parent revokes its
 // children, each audited.
 func TestAPITokensIssuedByTokens(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	op := f.bootstrap()
 	sys := audit.Actor{Type: audit.ActorUser, ID: op.ID}

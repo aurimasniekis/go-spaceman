@@ -9,6 +9,7 @@ import { keys, useLimits, useMe } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
+import { HarborPilotLimitsCard } from '@/features/harborpilot/HarborPilotLimitsCard'
 import { limitValue, usd } from '@/features/limits/format'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago } from '@/lib/format'
@@ -44,6 +45,7 @@ function LimitsPage() {
       <ErrorAlert error={limits.error} />
       {l && (
         <Stack gap="md">
+          <HarborPilotLimitsCard spaceId={spaceId} />
           <BudgetCard l={l} />
           <Card p={0}>
             <Table verticalSpacing="xs">

@@ -44,6 +44,7 @@ func (f *fx) corePublish(nc *nats.Conn, subject string, data []byte, headers map
 // as a durable one; it is labelled non-durable (subscribe grant, no durable or consumer), deduplicates by
 // Nats-Msg-Id or, without one, by content, and every delivery is live (core NATS never redelivers).
 func TestCoreSubscriptionIngests(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	s := f.coreSubscribe("spc_a", "issues-core")
 	if s.Delivery != DeliveryCore || s.Durable != "" || s.Consumer != "" || s.Grant != "subscribe:evt.github.example-org.webhook.issues.*" || s.Pending {
@@ -104,6 +105,7 @@ func TestCoreSubscriptionIngests(t *testing.T) {
 
 // SM-EVT-013 on core: an invalid message is quarantined (nothing could redeliver it anyway) and can be reprocessed.
 func TestCoreSubscriptionQuarantine(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	def := template.Definition{Subject: "evt.ops.alert.fired", Title: "{{data.name}}", InputSchema: json.RawMessage(`{"type":"object","required":["name","level"]}`)}
 	s, err := f.svc.CreateSubscription(f.ctx, admin, "spc_a", SubscriptionInput{Name: "alerts", ConnectionID: f.conn.ID, Custom: &def, Delivery: DeliveryCore})
@@ -137,6 +139,7 @@ func TestCoreSubscriptionQuarantine(t *testing.T) {
 // ADR-0042: core subscriptions have no cursor. Replays and cursor changes (start now included) are refused with a
 // clear error, history cannot be requested at creation, and a subject change resubscribes without asking for a cursor.
 func TestCoreSubscriptionRefusesCursors(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	vars := map[string]string{"account_key": "example-org", "repository": "example-org/tool"}
 	if _, err := f.svc.CreateSubscription(f.ctx, admin, "spc_a", SubscriptionInput{Name: "x", ConnectionID: f.conn.ID, TemplateVersionID: f.issue.Versions[0].ID,
@@ -179,6 +182,7 @@ func TestCoreSubscriptionRefusesCursors(t *testing.T) {
 
 // A core subscription the server refuses (no subscribe grant) is reported as an error naming the grant, and retried.
 func TestCoreSubscriptionDenied(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	conn, err := f.svc.CreateConnection(f.ctx, admin, ConnectionInput{Name: "pulse-narrow", URL: f.nats.URL,
 		Creds: string(f.nats.SubscribeOnlyCreds("narrow", "evt.other.>", "_INBOX_narrow.>")), Enabled: true})
@@ -197,6 +201,7 @@ func TestCoreSubscriptionDenied(t *testing.T) {
 
 // The asynchronous error callback marks a slow core subscription and a refusal that arrives late.
 func TestCoreAsyncErrors(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	s := f.coreSubscribe("spc_a", "issues-core")
 	var run *subRun
@@ -232,6 +237,7 @@ func TestCoreAsyncErrors(t *testing.T) {
 
 // The ingestion metrics classify every result, including rate-limited and failed events, without free-form labels.
 func TestObserveClassifies(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.observe(DeliveryDurable, OriginRedelivery, OutcomeDuplicate, nil, time.Millisecond)
 	f.svc.observe(DeliveryDurable, OriginReplay, OutcomeReplayed, nil, time.Millisecond)
@@ -259,6 +265,7 @@ func TestObserveClassifies(t *testing.T) {
 
 // Durable consumers report their pending and unacknowledged events; replays are counted.
 func TestDurableIngestMetrics(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	var rate atomic.Int64
 	rate.Store(6) // one per 10 s, burst 1: the rest wait
@@ -286,6 +293,7 @@ func TestDurableIngestMetrics(t *testing.T) {
 
 // SM-EVT-016 on core: a message carrying this installation's spaceman-origin is recorded as filtered, not ingested.
 func TestCoreOwnEventsAreNotReingested(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	f.svc.o.Origin = "spaceman-test" // before the subscription starts its handler
 	s := f.coreSubscribe("spc_a", "issues-core")

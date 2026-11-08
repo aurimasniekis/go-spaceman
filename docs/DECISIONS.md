@@ -2181,6 +2181,12 @@
   - An idle stop interrupts a program that is waiting at its prompt. Work in the middle of a turn is never stopped.
   - Not security-relevant: the launch goes through the same resolution, admission (limits and budgets) and audit as
     any launch, as a system actor.
+- **Note (2026-11-07, human responses):** a response whose requester's run has ended went to control only while a
+  control run was wanted (ADR-0032), so with no control running it became undeliverable: auto-start never saw it, and
+  a control started later was not told about it. With auto-start on, the routing now also sends it to control when the
+  space can start one (it had a control run or has a space role of kind control), as a pending, waking notification.
+  The sweep then starts control for it, and that control, or one an operator launches later, gets one notice per
+  unacknowledged response. With auto-start off, or with no control to start, it stays undeliverable as before.
 
 ### ADR-0057 — Repository SSH keys held by SpaceMan (security-relevant)
 - **Status:** Accepted, 2026-11-05 (operator decision; amends ADR-0044, which offered no SpaceMan-held Git credentials).
@@ -2300,12 +2306,39 @@
     too).
   - Terraform manages them as `claude_settings` on `spaceman_harness_profile`, a JSON string (`jsonencode`). An API
     update that leaves `claude_settings` out keeps the stored settings, so older clients don't wipe them.
+  - **Note (2026-11-07, ADR-0064):** SpaceMan adds one key of its own, `"tui": "default"` (Claude Code's classic
+    renderer), when the profile's settings have no `tui`. The full-screen renderer, Claude Code's default for a fresh
+    configuration, keeps earlier output out of the terminal, so watchers couldn't scroll back without a takeover. A
+    profile's `tui` always wins, and the profile's other keys are written unchanged.
 
 ### ADR-0060 — Harbor Pilot gateway: one central connection, spaces opt in per harness, per-run child tokens (security-relevant change)
-- **Status:** **Proposed**, 2026-11-06. Not yet accepted. The operator answered design questions Q1–Q7 on 2026-11-06
-  (listed at the end). The points they settle are marked **(Qn)**. Q4 stays **open**, with an interim default that
-  control proposed. Nothing in this ADR is implemented yet. Contract:
-  `docs/contracts/harbor-pilot.md` (v0.1.1); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike).
+- **Status:** **Accepted**, 2026-11-08 (HP-T8), with the operator's answers to Q1–Q7 of 2026-11-06 and their later
+  decisions (listed at the end; the points they settle are marked **(Qn)**). Proposed 2026-11-06. Accepted with:
+  - **Project choice: option b** (2026-11-07). Setting or changing a space's `project_id` needs `account:write`, like
+    binding an account to a space (decision 2, "Open points").
+  - **Minimum Harbor Pilot version 0.1.3** (decision 8), checked by the mint probe.
+  - **Q3 as built:** a per-space `on_budget_status_unavailable`, `proceed` by default or `refuse`. Since HP-T8 it also
+    covers SpaceMan's own failures while reading status (a token that can't be opened, a database error), with a fixed
+    reason.
+  - **Q4 stays open.** Where unscoped Harbor Pilot events go (quota, `access.request.blocked`, binding, workspace,
+    account and global budgets) is **not decided** and is not decided by this acceptance. The interim default is
+    control's proposal, not an operator answer: no automatic routing, delivery only to spaces that subscribe
+    (DECISIONS K-12).
+  - **Q7 is not met yet:** all real evidence is `serve --demo` 0.1.3 with synthetic upstreams; a real model provider
+    behind a real gateway is **not verified** (evidence map: RELEASE_READINESS §13).
+  - **Implemented:** HP-T2, the connection and space settings (decision 1; decision 2 for the stored tokens; decision 3's
+  central-side rules) and the version probe of decision 8. HP-T3: central's side of decisions 4 and 5 (routing without
+  fallback, mint-or-reuse at dispatch, revocation on every end path; see "Implementation notes (HP-T3)" below). HP-T4:
+  decision 6, delivery to the harness on the node (protocol minor 9; see "Implementation notes (HP-T4)" below). HP-T5:
+  the budget pre-check, the Limits card and per-run usage (decisions 4 and 7; see "Implementation notes (HP-T5)"
+  below). HP-T6: event templates (§7). HP-T7: Terraform resources and the combined example, in terraform-provider-spaceman.
+  HP-T8: verification, the threat model (T-03, T-05, T-34 to T-37, T-39), LIMITATIONS and release notes. Contract:
+  `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
+  the 0.1.3 re-run).
+  - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
+    by trusted ref, budget refusals as `access.request.blocked`, `system`-role messages (K-13 resolved), the minting
+    credential as `created_by`, and an optional budget check on mint. **The minimum Harbor Pilot version is 0.1.3**
+    (decision 8).
 - **Context:**
   - **What operators want.** Run model traffic should go through Harbor Pilot (HP), a self-hosted LLM gateway. HP gives
     failover, hard per-project spend limits and usage for every harness.
@@ -2322,8 +2355,8 @@
      - **One connection per central.** It is a singleton `harbor_pilot_connection` row and holds:
        - the base URL;
        - the **parent token** (`hpk_`, scopes `gateway:invoke`, `gateway:models`, `tokens:mint`);
-       - an optional **service-principal token** (`hpa_`, `usage.read` + `config.read`, plus `activity.read` once
-         per-run usage exists).
+       - an optional **service-principal token** (`hpa_`, `usage.read` + `config.read` for budget status and per-run
+         usage, plus `activity.read` for request activity and Harbor Pilot's events API).
      - **Each space opts in** through `space_harbor_pilot`, which has these fields:
        - `enabled`;
        - `project_id` (required when enabled);
@@ -2348,9 +2381,19 @@
      - **Run child tokens.** They are sealed the same way (`harborpilot:run:<run id>`) in `run_gateway_credentials`, so
        an at-least-once dispatch resend reuses the token instead of minting again.
      - **Permissions** go through Casbin:
-       - the connection needs `account:write`;
-       - space settings need `space_config:write`;
+       - the connection needs `account:write`, and its writes (replace, delete) a step-up (recent sign-in and second
+         factor), as event connections do;
+       - space settings need `space_config:write`, except the **project**: setting or changing a space's `project_id`
+         needs `account:write` (a global administrator or the root token), because the project decides who pays, as
+         binding an account to a space does (`set-space-accounts`). The operator decided this on 2026-11-07 (option b
+         of the HP-T2 review). An empty `project_id` on an update keeps the stored project, so a space's operators can
+         still enable, disable or tune their space; the audit entry records `project_changed`;
        - status needs space read.
+     - **Stored tokens go only to the address they were entered for.** A connection write that changes `base_url` or
+       `run_base_url` (scheme, host, port or path), or newly allows insecure HTTP, must carry `parent_token` again, and
+       `service_token` (or `remove_service_token`) when one is stored; otherwise it is refused with 422 before any
+       outbound call. Without this rule, whoever could write the connection (or a stolen administrator session) could
+       point it at their own host and receive the write-only tokens in the validation call (HP-T2 review, finding 1).
   3. **Transport.**
      - **Central's own client** (validation, mint, revoke, budget status): https is required unless the host is
        loopback or `allow_insecure_http` is set (as in ADR-0035).
@@ -2362,11 +2405,18 @@
          refuses the launch otherwise. So a central that skipped the check can't make a node send a token over plain
          HTTP;
        - if central reaches HP on another address than runs do (a loopback HP next to central, say), a separate
-         run-facing URL is configured. Whether that is a `run_base_url` field is settled in HP-T2.
+         run-facing URL is configured: the connection's optional `run_base_url` (HP-T2). Without it, runs use
+         `base_url`, which then has to pass the run-facing rule itself (a loopback `http` `base_url` is refused unless
+         `run_base_url` or `allow_insecure_http` is set).
      - **`allow_insecure_http` exposes child tokens.** With it, every run's token crosses the network path in clear for
        its whole TTL, as does the parent token on central's calls. It is for tests and a trusted local network only,
        and the connection's status says it is set.
-     - Redirects are never followed.
+     - Redirects are never followed, and no proxy is used (one from the environment would see every token).
+     - **SSRF stance.** `base_url` is chosen by an administrator (`account:write`). Central's client refuses to dial
+       link-local (cloud metadata), unspecified and multicast addresses, checked on the resolved address. Private and
+       loopback addresses stay allowed on purpose: a Harbor Pilot gateway usually runs on an internal network. What
+       comes back from a wrong target is bounded (status, error type and a 300-character sanitised message), and the
+       tokens are only ever sent to the address they were entered for (decision 2). THREAT_MODEL T-34 (T-33 is taken by an open branch).
      - Errors keep HP's status, error type and its `error.message`, cut to a fixed bound and treated as untrusted text
        (T-03), so failure reasons stay readable (SM-GW-003). Raw response bodies are never kept.
      - Tokens are never logged.
@@ -2378,6 +2428,14 @@
        fallback to a direct account**, silent or audited **(Q1)**. A harness configured for HP goes only through HP.
      - A launch is refused early when a blocking HP budget covering the space is `exceeded`. HP stays authoritative and
        enforces with 429 mid-run.
+     - **The pre-launch budget check is HP's own: the dispatch mint sends `check_budget: true`** (HP 0.1.3, its
+       D-043). HP then refuses a run whose binding, project, workspace or global blocking budget is used up with 429
+       `budget_exceeded` and the `budget_id`, and the run fails with that reason before its harness starts. This uses
+       HP's own figures and scope rules instead of SpaceMan recomputing which budgets cover the space. The budget
+       status that `LaunchRun` reads still gives the earlier refusal and the Limits page (HP-T5). Two limits stay: HP
+       doesn't check account budgets at mint, and a budget with spend under its limit passes even when the first
+       request is then refused for its own estimate. A mint that fails with 502 (`could not check budgets`) is a mint
+       failure, not a budget refusal.
      - When budget status can't be fetched, the space's `on_budget_status_unavailable` decides: `proceed` (the default;
        the gateway still enforces) or `refuse` **(Q3)**.
   5. **A per-run child token, minted at dispatch** (not in `LaunchRun`; see Alternatives):
@@ -2396,34 +2454,69 @@
        instance's `CODEX_HOME`.
      - **Node protocol.** This needs node protocol minor 9. Gateway launches to older agents are refused with a clear
        reason.
-     - **Model choice.** The run's model must be one the HP plan routes. With HP 0.1.1 it must also be a Claude model
-       whose requests carry no `system`-role messages (spike). How the default is chosen per space is settled in the
-       implementation, through `allowed_model_aliases` or a default model.
+     - **Model choice.** The run's model must be one the HP plan routes. How the default is chosen per space is settled
+       in the implementation, through `allowed_model_aliases` or a default model. Since HP 0.1.2, Claude Code's default
+       model works: its `system`-role messages are accepted (K-13, resolved by the 0.1.3 re-run). HP forwards them
+       unchanged to models not on its no-support list, so a model without support gets the provider's own 400.
   7. **Events and usage.**
      - **Events.** HP events become shipped event templates. Their text is untrusted (T-03).
        - Only project-scoped budget events map to one space.
        - **Unscoped events stay open (Q4).** These are quota, `access.request.blocked`, and binding/workspace/global
          budget events. **Interim default (control's proposal, not the operator's choice): no automatic routing.**
          They reach only the spaces that explicitly subscribe with the template.
-     - **Usage.** HP 0.1.1 can't report usage per run (no filter or grouping by trusted ref).
-       - The Limits page shows project-level HP usage, labelled with its source.
-       - Per-run usage waits for an upstream change **(Q5)**. That request, and the doc mismatches, go to the Harbor
-         Pilot space in SpaceMan as cross-space requests once that space exists, not as GitHub issues filed by agents.
+       - **Budget refusals arrive as `access.request.blocked`** (HP 0.1.2, its D-040): one event per refused request,
+         with `reason` naming the budget, alongside the once-per-period `budget.threshold.exceeded`. The HP-T6
+         templates include it. It carries only `request_id` and `binding_id`, so it is an unscoped event under Q4. A
+         space-level mapping through the request's `trusted_refs.spaceman.space` would need an HP API read per event
+         and is not decided. Its volume (one per refused request) also argues for dedup or a digest.
+       - **Shipped (HP-T6, 2026-11-07):** `harbor-pilot-budget` (`budget.threshold.*`; optional `project_id`,
+         `budget_id`, `exceeded_only`, `blocking_only`), `harbor-pilot-quota` (`quota.window.*`; optional `account_id`,
+         `monitor_id`, `exhausted_only`) and `harbor-pilot-access-blocked` (`access.request.blocked`; optional
+         `binding_id`, `budget_only`, which matches the 0.1.3 reason prefix `budget `). Filters use ADR-0061's
+         `if_set`. Correlation: a budget and its period (warning and exhaustion group), a quota monitor (exhaustion
+         and recovery group), a binding (a burst of refusals groups); redeliveries carry the same event id and are
+         duplicates. Titles and correlation keys use only values Harbor Pilot constrains, and each template's input
+         schema enforces those formats, so an event with other text there is quarantined rather than rendered. No
+         digest yet; the interim Q4 default stands.
+     - **Usage: per-run usage is in scope (HP-T5).** HP 0.1.2 filters usage by trusted ref (its D-041).
+       - **Run-end reconcile.** After a gateway run ends, central reads
+         `GET /api/v1/usage/summary?ref=spaceman.run:<run id>&binding_id=<binding>` with the service-principal token,
+         and records the run's usage with source **`harbor-pilot`**: tokens, attempts and HP's cost categories, labelled
+         as gateway-observed figures. `binding_id` is always passed, because ref values are chosen by the minting
+         client and only the binding makes them SpaceMan's.
+       - **What it fills.** It gives Codex runs usage, which today is `unavailable`. It never overwrites usage a harness
+         reported itself (Claude's transcript usage); how both are shown for a Claude run is settled in HP-T5.
+       - **Timing.** HP writes ledger rows as requests finish, so the reconcile runs after the token is revoked (no new
+         requests) and may be retried later; a figure read before the run's last request settled is not final.
+       - **Reading fails or the connection has no service-principal token:** the run keeps its current usage, never a
+         zero.
+       - The Limits page also shows project-level HP usage, labelled with its source.
+  8. **Minimum Harbor Pilot version: 0.1.3.** SpaceMan relies on 0.1.2's ref filters, budget-refusal events and
+     `system`-role support, and on 0.1.3's `check_budget`. hptest and the contract pin v0.1.3, and the docs state the
+     minimum. No HP API that reports its own version was found at v0.1.3, so connection validation detects an older
+     gateway with a feature probe (HP-T2): the validation mint always sends `check_budget` (false). HP decodes the
+     mint body refusing unknown fields, before it checks scopes (`internal/gateway/models.go:230-235` at v0.1.3), so a
+     gateway before 0.1.3 answers 400 `invalid body: json: unknown field "check_budget"`, and the connection is
+     refused as "older than Harbor Pilot 0.1.3". An older gateway is never used without `check_budget` or per-run
+     usage. The probe can't tell a later gateway that dropped the field from an old one; HP's D-043 keeps it.
 - **Consequences (security-relevant):**
   - **Agents can read their own child token.** A leaked one is worth one binding's routing and budget for at most the
     TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
     because HP can't refresh a token inside a running harness. The 24 h default and the per-space maximum of 7 days
     bound this **(Q2)**.
   - **HP clamps a child's TTL to its parent's expiry** (contract: Mint). A parent that expires sooner than a space's TTL
-    silently gives that space's runs shorter tokens, and they lose model access earlier. Validation in HP-T2 warns when
-    the parent's expiry is shorter than an opted-in space's TTL.
+    silently gives that space's runs shorter tokens, and they lose model access earlier. Validation (HP-T2) learns
+    the parent's expiry by minting its probe credential with HP's maximum TTL (7 days) and reading the clamped
+    `expires_at`; the connection and the space settings then warn when the parent expires before an opted-in space's
+    TTL. The probe's token is discarded at once and the credential revoked; if the revoke fails, the credential goes to
+    the durable revocation queue.
   - **Revoking the parent in HP cuts every live run at once.** That gives an emergency stop, and is also a single point of
     failure.
   - **Hard spend limits come only from HP.** SpaceMan's own budgets stay soft (ADR-0036).
   - **An HP outage stops new runs** for the harnesses that opted in.
   - **The parent token is long-lived and high-value.** Its protection rests on central's keyring and KEK, as for accounts.
-  - **Evidence ceiling (Q7).** Until a real upstream is available, evidence is "real `serve --demo` 0.1.1 with
-    synthetic upstreams". A live run against a real HP and provider is a placeholder in TRACEABILITY (SM-GW-010); the
+  - **Evidence ceiling (Q7).** Until a real upstream is available, evidence is "real `serve --demo` 0.1.3 with
+    synthetic upstreams" (0.1.1 for the first spike). A live run against a real HP and provider is a placeholder in TRACEABILITY (SM-GW-010); the
     operator says one is coming soon.
 - **Alternatives:**
   - **An account kind:** rejected (above).
@@ -2432,7 +2525,10 @@
     transaction, and a node that stays offline past the TTL would receive an expired token. Early refusal comes from a
     pre-check instead.
 - **Open points:**
-  - **HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces? Not decided.**
+  - ~~**HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces?**~~ **Settled in HP-T4
+    (2026-11-08) by control's instruction that no other Anthropic or Claude credential may sit next to the gateway's:
+    the second option, refused, done on the node** (see "Implementation notes (HP-T4)"). Kept as built at acceptance
+    (2026-11-08).
     - ADR-0059 lets a claude-code profile's `claude_settings.env` set any variable, `ANTHROPIC_BASE_URL` included. The
       operator accepted this on 2026-11-07 (ADR-0059 accepted risk, THREAT_MODEL T-32).
     - In a space with HP enabled for Claude Code, a profile `env` could point a run's model traffic away from HP or
@@ -2444,6 +2540,123 @@
       - or both stay as they are, documented as the operator's choice.
     - Whoever edits profiles can already run hooks on the node (ADR-0059), so the decision is about budget
       enforcement, not about a new privilege.
+  - ~~**Who may choose a space's project?**~~ **Resolved: the operator's decision of 2026-11-07 (option b).**
+    - HP-T2 first let `space_config:write` set the project, so a space's operators could point their space at any
+      project the connection's binding allows, another space's project included, and charge that project's budget.
+    - Now setting or changing `project_id` needs `account:write`, like binding an account to a space (decision 2). The
+      check runs before the project probe (an unauthorised caller causes no call to Harbor Pilot) and again in the
+      write transaction against the stored project.
+    - **Residual risk (accepted, not changed):** a space's operators can still disable Harbor Pilot for their space,
+      or delete its settings. Its runs then go back to the space's direct accounts and SpaceMan's soft budgets
+      (ADR-0036), outside Harbor Pilot's hard limits. Q1 forbids a per-run fallback while the space is enabled, not
+      this. If it matters, `enabled` going from true to false could need `account:write` too.
+- **Implementation notes (HP-T3, 2026-11-07).** Choices made while implementing decisions 4 and 5; none weakens them.
+  - **Hook shape.** `fleet.Options.Gateway` (`fleet.Gateway`, implemented by `harborpilot.Lifecycle`) has three parts:
+    `PreLaunch` before the launch transaction (no connection; the budget part is a `BudgetChecker` that HP-T5 fills),
+    `Route` inside it (instead of account resolution for a routed harness), and `Token` at dispatch. The gateway and
+    project are stored in the run's launch spec (`launch.gateway`) and manifest, so a dispatch uses what the launch
+    decided, and a space that later disables Harbor Pilot doesn't move its pending runs to an account.
+  - **Allowed aliases.** With a non-empty list, a launch must name one of the models; a launch with no model (the
+    harness default) is refused, since central can't tell what it would use.
+  - **Session.** A fresh Claude Code gateway run gets its session ID from central (a UUID chosen after the relocation
+    check), sent with `resume: false`; the run row learns it from the node's report as before, so a run that never
+    started has none and isn't resumed. Codex and resumed runs bind their own session; a fresh Codex run binds the run ID.
+  - **Token storage.** The sealed child token is dropped as soon as its revocation is queued (not when the revocation
+    is done): nothing needs it after its run's end. A row without a token means the run's token is gone, and a later
+    dispatch of that run fails as `gateway_unavailable` instead of minting again. A token minted for a run that was
+    stopped meanwhile is queued for revocation at once.
+  - **Revoker.** It runs on central's deadline timer (ADR-0036), woken by the commit that queued a revocation, at most
+    10 revocations per round with 5 s per call. 204 settles as revoked. 404 and 401 settle as revoked only when the
+    parent that asked is the one that minted the credential (a 401 then means the parent itself is revoked or expired,
+    which ended its children; audited). From any other parent they prove nothing and settle as failed. 403 and other
+    refusals settle as failed. Failed rows are audited (`harbor_pilot.revocation.failed`), logged, counted in the
+    connection's `failed_revocations` and on its page, and in the `spaceman_gateway_revocations_failed` gauge. Network
+    failures, 5xx and 429 are retried after 1 s, ×4 each time, at most 5 min, until the credential expires. No human
+    action is raised yet.
+  - **Which parent minted a credential (review F1, 2026-11-07).** `run_gateway_credentials` and `gateway_revocations`
+    record `parent_fp`, the first 8 bytes of a domain-separated SHA-256 of the minting parent token, hex-encoded. The
+    tokens are random, so this reveals nothing usable. NULL means unknown, and only a 204 counts for such a row. The
+    columns are in migration 0040, which is not released yet, so no migration was added.
+  - **Parent rotation.** Harbor Pilot answers 404 to a parent revoking another parent's child, so queueing these for
+    later would record them as done while they stay valid. Replacing the parent therefore revokes with the old parent,
+    at the stored address, everything it minted that may still be valid: live run tokens and pending revocations (for
+    example ones queued while Harbor Pilot was unreachable). This happens before the new parent is saved. The outcomes
+    are recorded, and the warning says those runs have no model access until restarted. One that can't be revoked is
+    recorded as failed with the advice to revoke the old parent in Harbor Pilot (its cascade ends the children). The
+    window where a run token is minted during the rotation is closed from both sides:
+    - the connection write's transaction lists the old parent's credentials again and, if one is new, runs another
+      revocation round (at most 3, then the write fails with "retry");
+    - a mint whose store transaction finds the parent version changed revokes its own credential with the old parent
+      (queueing it if that fails) and mints again with the new one.
+    If the connection write fails after the revocations (a version conflict, another binding while spaces use Harbor
+    Pilot), the old parent stays and those runs keep tokens that no longer work. That fails safe:
+    `TestParentRotationWriteFailureFailsSafe`.
+  - **Lease loss.** Runs a node left `unknown` keep their tokens while it may come back; once the space's lease has
+    expired by the disconnect grace plus one minute (the node's interrupt grace), the node's lease guard has stopped
+    them and the sweep queues their revocation. The runs stay `unknown`.
+  - **Agents before HP-T4 are refused (review F2, 2026-11-07).** A node whose agent doesn't know
+    `SPACEMAN_GATEWAY_TOKEN` drops it, and the harness then starts on whatever login the node user has. That is a
+    fallback to a direct account, which Q1 forbids. A gateway launch to a node below `proto.MinorGatewayToken` (9)
+    therefore fails as `agent_too_old`, before anything is minted: "gateway runs need protocol minor 9, which delivers
+    the run's token to the harness; the node negotiated 8: upgrade its agent". HP-T4 raised `MaxMinor` to 9 and removed
+    the test-only `GatewayMinMinor` seam that HP-T3 needed before any agent spoke minor 9.
+  - **A mint holds up dispatch for at most 5 s (review F3).** A node's dispatch loop waits at most 5 s
+    (`fleet.Options.GatewayMintWait`) for a new launch's token. A slower mint (Harbor Pilot retries take about 75 s at worst) goes
+    on in the background, once per run and bounded to 2 min. The launch stays pending, the node's other commands
+    (stops and kills included) are sent, and the finished mint kicks the loop, which then reuses the stored token.
+    Only the pass that starts a mint waits for it; while it runs, later passes skip that launch at once, so many slow
+    mints don't add up before a stop (HP-T3 review N1, fixed in HP-T4). Central's shutdown waits up to 5 s for
+    background mints, then cancels the rest and waits for them before it closes the store. A cancelled mint that already
+    reached Harbor Pilot still queues its credential for revocation (N3).
+  - **Failed revocations decay (HP-T3 review N2, fixed in HP-T4).** `failed_revocations` and the gauge count only
+    failed rows whose token hasn't expired yet. The deadline timer also wakes at the next such expiry, so the gauge
+    drops back without other activity. The rows are kept for the record.
+  - **Known gaps.** A crash between a successful mint and the transaction that stores the token leaves a child that
+    SpaceMan doesn't track; it stays valid until its TTL. The deadline timer that runs the revoker and the lease-loss
+    sweep runs only in `spaceman serve`; anything queued by another process is done at the next `serve` start. Both
+    are in LIMITATIONS.
+- **Implementation notes (HP-T4, 2026-11-08).** Decision 6 on the node; none weakens it.
+  - **Wire shape (minor 9).** At dispatch, central adds `gateway: {kind: "harbor-pilot", base_url, allow_insecure_http}`
+    to the launch next to `secrets[SPACEMAN_GATEWAY_TOKEN]`. `base_url` is the connection's `run_base_url`, or its
+    `base_url`. The plan's `kind: anthropic | openai-responses` was not used: the harness, not the gateway, decides the
+    API, so the kind names the gateway. The address is read at dispatch (`fleet.Gateway.Address`), after the token.
+    Moving the gateway needs the parent token again, which revokes every run token (decision 2), so a launch never
+    carries a token to an address it wasn't minted for. Both are dispatch-time only: the stored command has neither.
+  - **The node checks before it writes the secrets file.** `proto.GatewayLaunch.Origin`: absolute https, no
+    credentials, query or fragment; plain http only with `allow_insecure_http`, and no loopback exemption. A launch
+    whose token and address don't travel together, or that carries any other secret or names an account, is refused
+    (`build launch`). That would be a central bug, and the node doesn't guess.
+  - **Claude Code.** `SecretEnv` is exactly `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`. The shim scrubs every
+    inherited `ANTHROPIC_*`, and now also `HARBOR_PILOT_TOKEN` and `SPACEMAN_GATEWAY_TOKEN`. The ADR-0021 seed is kept.
+    A stored login (`$CLAUDE_CONFIG_DIR/.credentials.json`, from a `/login` inside an earlier run) is removed before
+    the launch. A profile whose `claude_settings` would add another credential or endpoint fails the launch with the
+    key named. That covers `apiKeyHelper`, `proxyAuthHelper`, `awsCredentialExport`, `awsAuthRefresh`, `gcpAuthRefresh`
+    and `forceLoginMethod` (from the 2.1.317 settings schema), and `env` entries `ANTHROPIC_*` and every
+    `CLAUDE_CODE_*` but an allowlist of output and UI switches (2.1.317 has over 800, among them OAuth tokens, key file
+    descriptors, host-managed auth, base URLs, proxies, client certificates and Bedrock/Vertex/Foundry switches; the
+    HP-T4 review asked for the allowlist shape so new ones are refused), plus `HTTP(S)_PROXY`/`ALL_PROXY` in either
+    case, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_OPTIONS`.
+    The check is on the node, so it holds whatever central sent.
+  - **Codex.** The five `-c model_provider…` overrides from the HP-T1 spike, `base_url = <origin>/v1`, and
+    `HARBOR_PILOT_TOKEN` in `SecretEnv`. No `auth.json` is written. Any `auth.json` in the instance's `CODEX_HOME` is
+    removed, and the launch fails if it is still there. That covers an ADR-0054 API-key file, and a link to an ADR-0053
+    login, whose `auth.lock` link goes too.
+  - **Codex's shell snapshot is off for every Codex run** (`-c features.shell_snapshot=false`). The real HP-T4 run found
+    that codex-cli 0.166.0 writes the run's environment, `HARBOR_PILOT_TOKEN` and `SPACEMAN_RUN_TOKEN` included, to
+    `$CODEX_HOME/shell_snapshots/*.sh`, where it outlives the run (`docs/contracts/harnesses.md`, THREAT_MODEL T-36).
+    Every Codex launch, gateway or not, also removes the `shell_snapshots` folder an earlier run left
+    (`Launch.RemoveDirs`: a link is removed itself, `os.RemoveAll` never follows one inside, and the launch fails if it
+    is still there): on earlier releases it could hold a direct account's API key, which a later gateway run of the
+    same instance must not start next to (HP-T4 review F1). Operators rotate such keys (CHANGELOG).
+  - **Codex `config.toml` and the provider (HP-T4 review).** With codex-cli 0.166.0 the `-c model_provider…` overrides
+    win over a `config.toml` root `model_provider`, a `<name>.config.toml` profile (even under `--profile`) and a
+    `[model_providers.harbor-pilot]` table there; a legacy `profile =` key makes Codex refuse to start. So no
+    `-c profile=` is passed and nothing is refused (LIMITATIONS).
+  - **Model choice.** Not changed. Codex's own default model may not be routed by the plan (the demo refuses it with
+    403), so a gateway Codex run needs the role's model or the space's allowed aliases. This is in LIMITATIONS.
+  - **Evidence.** Unit tests (`internal/harness`, `internal/proto`, `internal/agent`, `internal/fleet`), the fleet e2e
+    test with the real node agent (`TestHarborPilotGatewayDeliveryOnNode`), and real Claude Code 2.1.317 and codex-cli
+    0.166.0 runs through SpaceMan against `serve --demo` v0.1.3 (`TestRealHarborPilotGatewayRuns`, 2026-11-08).
 - **Operator questions and answers (asked and answered 2026-11-06):**
   - **Q1, fallback to a direct account:** never.
   - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.
@@ -2452,10 +2665,50 @@
     not an operator answer: they are not routed automatically and go only to spaces that explicitly subscribe.
   - **Q5, upstream issues:** yes, through cross-space requests to the Harbor Pilot space in SpaceMan once it exists.
     These cover a ref filter for usage, a service-principal token resource in its provider, project-id outputs in
-    scenario 07, the doc mismatches and the K-13 protocol gap.
+    scenario 07, the doc mismatches and the K-13 protocol gap. Harbor Pilot 0.1.2 (2026-11-07) answered the ref
+    filter, the doc mismatches and K-13; 0.1.3 added `check_budget` on mint.
   - **Q6, per-harness opt-in:** yes, with a `harnesses` list open to any harness HP can serve.
-  - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` 0.1.1, with a placeholder kept for a
-    live run.
+  - **Q7, real upstream:** coming soon. Until then, evidence is real `serve --demo` (0.1.1, then 0.1.3), with a
+    placeholder kept for a live run.
+
+- **Implementation notes (HP-T5, 2026-11-08).** Decisions 4 and 7; none weakens them.
+  - **Which budgets cover a space.** Budget status has no filters, so central selects: `project` = the space's
+    project, `workspace` = that project's workspace (looked up with `config.read` only when a workspace budget exists,
+    cached 10 min), `binding` = the connection's client binding (every run token is minted under it, so its trusted
+    refs carry it), and `global`. `account` budgets are left out: they cover whichever upstream account serves a
+    request, not a space, and Harbor Pilot doesn't check them at mint either. A disabled budget is shown as disabled.
+  - **Cache.** One budget status read per connection, reused for 30 s (a failed read for 5 s), single flight, read
+    outside any transaction. A cached read is keyed on the connection's id, version, service-token version and
+    address, so a connection write is never answered from an older read.
+  - **Refusal.** A covering budget that is enabled, enforced with `block` and `exceeded` refuses the launch in
+    `PreLaunch` with `rate_limited`, for example: `Harbor Pilot budget "daily" (project prj_web) is used up for
+    this day: 0.12 of 0.10 USD spent; it resets at 2026-11-09T00:00:00Z`. Names and ids are Harbor Pilot's text, so they
+    are sanitised and bounded (T-37). Warn-only budgets never refuse. Control's auto-start already turns a launch
+    error into "Control could not start" with the error, so nothing was added there. Status that can't be read (no
+    service-principal token, a failed read, a failed workspace lookup) follows `on_budget_status_unavailable`:
+    `proceed` logs and goes on, `refuse` answers `unavailable` with the reason.
+  - **Mint check.** The dispatch mint sends `check_budget: true`. Harbor Pilot's 429 `budget_exceeded` is not retried
+    and fails the run as `gateway_unavailable` with Harbor Pilot's message. Its 502 "could not check budgets" is
+    retried like any 5xx, then fails the run the same way (decision 4: a mint failure, not a budget refusal).
+  - **Status API.** `GET /spaces/{id}/harbor-pilot/status` (space configuration read): the overall state (`off`, `ok`,
+    `warning`, `exceeded`, `unavailable`), the covering budgets with decimal amounts, and the project's usage from
+    `usage/summary?group_by=project` since the start of the project budget's current period (the last 30 days
+    without one). The usage is labelled `clients: all`.
+  - **Per-run usage: how both are shown for a Claude run (the point decision 7 left to HP-T5).** The read-back is kept
+    in its own table (`run_gateway_usage`, migration 0043) and returned as `gateway` on the run's usage, next to
+    what the harness reported. It is written into `run_usage` (source `harbor-pilot`) only when that row is missing
+    or `unavailable`, or is its own earlier fill. A harness's report replaces a fill, even a final one, and a node's
+    `unavailable` report never replaces a fill. A node can't claim the `harbor-pilot` source.
+  - **When.** The end path's transaction queues the read-back next to the revocation (every path that queues a
+    revocation, and also when the token was already given up), first due 15 s later. Reads are at 15 s, 2 min and
+    10 min after the end; each replaces the last, and the third is final. A network failure, 5xx or 429 is retried
+    (30 s, doubling, at most 5 min) until an hour after the end, then the row fails. A refusal fails it at once. No
+    service-principal token or connection settles it as `unavailable`. The reads run on central's deadline timer, at
+    most 10 per round with 10 s per call, like the revoker. Query: `group_by=model`, `ref=spaceman.run:<run>`, the
+    connection's `binding_id`, and `from`/`to` around the run's lifetime. A model whose every request had no
+    reported usage gets unknown (nil) token counts. The cost estimate is Harbor Pilot's `actual_api_charge` in USD if
+    present, else its `estimated_api_charge`, labelled with its source.
+  - **Numbers.** Migration 0043. 0042 is retired and never used: the admin MCP branch (#18) took 0044, and goose runs without `AllowMissing`, so a 0042 landing after 0043 had been applied would fail to migrate. THREAT_MODEL T-37. PLAN D-18.
 
 ### ADR-0061 — More shipped GitHub event templates; optional filters and the `absent` operator
 - **Status:** Accepted, 2026-11-07 (operator request: spaces should react to pull request conversation, reviews, CI and
@@ -2558,6 +2811,111 @@
   - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
 
+
+### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
+- **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a
+  takeover the wheel showed "Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll").
+- **Context:**
+  - Without a `tui` setting, Claude Code 2.1.317 chooses its renderer itself. It picks the full-screen one for a recent
+    install (`fresh_install_on`, once `.claude.json` has a `firstStartVersion`, which every launch after an instance's
+    first has) or when a server-side feature flag says so. The operator's runs used it. That renderer draws in the alternate screen with mouse tracking (DEC modes
+    1000/1002/1003, SGR 1006) and keeps its own virtualized scrollback. The terminal itself never holds earlier output:
+    the recording, the live stream and the browser's terminal have only the current screen.
+  - A watch-only viewer sends no input (SM-UI-004), so they can't ask the program to scroll. The operator had to switch
+    to Replay to read a long reply, and Replay shows the same screens.
+  - ghostty-web 0.4.0 turns every wheel event in an alternate screen into `ESC[A`/`ESC[B` arrow keys, whatever mouse
+    mode the program asked for. In watch mode nothing listens, so the wheel did nothing. During a takeover the arrows
+    reached Claude Code, which answers them with the warning above instead of scrolling.
+  - On a normal screen ghostty-web keeps a 10,000-line scrollback, but it jumps to the bottom on every write, so a
+    viewer reading earlier output was pulled back about once a second.
+- **Decision:**
+  - **Claude Code runs get `"tui": "default"`** (the classic renderer) in the run's `settings.json`, unless the
+    profile's Claude Code settings (ADR-0059) set `tui`. The classic renderer writes to the normal screen, so the
+    output goes into the terminal's scrollback, the recording and the live stream. A profile that sets
+    `"tui": "fullscreen"` keeps the full-screen renderer and accepts that watchers can't scroll back. Verified in the
+    2.1.317 binary: the `tui` setting is checked before the fresh-install default (`settings_off`).
+  - **The node applies the default**, where it writes the run's `settings.json` (`internal/harness/claude.go`), not
+    central. It therefore needs the agent from SpaceMan 0.1.0-rc.10 or later; a run on an older node keeps Claude
+    Code's own choice of renderer. The resolved `claude_settings` that central's API returns are the profile's own and
+    don't show the default.
+  - **The web view handles the wheel and touch itself** (`web/src/features/terminal/scroll.ts`). Scrolling up moves
+    the box around the terminal first, then the scrollback; scrolling down goes back the same way. In an alternate
+    screen, a watch-only viewer sends nothing. A takeover holder sends what a terminal would: SGR (or X10) mouse-wheel
+    reports while the program tracks the mouse, arrow keys only under xterm's alternate-scroll mode 1007 (`ESC O A`/
+    `ESC O B` when the program set application cursor keys, DECCKM; `ESC [ A`/`ESC [ B` otherwise), else nothing.
+    ghostty-web's arrow keys never reach anyone.
+  - The view keeps a scrolled-up viewer on the same lines while output arrives, and shows **Jump to live** until they
+    return to live output.
+- **Alternatives:**
+  - **(a) A client-side scrollback rebuilt from the stream:** a full-screen renderer repaints its screen in place, so
+    lines that scroll out of its view never pass through the terminal as scrolled-off lines. Rebuilding them means
+    guessing from screen diffs, and the guesses would be wrong for any redraw that isn't a plain scroll.
+  - **(b) A server-side scrollback snapshot:** the node has the same screens as the browser; there is nothing more to
+    snapshot.
+  - **(c) A "recent output" pane fed by the transcript:** it would show the conversation, not the terminal, and needs
+    its own view and its own access rules for transcripts in the terminal page.
+  - **`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` in the run's environment:** it has the same effect, but a profile
+    couldn't opt back in without a new setting. `tui` already is one.
+- **Consequences:**
+  - Watchers can scroll back through everything a Claude Code run printed, up to the browser terminal's 10,000-line
+    scrollback, on desktop and on a phone (touch). No input is sent.
+  - Claude Code's classic renderer repaints its input area on the normal screen. The recording is somewhat larger than
+    with the full-screen renderer and the screen may flicker briefly during a repaint. Runs started before this change
+    keep the renderer they started with until they are relaunched.
+  - The `tui` key is SpaceMan's in the run's `settings.json` (ADR-0059): a `/tui fullscreen` typed during a takeover is
+    undone at the next launch. Set it in the profile instead.
+  - Other full-screen programs (and Claude Code with `"tui": "fullscreen"`) still can't be scrolled back while
+    watching; in a takeover the wheel scrolls them the way it would in a desktop terminal (LIMITATIONS, Web UI).
+  - Not security-relevant: watch mode still sends no input, and a takeover holder's wheel reports go through the same
+    audited takeover input as their keys.
+
+### ADR-0065 — Control schedules reminders to itself: scheduled messages to control
+- **Status:** Accepted, 2026-11-07 (operator request: control asks to be woken later, e.g. in 6 h, when the inbox and
+  queue are empty and it has stopped).
+- **Context:**
+  - With control auto-start and idle stop (ADR-0056), an idle control stops and is started again only for waiting work:
+    a stored message to control, or a pending human response that wakes it. Control had no way to have itself woken
+    later to check on something nobody will report, such as a deploy, a slow review or an answer that should arrive.
+  - The `schedule` package runs recurring schedules (cron with missed-run policies) that create inbox items. A
+    one-off, agent-set time doesn't fit it, and an inbox item would be work for people too.
+  - Messages already carry everything else: the dedup key, audit, the notifier's terminal notice, the "a new control is
+    told once" path (SM-COMM-003), and the auto-start sweep (`ListSpacesWantingControl`).
+- **Decision:**
+  - **A scheduled message is a message to `control` with `deliver_at`** (migration 0041, a new nullable column with a
+    partial index on pending ones). `spaceman_message_send` takes `deliver_at` (RFC 3339) or `delay` (a Go duration),
+    from 1 minute to 30 days ahead. Only control runs may schedule (`forbidden` otherwise), only `to: control`, and not
+    replies. Operators don't schedule. The API's send operation is unchanged.
+  - **Until it is due, it does not exist for delivery.** `ListMessagesFor` (fetch, notices, `Waiting` for idle stop)
+    and `ListSpacesWantingControl` (auto-start) skip messages whose `deliver_at` is in the future. A pending reminder
+    therefore doesn't keep control running and doesn't start it.
+  - **When it is due, it is an ordinary stored message to control.** A running idle control gets the usual notice; with
+    none running, the notifier's sweep asks the supervisor to start control within `control_autostart` and its hourly
+    cap; a control started later is told about it once. A run never receives its own messages, *except* a scheduled
+    one: the control that set a reminder and is still running receives it. `deliver_at` stays set after delivery, so
+    the UI keeps showing "scheduled for".
+  - **The notifier wakes for the earliest due reminder** (`NextScheduledMessage`), instead of waiting up to its
+    one-minute sweep. Due times come from `messages.Service.Clock` (default: the store's clock), so tests inject a
+    fake clock.
+  - **Limits:** at most 50 pending per space (`rate_limited`). A `dedup_key` on a scheduled send returns the pending
+    reminder with that key from any sender, so a later control run re-scheduling is idempotent. A key the sender
+    already used for a message that is not a pending reminder (one already delivered, or a plain message) is a
+    `conflict`, so a reminder is never silently dropped. Moving one means cancel and send again.
+  - **Listing and cancelling:** control has `spaceman_message_scheduled` and `spaceman_message_cancel`. Operators use
+    `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel` (`message:write`), and the Messages page's
+    Scheduled view. A cancelled reminder is resolved as "cancelled before delivery". Audit: `message.sent` carries
+    `deliver_at`, and a cancel is `message.cancelled`.
+- **Alternatives:**
+  - **A future `available_at`:** no migration, but `available_at` is overwritten at delivery, so nothing would mark the
+    message as scheduled afterwards, and the control that set it would never receive it.
+  - **One-shot schedules in the `schedule` package:** they create inbox items for everyone rather than a note for
+    control, and they need a second listing and cancelling surface.
+  - **Deferred tasks (`spaceman_task_create` with `not_before`):** the request asks for a wake-up rather than queued
+    work. Recorded as a possible follow-up.
+- **Consequences:** the change adds no new authority. Scheduling is limited to control writing to control, the
+  existing message permissions cover the operator operations, and the content stays untrusted data that is never
+  typed into a terminal. The limits on reminders (50 pending, 30 days, auto-start's hourly cap) mean a control can't
+  wake itself in a tight loop.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -2573,5 +2931,5 @@
 | K-9 | ~~Codex ChatGPT-login token materialization (`auth.json`) vs API key.~~ **Resolved 2026-11-03:** the `codex_chatgpt_login` kind, one live copy per account linked into each `CODEX_HOME` (ADR-0053); a real ChatGPT login is not verified (no account). | SM-ACCT-002 | done |
 | K-11 | ~~Hallpass applies SSO-sourced roles only to SSO sessions (its SR-26).~~ **Resolved 2026-11-02:** SSO grants are stored under `user:<id>#sso`, which only SSO sessions act as (ADR-0029); SR-26 ported as `TestReviewSR26SSOGrantsOnlyForSSOSessions` (`internal/auth`, `internal/oidc`) and `TestOIDCSignInOverHTTP`. | — | done |
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
-| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | ADR-0060 acceptance; SM-GW-007, SM-GW-010 | ADR-0060 stays Proposed; Q4 open; live-run placeholder in TRACEABILITY |
-| K-13 | Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works). `docs/contracts/harnesses.md`, Harbor Pilot gateway spike; ADR-0060 §6 (model choice). | Claude Code gateway runs on the default model | Report to the Harbor Pilot space as a cross-space request (Q5); until then a gateway run's model must avoid it |
+| K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
+| K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |

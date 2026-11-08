@@ -80,13 +80,105 @@
   after the first refresh. The copy stays on the node (0600, readable by the agent's user and root) and is not removed
   when the account is deleted. A real ChatGPT login has not been used: the layout was verified with codex-cli 0.166.0
   using an API-key file (ADR-0053, SM-ACCT-002).
-- **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence. codex-cli
-  0.166.0 is installed on the development machine, but there is no Codex or OpenAI credential to run it with.
+- **No real Codex run on an OpenAI account yet.** There is no Codex or OpenAI credential to run with. Real codex-cli
+  0.166.0 runs through SpaceMan were made only against Harbor Pilot `serve --demo` with synthetic upstreams
+  (`TestRealHarborPilotGatewayRuns`, 2026-11-08). They show the launch through the shim, a model turn and a second
+  prompt by safe input, but not an API-key or ChatGPT login.
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Harbor Pilot gateway
+- **Gateway runs need updated agents.** A node agent below protocol minor 9 can't hand the token to a harness, so
+  central fails a routed launch to it as `agent_too_old` before minting, rather than let the harness start on the
+  node's own login (ADR-0060). Update every node of a space before opting the space in.
+- **A Harbor Pilot outage stops the space's gateway runs.** There is no fallback to a direct account (Q1): when
+  Harbor Pilot is down, or its parent token is revoked or expired, every launch of a routed harness fails (at mint, as
+  `gateway_unavailable`), and running runs lose model access. Revoking the parent in Harbor Pilot is the emergency stop
+  for every gateway run at once (THREAT_MODEL T-39), and for the same reason a single point of failure for every
+  opted-in space. Recovery is a new parent saved on the connection; runs that lost access must be relaunched.
+- **No token refresh inside a run.** A run's token lives for the space's token lifetime (24 h by default, 15 min to
+  7 days, Q2). A harness can't be given a new token while it runs, so a run that outlives its token loses model
+  access and must be relaunched. A re-sent launch gets a fresh token only before its harness starts.
+- **Codex's default model may not be routed.** A gateway Codex run without a model uses Codex's own default
+  (`gpt-6.1-sol` in 0.166.0), which a Harbor Pilot plan may not route: the demo answers 403 "no eligible account". Set
+  the role's model, or the space's allowed models, to one the plan routes. SpaceMan doesn't pick one.
+- **Repository and harness-written settings are not checked.** In a gateway run SpaceMan refuses Claude Code profile
+  settings that add a credential or endpoint, and removes stored logins. It does not inspect a Claude Code project
+  `.claude/settings.json` in the run's working directory (repository content), keys Claude Code or the agent wrote
+  into the instance's own `settings.json`, or a Codex `config.toml` in `CODEX_HOME`. Whether a project file's `env`
+  can redirect Claude Code's base URL was not tested. The same holds for direct accounts (THREAT_MODEL T-36). A Codex
+  `config.toml` can't redirect a gateway run's model traffic: with codex-cli 0.166.0 the `-c model_provider…`
+  overrides won over its root `model_provider`, over a `<name>.config.toml` profile (even with `--profile`, which
+  SpaceMan never passes) and over its own `[model_providers.harbor-pilot]`, and a legacy `profile =` key makes Codex
+  refuse to start (checked by hand against two local servers, 2026-11-08). It can still add settings the overrides
+  don't set, such as extra request headers. Later Codex versions may change this precedence.
+- **The run can read its own token.** A gateway run's token is in its harness's environment, as account credentials
+  are. It is bound to the run in Harbor Pilot and revoked when the run ends, but stays usable until then.
+- **A crash right after a mint leaves an untracked token.** If central stops between Harbor Pilot's answer to a mint
+  and the transaction that stores the token, nothing records that child token. It stays valid until its TTL (the
+  space's token lifetime, 24 h by default) unless it, or the parent, is revoked in Harbor Pilot.
+- **Revocations and the lease-loss sweep run only in `spaceman serve`.** They run on serve's deadline timer. A
+  revocation queued by another process (an admin command) waits in the durable queue until the next `serve` runs.
+- **Failed revocations need a person.** A revocation Harbor Pilot refuses, or one whose parent was replaced before it
+  could be done, is audited, counted (connection page, `spaceman_gateway_revocations_failed`) and left to a person;
+  no human action is raised.
+- **Older gateways are detected by a feature probe.** Harbor Pilot has no version endpoint; a gateway that does not know
+  `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
+- **Demo evidence only.** Everything real ran against `harbor-pilot serve --demo` 0.1.3 with its synthetic upstreams:
+  connection checks, run tokens, real Claude Code and Codex runs, budgets, per-run usage, events and the Terraform
+  example. No run has gone through a production gateway to a real model provider (Q7: the operator will provide one;
+  the evidence map is in RELEASE_READINESS §13).
+- **Unscoped Harbor Pilot events have no routing decision.** Where quota, blocked-request and non-project budget events
+  should go is undecided (Q4, DECISIONS K-12); until it is decided they reach only spaces that subscribe.
+- **Harbor Pilot rounds share central's deadline timer.** Revocations, the lease-loss sweep and usage reads run one
+  after another on the timer that also expires human actions and approvals and fires schedules. A revocation
+  call is bounded by 5 s and a usage read by 10 s. A usage round stops asking Harbor Pilot after its first transport
+  failure, but a revocation round still tries each due revocation (at most 10), so a gateway that accepts connections
+  and never answers can delay human-action expiry, reminders and schedules by up to about 50 s per round, again each
+  time the revocations are retried.
+- **The early budget refusal is advisory and up to 30 s old.** SpaceMan reuses a budget status read for 30 s (5 s
+  after a failed read), so a budget used up in that window can let a launch through. Harbor Pilot then refuses the
+  run's token mint (`check_budget`) or its requests. The check can't see a request in flight that is about to push a
+  budget over its limit. A budget with no spend yet passes even when the first request is then refused for its own
+  estimate (Harbor Pilot's rule). Budgets on an upstream account are not shown or checked, because they cover
+  whichever account serves a request, not a space. Harbor Pilot doesn't check them at mint either.
+- **Workspace budgets need `config.read`.** Finding the project's workspace needs the service-principal token's
+  `config.read`. It is looked up only when a workspace budget exists, and cached for 10 minutes. If the lookup fails,
+  budget status is unavailable for the space, and its `on_budget_status_unavailable` decides.
+- **Project usage counts every client.** The Limits card's project usage is Harbor Pilot's usage of the project over all
+  its clients, not only this space's runs. Several spaces sharing a project see the same figures.
+- **Per-run usage arrives late and may miss a slow request.** A gateway run's usage is read about 15 s, 2 min and 10 min
+  after its end. A request still streaming after the last read is not counted. A run that ended while no
+  service-principal token was set gets no usage. A read failing for an hour is given up, and the run keeps what it had.
+  Usage is never written as zero: a read that finds no request for the run (the ledger behind, a binding changed, a
+  run that made no request) stays with the run's gateway figures only, and the run's usage stays unknown, so a gateway
+  run that really made no request is shown as unknown, not zero. Harbor Pilot counts requests whose provider reported
+  no usage; their tokens are unknown and not counted.
+- **Budget status errors on SpaceMan's side follow the unavailable policy.** A service-principal token that can't be
+  opened or a database error while reading the connection counts as "status can't be read": the space's
+  `on_budget_status_unavailable` decides, and the person sees a fixed reason (details only in central's log).
+- **Who may read budget status.** A space's Harbor Pilot status needs only `space_config:read`, and it shows the global
+  and client-binding budgets whose spend sums every space (ADR-0060, by design).
+- **Status refreshes once a minute in the UI.** The Limits card re-reads status every 60 s (central reuses a read for
+  30 s); a failed read shows an error on the card.
+- **Only project budgets map to a space.** The `harbor-pilot-budget` template routes a project-scoped budget to the
+  space whose subscription names that project. Quota windows, blocked requests and binding, workspace, account or global
+  budgets name no project: they reach only spaces that subscribe to them, and nothing routes them automatically (Q4 is
+  undecided, DECISIONS K-12). A blocked request is not mapped to the run or space that sent it.
+- **One item per refused request.** Harbor Pilot sends `access.request.blocked` for every refused request; refusals
+  of one binding share a correlation, but each is its own inbox item. There is no digest.
+- **Harbor Pilot events: relay tested against SpaceMan's test Pulse only.** Harbor Pilot's own relay was run into
+  SpaceMan's Pulse-shaped JetStream test server, not into a real `pulsed`. The quota window template was never fed a
+  live event (the demo emits none) and is tested on events derived from Harbor Pilot's code.
+- **A new Harbor Pilot Pulse destination misses earlier events.** Harbor Pilot starts a destination at its newest
+  event; anything emitted before the relay picked it up is only sent by a replay from Harbor Pilot.
+- **Stricter than Harbor Pilot's own validation.** The templates' input schemas expect Harbor Pilot 0.1.3's id, name
+  and amount formats. An event that differs (a forged one, or a later Harbor Pilot that changes a format) is
+  quarantined, not shown.
+
 ## Usage and transcripts
-- **Codex usage is unknown.** Its records are not verified, so Codex runs show unknown usage (never zero).
+- **Codex usage is unknown** unless the run went through Harbor Pilot. Its records are not verified, so direct Codex
+  runs show unknown usage (never zero). Gateway runs get Harbor Pilot's figures after they end (source `harbor-pilot`).
 - **Cost figures are the harness's own estimates** at list prices; SpaceMan has no price list and cannot enforce
   spending limits from usage that arrives after the fact. Budgets (ADR-0036) warn and stop new runs once reported usage
   passes them; runs already started can go past a budget, and runs with unknown usage are not counted.
@@ -299,6 +391,12 @@
 - **Terminals do not fit the browser.** A program runs at the node's terminal size (`runner.terminal_size`, default
   160×48; runs started before that setting keep herdr-core's 200×120). The view scales the font to the width, follows
   the cursor as output arrives, and scrolls with the wheel; a watch-only view never resizes the program (ADR-0052).
+- **Scrolling back reaches only what the terminal keeps.** The live view scrolls back through the browser terminal's
+  scrollback (10,000 lines; a page reload rebuilds it from the stored recording), never by sending the run input. A
+  full-screen program on the alternate screen keeps its history itself, so watchers see only its current screen: Claude
+  Code runs therefore use its classic renderer unless the profile sets `"tui": "fullscreen"`, and other full-screen
+  programs (Codex's alternate screen, editors) are the same. During a takeover the wheel scrolls such a program only
+  when it asks for mouse input (or xterm's alternate-scroll mode) (ADR-0064).
 - **Live views and many tabs over plain HTTP.** A browser opens at most six HTTP/1.1 connections to a host. The change
   feed is shared by all tabs where Web Locks exist (HTTPS, or `localhost`); a hidden tab releases its live terminal after
   5 seconds. Over plain HTTP to another host each tab holds its own feed, so only a few tabs work at once: serve central

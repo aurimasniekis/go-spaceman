@@ -15,6 +15,7 @@ import (
 // SM-STORE-006: the first start after a restore comes up paused with new execution authority, keeps unresolved human
 // actions and pending approvals, revokes approvals whose later use is unknown, and does all of it exactly once.
 func TestApplyPendingRestore(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	out := filepath.Join(t.TempDir(), "b")
 	m := f.create(out).Manifest

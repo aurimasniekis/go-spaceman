@@ -12,6 +12,7 @@ import (
 
 // HP-OBS-004: user login attempts are counted by method and outcome.
 func TestLoginMetrics(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	m := metrics.New()
 	f.svc = New(f.s, f.kr, audit.NewWriter(f.kr), eventbus.New(), mustAuthz(t, f.s), Options{Clock: f.clk, Metrics: m})

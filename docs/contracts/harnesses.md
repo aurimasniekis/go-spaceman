@@ -38,6 +38,22 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   reads `$CLAUDE_CONFIG_DIR/settings.json` as the user settings file. Its `autoMode.environment`, `autoMode.allow` and
   `autoMode.soft_deny` lists with `"$defaults"` keep the built-in rules and add the others (21 + 1, 16 + 1 and 72 + 1
   rules). `hard_deny` isn't configurable. SpaceMan sets the profile's keys there and keeps the rest.
+- **Renderer (ADR-0064, verified 2026-11-07: `strings` on the 2.1.317 binary, and its start-up
+  as recorded in the stub harness's `fullscreen.bin`; no model call):** with no `tui` setting, Claude Code picks the
+  renderer itself: full-screen for a recent install (`fresh_install_on`, needs `firstStartVersion` in `.claude.json`,
+  fewer than 3 upsells seen) or by server-side flags (`gb_on`), else classic. Signed out in an isolated tmux it stayed
+  classic, even on a relaunch; the operator's signed-in runs used the full-screen renderer. That renderer uses the alternate screen
+  (`?1049h`), mouse tracking `?1000h ?1002h ?1003h` with SGR `?1006h`, focus events `?1004h`, synchronized output
+  `?2026h`, and a virtualized scrollback that only the program can scroll (wheel reports, PgUp/PgDn). Arrow keys
+  that look like a scroll wheel (a burst in one direction) make it show "Scroll wheel is sending arrow keys · use PgUp/PgDn to scroll"
+  (`scroll-as-arrows`). `settings.json` `"tui": "default"` selects the classic renderer (`settings_off`, checked before
+  the fresh-install default); `"fullscreen"` forces the full-screen one. `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` (or
+  `CLAUDE_CODE_NO_FLICKER` set false) also forces the classic renderer, and `CLAUDE_CODE_NO_FLICKER=1` forces the full-screen one; both environment
+  variables are checked before `tui` (so a profile's `env` can override it). SpaceMan sets `"tui": "default"` unless the profile sets
+  `tui`. Checked live (isolated tmux, fresh `HOME` and config dir, `DISABLE_AUTOUPDATER=1`, no credentials, no prompt):
+  `"tui": "fullscreen"` gave `alternate_on=1`, `mouse_any_flag=1`, `mouse_sgr_flag=1`; `"tui": "default"` gave 0, 0, 0.
+  The "Scroll wheel is sending arrow keys" hint did not show for bursts of `ESC[A` in an empty, signed-out session
+  (it is in the operator's screenshot of a real run).
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).
@@ -88,7 +104,7 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
 
 ## Harbor Pilot gateway spike (2026-11-06)
 
-Evidence for ADR-0060 (Proposed, `docs/DECISIONS.md`); the gateway contract is `docs/contracts/harbor-pilot.md`.
+Evidence for ADR-0060 (Accepted, `docs/DECISIONS.md`); the gateway contract is `docs/contracts/harbor-pilot.md`.
 
 **Setup.**
 - The gateway was Harbor Pilot v0.1.1 `serve --demo` on loopback, with synthetic upstreams and the `hptest` fixture
@@ -152,7 +168,103 @@ argv was `codex --no-daemon` with these five overrides, then `-s read-only -a ne
 - A model must be chosen that both the harness sends cleanly and the Harbor Pilot plan routes.
   - For Codex, a run needs a `-m` the plan routes (a space setting or allowed-alias default).
   - For Claude with Harbor Pilot 0.1.1, a model whose requests carry no `system`-role messages, until Harbor Pilot
-    accepts them.
+    accepts them. Harbor Pilot 0.1.2 does (re-run below), and SpaceMan requires ≥ 0.1.3.
+
+## Harbor Pilot 0.1.3 re-run: Claude Code on its default model (K-13, 2026-11-07)
+
+Re-run of the Claude Code model turn above after Harbor Pilot 0.1.2/0.1.3 started accepting `system`-role entries in
+`messages[]` (contract: Gateway data plane).
+
+**Setup.**
+- Harbor Pilot v0.1.3 `serve --demo` (from `go install`, commit `2e957c7`) on loopback, provisioned by `hptest`
+  (binding `spaceman-test`, synthetic upstreams).
+- One child token minted with the parent token: scopes `gateway:invoke` and `gateway:models`, TTL 1 h, `bound_refs`
+  `spaceman.space`, `spaceman.run`, `spaceman.instance`, `session` and `project_id`.
+- Claude Code 2.1.317 (`/usr/local/bin/claude`), started with `env -i`, a fresh `HOME`, `DISABLE_AUTOUPDATER=1`, and
+  only `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` (the child token) as credentials. **No `--model`**, so it used
+  its default, `claude-opus-5-5`.
+- It ran in print mode (`claude -p "…" --output-format json`), not interactively through `spaceman-agent launch` as in
+  the first spike. Print mode sends the same `system`-role entry, as the proxy showed.
+- A pass-through proxy in front of the gateway logged each request's model and the roles in `messages[]` (no content).
+
+**Result: K-13 is resolved on the demo.**
+- The model request was `POST /v1/messages?beta=true`, model `claude-opus-5-5`, with roles `["user","system"]`. That
+  is the shape Harbor Pilot 0.1.1 refused with 400.
+- Harbor Pilot answered 200, and the turn completed (`is_error: false`, `subtype: success`) with the demo's synthetic
+  reply. Claude reported its usage under `claude-opus-5-5`.
+- Two runs, each on its own gateway, were served by different demo accounts (contract: Demo seed, demo routing):
+  - on one, started right after the gateway was up, the request went to the demo's Anthropic-shaped upstream
+    (`demo-sonnet`). Its request detail showed **no losses**, so the `system` entry was passed through unchanged;
+  - on the other, it went to a Responses-shaped upstream (`demo-gpt`) and was translated, with losses only for fields
+    Responses lacks (among them `output_config` on the mid-conversation system message).
+- **Attribution: worked.** `harness: claude_code`; `trusted_refs` held the five bound refs plus the binding's
+  `spaceman.fleet`; Claude's `x-claude-code-session-id` was under `claims`. `activity/requests?ref=spaceman.run:<run>`
+  and `activity/sessions?ref=session:<value>` found the request and its session; `usage/summary` with
+  `group_by=ref:spaceman.run` showed the run.
+- **Cleanup.** The token was revoked (204, twice), then got 401 on `/v1/models`. The gateway and its data directory
+  were removed by the test cleanup.
+
+**What this does not show.**
+- The demo's upstreams are synthetic, so whether a **real** Anthropic upstream accepts `claude-opus-5-5`'s
+  mid-conversation `system` entry is not verified. Harbor Pilot passes it through unchanged for models not on its
+  no-support list (D-042), so a real model without support would return the provider's own 400.
+- Interactive Claude through `spaceman-agent launch` was not re-run. The first spike already showed that path reaches
+  the prompt with the ADR-0021 seed; only the model turn changed.
+
+**Consequence for HP-T4:** with Harbor Pilot ≥ 0.1.2, a Claude Code gateway run doesn't need a model chosen to avoid
+`system`-role messages. It still needs a model the space's Harbor Pilot plan routes.
+
+## Gateway runs through SpaceMan (HP-T4, 2026-11-08)
+
+Real runs through the whole stack: `TestRealHarborPilotGatewayRuns` (`make test-real-harbor-pilot`). **live**
+
+**Setup.**
+- SpaceMan built from this branch: real central, `spaceman-agent` (protocol minor 9), an isolated herdr-core core
+  (hc 0.1.17) and the launcher shim.
+- Harbor Pilot v0.1.3 `serve --demo` on loopback (synthetic upstreams), provisioned by `hptest`. The connection and the
+  space settings were set through SpaceMan's API (`allow_insecure_http`, since the demo is plain http on loopback).
+- The space also had a direct account bound (a Claude token or an OpenAI key), which the run must not get.
+- Each harness binary was wrapped by a script. It wrote the names of the variables the harness started with (and the
+  tokens, to a private test folder outside the stack) and then exec'd the real binary with `DISABLE_AUTOUPDATER=1`.
+- Claude Code 2.1.317 (`/usr/local/bin/claude`) with no model. codex-cli 0.166.0 (npm, project-local) with
+  `-m coding/default`, `-s read-only`, `-a never`. Each run got a first prompt, then a second one through SpaceMan's
+  safe input.
+
+**Result: both harnesses worked through SpaceMan with no seeding beyond ADR-0021.**
+- **Environment.** Claude Code started with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` and no other `ANTHROPIC_*`,
+  `CLAUDE_CODE_OAUTH*`, `OPENAI_*`, `CODEX_API_KEY` or `SPACEMAN_GATEWAY_TOKEN` variable. Codex started with
+  `HARBOR_PILOT_TOKEN` and none of those either.
+- **Attribution.** Harbor Pilot's request detail showed the test binding and these trusted refs: `spaceman.space`,
+  `spaceman.run`, `spaceman.instance`, `session`, `project_id`, and the binding's `spaceman.fleet`. The harness label
+  was `claude_code` for Claude Code and `generic` for Codex. The bound `session` was Claude's central-chosen session ID,
+  and the run ID for Codex.
+- **Sessions.** For each run, `activity/sessions?ref=session:<value>` found exactly one Harbor Pilot session. Both of
+  the run's requests (two turns) belonged to it, and `activity/requests?ref=session:<value>` listed the same two
+  requests as `ref=spaceman.run:<run>`.
+- **End.** After the run was stopped, the token got 401 on `/v1/models`, and Harbor Pilot showed the credential
+  revoked. This was central's own revoker on its deadline timer, not a test call.
+- **At rest.** Neither the gateway token, the run's `SPACEMAN_RUN_TOKEN` nor the direct account's secret was in
+  herdr-core's `terminals.json`, the central or agent logs, or any file under central's or the agent's data
+  directories.
+
+**Finding: Codex's shell snapshot keeps the run's environment.** codex-cli 0.166.0's `shell_snapshot` feature
+(stable, on by default) writes a snapshot of the shell environment to
+`$CODEX_HOME/shell_snapshots/<id>.sh` (0600). The snapshot includes `HARBOR_PILOT_TOKEN` and `SPACEMAN_RUN_TOKEN`, so
+both were at rest in the instance's folder after the run. This affected every Codex run, not only gateway runs; the
+earlier Codex test didn't look for the run token. The adapter now passes `-c features.shell_snapshot=false`
+(`codex features list` shows it off with that override). With it, the same run found no token at rest. Every Codex
+launch also removes the `shell_snapshots` folder earlier runs left, which could hold a direct account's API key.
+
+**Codex `config.toml` against the `-c` provider overrides (code: codex-cli 0.166.0 from npm, 2026-11-08).** `codex
+exec` with the five overrides pointed at one local server, and a `config.toml` pointing at another, sent every request
+to the override's server: with a root `model_provider = "evil"`, with an `evil.config.toml` profile setting it (with and
+without `--profile evil`), and with `config.toml` redefining `[model_providers.harbor-pilot].base_url`. A `profile =`
+key (in `config.toml` or as `-c profile=…`) fails at start: "legacy `profile = …` config is no longer supported; use
+`--profile <name>` with `<name>.config.toml` instead".
+
+**Not shown.** A real model provider behind Harbor Pilot; a profile's `claude_settings` in a gateway run (refused by
+the adapter, unit-tested only); a Claude Code project `.claude/settings.json` in the working directory that sets `env`
+(not checked by SpaceMan: LIMITATIONS).
 
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |

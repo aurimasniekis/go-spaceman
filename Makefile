@@ -25,8 +25,11 @@ test:
 # The race detector slows SQLite transactions several-fold; as in CI, the 100 ms write-transaction guard is relaxed here
 # and enforced by the non-race coverage run.
 # internal/app's end-to-end tests take about 9 minutes under the race detector, close to go test's 10-minute default.
+# Most tests call t.Parallel; RACE_PARALLEL caps them per package (go test's default is GOMAXPROCS, multiplied by the
+# packages running at once), so a many-core machine doesn't starve leases and write transactions. 4 matches CI's runners.
+RACE_PARALLEL ?= 4
 race:
-	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race -count=1 -timeout 30m ./...
+	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race -count=1 -parallel $(RACE_PARALLEL) -timeout 30m ./...
 
 $(BIN)/spaceman-vet: $(shell find tools -name '*.go' -not -path '*/testdata/*')
 	cd tools && $(GO) build -o ../$(BIN)/spaceman-vet ./cmd/spaceman-vet
@@ -157,7 +160,7 @@ PORCH_SRC ?= $(SIBLINGS)/porch
 PULSE_SRC ?= $(SIBLINGS)/pulse
 PULSE_GITHUB_SRC ?= $(SIBLINGS)/pulse-github
 
-.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd test-harbor-pilot
+.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd test-harbor-pilot test-real-harbor-pilot
 # Real Porch (built from PORCH_SRC into a temp dir, with Porch's own fake Google upstream): SpaceMan OIDC sign-in.
 test-real-porch:
 	SPACEMAN_REAL_PORCH=1 SPACEMAN_PORCH_SRC=$(PORCH_SRC) $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealPorch' -v ./test/real/
@@ -183,11 +186,20 @@ test-real-codex:
 	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE SPACEMAN_REAL_CODEX=1 $(GO) test -tags real -count=1 -timeout 15m \
 	  -run '^TestRealCodexRun$$' -v ./test/real/
 
-# Real Harbor Pilot gateway (docs/contracts/harbor-pilot.md): `harbor-pilot serve --demo` v0.1.1 on loopback in a temp
+# Real Harbor Pilot gateway (docs/contracts/harbor-pilot.md): `harbor-pilot serve --demo` v0.1.3 on loopback in a temp
 # data dir, with its own binding, budget, service principal and parent token (internal/harborpilot/hptest). Uses
 # HARBOR_PILOT_BIN, or installs the pinned release with `go install`. Synthetic upstreams; no provider credentials.
+# internal/events relays the gateway's events through its own Pulse destination into an in-process Pulse-shaped server;
+# internal/app covers the run-token lifecycle (mint at dispatch, revoke at the end) over a scripted node.
 test-harbor-pilot:
-	SPACEMAN_HARBOR_PILOT=1 $(GO) test -count=1 -timeout 15m -run '^TestRealHarborPilot' -v ./internal/harborpilot/...
+	SPACEMAN_HARBOR_PILOT=1 $(GO) test -count=1 -timeout 15m -run '^TestRealHarborPilot' -v ./internal/harborpilot/... ./internal/events/ ./internal/app/
+
+# Real Claude Code and Codex runs through SpaceMan (real central, agent, herdr-core and launcher shim) and the real
+# gateway above. No provider credentials and no cost (synthetic upstreams). Codex from SPACEMAN_REAL_CODEX_BIN or PATH
+# (npm install --prefix <dir> @openai/codex@0.166.0 works without root).
+test-real-harbor-pilot:
+	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE SPACEMAN_REAL=1 SPACEMAN_HARBOR_PILOT=1 $(GO) test -tags real -count=1 -timeout 15m \
+	  -run '^TestRealHarborPilotGatewayRuns$$' -v ./test/real/
 
 # Linux/systemd: a Debian 13 container with systemd as PID 1 running the linux release binary and the shipped units.
 test-real-systemd:

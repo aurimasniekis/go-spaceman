@@ -30,6 +30,7 @@ import (
 // node, nothing launches until the space is resumed, the subscription replays from its oldest stored delivery, the
 // approval with uses left is revoked while the pending one stays, and the restored files are readable.
 func TestBackupRestoreEndToEnd(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	git, gitErr := exec.LookPath("git")
 	e := newFleetEnv(t)
 	e.enroll()
@@ -256,6 +257,7 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 // SM-STORE-005 over HTTP: global administrators list, create and verify backups; a space viewer cannot; every signed-in
 // principal reads the restore notice; restore is not an API operation.
 func TestBackupsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
 	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)

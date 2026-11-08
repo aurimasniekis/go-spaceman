@@ -24,6 +24,7 @@ import (
 // transaction, the relay publishes it to the in-process Pulse-shaped server after commit with the task as correlation and
 // the API request as causation, and the publication status is visible to global admins only.
 func TestOutboundEventsOverHTTP(t *testing.T) {
+	t.Parallel()
 	nats := pulsetest.Start(t)
 	creds := filepath.Join(t.TempDir(), "spaceman.creds")
 	if err := os.WriteFile(creds, nats.Creds("spaceman"), 0o600); err != nil {
@@ -104,6 +105,7 @@ func TestOutboundEventsOverHTTP(t *testing.T) {
 // SM-OBS-004: a run's lifecycle (launched, started once even across an agent restart, ended) is recorded in the
 // transactions that change the run, with the run as correlation; nothing from the prompt reaches the payload.
 func TestRunLifecycleEvents(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	e := newFleetEnv(t)
 	e.cfg.Events.Outbound = config.OutboundConfig{Enabled: true, URL: "nats://127.0.0.1:4222", CredsFile: "/nonexistent/pulse.creds", Source: "spaceman",
 		Retention: config.Duration(time.Hour)}

@@ -34,10 +34,15 @@ export const keys = {
   humanPending: ['human', 'pending'] as const,
   accounts: ['accounts'] as const,
   gitKeys: ['git-ssh-keys'] as const,
+  harborPilot: ['harbor-pilot'] as const,
+  spaceHarborPilot: (space: string) => ['space-harbor-pilot', space] as const,
+  spaceHarborPilotStatus: (space: string) => ['space-harbor-pilot', space, 'status'] as const,
   spaceGitKeys: (space: string) => ['git-ssh-keys', 'space', space] as const,
   accountKinds: ['account-kinds'] as const,
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
   messages: (space: string) => ['messages', space] as const,
+  /** Under keys.messages, so invalidating a space's messages refreshes it too. */
+  scheduledMessages: (space: string) => ['messages', space, 'scheduled'] as const,
   prompts: ['prompts'] as const,
   prompt: (id: string) => ['prompt', id] as const,
   profiles: ['harness-profiles'] as const,
@@ -359,6 +364,13 @@ export const useMessages = (space: string) =>
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space } } })),
   })
 
+/** A space's pending scheduled messages to control, earliest first: the server's list, not a filter of the newest messages (ADR-0065). */
+export const useScheduledMessages = (space: string) =>
+  useQuery({
+    queryKey: keys.scheduledMessages(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space }, query: { scheduled: true } } })).items,
+  })
+
 export const usePrompts = () => useQuery({ queryKey: keys.prompts, queryFn: async () => unwrap(await api.GET('/prompts')).items })
 export const usePrompt = (id: string) =>
   useQuery({ queryKey: keys.prompt(id), queryFn: async () => unwrap(await api.GET('/prompts/{prompt_id}', { params: { path: { prompt_id: id } } })) })
@@ -433,6 +445,23 @@ export const useAllXSpace = (enabled: boolean) =>
 /** Shared Git SSH keys (ADR-0058): administrators manage them. */
 export const useGitKeys = (enabled = true) =>
   useQuery({ queryKey: keys.gitKeys, enabled, queryFn: async () => unwrap(await api.GET('/git-ssh-keys')).items })
+
+/** The Harbor Pilot connection (ADR-0060; administrators). null when none is configured. */
+export const useHarborPilot = (enabled = true) =>
+  useQuery({ queryKey: keys.harborPilot, enabled, queryFn: async () => {
+    const r = await api.GET('/harbor-pilot/connection')
+    if (r.response.status === 404) return null
+    return unwrap(r)
+  } })
+
+/** A space's Harbor Pilot settings (the defaults when it never opted in). */
+export const useSpaceHarborPilot = (space: string) =>
+  useQuery({ queryKey: keys.spaceHarborPilot(space), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/harbor-pilot', { params: { path: { space_id: space } } })) })
+
+/** A space's Harbor Pilot budget status and project usage (HP-T5). Central reuses a read for 30 s. */
+export const useHarborPilotStatus = (space: string) =>
+  useQuery({ queryKey: keys.spaceHarborPilotStatus(space), refetchInterval: 60_000,
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/harbor-pilot/status', { params: { path: { space_id: space } } })) })
 
 /** The shared Git SSH keys a space's repositories may use. */
 export const useSpaceGitKeys = (space: string) =>

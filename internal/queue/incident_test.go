@@ -73,6 +73,7 @@ func (f *fx) running(title, run, sub string) *Task {
 // SM-QUEUE-009: only trusted triggers raise incidents; anything else is proposed (an ordinary task that neither jumps
 // the queue nor preempts) or refused, as the policy says, and the refusal is audited. Operators confirm proposals.
 func TestIncidentTriggers(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	var notes []string
 	f.svc.Notify = func(_, _, subject, _ string) { notes = append(notes, subject) }
@@ -134,6 +135,7 @@ func TestIncidentTriggers(t *testing.T) {
 // SM-QUEUE-009: an operator confirms or dismisses a proposal; confirming applies insertion and preemption then, and
 // is refused when operators are not trusted.
 func TestIncidentProposalDecision(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	_, err := f.svc.SetPolicy(f.ctx, op, "spc_a", Policy{MaxActive: 1, IncidentInsertion: "top", IncidentPreempts: true})
 	must(t, err)
@@ -171,6 +173,7 @@ func TestIncidentProposalDecision(t *testing.T) {
 // SM-QUEUE-009: what happens to a preempted task's workers is the policy's choice and is recorded and audited:
 // finish tells them to wrap up, pause interrupts their turn, interrupt stops them. Subtask workers count too.
 func TestPreemptedWorkers(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ policy, want string }{
 		{"finish", "notice:run_a notice:run_s"},
 		{"pause", "pause:run_a pause:run_s"},
@@ -210,6 +213,7 @@ func TestPreemptedWorkers(t *testing.T) {
 // workers to continue; a task whose workers were stopped stays ready for control to relaunch. Manual resumption only
 // tells control, and an explicit resume (or start) does the rest. Nothing polls: it all happens in the transition.
 func TestIncidentResumption(t *testing.T) {
+	t.Parallel()
 	t.Run("auto with paused workers", func(t *testing.T) {
 		f := newFx(t)
 		wk := &fakeWorkers{live: map[string]bool{"run_a": true}}
@@ -302,6 +306,7 @@ func TestIncidentResumption(t *testing.T) {
 
 // SM-QUEUE-009: the incident capacity lets incidents run beside the ordinary limit without preempting anything.
 func TestIncidentCapacity(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	_, err := f.svc.SetPolicy(f.ctx, op, "spc_a", Policy{MaxActive: 1, IncidentInsertion: "top", IncidentCapacity: 1})
 	must(t, err)

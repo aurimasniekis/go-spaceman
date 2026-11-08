@@ -79,6 +79,15 @@ type Options struct {
 	// Admit decides inside the launch transaction whether a launch may start (limits and budgets, SM-LIMIT-001); an
 	// error refuses it. Nil: every launch the space and lease allow starts.
 	Admit func(ctx context.Context, tx *store.Tx, a Admission) error
+	// Gateway routes the runs of the harnesses a space opted in through an LLM gateway (Harbor Pilot, ADR-0060). Nil:
+	// every run uses the space's direct accounts.
+	Gateway Gateway
+	// OnGatewayRevocation is called after a commit that queued gateway token revocations (it wakes the revoker).
+	OnGatewayRevocation func()
+	// GatewayMintWait bounds how long a node's dispatch loop waits for a gateway run's token (default 5 s). A mint that
+	// takes longer goes on in the background; the launch stays pending, the loop moves on to the node's other commands
+	// (only the pass that starts a mint waits for it), and the node is kicked when the mint is done.
+	GatewayMintWait time.Duration
 }
 
 // Admission is a launch about to be admitted.
@@ -122,6 +131,9 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	}
 	if o.DisconnectGrace < 0 {
 		o.DisconnectGrace = 0
+	}
+	if o.GatewayMintWait <= 0 {
+		o.GatewayMintWait = 5 * time.Second
 	}
 	if o.EnrollmentTTL <= 0 {
 		o.EnrollmentTTL = 24 * time.Hour

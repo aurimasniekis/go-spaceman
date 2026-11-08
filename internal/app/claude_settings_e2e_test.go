@@ -10,6 +10,7 @@ import (
 // older client does not wipe them), an empty object clears them, a codex profile is refused them, and a malformed key
 // SpaceMan edits is refused.
 func TestClaudeSettingsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	secret, _, _ := h.c.Auth.IssueRootToken(context.Background())
 	root := h.client()

@@ -79,6 +79,7 @@ Grouped by milestone; the per-feature detail is in the site's guides and in the 
 | 0057 | Repository SSH keys held by SpaceMan: sealed in central, sent only with a clone or fetch, served from an in-memory agent on the node against pinned host keys; agents never receive them. |
 | 0058 | Shared Git SSH keys: one administrator-managed key on a Git account, scoped to listed spaces, that repositories choose instead of their own deploy key. |
 | 0059 | Claude Code settings on harness profiles: the profile's settings.json keys (permissions, auto mode, hooks, any key) set in each run's settings.json, defaultMode under the ceiling, protocol minor 8. |
+| 0060 | Harbor Pilot gateway (Accepted 2026-11-08): one central connection with sealed write-only tokens, spaces opt in per harness, a child token per run minted at dispatch and revoked on every end path, no fallback to accounts, Harbor Pilot budgets as an early refusal, protocol minor 9. See §13. |
 
 ## 4. Commits
 
@@ -187,3 +188,43 @@ Status: 218 implemented, 1 partial, 1 n/a. The brief's §40 verification topics 
 3. Close or accept the open security findings, ideally with an external review.
 4. Push to a remote, run the release workflow, publish images, SBOMs and checksums, and publish the site.
 5. Collect the missing real evidence (SM-VER-002), at least a real Codex run, or state the gaps in the release notes.
+
+## 13. Addendum: Harbor Pilot gateway (PR #17, HP-T8, 2026-11-08)
+
+Written for the combined pull request that adds the Harbor Pilot gateway (ADR-0060, **Accepted** 2026-11-08 with Q4
+open). Sections 1 to 12 above are the 2026-11-03 report and are not restated. **No production claim:** every real run
+below used Harbor Pilot's own demo gateway with synthetic upstreams. A real model provider behind a real Harbor Pilot has
+**not** been used (Q7: the operator will provide one).
+
+**Release impact.** Migrations 0040 (connection, space settings, run tokens, revocation queue) and 0043 (run-end usage
+reads), forward-only; 0042 is retired and never used. Node protocol minor 9: only spaces that opt in need updated
+agents; a gateway launch to an older agent fails as `agent_too_old` before a token is minted. Minimum Harbor Pilot
+0.1.3. The Terraform resources come in the provider's next release (provider PR #12), which needs this release.
+
+**Evidence labels.** *contract-tested (fake)*: automated tests against `internal/harborpilot/hpfake` or a stand-in, run
+by `make check` and CI. *real-demo-tested*: the opt-in suites against a real `harbor-pilot serve --demo` **0.1.3**
+binary (`go install`, checked by buildinfo), run on 2026-11-08 for this addendum. *not verified*: no evidence.
+
+| Done-when item (operator request, 2026-11-06) | contract-tested (fake) | real-demo-tested (serve --demo 0.1.3) | not verified |
+|---|---|---|---|
+| Claude Code and Codex runs each get their own token | `TestRunTokenMintOnceAndReuse`, `TestRunTokenSingleFlight`, `TestClaudeGatewayBuild`, `TestCodexGatewayBuild`, `TestHarborPilotGatewayDeliveryOnNode` | `TestRealHarborPilotGatewayRuns` (`make test-real-harbor-pilot`: real Claude Code and codex-cli through central, agent, herdr-core and the shim) | — |
+| Their requests show up under the SpaceMan client with trusted refs | `TestRunTokenMintOnceAndReuse` (bound refs sent) | `TestRealHarborPilotRunToken` (bound refs on the credential), `TestRealHarborPilotGatewayRuns` (request detail: the binding, `spaceman.space`, `spaceman.run`, `session`; one session per run) | requests to a real provider |
+| Tokens are revoked at run end | one test per end path in `internal/fleet/gateway_test.go`, `TestRevokerOutcomes`, `TestRevocationSurvivesRestart`, `TestHarborPilotRevocationAfterRestart` | `TestRealHarborPilotRunToken` (401 after the reported end), `TestRealHarborPilotGatewayRuns` (401 after a stop, by `serve`'s own timer) | relocation, purge and lease loss against the real gateway (fake only) |
+| Emergency stop: revoking the parent cuts every run (T-39) | `TestParentRotationRevokesLiveRunTokens` | `TestRealHarborPilotRunToken` (a live run's token gets 401 at once; the next launch fails as `gateway_unavailable`) | — |
+| Never a silent fallback to a direct account | `TestRouteAndPreLaunch`, `TestHarborPilotRunTokenLifecycle`, `TestGatewayLaunchNeedsAgentMinor` | `TestRealHarborPilotRunToken` (revoked parent: the run fails, no account used) | — |
+| A space with an exhausted budget can't launch and says why | `TestCheckBudgetRefusesUsedUpBlockingBudget`, `TestCheckBudgetStatusUnavailable`, `TestCheckBudgetOwnFailureFollowsPolicy`, `TestHarborPilotBudgetRefusesLaunch`, `TestHarborPilotBudgetRefusalRaisesControlCouldNotStart` | `TestRealHarborPilotBudgetAndUsage` (a used-up tiny budget: the refusal names it, its spend and reset; Harbor Pilot refuses the `check_budget` mint) | the "Control could not start" path against the real gateway |
+| The Limits page shows Harbor Pilot budget status | `HarborPilotLimitsCard.test.tsx` (ok, warning, exceeded, unavailable, error), `TestSpaceStatusStates`; screenshots against a stand-in gateway | the status API in `TestRealHarborPilotBudgetAndUsage` | the page rendered against a real gateway |
+| Events arrive as inbox items for the right space | `TestHarborPilotTemplates`, `TestHarborPilotEventsReachTheRightSpace` (fixtures captured from the real demo) | `TestRealHarborPilotEventsThroughPulse` (Harbor Pilot's relay into a Pulse-shaped JetStream test server) | a real `pulsed`; a live `quota.window.*` event; routing of unscoped events (Q4 open) |
+| Codex usage filled only with real data, source labelled | `TestReadDueUsageFillsUnavailableUsage`, `TestReadDueUsageKeepsHarnessUsage`, `TestReadDueUsageFailures`, `TestReadDueUsageEmptyIsNotZero`, `TestHarborPilotRunUsageReadBack` | `TestRealHarborPilotBudgetAndUsage` (a run's two requests read back, source `harbor-pilot`) | usage of a real provider |
+| Terraform acceptance tests pass, the combined example included | provider unit tests | provider PR #12 `make acc-harbor-pilot`: `TestAccHarborPilot`, `TestAccHarborPilotExample` (with the `harborpilot` provider), 26/26 | a production deployment |
+| Tests run against a real `serve --demo` binary | — | every row above; the plan named 0.1.1, the pinned minimum is now 0.1.3 | — |
+| A real upstream model provider behind Harbor Pilot | — | — | **not verified** (Q7) |
+| Status recorded honestly (contract-tested vs live-verified) | — | — | this table; [TRACEABILITY.md](TRACEABILITY.md) SM-GW-001…010 keep the columns apart |
+
+**Gates for this addendum** (2026-11-08, Linux, the head named in PR #17): `make check` (umask 022,
+`SM_TEST_TX_MAX=500ms`), `make web-check`, `make site-check`, `SPACEMAN_HARBOR_PILOT=1 make test-harbor-pilot`,
+`make test-real-harbor-pilot` and CI. Results are in the PR description and PLAN §3.
+
+**Open:** Q4 (unscoped event routing, DECISIONS K-12); a run against a real provider (Q7); the limitations in
+[LIMITATIONS.md](LIMITATIONS.md#harbor-pilot-gateway), first among them that a Harbor Pilot outage stops every
+opted-in space's routed harnesses, by design (no fallback).

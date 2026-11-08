@@ -46,8 +46,30 @@ type Usage struct {
 	Final      bool                `json:"final"`
 	Note       string              `json:"note,omitempty"`
 	Transcript *Transcript         `json:"transcript,omitempty"`
+	Gateway    *GatewayUsage       `json:"gateway,omitempty" doc:"What the LLM gateway (Harbor Pilot) observed for a gateway run, read back after it ended"`
 	UpdatedAt  time.Time           `json:"updated_at"`
 	StartedAt  *time.Time          `json:"run_created_at,omitempty"`
+}
+
+// GatewayUsage is a gateway run's usage as Harbor Pilot observed it (ADR-0060 decision 7): read back from
+// usage/summary?ref=spaceman.run:<run> after the run's token was given up. It is shown next to what the harness
+// reported, and fills the run's usage (source harbor-pilot) only where the harness reported none.
+type GatewayUsage struct {
+	Source       string             `json:"source" doc:"Always harbor-pilot"`
+	State        string             `json:"state" enum:"pending,final,failed,unavailable" doc:"pending: more reads are due, figures may still grow; final: the last read is stored; failed and unavailable: see note"`
+	Models       []proto.ModelUsage `json:"models"`
+	Costs        []GatewayCost      `json:"costs" doc:"Harbor Pilot's cost totals per category and currency (categories are never summed)"`
+	Requests     int64              `json:"requests" doc:"Attempts Harbor Pilot recorded"`
+	UnknownUsage int64              `json:"unknown_usage_requests" doc:"Attempts whose token usage the provider did not report (not counted as zero)"`
+	ReadAt       *time.Time         `json:"read_at,omitempty"`
+	Note         string             `json:"note,omitempty"`
+}
+
+// GatewayCost is a cost total in one Harbor Pilot category (estimated_api_charge, actual_api_charge, …).
+type GatewayCost struct {
+	Kind     string `json:"kind"`
+	Currency string `json:"currency"`
+	Amount   string `json:"amount" doc:"Decimal amount"`
 }
 
 // Transcript is a stored native transcript.
@@ -337,7 +359,31 @@ func (svc *Service) ForRun(ctx context.Context, spaceID, runID string) (*Usage, 
 	}
 	u.Role, u.Kind, u.Harness = r.Role, r.Kind, r.Harness
 	u.Transcript = svc.transcript(ctx, runID)
+	u.Gateway = svc.gateway(ctx, runID)
 	return u, nil
+}
+
+// gateway returns a gateway run's read-back usage (nil: not a gateway run, or not queued yet).
+func (svc *Service) gateway(ctx context.Context, runID string) *GatewayUsage {
+	g, err := svc.s.R().GetRunGatewayUsage(ctx, runID)
+	if err != nil {
+		return nil
+	}
+	out := &GatewayUsage{Source: proto.UsageHarborPilot, State: g.State, Models: []proto.ModelUsage{}, Costs: []GatewayCost{}, Requests: g.Attempts,
+		UnknownUsage: g.UnknownUsage, Note: g.LastError}
+	_ = json.Unmarshal([]byte(g.ModelsJson), &out.Models)
+	_ = json.Unmarshal([]byte(g.CostsJson), &out.Costs)
+	if g.ReadAt.Valid {
+		t := time.UnixMicro(g.ReadAt.Int64).UTC()
+		out.ReadAt = &t
+	}
+	if out.Models == nil {
+		out.Models = []proto.ModelUsage{}
+	}
+	if out.Costs == nil {
+		out.Costs = []GatewayCost{}
+	}
+	return out
 }
 
 // Space summarizes a space's usage over its most recent runs.

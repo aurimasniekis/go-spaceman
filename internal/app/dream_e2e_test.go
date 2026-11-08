@@ -20,6 +20,7 @@ import (
 // role memory through an ordinary checkout and reports; only then are its memory changes checkpointed (and synced) and
 // its evidence advanced. A dream that ends without reporting advances nothing.
 func TestDreamConsolidates(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}

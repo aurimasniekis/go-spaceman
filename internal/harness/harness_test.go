@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -60,9 +61,10 @@ func TestClaudeBuild(t *testing.T) {
 		projects["/data/spaces/spc_a/work"].(map[string]any)["hasTrustDialogAccepted"] != true {
 		t.Fatalf("claude state %v", l.MergeJSON)
 	}
-	// The profile's settings.json keys are owned at every launch, none when it has none (ADR-0059).
+	// The profile's settings.json keys are owned at every launch (ADR-0059), plus the classic renderer when the profile
+	// sets none, so the terminal keeps a scrollback a watch-only viewer can scroll (ADR-0064).
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
-	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 0 {
+	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 1 || keys["tui"] != "default" {
 		t.Fatalf("settings keys without settings %v", l.OwnJSON)
 	}
 	cs := proto.ClaudeSettings{"permissions": map[string]any{"deny": []any{"Read(./secrets/**)"}}, "hooks": map[string]any{"Stop": []any{}}}
@@ -70,8 +72,25 @@ func TestClaudeBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if keys := l.OwnJSON[cfgSettings]; len(keys) != 2 || keys["hooks"] == nil || keys["permissions"] == nil {
+	if keys := l.OwnJSON[cfgSettings]; len(keys) != 3 || keys["hooks"] == nil || keys["permissions"] == nil || keys["tui"] != "default" {
 		t.Fatalf("settings keys %v", l.OwnJSON)
+	}
+	// Every profile key is written unchanged, and the profile's own settings are not modified.
+	for k, v := range cs {
+		if !reflect.DeepEqual(l.OwnJSON[cfgSettings][k], v) {
+			t.Fatalf("settings key %s changed: %v", k, l.OwnJSON[cfgSettings][k])
+		}
+	}
+	if _, set := cs["tui"]; set || len(cs) != 2 {
+		t.Fatal("the profile's settings were changed")
+	}
+	// A profile that picks a renderer keeps it, whichever it is.
+	for _, tui := range []any{"fullscreen", "default"} {
+		prof := proto.ClaudeSettings{"tui": tui, "model": "opus"}
+		l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: prof}))
+		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus"}) {
+			t.Fatalf("profile renderer %v: %v %v", tui, l.OwnJSON, err)
+		}
 	}
 	if _, err := (Claude{}).Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"permissions": "all"}})); err == nil {
 		t.Error("invalid claude settings accepted")
@@ -107,7 +126,7 @@ func TestCodexBuild(t *testing.T) {
 		t.Fatalf("--no-daemon must come first: %v", l.Argv)
 	}
 	argv := strings.Join(l.Argv, " ")
-	for _, want := range []string{`mcp_servers.spaceman.command="/opt/spaceman/spaceman-agent"`, `mcp_servers.spaceman.args=["mcp-bridge", "--run", "run_1", "--socket", "/run/sm/bridge.sock"]`,
+	for _, want := range []string{"-c features.shell_snapshot=false", `mcp_servers.spaceman.command="/opt/spaceman/spaceman-agent"`, `mcp_servers.spaceman.args=["mcp-bridge", "--run", "run_1", "--socket", "/run/sm/bridge.sock"]`,
 		"-s workspace-write", "-a on-request", "-- Standing rules.\n\nadd tests"} {
 		if !strings.Contains(argv, want) {
 			t.Errorf("argv %q missing %q", argv, want)
@@ -115,6 +134,9 @@ func TestCodexBuild(t *testing.T) {
 	}
 	if l.Env["CODEX_HOME"] != "/data/spaces/spc_a/instances/ins_1/codex" || len(l.SecretEnv) != 1 || l.SecretEnv["OPENAI_API_KEY"] != "sk" {
 		t.Fatalf("env %v secrets %v", l.Env, l.SecretEnv)
+	}
+	if !reflect.DeepEqual(l.RemoveDirs, []string{"/data/spaces/spc_a/instances/ins_1/codex/shell_snapshots"}) {
+		t.Fatalf("remove dirs %v", l.RemoveDirs)
 	}
 	// Interactive Codex takes an API key only from a stored login (ADR-0054): the key becomes auth.json in API-key mode.
 	if got := string(l.SecretFiles["/data/spaces/spc_a/instances/ins_1/codex/auth.json"]); got != `{"OPENAI_API_KEY":"sk","auth_mode":"apikey"}` || len(l.SecretFiles) != 1 {
@@ -203,4 +225,172 @@ func TestCapabilitiesAreExplicit(t *testing.T) {
 			t.Fatalf("%s not installed: %+v", kind, missing)
 		}
 	}
+}
+
+func gatewayPayload(p proto.LaunchPayload) proto.LaunchPayload {
+	p.Gateway = &proto.GatewayLaunch{Kind: proto.GatewayHarborPilot, BaseURL: "https://hp.example.com/"}
+	if p.Secrets == nil {
+		p.Secrets = map[string]string{proto.SecretGatewayToken: "hpk_child_1"}
+	}
+	return p
+}
+
+// SM-GW-003 (ADR-0060 decision 6): a Claude Code gateway run gets exactly ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN,
+// only through the shim's secrets (never the runner env), its stored login is removed, and the ADR-0021 first-run seed
+// stays. Another credential next to the gateway's, or a settings key that adds one, refuses the launch.
+func TestClaudeGatewayBuild(t *testing.T) {
+	t.Parallel()
+	c := ctxFor(gatewayPayload(proto.LaunchPayload{Prompt: "go", SessionID: "11111111-2222-4333-8444-555555555555",
+		ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"FOO": "bar"}}}))
+	l, err := Claude{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"ANTHROPIC_BASE_URL": "https://hp.example.com", "ANTHROPIC_AUTH_TOKEN": "hpk_child_1"}
+	if !reflect.DeepEqual(l.SecretEnv, want) {
+		t.Fatalf("secret env %v", l.SecretEnv)
+	}
+	for k, v := range l.Env {
+		if strings.HasPrefix(k, "ANTHROPIC_") || strings.Contains(v, "hpk_child_1") || strings.Contains(v, "hp.example.com") {
+			t.Fatalf("gateway env in the runner env: %s", k)
+		}
+	}
+	if strings.Contains(strings.Join(l.Argv, " "), "hpk_child_1") {
+		t.Fatal("the token is in argv")
+	}
+	if !reflect.DeepEqual(l.RemoveFiles, []string{"/data/spaces/spc_a/instances/ins_1/claude/.credentials.json"}) {
+		t.Fatalf("remove %v", l.RemoveFiles)
+	}
+	if l.SessionID != "11111111-2222-4333-8444-555555555555" || l.MergeJSON["/data/spaces/spc_a/instances/ins_1/claude/.claude.json"]["hasCompletedOnboarding"] != true {
+		t.Fatalf("session %q seed %v", l.SessionID, l.MergeJSON)
+	}
+
+	bad := map[string]proto.LaunchPayload{
+		"another credential":   gatewayPayload(proto.LaunchPayload{Secrets: map[string]string{proto.SecretGatewayToken: "hpk", "CLAUDE_CODE_OAUTH_TOKEN": "x"}}),
+		"another credential ":  gatewayPayload(proto.LaunchPayload{Secrets: map[string]string{proto.SecretGatewayToken: "hpk", "ANTHROPIC_API_KEY": "x"}}),
+		"carries no token":     gatewayPayload(proto.LaunchPayload{Secrets: map[string]string{}}),
+		"can't name an accoun": gatewayPayload(proto.LaunchPayload{AccountRef: "acc_1"}),
+		"apiKeyHelper":         gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"apiKeyHelper": "/bin/key"}}),
+		"env.ANTHROPIC_BASE_URL": gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{
+			"env": map[string]any{"ANTHROPIC_BASE_URL": "https://elsewhere.example.com"}}}),
+		"env.CLAUDE_CODE_USE_BEDROCK": gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"CLAUDE_CODE_USE_BEDROCK": "1"}}}),
+		"plain http":                  {Gateway: &proto.GatewayLaunch{Kind: proto.GatewayHarborPilot, BaseURL: "http://127.0.0.1:4000"}, Secrets: map[string]string{proto.SecretGatewayToken: "hpk"}},
+		"without the gateway's addr":  {Secrets: map[string]string{proto.SecretGatewayToken: "hpk"}},
+	}
+	for want, p := range bad {
+		if _, err := (Claude{}).Build(ctxFor(p)); err == nil || !strings.Contains(err.Error(), strings.TrimSpace(want)) {
+			t.Errorf("%s: %v", want, err)
+		}
+		cx := ctxFor(p)
+		cx.Binary = "codex"
+		if strings.HasPrefix(want, "env.") || want == "apiKeyHelper" {
+			continue // Claude Code settings
+		}
+		if _, err := (Codex{}).Build(cx); err == nil {
+			t.Errorf("codex %s: accepted", want)
+		}
+	}
+	// Plain http only when the connection allows it.
+	p := gatewayPayload(proto.LaunchPayload{})
+	p.Gateway.BaseURL, p.Gateway.AllowInsecureHTTP = "http://127.0.0.1:4000", true
+	if l, err := (Claude{}).Build(ctxFor(p)); err != nil || l.SecretEnv["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:4000" {
+		t.Fatalf("insecure allowed: %v %v", l.SecretEnv["ANTHROPIC_BASE_URL"], err)
+	}
+}
+
+// HP-T4 review F2: a gateway run's Claude Code settings env may set only the allowlisted CLAUDE_CODE_* switches; every
+// other CLAUDE_CODE_* (credentials, endpoints, proxies, client certificates, new ones), every ANTHROPIC_* and the
+// proxy and TLS variables in either case are refused.
+func TestClaudeGatewayEnv(t *testing.T) {
+	t.Parallel()
+	refused := []string{
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+		"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+		"CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_ENABLE_PROXY_AUTH_HELPER", "CLAUDE_CODE_PROXY_URL",
+		"CLAUDE_CODE_HTTPS_PROXY", "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_SOMETHING_NEW",
+		"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy",
+		"NODE_TLS_REJECT_UNAUTHORIZED", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "NODE_OPTIONS",
+	}
+	for _, k := range refused {
+		p := gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"FOO": "1", k: "x"}}})
+		if _, err := (Claude{}).Build(ctxFor(p)); err == nil || !strings.Contains(err.Error(), "env."+k+" ") {
+			t.Errorf("%s: %v", k, err)
+		}
+	}
+	allowed := map[string]any{"FOO": "1", "NO_PROXY": "example.com", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8000",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_NO_FLICKER": "1"}
+	if _, err := (Claude{}).Build(ctxFor(gatewayPayload(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": allowed}}))); err != nil {
+		t.Fatal(err)
+	}
+	// Without a gateway nothing is refused: a direct account's profile keeps its env.
+	if _, err := (Claude{}).Build(ctxFor(proto.LaunchPayload{ClaudeSettings: proto.ClaudeSettings{"env": map[string]any{"HTTPS_PROXY": "http://p"}}})); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// SM-GW-003 (ADR-0060 decision 6, the HP-T1 spike's shape): a Codex gateway run gets the five model-provider
+// overrides and HARBOR_PILOT_TOKEN through the shim only, no auth.json (any left is removed) and no login.
+func TestCodexGatewayBuild(t *testing.T) {
+	t.Parallel()
+	c := ctxFor(gatewayPayload(proto.LaunchPayload{Prompt: "go", Model: "coding/default", Settings: map[string]string{"sandbox": "read-only"}}))
+	c.Binary = "codex"
+	l, err := Codex{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := strings.Join(l.Argv, " ")
+	for _, want := range []string{
+		`-c model_provider="harbor-pilot"`,
+		`-c model_providers.harbor-pilot.name="Harbor Pilot"`,
+		`-c model_providers.harbor-pilot.base_url="https://hp.example.com/v1"`,
+		`-c model_providers.harbor-pilot.wire_api="responses"`,
+		`-c model_providers.harbor-pilot.env_key="HARBOR_PILOT_TOKEN"`,
+		"-m coding/default", "-s read-only", "-- go",
+	} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("argv %q missing %q", argv, want)
+		}
+	}
+	if l.Argv[1] != "--no-daemon" || strings.Index(argv, "model_provider=") > strings.Index(argv, "-- go") {
+		t.Fatalf("argv order %v", l.Argv)
+	}
+	if strings.Contains(argv, "hpk_child_1") {
+		t.Fatal("the token is in argv")
+	}
+	if !reflect.DeepEqual(l.SecretEnv, map[string]string{"HARBOR_PILOT_TOKEN": "hpk_child_1"}) {
+		t.Fatalf("secret env %v", l.SecretEnv)
+	}
+	for k, v := range l.Env {
+		if strings.Contains(v, "hpk_child_1") || k == "HARBOR_PILOT_TOKEN" {
+			t.Fatalf("token in the runner env: %s", k)
+		}
+	}
+	home := "/data/spaces/spc_a/instances/ins_1/codex"
+	if len(l.SecretFiles) != 0 || l.Login != nil || !reflect.DeepEqual(l.RemoveFiles, []string{home + "/auth.json"}) ||
+		l.LoginLinks[home+"/auth.json"] != "auth.json" || l.LoginLinks[home+"/auth.lock"] != "auth.lock" {
+		t.Fatalf("secret files %v login %+v remove %v links %v", l.SecretFiles, l.Login, l.RemoveFiles, l.LoginLinks)
+	}
+	if !reflect.DeepEqual(l.RemoveDirs, []string{home + "/shell_snapshots"}) || !strings.Contains(argv, "-c features.shell_snapshot=false") {
+		t.Fatalf("snapshots: remove dirs %v argv %q", l.RemoveDirs, argv)
+	}
+	for _, secrets := range []map[string]string{
+		{proto.SecretGatewayToken: "hpk", "OPENAI_API_KEY": "sk"},
+		{proto.SecretGatewayToken: "hpk", CodexAuthKey: "{}"},
+	} {
+		cx := ctxFor(gatewayPayload(proto.LaunchPayload{Secrets: secrets}))
+		cx.Binary = "codex"
+		if _, err := (Codex{}).Build(cx); err == nil || !strings.Contains(err.Error(), "another credential") {
+			t.Errorf("%v: %v", keysOf(secrets), err)
+		}
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }

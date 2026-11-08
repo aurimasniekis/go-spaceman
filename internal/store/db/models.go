@@ -342,6 +342,21 @@ type ExecutionLease struct {
 	ExpiresAt  int64
 }
 
+type GatewayRevocation struct {
+	CredentialID  string
+	RunID         string
+	SpaceID       string
+	Reason        string
+	ExpiresAt     int64
+	State         string
+	Attempts      int64
+	NextAttemptAt int64
+	LastError     string
+	RequestedAt   int64
+	DoneAt        sql.NullInt64
+	ParentFp      sql.NullString
+}
+
 type GitSshKey struct {
 	ID          string
 	Name        string
@@ -360,6 +375,26 @@ type GitSshKey struct {
 type GitSshKeySpace struct {
 	KeyID   string
 	SpaceID string
+}
+
+type HarborPilotConnection struct {
+	ID                  string
+	Singleton           int64
+	BaseUrl             string
+	RunBaseUrl          string
+	AllowInsecureHttp   int64
+	ParentTokenEnc      []byte
+	ParentTokenVersion  int64
+	ServiceTokenEnc     []byte
+	ServiceTokenVersion int64
+	BindingID           string
+	ParentExpiresAt     sql.NullInt64
+	ValidatedAt         int64
+	CreatedAt           int64
+	CreatedBy           string
+	UpdatedAt           int64
+	UpdatedBy           string
+	Version             int64
 }
 
 type HarnessProfile struct {
@@ -740,6 +775,7 @@ type Message struct {
 	Resolution     string
 	CreatedAt      int64
 	Version        int64
+	DeliverAt      sql.NullInt64
 }
 
 type MfaTotp struct {
@@ -1072,6 +1108,33 @@ type RunCredential struct {
 	TokenEnc  []byte
 }
 
+type RunGatewayCredential struct {
+	RunID        string
+	SpaceID      string
+	CredentialID string
+	TokenEnc     []byte
+	ExpiresAt    int64
+	CreatedAt    int64
+	ParentFp     sql.NullString
+}
+
+type RunGatewayUsage struct {
+	RunID         string
+	SpaceID       string
+	State         string
+	EndedAt       int64
+	Reads         int64
+	Failures      int64
+	NextAttemptAt int64
+	ReadAt        sql.NullInt64
+	ModelsJson    string
+	CostsJson     string
+	Attempts      int64
+	UnknownUsage  int64
+	LastError     string
+	UpdatedAt     int64
+}
+
 type RunTakeover struct {
 	ID          string
 	RunID       string
@@ -1192,6 +1255,21 @@ type SpaceAccount struct {
 	IsDefault int64
 	CreatedAt int64
 	CreatedBy string
+}
+
+type SpaceHarborPilot struct {
+	SpaceID                   string
+	Enabled                   int64
+	ProjectID                 string
+	HarnessesJson             string
+	TtlSeconds                int64
+	OnBudgetStatusUnavailable string
+	AllowedModelAliasesJson   string
+	CreatedAt                 int64
+	CreatedBy                 string
+	UpdatedAt                 int64
+	UpdatedBy                 string
+	Version                   int64
 }
 
 type SpaceHumanType struct {

@@ -54,10 +54,13 @@ func LaunchShim(secretsFile string, argv []string) error {
 // inherited reports environment variables a run must never inherit from the node agent or the herdr-core server:
 // another Claude Code or Codex session's markers (a nested-session marker turns off transcripts, verified with Claude
 // Code 2.1.316) and provider credentials from the node's environment, which would bypass SpaceMan accounts
-// (SM-ACCT-004). The run's own credentials come from the secrets file, applied after scrubbing.
+// (SM-ACCT-004) or a gateway run's own token (ADR-0060). The run's own credentials come from the secrets file, applied
+// after scrubbing: for a gateway run, ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (Claude Code) or HARBOR_PILOT_TOKEN
+// (Codex) and nothing else, so an ANTHROPIC_* variable of the node can't point a run elsewhere.
 func inherited(name string) bool {
 	switch name {
-	case "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_THREAD_ID":
+	case "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CODEX_THREAD_ID",
+		"HARBOR_PILOT_TOKEN", "SPACEMAN_GATEWAY_TOKEN":
 		return true
 	}
 	return strings.HasPrefix(name, "CLAUDE_CODE_") || strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CODEX_SANDBOX")

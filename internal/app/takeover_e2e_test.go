@@ -31,6 +31,7 @@ import (
 // held notices go out after the release; start and end are audited without the keystrokes; it ends on release,
 // expiry and run end, and the node detaches each time.
 func TestTerminalTakeover(t *testing.T) {
+	// Not parallel: it shortens the package-level fleet.TakeoverTTL.
 	prev := fleet.TakeoverTTL
 	fleet.TakeoverTTL = 2 * time.Second
 	t.Cleanup(func() { fleet.TakeoverTTL = prev })

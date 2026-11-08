@@ -16,6 +16,7 @@ import (
 // can sign in with SSO; while it is on, password sign-in is refused, break-glass still works, and changes that would
 // lock the administrators out are refused.
 func TestSSOOnlyEnforcement(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	off := func(v bool) SignInSettingsInput { return SignInSettingsInput{LocalLoginDisabled: ptr(v)} }
 	st, err := f.svc.SignInSettings(f.ctx)
@@ -105,6 +106,7 @@ func TestSSOOnlyEnforcement(t *testing.T) {
 
 // Hallpass: the sign-in page can go straight to one enabled provider; a disabled or deleted one turns it off.
 func TestDirectProvider(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	set := func(slug string) error {
 		_, err := f.svc.SetSignInSettings(f.ctx, admin, SignInSettingsInput{DirectProvider: ptr(slug)})
@@ -139,6 +141,7 @@ func TestDirectProvider(t *testing.T) {
 // Hallpass HP-OIDC-015: RP-initiated logout only when the provider enables it and advertises end_session_endpoint;
 // the endpoint is validated like the others, no id_token_hint is sent and the redirect comes back to /login.
 func TestLogoutURL(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	if u, err := f.svc.LogoutURL(f.ctx, "corp", "/login"); err != nil || u != "" {
 		t.Fatalf("not enabled: %q %v", u, err)

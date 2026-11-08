@@ -16,6 +16,7 @@ import (
 // SM-AUTH-001 (ADR-0045, ported from Hallpass bdd8329) over the real HTTP stack: SSO-only enforcement with its
 // precondition and guards, the direct provider on the public system info, and RP-initiated logout of an SSO session.
 func TestSignInSettingsOverHTTP(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	idp := oidctest.New(t)
 	idp.Now = h.clk.Now

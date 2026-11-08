@@ -192,6 +192,7 @@ func isCode(err error, c apperr.Code) bool { return apperr.CodeOf(err) == c }
 
 // Hallpass HP-OIDC-002/003/009: code flow with PKCE, validated ID token, identity by (iss, sub), session created.
 func TestLoginPreprovisioned(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("alice@corp.example", authz.RoleOperator)
 	if _, err := f.flow(PurposeLogin, nil); !errors.Is(err, ErrNotProvisioned) {
@@ -224,6 +225,7 @@ func TestLoginPreprovisioned(t *testing.T) {
 
 // RFC 9207 (Porch sends iss): a matching iss is accepted, another issuer is a mix-up and rejected.
 func TestResponseIssuer(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("alice@corp.example")
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -239,6 +241,7 @@ func TestResponseIssuer(t *testing.T) {
 
 // Hallpass HP-OIDC-009: an email match never links or merges.
 func TestNoEmailMerge(t *testing.T) {
+	t.Parallel()
 	f := newFx(t, func(in *ProviderInput) {
 		in.Provisioning = ptr(JIT)
 		in.JIT = &JITRules{EmailDomains: []string{"example.com"}}
@@ -257,6 +260,7 @@ func TestNoEmailMerge(t *testing.T) {
 
 // Hallpass HP-OIDC-010/011: JIT restrictions, no grant without a mapping, grant sync on every login.
 func TestJITAndGroupSync(t *testing.T) {
+	t.Parallel()
 	f := newFx(t, func(in *ProviderInput) {
 		in.Provisioning = ptr(JIT)
 		in.JIT = &JITRules{EmailDomains: []string{"example.com"}, Groups: []string{"spaceman-users"}}
@@ -304,6 +308,7 @@ func TestJITAndGroupSync(t *testing.T) {
 // Hallpass HP-OIDC-011, Porch contract: groups_claim reads a nested claim by dotted path (Porch sends porch.groups),
 // while a top-level claim whose name contains dots still wins.
 func TestGroupsClaimPath(t *testing.T) {
+	t.Parallel()
 	f := newFx(t, func(in *ProviderInput) {
 		in.GroupsClaim = ptr("porch.groups")
 		in.Provisioning = ptr(JIT)
@@ -331,6 +336,7 @@ func TestGroupsClaimPath(t *testing.T) {
 }
 
 func TestClaimAt(t *testing.T) {
+	t.Parallel()
 	all := map[string]json.RawMessage{
 		"groups":                     json.RawMessage(`["top"]`),
 		"https://example.com/groups": json.RawMessage(`["url"]`),
@@ -363,6 +369,7 @@ func TestClaimAt(t *testing.T) {
 // SSO grants never count toward the last-administrator guard (adapted from Hallpass HP-AUTH-015 TestSyncKeepsLastAdmin):
 // an IdP-only administrator can lose the grant, and a manual global administrator always remains.
 func TestSSOGrantsNeverCountAsLastAdmin(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u, err := f.auth.Create(f.ctx, admin, auth.CreateInput{Email: "sso-admin@example.com", DisplayName: "SSO admin"})
 	must(t, err)
@@ -387,6 +394,7 @@ func TestSSOGrantsNeverCountAsLastAdmin(t *testing.T) {
 
 // Hallpass HP-OIDC-002: state is single-use, bound to the browser and expires after 10 minutes.
 func TestStateSafety(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("bob@example.com")
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -433,6 +441,7 @@ func TestStateSafety(t *testing.T) {
 
 // Hallpass HP-OIDC-003: signature algorithms, iss/aud/azp, time claims and nonce are enforced.
 func TestIDTokenValidation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("carol@example.com")
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -500,6 +509,7 @@ func TestIDTokenValidation(t *testing.T) {
 
 // Hallpass HP-OIDC-004: JWKS is cached, refetched on an unknown kid (key rotation) and refetches are rate-limited.
 func TestJWKSRotation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("dave@example.com")
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -525,6 +535,7 @@ func TestJWKSRotation(t *testing.T) {
 
 // Hallpass HP-OIDC-001/005/006: issuer match, https, endpoint origin, private networks, TLS verification.
 func TestProviderValidation(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	bad := []ProviderInput{
 		{Slug: ptr("x1"), DisplayName: ptr("x"), Issuer: ptr("http://idp.example"), ClientID: ptr("c")},
@@ -611,6 +622,7 @@ func TestProviderValidation(t *testing.T) {
 
 // Hallpass HP-OIDC-007: the client secret is sealed at rest and never returned.
 func TestClientSecretWriteOnly(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	b, _ := json.Marshal(f.prov)
 	if strings.Contains(string(b), f.idp.ClientSecret) || !f.prov.HasClientSecret {
@@ -651,6 +663,7 @@ func TestClientSecretWriteOnly(t *testing.T) {
 
 // Hallpass HP-OIDC-012: outages fail closed; existing sessions continue.
 func TestOutage(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("erin@example.com")
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -679,6 +692,7 @@ func TestOutage(t *testing.T) {
 
 // Hallpass HP-OIDC-013: step-up requires a fresh auth_time (and acr when configured); TOTP fallback when unsupported.
 func TestStepUp(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("frank@example.com")
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -767,6 +781,7 @@ func mustToken(t *testing.T, r *CallbackResult) string {
 
 // Hallpass HP-OIDC-014: a test login previews the mapping without creating a session and records the evidence.
 func TestTestLogin(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	adminP := f.localSession("root@corp.example")
 	if _, err := f.svc.Start(f.ctx, StartInput{Provider: "corp", Purpose: PurposeTest}); err == nil {
@@ -842,6 +857,7 @@ func TestTestLogin(t *testing.T) {
 
 // Hallpass HP-OIDC-009: linking requires a session or an admin invitation; identities are never moved.
 func TestLinking(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	a := f.user("a@example.com")
 	b := f.user("b@example.com")
@@ -911,6 +927,7 @@ func TestLinking(t *testing.T) {
 
 // A user may unlink their own identity unless it is their only way to sign in.
 func TestSelfUnlink(t *testing.T) {
+	t.Parallel()
 	f := newFx(t, func(in *ProviderInput) {
 		in.Provisioning = ptr(JIT)
 		in.JIT = &JITRules{EmailDomains: []string{"example.com"}}
@@ -926,6 +943,7 @@ func TestSelfUnlink(t *testing.T) {
 
 // Hallpass HP-OIDC-005: post-login return paths are relative and allowlisted.
 func TestSanitizeReturnTo(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"/spaces?x=1": "/spaces?x=1", "": "/", "https://evil.example/": "/", "//evil.example": "/", "/\\evil": "/", "/api/v1/x": "/",
 		"/auth/oidc/callback": "/", "javascript:alert(1)": "/", "/ok\r\nSet-Cookie: x": "/", "/spaces/spc_1#t=3": "/spaces/spc_1#t=3",
@@ -939,6 +957,7 @@ func TestSanitizeReturnTo(t *testing.T) {
 
 // Disabled users and disabled providers cannot sign in; denied logins are audited.
 func TestDisabled(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("gail@example.com")
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))
@@ -972,6 +991,7 @@ func TestDisabled(t *testing.T) {
 
 // Group mappings: domains must be "*" or an existing space; removing the space removes its mappings.
 func TestMappings(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	space := f.space()
 	for _, in := range []MappingInput{
@@ -1025,6 +1045,7 @@ func TestMappings(t *testing.T) {
 // Hallpass HP-OIDC-008: after an SSO login no access, refresh or ID token is stored anywhere: not in any table and not
 // in the database or WAL files on disk.
 func TestTokensNotPersisted(t *testing.T) {
+	t.Parallel()
 	f := newFx(t)
 	u := f.user("alice@corp.example", authz.RoleOperator)
 	must(t, f.svc.LinkIdentity(f.ctx, admin, u.ID, f.prov.ID, "user-1"))

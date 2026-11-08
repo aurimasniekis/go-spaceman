@@ -154,7 +154,8 @@ their SpaceMan tools and never wait in a loop: they are told when a response arr
 - When the requester's run has **ended** (it exited, failed, was lost, or ends before acknowledging the response), the
   policy decides:
   - **On at once** (`reroute`, the default): to a running run of the policy's **successor role**, else to the space's
-    **control** (also while the supervisor restarts it), else nobody.
+    **control** (also while the supervisor restarts it, or while no control runs but
+    [auto-start](./control#starting-and-stopping-on-its-own) can start one for it), else nobody.
   - **To its next run** (`next_launch`): kept for the next run of the same agent instance, a resumed session such as a
     restarted control or a sleeping knowledge-base session, for the policy's hold time; then on as above.
 - If no agent can take it, the action shows the response as **undeliverable**, operators get a message, and **Send to

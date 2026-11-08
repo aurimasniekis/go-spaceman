@@ -201,6 +201,7 @@ func (e *fleetEnv) auditCount(action, outcome string) int {
 // commit, memory restored at central's head), moves the assignment and the lease (new generation) in one step, leaves
 // the space paused, retains the source folder, and the next run on the destination starts a fresh native session.
 func TestRelocationClean(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -317,6 +318,7 @@ func TestRelocationClean(t *testing.T) {
 // SM-SPACE-005, SM-REPO-006: unpushed, changed and untracked state is refused (never lost silently), the space stays
 // on its source; the operator's explicit export carries it to the destination.
 func TestRelocationDirtyRefusedThenExported(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -386,6 +388,7 @@ func TestRelocationDirtyRefusedThenExported(t *testing.T) {
 // uses central's copies only, marks the source's runs lost, and fences the source when it comes back: its run is
 // stopped, it gets no lease, and its folder is retained.
 func TestRelocationUnavailableSource(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -474,6 +477,7 @@ func TestRelocationUnavailableSource(t *testing.T) {
 
 // A central restart in the middle of a relocation resumes it from the database (the destination was offline).
 func TestRelocationResumesAfterCentralRestart(t *testing.T) {
+	// Not parallel: central restarts must finish within the node lease, which parallel tests can starve.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -512,6 +516,7 @@ func TestRelocationResumesAfterCentralRestart(t *testing.T) {
 // SM-INV-003: nothing moves a space without an explicit request. A source that is gone for many lease periods keeps
 // its spaces, no relocation is created, and launches wait for it.
 func TestRelocationNeverAutomatic(t *testing.T) {
+	// Not parallel: short leases (shortLease) expire if parallel tests starve the node.
 	e := newFleetEnv(t, shortLease)
 	ctx := context.Background()
 	a, _ := e.addNode("node-a"), e.addNode("node-b")
@@ -540,6 +545,7 @@ func TestRelocationNeverAutomatic(t *testing.T) {
 
 // The relocation API: authorization rules exist for every operation, and the read model is served.
 func TestRelocationOverHTTP(t *testing.T) {
+	t.Parallel()
 	e := newFleetEnv(t)
 	ctx := context.Background()
 	a, b := e.addNode("node-a"), e.addNode("node-b")

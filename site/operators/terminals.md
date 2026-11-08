@@ -42,6 +42,21 @@ The **inspector** beside the terminal (the panel button toggles it) shows:
 
 <Shot name="terminal-live" alt="A run's page: control's live terminal with the inspector showing its state, task, usage and node" caption="A live, watch-only terminal with its inspector" />
 
+### Scrolling back
+
+You can scroll back through earlier output in the live view without taking the terminal over. Use the mouse wheel or
+trackpad, or drag on a phone. Scrolling up first moves the terminal within its frame, then moves into the earlier output
+the terminal keeps (up to 10,000 lines). Scrolling never sends anything to the run. While you read, new output keeps
+arriving below without moving your place. **Jump to live** returns to the newest output.
+
+<Shot name="terminal-scrollback" alt="A run's live, watch-only terminal scrolled back into earlier output, with a Jump to live button over its bottom edge" caption="Reading earlier output while the run goes on" />
+
+Earlier output is there only when the program printed it to the terminal's normal screen. Full-screen programs draw on
+an alternate screen and keep their own history, which only they can scroll. SpaceMan therefore starts Claude Code with
+its classic renderer (`"tui": "default"` in the run's settings). A profile can set `"tui": "fullscreen"` in its Claude
+Code settings to use the full-screen renderer instead, but then watchers can see only the current screen
+(ADR-0064 in the [decision log](/security/decisions)).
+
 Watching a terminal needs the `terminal:watch` permission (operator and above). The stream re-checks your session
 periodically and ends if it was revoked or your grant was removed.
 
@@ -63,6 +78,9 @@ an interactive tool). **Take over terminal** on a running run's page lets one pe
   program echoes, as for any output.
 - Typed keys reach the program through herdr-core's interactive attach on the node (node protocol 1.6; older agents
   cannot be taken over). The terminal keeps its size rather than fitting your browser window.
+- While you hold the takeover, the wheel scrolls a full-screen program the way a desktop terminal would: it sends
+  mouse-wheel reports when the program asks for mouse input (Claude Code's full-screen renderer then scrolls its
+  history), and nothing otherwise. Programs on the normal screen scroll back locally, as when watching.
 
 <Shot name="terminal-takeover" alt="A run's live terminal taken over by the signed-in admin: a banner says you have taken over this terminal, with a Release button" caption="A taken-over terminal: automated input waits until it is released" />
 

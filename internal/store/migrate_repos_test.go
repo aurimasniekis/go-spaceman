@@ -10,6 +10,7 @@ import (
 // 0029 adds space repositories and registers every folder a knowledge base names as a listed repository (role kb,
 // manual), once per space and folder, with a suffix when the derived name is taken; the knowledge bases are unchanged.
 func TestSpaceRepositoriesMigrationKeepsKBs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "data")
 	s, err := Open(ctx, Options{DataDir: dir, Migrations: embeddedUpTo(t, "0028")})

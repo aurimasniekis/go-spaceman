@@ -40,6 +40,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	"github.com/aurimasniekis/go-spaceman/internal/gitkeys"
+	"github.com/aurimasniekis/go-spaceman/internal/harborpilot"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/kb"
@@ -96,6 +97,12 @@ type Central struct {
 	Supervisor *control.Supervisor
 	// GitKeys holds shared Git SSH keys (ADR-0058).
 	GitKeys *gitkeys.Service
+	// HarborPilot holds the Harbor Pilot connection and space settings (ADR-0060).
+	HarborPilot *harborpilot.Service
+	// HarborPilotRuns is the run-token lifecycle: routing, mint-or-reuse at dispatch, revocation (ADR-0060, HP-T3).
+	HarborPilotRuns *harborpilot.Lifecycle
+	// HarborPilotBudgets reads Harbor Pilot budget status: the early launch refusal and the Limits page (ADR-0060, HP-T5).
+	HarborPilotBudgets *harborpilot.Budgets
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
@@ -147,6 +154,9 @@ type Options struct {
 	Environ []string
 	// StoreBusyTimeout overrides SQLite's busy timeout (fault tests of lock contention; 0 keeps the default).
 	StoreBusyTimeout time.Duration
+	// StoreReaders overrides the store's reader pool size (0 keeps the default, max(4, GOMAXPROCS)). Opening the store
+	// opens and checks every reader connection, which on a many-core host under the race detector takes seconds.
+	StoreReaders int
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -159,7 +169,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	}
 	m := metrics.New()
 	st, err := store.Open(ctx, store.Options{DataDir: cfg.DataDir, Logger: obs.Component(log, "store"), Clock: o.Clock, Metrics: m,
-		BusyTimeout: o.StoreBusyTimeout, AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
+		BusyTimeout: o.StoreBusyTimeout, Readers: o.StoreReaders, AllowNetworkFS: !cfg.IsProduction() && os.Getenv("SPACEMAN_ALLOW_NETWORK_FS") == "1"})
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +213,15 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		_ = st.Close()
 		return nil, err
 	}
+	// Queued gateway revocations are done on the deadline timer, woken after the commit that queued them.
+	wakeDeadlines := func() {
+		if c.Human != nil {
+			c.Human.Kick()
+		}
+	}
+	c.HarborPilot = harborpilot.New(st, c.Audit, c.Changes, c.Keyring, harborpilot.Options{Log: obs.Component(log, "harborpilot"), Wake: wakeDeadlines})
+	c.HarborPilotBudgets = harborpilot.NewBudgets(c.HarborPilot, harborpilot.BudgetsOptions{})
+	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{Metrics: m, Budget: c.HarborPilotBudgets})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
 		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
@@ -297,7 +316,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return c.Notifier.OnCommandAck(ctx, tx, commandID, result)
 		},
-		Outbox: c.Outbox, Admit: c.Limits.Admit})
+		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines})
 	c.Accounts = accounts.New(st, c.Keyring, c.Audit, c.Changes)
 	c.Fleet.Hub().Secrets = func(ctx context.Context, run *fleet.Run) (map[string]string, error) {
 		if run.Launch.AccountRef == "" {
@@ -328,6 +347,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		return v.Get(limits.HumanPending), v.Get(limits.HumanPendingPerRun)
 	}
 	c.Human.Log = obs.Component(log, "human")
+	// A response whose run is gone goes to a control auto-start can start (ADR-0056).
+	c.Human.ControlAutostart = func(ctx context.Context, q *db.Queries, spaceID string) bool {
+		v, err := c.Limits.For(ctx, q, spaceID)
+		return err == nil && v.Get(limits.ControlAutostart) != 0
+	}
 	c.Messages = messages.New(st, c.Audit, c.Changes)
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
@@ -478,6 +502,9 @@ const (
 	dataReservePercent = 2
 )
 
+// mintShutdownGrace is how long Close lets background gateway mints finish before it cancels them.
+const mintShutdownGrace = 5 * time.Second
+
 // Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
 	if c.Backups != nil {
@@ -488,6 +515,7 @@ func (c *Central) Close() error {
 	}
 	if c.Fleet != nil {
 		c.Fleet.Hub().CloseAll("central shutting down")
+		c.Fleet.Hub().StopMints(mintShutdownGrace)
 		c.Fleet.Recordings().Close()
 	}
 	if c.Gateway != nil {
@@ -510,7 +538,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	return d
@@ -630,6 +658,11 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "schedules", Next: c.Schedules.Next, Due: c.Schedules.Due},
 		human.Deadline{Name: "task_deadlines", Next: c.Limits.NextDeadline, Due: c.Limits.Deadlines},
 		human.Deadline{Name: "xspace", Next: c.XSpace.NextDeadline, Due: c.XSpace.Expire},
+		// Harbor Pilot run tokens (ADR-0060): queued revocations, and runs a node left unknown past its lease.
+		human.Deadline{Name: "gateway_revocations", Next: c.HarborPilotRuns.NextRevocation, Due: c.HarborPilotRuns.RevokeDue},
+		human.Deadline{Name: "gateway_lease_sweep", Next: c.Fleet.NextGatewayLeaseSweep, Due: c.Fleet.SweepGatewayLeases},
+		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
+		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
 		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
 	go c.Notifier.Run(ctx)
@@ -711,13 +744,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.RetentionRules, api.AttentionRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules} {
 		for k, v := range m {
 			out[k] = v
 		}

@@ -17,6 +17,8 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
+	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -652,6 +654,7 @@ func (svc *Service) applyPrepare(ctx context.Context, r db.Relocation, rep proto
 // source's runs, commands and reports. The space stays paused. The source is told to retain or delete its folder.
 func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) error {
 	var gen int64
+	var lostRuns []db.Run
 	err := svc.s.W().TxNamed(ctx, "fleet.relocation_finalize", func(tx *store.Tx) error {
 		sp, err := tx.Q.GetSpace(ctx, r.SpaceID)
 		if err != nil {
@@ -682,14 +685,32 @@ func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) err
 			return err
 		}
 		lost := int64(0)
+		lostRuns = nil
 		if r.Mode == RelocSourceUnavailable {
+			// The source's runs end here, like runs a node reports ended: counted, run_ended published and OnRunEnded
+			// called after the commit (it used to mark them lost silently).
+			if lostRuns, err = tx.Q.ListRunsLostForRelocation(ctx, db.ListRunsLostForRelocationParams{SpaceID: r.SpaceID, NodeID: r.SourceNodeID}); err != nil {
+				return err
+			}
 			if lost, err = tx.Q.MarkRunsLostForRelocation(ctx, db.MarkRunsLostForRelocationParams{Now: tx.NowMicros(), SpaceID: r.SpaceID,
 				NodeID: r.SourceNodeID}); err != nil {
 				return err
 			}
+			for _, run := range lostRuns {
+				svc.opts.Metrics.RunEnded(metrics.Harness(run.Harness), metrics.RunLost)
+				if err := svc.endRunTakeoverTx(ctx, tx, run); err != nil {
+					return err
+				}
+				if err := svc.runEvent(ctx, tx, run, outbox.RunEnded{Run: outboxRun(run), State: proto.RunLost, EndReason: relocatedSourceUnavailable}); err != nil {
+					return err
+				}
+			}
 		}
 		if _, err := tx.Q.RevokeSpaceRunCredentials(ctx, db.RevokeSpaceRunCredentialsParams{RevokedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 			SpaceID: r.SpaceID}); err != nil {
+			return err
+		}
+		if err := svc.queueSpaceGatewayRevocations(ctx, tx, r.SpaceID, RevokeRelocated); err != nil {
 			return err
 		}
 		action := proto.ReleaseRetain
@@ -727,10 +748,18 @@ func (svc *Service) finalizeRelocation(ctx context.Context, r db.Relocation) err
 	if err != nil {
 		return err
 	}
+	if svc.opts.OnRunEnded != nil {
+		for _, run := range lostRuns {
+			svc.opts.OnRunEnded(run.ID)
+		}
+	}
 	svc.removeMemoryBlobs(r.ID)
 	svc.retainKick()
 	return nil
 }
+
+// relocatedSourceUnavailable is the end reason of runs a source-unavailable relocation marks lost.
+const relocatedSourceUnavailable = "relocated_source_unavailable"
 
 // applyRelease records what a node did with a space's folder after a relocation finished (source) or was cancelled
 // (destination).

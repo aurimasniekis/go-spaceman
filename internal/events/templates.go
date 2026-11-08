@@ -45,17 +45,23 @@ var reSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 type builtin struct {
 	slug, name, description string
 	def                     func() template.Definition
+	notes                   string // version 1's notes; empty means the go-pulse-github contract
 }
 
+const harborPilotSeedNotes = "Seeded from the Harbor Pilot v0.1.3 events contract (docs/contracts/harbor-pilot.md)."
+
 var builtins = []builtin{
-	{"github-issue", "GitHub issues", "Issue events for one repository, from go-pulse-github webhooks (evt.github.<account>.webhook.issues.*).", template.GitHubIssue},
-	{"github-pull-request", "GitHub pull requests", "Pull request events for one repository, from go-pulse-github webhooks (evt.github.<account>.webhook.pull_request.*).", template.GitHubPullRequest},
-	{"github-pr-comment", "GitHub pull request comments", "New comments in pull request conversations (evt.github.<account>.webhook.issue_comment.created on pull requests).", template.GitHubPullRequestComment},
-	{"github-pr-review", "GitHub pull request reviews", "Submitted pull request reviews: approved, changes requested or commented (evt.github.<account>.webhook.pull_request_review.submitted).", template.GitHubPullRequestReview},
-	{"github-pr-review-comment", "GitHub pull request review comments", "New inline comments on pull request diffs (evt.github.<account>.webhook.pull_request_review_comment.created).", template.GitHubPullRequestReviewComment},
-	{"github-issue-comment", "GitHub issue comments", "New comments on issues, not pull requests (evt.github.<account>.webhook.issue_comment.created).", template.GitHubIssueComment},
-	{"github-workflow-run", "GitHub Actions workflow runs", "Completed workflow runs, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.workflow_run.completed).", template.GitHubWorkflowRun},
-	{"github-check-suite", "GitHub check suites", "Completed check suites of any CI app, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.check_suite.completed).", template.GitHubCheckSuite},
+	{"github-issue", "GitHub issues", "Issue events for one repository, from go-pulse-github webhooks (evt.github.<account>.webhook.issues.*).", template.GitHubIssue, ""},
+	{"github-pull-request", "GitHub pull requests", "Pull request events for one repository, from go-pulse-github webhooks (evt.github.<account>.webhook.pull_request.*).", template.GitHubPullRequest, ""},
+	{"github-pr-comment", "GitHub pull request comments", "New comments in pull request conversations (evt.github.<account>.webhook.issue_comment.created on pull requests).", template.GitHubPullRequestComment, ""},
+	{"github-pr-review", "GitHub pull request reviews", "Submitted pull request reviews: approved, changes requested or commented (evt.github.<account>.webhook.pull_request_review.submitted).", template.GitHubPullRequestReview, ""},
+	{"github-pr-review-comment", "GitHub pull request review comments", "New inline comments on pull request diffs (evt.github.<account>.webhook.pull_request_review_comment.created).", template.GitHubPullRequestReviewComment, ""},
+	{"github-issue-comment", "GitHub issue comments", "New comments on issues, not pull requests (evt.github.<account>.webhook.issue_comment.created).", template.GitHubIssueComment, ""},
+	{"github-workflow-run", "GitHub Actions workflow runs", "Completed workflow runs, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.workflow_run.completed).", template.GitHubWorkflowRun, ""},
+	{"github-check-suite", "GitHub check suites", "Completed check suites of any CI app, by default only those that failed, timed out, were cancelled or failed to start (conclusions failure, timed_out, cancelled or startup_failure; evt.github.<account>.webhook.check_suite.completed).", template.GitHubCheckSuite, ""},
+	{"harbor-pilot-budget", "Harbor Pilot budgets", "Harbor Pilot budget warnings and exhausted budgets (evt.harborpilot.budget.threshold.*); project_id routes a project's budgets to its space.", template.HarborPilotBudget, harborPilotSeedNotes},
+	{"harbor-pilot-quota", "Harbor Pilot quota windows", "Harbor Pilot provider quota windows that ran out or recovered (evt.harborpilot.quota.window.*); not scoped to a project.", template.HarborPilotQuota, harborPilotSeedNotes},
+	{"harbor-pilot-access-blocked", "Harbor Pilot blocked requests", "Model requests Harbor Pilot refused by policy, including blocking-budget refusals (evt.harborpilot.access.request.blocked); not scoped to a project.", template.HarborPilotAccessBlocked, harborPilotSeedNotes},
 }
 
 // SeedBuiltins creates the built-in templates (published version 1) when they do not exist yet.
@@ -70,6 +76,10 @@ func (svc *Service) SeedBuiltins(ctx context.Context) error {
 			return err
 		}
 		def := b.def()
+		notes := b.notes
+		if notes == "" {
+			notes = "Seeded from the go-pulse-github v0.1.0 contract."
+		}
 		if err := def.Validate(); err != nil {
 			return err
 		}
@@ -83,7 +93,7 @@ func (svc *Service) SeedBuiltins(ctx context.Context) error {
 				return err
 			}
 			return tx.Q.InsertEventTemplateVersion(ctx, db.InsertEventTemplateVersionParams{ID: ids.New(ids.EventTemplVer), TemplateID: id, Version: 1,
-				Status: "published", DefinitionJson: mustJSON(def), Notes: "Seeded from the go-pulse-github v0.1.0 contract.", CreatedAt: tx.NowMicros(),
+				Status: "published", DefinitionJson: mustJSON(def), Notes: notes, CreatedAt: tx.NowMicros(),
 				CreatedBy: "system", PublishedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}})
 		})
 		if err != nil {

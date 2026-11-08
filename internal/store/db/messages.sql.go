@@ -59,6 +59,25 @@ func (q *Queries) AckNotification(ctx context.Context, arg AckNotificationParams
 	return result.RowsAffected()
 }
 
+const cancelScheduledMessage = `-- name: CancelScheduledMessage :execrows
+UPDATE messages SET state = 'resolved', resolved_at = ?1, resolution = ?2, version = version + 1
+WHERE id = ?3 AND state = 'stored' AND deliver_at > ?1
+`
+
+type CancelScheduledMessageParams struct {
+	Now        sql.NullInt64
+	Resolution string
+	ID         string
+}
+
+func (q *Queries) CancelScheduledMessage(ctx context.Context, arg CancelScheduledMessageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelScheduledMessage, arg.Now, arg.Resolution, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const clearRefusedMessageNotice = `-- name: ClearRefusedMessageNotice :exec
 UPDATE messages SET noticed_at = NULL WHERE notice_command = ?1 AND state IN ('stored', 'available')
 `
@@ -88,8 +107,24 @@ func (q *Queries) CountOperatorMessages(ctx context.Context, spaceID string) (in
 	return count, err
 }
 
+const countScheduledMessages = `-- name: CountScheduledMessages :one
+SELECT count(*) FROM messages WHERE space_id = ?1 AND state = 'stored' AND deliver_at > ?2
+`
+
+type CountScheduledMessagesParams struct {
+	SpaceID string
+	Now     sql.NullInt64
+}
+
+func (q *Queries) CountScheduledMessages(ctx context.Context, arg CountScheduledMessagesParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countScheduledMessages, arg.SpaceID, arg.Now)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getMessage = `-- name: GetMessage :one
-SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version FROM messages WHERE id = ?
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages WHERE id = ?
 `
 
 func (q *Queries) GetMessage(ctx context.Context, id string) (Message, error) {
@@ -120,12 +155,13 @@ func (q *Queries) GetMessage(ctx context.Context, id string) (Message, error) {
 		&i.Resolution,
 		&i.CreatedAt,
 		&i.Version,
+		&i.DeliverAt,
 	)
 	return i, err
 }
 
 const getMessageByDedup = `-- name: GetMessageByDedup :one
-SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version FROM messages WHERE space_id = ? AND from_kind = ? AND from_id = ? AND dedup_key = ?
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages WHERE space_id = ? AND from_kind = ? AND from_id = ? AND dedup_key = ?
 `
 
 type GetMessageByDedupParams struct {
@@ -168,6 +204,52 @@ func (q *Queries) GetMessageByDedup(ctx context.Context, arg GetMessageByDedupPa
 		&i.Resolution,
 		&i.CreatedAt,
 		&i.Version,
+		&i.DeliverAt,
+	)
+	return i, err
+}
+
+const getScheduledByDedup = `-- name: GetScheduledByDedup :one
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages
+WHERE space_id = ?1 AND state = 'stored' AND deliver_at > ?2 AND dedup_key = ?3
+ORDER BY created_at LIMIT 1
+`
+
+type GetScheduledByDedupParams struct {
+	SpaceID  string
+	Now      sql.NullInt64
+	DedupKey string
+}
+
+func (q *Queries) GetScheduledByDedup(ctx context.Context, arg GetScheduledByDedupParams) (Message, error) {
+	row := q.db.QueryRowContext(ctx, getScheduledByDedup, arg.SpaceID, arg.Now, arg.DedupKey)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.FromKind,
+		&i.FromID,
+		&i.FromLabel,
+		&i.ToKind,
+		&i.ToID,
+		&i.Kind,
+		&i.Subject,
+		&i.Body,
+		&i.CorrelationID,
+		&i.ReplyTo,
+		&i.DedupKey,
+		&i.State,
+		&i.AvailableAt,
+		&i.DeliveredVia,
+		&i.NoticeCommand,
+		&i.NoticedAt,
+		&i.AcknowledgedAt,
+		&i.AcknowledgedBy,
+		&i.ResolvedAt,
+		&i.Resolution,
+		&i.CreatedAt,
+		&i.Version,
+		&i.DeliverAt,
 	)
 	return i, err
 }
@@ -328,14 +410,16 @@ func (q *Queries) ListMessagesByNotice(ctx context.Context, noticeCommand string
 }
 
 const listMessagesFor = `-- name: ListMessagesFor :many
-SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version FROM messages
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages
 WHERE space_id = ?1 AND state IN ('stored', 'available')
-  AND ((to_kind = 'run' AND to_id = ?2) OR (to_kind = 'role' AND to_id = ?3) OR (to_kind = 'control' AND ?4 = 1))
-ORDER BY created_at LIMIT ?5
+  AND (deliver_at IS NULL OR deliver_at <= ?2)
+  AND ((to_kind = 'run' AND to_id = ?3) OR (to_kind = 'role' AND to_id = ?4) OR (to_kind = 'control' AND ?5 = 1))
+ORDER BY created_at LIMIT ?6
 `
 
 type ListMessagesForParams struct {
 	SpaceID   string
+	Now       sql.NullInt64
 	RunID     string
 	Role      string
 	IsControl interface{}
@@ -345,6 +429,7 @@ type ListMessagesForParams struct {
 func (q *Queries) ListMessagesFor(ctx context.Context, arg ListMessagesForParams) ([]Message, error) {
 	rows, err := q.db.QueryContext(ctx, listMessagesFor,
 		arg.SpaceID,
+		arg.Now,
 		arg.RunID,
 		arg.Role,
 		arg.IsControl,
@@ -382,6 +467,7 @@ func (q *Queries) ListMessagesFor(ctx context.Context, arg ListMessagesForParams
 			&i.Resolution,
 			&i.CreatedAt,
 			&i.Version,
+			&i.DeliverAt,
 		); err != nil {
 			return nil, err
 		}
@@ -442,8 +528,69 @@ func (q *Queries) ListNoticeCandidates(ctx context.Context) ([]ListNoticeCandida
 	return items, nil
 }
 
+const listScheduledMessages = `-- name: ListScheduledMessages :many
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages
+WHERE space_id = ?1 AND state = 'stored' AND deliver_at > ?2
+ORDER BY deliver_at, id LIMIT ?3
+`
+
+type ListScheduledMessagesParams struct {
+	SpaceID string
+	Now     sql.NullInt64
+	Lim     int64
+}
+
+func (q *Queries) ListScheduledMessages(ctx context.Context, arg ListScheduledMessagesParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, listScheduledMessages, arg.SpaceID, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.FromKind,
+			&i.FromID,
+			&i.FromLabel,
+			&i.ToKind,
+			&i.ToID,
+			&i.Kind,
+			&i.Subject,
+			&i.Body,
+			&i.CorrelationID,
+			&i.ReplyTo,
+			&i.DedupKey,
+			&i.State,
+			&i.AvailableAt,
+			&i.DeliveredVia,
+			&i.NoticeCommand,
+			&i.NoticedAt,
+			&i.AcknowledgedAt,
+			&i.AcknowledgedBy,
+			&i.ResolvedAt,
+			&i.Resolution,
+			&i.CreatedAt,
+			&i.Version,
+			&i.DeliverAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSpaceMessages = `-- name: ListSpaceMessages :many
-SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version FROM messages WHERE space_id = ? ORDER BY created_at DESC LIMIT ?
+SELECT id, space_id, from_kind, from_id, from_label, to_kind, to_id, kind, subject, body, correlation_id, reply_to, dedup_key, state, available_at, delivered_via, notice_command, noticed_at, acknowledged_at, acknowledged_by, resolved_at, resolution, created_at, version, deliver_at FROM messages WHERE space_id = ? ORDER BY created_at DESC LIMIT ?
 `
 
 type ListSpaceMessagesParams struct {
@@ -485,6 +632,7 @@ func (q *Queries) ListSpaceMessages(ctx context.Context, arg ListSpaceMessagesPa
 			&i.Resolution,
 			&i.CreatedAt,
 			&i.Version,
+			&i.DeliverAt,
 		); err != nil {
 			return nil, err
 		}
@@ -502,16 +650,20 @@ func (q *Queries) ListSpaceMessages(ctx context.Context, arg ListSpaceMessagesPa
 const listSpacesWantingControl = `-- name: ListSpacesWantingControl :many
 SELECT s.id FROM spaces s
 WHERE s.state = 'active'
-  AND (EXISTS (SELECT 1 FROM messages m WHERE m.space_id = s.id AND m.to_kind = 'control' AND m.state = 'stored')
-    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.target_kind = 'control' AND n.state = 'pending' AND n.wake = 1))
+  AND (EXISTS (SELECT 1 FROM messages m WHERE m.space_id = s.id AND m.to_kind = 'control' AND m.state = 'stored'
+      AND (m.deliver_at IS NULL OR m.deliver_at <= ?1))
+    OR EXISTS (SELECT 1 FROM human_notifications n WHERE n.space_id = s.id AND n.state = 'pending' AND n.wake = 1
+      AND (n.target_kind = 'control' OR (n.target_kind = 'instance' AND n.target_instance = (SELECT c.instance_id FROM runs c
+        WHERE c.space_id = s.id AND c.kind = 'control' ORDER BY c.created_at DESC, c.id DESC LIMIT 1)))))
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.space_id = s.id AND r.kind = 'control'
     AND (r.desired = 'running' OR r.observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')))
 `
 
-// Active spaces where something waits for control that no control has seen (a stored message to control, or a pending
-// human response that wakes it) and no control run is authoritative (the ux_runs_one_control condition).
-func (q *Queries) ListSpacesWantingControl(ctx context.Context) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listSpacesWantingControl)
+// Active spaces where something waits for control that no control has seen (a stored message to control that is due, a pending
+// human response that wakes it, or one held for the next launch of control's agent instance: the instance of the space's
+// latest control run, which auto-start resumes) and no control run is authoritative (the ux_runs_one_control condition).
+func (q *Queries) ListSpacesWantingControl(ctx context.Context, now sql.NullInt64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listSpacesWantingControl, now)
 	if err != nil {
 		return nil, err
 	}
@@ -627,6 +779,20 @@ func (q *Queries) MarkNotificationsDelivered(ctx context.Context, arg MarkNotifi
 	return result.RowsAffected()
 }
 
+const nextScheduledMessage = `-- name: NextScheduledMessage :one
+SELECT CAST(coalesce(min(m.deliver_at), 0) AS INTEGER) FROM messages m
+WHERE m.state = 'stored' AND m.deliver_at > ?1
+  AND EXISTS (SELECT 1 FROM spaces s WHERE s.id = m.space_id AND s.state = 'active')
+`
+
+// The earliest due time of a scheduled message in an active space (the notifier sweeps then; 0: none).
+func (q *Queries) NextScheduledMessage(ctx context.Context, now sql.NullInt64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextScheduledMessage, now)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const resolveMessage = `-- name: ResolveMessage :execrows
 UPDATE messages SET state = 'resolved', resolved_at = ?1, resolution = ?2, version = version + 1
 WHERE id = ?3 AND state <> 'resolved'
@@ -644,6 +810,23 @@ func (q *Queries) ResolveMessage(ctx context.Context, arg ResolveMessageParams) 
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setMessageDeliverAt = `-- name: SetMessageDeliverAt :exec
+
+UPDATE messages SET deliver_at = ?1 WHERE id = ?2 AND state = 'stored'
+`
+
+type SetMessageDeliverAtParams struct {
+	DeliverAt sql.NullInt64
+	ID        string
+}
+
+// Scheduled messages (ADR-0065): a stored message whose deliver_at is in the future is not delivered, noticed or
+// counted as waiting work until that time.
+func (q *Queries) SetMessageDeliverAt(ctx context.Context, arg SetMessageDeliverAtParams) error {
+	_, err := q.db.ExecContext(ctx, setMessageDeliverAt, arg.DeliverAt, arg.ID)
+	return err
 }
 
 const setMessageNotice = `-- name: SetMessageNotice :exec
