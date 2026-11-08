@@ -862,7 +862,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	if c.Kind == proto.CmdReposSync && keys {
 		var p proto.ReposSyncPayload
 		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-			return msg, fmt.Errorf("%w: %v", errBadPayload, err)
+			return msg, fmt.Errorf("%w: %w", errBadPayload, err)
 		}
 		for i := range p.Repositories {
 			k, err := h.RepoKey(ctx, c.SpaceID, p.Repositories[i].ID)
@@ -877,7 +877,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	if c.Kind == proto.CmdRelocatePrepare && keys {
 		var p proto.RelocatePreparePayload
 		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-			return msg, fmt.Errorf("%w: %v", errBadPayload, err)
+			return msg, fmt.Errorf("%w: %w", errBadPayload, err)
 		}
 		keyed := false
 		for i := range p.Repos {
@@ -900,7 +900,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	}
 	var p proto.LaunchPayload
 	if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-		return msg, fmt.Errorf("%w: %v", errBadPayload, err)
+		return msg, fmt.Errorf("%w: %w", errBadPayload, err)
 	}
 	// An older agent would ignore the settings and run without the rules they add, deny rules included.
 	if len(p.ClaudeSettings) > 0 && minor < proto.MinorClaudeSettings {
