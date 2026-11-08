@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- **A launch whose delivery failed once is delivered again on its own.** When central could not prepare a command for
+  a node for a transient reason (a failed read, the run's secrets not resolved), the command waited until something else
+  woke the node's dispatch, which might never happen, and the run stayed pending. The dispatch now retries with a
+  backoff (250 ms up to 30 s).
+- **A response held for an agent instance goes to the instance's next run when it launches.** Before, it was pinned
+  only when the deadline loop happened to run after the launch (the run reporting idle, another response, the hold
+  ending up to an hour later).
+- **Human-action deadlines retry after a failed round.** A round in which a job failed (routing a stranded response,
+  an expiry) is tried again within a second, backing off to a minute, instead of at the next deadline, which could be
+  an hour away.
+- **Role memory's git housekeeping finishes inside the call.** An automatic `git gc` or `git maintenance` started by a
+  memory fetch or commit ran detached and kept writing into the repository after the call returned.
+- Tests: `eventually` in the end-to-end tests prints the runs, leases, node commands, human notifications and
+  terminals when a wait times out.
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim
