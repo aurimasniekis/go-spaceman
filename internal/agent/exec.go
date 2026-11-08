@@ -275,6 +275,9 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	// Claude Code's auto memory is kept outside the space folder, where no other run's file tools reach (ADR-0068).
 	var autoMem string
 	if p.Harness == harness.KindClaude {
+		if _, set := p.ClaudeSettings["autoMemoryDirectory"]; set {
+			log.Warn("the profile's autoMemoryDirectory is ignored: SpaceMan keeps each instance's auto memory in its own folder")
+		}
 		autoMem, err = PrepareAutoMemory(filepath.Join(space, "instances", p.InstanceID, "claude"), a.autoMemoryDir(c.SpaceID, p.InstanceID), work)
 		if err != nil {
 			fail("prepare auto memory", err)

@@ -200,7 +200,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - another instance's auto memory, which its next run would load: each instance's Claude Code auto memory now lives
     outside the space folder, in `<data_dir>/automemory/<space-id>/<instance>` (set as `autoMemoryDirectory`). The
     memory an instance kept in its config dir is copied there at its first launch on this release; the old copy
-    stays in place. A relocation retains or deletes it with the space folder.
+    stays in place. A relocation retains or deletes it with the space folder. A profile's own
+    `autoMemoryDirectory` is now ignored (the node logs a warning).
+
+  These rules cover every space's instances on the node, also when a profile adds the node's whole `spaces/` folder
+  as a directory.
 
   At every launch the node removes dangerous keys from the instance's `settings.json` unless the profile or SpaceMan
   set them: `disableAllHooks`, `hooks`, `env`, `*Helper`, `statusLine`, `autoMode`, `permissions`, plugin keys and

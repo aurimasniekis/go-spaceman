@@ -26,15 +26,15 @@ func spacemanHooks() map[string]any {
 // (ADR-0068), for the test space folder.
 func withCreds(rules ...string) []string {
 	rules = append(rules,
-		"Read(//data/spaces/spc_a/instances/*/claude/.credentials.json)", "Edit(//data/spaces/spc_a/instances/*/claude/.credentials.json)",
-		"Read(//data/spaces/spc_a/instances/*/codex/auth.json)", "Edit(//data/spaces/spc_a/instances/*/codex/auth.json)")
+		"Read(//data/spaces/*/instances/*/claude/.credentials.json)", "Edit(//data/spaces/*/instances/*/claude/.credentials.json)",
+		"Read(//data/spaces/*/instances/*/codex/auth.json)", "Edit(//data/spaces/*/instances/*/codex/auth.json)")
 	for _, f := range []string{"claude/settings.json", "claude/settings.local.json", "claude/settings.json.spaceman-keys", "claude/.claude.json",
 		"claude/remote-settings.json*", "claude/policy-limits.json*", "claude/CLAUDE.md", "claude/loop.md", "claude/rules/**", "claude/agents/**",
 		"claude/commands/**", "claude/skills/**", "claude/output-styles/**", "claude/workflows/**", "claude/routines/**", "claude/plugins/**",
 		"claude/cowork_plugins/**", "claude/hooks/**", "claude/scheduled_tasks.json", "claude/launch.json", "claude/daemon.json", "claude/daemon/**",
 		"claude/shell-snapshots/**", "claude/session-env/**", "claude/projects/**", "claude/agent-memory/**", "claude/backups/**",
 		"claude/tasks/**", "claude/teams/**", "claude/todos/**", "claude/file-history/**", "codex/**"} {
-		rules = append(rules, "Edit(//data/spaces/spc_a/instances/*/"+f+")")
+		rules = append(rules, "Edit(//data/spaces/*/instances/*/"+f+")")
 	}
 	return rules
 }
@@ -169,7 +169,7 @@ func TestClaudeDeniesOtherInstances(t *testing.T) {
 			t.Fatalf("own folder or a read denied: %s", rule)
 		}
 	}
-	if !slices.Contains(p["deny"].([]string), "Edit(//data/spaces/spc_a/instances/*/claude/settings.json)") {
+	if !slices.Contains(p["deny"].([]string), "Edit(//data/spaces/*/instances/*/claude/settings.json)") {
 		t.Fatal("settings.json of every instance not denied")
 	}
 	if l.StripJSON[cfgSettings] == nil || !slices.Contains(l.StripJSON[cfgSettings], "disableAllHooks") || !slices.Contains(l.StripJSON[cfgSettings], "*Helper") {
@@ -202,24 +202,25 @@ func TestClaudeDeniesOtherInstances(t *testing.T) {
 		if n == MaxInstanceDenyRules {
 			want += n
 		}
-		if len(deny) != want || !slices.Contains(deny, "Edit(//data/spaces/spc_a/instances/*/claude/settings.json)") {
+		if len(deny) != want || !slices.Contains(deny, "Edit(//data/spaces/*/instances/*/claude/settings.json)") {
 			t.Fatalf("%d instances: %d rules", n, len(deny))
 		}
 	}
 
-	// The run's own auto memory goes where the node put it (outside the space folder); a profile's own value wins.
+	// The run's own auto memory goes where the node put it (outside the space folder).
 	c = ctxFor(proto.LaunchPayload{Kind: "worker"})
 	c.AutoMemoryDir = "/data/automemory/spc_a/ins_1/projects/-data-spaces-spc_a-repo/memory"
 	l, _ = Claude{}.Build(c)
 	if got := l.OwnJSON[cfgSettings]["autoMemoryDirectory"]; got != c.AutoMemoryDir {
 		t.Fatalf("autoMemoryDirectory %v", got)
 	}
+	// A profile's own value is ignored, so instances never share an auto memory folder.
 	c.Payload.ClaudeSettings = map[string]any{"autoMemoryDirectory": "~/mem"}
 	l, _ = Claude{}.Build(c)
-	if got := l.OwnJSON[cfgSettings]["autoMemoryDirectory"]; got != "~/mem" {
+	if got := l.OwnJSON[cfgSettings]["autoMemoryDirectory"]; got != c.AutoMemoryDir {
 		t.Fatalf("profile autoMemoryDirectory %v", got)
 	}
-	c = ctxFor(proto.LaunchPayload{Kind: "worker"})
+	c = ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: map[string]any{"autoMemoryDirectory": "~/mem"}})
 	l, _ = Claude{}.Build(c)
 	if _, set := l.OwnJSON[cfgSettings]["autoMemoryDirectory"]; set {
 		t.Fatal("autoMemoryDirectory set without a folder")

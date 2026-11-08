@@ -95,21 +95,33 @@ func copyTree(src, dst string) error {
 	})
 }
 
+// copyData copies a file's content (a variable so a test can make it fail midway).
+var copyData = io.Copy
+
+// copyFile copies src to dst through a temporary file renamed into place, so a copy that fails midway leaves nothing
+// at dst for the retry to skip.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src) //nolint:gosec // a regular file under the instance's own config dir (WalkDir does not follow links)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // dst is under the instance's auto memory root
+	out, err := os.CreateTemp(filepath.Dir(dst), ".copy-*")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
+	tmp := out.Name()
+	_, err = copyData(out, in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
 	}
-	return out.Close()
+	if err == nil {
+		err = os.Rename(tmp, dst)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 // ClaudeProjectRoot is the folder Claude Code keys a working directory's project state by: the main checkout of the

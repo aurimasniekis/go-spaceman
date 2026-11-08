@@ -127,7 +127,9 @@ func TestRealClaudeCLIDeniesOtherInstances(t *testing.T) {
 	}
 	root := t.TempDir()
 	root, _ = filepath.EvalSymlinks(root)
-	space := filepath.Join(root, "space")
+	spaces := filepath.Join(root, "spaces") // the node's spaces folder
+	space := filepath.Join(spaces, "space")
+	otherSpaceCfg := filepath.Join(spaces, "other", "instances", "ins_z", "claude") // an instance of another space
 	home := filepath.Join(root, "home")
 	repo := filepath.Join(space, "repo")
 	work := filepath.Join(space, "worktrees", "w1")
@@ -138,7 +140,7 @@ func TestRealClaudeCLIDeniesOtherInstances(t *testing.T) {
 	for i := range harness.MaxInstanceDenyRules {
 		instances = append(instances, fmt.Sprintf("ins_x%03d", i))
 	}
-	for _, d := range []string{home, repo} {
+	for _, d := range []string{home, repo, otherSpaceCfg} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -171,7 +173,12 @@ func TestRealClaudeCLIDeniesOtherInstances(t *testing.T) {
 		t.Helper()
 		l, err := harness.Claude{}.Build(harness.Context{AgentBinary: filepath.Join(root, "missing", "spaceman-agent"), ConfigDir: cfg, SpaceDir: space,
 			SpaceInstances: instances, WorkDir: work, RunID: "run_1", SpaceID: "spc_1", RunDir: root, Binary: claude,
-			Payload: proto.LaunchPayload{Kind: "worker"}, AutoMemoryDir: autoMem})
+			// An operator-style profile: the node's whole spaces folder as a directory, and a fixed auto memory folder
+			// (ignored: instances never share one).
+			Payload: proto.LaunchPayload{Kind: "worker", ClaudeSettings: proto.ClaudeSettings{
+				"permissions":         map[string]any{"additionalDirectories": []any{spaces}},
+				"autoMemoryDirectory": filepath.Join(root, "shared-memory"),
+			}}, AutoMemoryDir: autoMem})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -246,6 +253,10 @@ func TestRealClaudeCLIDeniesOtherInstances(t *testing.T) {
 		{"write another instance's shell snapshot", write(filepath.Join(otherCfg, "shell-snapshots", "snapshot-bash-1-x.sh")), true, deniedBySettings},
 		{"write another instance's session environment", write(filepath.Join(otherCfg, "session-env", "s", "hook-0.sh")), true, deniedBySettings},
 		{"write another instance's plan file (not loaded at launch; over the cap, no per-instance rules)", write(filepath.Join(otherCfg, "plans", "p.md")), false, ""},
+		{"write another space's instance settings", write(filepath.Join(otherSpaceCfg, "settings.json")), true, deniedBySettings},
+		{"write another space's instance CLAUDE.md", write(filepath.Join(otherSpaceCfg, "CLAUDE.md")), true, deniedBySettings},
+		{"write another space's instance rules", write(filepath.Join(otherSpaceCfg, "rules", "x.md")), true, deniedBySettings},
+		{"write in another space's checkouts (the profile's directory)", write(filepath.Join(spaces, "other", "notes.txt")), false, ""},
 		{"write a later instance's settings", write(filepath.Join(later, "settings.json")), true, deniedBySettings},
 		{"write a later instance's rules", write(filepath.Join(later, "rules", "x.md")), true, deniedBySettings},
 		{"write a later instance's memory", write(filepath.Join(later, "projects", "p", "memory", "MEMORY.md")), true, deniedBySettings},
@@ -286,7 +297,11 @@ func TestRealClaudeCLIDeniesOtherInstances(t *testing.T) {
 	if b, _ := os.ReadFile(own); strings.Contains(string(b), "disableAllHooks") {
 		t.Errorf("own settings changed: %s", b)
 	}
-	for _, p := range []string{filepath.Join(otherCfg, "rules"), filepath.Join(otherCfg, "projects"), filepath.Join(claudeDir, "rules"),
+	if strings.Contains(api.request, "shared-memory") {
+		t.Error("the profile's auto memory folder was used")
+	}
+	for _, p := range []string{filepath.Join(otherSpaceCfg, "settings.json"), filepath.Join(otherSpaceCfg, "CLAUDE.md"), filepath.Join(otherSpaceCfg, "rules"),
+		filepath.Join(otherCfg, "rules"), filepath.Join(otherCfg, "projects"), filepath.Join(claudeDir, "rules"),
 		filepath.Join(claudeDir, "remote-settings.json")} {
 		if _, err := os.Stat(p); err == nil {
 			t.Errorf("%s was written", p)

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +181,47 @@ func TestPrepareAutoMemory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(broken, ".migrated")); err == nil {
 		t.Fatal("a failed copy was marked done")
+	}
+}
+
+// A copy that fails midway leaves no partial file (nor its temporary file) for the retry to skip; the retry copies it
+// whole.
+func TestPrepareAutoMemoryPartialCopy(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, "claude")
+	root := filepath.Join(dir, "automemory")
+	work := filepath.Join(dir, "work")
+	key := ClaudeProjectKey(work)
+	src := filepath.Join(claudeDir, "projects", key, "memory", "MEMORY.md")
+	if err := os.MkdirAll(filepath.Dir(src), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("the whole memory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := copyData
+	t.Cleanup(func() { copyData = orig })
+	copyData = func(dst io.Writer, _ io.Reader) (int64, error) {
+		n, _ := dst.Write([]byte("the wh"))
+		return int64(n), errors.New("disk full")
+	}
+	if _, err := PrepareAutoMemory(claudeDir, root, work); err == nil {
+		t.Fatal("a failed copy succeeded")
+	}
+	mem := filepath.Join(root, "projects", key, "memory")
+	entries, _ := os.ReadDir(mem)
+	if len(entries) != 0 {
+		t.Fatalf("left behind: %v", entries)
+	}
+	copyData = orig
+	got, err := PrepareAutoMemory(claudeDir, root, work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(got, "MEMORY.md")); string(b) != "the whole memory" {
+		t.Fatalf("retry copied %q", b)
+	}
+	if fi, err := os.Stat(filepath.Join(got, "MEMORY.md")); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v %v", fi, err)
 	}
 }

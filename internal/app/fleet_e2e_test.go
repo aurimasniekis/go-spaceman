@@ -291,8 +291,8 @@ func TestFleetLifecycle(t *testing.T) {
 	if err != nil || json.Unmarshal(raw, &settings) != nil || len(settings.Hooks.PermissionRequest) != 1 ||
 		settings.Hooks.PermissionRequest[0].Hooks[0].Command != hns.ClaudePermissionHookCommand("/usr/bin/true") ||
 		!slices.Equal(settings.Permissions.AdditionalDirectories, []string{spaceDir}) ||
-		!slices.Contains(settings.Permissions.Deny, "Edit(/"+spaceDir+"/instances/*/claude/settings.json)") ||
-		!slices.Contains(settings.Permissions.Deny, "Edit(/"+spaceDir+"/instances/*/claude/projects/**)") ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+filepath.Dir(spaceDir)+"/*/instances/*/claude/settings.json)") ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+filepath.Dir(spaceDir)+"/*/instances/*/claude/projects/**)") ||
 		!strings.HasPrefix(settings.AutoMemoryDirectory, filepath.Join(e.agentDir, "automemory", sp.ID, e.run1(ctrl.ID).InstanceID, "projects")+"/") {
 		t.Fatalf("run settings %s %v", raw, err)
 	}

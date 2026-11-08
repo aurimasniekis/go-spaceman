@@ -150,7 +150,7 @@ func hasHookCommand(group any, command string) bool {
 }
 
 // ClaudeSpaceCredentialFiles are the harness login files a space folder can hold, in its instances' config dirs
-// (relative to the space folder, Claude Code permission-rule globs). The own-space directory a run gets would let its
+// (relative to a space folder, Claude Code permission-rule globs; the rules cover every space folder on the node). The own-space directory a run gets would let its
 // file tools read them without a dialog, so they are denied (ADR-0068).
 var ClaudeSpaceCredentialFiles = []string{"instances/*/claude/.credentials.json", "instances/*/codex/auth.json"}
 
@@ -195,7 +195,8 @@ const globUnsafe = "*?[]{}\\!"
 // (plans, notes, other checkouts of the space) from a run that starts in a checkout does not end in a "read outside the
 // working directories" dialog. Only that space's folder is added, never the node's whole spaces folder. Deny rules keep
 // the run's file tools away from the instances' config dirs: Read and Edit for the login files
-// (ClaudeSpaceCredentialFiles), Edit for the harness configuration of every instance (ClaudeSpaceProtectedFiles) and
+// (ClaudeSpaceCredentialFiles), Edit for the harness configuration of every instance (ClaudeSpaceProtectedFiles), both
+// for every space folder next to the run's own (<data_dir>/spaces/*), and
 // Edit for the whole folder of every other instance that exists at launch (instances, listing the space's instances
 // folder, without the run's own, configDir's name): everything in it; at most MaxInstanceDenyRules of them, else
 // none. A space folder holding a
@@ -243,21 +244,25 @@ func addSpaceDirectory(own map[string]any, spaceDir, configDir string, instances
 	}
 	perms["additionalDirectories"] = dirs
 	deny := stringsOf(perms["deny"])
-	add := func(tool, rel string) {
+	add := func(tool, base, rel string) {
 		// "//" starts an absolute path in a Claude Code permission rule.
-		if rule := tool + "(/" + filepath.ToSlash(filepath.Join(spaceDir, rel)) + ")"; !slices.Contains(deny, rule) {
+		if rule := tool + "(/" + filepath.ToSlash(filepath.Join(base, rel)) + ")"; !slices.Contains(deny, rule) {
 			deny = append(deny, rule)
 		}
 	}
+	// The login and configuration rules cover every space's instances on the node (<data_dir>/spaces/*), not only the
+	// run's own: a profile may add the node's whole spaces folder as a directory (round-2 review), and another space's
+	// instances must not be writable then either. The run's own auto memory is outside the spaces folder.
+	spaces := filepath.Join(filepath.Dir(spaceDir), "*")
 	for _, f := range ClaudeSpaceCredentialFiles {
-		add("Read", f)
-		add("Edit", f)
+		add("Read", spaces, f)
+		add("Edit", spaces, f)
 	}
 	for _, f := range ClaudeSpaceProtectedFiles {
-		add("Edit", f)
+		add("Edit", spaces, f)
 	}
 	for _, id := range others {
-		add("Edit", "instances/"+id+"/**")
+		add("Edit", spaceDir, "instances/"+id+"/**")
 	}
 	perms["deny"] = deny
 	own["permissions"] = perms
@@ -375,8 +380,10 @@ func (Claude) Build(c Context) (Launch, error) {
 	addSpaceDirectory(own, c.SpaceDir, c.ConfigDir, c.SpaceInstances)
 	// The run's own auto memory lives outside the space folder, since every instance's projects folder is denied to
 	// the file tools; Claude Code lets its tools write its auto memory folder without a dialog (verified with Claude
-	// Code 2.1.317). A profile that sets autoMemoryDirectory itself decides (ADR-0068).
-	if _, set := own["autoMemoryDirectory"]; !set && c.AutoMemoryDir != "" {
+	// Code 2.1.317). A profile's own autoMemoryDirectory is ignored (the node logs a warning): a fixed folder shared by
+	// the profile's instances would let one instance write the memory another loads (ADR-0068).
+	delete(own, "autoMemoryDirectory")
+	if c.AutoMemoryDir != "" {
 		own["autoMemoryDirectory"] = c.AutoMemoryDir
 	}
 	env := commonEnv(c)

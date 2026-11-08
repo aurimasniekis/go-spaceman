@@ -337,7 +337,10 @@
 
   This is wider than before: the shell runs as the same OS user, but each shell command passes auto mode's classifier,
   which file tools inside a working directory skip. The folder of another space stays outside, and reading it raises a
-  dialog, which the hook denies.
+  dialog, which the hook denies, unless a profile adds the node's whole spaces folder as a directory: its runs can
+  then read and write other spaces' checkouts too. Every space's instance configuration, instructions, memory and
+  transcripts stay denied to edits even then (the rules cover `<data_dir>/spaces/*`). A profile's own
+  `autoMemoryDirectory` is ignored (the node logs a warning), so instances never share an auto memory folder.
 - **The PermissionRequest hook can still end at the dialog** (ADR-0068):
   - **Timeout.** A hook that runs past its 30 s timeout ends at the dialog. A missing or failing agent binary does not:
     the command then prints a fixed deny.

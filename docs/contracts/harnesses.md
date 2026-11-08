@@ -107,6 +107,9 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
       globs refused writes to another instance's memory, transcript, `rules/`, `CLAUDE.md`, `policy-limits.json`, shell
       snapshots and session environment, and to the run's own `rules/` and `remote-settings.json` (which Claude Code
       also asks about on its own, as one of its config files).
+    - With a profile adding the node's whole spaces folder to `additionalDirectories`, a rule anchored on the run's own
+      space left another space's instance `settings.json`, `CLAUDE.md` and `rules/` writable; anchored on
+      `//<data_dir>/spaces/*/instances/*/claude/...`, the writes are refused (a `*` in the path matches the space).
     - The binary protects these entries of its own config dir (they are what SpaceMan denies for every instance):
       `shell-snapshots`, `session-env`, `plugins`, `hooks`, `skills`, `workflows`, `commands`, `agents`, `routines`,
       `rules`, `output-styles`, `scheduled_tasks.json`, `launch.json`, `CLAUDE.md`, `projects`, `daemon.json`,

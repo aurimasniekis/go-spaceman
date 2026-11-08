@@ -3292,7 +3292,10 @@
       apply;
     - every instance, the run's own included, gets `Edit` deny rules (`harness.ClaudeSpaceProtectedFiles`) for
       everything in its config dir that Claude Code loads, runs or restores at a later launch or resume, whatever the
-      number of instances. These also cover an instance created after the launch. The list mirrors the entries Claude
+      number of instances. These also cover an instance created after the launch. They, and the login-file rules, are
+      anchored on the node's spaces folder (`Edit(//<data_dir>/spaces/*/instances/*/claude/...)`), so they cover every
+      space's instances: a profile may add the whole spaces folder as a directory (operators did, before this ADR), and
+      another space's instance configuration must not be writable then either (round-2 re-review, verified live). The list mirrors the entries Claude
       Code 2.1.317 protects in its own config dir, for every instance: `claude/settings.json`, `settings.local.json`,
       the keys record, `.claude.json`, the cached `remote-settings.json*` and `policy-limits.json*`, the instructions
       (`CLAUDE.md`, `rules/`, `agents/`, `commands/`, `skills/`, `output-styles/`, `workflows/`, `routines/`,
@@ -3309,8 +3312,10 @@
       The project key is Claude Code's own (the main checkout for a linked worktree; non-alphanumerics become `-`). At
       the instance's first launch on this release the node copies the memory it kept in its config dir
       (`claude/projects/*/memory`) there under the same keys, folders and regular files only (never symbolic links),
-      and marks the folder done only after a full copy; the old copy stays. A profile that sets `autoMemoryDirectory`
-      itself decides. A relocation's release retains or deletes `automemory/<space-id>` with the space folder;
+      and marks the folder done only after a full copy; the old copy stays. A partly copied file never stays: each file is
+      written to a temporary name and renamed into place. A profile's own `autoMemoryDirectory` is ignored, with a
+      warning in the node's log: a fixed folder shared by the profile's instances would bring cross-instance memory
+      poisoning back. A relocation's release retains or deletes `automemory/<space-id>` with the space folder;
     - the rule is not the simpler `Edit(//<space>/instances/**)`: the run's own file tools still write its plan files
       (`plans/`, plan mode) and background job folder (`jobs/`) in its config dir, a deny rule wins over Claude Code's
       carve-out for them (verified), and permission-rule globs have no "all but one" form (`[!x]` is not negation
