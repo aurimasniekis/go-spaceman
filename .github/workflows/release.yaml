@@ -141,6 +141,8 @@ jobs:
         run: npx --yes playwright@1.64.1 install --with-deps chromium
       # Always the full audit, whatever changed since the last release (ADR-0062).
       - name: build, Mermaid, API reference drift and axe on every page
+        env:
+          SM_SITE_A11Y: "1"
         run: make site-check
 
   web:

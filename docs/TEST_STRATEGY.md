@@ -36,7 +36,7 @@
 | `make demo` | `test/demo` (build tag `demo`): the brief's §41 demonstration, thirty steps in order against a real central with the UI, two real agents with their own herdr-core cores, devpulse and devmcp, through the browser, the API and the CLI; one evidence line per step ([DEMO.md](DEMO.md)) | real processes, browser and hc; stub harness (simulated steps marked per step); `SPACEMAN_DEMO_REAL=1` adds a real Claude Code worker |
 | `make e2e-browsers` | The same journey in Firefox and WebKit (Playwright's builds, `SM_E2E_BROWSERS`), each on its own fresh stack | real browsers, real hc; stub harness |
 | `make screenshots` | Seeded demo instance. Every captured page is audited with axe (WCAG 2.1 A/AA) in both themes | real browser |
-| `make site-check` | Site build with a dead-link check, screenshot references, Mermaid parsing, API-reference drift, and axe on every site page | real browser |
+| `make site-check` | Site build with a dead-link check, screenshot references, Mermaid parsing, API-reference drift, and axe on every site page (sharded over `SM_A11Y_SHARDS` workers; skipped when `scripts/site-affected.sh` finds no site-affecting change against `main`, forced with `SM_SITE_A11Y=1`) | real browser |
 | `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` | simulated |
 
 The browser rows (`make e2e`, `make screenshots`, `make site-check`) take `SM_CHROMIUM_ARGS`, extra Chromium launch arguments separated by spaces, for hosts whose sandbox stops Chromium from starting, for example `SM_CHROMIUM_ARGS='--no-sandbox --disable-gpu --no-zygote'` inside a container. It is unset by default and in CI.
