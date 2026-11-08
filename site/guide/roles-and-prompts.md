@@ -98,11 +98,16 @@ Things to know:
   only the current screen (ADR-0064). The node adds this default when it writes the run's settings, so it needs
   SpaceMan 0.1.0-rc.10 or later on the node: a run on an older node keeps Claude Code's own choice of renderer. The
   profile's resolved settings in the API don't show the default; they show only what the profile sets.
-- **Agents can't ask in the terminal.** Every run gets `AskUserQuestion` in its `permissions.deny`, so Claude Code
-  never offers its question picker: a run that asked there would wait for an answer typed into its terminal, which
-  nobody may be watching. Agents ask through [human actions](./human-actions#agents-ask-here-not-in-the-terminal)
-  instead. To allow the picker anyway, add `AskUserQuestion` to the profile's **Allow** rules (ADR-0066). Like the
-  renderer default, the node adds this, and the resolved settings don't show it.
+- **Agents can't ask in the terminal.** Every run gets `AskUserQuestion` and `EnterPlanMode` in its
+  `permissions.deny`, after the profile's own **Deny** rules (each rule once; your other permission settings stay as
+  they are). Claude Code then never offers its question picker or plan mode, whose plan ends in an approval dialog: a
+  run waiting there would wait for an answer typed into its terminal, which nobody may be watching. Agents ask through
+  [human actions](./human-actions#agents-ask-here-not-in-the-terminal) instead. To allow one anyway, add it to the
+  profile's **Allow** rules (ADR-0066). Like the renderer default, the node adds this, and the resolved settings don't
+  show it.
+- **`skipAutoPermissionPrompt` doesn't stop permission dialogs.** It only skips the one-time notice shown when auto
+  mode starts. Auto mode still asks in the terminal for **Ask** rules, for reads outside the run's working
+  directories, and when its classifier falls back to asking after repeated blocks.
 
 ## Space roles
 

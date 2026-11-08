@@ -312,6 +312,11 @@
   every run's orientation says to use `spaceman_human_ask`. Codex's `request_user_input` (Plan mode, or Default mode
   with its feature flag) is only discouraged by the prompt: SpaceMan sets no override for it yet, because none has
   been verified against a live Codex session. A harness's own permission dialogs still appear in the terminal.
+- **Claude Code permission dialogs still appear in the terminal.** `skipAutoPermissionPrompt` only skips the one-time
+  notice shown when auto mode starts. Auto mode still shows a dialog for `ask` rules, for reads outside the working
+  directories, and when its classifier falls back to asking after repeated blocks. A built-in PermissionRequest hook for
+  these is a planned follow-up. A run whose permission mode is `plan` still ends in the `ExitPlanMode` approval dialog;
+  only `EnterPlanMode` is denied.
 - **A run waiting at a terminal prompt raises no attention item.** SpaceMan doesn't detect that a run's terminal has
   been waiting for input for a long time. Follow-up: raise an attention item when the program status reports a
   waiting prompt for more than a few minutes.

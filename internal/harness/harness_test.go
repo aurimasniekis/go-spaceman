@@ -18,14 +18,14 @@ func ctxFor(p proto.LaunchPayload) Context {
 		WorkDir: "/data/spaces/spc_a/work", RunID: "run_1", SpaceID: "spc_a", RunDir: "/data/runs/run_1", Binary: "claude", Payload: p}
 }
 
-// ADR-0066: every SpaceMan-launched Claude Code run, of every kind, has the terminal question picker denied, so the
-// model never sees it and asks people through spaceman_human_ask; a profile opts back in only by allowing it itself.
+// ADR-0066: every SpaceMan-launched Claude Code run, of every kind, has the terminal question picker and plan mode
+// denied, so the model never sees them and asks people through spaceman_human_ask; a profile opts back in only by
+// allowing a tool itself.
 func TestClaudeDeniesTerminalPrompts(t *testing.T) {
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
-	denied := func(l Launch) []string {
+	perms := func(l Launch) map[string]any {
 		p, _ := l.OwnJSON[cfgSettings]["permissions"].(map[string]any)
-		d, _ := p["deny"].([]string)
-		return d
+		return p
 	}
 	for _, kind := range []string{"control", "worker", "kb", "dreamer", "diagnostic"} {
 		for name, cs := range map[string]proto.ClaudeSettings{
@@ -38,34 +38,61 @@ func TestClaudeDeniesTerminalPrompts(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s/%s: %v", kind, name, err)
 			}
-			if !slices.Contains(denied(l), "AskUserQuestion") {
-				t.Fatalf("%s/%s: AskUserQuestion not denied: %v", kind, name, l.OwnJSON[cfgSettings])
+			d, _ := perms(l)["deny"].([]string)
+			for _, tool := range ClaudeTerminalPromptTools {
+				if !slices.Contains(d, tool) {
+					t.Fatalf("%s/%s: %s not denied: %v", kind, name, tool, l.OwnJSON[cfgSettings])
+				}
 			}
 		}
 	}
-	// The profile's other permission keys and rules are kept, and an existing deny is not repeated.
-	cs := proto.ClaudeSettings{"permissions": map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}, "deny": []any{"WebFetch", "AskUserQuestion"}}}
+	// Merge, never replace: a profile that already denies the tools (as the operator's profiles do), with its own
+	// rules, a repeated rule and every other permissions key, keeps all of them, in its order, with no duplicates.
+	cs := proto.ClaudeSettings{"permissions": map[string]any{
+		"defaultMode":           "auto",
+		"allow":                 []any{"Bash(go test *)"},
+		"ask":                   []any{"Bash(git push *)"},
+		"additionalDirectories": []any{"/data/shared"},
+		"deny":                  []any{"AskUserQuestion", "WebFetch", "EnterPlanMode", "WebFetch"},
+	}}
 	l, err := Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: cs}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], cs["permissions"]) {
-		t.Fatalf("permissions %v", l.OwnJSON[cfgSettings]["permissions"])
+	want := map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}, "ask": []any{"Bash(git push *)"},
+		"additionalDirectories": []any{"/data/shared"}, "deny": []string{"AskUserQuestion", "WebFetch", "EnterPlanMode"}}
+	if !reflect.DeepEqual(perms(l), want) {
+		t.Fatalf("permissions %v", perms(l))
+	}
+	// Only the missing tool is added after the profile's rules.
+	cs = proto.ClaudeSettings{"permissions": map[string]any{"defaultMode": "auto", "deny": []any{"EnterPlanMode", "Read(./secrets/**)"}}}
+	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "control", ClaudeSettings: cs}))
+	if p := perms(l); p["defaultMode"] != "auto" || !reflect.DeepEqual(p["deny"], []string{"EnterPlanMode", "Read(./secrets/**)", "AskUserQuestion"}) {
+		t.Fatalf("permissions %v", p)
+	}
+	// The profile's stored settings are not changed.
+	if !reflect.DeepEqual(cs["permissions"], map[string]any{"defaultMode": "auto", "deny": []any{"EnterPlanMode", "Read(./secrets/**)"}}) {
+		t.Fatal("the profile's settings were changed")
 	}
 	cs = proto.ClaudeSettings{"permissions": map[string]any{"defaultMode": "auto", "allow": []any{"Bash(go test *)"}}}
 	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker", ClaudeSettings: cs}))
-	if p := l.OwnJSON[cfgSettings]["permissions"].(map[string]any); p["defaultMode"] != "auto" || !reflect.DeepEqual(p["allow"], []any{"Bash(go test *)"}) ||
-		!reflect.DeepEqual(p["deny"], []string{"AskUserQuestion"}) {
+	if p := perms(l); p["defaultMode"] != "auto" || !reflect.DeepEqual(p["allow"], []any{"Bash(go test *)"}) ||
+		!reflect.DeepEqual(p["deny"], []string{"AskUserQuestion", "EnterPlanMode"}) {
 		t.Fatalf("permissions %v", p)
 	}
 	if _, set := cs["permissions"].(map[string]any)["deny"]; set {
 		t.Fatal("the profile's settings were changed")
 	}
-	// Opt-in: a profile that allows the tool explicitly gets no deny (a deny would win over its allow).
+	// Opt-in, per tool: a profile that allows a tool explicitly gets no deny for it (a deny would win over its allow).
 	cs = proto.ClaudeSettings{"permissions": map[string]any{"allow": []any{"AskUserQuestion"}}}
 	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "control", ClaudeSettings: cs}))
-	if d := denied(l); slices.Contains(d, "AskUserQuestion") || !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], cs["permissions"]) {
-		t.Fatalf("opt-in ignored: %v", l.OwnJSON[cfgSettings])
+	if p := perms(l); !reflect.DeepEqual(p, map[string]any{"allow": []any{"AskUserQuestion"}, "deny": []string{"EnterPlanMode"}}) {
+		t.Fatalf("opt-in ignored: %v", p)
+	}
+	cs = proto.ClaudeSettings{"permissions": map[string]any{"allow": []any{"AskUserQuestion", "EnterPlanMode"}}}
+	l, _ = Claude{}.Build(ctxFor(proto.LaunchPayload{Kind: "control", ClaudeSettings: cs}))
+	if !reflect.DeepEqual(perms(l), cs["permissions"]) {
+		t.Fatalf("opt-in ignored: %v", perms(l))
 	}
 }
 
@@ -117,7 +144,7 @@ func TestClaudeBuild(t *testing.T) {
 	// terminal question picker (ADR-0066).
 	cfgSettings := "/data/spaces/spc_a/instances/ins_1/claude/settings.json"
 	if keys, ok := l.OwnJSON[cfgSettings]; !ok || len(keys) != 2 || keys["tui"] != "default" ||
-		!reflect.DeepEqual(keys["permissions"], map[string]any{"deny": []string{"AskUserQuestion"}}) {
+		!reflect.DeepEqual(keys["permissions"], map[string]any{"deny": []string{"AskUserQuestion", "EnterPlanMode"}}) {
 		t.Fatalf("settings keys without settings %v", l.OwnJSON)
 	}
 	cs := proto.ClaudeSettings{"permissions": map[string]any{"deny": []any{"Read(./secrets/**)"}}, "hooks": map[string]any{"Stop": []any{}}}
@@ -130,7 +157,7 @@ func TestClaudeBuild(t *testing.T) {
 	}
 	// Every profile key is written unchanged, except that the deny is added to the profile's own rules, and the
 	// profile's own settings are not modified.
-	if !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], map[string]any{"deny": []string{"Read(./secrets/**)", "AskUserQuestion"}}) {
+	if !reflect.DeepEqual(l.OwnJSON[cfgSettings]["permissions"], map[string]any{"deny": []string{"Read(./secrets/**)", "AskUserQuestion", "EnterPlanMode"}}) {
 		t.Fatalf("permissions %v", l.OwnJSON[cfgSettings]["permissions"])
 	}
 	for k, v := range cs {
@@ -146,7 +173,7 @@ func TestClaudeBuild(t *testing.T) {
 		prof := proto.ClaudeSettings{"tui": tui, "model": "opus"}
 		l, err = Claude{}.Build(ctxFor(proto.LaunchPayload{ClaudeSettings: prof}))
 		if err != nil || !reflect.DeepEqual(l.OwnJSON[cfgSettings], map[string]any{"tui": tui, "model": "opus",
-			"permissions": map[string]any{"deny": []string{"AskUserQuestion"}}}) {
+			"permissions": map[string]any{"deny": []string{"AskUserQuestion", "EnterPlanMode"}}}) {
 			t.Fatalf("profile renderer %v: %v %v", tui, l.OwnJSON, err)
 		}
 	}
