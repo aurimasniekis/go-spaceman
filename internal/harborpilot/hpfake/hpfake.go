@@ -1,5 +1,5 @@
 // Package hpfake is a test double of the Harbor Pilot 0.1.3 endpoints SpaceMan calls (mint, revoke, budget status,
-// projects; docs/contracts/harbor-pilot.md). It is never evidence of a working integration: the real gateway is
+// projects, usage summary; docs/contracts/harbor-pilot.md). It is never evidence of a working integration: the real gateway is
 // exercised by the opt-in hptest tests.
 package hpfake
 
@@ -42,6 +42,20 @@ type HP struct {
 	Owner         map[string]string // credential id → the parent token that minted it: only that one can revoke it
 	Bodies        []string          // raw mint bodies
 	Requests      int               // every request served
+	// Budgets is the body of GET /api/v1/budgets/status's items (JSON array); "" serves one ok project budget on
+	// prj_web. FailBudgets, when non-zero, makes budget status answer that status. BudgetReads counts its reads.
+	Budgets     string
+	FailBudgets int
+	BudgetReads int
+	// Usage maps a usage summary query to its JSON answer: the key is the "ref" filter (e.g. "spaceman.run:run_x"), or
+	// "group_by=<dim>" for a query without one; an unknown query answers no groups. FailUsage, when non-zero, makes
+	// usage summary answer that status. UsageQueries records every usage query's raw query string.
+	Usage        map[string]string
+	FailUsage    int
+	UsageQueries []string
+	// Workspace is the workspace every project belongs to (default wsp_1). ProjectReads counts project lookups.
+	Workspace    string
+	ProjectReads int
 	// Hook, when set, runs before each request is served (without the fake's lock), e.g. to change state mid-call.
 	Hook func(r *http.Request)
 	seq  int
@@ -113,20 +127,49 @@ func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 		if !f.authAPI(w, r, "usage.read") {
 			return
 		}
+		f.BudgetReads++
+		if f.FailBudgets != 0 {
+			problem(w, f.FailBudgets, "budget status failed")
+			return
+		}
+		items := f.Budgets
+		if items == "" {
+			items = `[{"budget_id":"bdg_1","name":"daily","scope":"project","scope_id":"prj_web","period":"day","currency":"USD",` +
+				`"enforcement":"block","enabled":true,"limit_e10":10000000000,"spent_e10":5,"reserved_e10":0,"fraction":0.1,"state":"ok"}]`
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"items":[{"budget_id":"bdg_1","name":"daily","scope":"project","scope_id":"prj_web","period":"day","currency":"USD",`+
-			`"enforcement":"block","enabled":true,"limit_e10":10000000000,"spent_e10":5,"reserved_e10":0,"fraction":0.1,"state":"ok"}]}`)
+		_, _ = io.WriteString(w, `{"items":`+items+`}`)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/usage/summary":
+		if !f.authAPI(w, r, "usage.read") {
+			return
+		}
+		f.UsageQueries = append(f.UsageQueries, r.URL.RawQuery)
+		if f.FailUsage != 0 {
+			problem(w, f.FailUsage, "usage failed")
+			return
+		}
+		key := r.URL.Query().Get("ref")
+		if key == "" {
+			key = "group_by=" + r.URL.Query().Get("group_by")
+		}
+		body, ok := f.Usage[key]
+		if !ok {
+			body = `{"group_by":"` + r.URL.Query().Get("group_by") + `","groups":[],"totals":[]}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, body) //nolint:gosec // a test double serving the JSON the test configured
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/projects/"):
 		if !f.authAPI(w, r, "config.read") {
 			return
 		}
+		f.ProjectReads++
 		id, ok := f.Projects[strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")]
 		if !ok {
 			problem(w, 404, "project not found")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "kind": "project", "name": id + "-name", "spec": map[string]any{"workspace_id": "wsp_1"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "kind": "project", "name": id + "-name", "spec": map[string]any{"workspace_id": f.workspace()}})
 	default:
 		problem(w, 404, "no route")
 	}
@@ -215,6 +258,13 @@ func (f *HP) mint(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{"credential": map[string]any{"id": id, "binding_id": f.BindingID, "parent_id": "crd_parent",
 		"scopes": body.Scopes, "bound_refs": body.BoundRefs, "expires_at": exp.UTC()}, "token": "hpk_child_" + id})
+}
+
+func (f *HP) workspace() string {
+	if f.Workspace == "" {
+		return "wsp_1"
+	}
+	return f.Workspace
 }
 
 func contains(l []string, s string) bool {

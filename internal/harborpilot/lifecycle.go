@@ -96,7 +96,8 @@ func errNoConnectionFor(harness string) error {
 }
 
 // PreLaunch refuses a launch of a routed harness before the launch transaction: when no connection is configured, or
-// (HP-T5) when a blocking budget covering the space is used up.
+// (HP-T5, the Budget checker) when a blocking budget covering the space is used up. The dispatch mint then asks Harbor
+// Pilot to check its budgets again (check_budget), with its own figures, before the harness starts.
 func (l *Lifecycle) PreLaunch(ctx context.Context, spaceID, harness string) error {
 	row, err := l.svc.s.R().GetSpaceHarborPilot(ctx, spaceID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -275,7 +276,8 @@ func (l *Lifecycle) mintAndStore(ctx context.Context, run *fleet.Run, session, o
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	cred, tok, err := l.mint(ctx, c, parent, MintRequest{Name: "spaceman-run-" + run.ID, Scopes: RunScopes, TTLSeconds: ttl, BoundRefs: refs})
+	cred, tok, err := l.mint(ctx, c, parent, MintRequest{Name: "spaceman-run-" + run.ID, Scopes: RunScopes, TTLSeconds: ttl, BoundRefs: refs,
+		CheckBudget: true})
 	if err != nil {
 		var he *Error
 		if errors.As(err, &he) {

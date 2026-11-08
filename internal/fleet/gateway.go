@@ -61,18 +61,27 @@ const (
 	RevokeParentReset = "parent_rotated"
 )
 
+// GatewayUsageFirstRead is how long after a gateway run's token is given up its usage is first read back from the
+// gateway (ADR-0060 decision 7): the gateway writes its ledger as requests finish.
+const GatewayUsageFirstRead = 15 * time.Second
+
 // queueGatewayRevocation queues the revocation of a run's live gateway token inside the end path's transaction (a crash
-// can't lose it, ADR-0060 decision 5) and drops the sealed token. The revoker is woken after the commit. It reports
-// whether anything was queued.
+// can't lose it, ADR-0060 decision 5) and drops the sealed token. The revoker is woken after the commit. It also queues
+// the run's usage read-back (once per run; HP-T5). It reports whether a revocation was queued.
 func (svc *Service) queueGatewayRevocation(ctx context.Context, tx *store.Tx, runID, reason string) (bool, error) {
 	n, err := tx.Q.QueueRunGatewayRevocation(ctx, db.QueueRunGatewayRevocationParams{Reason: reason, Now: tx.NowMicros(), RunID: runID})
+	if err != nil {
+		return false, err
+	}
+	u, err := tx.Q.QueueRunGatewayUsage(ctx, db.QueueRunGatewayUsageParams{Now: tx.NowMicros(),
+		NextAt: tx.NowMicros() + GatewayUsageFirstRead.Microseconds(), RunID: runID})
 	if err != nil {
 		return false, err
 	}
 	if _, err := tx.Q.ClearRunGatewayToken(ctx, runID); err != nil {
 		return false, err
 	}
-	if n > 0 {
+	if n > 0 || u > 0 {
 		svc.wakeRevoker(tx)
 	}
 	return n > 0, nil
@@ -84,10 +93,15 @@ func (svc *Service) queueSpaceGatewayRevocations(ctx context.Context, tx *store.
 	if err != nil {
 		return err
 	}
+	u, err := tx.Q.QueueSpaceGatewayUsage(ctx, db.QueueSpaceGatewayUsageParams{Now: tx.NowMicros(),
+		NextAt: tx.NowMicros() + GatewayUsageFirstRead.Microseconds(), SpaceID: spaceID})
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Q.ClearSpaceGatewayTokens(ctx, spaceID); err != nil {
 		return err
 	}
-	if n > 0 {
+	if n > 0 || u > 0 {
 		svc.wakeRevoker(tx)
 	}
 	return nil

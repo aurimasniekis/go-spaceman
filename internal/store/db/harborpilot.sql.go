@@ -120,6 +120,39 @@ func (q *Queries) DeleteSpaceHarborPilot(ctx context.Context, arg DeleteSpaceHar
 	return result.RowsAffected()
 }
 
+const fillRunUsageFromGateway = `-- name: FillRunUsageFromGateway :exec
+INSERT INTO run_usage (run_id, space_id, source, models_json, estimate_json, transcript_bytes, final, note, updated_at)
+VALUES (?1, ?2, 'harbor-pilot', ?3, ?4, NULL, ?5, ?6, ?7)
+ON CONFLICT (run_id) DO UPDATE SET source = excluded.source, models_json = excluded.models_json, estimate_json = excluded.estimate_json,
+  final = excluded.final, note = excluded.note, updated_at = excluded.updated_at
+WHERE run_usage.source IN ('unavailable', 'harbor-pilot')
+`
+
+type FillRunUsageFromGatewayParams struct {
+	RunID        string
+	SpaceID      string
+	ModelsJson   string
+	EstimateJson string
+	Final        int64
+	Note         string
+	UpdatedAt    int64
+}
+
+// Gateway-observed usage fills a run's usage only where its harness reported none (no row, or source unavailable), and
+// updates its own earlier fill. A harness's own usage is never overwritten.
+func (q *Queries) FillRunUsageFromGateway(ctx context.Context, arg FillRunUsageFromGatewayParams) error {
+	_, err := q.db.ExecContext(ctx, fillRunUsageFromGateway,
+		arg.RunID,
+		arg.SpaceID,
+		arg.ModelsJson,
+		arg.EstimateJson,
+		arg.Final,
+		arg.Note,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const getGatewayRevocation = `-- name: GetGatewayRevocation :one
 SELECT credential_id, run_id, space_id, reason, expires_at, state, attempts, next_attempt_at, last_error, requested_at, done_at, parent_fp FROM gateway_revocations WHERE credential_id = ?
 `
@@ -188,6 +221,32 @@ func (q *Queries) GetRunGatewayCredential(ctx context.Context, runID string) (Ru
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ParentFp,
+	)
+	return i, err
+}
+
+const getRunGatewayUsage = `-- name: GetRunGatewayUsage :one
+SELECT run_id, space_id, state, ended_at, reads, failures, next_attempt_at, read_at, models_json, costs_json, attempts, unknown_usage, last_error, updated_at FROM run_gateway_usage WHERE run_id = ?
+`
+
+func (q *Queries) GetRunGatewayUsage(ctx context.Context, runID string) (RunGatewayUsage, error) {
+	row := q.db.QueryRowContext(ctx, getRunGatewayUsage, runID)
+	var i RunGatewayUsage
+	err := row.Scan(
+		&i.RunID,
+		&i.SpaceID,
+		&i.State,
+		&i.EndedAt,
+		&i.Reads,
+		&i.Failures,
+		&i.NextAttemptAt,
+		&i.ReadAt,
+		&i.ModelsJson,
+		&i.CostsJson,
+		&i.Attempts,
+		&i.UnknownUsage,
+		&i.LastError,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -410,6 +469,73 @@ func (q *Queries) ListDueGatewayRevocations(ctx context.Context, arg ListDueGate
 	return items, nil
 }
 
+const listDueGatewayUsage = `-- name: ListDueGatewayUsage :many
+SELECT u.run_id, u.space_id, u.state, u.ended_at, u.reads, u.failures, u.next_attempt_at, u.read_at, u.models_json, u.costs_json, u.attempts, u.unknown_usage, u.last_error, u.updated_at, r.created_at AS run_created_at FROM run_gateway_usage u JOIN runs r ON r.id = u.run_id
+WHERE u.state = 'pending' AND u.next_attempt_at <= ?1 ORDER BY u.next_attempt_at LIMIT ?2
+`
+
+type ListDueGatewayUsageParams struct {
+	Now int64
+	Lim int64
+}
+
+type ListDueGatewayUsageRow struct {
+	RunID         string
+	SpaceID       string
+	State         string
+	EndedAt       int64
+	Reads         int64
+	Failures      int64
+	NextAttemptAt int64
+	ReadAt        sql.NullInt64
+	ModelsJson    string
+	CostsJson     string
+	Attempts      int64
+	UnknownUsage  int64
+	LastError     string
+	UpdatedAt     int64
+	RunCreatedAt  int64
+}
+
+func (q *Queries) ListDueGatewayUsage(ctx context.Context, arg ListDueGatewayUsageParams) ([]ListDueGatewayUsageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDueGatewayUsage, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDueGatewayUsageRow{}
+	for rows.Next() {
+		var i ListDueGatewayUsageRow
+		if err := rows.Scan(
+			&i.RunID,
+			&i.SpaceID,
+			&i.State,
+			&i.EndedAt,
+			&i.Reads,
+			&i.Failures,
+			&i.NextAttemptAt,
+			&i.ReadAt,
+			&i.ModelsJson,
+			&i.CostsJson,
+			&i.Attempts,
+			&i.UnknownUsage,
+			&i.LastError,
+			&i.UpdatedAt,
+			&i.RunCreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnabledSpaceHarborPilot = `-- name: ListEnabledSpaceHarborPilot :many
 SELECT space_id, enabled, project_id, harnesses_json, ttl_seconds, on_budget_status_unavailable, allowed_model_aliases_json, created_at, created_by, updated_at, updated_by, version FROM space_harbor_pilot WHERE enabled = 1 ORDER BY space_id
 `
@@ -568,6 +694,17 @@ func (q *Queries) NextGatewayRevocation(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
+const nextGatewayUsageRead = `-- name: NextGatewayUsageRead :one
+SELECT CAST(COALESCE(MIN(next_attempt_at), 0) AS INTEGER) FROM run_gateway_usage WHERE state = 'pending'
+`
+
+func (q *Queries) NextGatewayUsageRead(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextGatewayUsageRead)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const queueRunGatewayRevocation = `-- name: QueueRunGatewayRevocation :execrows
 INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
 SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2, c.parent_fp
@@ -591,6 +728,26 @@ func (q *Queries) QueueRunGatewayRevocation(ctx context.Context, arg QueueRunGat
 	return result.RowsAffected()
 }
 
+const queueRunGatewayUsage = `-- name: QueueRunGatewayUsage :execrows
+INSERT INTO run_gateway_usage (run_id, space_id, ended_at, next_attempt_at, updated_at)
+SELECT c.run_id, c.space_id, ?1, ?2, ?1 FROM run_gateway_credentials c WHERE c.run_id = ?3
+ON CONFLICT (run_id) DO NOTHING
+`
+
+type QueueRunGatewayUsageParams struct {
+	Now    int64
+	NextAt int64
+	RunID  string
+}
+
+func (q *Queries) QueueRunGatewayUsage(ctx context.Context, arg QueueRunGatewayUsageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, queueRunGatewayUsage, arg.Now, arg.NextAt, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const queueSpaceGatewayRevocations = `-- name: QueueSpaceGatewayRevocations :execrows
 INSERT INTO gateway_revocations (credential_id, run_id, space_id, reason, expires_at, next_attempt_at, requested_at, parent_fp)
 SELECT c.credential_id, c.run_id, c.space_id, ?1, c.expires_at, ?2, ?2, c.parent_fp
@@ -606,6 +763,27 @@ type QueueSpaceGatewayRevocationsParams struct {
 
 func (q *Queries) QueueSpaceGatewayRevocations(ctx context.Context, arg QueueSpaceGatewayRevocationsParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, queueSpaceGatewayRevocations, arg.Reason, arg.Now, arg.SpaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const queueSpaceGatewayUsage = `-- name: QueueSpaceGatewayUsage :execrows
+INSERT INTO run_gateway_usage (run_id, space_id, ended_at, next_attempt_at, updated_at)
+SELECT c.run_id, c.space_id, ?1, ?2, ?1 FROM run_gateway_credentials c
+WHERE c.space_id = ?3 AND c.token_enc IS NOT NULL
+ON CONFLICT (run_id) DO NOTHING
+`
+
+type QueueSpaceGatewayUsageParams struct {
+	Now     int64
+	NextAt  int64
+	SpaceID string
+}
+
+func (q *Queries) QueueSpaceGatewayUsage(ctx context.Context, arg QueueSpaceGatewayUsageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, queueSpaceGatewayUsage, arg.Now, arg.NextAt, arg.SpaceID)
 	if err != nil {
 		return 0, err
 	}
@@ -682,6 +860,69 @@ type SetGatewayRevocationRetryParams struct {
 
 func (q *Queries) SetGatewayRevocationRetry(ctx context.Context, arg SetGatewayRevocationRetryParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setGatewayRevocationRetry, arg.LastError, arg.NextAttemptAt, arg.CredentialID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setGatewayUsageFailure = `-- name: SetGatewayUsageFailure :execrows
+UPDATE run_gateway_usage SET state = ?1, failures = failures + 1, next_attempt_at = ?2,
+  last_error = ?3, updated_at = ?4
+WHERE run_id = ?5 AND state = 'pending'
+`
+
+type SetGatewayUsageFailureParams struct {
+	State         string
+	NextAttemptAt int64
+	LastError     string
+	Now           int64
+	RunID         string
+}
+
+func (q *Queries) SetGatewayUsageFailure(ctx context.Context, arg SetGatewayUsageFailureParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setGatewayUsageFailure,
+		arg.State,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.Now,
+		arg.RunID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setGatewayUsageRead = `-- name: SetGatewayUsageRead :execrows
+UPDATE run_gateway_usage SET state = ?1, reads = reads + 1, failures = 0, next_attempt_at = ?2,
+  read_at = ?3, models_json = ?4, costs_json = ?5, attempts = ?6,
+  unknown_usage = ?7, last_error = '', updated_at = ?3
+WHERE run_id = ?8 AND state = 'pending'
+`
+
+type SetGatewayUsageReadParams struct {
+	State         string
+	NextAttemptAt int64
+	Now           sql.NullInt64
+	ModelsJson    string
+	CostsJson     string
+	Attempts      int64
+	UnknownUsage  int64
+	RunID         string
+}
+
+func (q *Queries) SetGatewayUsageRead(ctx context.Context, arg SetGatewayUsageReadParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setGatewayUsageRead,
+		arg.State,
+		arg.NextAttemptAt,
+		arg.Now,
+		arg.ModelsJson,
+		arg.CostsJson,
+		arg.Attempts,
+		arg.UnknownUsage,
+		arg.RunID,
+	)
 	if err != nil {
 		return 0, err
 	}

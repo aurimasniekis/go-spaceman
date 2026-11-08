@@ -673,6 +673,9 @@ type DreamSpec struct {
 const (
 	UsageClaudeTranscript = "claude-transcript" // Claude Code's native session transcript (verified, spike S-7)
 	UsageUnavailable      = "unavailable"       // the harness keeps no usage SpaceMan can read
+	// UsageHarborPilot is usage central read back from the Harbor Pilot gateway for a gateway run (ADR-0060 decision 7):
+	// gateway-observed, never reported by a node, and only where the harness reported none.
+	UsageHarborPilot = "harbor-pilot"
 )
 
 // ModelUsage is one model's token counts. A nil count is unknown, never zero.
