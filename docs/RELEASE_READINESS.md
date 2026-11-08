@@ -4,6 +4,9 @@
 > This report makes **no production-readiness claim**. SpaceMan is feature-complete against the brief with the gaps
 > recorded here and in [LIMITATIONS.md](LIMITATIONS.md). It has not been released, published or run by anyone but its
 > developer, and several dependencies have only simulated evidence.
+>
+> **v0.1.0 final (2026-11-08):** §14 records the final release: what it contains since rc.9, its migrations, node
+> protocol and tested Claude Code version, the known issues it ships with and the accepted risks.
 
 ## 1. Verdict
 
@@ -228,3 +231,67 @@ binary (`go install`, checked by buildinfo), run on 2026-11-08 for this addendum
 **Open:** Q4 (unscoped event routing, DECISIONS K-12); a run against a real provider (Q7); the limitations in
 [LIMITATIONS.md](LIMITATIONS.md#harbor-pilot-gateway), first among them that a Harbor Pilot outage stops every
 opted-in space's routed harnesses, by design (no fallback).
+
+## 14. v0.1.0 final (2026-11-08)
+
+The operator authorized the final v0.1.0 release on 2026-11-08. It is cut from the merge of PR #18 into `main` and
+tagged `v0.1.0`; the release workflow builds the archives, images and SBOMs into a draft release that the operator
+publishes. It still makes **no production-readiness claim**: §1's verdict stands (ready for evaluation by a trusted
+team), now with the release workflow as the path that builds and publishes it.
+
+**Contents since v0.1.0-rc.9:** the Harbor Pilot gateway (ADR-0060, §13), the SpaceMan admin MCP and the external
+`/api/v1/mcp` endpoint (ADR-0063, Accepted), Claude Code's classic renderer by default (ADR-0064), control
+reminders (ADR-0065), the terminal-prompt deny (ADR-0066), the System page (ADR-0067), the deny-only permission hook
+with instance protection and the auto-memory relocation (ADR-0068), and the store busy/close fix. The full list is in
+`CHANGELOG.md` `[0.1.0]`.
+
+| Item | v0.1.0 |
+|---|---|
+| Migrations since rc.9 | 0040–0045, forward-only: 0040 Harbor Pilot connection, space settings, run tokens and revocation queue; 0041 `messages.deliver_at`; 0042 retired, never used; 0043 Harbor Pilot run-end usage reads; 0044 SpaceMan MCP servers and internal tokens; 0045 the partial index `ix_runs_observed_live`. Take a backup before upgrading; central also writes a pre-migration snapshot. |
+| Node protocol | 1.9 (`proto.MaxMinor = 9`; minor 9 is the Harbor Pilot gateway token). Agents back to 1.0 still connect; a gateway launch to an agent older than 1.9 fails as `agent_too_old`, and the node-side Claude Code changes (ADR-0064, 0066, 0068) take effect only on agents of this release. |
+| Claude Code tested | 2.1.317: the real Claude Code suites, `make test-real-claude-cli` (ADR-0068 deny rules, 52 instances, the auto-memory migration) and the Harbor Pilot gateway runs. |
+| Codex tested | codex-cli 0.166.0 without a real model credential (§7). |
+| Harbor Pilot | 0.1.3 or later, verified against `serve --demo` only (§13). |
+
+**Upgrade notes from rc.9** (also in the CHANGELOG):
+- Upgrade central first, then every node agent (site page Operators → Upgrade and rollback).
+- Each instance's Claude Code auto memory moves to `<data_dir>/automemory/<space>/<instance>/…` and is copied there at
+  the instance's first launch on this release (the old copy stays in place).
+- Deny rules protect every space's instance files from a run's file tools, also when a profile adds the whole
+  `spaces/` folder.
+- A `PermissionRequest` hook denies every permission dialog; an `ask` rule now works like a deny.
+- A profile's own `autoMemoryDirectory` is ignored (the node logs a warning).
+- Closing the store waits at most 8 s (WAL checkpoint and connections still in use), inside the units'
+  `TimeoutStopSec=45s`.
+- Operators should remove any profile `additionalDirectories` entry that grants the node's whole `spaces/` folder, and
+  any dialog-denying hook script: v0.1.0 adds the run's own space folder and the hook automatically.
+- If a node ran Codex with an API-key account on an earlier release, rotate that key.
+
+**Known issues it ships with** (open in [LIMITATIONS.md](LIMITATIONS.md); the §7 list still applies):
+- No real Codex model turn, no AWS S3/R2, no physical Linux host or amd64 under systemd, no real Google or GitHub
+  accounts (SM-VER-002 stays `partial`).
+- Harbor Pilot: no real model provider behind it (Q7); unscoped events are routed nowhere (Q4); an outage stops every
+  opted-in space's routed harnesses, by design (no fallback).
+- SpaceMan MCP: no real harness has driven the tools through a model yet (tested in process over the real bridge);
+  the Terraform resource waits for the provider's next release; the external endpoint takes bearer tokens only (no
+  OAuth).
+- Claude Code runs: an `ask` rule works like a deny; the protected paths and stripped settings keys are deny-lists
+  checked against Claude Code 2.1.317 (an allow-list is a follow-up); a run can read other instances' transcripts,
+  settings and memory.
+- Agent restarts under the shipped systemd unit end the node's runs.
+
+**Accepted risks** (operator decisions, [THREAT_MODEL.md](THREAT_MODEL.md), [SECURITY_REVIEW.md](SECURITY_REVIEW.md)):
+
+| ID | Risk | Decision |
+|---|---|---|
+| T-33 | An agent with SpaceMan MCP tools uses its owner's administrator authority (default preset `admin@*`, no expiry, approvals for dangerous tools only). | Accepted 2026-11-07 for a trusted infra space. |
+| T-38 | An operator's own MCP client on `/api/v1/mcp` uses that token's full grants; reads and writes run without approval. | Residuals accepted 2026-11-08 (F6, SR-MCP-01). |
+| T-40 | Dialog handling: `ask` rules become denies; reads of other instances' files; deny-lists tied to the tested Claude Code version; a profile editor can still widen a run. | Residuals accepted with ADR-0068. |
+| F1 | In-run dangerous calls are approved in the run's own space, also when they act on other spaces. | Accepted 2026-11-08. |
+| F2 | `launch-run` stays a write with `settings.permission_mode` or `account_ref` overrides. | Accepted 2026-11-08. |
+| F6 | `/api/v1/mcp` is on for every user API token, with no switch. | Accepted 2026-11-08. |
+| SR-MCP-01 | The root token may approve the external endpoint's dangerous calls. | Kept 2026-11-08 (single-administrator path). |
+
+**Gates** (Linux, umask 022, `SM_TEST_TX_MAX=500ms`, at the PR #18 head named in the PR description):
+`make check`, `make site-check` and CI on PR #18, all passing before the PR left draft; the results and the head
+commit are in the PR description.

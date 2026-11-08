@@ -3088,7 +3088,7 @@
     `"tui": "fullscreen"` keeps the full-screen renderer and accepts that watchers can't scroll back. Verified in the
     2.1.317 binary: the `tui` setting is checked before the fresh-install default (`settings_off`).
   - **The node applies the default**, where it writes the run's `settings.json` (`internal/harness/claude.go`), not
-    central. It therefore needs the agent from SpaceMan 0.1.0-rc.10 or later; a run on an older node keeps Claude
+    central. It therefore needs the agent from SpaceMan 0.1.0 or later; a run on an older node keeps Claude
     Code's own choice of renderer. The resolved `claude_settings` that central's API returns are the profile's own and
     don't show the default.
   - **The web view handles the wheel and touch itself** (`web/src/features/terminal/scroll.ts`). Scrolling up moves

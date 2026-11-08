@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-08
+
+First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim
+(docs/RELEASE_READINESS.md §14 lists what was verified, the known issues it ships with and the accepted risks).
+Since v0.1.0-rc.9: the Harbor Pilot gateway (ADR-0060); the SpaceMan admin MCP for control and worker runs and the
+external `/api/v1/mcp` endpoint for your own MCP client (ADR-0063); the System page (ADR-0067); scheduled reminders
+for control (ADR-0065); no terminal questions or plan mode in Claude Code runs (ADR-0066); a deny-only hook in place
+of permission dialogs, with every space's instance files protected and auto memory moved out of the space folder
+(ADR-0068); Claude Code's classic renderer so watchers can scroll back (ADR-0064); and fixes, among them opening and
+closing the database under a brief lock. Tested with Claude Code 2.1.317.
+
+**Upgrade notes** (from v0.1.0-rc.9):
+- **Take a backup first.** Migrations 0040, 0041, 0043, 0044 and 0045 are forward-only (0042 is retired and never
+  used). Central also writes a pre-migration snapshot; going back means restoring it.
+- **Node protocol 1.9.** Upgrade central first, then every node agent. Older agents keep working, but the node-side
+  changes below need agents on this release, and a Harbor Pilot gateway launch to an older agent fails as
+  `agent_too_old`.
+- **New node behaviour in Claude Code runs:**
+  - each instance's auto memory moves to `<data_dir>/automemory/<space>/<instance>/…`; the memory an instance kept in
+    its config dir is copied there at its first launch on this release (the old copy stays);
+  - deny rules protect every space's instance files (settings, instructions, plugins, hooks, auto memory and
+    transcripts) from a run's file tools;
+  - a `PermissionRequest` hook denies every permission dialog, so an `ask` rule now works like a deny;
+  - a profile's own `autoMemoryDirectory` is ignored (the node logs a warning);
+  - stopping central drains for at most 8 s for the database, inside the units' `TimeoutStopSec=45s`.
+- **Check your profiles:** remove any `additionalDirectories` entry that grants the node's whole `spaces/` folder, and
+  any dialog-denying hook script. This release adds the run's own space folder and the hook automatically.
+- `/api/v1/mcp` is on for every user API token; leave it out of your reverse proxy if you don't want it.
+- **Codex users:** if a node ran Codex with an API-key account on an earlier release, rotate that key (see Fixed).
+
 ### Added
 - **System page and API** (ADR-0067; SM-OBS-006). Administrators see this instance's status on a new **System** page
   (under Access), with `GET /api/v1/system` (`get-system`, `system:read`) and `spaceman system status`: readiness,
@@ -1003,7 +1033,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...v0.1.0
 [0.1.0-rc.9]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.9
 [0.1.0-rc.8]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.8
 [0.1.0-rc.7]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.7
