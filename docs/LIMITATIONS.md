@@ -98,7 +98,12 @@
   settings that add a credential or endpoint, and removes stored logins. It does not inspect a Claude Code project
   `.claude/settings.json` in the run's working directory (repository content), keys Claude Code or the agent wrote
   into the instance's own `settings.json`, or a Codex `config.toml` in `CODEX_HOME`. Whether a project file's `env`
-  can redirect Claude Code's base URL was not tested. The same holds for direct accounts (THREAT_MODEL T-36).
+  can redirect Claude Code's base URL was not tested. The same holds for direct accounts (THREAT_MODEL T-36). A Codex
+  `config.toml` can't redirect a gateway run's model traffic: with codex-cli 0.166.0 the `-c model_provider…`
+  overrides won over its root `model_provider`, over a `<name>.config.toml` profile (even with `--profile`, which
+  SpaceMan never passes) and over its own `[model_providers.harbor-pilot]`, and a legacy `profile =` key makes Codex
+  refuse to start (checked by hand against two local servers, 2026-11-08). It can still add settings the overrides
+  don't set, such as extra request headers. Later Codex versions may change this precedence.
 - **The run can read its own token.** A gateway run's token is in its harness's environment, as account credentials
   are. It is bound to the run in Harbor Pilot and revoked when the run ends, but stays usable until then.
 - **A crash right after a mint leaves an untracked token.** If central stops between Harbor Pilot's answer to a mint

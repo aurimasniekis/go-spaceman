@@ -308,6 +308,10 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("remove stored credentials", err)
 		return
 	}
+	if err := removeCredentialDirs(built.RemoveDirs); err != nil {
+		fail("remove stored credentials", err)
+		return
+	}
 	if err := writeSecretFiles(built.SecretFiles); err != nil { // after the login links are gone
 		fail("write login", err)
 		return

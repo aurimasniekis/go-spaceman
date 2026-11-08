@@ -2617,8 +2617,12 @@
     A stored login (`$CLAUDE_CONFIG_DIR/.credentials.json`, from a `/login` inside an earlier run) is removed before
     the launch. A profile whose `claude_settings` would add another credential or endpoint fails the launch with the
     key named. That covers `apiKeyHelper`, `proxyAuthHelper`, `awsCredentialExport`, `awsAuthRefresh`, `gcpAuthRefresh`
-    and `forceLoginMethod` (from the 2.1.317 settings schema), and `env` entries `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_*`
-    and `CLAUDE_CODE_USE_*` (Bedrock, Vertex, Foundry). The check is on the node, so it holds whatever central sent.
+    and `forceLoginMethod` (from the 2.1.317 settings schema), and `env` entries `ANTHROPIC_*` and every
+    `CLAUDE_CODE_*` but an allowlist of output and UI switches (2.1.317 has over 800, among them OAuth tokens, key file
+    descriptors, host-managed auth, base URLs, proxies, client certificates and Bedrock/Vertex/Foundry switches; the
+    HP-T4 review asked for the allowlist shape so new ones are refused), plus `HTTP(S)_PROXY`/`ALL_PROXY` in either
+    case, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_OPTIONS`.
+    The check is on the node, so it holds whatever central sent.
   - **Codex.** The five `-c model_provider…` overrides from the HP-T1 spike, `base_url = <origin>/v1`, and
     `HARBOR_PILOT_TOKEN` in `SecretEnv`. No `auth.json` is written. Any `auth.json` in the instance's `CODEX_HOME` is
     removed, and the launch fails if it is still there. That covers an ADR-0054 API-key file, and a link to an ADR-0053
@@ -2626,6 +2630,14 @@
   - **Codex's shell snapshot is off for every Codex run** (`-c features.shell_snapshot=false`). The real HP-T4 run found
     that codex-cli 0.166.0 writes the run's environment, `HARBOR_PILOT_TOKEN` and `SPACEMAN_RUN_TOKEN` included, to
     `$CODEX_HOME/shell_snapshots/*.sh`, where it outlives the run (`docs/contracts/harnesses.md`, THREAT_MODEL T-36).
+    Every Codex launch, gateway or not, also removes the `shell_snapshots` folder an earlier run left
+    (`Launch.RemoveDirs`: a link is removed itself, `os.RemoveAll` never follows one inside, and the launch fails if it
+    is still there): on earlier releases it could hold a direct account's API key, which a later gateway run of the
+    same instance must not start next to (HP-T4 review F1). Operators rotate such keys (CHANGELOG).
+  - **Codex `config.toml` and the provider (HP-T4 review).** With codex-cli 0.166.0 the `-c model_provider…` overrides
+    win over a `config.toml` root `model_provider`, a `<name>.config.toml` profile (even under `--profile`) and a
+    `[model_providers.harbor-pilot]` table there; a legacy `profile =` key makes Codex refuse to start. So no
+    `-c profile=` is passed and nothing is refused (LIMITATIONS).
   - **Model choice.** Not changed. Codex's own default model may not be routed by the plan (the demo refuses it with
     403), so a gateway Codex run needs the role's model or the space's allowed aliases. This is in LIMITATIONS.
   - **Evidence.** Unit tests (`internal/harness`, `internal/proto`, `internal/agent`, `internal/fleet`), the fleet e2e

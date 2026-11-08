@@ -137,6 +137,14 @@ func TestHarborPilotGatewayDeliveryOnNode(t *testing.T) {
 	if err := os.WriteFile(auth, []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"stub-openai-key"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// HP-T4 review F1: so is a shell snapshot an earlier Codex version wrote with the account's API key in it.
+	snaps := filepath.Join(instance(x1, "codex"), "shell_snapshots")
+	if err := os.MkdirAll(snaps, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snaps, "old.sh"), []byte("export OPENAI_API_KEY=stub-snapshot-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	x2 := launch(hns.KindCodex, "reviewer", "coding/default", x1.InstanceID)
 	sec = secrets(x2)
 	ctok := sec[hns.CodexGatewayEnv]
@@ -145,6 +153,9 @@ func TestHarborPilotGatewayDeliveryOnNode(t *testing.T) {
 	}
 	if _, err := os.Lstat(auth); !os.IsNotExist(err) {
 		t.Fatalf("auth.json is still in CODEX_HOME: %v", err)
+	}
+	if _, err := os.Lstat(snaps); !os.IsNotExist(err) {
+		t.Fatalf("the shell snapshots are still in CODEX_HOME: %v", err)
 	}
 	procs := e.run.LiveByLabel("spaceman.run", x2.ID)
 	if len(procs) != 1 {
@@ -159,5 +170,6 @@ func TestHarborPilotGatewayDeliveryOnNode(t *testing.T) {
 	}
 	nowhere(ctok)
 	nowhere("stub-openai-key")
+	nowhere("stub-snapshot-key")
 	nowhere("stub-claude-token")
 }

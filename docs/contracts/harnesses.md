@@ -252,7 +252,15 @@ Real runs through the whole stack: `TestRealHarborPilotGatewayRuns` (`make test-
 `$CODEX_HOME/shell_snapshots/<id>.sh` (0600). The snapshot includes `HARBOR_PILOT_TOKEN` and `SPACEMAN_RUN_TOKEN`, so
 both were at rest in the instance's folder after the run. This affected every Codex run, not only gateway runs; the
 earlier Codex test didn't look for the run token. The adapter now passes `-c features.shell_snapshot=false`
-(`codex features list` shows it off with that override). With it, the same run found no token at rest.
+(`codex features list` shows it off with that override). With it, the same run found no token at rest. Every Codex
+launch also removes the `shell_snapshots` folder earlier runs left, which could hold a direct account's API key.
+
+**Codex `config.toml` against the `-c` provider overrides (code: codex-cli 0.166.0 from npm, 2026-11-08).** `codex
+exec` with the five overrides pointed at one local server, and a `config.toml` pointing at another, sent every request
+to the override's server: with a root `model_provider = "evil"`, with an `evil.config.toml` profile setting it (with and
+without `--profile evil`), and with `config.toml` redefining `[model_providers.harbor-pilot].base_url`. A `profile =`
+key (in `config.toml` or as `-c profile=…`) fails at start: "legacy `profile = …` config is no longer supported; use
+`--profile <name>` with `<name>.config.toml` instead".
 
 **Not shown.** A real model provider behind Harbor Pilot; a profile's `claude_settings` in a gateway run (refused by
 the adapter, unit-tested only); a Claude Code project `.claude/settings.json` in the working directory that sets `env`
