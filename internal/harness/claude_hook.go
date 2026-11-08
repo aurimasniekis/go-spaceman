@@ -43,8 +43,19 @@ func ClaudePermissionRequestHook(in io.Reader, out io.Writer) error {
 	if reToolName.MatchString(input.ToolName) {
 		msg = "Permission for " + input.ToolName + " denied. " + msg
 	}
-	return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+	return json.NewEncoder(out).Encode(permissionDeny(msg))
+}
+
+func permissionDeny(msg string) map[string]any {
+	return map[string]any{"hookSpecificOutput": map[string]any{
 		"hookEventName": "PermissionRequest",
 		"decision":      map[string]any{"behavior": "deny", "message": msg},
-	}})
+	}}
+}
+
+// ClaudeStaticPermissionDeny is the decision the hook command prints when the agent binary fails (see
+// ClaudePermissionHookCommand): the same deny, without the tool name.
+func ClaudeStaticPermissionDeny() string {
+	b, _ := json.Marshal(permissionDeny(ClaudePermissionDenyMessage))
+	return string(b)
 }

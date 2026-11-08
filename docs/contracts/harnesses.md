@@ -80,6 +80,26 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   the hook's message; the terminal showed "Denied by PermissionRequest hook". A file under a directory in
   `permissions.additionalDirectories` was read without a dialog. A deny rule `Read(//<abs path glob>)` (a leading `//`
   is an absolute path) refused a read there with "File is in a directory that is denied by your permission settings."
+- **Deny rules against other instances, and failing hooks (ADR-0068 review fixes, verified 2026-11-08 with Claude
+  Code 2.1.317, live, no model; `make test-real-claude-cli`):**
+  - **Setup.** Print mode (`-p`) with a local fake API scripting the tool calls, `--permission-mode acceptEdits`, a
+    throwaway HOME, config dir and space folder.
+  - **Without an Edit deny, other instances are writable.** With the space folder in `additionalDirectories`, `Write`
+    and `Edit` to another instance's `claude/settings.json` succeed without a dialog.
+  - **What the deny rules refuse.** `Edit(//<abs glob>)` deny rules refuse `Write` and `Edit` alike ("File is in a
+    directory that is denied by your permission settings."). That covers both `Edit(//<space>/instances/<id>/**)` and
+    `Edit(//<space>/instances/*/claude/settings.json)`.
+  - **Deny rules also block the run's own auto memory.** Claude Code writes its auto memory to
+    `$CLAUDE_CONFIG_DIR/projects/<cwd with / and . as ->/memory/` with the same `Write` tool, and a deny rule covering
+    that folder refuses it. So `Edit(//<space>/instances/**)` would block the run's own memory.
+  - **Bracket negation doesn't work.** `[!A]` in a rule did not act as "not A" (it matched names starting with `A`).
+  - **Hook command failures.** A `PermissionRequest` command hook whose command fails shows the dialog: exit code 2
+    does not deny this event. The command `'<bin>' hook permission-request 2>/dev/null || printf '%s' '<deny JSON>'`
+    still denies when `<bin>` is missing (the reviewer checked this interactively; `TestRealClaudeCLIDeniesOtherInstances`
+    checks it in print mode).
+  - **Settings keys that run commands** (from the binary's settings schema): `apiKeyHelper`, `otelHeadersHelper`,
+    `proxyAuthHelper`, `policyHelper(s)`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `processWrapper`,
+    `statusLine`, `subagentStatusLine`, `fileSuggestion`, `sshHostCommands`, `hooks`. `autoMemoryDirectory` exists too.
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).

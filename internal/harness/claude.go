@@ -78,6 +78,18 @@ func denyTerminalPrompts(own map[string]any) {
 // ClaudePermissionHookArgs are the spaceman-agent arguments of the PermissionRequest hook every run gets (ADR-0068).
 var ClaudePermissionHookArgs = []string{"hook", "permission-request"}
 
+// ClaudePermissionHookCommand is the shell command of SpaceMan's PermissionRequest hook. It fails closed: when the agent
+// binary is missing, crashes or exits non-zero, a fixed deny (ClaudeStaticPermissionDeny) is printed instead, because
+// Claude Code shows the dialog for a failed hook (exit code 2 does not deny this event), and the run would stall there.
+// A hook that runs past its timeout still ends at the dialog (ADR-0068).
+func ClaudePermissionHookCommand(agentBinary string) string {
+	command := shellQuote(agentBinary)
+	for _, a := range ClaudePermissionHookArgs {
+		command += " " + a
+	}
+	return command + " 2>/dev/null || printf '%s' " + shellQuote(ClaudeStaticPermissionDeny())
+}
+
 // denyPermissionDialogs appends SpaceMan's PermissionRequest hook to the run's hooks. Claude Code still shows a
 // permission dialog in auto mode for an "ask" rule, for a read outside the working directories and when the classifier
 // falls back to asking after repeated blocks; nobody answers it in an unattended run, so the run would stall. The hook
@@ -87,10 +99,7 @@ var ClaudePermissionHookArgs = []string{"hook", "permission-request"}
 // PermissionRequest value that is not a list, is not valid Claude Code settings and is replaced. The profile's settings
 // map is never modified: the hooks object is copied.
 func denyPermissionDialogs(own map[string]any, agentBinary string) {
-	command := shellQuote(agentBinary)
-	for _, a := range ClaudePermissionHookArgs {
-		command += " " + a
-	}
+	command := ClaudePermissionHookCommand(agentBinary)
 	hooks := map[string]any{}
 	if cur, ok := own["hooks"].(map[string]any); ok {
 		for k, v := range cur {
@@ -145,16 +154,49 @@ func hasHookCommand(group any, command string) bool {
 // file tools read them without a dialog, so they are denied (ADR-0068).
 var ClaudeSpaceCredentialFiles = []string{"instances/*/claude/.credentials.json", "instances/*/codex/auth.json"}
 
+// ClaudeSpaceProtectedFiles are the files of every instance's config dirs (the run's own included) that configure the
+// harness: settings that can run commands at the next launch (hooks, helpers, env), instructions it loads (CLAUDE.md,
+// agents, commands, skills, output styles), plugins, and Codex's whole config dir. The run's file tools get Edit deny
+// rules for them, so a run can't plant settings in another instance, or in its own, without a dialog (ADR-0068, T-40).
+// They are listed one by one rather than as instances/** because the run's own Claude Code writes its auto memory under
+// its own config dir (projects/*/memory) with the same file tools, and a deny rule wins over that (verified with Claude
+// Code 2.1.317); Claude Code itself writes these files without its tools, so the rules don't stop it.
+var ClaudeSpaceProtectedFiles = []string{
+	"instances/*/claude/settings.json", "instances/*/claude/settings.local.json", "instances/*/claude/settings.json.spaceman-keys",
+	"instances/*/claude/.claude.json", "instances/*/claude/CLAUDE.md", "instances/*/claude/agents/**", "instances/*/claude/commands/**",
+	"instances/*/claude/skills/**", "instances/*/claude/plugins/**", "instances/*/claude/output-styles/**", "instances/*/claude/hooks/**",
+	"instances/*/codex/**",
+}
+
+// globUnsafe are the characters a path must not hold to be used in a Claude Code permission-rule glob: escaping them is
+// not documented, so a space folder or instance name with one gets no directory at all (N2).
+const globUnsafe = "*?[]{}\\!"
+
 // addSpaceDirectory adds the run's own space folder to permissions.additionalDirectories, so reading the space's files
 // (plans, notes, other checkouts of the space) from a run that starts in a checkout does not end in a "read outside the
-// working directories" dialog. Only that space's folder is added, never the node's whole spaces folder; the instances'
-// login files in it get Read and Edit deny rules (ClaudeSpaceCredentialFiles). The profile's directories and deny rules
-// come first and are kept, duplicates are dropped and every other permissions key is kept; the profile's settings map
-// is never modified (ADR-0068).
-func addSpaceDirectory(own map[string]any, spaceDir string) {
-	if spaceDir == "" {
+// working directories" dialog. Only that space's folder is added, never the node's whole spaces folder. Deny rules keep
+// the run's file tools away from the instances' config dirs: Read and Edit for the login files
+// (ClaudeSpaceCredentialFiles), Edit for the harness configuration of every instance (ClaudeSpaceProtectedFiles) and
+// Edit for the whole folder of every other instance that exists at launch (instances, listing the space's instances
+// folder, without the run's own, configDir's name): their settings, memory and transcripts. A space folder or instance
+// name holding a glob character gets no directory and no rules, since the rules could not be written exactly. The
+// profile's directories and deny rules come first and are kept, duplicates are dropped and every other permissions key
+// is kept; the profile's settings map is never modified (ADR-0068).
+func addSpaceDirectory(own map[string]any, spaceDir, configDir string, instances []string) {
+	if spaceDir == "" || strings.ContainsAny(spaceDir, globUnsafe) {
 		return
 	}
+	self := filepath.Base(configDir)
+	var others []string
+	for _, id := range instances {
+		if id == "" || id == "." || id == ".." || strings.ContainsAny(id, globUnsafe+"/") {
+			return
+		}
+		if id != self && !slices.Contains(others, id) {
+			others = append(others, id)
+		}
+	}
+	slices.Sort(others)
 	perms := map[string]any{}
 	if cur, ok := own["permissions"].(map[string]any); ok {
 		for k, v := range cur {
@@ -169,16 +211,36 @@ func addSpaceDirectory(own map[string]any, spaceDir string) {
 	}
 	perms["additionalDirectories"] = dirs
 	deny := stringsOf(perms["deny"])
-	for _, f := range ClaudeSpaceCredentialFiles {
+	add := func(tool, rel string) {
 		// "//" starts an absolute path in a Claude Code permission rule.
-		for _, tool := range []string{"Read", "Edit"} {
-			if rule := tool + "(/" + filepath.ToSlash(filepath.Join(spaceDir, f)) + ")"; !slices.Contains(deny, rule) {
-				deny = append(deny, rule)
-			}
+		if rule := tool + "(/" + filepath.ToSlash(filepath.Join(spaceDir, rel)) + ")"; !slices.Contains(deny, rule) {
+			deny = append(deny, rule)
 		}
+	}
+	for _, f := range ClaudeSpaceCredentialFiles {
+		add("Read", f)
+		add("Edit", f)
+	}
+	for _, f := range ClaudeSpaceProtectedFiles {
+		add("Edit", f)
+	}
+	for _, id := range others {
+		add("Edit", "instances/"+id+"/**")
 	}
 	perms["deny"] = deny
 	own["permissions"] = perms
+}
+
+// ClaudeUnsafeSettingsKeys are the top-level Claude Code settings (path.Match patterns) that run commands, add
+// credentials or environment, change what hooks, plugins, the sandbox or the auto-mode classifier allow, or reroute
+// the harness: only the profile or SpaceMan may define them, so the node removes any it did not set from the run's
+// settings.json at every launch (Launch.StripJSON, ADR-0068). Keys Claude Code keeps there itself (feedbackSurveyState,
+// theme choices and the like) are not among them and stay. Checked against Claude Code 2.1.317's settings schema.
+var ClaudeUnsafeSettingsKeys = []string{
+	"disableAllHooks", "hooks", "env", "*Helper", "*Helpers", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh",
+	"processWrapper", "statusLine", "subagentStatusLine", "fileSuggestion", "sshHostCommands", "permissions", "autoMode",
+	"sandbox", "enabledPlugins", "extraKnownMarketplaces", "pluginConfigs", "enableAllProjectMcpServers",
+	"enabledMcpjsonServers", "allowedHttpHookUrls", "httpHookAllowedEnvVars", "autoMemoryDirectory",
 }
 
 // shellQuote quotes s for the shell Claude Code runs a command hook with.
@@ -278,7 +340,7 @@ func (Claude) Build(c Context) (Launch, error) {
 	}
 	denyTerminalPrompts(own)
 	denyPermissionDialogs(own, c.AgentBinary)
-	addSpaceDirectory(own, c.SpaceDir)
+	addSpaceDirectory(own, c.SpaceDir, c.ConfigDir, c.SpaceInstances)
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
 	secrets := secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
@@ -302,7 +364,8 @@ func (Claude) Build(c Context) (Launch, error) {
 			"theme":                  "dark",
 			"projects":               map[string]any{c.WorkDir: map[string]any{"hasTrustDialogAccepted": true}},
 		}},
-		OwnJSON: map[string]map[string]any{filepath.Join(cfg, "settings.json"): own},
+		OwnJSON:   map[string]map[string]any{filepath.Join(cfg, "settings.json"): own},
+		StripJSON: map[string][]string{filepath.Join(cfg, "settings.json"): ClaudeUnsafeSettingsKeys},
 		// Verified: Claude Code loads $CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md (spike S-6).
 		SkillsRoot:  filepath.Join(cfg, "skills"),
 		SecretEnv:   secrets,

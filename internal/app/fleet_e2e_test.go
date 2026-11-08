@@ -283,11 +283,13 @@ func TestFleetLifecycle(t *testing.T) {
 		} `json:"hooks"`
 		Permissions struct {
 			AdditionalDirectories []string `json:"additionalDirectories"`
+			Deny                  []string `json:"deny"`
 		} `json:"permissions"`
 	}
 	if err != nil || json.Unmarshal(raw, &settings) != nil || len(settings.Hooks.PermissionRequest) != 1 ||
-		settings.Hooks.PermissionRequest[0].Hooks[0].Command != "'/usr/bin/true' hook permission-request" ||
-		!slices.Equal(settings.Permissions.AdditionalDirectories, []string{spaceDir}) {
+		settings.Hooks.PermissionRequest[0].Hooks[0].Command != hns.ClaudePermissionHookCommand("/usr/bin/true") ||
+		!slices.Equal(settings.Permissions.AdditionalDirectories, []string{spaceDir}) ||
+		!slices.Contains(settings.Permissions.Deny, "Edit(/"+spaceDir+"/instances/*/claude/settings.json)") {
 		t.Fatalf("run settings %s %v", raw, err)
 	}
 	if e.run1(ctrl.ID).Launch.AccountRef != accts["claude_oauth_token"] {

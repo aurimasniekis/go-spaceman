@@ -114,11 +114,19 @@ Things to know:
     instead of retrying. It can only deny, never allow, so an **Ask** rule works like a **Deny** rule: to let runs do
     something, put it under **Allow**.
   - **The run's own space folder** in `additionalDirectories` (only that space's folder), so reading the space's plans
-    and notes from a checkout doesn't raise a dialog. The Claude Code and Codex login files in it are denied.
+    and notes from a checkout doesn't raise a dialog. The Claude Code and Codex login files in it are denied. Other
+    instances' folders, and every instance's settings and other harness configuration, can't be edited.
 
   Both are added after the profile's own hooks, **Deny** rules and directories, which stay as they are (each entry
-  once). A profile that sets `disableAllHooks` also turns SpaceMan's hook off. Like the other defaults, the node adds
-  these, and the resolved settings don't show them.
+  once). Like the other defaults, the node adds these, and the resolved settings don't show them. Three more things
+  to know:
+  - **Key stripping.** At every launch the node removes settings keys that run commands or change hooks, credentials
+    or permissions (`hooks`, `env`, `*Helper`, `statusLine`, `disableAllHooks`, …) from the instance's settings
+    unless the profile set them. So set such keys in the profile, not by editing an instance's file.
+  - **`disableAllHooks`.** A profile that sets it also turns SpaceMan's hook off.
+  - **A profile's own PermissionRequest hook.** Claude Code runs it alongside SpaceMan's. Outside auto mode the first
+    answer wins, so a profile hook that allows can override SpaceMan's deny. Give it only to profiles whose editors
+    you trust with that (profile editors are trusted with run credentials anyway).
 
 ## Space roles
 

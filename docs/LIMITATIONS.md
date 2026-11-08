@@ -320,9 +320,22 @@
   wait for a profile change. A profile that sets `disableAllHooks` (or a managed `allowManagedHooksOnly`) turns the
   hook off, and the dialogs stall the run again. A run whose permission mode is `plan` still ends in the
   `ExitPlanMode` approval dialog; only `EnterPlanMode` is denied.
-- **A run's file tools reach its whole space folder** (ADR-0068): other instances' transcripts, settings and checkouts
-  too, not only its own. Only the Claude Code and Codex login files there are denied. The folder of another space
-  stays outside, and reading it still raises a dialog, which the hook denies.
+- **A run's file tools reach its whole space folder** (ADR-0068). Every checkout and `work/` is readable and
+  writable. Other instances' transcripts (`projects/*.jsonl`), settings and memory are readable but not writable.
+  Every instance's harness configuration is denied to edits, the run's own included. The Claude Code and Codex login
+  files are denied entirely. Two gaps remain:
+  - an instance created after the run started has its memory and transcripts writable by that run until the run's next
+    launch;
+  - the node strips dangerous settings keys at every launch, but keeps keys the profile set.
+
+  This is wider than before: the shell runs as the same OS user, but each shell command passes auto mode's classifier,
+  which file tools inside a working directory skip. The folder of another space stays outside, and reading it raises a
+  dialog, which the hook denies.
+- **The PermissionRequest hook can still end at the dialog** (ADR-0068):
+  - **Timeout.** A hook that runs past its 30 s timeout ends at the dialog. A missing or failing agent binary does not:
+    the command then prints a fixed deny.
+  - **A profile hook that allows.** When a profile adds its own `PermissionRequest` hook, outside auto mode the first
+    answer wins, so a profile hook that allows can win over SpaceMan's deny.
 - **A run waiting at a terminal prompt raises no attention item.** SpaceMan doesn't detect that a run's terminal has
   been waiting for input for a long time. Follow-up: raise an attention item when the program status reports a
   waiting prompt for more than a few minutes.

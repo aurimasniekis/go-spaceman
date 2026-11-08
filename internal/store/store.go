@@ -181,15 +181,18 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) closeNow() {
+	// One deadline for the whole close (the checkpoint and both pools' drains), so shutdown stays inside the service
+	// manager's stop timeout (closeDrainTimeout).
+	deadline := time.Now().Add(closeDrainTimeout)
 	var errs []error
 	if s.rdb != nil {
-		errs = append(errs, s.rdb.Close(), drainConns(s.rdb, "reader"))
+		errs = append(errs, s.rdb.Close(), drainConns(s.rdb, "reader", deadline))
 	}
 	if s.wdb != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		_, _ = s.wdb.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 		cancel()
-		errs = append(errs, s.wdb.Close(), drainConns(s.wdb, "writer"))
+		errs = append(errs, s.wdb.Close(), drainConns(s.wdb, "writer", deadline))
 	}
 	if s.lock != nil {
 		errs = append(errs, s.lock.Release())
@@ -197,16 +200,21 @@ func (s *Store) closeNow() {
 	s.closeErr = errors.Join(errs...)
 }
 
-// closeDrainTimeout bounds how long Close waits for connections that were in use when it was called.
-const closeDrainTimeout = 30 * time.Second
+// closeDrainTimeout bounds the whole of Close: the WAL checkpoint and the wait for connections that were in use when it
+// was called, both pools sharing the one deadline. With central's shutdown.timeout (30 s by default) and the 5 s for
+// gateway mints, a stop then takes at most 43 s, inside the units' TimeoutStopSec=45s (site/operators/upgrade.md). A
+// variable so a test can shorten it.
+var closeDrainTimeout = 8 * time.Second
 
 // drainConns waits until every connection of a closed pool is closed. sql.DB.Close closes only idle connections: one
 // still in use (a query or transaction of a goroutine that has not stopped yet) closes when it is released. Until then
 // it keeps the database file open, and closing it later (the last connection of the process checkpoints the WAL under
 // an exclusive lock) races a store opened next on the same directory, so Close does not release the process lock
 // before.
-func drainConns(d *sql.DB, pool string) error {
-	deadline := time.Now().Add(closeDrainTimeout)
+//
+// When the deadline passes first, the lock is released anyway (a stuck goroutine must not keep the node from shutting
+// down) and the error says how many connections were still in use.
+func drainConns(d *sql.DB, pool string, deadline time.Time) error {
 	for d.Stats().OpenConnections > 0 {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("close %s pool: %d connections still in use after %s", pool, d.Stats().OpenConnections, closeDrainTimeout)

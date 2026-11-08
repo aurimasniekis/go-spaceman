@@ -188,7 +188,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `skipAutoPermissionPrompt` doesn't prevent these dialogs: it only skips the notice shown when auto mode starts. The
   hook can only deny, never allow, so an `ask` rule now works like a deny. Each run also gets its own space folder
   (`<data_dir>/spaces/<space>`, only that one) in `permissions.additionalDirectories`, with `Read` and `Edit` denied
-  for the instances' login files in it. Both are merged with the profile's settings: its hooks (any `PermissionRequest`
+  for the instances' login files in it. Its file tools can't edit:
+  - other instances' folders;
+  - any instance's settings or other harness configuration (`settings.json`, `.claude.json`, `CLAUDE.md`, agents,
+    commands, skills, plugins, hooks, Codex's config dir).
+
+  At every launch the node removes dangerous keys from the instance's `settings.json` unless the profile or SpaceMan
+  set them: `disableAllHooks`, `hooks`, `env`, `*Helper`, `statusLine`, `autoMode`, `permissions`, plugin keys and
+  similar. The removed key names are logged. Keep such keys in the profile; edits made to an instance's file by hand
+  are removed. The hook fails closed: if the agent binary is missing or fails, its command still prints a deny.
+
+  Both are merged with the profile's settings: its hooks (any `PermissionRequest`
   hook or `PreToolUse` guard), deny rules and directories are kept, and nothing is repeated. If your profiles carry a
   workaround (a dialog-denying hook script, or the whole `spaces/` folder as an additional directory), you can remove
   it. The node adds both, so they take nodes on this release or later.
@@ -214,8 +224,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection's first statement. Before, the writer ran its first statement without one, so opening the data directory
   failed at once with `storage busy: open database: database is locked (SQLITE_BUSY)` whenever another connection held
   the file for a moment, for example the last connection of a store that had just closed, while it checkpointed the WAL.
-  Closing the store now also waits, for up to 30 s, until the connections still in use by unfinished requests have
-  closed. Only then does it release the data directory's lock. Seen as a flaky central restart in tests.
+  Closing the store now also waits until the connections still in use by unfinished requests have closed, and only
+  then releases the data directory's lock. The checkpoint and that wait share one 8 s deadline, so a stop stays inside
+  the units' `TimeoutStopSec=45s` (30 s `shutdown.timeout`, 5 s for gateway mints, 8 s for the database). Past the
+  deadline the lock is released anyway, and central logs `closing central failed`; offline commands log it too. Seen as
+  a flaky central restart in tests.
 - Codex runs no longer leave their environment in the instance's `CODEX_HOME/shell_snapshots`: SpaceMan now turns off
   Codex's shell snapshot (`features.shell_snapshot=false`), and every Codex launch removes the `shell_snapshots` folder
   an earlier run left (without following links; the launch fails if it is still there). Found with codex-cli 0.166.0.

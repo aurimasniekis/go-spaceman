@@ -3281,6 +3281,34 @@
   - **Its login files are denied.** The space folder also holds the instances' harness config dirs, which can hold a
     Claude Code login (`instances/*/claude/.credentials.json`) or a Codex login (`instances/*/codex/auth.json`). Those
     two paths get `Read` and `Edit` deny rules (verified: such a read fails with "denied by your permission settings").
+  - **Other instances and every instance's harness configuration are not writable** (review fix M1). Adding the space
+    folder let a run's file tools write other instances' `instances/*/claude/settings.json` with no dialog and no
+    classifier (verified live with Claude Code 2.1.317 in `acceptEdits`), and a key planted there (`disableAllHooks`,
+    `env.ANTHROPIC_BASE_URL`, `apiKeyHelper`, …) took effect at that instance's next launch. Now:
+    - every instance folder other than the run's own that exists at launch gets `Edit(//<space>/instances/<id>/**)`
+      (its settings, memory and transcripts);
+    - every instance, the run's own included, gets `Edit` deny rules for the files that configure the harness:
+      `claude/settings.json`, `settings.local.json`, the keys record, `.claude.json`, `CLAUDE.md`, `agents/`,
+      `commands/`, `skills/`, `plugins/`, `output-styles/`, `hooks/`, and all of `codex/`. These also cover an instance
+      created after the launch.
+    - The rule is not the simpler `Edit(//<space>/instances/**)`: Claude Code writes its own auto memory
+      (`instances/<own>/claude/projects/*/memory/`) with the same file tools, a deny rule wins over that (verified), and
+      permission-rule globs have no "all but one" form (`[!x]` is not negation there). No `Read` deny is added for
+      `instances/**`: Claude Code reads its own tool results there.
+    - A space folder or instance name that holds a glob character (`* ? [ ] { } \ !`) gets no directory and no rules,
+      since the rules could not be written exactly (N2).
+  - **Defence in depth: the node strips dangerous settings keys at every launch.** Before the harness starts, the node
+    removes from the instance's `settings.json` every top-level key that runs commands, adds credentials or
+    environment, or changes what hooks, plugins, the sandbox or the classifier allow, unless the profile or SpaceMan
+    set it (`harness.ClaudeUnsafeSettingsKeys`: `disableAllHooks`, `hooks`, `env`, `*Helper`, `*Helpers`,
+    `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `processWrapper`, `statusLine`, `subagentStatusLine`,
+    `fileSuggestion`, `sshHostCommands`, `permissions`, `autoMode`, `sandbox`, the plugin and project-MCP keys,
+    `allowedHttpHookUrls`, `httpHookAllowedEnvVars`, `autoMemoryDirectory`). Keys Claude Code keeps there itself
+    (`feedbackSurveyState`, `model` and the like) stay. A removal is logged with the key names, never the values.
+  - **The hook fails closed** (review fix S1). The command is
+    `'<agent>' hook permission-request 2>/dev/null || printf '%s' '<fixed deny>'`. When the binary is missing, crashes or
+    exits non-zero, the run still gets a deny, not a dialog: Claude Code shows the dialog for a failed hook, and exit
+    code 2 doesn't deny this event. A hook that runs past its 30 s timeout still ends at the dialog.
   - **Merge, never replace** (as in ADR-0066). The profile's own hooks of every event come first, in their order, and
     SpaceMan's entry is appended to `PermissionRequest` (and not added again when the profile already has it). The
     profile's directories and deny rules come first, and duplicates are dropped. The profile's stored settings are not
@@ -3298,9 +3326,18 @@
     names `spaceman_human_ask`.
   - What was "ask a person in the terminal" (who was usually not there) is now "denied". An `ask` rule therefore
     works like a deny in SpaceMan runs; a profile that wants the call to happen must allow it.
-  - A run's file tools reach its own space without a dialog: other instances' transcripts, settings and checkouts, but
-    not the two login files. The runs already ran as the same OS user, so their shell could read these files before
-    (subject to auto mode's classifier). A profile that sets `disableAllHooks` turns SpaceMan's hook off too.
+  - **What a run's file tools reach.** They reach the run's own space without a dialog. They can read and write the
+    space's checkouts and `work/`. They can read other instances' transcripts (`projects/*.jsonl`), settings and
+    memory, but not the two login files. They can't write other instances' folders, or any instance's harness
+    configuration (M1 above). This is wider than before. The shell runs as the same OS user, but every shell command
+    goes through auto mode's classifier (or a dialog in other modes), so the shell did not already reach these files
+    without a check. File tools inside a working directory skip both.
+  - **Accepted residuals.** Reading other instances' transcripts. Writing the memory and transcripts of an instance
+    created after the run launched, until the run's next launch.
+  - **Hook precedence and profile hooks** (S2). A profile that sets `disableAllHooks` turns SpaceMan's hook off too.
+    When the profile has its own `PermissionRequest` hook, Claude Code runs both. Outside auto mode the first answer
+    wins, so a profile hook that allows can win over SpaceMan's deny. In auto mode Claude Code ignores any hook's
+    allow. A profile editor is trusted with this (T-32).
   - The node writes both when it builds the launch, so they take nodes on this release or later. The profile's
     resolved settings in the API don't show them. Codex is unchanged.
 

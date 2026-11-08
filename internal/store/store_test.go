@@ -605,3 +605,33 @@ func TestCloseWaitsForConnectionsInUse(t *testing.T) {
 	}
 	_ = s2.Close()
 }
+
+// S3: Close has one deadline for the checkpoint and both pools' drains. When a connection is still in use at the
+// deadline, Close returns an error saying so, releases the process lock anyway and the directory can be opened again.
+// Not parallel: it shortens the package's deadline (parallel tests start only after it has restored it).
+func TestCloseDrainDeadline(t *testing.T) {
+	old := closeDrainTimeout
+	closeDrainTimeout = 300 * time.Millisecond
+	defer func() { closeDrainTimeout = old }()
+	migs := migFS(map[string]string{"0001_a.sql": mig1})
+	s := openTest(t, Options{Migrations: migs})
+	ctx := context.Background()
+	reader, err := s.ReadDB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	start := time.Now()
+	err = s.Close()
+	if err == nil || !strings.Contains(err.Error(), "reader pool: 1 connections still in use") {
+		t.Fatalf("Close: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("Close took %s past a %s deadline", took, closeDrainTimeout)
+	}
+	s2, err := Open(ctx, Options{DataDir: s.Dir(), Migrations: migs})
+	if err != nil {
+		t.Fatalf("reopen after a timed-out close: %v", err)
+	}
+	_ = s2.Close()
+}
