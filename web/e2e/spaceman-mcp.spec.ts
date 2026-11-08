@@ -1,6 +1,8 @@
-import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+import AxeBuilder from '@axe-core/playwright'
+import { expect, test, type Page } from '@playwright/test'
 
 import { Api, env, settle } from './stack'
 
@@ -9,7 +11,8 @@ import { Api, env, settle } from './stack'
  * "Administer everything (infra)", dangerous approvals locked on, no expiry) and live tool count, the created server's
  * badge and drawer, the internal token's label on the Tokens page, the space's MCP card, and a confirmed delete. The
  * modal and the pages are checked at phone (390 px) and desktop (1280 px) widths in both themes, without horizontal
- * scrolling. Screenshots go to SM_SHOTS (for review, not committed here).
+ * scrolling, and the list and the drawer pass axe (WCAG 2.1 A/AA, as in screenshots.spec.ts). Screenshots go to
+ * SM_SHOTS (for review, not committed here).
  */
 
 const shots = process.env.SM_SHOTS ?? join(process.cwd(), 'test-results', 'shots')
@@ -31,6 +34,13 @@ async function noSideways(page: Page, what: string) {
   })
   expect(widths.page, `${what}: page scrolls sideways`).toBeLessThanOrEqual(widths.view)
   expect(widths.dialog, `${what}: dialog scrolls sideways`).toBeLessThanOrEqual(1)
+}
+
+/** Fails on any axe WCAG 2.1 A/AA violation on the page as shown (SM-UI-006), e.g. link-in-text-block. */
+async function axe(page: Page, what: string) {
+  const res = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  const found = res.violations.map((v) => `${v.id} [${v.impact}]: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ')}`)
+  expect(found, `${what}: accessibility violations`).toEqual([])
 }
 
 test('Add SpaceMan MCP: modal, drawer, tokens and space card at 390 and 1280 px', async ({ page }) => {
@@ -103,6 +113,7 @@ test('Add SpaceMan MCP: modal, drawer, tokens and space card at 390 and 1280 px'
       const row = page.getByRole('row', { name: /SpaceMan/ })
       await expect(row.getByText('SpaceMan', { exact: true }).nth(1)).toBeVisible()
       await noSideways(page, `list ${width}px ${theme}`)
+      await axe(page, `list ${width}px ${theme}`)
       await page.screenshot({ path: join(shots, `spaceman-mcp-list-${width}-${theme}.png`), animations: 'disabled' })
       await row.click()
       const drawer = page.getByRole('dialog', { name: 'SpaceMan' })
@@ -112,6 +123,7 @@ test('Add SpaceMan MCP: modal, drawer, tokens and space card at 390 and 1280 px'
       await expect(drawer.getByText(/· approval$/).first()).toBeVisible()
       await settle(page)
       await noSideways(page, `drawer ${width}px ${theme}`)
+      await axe(page, `drawer ${width}px ${theme}`)
       await page.screenshot({ path: join(shots, `spaceman-mcp-drawer-${width}-${theme}.png`), animations: 'disabled' })
       await page.keyboard.press('Escape')
     }
