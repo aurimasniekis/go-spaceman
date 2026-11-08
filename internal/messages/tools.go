@@ -16,7 +16,7 @@ type sendIn struct {
 	Body          string `json:"body,omitempty" jsonschema:"Markdown"`
 	Request       bool   `json:"request,omitempty" jsonschema:"a request expects a reply; replying resolves it"`
 	CorrelationID string `json:"correlation_id,omitempty"`
-	DedupKey      string `json:"dedup_key,omitempty" jsonschema:"repeating a key returns the original message; for a scheduled message, also one a previous control run scheduled that is still pending"`
+	DedupKey      string `json:"dedup_key,omitempty" jsonschema:"repeating a key returns the original message; for a scheduled message, the pending one with that key from any control run, and a conflict if the key was already used by a delivered or plain message"`
 	DeliverAt     string `json:"deliver_at,omitempty" jsonschema:"control only, to control: deliver at this RFC 3339 time (1 minute to 30 days ahead) instead of now"`
 	Delay         string `json:"delay,omitempty" jsonschema:"control only, to control: deliver after this Go duration (1m to 720h), e.g. 6h"`
 }

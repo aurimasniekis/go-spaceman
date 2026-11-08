@@ -2701,8 +2701,9 @@
     one-minute sweep. Due times come from `messages.Service.Clock` (default: the store's clock), so tests inject a
     fake clock.
   - **Limits:** at most 50 pending per space (`rate_limited`). A `dedup_key` on a scheduled send returns the pending
-    reminder with that key from any sender, so a later control run re-scheduling is idempotent. Moving one means cancel
-    and send again.
+    reminder with that key from any sender, so a later control run re-scheduling is idempotent. A key the sender
+    already used for a message that is not a pending reminder (one already delivered, or a plain message) is a
+    `conflict`, so a reminder is never silently dropped. Moving one means cancel and send again.
   - **Listing and cancelling:** control has `spaceman_message_scheduled` and `spaceman_message_cancel`. Operators use
     `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel` (`message:write`), and the Messages page's
     Scheduled view. A cancelled reminder is resolved as "cancelled before delivery". Audit: `message.sent` carries

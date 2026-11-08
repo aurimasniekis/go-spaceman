@@ -213,6 +213,11 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 		}
 		if in.DedupKey != "" {
 			if ex, err := tx.Q.GetMessageByDedup(ctx, db.GetMessageByDedupParams{SpaceID: spaceID, FromKind: from.Kind, FromID: from.ID, DedupKey: in.DedupKey}); err == nil {
+				if !deliverAt.IsZero() {
+					// Keys stay per sender forever, but a pending reminder with this key was matched above: returning a
+					// delivered reminder or a plain message would silently drop the new one (ADR-0065).
+					return apperr.New(apperr.CodeConflict, "dedup_key already used by message %s; use a new key", ex.ID)
+				}
 				id = ex.ID
 				return nil
 			} else if !errors.Is(err, sql.ErrNoRows) {

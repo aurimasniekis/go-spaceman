@@ -161,6 +161,49 @@ func TestScheduleCancelCapDedup(t *testing.T) {
 	must(t, err)
 }
 
+// ADR-0065 (review F1): a scheduled send whose key the sender already used for a message that is not a pending
+// reminder is a conflict, never a silent no-op returning the old message.
+func TestScheduleDedupReuseConflicts(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	// Reused after delivery: the same control run schedules "k", it is delivered, then it schedules "k" again.
+	m, _, err := f.svc.Send(f.ctx, op, "spc_a", ctrlFrom, SendInput{To: "control", Subject: "Check CI", Delay: time.Hour, DedupKey: "k"})
+	must(t, err)
+	f.clk.Advance(time.Hour)
+	in, err := f.svc.Fetch(f.ctx, ctrl)
+	must(t, err)
+	if len(in.Messages) != 1 || in.Messages[0].ID != m.ID {
+		t.Fatalf("delivered %+v", in.Messages)
+	}
+	_, _, err = f.svc.Send(f.ctx, op, "spc_a", ctrlFrom, SendInput{To: "control", Subject: "Check CI again", Delay: time.Hour, DedupKey: "k"})
+	code(t, err, apperr.CodeConflict)
+	if !strings.Contains(err.Error(), m.ID) {
+		t.Fatalf("conflict does not name %s: %v", m.ID, err)
+	}
+	// A plain message sent earlier with key "p".
+	plain, _, err := f.svc.Send(f.ctx, op, "spc_a", ctrlFrom, SendInput{To: "control", Subject: "now", DedupKey: "p"})
+	must(t, err)
+	_, _, err = f.svc.Send(f.ctx, op, "spc_a", ctrlFrom, SendInput{To: "control", Subject: "later", Delay: time.Hour, DedupKey: "p"})
+	code(t, err, apperr.CodeConflict)
+	if !strings.Contains(err.Error(), plain.ID) {
+		t.Fatalf("conflict does not name %s: %v", plain.ID, err)
+	}
+	if l, _ := f.svc.Scheduled(f.ctx, "spc_a"); len(l) != 0 {
+		t.Fatalf("conflicting sends scheduled %+v", l)
+	}
+	// A plain send repeating a key still returns the original (SM-COMM-004), and a new key schedules.
+	again, created, err := f.svc.Send(f.ctx, op, "spc_a", ctrlFrom, SendInput{To: "control", Subject: "now", DedupKey: "p"})
+	must(t, err)
+	if created || again.ID != plain.ID {
+		t.Fatalf("plain dedup: created %v, %s vs %s", created, again.ID, plain.ID)
+	}
+	_, created, err = f.svc.Send(f.ctx, op, "spc_a", ctrlFrom, SendInput{To: "control", Subject: "Check CI again", Delay: time.Hour, DedupKey: "k2"})
+	must(t, err)
+	if !created {
+		t.Fatal("new key not created")
+	}
+}
+
 // ADR-0065: the scheduling tools are control's; workers cannot schedule, list or cancel.
 func TestScheduleTools(t *testing.T) {
 	t.Parallel()
