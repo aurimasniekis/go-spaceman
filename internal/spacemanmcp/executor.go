@@ -56,14 +56,15 @@ type Result struct {
 }
 
 // Execute runs a call. Bad arguments and API problems (4xx and 5xx) are tool errors (isError) the model can read; the
-// returned error is only for a call that cannot be made at all (no principal or tool, or a principal that is not an
-// internal token's: the in-process handler skips authentication, so only auth.InternalPrincipal's result may reach it).
+// returned error is only for a call that cannot be made at all (no principal or tool, or a principal that is neither an
+// internal token's nor a bearer token's on the external MCP endpoint: the in-process handler skips authentication, so
+// only auth.InternalPrincipal's result or the endpoint guard's may reach it).
 func (e *Executor) Execute(ctx context.Context, c Call) (*mcp.CallToolResult, error) {
 	if c.Principal == nil || c.Tool == nil || e.Handler == nil {
 		return nil, errors.New("spacemanmcp: call without principal, tool or handler")
 	}
-	if !c.Principal.Internal() || c.Principal.IsRoot() {
-		return nil, errors.New("spacemanmcp: call with a principal that is not an internal token's")
+	if !c.Principal.ViaMCP() || c.Principal.IsRoot() {
+		return nil, errors.New("spacemanmcp: call with a principal that is neither an internal token's nor the MCP endpoint's")
 	}
 	req, err := e.request(ctx, c)
 	if err != nil {
@@ -203,7 +204,9 @@ func (e *Executor) request(ctx context.Context, c Call) (*http.Request, error) {
 	if ifMatch != "" {
 		req.Header.Set("If-Match", ifMatch)
 	}
-	if t.Idempotent {
+	if t.Idempotent && !c.Principal.MCPEndpoint {
+		// A run's retries are deduplicated. On the external MCP endpoint a person drives the client and a repeated
+		// call is meant (ADR-0063 §External endpoint), as with a CLI command without --idempotency-key.
 		key, err := IdempotencyKey(c.Principal, t, c.Args)
 		if err != nil {
 			return nil, err

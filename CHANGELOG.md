@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- SpaceMan admin MCP (ADR-0063, Proposed; AM-1 to AM-5): SpaceMan's own API as MCP tools for a space's control and
+- SpaceMan admin MCP (ADR-0063, Proposed; AM-1 to AM-6, AM-10): SpaceMan's own API as MCP tools for a space's control and
   worker runs.
   - Internal API tokens: owned by an administrator, scoped like any API token, without a secret, and never accepted as
     a bearer token. Their calls are audited with the owner, the token (`via spaceman_mcp:<token>`) and the agent run.
@@ -28,6 +28,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     Reads filtered by the caller's grants (`list-spaces` and ten others) are tools; personal operations are not.
     A revoked token empties the catalog, and calls are refused with the reason.
   - CLI (AM-6): `spaceman mcp spaceman create`, `update` and `reissue`.
+  - External MCP endpoint (AM-10, SM-MCP-009): `/api/v1/mcp` serves the same tools over streamable HTTP to your own
+    MCP client, with your API token as a bearer and exactly that token's grants. Browser requests, session cookies,
+    the root token and internal tokens are refused, and each token is rate limited. Dangerous calls and diagnostic
+    launches need an approval from someone other than the token's user. Calls are audited via the token on the
+    `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
 - Gateway runs reach their harness (ADR-0060, Proposed; HP-T4; node protocol minor 9). **Update every node of a space
   before opting it in to Harbor Pilot:** a launch to an older agent fails as `agent_too_old` ("gateway runs need
   protocol minor 9 …: upgrade its agent") before a token is minted.
@@ -103,6 +108,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     settings, run-token and revocation-queue tables.
 
 ### Changed
+- KB support sessions and dreams refuse a space role that no longer runs as kind kb or dreamer before launching,
+  instead of launching a run and killing it.
 - Harbor Pilot groundwork (still no product behaviour) moves to Harbor Pilot v0.1.3, now the minimum version: the
   contract, `make test-harbor-pilot` (installs and checks v0.1.3) and ADR-0060 (Proposed). The test harness also checks
   per-run usage by trusted reference, budget refusals and the budget check on run-token mint. Claude Code's default

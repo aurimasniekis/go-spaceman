@@ -66,6 +66,9 @@ type Deps struct {
 	ExtraRules map[string]Rule
 	// Raw are plain HTTP routes (streams, downloads), authorized per space.
 	Raw []RawRoute
+	// MCP serves the external MCP endpoint (MCPPath, ADR-0063) behind the API's middleware and mcpEndpoint's guard;
+	// nil leaves the path unserved.
+	MCP http.Handler
 	// Ready reports readiness for the public system info.
 	Ready func() bool
 	// ProviderLogoutURL returns where to send the browser after signing out of an SSO session (RP-initiated logout,
@@ -153,7 +156,8 @@ func WithInProcessPrincipal(ctx context.Context, p *auth.Principal) context.Cont
 // InProcessHandler serves the API's operations to callers inside central (the SpaceMan MCP, ADR-0063) with the
 // principal they inject through WithInProcessPrincipal, instead of authenticating a cookie or bearer token. Every
 // operation still runs its rule (authorizeOps), validation, idempotency and audit exactly as over HTTP; a request
-// without a principal is unauthenticated, and any principal but an internal token's is forbidden. Only huma operations are served: the watch stream and the raw routes
+// without a principal is unauthenticated, and any principal but an internal token's or the external MCP endpoint's
+// (auth.Principal.ViaMCP) is forbidden. Only huma operations are served: the watch stream and the raw routes
 // (uploads, downloads, exports) are not.
 func (d *Deps) InProcessHandler() http.Handler {
 	mux := http.NewServeMux()
@@ -164,10 +168,11 @@ func (d *Deps) InProcessHandler() http.Handler {
 			writeProblem(w, errUnauthenticated())
 			return
 		}
-		if !p.Internal() || p.IsRoot() {
-			// Only an internal token's principal (auth.InternalPrincipal) may be injected: any other kind would skip
-			// the internal-principal refusals and, with a token ID, step-up (ADR-0063).
-			writeProblem(w, newProblem(http.StatusForbidden, apperr.CodeForbidden, "only an internal principal may call the API in process", nil))
+		if !p.ViaMCP() || p.IsRoot() || p.User == nil || p.TokenID == "" {
+			// Only an internal token's principal (auth.InternalPrincipal) or a bearer token's on the external MCP
+			// endpoint may be injected: any other kind would skip the MCP refusals and, with a token ID, step-up
+			// (ADR-0063).
+			writeProblem(w, newProblem(http.StatusForbidden, apperr.CodeForbidden, "only an MCP principal may call the API in process", nil))
 			return
 		}
 		ids := []obs.CorrelationID{}
@@ -192,6 +197,9 @@ func (d *Deps) Handler() http.Handler {
 	mux.Handle("GET "+Prefix+"/watch", d.watchHandler())
 	for _, rt := range d.Raw {
 		mux.Handle(rt.Pattern, d.authorizeRaw(rt))
+	}
+	if d.MCP != nil {
+		mux.Handle(MCPPath, d.mcpEndpoint(d.MCP))
 	}
 	var h http.Handler = mux
 	h = d.authenticate(h)

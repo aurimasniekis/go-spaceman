@@ -2763,8 +2763,9 @@
   question numbers (Q1–Q9) refer to the questions of the admin MCP plan.
   Implemented so far: migration 0042, the internal token and its principal, the audit attribution and the approver
   exclusion (AM-2); the tool catalog, classification and in-process executor (AM-3, AM-4); the gateway kind with its
-  create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5). The CLI, web, Terraform
-  and endpoint parts follow (AM-6 to AM-10). Requirements SM-MCP-005..009; threat T-33.
+  create, edit and re-issue operations, `approvals.Require` and the wiring in central (AM-5); the CLI (AM-6); the
+  external endpoint (AM-10, §External endpoint below). The web, bridge end-to-end and Terraform parts follow (AM-7 to
+  AM-9). Requirements SM-MCP-005..009; threats T-33, T-37.
 - **Context:**
   - The operator wants an "infra" space whose agents administer SpaceMan itself: create spaces, launch and stop runs,
     manage tasks, limits, roles, schedules and the other things an administrator does with the CLI or the API. Today an
@@ -2875,7 +2876,7 @@
      - Only control and worker runs get the tools; KB, dreamer and diagnostic runs never do.
   8. **External endpoint in this release** (operator decision on plan question Q9; AM-10, SM-MCP-009). Central also serves the tool surface at
      `/api/v1/mcp` for operators' own MCP clients, authenticated with a bearer API token (never an internal one), with
-     the same classification, exclusions and approval rules.
+     the same classification, exclusions and approval rules. The rules are in §External endpoint below.
   9. **API (AM-5):** `create-spaceman-mcp` (`POST /mcp-servers/spaceman`), `update-spaceman-mcp`
      (`PUT /mcp-servers/{id}/spaceman`: tools, approval mode, limits) and `reissue-spaceman-mcp`
      (`POST /mcp-servers/{id}/reissue`: new grants, expiry or owner), all `StepUp(mcp:write)`. Servers carry `kind` and,
@@ -2888,6 +2889,56 @@
   11. **Numbers:** migration 0042 (four `ADD COLUMN`s: `mcp_servers.kind`, `api_token_id`, `spaceman_json`;
       `api_tokens.purpose`, forward-only like every migration; numbered 0041 until the control reminders took that
       number), T-33, SM-MCP-005..009. No protocol minor.
+- **External endpoint (AM-10, SM-MCP-009, threat T-37).** `/api/v1/mcp` (`api.MCPPath`) serves the same catalog and
+  executor over streamable HTTP to an operator's own MCP client (`internal/spacemanmcp` `Endpoint`). It is not an API
+  operation: it is absent from the OpenAPI document and the CLI.
+  - **Who can call it:** a user's bearer API token, acting as itself (token **and** owner, as on the API). The guard
+    (`api.Deps.mcpEndpoint`) refuses a session cookie and the root token (403). Internal tokens
+    (`purpose = 'spaceman_mcp'`) never authenticate as bearers (`AuthenticateAPIToken` refuses any purpose, 401), and
+    the guard refuses a principal with a purpose as well. The guard passes on a copy of the principal marked
+    `MCPEndpoint`; only the guard sets it.
+  - **Same rails as the in-run tools** (`auth.Principal.ViaMCP` covers both): the API refuses Session (unless
+    `Filtered`), UserOnly, Reauth and MFA rules for such a principal, although bearer tokens otherwise skip step-up;
+    the hard exclusions keep the same operations out of the catalog; the in-process handler and the executor accept
+    this principal (and an internal one) only. Human-action responses and approval decisions refuse an actor on the
+    `mcp_endpoint` channel at the service level (`audit.Actor.MCP`), although the catalog never offers them.
+  - **Tool selection: the token's grants as they are.** The endpoint offers the `admin` preset's classes (read, write,
+    dangerous) filtered by what the token's grants can reach. Of the two options (a preset stored on the token, or the
+    grants as they are), this is the simpler one: it needs no migration, no token setting, no UI or Terraform attribute,
+    and the grants are already the scope the operator chose for that token; a narrower client gets a narrower token.
+    Two kinds of tool are left out: sensitive reads (recordings, transcripts), which no preset includes; and dangerous
+    tools that act on no space (accounts, Git SSH keys, HTTP MCP servers and grants, harness profiles, role templates,
+    publishing, installation-wide human policies, node writes), because an approval belongs to a space. Those stay on
+    the API, the CLI and the web UI.
+  - **Approvals: dangerous calls always need one, decided by another person.** A dangerous tool, and a `launch_run`
+    asking for `kind: diagnostic`, goes through `approvals.RequireFor` with the operation
+    `mcp.endpoint.dangerous.<tool>`, the resource `api_token:<token id>` and the requester key `api_token:<token id>`
+    (role `mcp_endpoint`): only calls with the same token and the identical arguments can use the approval. A stored
+    policy for that operation sets the uses and lifetimes; without one a synthetic one-use policy does (one hour after
+    the decision, a day to decide). Before asking, the endpoint checks that the token may use the tool in that space,
+    so nobody is asked about a call the API would refuse. Read and write calls run at once, as the same token's calls
+    on the API would.
+    - **Rule: the token's own user never decides it.** Not through the token, not in a browser session, not with
+      another of their tokens: `onFinalized` refuses the decision when the deciding user owns the requesting token, and
+      the gate revokes an approval that such a user decided anyway. The token acts for its user, so the user approving
+      their own client's call adds no second check; a stolen token plus that user's session would otherwise approve
+      itself. Consequence: an installation with one administrator can't run dangerous tools through the endpoint; that
+      person uses the API, CLI or web UI for them.
+  - **Diagnostic launch gate:** `authorizeLaunchKind` refuses a diagnostic launch by any `ViaMCP` principal unless the
+    call carries `gateway.WithApprovedCall("launch-run")`, which the endpoint sets only after `RequireFor` succeeded
+    for that call. A launch by a space role whose template is diagnostic, without `kind`, is refused with the hint.
+  - **Edge protection:** the API's own middleware (security headers, request IDs, the body limit
+    `http.max_body_bytes`, the failed-bearer limit of 20 per minute per address) and, per token, 5 requests per second
+    with bursts of 50 (429). A request with an `Origin` or `Sec-Fetch-*` header (a browser) is refused, and no CORS
+    headers are ever sent. The MCP SDK's localhost DNS-rebinding check is off: central normally sits behind a reverse
+    proxy on the same host, and rebinding needs a browser, which is refused, plus a bearer token, which a page doesn't
+    have. The server is stateless (no `Mcp-Session-Id`; GET and DELETE answer 405) and answers in JSON.
+  - **No derived idempotency key.** A run's retries are deduplicated (decision 5); on the endpoint a person drives the
+    client and a repeated create is meant, as with a CLI command without `--idempotency-key`.
+  - **Audit:** every operation is attributed to the token's user with `via: api_token:<id>` and `channel:
+    mcp_endpoint` (`audit.Actor.Channel`). Each tool call is also audited as `mcp_endpoint.tool_called` (target the
+    token; tool, operation, class, result, duration, and the space of a dangerous call; never arguments or results).
+    Approval requests and uses carry the same actor.
 - **Alternatives:**
   - **A first-class service principal** (`svc:<id>`), independent of any person. Access would survive admin turnover
     without a re-issue, but it roughly doubles the authentication work (new subject kind, grants, management, audit) and
@@ -2912,6 +2963,8 @@
     review risk.
   - Secrets that an agent writes through these tools (account keys, event connection secrets) pass through the model's
     context; those operations are dangerous and need an approval.
+  - The external endpoint gives an operator's MCP client what the operator's token can do on the API, short of the
+    hard exclusions and with dangerous calls approved by someone else (T-37).
 
 ### ADR-0064 — Scrolling back through run terminals: Claude Code's classic renderer by default, scrolling handled by the web view
 - **Status:** Accepted, 2026-11-07 (operator request: scroll the terminal without taking it over; follow-up bug: in a

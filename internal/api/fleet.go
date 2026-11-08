@@ -340,9 +340,10 @@ func (d *Deps) spaceRun(ctx context.Context, f *fleet.Service, spaceID, runID st
 
 // authorizeLaunchKind checks the caller may launch a run of the resolved kind. launch-run needs run:control; a
 // diagnostic launch (the kind may come from the space role) also needs run:diagnose (SM-CTRL-004, ADR-0050). An
-// agent's SpaceMan MCP call (an internal principal) launches a diagnostic run only when the gateway approved this exact
-// call as dangerous (gateway.WithApprovedCall): the gateway classes a call by its arguments, and this checks the kind as
-// resolved, so a space role of diagnostic kind can't slip past the approval (ADR-0063).
+// agent's SpaceMan MCP call (an internal principal), or a call through the external MCP endpoint, launches a diagnostic
+// run only when that call was approved as dangerous (gateway.WithApprovedCall, set by the gateway or the endpoint): both
+// class a call by its arguments, and this checks the kind as resolved, so a space role of diagnostic kind can't slip
+// past the approval (ADR-0063).
 func (d *Deps) authorizeLaunchKind(ctx context.Context, spaceID, kind string) error {
 	if kind != "diagnostic" {
 		return nil
@@ -351,7 +352,7 @@ func (d *Deps) authorizeLaunchKind(ctx context.Context, spaceID, kind string) er
 	if d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), spaceID, authz.RunDiag) {
 		return apperr.New(apperr.CodeForbidden, "diagnostic launches need run:diagnose")
 	}
-	if p.Internal() && gateway.ApprovedCall(ctx) != "launch-run" {
+	if p.ViaMCP() && gateway.ApprovedCall(ctx) != "launch-run" {
 		return apperr.New(apperr.CodeForbidden,
 			"a diagnostic launch through SpaceMan MCP needs a person's approval: call launch_run with kind \"diagnostic\" so it is gated")
 	}

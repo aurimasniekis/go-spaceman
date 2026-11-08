@@ -134,11 +134,13 @@ func TestExecutorErrors(t *testing.T) {
 	if _, err := ex.Execute(ctx, spacemanmcp.Call{Tool: get}); err == nil {
 		t.Error("a call without a principal ran")
 	}
-	// Only an internal token's principal runs a call: a bearer token's would skip step-up, root's every check.
+	// Only an internal token's principal or the MCP endpoint's runs a call: a plain bearer token's would skip step-up,
+	// root's every check.
 	for name, p := range map[string]*auth.Principal{
 		"bearer":                        {User: &auth.User{ID: "usr_owner"}, TokenID: "atk_ci", Method: auth.MethodToken},
 		"root":                          {RootTokenID: "rtk_1", Method: auth.MethodRoot},
 		"root with an internal purpose": {RootTokenID: "rtk_1", TokenPurpose: auth.TokenPurposeSpacemanMCP},
+		"root on the MCP endpoint":      {RootTokenID: "rtk_1", Method: auth.MethodRoot, MCPEndpoint: true},
 	} {
 		rec = seen{}
 		if _, err := ex.Execute(ctx, spacemanmcp.Call{Principal: p, Tool: get, Args: json.RawMessage(`{"space_id":"spc_x"}`)}); err == nil || rec.method != "" {

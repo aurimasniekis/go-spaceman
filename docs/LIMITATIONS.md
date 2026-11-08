@@ -219,15 +219,22 @@
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
 ## SpaceMan MCP (in progress)
-- **Not usable yet.** The identity it acts through (an internal API token, ADR-0063, Proposed) and the tool catalog
-  and executor exist, but no server or endpoint serves them yet (AM-5 to AM-10).
-- **No space listing.** Operations whose rule is "any signed-in principal, filtered by grants" (`list-spaces`,
-  event connections and templates, attention) are excluded with the personal ones, so an agent needs a space's ID.
+- **Not finished.** Servers are managed through the API and CLI and the external endpoint is served (ADR-0063,
+  Proposed), but the web UI, the agent-bridge end-to-end test and Terraform follow (AM-7 to AM-9).
 - **Full admin by default, by design.** The default preset is `admin` on every space and the token never expires
   (operator decisions for a trusted infra space). An agent with these tools can do what its owner can, short of the
   hard exclusions; prompt injection into that space is accepted risk T-33.
 - **Owned by a person.** The token acts for the admin who created the server: if that admin is disabled or loses
   grants, the server stops working until it is re-issued by someone else.
+- **External endpoint (`/api/v1/mcp`): bearer tokens only.** A client must send `Authorization: Bearer
+  spaceman_at_…`; there is no OAuth flow, so clients that only support OAuth for remote servers can't connect.
+- **External endpoint: no dangerous tools without a second person.** A dangerous call needs an approval from someone
+  other than the token's user, so an installation with one administrator can't run them through the endpoint (use the
+  API, CLI or web UI). Dangerous tools that act on no space (accounts, Git SSH keys, HTTP MCP servers, harness
+  profiles, role templates, publishing, installation-wide human policies, node writes) and sensitive reads
+  (recordings, transcripts) are not offered there at all.
+- **External endpoint: the token's grants are the selection.** There is no per-token tool preset; issue a token with
+  narrower grants for a narrower client.
 
 ## Skills
 - **Skill loading is verified, not a skill's use.** Codex runs get skills in `$CODEX_HOME/skills` (listed in the model's

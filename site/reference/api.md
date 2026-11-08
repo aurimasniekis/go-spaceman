@@ -26,6 +26,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
   `GET /api/v1/spaces/{space_id}/attachments/{attachment_id}/content` serves an attachment's bytes (raster images inline,
   everything else as a download, always sandboxed), and `GET /api/v1/spaces/{space_id}/runs/{run_id}/transcript` downloads a
   run's stored native transcript (`recording:read`; it may contain secrets and is never rendered).
+- **MCP**: `POST /api/v1/mcp` serves these operations as MCP tools over streamable HTTP to your own MCP client, with an API
+  token as the bearer (outside the OpenAPI document; [guide](../guide/mcp-endpoint)).
 - **Command line**: `spaceman` is a client for these operations ([CLI reference](./cli/)); each command names the operations it calls.
 
 ## Operations

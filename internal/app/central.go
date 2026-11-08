@@ -106,6 +106,8 @@ type Central struct {
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
 	Gateway *gateway.Service
+	// mcpEndpoint serves api.MCPPath (ADR-0063); set by wireSpacemanMCP.
+	mcpEndpoint *spacemanmcp.Endpoint
 	// Approvals gates operations that policies make need a person's approval (ADR-0024).
 	Approvals *approvals.Service
 	// Memory preserves role memory synced from nodes (ADR-0025).
@@ -488,6 +490,14 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	return c, nil
 }
 
+// SpacemanCatalog returns the SpaceMan MCP tool catalog (nil before wireSpacemanMCP).
+func (c *Central) SpacemanCatalog() *spacemanmcp.Catalog {
+	if c.mcpEndpoint == nil {
+		return nil
+	}
+	return c.mcpEndpoint.Cat
+}
+
 // wireSpacemanMCP gives the gateway its SpaceMan MCP backend: the tool catalog generated from this build's API and the
 // in-process handler that runs the tools.
 func (c *Central) wireSpacemanMCP() error {
@@ -497,7 +507,12 @@ func (c *Central) wireSpacemanMCP() error {
 		return err
 	}
 	c.Gateway.Tokens = c.Auth
-	c.Gateway.Spaceman = &spacemanmcp.Backend{Cat: cat, Handler: d.InProcessHandler(), Tokens: c.Auth}
+	h := d.InProcessHandler()
+	c.Gateway.Spaceman = &spacemanmcp.Backend{Cat: cat, Handler: h, Tokens: c.Auth}
+	// The external MCP endpoint (ADR-0063 §External endpoint): the same catalog and executor for operators' own MCP
+	// clients, behind the API's guard (api.MCPPath).
+	c.mcpEndpoint = &spacemanmcp.Endpoint{Cat: cat, Handler: h, Tokens: c.Auth, Approvals: c.Approvals, Authz: c.Authz, Store: c.Store,
+		Audit: c.Audit, Log: obs.Component(c.Log, "mcp_endpoint")}
 	return nil
 }
 
@@ -558,6 +573,9 @@ func (c *Central) APIDeps() *api.Deps {
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
+	if c.mcpEndpoint != nil {
+		d.MCP = c.mcpEndpoint
+	}
 	return d
 }
 

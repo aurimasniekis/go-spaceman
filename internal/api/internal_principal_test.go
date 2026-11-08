@@ -31,6 +31,12 @@ func TestActorOfInternalPrincipal(t *testing.T) {
 	if got, want := Actor(ctx), (audit.Actor{Type: audit.ActorUser, ID: "usr_owner", Via: "api_token:atk_ci"}); got != want {
 		t.Fatalf("actor %+v, want %+v", got, want)
 	}
+	ep := *bearer
+	ep.MCPEndpoint = true
+	ctx = context.WithValue(context.Background(), principalKey{}, &ep)
+	if got, want := Actor(ctx), (audit.Actor{Type: audit.ActorUser, ID: "usr_owner", Via: "api_token:atk_ci", Channel: audit.ChannelMCPEndpoint}); got != want {
+		t.Fatalf("actor %+v, want %+v", got, want)
+	}
 }
 
 // An internal principal never reaches an operation that needs a person at the keyboard: own-account (Session,
@@ -84,17 +90,26 @@ func TestInProcessHandler(t *testing.T) {
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "not available through the SpaceMan MCP") {
 		t.Fatalf("internal principal on a session rule: %d %s", rec.Code, rec.Body.String())
 	}
-	// Only an internal token's principal may be injected: a bearer token's (which skips step-up) or root's is refused
-	// before any rule runs, even on a Session rule that any signed-in principal passes over HTTP.
+	// The external MCP endpoint's principal gets the same refusal.
+	ep := &auth.Principal{User: &auth.User{ID: "usr_owner"}, SessionID: "atk_ci", TokenID: "atk_ci", Method: auth.MethodToken, MCPEndpoint: true}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/auth/me", nil).WithContext(WithInProcessPrincipal(context.Background(), ep)))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "not available through the SpaceMan MCP") {
+		t.Fatalf("MCP endpoint principal on a session rule: %d %s", rec.Code, rec.Body.String())
+	}
+	// Only an internal token's principal or the MCP endpoint's may be injected: a bearer token's (which skips step-up)
+	// or root's is refused before any rule runs, even on a Session rule that any signed-in principal passes over HTTP.
 	for name, p := range map[string]*auth.Principal{
 		"bearer":                        {User: &auth.User{ID: "usr_owner"}, SessionID: "atk_ci", TokenID: "atk_ci", Method: auth.MethodToken},
 		"root":                          {RootTokenID: "rtk_1", Method: auth.MethodRoot},
 		"session":                       {User: &auth.User{ID: "usr_owner"}, SessionID: "ses_1", Method: auth.MethodPassword},
 		"root with an internal purpose": {RootTokenID: "rtk_1", TokenPurpose: auth.TokenPurposeSpacemanMCP},
+		"session marked MCP endpoint":   {User: &auth.User{ID: "usr_owner"}, SessionID: "ses_1", Method: auth.MethodPassword, MCPEndpoint: true},
+		"root marked MCP endpoint":      {RootTokenID: "rtk_1", Method: auth.MethodRoot, MCPEndpoint: true},
 	} {
 		rec = httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/auth/me", nil).WithContext(WithInProcessPrincipal(context.Background(), p)))
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "only an internal principal") {
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "only an MCP principal") {
 			t.Errorf("%s principal: %d %s", name, rec.Code, rec.Body.String())
 		}
 	}
