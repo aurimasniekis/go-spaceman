@@ -2012,6 +2012,32 @@
         ],
         "type": "object"
       },
+      "BuildinfoInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "go_version": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "go_version",
+          "platform"
+        ],
+        "type": "object"
+      },
       "Cancel-human-actionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -16003,6 +16029,48 @@
         ],
         "type": "object"
       },
+      "SystemCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "human_pending": {
+            "description": "Open and in-progress human actions",
+            "format": "int64",
+            "type": "integer"
+          },
+          "live_streams": {
+            "description": "Connected live-event streams (change feed, terminals, recordings)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "nodes_active": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "nodes_connected": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "runs_running": {
+            "description": "Runs starting, running or stopping",
+            "format": "int64",
+            "type": "integer"
+          },
+          "spaces": {
+            "description": "Spaces that are not archived",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "spaces",
+          "nodes_active",
+          "nodes_connected",
+          "runs_running",
+          "human_pending",
+          "live_streams"
+        ],
+        "type": "object"
+      },
       "SystemInfo": {
         "additionalProperties": false,
         "properties": {
@@ -16041,6 +16109,186 @@
           "has_admin",
           "local_login_disabled",
           "direct_provider"
+        ],
+        "type": "object"
+      },
+      "SystemProtocol": {
+        "additionalProperties": false,
+        "properties": {
+          "major": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_minor": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "min_minor": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major",
+          "min_minor",
+          "max_minor"
+        ],
+        "type": "object"
+      },
+      "SystemSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "latest": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "current",
+          "latest"
+        ],
+        "type": "object"
+      },
+      "SystemStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/SystemStatus.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "boot_id": {
+            "description": "Changes at every start of central",
+            "type": "string"
+          },
+          "build": {
+            "$ref": "#/components/schemas/BuildinfoInfo"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/SystemCounts"
+          },
+          "data_dir": {
+            "description": "Central's data directory on its host",
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/SystemProtocol"
+          },
+          "public_url": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/SystemSchema"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/SystemStorage"
+          },
+          "uptime_seconds": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "build",
+          "started_at",
+          "uptime_seconds",
+          "boot_id",
+          "public_url",
+          "data_dir",
+          "schema",
+          "protocol",
+          "storage",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "SystemStorage": {
+        "additionalProperties": false,
+        "properties": {
+          "below_reserve": {
+            "type": "boolean"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionCheck"
+            },
+            "type": "array"
+          },
+          "db_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_available_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_error": {
+            "type": "string"
+          },
+          "disk_reserve_bytes": {
+            "description": "Free space below this degrades readiness",
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_total_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "disk_used_percent": {
+            "format": "double",
+            "type": "number"
+          },
+          "problem": {
+            "description": "Readiness is not ready, the database is not ok, or free space is below the reserve",
+            "type": "boolean"
+          },
+          "readiness": {
+            "description": "ready, degraded, failed, starting or stopping",
+            "type": "string"
+          },
+          "store_reason": {
+            "type": "string"
+          },
+          "store_state": {
+            "enum": [
+              "ok",
+              "degraded",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "wal_bytes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "db_bytes",
+          "wal_bytes",
+          "readiness",
+          "checks",
+          "store_state",
+          "disk_total_bytes",
+          "disk_available_bytes",
+          "disk_used_percent",
+          "disk_reserve_bytes",
+          "below_reserve",
+          "problem"
         ],
         "type": "object"
       },
@@ -31648,6 +31896,38 @@
         "summary": "The starter roles and whether each one's template still exists",
         "tags": [
           "roles"
+        ]
+      }
+    },
+    "/system": {
+      "get": {
+        "description": "Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.",
+        "operationId": "get-system",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "This instance's status",
+        "tags": [
+          "system"
         ]
       }
     },

@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/fsstat"
@@ -364,6 +365,18 @@ func (m *Metrics) SSEClientDisconnected() {
 		return
 	}
 	m.sseClients.Dec()
+}
+
+// SSEClients returns the number of connected live-event (SSE) streams: watch and recording streams (the System page).
+func (m *Metrics) SSEClients() int64 {
+	if m == nil {
+		return 0
+	}
+	var d dto.Metric
+	if m.sseClients.Write(&d) != nil || d.Gauge == nil {
+		return 0
+	}
+	return int64(d.Gauge.GetValue())
 }
 
 // --- User authentication ---

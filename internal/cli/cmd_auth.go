@@ -213,9 +213,11 @@ func (a *App) passwordCmd() *cobra.Command {
 	)
 }
 
-// systemExtra are the system commands for the outbox, the restore and break-glass notices and the root token.
+// systemExtra are the system commands for the instance's status, the outbox, the restore and break-glass notices and the root token.
 func (a *App) systemExtra() []*cobra.Command {
 	return []*cobra.Command{
+		a.cmd(opts{use: "status", short: "This instance's status: version, uptime, boot ID, schema and protocol versions, storage, counts (admins)",
+			op: "get-system"}),
 		a.cmd(opts{use: "outbox", short: "Outbound event publication status (pending, retrying, dead, recent failures)", op: "get-outbound-events"}),
 		a.cmd(opts{use: "attention", short: "What needs a person: human actions, blocked tasks, quarantine, runs, budgets, nodes, outbox, backups, storage",
 			op: "get-attention", query: []qflag{qs("space", "space", "only this space")}}),

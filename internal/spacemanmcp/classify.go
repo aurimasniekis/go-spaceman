@@ -106,6 +106,7 @@ var Table = map[string]Entry{
 
 	// Admin.
 	"get-break-glass":     {Read, rRead},
+	"get-system":          {Read, rRead},
 	"acknowledge-restore": {Excluded, "acknowledging a restore is an operator's confirmation after a recovery"},
 	// Step-up (excluded by its rule); the fallback.
 	"acknowledge-break-glass": {Excluded, "acknowledging a break-glass sign-in is an operator's confirmation"},

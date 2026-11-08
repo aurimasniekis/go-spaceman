@@ -3875,6 +3875,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This instance's status
+         * @description Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.
+         */
+        get: operations["get-system"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/backups": {
         parameters: {
             query?: never;
@@ -5006,6 +5026,13 @@ export interface components {
              * @description Time of the most recent unacknowledged use
              */
             at?: string;
+        };
+        BuildinfoInfo: {
+            commit?: string;
+            date?: string;
+            go_version: string;
+            platform: string;
+            version: string;
         };
         "Cancel-human-actionRequest": {
             /**
@@ -10323,6 +10350,32 @@ export interface components {
              */
             while_paused?: "defer" | "wake" | "stop";
         };
+        SystemCounts: {
+            /**
+             * Format: int64
+             * @description Open and in-progress human actions
+             */
+            human_pending: number;
+            /**
+             * Format: int64
+             * @description Connected live-event streams (change feed, terminals, recordings)
+             */
+            live_streams: number;
+            /** Format: int64 */
+            nodes_active: number;
+            /** Format: int64 */
+            nodes_connected: number;
+            /**
+             * Format: int64
+             * @description Runs starting, running or stopping
+             */
+            runs_running: number;
+            /**
+             * Format: int64
+             * @description Spaces that are not archived
+             */
+            spaces: number;
+        };
         SystemInfo: {
             /**
              * Format: uri
@@ -10336,6 +10389,70 @@ export interface components {
             local_login_disabled: boolean;
             ready: boolean;
             version: string;
+        };
+        SystemProtocol: {
+            /** Format: int64 */
+            major: number;
+            /** Format: int64 */
+            max_minor: number;
+            /** Format: int64 */
+            min_minor: number;
+        };
+        SystemSchema: {
+            /** Format: int64 */
+            current: number;
+            error?: string;
+            /** Format: int64 */
+            latest: number;
+        };
+        SystemStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/SystemStatus.json
+             */
+            readonly $schema?: string;
+            /** @description Changes at every start of central */
+            boot_id: string;
+            build: components["schemas"]["BuildinfoInfo"];
+            counts: components["schemas"]["SystemCounts"];
+            /** @description Central's data directory on its host */
+            data_dir: string;
+            protocol: components["schemas"]["SystemProtocol"];
+            public_url: string;
+            schema: components["schemas"]["SystemSchema"];
+            /** Format: date-time */
+            started_at: string;
+            storage: components["schemas"]["SystemStorage"];
+            /** Format: int64 */
+            uptime_seconds: number;
+        };
+        SystemStorage: {
+            below_reserve: boolean;
+            checks: components["schemas"]["AttentionCheck"][];
+            /** Format: int64 */
+            db_bytes: number;
+            /** Format: int64 */
+            disk_available_bytes: number;
+            disk_error?: string;
+            /**
+             * Format: int64
+             * @description Free space below this degrades readiness
+             */
+            disk_reserve_bytes: number;
+            /** Format: int64 */
+            disk_total_bytes: number;
+            /** Format: double */
+            disk_used_percent: number;
+            /** @description Readiness is not ready, the database is not ok, or free space is below the reserve */
+            problem: boolean;
+            /** @description ready, degraded, failed, starting or stopping */
+            readiness: string;
+            store_reason?: string;
+            /** @enum {string} */
+            store_state: "ok" | "degraded" | "failed";
+            /** Format: int64 */
+            wal_bytes: number;
         };
         TOTPEnrollment: {
             /**
@@ -20009,6 +20126,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StarterRolesOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
                 };
             };
             /** @description Error */

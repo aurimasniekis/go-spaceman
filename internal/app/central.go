@@ -42,6 +42,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/gitkeys"
 	"github.com/aurimasniekis/go-spaceman/internal/harborpilot"
 	"github.com/aurimasniekis/go-spaceman/internal/human"
+	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/kb"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
@@ -68,19 +69,22 @@ import (
 
 // Central holds the running central service.
 type Central struct {
-	Cfg     *config.Config
-	Log     *slog.Logger
-	Clock   clock.Clock
-	Store   *store.Store
-	Keyring *keyring.Keyring
-	Audit   *audit.Writer
-	Authz   *authz.Engine
-	Auth    *auth.Service
-	Bus     *eventbus.Bus
-	Changes *changefeed.Recorder
-	Metrics *metrics.Metrics
-	Health  *health.Checker
-	Fleet   *fleet.Service
+	// StartedAt is when this central opened; BootID identifies this start (the System page, SM-OBS-006).
+	StartedAt time.Time
+	BootID    string
+	Cfg       *config.Config
+	Log       *slog.Logger
+	Clock     clock.Clock
+	Store     *store.Store
+	Keyring   *keyring.Keyring
+	Audit     *audit.Writer
+	Authz     *authz.Engine
+	Auth      *auth.Service
+	Bus       *eventbus.Bus
+	Changes   *changefeed.Recorder
+	Metrics   *metrics.Metrics
+	Health    *health.Checker
+	Fleet     *fleet.Service
 	// Artifacts is the artifact store (SM-STORE-002, ADR-0048): attachment content, finished recordings and transcripts.
 	Artifacts artifacts.Store
 	// Attachments stores uploaded files (SM-ATT-*).
@@ -176,7 +180,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	if err != nil {
 		return nil, err
 	}
-	c := &Central{Cfg: cfg, Log: log, Clock: o.Clock, Store: st, Metrics: m, Bus: eventbus.New()}
+	c := &Central{Cfg: cfg, Log: log, Clock: o.Clock, Store: st, Metrics: m, Bus: eventbus.New(), StartedAt: o.Clock.Now().UTC(), BootID: ids.New(ids.Boot)}
 	ob := cfg.Events.Outbound
 	c.Outbox = outbox.New(st, outbox.Options{Enabled: ob.Enabled, Source: ob.Source, URL: ob.URL, Clock: o.Clock, Metrics: m, Log: log,
 		Retention: ob.Retention.D()})
@@ -579,7 +583,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources())},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources())},
 		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
@@ -623,6 +627,35 @@ func (c *Central) attentionSources() *api.AttentionSources {
 		StorageQuota: func(ctx context.Context, spaceID string) int64 {
 			return c.Limits.Value(ctx, nil, spaceID, limits.StorageQuota)
 		},
+	}
+}
+
+// systemSources are the inputs of the System page (SM-OBS-006): what central learned at start, node connections, storage
+// health and live streams. No key material or key paths.
+func (c *Central) systemSources() *api.SystemSources {
+	return &api.SystemSources{
+		StartedAt: c.StartedAt, BootID: c.BootID, PublicURL: c.Cfg.PublicURL, DataDir: c.Cfg.DataDir,
+		Schema: func(ctx context.Context) (int64, int64, error) {
+			return store.SchemaVersions(ctx, c.Store.ReadDB(), store.EmbeddedMigrations())
+		},
+		Nodes: func(ctx context.Context) (active, connected int, err error) {
+			l, err := c.Fleet.ListNodes(ctx)
+			if err != nil {
+				return 0, 0, err
+			}
+			for _, n := range l {
+				if n.State == "active" {
+					active++
+					if n.Connected {
+						connected++
+					}
+				}
+			}
+			return active, connected, nil
+		},
+		Storage:     c.attentionSources(),
+		StoreSizes:  c.Store.Sizes,
+		LiveStreams: c.Metrics.SSEClients,
 	}
 }
 
@@ -788,13 +821,13 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil)}}
 }
 
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules} {
 		for k, v := range m {
 			out[k] = v
 		}

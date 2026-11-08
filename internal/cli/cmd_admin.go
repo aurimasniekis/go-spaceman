@@ -277,7 +277,7 @@ func (a *App) systemCmd() *cobra.Command {
 			confirm: "delete everything older than its retention period now",
 			view:    view{first: []string{"id", "state", "deleted", "error"}}}),
 	)
-	return group("system", "A running central: version, backups, outbox, restore and break-glass notices, root token", nil,
+	return group("system", "A running central: version, status, backups, outbox, restore and break-glass notices, root token", nil,
 		a.cmd(opts{use: "info", short: "Version, readiness and bootstrap state (needs no token)", op: "get-system-info", anonymous: true}),
 		backups,
 		retention,

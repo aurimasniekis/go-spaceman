@@ -37,6 +37,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
 | `GET` | `/attention` | `get-attention` | What needs a person |
+| `GET` | `/system` | `get-system` | This instance's status |
 | `GET` | `/system/info` | `get-system-info` | Public system status |
 | `GET` | `/system/outbound-events` | `get-outbound-events` | Outbound event publication status |
 
