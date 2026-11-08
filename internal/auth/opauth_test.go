@@ -247,7 +247,7 @@ func TestBootstrapAndForcedEnrollment(t *testing.T) {
 }
 
 func TestLoginThrottlingAndEnumeration(t *testing.T) {
-	// Not parallel: it swaps the package-level loginVerify and compares login timings.
+	// Not parallel: it swaps the package-level loginVerify.
 	f := newFx(t)
 	f.bootstrap()
 	n := 0
@@ -276,7 +276,7 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 	must(t, f.svc.ClearThrottle(f.ctx, audit.System, op.ID))
 	// Unknown accounts do the same work as known ones: exactly one Argon2id verification, against a hash with the
 	// same parameters (memory, time, threads, key length) as the real account's (HP-AUTH-005). This is the
-	// deterministic check; the timing comparison below confirms it on the clock.
+	// deterministic check, run everywhere; TestLoginTimingWallClock confirms it on the clock when opted in (ADR-0071).
 	var verified []string
 	loginVerify = func(pw []byte, phc string) (bool, error) {
 		verified = append(verified, phc)
@@ -303,16 +303,26 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 	if params(verified[0]) != params(verified[1]) {
 		t.Fatalf("dummy hash parameters %s differ from the account's %s", params(verified[1]), params(verified[0]))
 	}
-	loginVerify = VerifyPassword
-	must(t, f.svc.ClearThrottle(f.ctx, audit.System, op.ID))
+}
 
-	// Timing: medians of interleaved attempts must be within 25% (Hallpass HP-AUTH-005). Interleaving makes load drift
-	// affect both kinds alike; a machine under very heavy load (load average above 100 was seen) can still skew one
-	// round, so up to three rounds are measured and one in range passes. A missing dummy hash would make unknown
-	// accounts orders of magnitude faster in every round, which the check above also rules out.
-	if testing.Short() {
-		return
+// TestLoginTimingWallClock compares the wall-clock time of failed logins for a known and an unknown account (Hallpass
+// HP-AUTH-005). It is opt-in (`make test-login-timing`, SPACEMAN_LOGIN_TIMING=1) and runs only without the race
+// detector and coverage instrumentation, alone on the machine (ADR-0071): on a loaded machine the CPU-bound Argon2id
+// check varies by more than the 25% band in either direction, so the result says more about the load than about the
+// code. The deterministic check in TestLoginThrottlingAndEnumeration (exactly one verification, against a dummy hash
+// with the account's parameters) runs everywhere.
+func TestLoginTimingWallClock(t *testing.T) {
+	if os.Getenv("SPACEMAN_LOGIN_TIMING") != "1" {
+		t.Skip("wall-clock timing comparison is opt-in: make test-login-timing (ADR-0071)")
 	}
+	if raceEnabled || testing.CoverMode() != "" {
+		t.Skip("wall-clock timing comparison runs without -race and -cover (ADR-0071)")
+	}
+	f := newFx(t)
+	f.bootstrap()
+	// Medians of interleaved attempts must be within 25%. Interleaving makes load drift affect both kinds alike; up to
+	// three rounds are measured and one in range passes. A missing dummy hash would make unknown accounts orders of
+	// magnitude faster in every round.
 	round := func(r int) (known, unknown time.Duration) {
 		var kd, ud []time.Duration
 		for i := range 21 {
