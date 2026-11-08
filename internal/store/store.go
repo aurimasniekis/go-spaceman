@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -182,18 +183,37 @@ func (s *Store) Close() error {
 func (s *Store) closeNow() {
 	var errs []error
 	if s.rdb != nil {
-		errs = append(errs, s.rdb.Close())
+		errs = append(errs, s.rdb.Close(), drainConns(s.rdb, "reader"))
 	}
 	if s.wdb != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_, _ = s.wdb.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 		cancel()
-		errs = append(errs, s.wdb.Close())
+		errs = append(errs, s.wdb.Close(), drainConns(s.wdb, "writer"))
 	}
 	if s.lock != nil {
 		errs = append(errs, s.lock.Release())
 	}
 	s.closeErr = errors.Join(errs...)
+}
+
+// closeDrainTimeout bounds how long Close waits for connections that were in use when it was called.
+const closeDrainTimeout = 30 * time.Second
+
+// drainConns waits until every connection of a closed pool is closed. sql.DB.Close closes only idle connections: one
+// still in use (a query or transaction of a goroutine that has not stopped yet) closes when it is released. Until then
+// it keeps the database file open, and closing it later (the last connection of the process checkpoints the WAL under
+// an exclusive lock) races a store opened next on the same directory, so Close does not release the process lock
+// before.
+func drainConns(d *sql.DB, pool string) error {
+	deadline := time.Now().Add(closeDrainTimeout)
+	for d.Stats().OpenConnections > 0 {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("close %s pool: %d connections still in use after %s", pool, d.Stats().OpenConnections, closeDrainTimeout)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil
 }
 
 // W returns the single writer.
@@ -224,8 +244,11 @@ const DefaultBusyTimeout = 5 * time.Second
 
 func baseDSN(busy time.Duration) url.Values {
 	q := url.Values{}
+	// _busy_timeout, not a _pragma: the driver runs it first, before _auto_vacuum (which reads the file) and the
+	// _pragma list. Set as a _pragma, the writer's auto_vacuum ran without a busy handler and an open failed at once
+	// with SQLITE_BUSY whenever another connection briefly held the file (for example while closing and checkpointing).
+	q.Set("_busy_timeout", strconv.FormatInt(busy.Milliseconds(), 10))
 	for _, p := range []string{
-		fmt.Sprintf("busy_timeout(%d)", busy.Milliseconds()),
 		"foreign_keys(1)",
 		"synchronous(FULL)",
 		"trusted_schema(0)",

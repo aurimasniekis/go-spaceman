@@ -198,6 +198,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
+- **Opening the database waits out a brief lock instead of failing.** The SQLite busy timeout now applies from a
+  connection's first statement. Before, the writer ran its first statement without one, so opening the data directory
+  failed at once with `storage busy: open database: database is locked (SQLITE_BUSY)` whenever another connection held
+  the file for a moment, for example the last connection of a store that had just closed, while it checkpointed the WAL.
+  Closing the store now also waits, for up to 30 s, until the connections still in use by unfinished requests have
+  closed. Only then does it release the data directory's lock. Seen as a flaky central restart in tests.
 - Codex runs no longer leave their environment in the instance's `CODEX_HOME/shell_snapshots`: SpaceMan now turns off
   Codex's shell snapshot (`features.shell_snapshot=false`), and every Codex launch removes the `shell_snapshots` folder
   an earlier run left (without following links; the launch fails if it is still there). Found with codex-cli 0.166.0.
