@@ -126,7 +126,7 @@ func TestCodexBuild(t *testing.T) {
 		t.Fatalf("--no-daemon must come first: %v", l.Argv)
 	}
 	argv := strings.Join(l.Argv, " ")
-	for _, want := range []string{`mcp_servers.spaceman.command="/opt/spaceman/spaceman-agent"`, `mcp_servers.spaceman.args=["mcp-bridge", "--run", "run_1", "--socket", "/run/sm/bridge.sock"]`,
+	for _, want := range []string{"-c features.shell_snapshot=false", `mcp_servers.spaceman.command="/opt/spaceman/spaceman-agent"`, `mcp_servers.spaceman.args=["mcp-bridge", "--run", "run_1", "--socket", "/run/sm/bridge.sock"]`,
 		"-s workspace-write", "-a on-request", "-- Standing rules.\n\nadd tests"} {
 		if !strings.Contains(argv, want) {
 			t.Errorf("argv %q missing %q", argv, want)

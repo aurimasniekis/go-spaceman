@@ -15,6 +15,8 @@ import (
 //
 //   - isolation: CODEX_HOME=<config>/codex per space and instance
 //   - --no-daemon: required under herdr-core, otherwise commands run outside hc (hc manual)
+//   - -c features.shell_snapshot=false: the snapshot would keep the run's environment, its tokens included, in
+//     $CODEX_HOME/shell_snapshots (verified with codex-cli 0.166.0 `features list`)
 //   - MCP: -c mcp_servers.spaceman.command=… -c mcp_servers.spaceman.args=[…] (TOML overrides)
 //   - session: Codex chooses its own session ID; resume is `codex resume <id>` (the ID is discovered from
 //     $CODEX_HOME/sessions after launch — not a fixed-ID capability)
@@ -59,6 +61,10 @@ func (Codex) Build(c Context) (Launch, error) {
 		args = append(args, tomlString(a))
 	}
 	argv := []string{c.Binary, "--no-daemon",
+		// Codex's shell snapshot writes the run's environment, SPACEMAN_RUN_TOKEN and a gateway token included, to
+		// $CODEX_HOME/shell_snapshots/*.sh, where it outlives the run (found by the HP-T4 real run, codex-cli 0.166.0):
+		// secrets reach a run only through its environment (ADR-0009), never a file the harness keeps.
+		"-c", "features.shell_snapshot=false",
 		"-c", "mcp_servers.spaceman.command=" + tomlString(c.AgentBinary),
 		"-c", "mcp_servers.spaceman.args=[" + strings.Join(args, ", ") + "]",
 	}
