@@ -263,26 +263,36 @@
 - **Shell access bypasses the gateway.** Agents with shell access can reach the network directly from their node.
 
 ## SpaceMan MCP
-- **Simulated evidence only; ADR-0063 Proposed.** Servers are managed through the API, the CLI and the web UI, runs use
+- **Simulated evidence only.** Servers are managed through the API, the CLI and the web UI, runs use
   the tools over the agent bridge and the external endpoint is served. All of it is tested in process with the real
   agent and bridge and a fake runner (`TestSpacemanMCPOverBridge`); no real harness has driven the tools through a
-  model yet. The Terraform resource is in terraform-provider-spaceman PR #12, not yet released. ADR-0063 stays
-  Proposed while the root-approval question below is open.
+  model yet. The Terraform resource is in terraform-provider-spaceman PR #12, not yet released.
 - **Full admin by default, by design.** The default preset is `admin` on every space and the token never expires
   (operator decisions for a trusted infra space). An agent with these tools can do what its owner can, short of the
   hard exclusions; prompt injection into that space is accepted risk T-33.
+- **In-run approvals are decided in the run's space.** A dangerous call's approval request appears in the space of the
+  run that made it, and anyone with `approval:decide` there may approve it, also when the call acts on another space
+  or on an installation-wide target. Give `approval:decide` in the infra space only to people trusted with the
+  server's reach (accepted risk, T-33).
+- **Launches are writes, overrides included.** `launch-run` needs no approval under the default `approval: none`,
+  also when it overrides the role's `settings.permission_mode` (up to the installation ceiling) or `account_ref`;
+  only diagnostic launches are gated. Saving a space role is dangerous, because it changes every later launch by
+  that role (accepted risk, T-33). Set `approval: writes` to gate launches too.
 - **Owned by a person.** The token acts for the admin who created the server: if that admin is disabled or loses
   grants, the server stops working until it is re-issued by someone else.
+- **External endpoint (`/api/v1/mcp`): on for every user API token.** There is no setting to turn it off, globally
+  or per token; a token can do there what it can do on the API. To keep it unreachable, don't forward `/api/v1/mcp`
+  from the reverse proxy (accepted risk, T-38).
 - **External endpoint (`/api/v1/mcp`): bearer tokens only.** A client must send `Authorization: Bearer
   spaceman_at_…`; there is no OAuth flow, so clients that only support OAuth for remote servers can't connect.
 - **External endpoint: no dangerous tools without a second person.** A dangerous call needs an approval from someone
   other than the token's user (that user may only deny or withdraw it), so an installation with one administrator
-  can't run them through the endpoint with a user's approval (use the API, CLI or web UI). Dangerous tools that act on no space (accounts, Git SSH keys, HTTP MCP servers, harness
+  can't run them through the endpoint with a user's approval: approve with the root token, or use the API, CLI or
+  web UI. Dangerous tools that act on no space (accounts, Git SSH keys, HTTP MCP servers, harness
   profiles, role templates, publishing, installation-wide human policies, node writes) and sensitive reads
   (recordings, transcripts) are not offered there at all.
-- **External endpoint: the root token can approve (under review).** An approval the endpoint asked for can currently be
-  approved with the root token; on a single-admin installation that is the only approval path. Whether root may
-  decide these approvals is an open operator decision (ADR-0063); the behaviour may change.
+- **External endpoint: the root token can approve.** An approval the endpoint asked for can be approved with the root
+  token; on a single-admin installation that is the documented approval path (operator decision, ADR-0063).
 - **External endpoint: one message per request.** JSON-RPC batches and protocol versions before 2025-06-18 are
   refused (400), so the per-token rate limit counts calls.
 - **External endpoint: the token's grants are the selection.** There is no per-token tool preset; issue a token with

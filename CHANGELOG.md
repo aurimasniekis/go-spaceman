@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- **SpaceMan admin MCP** (ADR-0063, Proposed; SM-MCP-005…009; AM-1 to AM-10). SpaceMan's own API as MCP tools: for
+- **SpaceMan admin MCP** (ADR-0063, Accepted; SM-MCP-005…009; AM-1 to AM-10). SpaceMan's own API as MCP tools: for
   a space's control and worker runs through a `spaceman` gateway server, and for your own MCP client through the
   external endpoint. An agent in an "infra" space can then administer SpaceMan with an administrator's authority, short
   of hard exclusions, and with dangerous calls approved by a person. **Upgrade notes:**
@@ -18,13 +18,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     `mcp:write` with a step-up; `list-spaceman-mcp-tools` (`GET /mcp-servers/spaceman/tools`) previews a preset's
     tools. MCP servers and a run manifest's `mcp_servers` entries now carry `kind`. CLI: `spaceman mcp spaceman
     create`, `update`, `reissue` and `tools`.
-  - **External endpoint:** `/api/v1/mcp` is new and on by default for any user API token (see below). If your reverse
-    proxy forwards all of `/api/v1/`, it is reachable wherever the API is.
+  - **External endpoint:** `/api/v1/mcp` is new and on by default for every user API token, with no setting to turn
+    it off (see below). If your reverse proxy forwards all of `/api/v1/`, it is reachable wherever the API is; leave
+    `/api/v1/mcp` out of the proxy if you don't want it.
   - **Terraform:** the `spaceman_admin_mcp_server` resource is in terraform-provider-spaceman PR #12 (not yet
     released); grant it with the existing `spaceman_mcp_grant`.
   - No node protocol change: agents need no update.
-  - Not yet decided (ADR-0063 stays Proposed): whether the root token may approve the external endpoint's dangerous
-    calls. Today it can.
+  - **Approvers:** the root token may approve the external endpoint's dangerous calls (the path for a
+    single-administrator installation). An in-run call's approval is decided in the run's own space, also when the
+    call acts on another space.
 
   **Identity:** each SpaceMan server has an internal API token, minted with it, owned by its creator, scoped like any
   API token (covered by the owner's grants, and by the creating token's, whose expiry it never outlives), and without
@@ -44,7 +46,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   **Approvals:** dangerous tools always need a person's approval (operation `mcp.<slug>.<class>.<tool>`, one use for
   the exact arguments unless a stored policy says otherwise); `approval: writes` gates writes too. The API checks a
   launch's kind as resolved, so a space role of diagnostic kind can't bypass the gate, and saving a space role is
-  dangerous. An agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through the tools.
+  dangerous; launching a run is a write, also with a permission mode (up to the ceiling) or account override. An agent can't manage SpaceMan MCP servers, answer human actions or decide approvals through the tools.
 
   **Web:** **Add SpaceMan MCP** on the MCP servers page and on a space's new **MCP servers** card. The dialog defaults
   to the slug `spaceman-admin` (`spaceman` is reserved), the control role, "Administer everything (infra)" and no
@@ -56,7 +58,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with your API token as a bearer and exactly that token's grants. Browser requests, session cookies, the root token
   and internal tokens are refused, and each token is rate limited; each request carries one JSON-RPC message (batches
   and protocol versions before 2025-06-18 are refused). Dangerous calls and diagnostic launches need an approval from
-  someone other than the token's user, who may only deny or cancel their own client's request. Calls are audited via
+  someone other than the token's user, who may only deny or cancel their own client's request; the root token may
+  approve them. Calls are audited via
   the token on the `mcp_endpoint` channel. See the guide's "Your own MCP client" page.
 
   Verified end to end in process (`TestSpacemanMCPOverBridge`: a control run's harness MCP client over the real

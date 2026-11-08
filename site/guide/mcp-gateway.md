@@ -55,7 +55,9 @@ for your password or second factor first. The dialog's defaults:
   grouped by API area, with dangerous ones flagged. The count shows how many tools runs will see; tools the grants can
   never reach are left out.
 - **Approvals:** every dangerous call waits for a person's approval, and this can't be turned off. Approval for writes
-  is off unless you turn it on.
+  is off unless you turn it on. The request appears in the run's own space, and anyone with `approval:decide` there
+  may approve it, also when the call acts on another space or on the whole installation. Launching a run is a write,
+  so it needs no approval unless writes are gated, except a diagnostic launch.
 - **Expiry:** never. You can set 1 to 366 days instead.
 
 Click a SpaceMan server in the list (it carries a **SpaceMan** badge) to see its owner, its token, its grants and the
