@@ -32,6 +32,11 @@ type Option func(*store.Options)
 // WithClock sets the store clock.
 func WithClock(c clock.Clock) Option { return func(o *store.Options) { o.Clock = c } }
 
+// WithReadObserver reports the SQL text of every query run through the store's R() to observe (store.Options.ReadObserver).
+func WithReadObserver(observe func(query string)) Option {
+	return func(o *store.Options) { o.ReadObserver = observe }
+}
+
 // WithDir uses dir as the data directory instead of a fresh temp dir.
 func WithDir(dir string) Option { return func(o *store.Options) { o.DataDir = dir } }
 

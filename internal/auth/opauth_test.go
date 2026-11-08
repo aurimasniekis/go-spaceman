@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,10 +41,10 @@ type fx struct {
 	kr  *keyring.Keyring
 }
 
-func newFx(t *testing.T) *fx {
+func newFx(t *testing.T, opts ...storetest.Option) *fx {
 	t.Helper()
 	clk := clock.NewFake(time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC))
-	s := storetest.Open(t, storetest.WithClock(clk))
+	s := storetest.Open(t, append([]storetest.Option{storetest.WithClock(clk)}, opts...)...)
 	kr := keyringtest.Load(t, s)
 	return &fx{t: t, ctx: context.Background(), clk: clk, s: s, kr: kr,
 		svc: New(s, kr, audit.NewWriter(kr), eventbus.New(), mustAuthz(t, s), Options{Clock: clk})}
@@ -302,6 +303,44 @@ func TestLoginThrottlingAndEnumeration(t *testing.T) {
 	}
 	if params(verified[0]) != params(verified[1]) {
 		t.Fatalf("dummy hash parameters %s differ from the account's %s", params(verified[1]), params(verified[0]))
+	}
+}
+
+// TestLoginReadsSameForUnknownAccounts checks that a failed login runs the same database reads, in the same order,
+// whether or not the account exists, including the local credential lookup (Hallpass HP-AUTH-005, ADR-0071). A read
+// on the known path only would make unknown accounts measurably faster.
+func TestLoginReadsSameForUnknownAccounts(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var reads []string
+	recording := false
+	f := newFx(t, storetest.WithReadObserver(func(q string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if recording {
+			name, _, _ := strings.Cut(strings.TrimPrefix(q, "-- name: "), " ")
+			reads = append(reads, name)
+		}
+	}))
+	f.bootstrap()
+	failed := func(email, ip string) []string {
+		mu.Lock()
+		reads, recording = nil, true
+		mu.Unlock()
+		if _, err := f.svc.Login(f.ctx, LoginInput{Email: email, Password: "wrong password!!", Meta: SessionMeta{IP: ip}}); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("login %s: %v, want invalid credentials", email, err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		recording = false
+		return reads
+	}
+	known, unknown := failed("admin@example.com", "203.0.113.1"), failed("nobody@example.com", "203.0.113.2")
+	if !slices.Contains(known, "GetLocalCredential") {
+		t.Fatalf("known-account login reads %v, want a GetLocalCredential read", known)
+	}
+	if !slices.Equal(known, unknown) {
+		t.Fatalf("failed-login reads differ:\nknown   %v\nunknown %v", known, unknown)
 	}
 }
 
