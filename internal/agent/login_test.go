@@ -133,3 +133,36 @@ func TestWriteSecretFilesReplacesLinks(t *testing.T) {
 		t.Fatalf("the shared ChatGPT login was overwritten through the link: %s", got)
 	}
 }
+
+// ADR-0060 decision 6: a gateway run's stored credentials are removed before it starts: a regular file, and a link
+// (only the link: its target, a shared login, stays).
+func TestRemoveCredentialFiles(t *testing.T) {
+	dir := t.TempDir()
+	file, link, shared := filepath.Join(dir, "auth.json"), filepath.Join(dir, ".credentials.json"), filepath.Join(dir, "shared.json")
+	for _, p := range []string{file, shared} {
+		if err := os.WriteFile(p, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(shared, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCredentialFiles([]string{file, link, filepath.Join(dir, "missing.json")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{file, link} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s is still there: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(shared); err != nil {
+		t.Fatalf("the link's target was removed: %v", err)
+	}
+	// A directory in its place can't be removed: the launch fails rather than start next to it.
+	if err := os.MkdirAll(filepath.Join(file, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCredentialFiles([]string{file}); err == nil {
+		t.Fatal("a credential path that could not be removed was accepted")
+	}
+}

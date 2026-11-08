@@ -15,7 +15,10 @@ import (
 //   - session: --session-id <uuid> for a new conversation, --resume <id> to continue one
 //   - MCP: --mcp-config <file> --strict-mcp-config (only the SpaceMan bridge; no user-level servers leak in)
 //   - prompt: --append-system-prompt <text>; the initial instruction is the positional prompt
-//   - auth: CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY, through the launcher shim only
+//   - auth: CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY, through the launcher shim only; a gateway
+//     run (ADR-0060) gets ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (its child token) instead, also through the shim
+//     only (it scrubs every inherited ANTHROPIC_* variable), and nothing else: no account secret, no settings key that
+//     adds a credential source, no stored login (verified with Claude Code 2.1.317, docs/contracts/harnesses.md)
 //
 // Runs are interactive inside herdr-core so status arrives via OSC 7501 (verified live) — never print mode.
 type Claude struct{}
@@ -39,6 +42,10 @@ func (Claude) Build(c Context) (Launch, error) {
 		return Launch{}, err
 	}
 	p := c.Payload
+	gw, err := gatewayFor(p)
+	if err != nil {
+		return Launch{}, err
+	}
 	cfg := filepath.Join(c.ConfigDir, "claude")
 	mcpPath := filepath.Join(c.RunDir, "mcp.json")
 	mcp, err := json.MarshalIndent(map[string]any{"mcpServers": map[string]any{
@@ -88,6 +95,11 @@ func (Claude) Build(c Context) (Launch, error) {
 	if problems := p.ClaudeSettings.Validate(); len(problems) > 0 {
 		return Launch{}, errors.New("claude: invalid claude_settings: " + problems[0])
 	}
+	if gw != nil {
+		if err := gatewayClaudeSettings(p.ClaudeSettings); err != nil {
+			return Launch{}, err
+		}
+	}
 	own := map[string]any{}
 	for k, v := range p.ClaudeSettings {
 		own[k] = v
@@ -102,6 +114,15 @@ func (Claude) Build(c Context) (Launch, error) {
 	}
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
+	secrets := secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+	var remove []string
+	if gw != nil {
+		// The gateway is the only credential: the origin and the token go through the shim (not Spec.Env, which
+		// herdr-core persists and the shim scrubs of ANTHROPIC_*), and a login stored in the config dir (a /login inside an
+		// earlier run) is removed so Claude Code can't fall back to it.
+		secrets = map[string]string{"ANTHROPIC_BASE_URL": gw.Origin, "ANTHROPIC_AUTH_TOKEN": gw.Token}
+		remove = []string{filepath.Join(cfg, ".credentials.json")}
+	}
 	return Launch{
 		Argv:  argv,
 		Env:   env,
@@ -116,8 +137,9 @@ func (Claude) Build(c Context) (Launch, error) {
 		}},
 		OwnJSON: map[string]map[string]any{filepath.Join(cfg, "settings.json"): own},
 		// Verified: Claude Code loads $CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md (spike S-6).
-		SkillsRoot: filepath.Join(cfg, "skills"),
-		SecretEnv:  secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
-		SessionID:  session,
+		SkillsRoot:  filepath.Join(cfg, "skills"),
+		SecretEnv:   secrets,
+		RemoveFiles: remove,
+		SessionID:   session,
 	}, nil
 }

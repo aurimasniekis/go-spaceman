@@ -307,6 +307,9 @@ func (g *fakeGateway) Token(ctx context.Context, _ *Run, _ string) (map[string]s
 	}
 	return map[string]string{proto.SecretGatewayToken: "hpk_child_fake"}, nil
 }
+func (g *fakeGateway) Address(context.Context) (*proto.GatewayLaunch, error) {
+	return &proto.GatewayLaunch{Kind: proto.GatewayHarborPilot, BaseURL: "https://hp.example.com"}, nil
+}
 
 func launchRow(runID string) db.NodeCommand {
 	return db.NodeCommand{ID: "cmd_" + runID, Kind: proto.CmdLaunch, SpaceID: "spc_a", RunID: sql.NullString{String: runID, Valid: true}, Generation: 1,
@@ -331,18 +334,18 @@ func TestGatewayLaunchNeedsAgentMinor(t *testing.T) {
 		t.Fatal("a token was minted for an agent that would drop it")
 	}
 	if proto.MaxMinor < proto.MinorGatewayToken {
-		// Until HP-T4 ships, no agent negotiates the minor: every gateway launch fails this way.
-		if _, err := e.svc.hub.materialize(ctx, launchRow("run_1"), "nod_1", proto.MaxMinor); !errors.Is(err, ErrAgentTooOld) {
-			t.Fatalf("newest agent before HP-T4: %v", err)
-		}
+		t.Fatal("this agent can't deliver gateway tokens")
 	}
-	msg, err := e.svc.hub.materialize(ctx, launchRow("run_1"), "nod_1", proto.MinorGatewayToken)
+	msg, err := e.svc.hub.materialize(ctx, launchRow("run_1"), "nod_1", proto.MaxMinor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var p proto.LaunchPayload
 	if err := json.Unmarshal(msg.Payload, &p); err != nil || p.Secrets[proto.SecretGatewayToken] != "hpk_child_fake" || len(p.Secrets) != 1 {
 		t.Fatalf("payload secrets %v %v", p.Secrets, err)
+	}
+	if p.Gateway == nil || p.Gateway.Kind != proto.GatewayHarborPilot || p.Gateway.BaseURL != "https://hp.example.com" {
+		t.Fatalf("payload gateway %+v", p.Gateway)
 	}
 }
 
@@ -355,7 +358,6 @@ func TestGatewayMintDoesNotBlockDispatch(t *testing.T) {
 	g := &fakeGateway{block: make(chan struct{})}
 	e.svc.opts.Gateway = g
 	e.svc.opts.GatewayMintWait = 50 * time.Millisecond
-	e.svc.opts.GatewayMinMinor = proto.MaxMinor
 	e.run("run_1", proto.RunPending)
 	e.exec(`UPDATE node_commands SET payload_json = ? WHERE id = 'cmd_run_1'`, launchRow("run_1").PayloadJson)
 	e.exec(`INSERT INTO node_commands (id, node_id, space_id, run_id, generation, kind, idempotency_key, state, payload_json, created_at)
@@ -418,5 +420,110 @@ func TestGatewayMintDoesNotBlockDispatch(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+// HP-T3 review N1: only the dispatch pass that starts a mint waits for it. With several slow mints pending, a later pass
+// returns at once for each of them, so a stop queued behind them is sent without waiting GatewayMintWait per launch.
+func TestGatewayMintWaitsOnlyWhenStarted(t *testing.T) {
+	t.Parallel()
+	e := newGWEnv(t)
+	g := &fakeGateway{block: make(chan struct{})}
+	e.svc.opts.Gateway = g
+	const wait = 400 * time.Millisecond
+	e.svc.opts.GatewayMintWait = wait
+	for _, id := range []string{"run_1", "run_2", "run_3"} {
+		e.run(id, proto.RunPending)
+		e.exec(`UPDATE node_commands SET payload_json = ? WHERE id = ?`, launchRow(id).PayloadJson, "cmd_"+id)
+	}
+	stop := func(id string) {
+		e.exec(`INSERT INTO node_commands (id, node_id, space_id, run_id, generation, kind, idempotency_key, state, payload_json, created_at)
+			VALUES (?, 'nod_1', 'spc_a', 'run_9', 1, 'run.stop', ?, 'pending', '{}', 1)`, id, "stop:"+id)
+	}
+	stop("cmd_stop1")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &session{nodeID: "nod_1", out: make(chan []byte, 64), kick: make(chan struct{}, 1), done: make(chan struct{}), log: slog.New(slog.DiscardHandler),
+		minor: proto.MaxMinor}
+	defer close(s.done)
+	h := e.svc.hub
+	h.mu.Lock()
+	h.sessions["nod_1"] = s
+	h.mu.Unlock()
+	go h.dispatchLoop(ctx, s)
+	waitFor := func(id string, within time.Duration) time.Duration {
+		t.Helper()
+		start := time.Now()
+		deadline := time.After(within)
+		for {
+			select {
+			case b := <-s.out:
+				env, err := proto.Decode(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var c proto.Command
+				if env.Type == proto.TypeCommand && env.Decode(&c) == nil && c.CommandID == id {
+					return time.Since(start)
+				}
+			case <-deadline:
+				t.Fatalf("%s not sent within %v", id, within)
+			}
+		}
+	}
+	// The first pass starts the three mints and waits for each of them once.
+	s.kick <- struct{}{}
+	waitFor("cmd_stop1", 10*wait)
+	if n := g.calls.Load(); n != 3 {
+		t.Fatalf("%d mints started, want 3", n)
+	}
+	// The mints are still running: the next pass waits for none of them.
+	stop("cmd_stop2")
+	s.kick <- struct{}{}
+	if d := waitFor("cmd_stop2", 10*wait); d >= wait {
+		t.Fatalf("the stop waited %v behind mints already running (one wait is %v)", d, wait)
+	}
+	if n := g.calls.Load(); n != 3 {
+		t.Fatalf("%d mints started, want 3", n)
+	}
+	close(g.block)
+	for _, id := range []string{"cmd_run_1", "cmd_run_2", "cmd_run_3"} {
+		waitFor(id, 10*wait)
+	}
+}
+
+// HP-T3 review N3: central's shutdown waits for background mints before it closes the store, cancelling those that
+// outlast the grace, and starts no new one.
+func TestStopMintsWaitsForBackgroundMints(t *testing.T) {
+	t.Parallel()
+	e := newGWEnv(t)
+	g := &fakeGateway{block: make(chan struct{})}
+	e.svc.opts.Gateway = g
+	e.svc.opts.GatewayMintWait = 10 * time.Millisecond
+	e.run("run_1", proto.RunPending)
+	h := e.svc.hub
+	ctx := context.Background()
+	run, err := e.svc.GetRun(ctx, "run_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.gatewayToken(ctx, "nod_1", run, "run_1"); !errors.Is(err, errMintPending) {
+		t.Fatalf("slow mint: %v", err)
+	}
+	start := time.Now()
+	h.StopMints(100 * time.Millisecond) // the mint blocks until cancelled
+	if d := time.Since(start); d < 100*time.Millisecond {
+		t.Fatalf("returned after %v, before the grace", d)
+	}
+	done := make(chan struct{})
+	go func() { h.mintWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("a background mint is still running after StopMints")
+	}
+	if _, err := h.gatewayToken(ctx, "nod_1", run, "run_1"); !errors.Is(err, errMintPending) || g.calls.Load() != 1 {
+		t.Fatalf("after shutdown: %v, %d mints", err, g.calls.Load())
 	}
 }

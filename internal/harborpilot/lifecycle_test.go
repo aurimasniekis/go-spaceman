@@ -598,6 +598,24 @@ func TestRevokerForeignParentIsFailed(t *testing.T) {
 	if v := metricstest.Value(t, m, "spaceman_gateway_revocations_failed"); v != 1 {
 		t.Fatalf("spaceman_gateway_revocations_failed = %v", v)
 	}
+
+	// HP-T3 review N2: the deadline timer wakes when the token expires, and from then on it counts no more (the
+	// connection's warning and the gauge drop back).
+	exp := s.Now().Add(time.Minute).Truncate(time.Microsecond)
+	exec(t, s, `UPDATE gateway_revocations SET expires_at = ? WHERE credential_id = ?`, exp.UnixMicro(), cred.ID)
+	if next, err := l.NextRevocation(ctx); err != nil || !next.Equal(exp) {
+		t.Fatalf("next wake %v %v, want the failed token's expiry %v", next, err, exp)
+	}
+	exec(t, s, `UPDATE gateway_revocations SET expires_at = ? WHERE credential_id = ?`, s.Now().Add(-time.Second).UnixMicro(), cred.ID)
+	if next, err := l.NextRevocation(ctx); err != nil || !next.IsZero() {
+		t.Fatalf("next wake after the expiry %v %v", next, err)
+	}
+	if v := metricstest.Value(t, m, "spaceman_gateway_revocations_failed"); v != 0 {
+		t.Fatalf("spaceman_gateway_revocations_failed after the expiry = %v", v)
+	}
+	if conn, err := svc.GetConnection(ctx); err != nil || conn.FailedRevocations != 0 || strings.Contains(strings.Join(conn.Warnings, "\n"), "revocations failed") {
+		t.Fatalf("connection after the expiry %+v %v", conn, err)
+	}
 }
 
 // F1: a run token the old parent mints between the rotation's list and its commit is caught by the commit's check and

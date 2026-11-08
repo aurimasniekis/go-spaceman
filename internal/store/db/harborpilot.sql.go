@@ -52,11 +52,13 @@ func (q *Queries) ClearSpaceGatewayTokens(ctx context.Context, spaceID string) (
 }
 
 const countFailedGatewayRevocations = `-- name: CountFailedGatewayRevocations :one
-SELECT count(*) FROM gateway_revocations WHERE state = 'failed'
+SELECT count(*) FROM gateway_revocations WHERE state = 'failed' AND expires_at > ?1
 `
 
-func (q *Queries) CountFailedGatewayRevocations(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countFailedGatewayRevocations)
+// Failed revocations whose tokens are still valid: a token past its expiry is dead whatever happened to its
+// revocation, so the count (the connection's warning and the gauge) drops back once it expires.
+func (q *Queries) CountFailedGatewayRevocations(ctx context.Context, now int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countFailedGatewayRevocations, now)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -525,6 +527,18 @@ func (q *Queries) ListParentGatewayCredentials(ctx context.Context, parentFp sql
 		return nil, err
 	}
 	return items, nil
+}
+
+const nextFailedGatewayRevocationExpiry = `-- name: NextFailedGatewayRevocationExpiry :one
+SELECT CAST(coalesce(min(expires_at), 0) AS INTEGER) FROM gateway_revocations WHERE state = 'failed' AND expires_at > ?1
+`
+
+// When the next failed revocation's token expires (0: none), so the failed count drops back on time.
+func (q *Queries) NextFailedGatewayRevocationExpiry(ctx context.Context, now int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextFailedGatewayRevocationExpiry, now)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const nextGatewayLeaseSweep = `-- name: NextGatewayLeaseSweep :one

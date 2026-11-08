@@ -222,6 +222,26 @@ func (l *Lifecycle) Token(ctx context.Context, run *fleet.Run, session string) (
 	}
 }
 
+// Address implements fleet.Gateway: the connection's run-facing URL (run_base_url, or base_url), checked against the
+// run-facing rule again (https, no loopback exemption, unless insecure HTTP is allowed; ADR-0060 decision 3).
+func (l *Lifecycle) Address(ctx context.Context) (*proto.GatewayLaunch, error) {
+	conn, err := l.svc.s.R().GetHarborPilotConnection(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, unavailable("no Harbor Pilot connection is configured")
+	} else if err != nil {
+		return nil, err
+	}
+	raw := conn.RunBaseUrl
+	if raw == "" {
+		raw = conn.BaseUrl
+	}
+	u, err := ParseBaseURL(raw, conn.AllowInsecureHttp == 1, false)
+	if err != nil {
+		return nil, unavailable("the address runs reach Harbor Pilot on is not usable: %s", err.Error())
+	}
+	return &proto.GatewayLaunch{Kind: proto.GatewayHarborPilot, BaseURL: u.String(), AllowInsecureHTTP: conn.AllowInsecureHttp == 1}, nil
+}
+
 // errParentReplaced: the connection's parent token was replaced (or the connection removed) while a run token was
 // minted with the old one; the credential was revoked or queued.
 var errParentReplaced = errors.New("harborpilot: the parent token was replaced during the mint")
@@ -396,12 +416,24 @@ const (
 	revokeMaxWait = 5 * time.Minute
 )
 
-// NextRevocation is when the earliest queued revocation is due (zero: none). The deadline timer calls it.
+// NextRevocation is when the earliest queued revocation is due, or the token of a failed one expires, which takes it
+// out of the failed count and the gauge (zero: neither). The deadline timer calls it.
 func (l *Lifecycle) NextRevocation(ctx context.Context) (time.Time, error) {
 	l.refreshFailed(ctx)
-	at, err := l.svc.s.R().NextGatewayRevocation(ctx)
-	if err != nil || at == 0 {
+	q := l.svc.s.R()
+	at, err := q.NextGatewayRevocation(ctx)
+	if err != nil {
 		return time.Time{}, err
+	}
+	exp, err := q.NextFailedGatewayRevocationExpiry(ctx, l.svc.s.Now().UnixMicro())
+	if err != nil {
+		return time.Time{}, err
+	}
+	if at == 0 || (exp != 0 && exp < at) {
+		at = exp
+	}
+	if at == 0 {
+		return time.Time{}, nil
 	}
 	return time.UnixMicro(at).UTC(), nil
 }
@@ -500,7 +532,7 @@ func (l *Lifecycle) refreshFailed(ctx context.Context) {
 	if l.o.Metrics == nil {
 		return
 	}
-	if n, err := l.svc.s.R().CountFailedGatewayRevocations(ctx); err == nil {
+	if n, err := l.svc.s.R().CountFailedGatewayRevocations(ctx, l.svc.s.Now().UnixMicro()); err == nil {
 		l.o.Metrics.SetGatewayRevocationsFailed(n)
 	}
 }

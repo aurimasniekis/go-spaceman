@@ -30,8 +30,9 @@ const (
 	// repositories (space.repos.sync, repository sources on launches, repos.status reports, ADR-0044); 5: memory flush
 	// before a backup (memory.flush / memory.flushed, ADR-0045); 6: terminal takeover (takeover.state, takeover.input,
 	// takeover.ended; SM-UI-004, ADR-0046); 7: repository SSH keys (ssh_key and known_hosts on repository sources,
-	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059)
-	MaxMinor = 8
+	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059); 9: gateway runs (the launch's gateway
+	// address and its child token in the secrets, delivered to the harness; ADR-0060)
+	MaxMinor = 9
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -377,6 +378,10 @@ type LaunchPayload struct {
 	ClaudeSettings ClaudeSettings `json:"claude_settings,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
 	AccountRef string `json:"account_ref,omitempty"`
+	// Gateway is set, at dispatch only, when the run's model traffic goes through an LLM gateway (minor ≥ 9, ADR-0060):
+	// the harness is pointed at its address with the child token in Secrets[SecretGatewayToken], and no other
+	// credential. It is not secret.
+	Gateway *GatewayLaunch `json:"gateway,omitempty"`
 	// Dream asks the node to prepare a dream workspace (minor ≥ 2, ADR-0027).
 	Dream *DreamSpec `json:"dream,omitempty"`
 	// RecordingMaxBytes bounds the run's terminal recording on the node (the space's recording_quota_bytes limit,
@@ -390,15 +395,29 @@ type LaunchPayload struct {
 }
 
 // SecretGatewayToken is the LaunchPayload.Secrets key of a gateway run's child token (Harbor Pilot, ADR-0060). Central
-// sets it at dispatch, only for a node at MinorGatewayToken or later; the harness adapters turn it into the harness's
-// own variables (HP-T4).
+// sets it at dispatch, only for a node at MinorGatewayToken or later, together with LaunchPayload.Gateway; the harness
+// adapters turn it into the harness's own variable (ANTHROPIC_AUTH_TOKEN, HARBOR_PILOT_TOKEN), never forwarding it
+// under this name.
 const SecretGatewayToken = "SPACEMAN_GATEWAY_TOKEN"
 
 // MinorGatewayToken is the first minor version whose agent delivers SecretGatewayToken to the harness (HP-T4). An older
 // agent would drop it and start the harness on whatever login the node user has, a fallback to a direct account that
-// ADR-0060 forbids (Q1), so central fails a gateway launch to such a node as agent_too_old before minting. It is above
-// MaxMinor until HP-T4 ships: until then every gateway launch fails that way.
+// ADR-0060 forbids (Q1), so central fails a gateway launch to such a node as agent_too_old before minting.
 const MinorGatewayToken = 9
+
+// GatewayHarborPilot is the GatewayLaunch kind of a Harbor Pilot gateway.
+const GatewayHarborPilot = "harbor-pilot"
+
+// GatewayLaunch is where a gateway run's harness sends its model traffic (ADR-0060 decisions 3 and 6).
+type GatewayLaunch struct {
+	Kind string `json:"kind"`
+	// BaseURL is the gateway origin runs reach (the connection's run_base_url, or its base_url): Anthropic's API is at
+	// BaseURL, the OpenAI Responses API at BaseURL/v1.
+	BaseURL string `json:"base_url"`
+	// AllowInsecureHTTP lets BaseURL be plain http. Without it the node refuses anything but https, with no loopback
+	// exemption: a loopback host on central is the node's own loopback here.
+	AllowInsecureHTTP bool `json:"allow_insecure_http,omitempty"`
+}
 
 // DefaultRecordingMaxBytes is the recording bound a node applies when the launch names none (512 MiB).
 const DefaultRecordingMaxBytes = 512 << 20
