@@ -40,6 +40,8 @@ export const keys = {
   accountKinds: ['account-kinds'] as const,
   spaceAccounts: (space: string) => ['space-accounts', space] as const,
   messages: (space: string) => ['messages', space] as const,
+  /** Under keys.messages, so invalidating a space's messages refreshes it too. */
+  scheduledMessages: (space: string) => ['messages', space, 'scheduled'] as const,
   prompts: ['prompts'] as const,
   prompt: (id: string) => ['prompt', id] as const,
   profiles: ['harness-profiles'] as const,
@@ -359,6 +361,13 @@ export const useMessages = (space: string) =>
   useQuery({
     queryKey: keys.messages(space),
     queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space } } })),
+  })
+
+/** A space's pending scheduled messages to control, earliest first: the server's list, not a filter of the newest messages (ADR-0065). */
+export const useScheduledMessages = (space: string) =>
+  useQuery({
+    queryKey: keys.scheduledMessages(space),
+    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/messages', { params: { path: { space_id: space }, query: { scheduled: true } } })).items,
   })
 
 export const usePrompts = () => useQuery({ queryKey: keys.prompts, queryFn: async () => unwrap(await api.GET('/prompts')).items })

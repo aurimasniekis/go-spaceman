@@ -373,6 +373,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/messages` | `send-message` | Send a durable message to control, a role or a run |
 | `GET` | `/spaces/{space_id}/messages/{message_id}` | `get-message` | A message |
 | `POST` | `/spaces/{space_id}/messages/{message_id}/ack` | `ack-message` | Acknowledge a message addressed to operators |
+| `POST` | `/spaces/{space_id}/messages/{message_id}/cancel` | `cancel-message` | Cancel a scheduled message before it is due |
 | `POST` | `/spaces/{space_id}/messages/{message_id}/reply` | `reply-message` | Reply to an agent's message |
 | `POST` | `/spaces/{space_id}/messages/{message_id}/resolve` | `resolve-message` | Close a message or request |
 

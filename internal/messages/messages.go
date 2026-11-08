@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/attachments"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
+	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
@@ -32,21 +33,24 @@ const (
 
 // Message is one durable message.
 type Message struct {
-	ID             string     `json:"id"`
-	SpaceID        string     `json:"space_id"`
-	FromKind       string     `json:"from_kind" enum:"run,operator,system"`
-	FromID         string     `json:"from_id,omitempty"`
-	FromLabel      string     `json:"from_label,omitempty"`
-	ToKind         string     `json:"to_kind" enum:"run,role,control,operators"`
-	ToID           string     `json:"to_id,omitempty"`
-	Kind           string     `json:"kind" enum:"message,request,reply,notification"`
-	Subject        string     `json:"subject"`
-	Body           string     `json:"body" doc:"Markdown; untrusted when an agent wrote it"`
-	CorrelationID  string     `json:"correlation_id,omitempty"`
-	ReplyTo        string     `json:"reply_to,omitempty"`
-	State          string     `json:"state" enum:"stored,available,acknowledged,resolved"`
-	DeliveredVia   string     `json:"delivered_via,omitempty" enum:",terminal_notice,mcp_fetch,operator_view"`
-	AvailableAt    *time.Time `json:"available_at,omitempty"`
+	ID            string     `json:"id"`
+	SpaceID       string     `json:"space_id"`
+	FromKind      string     `json:"from_kind" enum:"run,operator,system"`
+	FromID        string     `json:"from_id,omitempty"`
+	FromLabel     string     `json:"from_label,omitempty"`
+	ToKind        string     `json:"to_kind" enum:"run,role,control,operators"`
+	ToID          string     `json:"to_id,omitempty"`
+	Kind          string     `json:"kind" enum:"message,request,reply,notification"`
+	Subject       string     `json:"subject"`
+	Body          string     `json:"body" doc:"Markdown; untrusted when an agent wrote it"`
+	CorrelationID string     `json:"correlation_id,omitempty"`
+	ReplyTo       string     `json:"reply_to,omitempty"`
+	State         string     `json:"state" enum:"stored,available,acknowledged,resolved"`
+	DeliveredVia  string     `json:"delivered_via,omitempty" enum:",terminal_notice,mcp_fetch,operator_view"`
+	AvailableAt   *time.Time `json:"available_at,omitempty"`
+	// DeliverAt is set on a scheduled message (ADR-0065): it is not delivered, noticed or counted as waiting work before
+	// this time. It stays set after delivery; a cancelled one is resolved with CancelledResolution.
+	DeliverAt      *time.Time `json:"deliver_at,omitempty" doc:"Scheduled for this time: not delivered before it"`
 	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
 	AcknowledgedBy string     `json:"acknowledged_by,omitempty"`
 	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
@@ -78,7 +82,21 @@ type SendInput struct {
 	DedupKey      string
 	// AttachmentIDs are attachments of the space the message references.
 	AttachmentIDs []string
+	// DeliverAt or Delay schedules the message (ADR-0065): only to control, MinDelay to MaxDelay ahead, at most
+	// MaxScheduled pending per space. With a dedup key, a pending scheduled message to control with the same key (from
+	// any sender, so a later control run too) is returned instead of a new one.
+	DeliverAt time.Time
+	Delay     time.Duration
 }
+
+// Scheduling bounds (ADR-0065).
+const (
+	MinDelay     = time.Minute
+	MaxDelay     = 30 * 24 * time.Hour
+	MaxScheduled = 50
+	// CancelledResolution is the resolution of a scheduled message cancelled before it was due.
+	CancelledResolution = "cancelled before delivery"
+)
 
 // Service manages messages.
 type Service struct {
@@ -87,7 +105,19 @@ type Service struct {
 	changes *changefeed.Recorder
 	// Kick wakes the notifier after a commit (nil: no notifier).
 	Kick func()
+	// Clock decides when scheduled messages are due (nil: the store's clock). Tests inject a fake.
+	Clock clock.Clock
 }
+
+// now is the time scheduled messages are compared with.
+func (svc *Service) now() time.Time {
+	if svc.Clock != nil {
+		return svc.Clock.Now()
+	}
+	return svc.s.Now()
+}
+
+func micros(t time.Time) sql.NullInt64 { return sql.NullInt64{Int64: t.UnixMicro(), Valid: true} }
 
 // New returns the service.
 func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder) *Service {
@@ -111,7 +141,7 @@ func fromRow(r db.Message) *Message {
 	return &Message{ID: r.ID, SpaceID: r.SpaceID, FromKind: r.FromKind, FromID: r.FromID, FromLabel: r.FromLabel, ToKind: r.ToKind, ToID: r.ToID,
 		Kind: r.Kind, Subject: r.Subject, Body: r.Body, CorrelationID: r.CorrelationID, ReplyTo: r.ReplyTo, State: r.State, DeliveredVia: r.DeliveredVia,
 		AvailableAt: tp(r.AvailableAt), AcknowledgedAt: tp(r.AcknowledgedAt), AcknowledgedBy: r.AcknowledgedBy, ResolvedAt: tp(r.ResolvedAt),
-		Resolution: r.Resolution, CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), Version: r.Version}
+		Resolution: r.Resolution, CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), Version: r.Version, DeliverAt: tp(r.DeliverAt)}
 }
 
 // ParseTo splits a recipient.
@@ -160,6 +190,11 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 	if len(in.AttachmentIDs) > MaxAttachments {
 		v.Add("attachment_ids", "at most %d attachments", MaxAttachments)
 	}
+	now := svc.now()
+	deliverAt, err := scheduleTime(v, now, in, toKind)
+	if err != nil {
+		return nil, false, err
+	}
 	if err := v.Err(); err != nil {
 		return nil, false, err
 	}
@@ -167,8 +202,22 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 	created := false
 	err = svc.s.W().TxNamed(ctx, "messages.send", func(tx *store.Tx) error {
 		created = false
+		if !deliverAt.IsZero() && in.DedupKey != "" {
+			ex, err := tx.Q.GetScheduledByDedup(ctx, db.GetScheduledByDedupParams{SpaceID: spaceID, Now: micros(now), DedupKey: in.DedupKey})
+			if err == nil {
+				id = ex.ID
+				return nil
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		if in.DedupKey != "" {
 			if ex, err := tx.Q.GetMessageByDedup(ctx, db.GetMessageByDedupParams{SpaceID: spaceID, FromKind: from.Kind, FromID: from.ID, DedupKey: in.DedupKey}); err == nil {
+				if !deliverAt.IsZero() {
+					// Keys stay per sender forever, but a pending reminder with this key was matched above: returning a
+					// delivered reminder or a plain message would silently drop the new one (ADR-0065).
+					return apperr.New(apperr.CodeConflict, "dedup_key already used by message %s; use a new key", ex.ID)
+				}
 				id = ex.ID
 				return nil
 			} else if !errors.Is(err, sql.ErrNoRows) {
@@ -197,6 +246,18 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 			DedupKey: in.DedupKey, CreatedAt: tx.NowMicros()}); err != nil {
 			return err
 		}
+		if !deliverAt.IsZero() {
+			n, err := tx.Q.CountScheduledMessages(ctx, db.CountScheduledMessagesParams{SpaceID: spaceID, Now: micros(now)})
+			if err != nil {
+				return err
+			}
+			if n >= MaxScheduled {
+				return apperr.New(apperr.CodeRateLimited, "the space already has %d scheduled messages; cancel one first", n)
+			}
+			if err := tx.Q.SetMessageDeliverAt(ctx, db.SetMessageDeliverAtParams{DeliverAt: micros(deliverAt), ID: id}); err != nil {
+				return err
+			}
+		}
 		if err := attachments.Reference(ctx, tx, spaceID, OwnerKind, id, in.AttachmentIDs); err != nil {
 			return err
 		}
@@ -213,8 +274,11 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 		if err := svc.changes.Record(ctx, tx, spaceID, "message", id, "created", 1); err != nil {
 			return err
 		}
-		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "message.sent", Target: audit.Target{Type: "message", ID: id},
-			Details: map[string]any{"space_id": spaceID, "to": in.To, "kind": in.Kind, "reply_to": in.ReplyTo}})
+		details := map[string]any{"space_id": spaceID, "to": in.To, "kind": in.Kind, "reply_to": in.ReplyTo}
+		if !deliverAt.IsZero() {
+			details["deliver_at"] = deliverAt.UTC().Format(time.RFC3339)
+		}
+		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "message.sent", Target: audit.Target{Type: "message", ID: id}, Details: details})
 		return err
 	})
 	if err != nil {
@@ -225,6 +289,75 @@ func (svc *Service) Send(ctx context.Context, actor audit.Actor, spaceID string,
 	}
 	m, err := svc.Get(ctx, spaceID, id)
 	return m, created, err
+}
+
+// scheduleTime validates a scheduled send and returns its delivery time (zero: deliver now).
+func scheduleTime(v *apperr.Validation, now time.Time, in SendInput, toKind string) (time.Time, error) {
+	if in.DeliverAt.IsZero() && in.Delay == 0 {
+		return time.Time{}, nil
+	}
+	if !in.DeliverAt.IsZero() && in.Delay != 0 {
+		return time.Time{}, apperr.New(apperr.CodeInvalid, "give deliver_at or delay, not both")
+	}
+	if toKind != "control" {
+		return time.Time{}, apperr.New(apperr.CodeInvalid, "only messages to control can be scheduled")
+	}
+	if in.Kind == "reply" {
+		return time.Time{}, apperr.New(apperr.CodeInvalid, "a reply cannot be scheduled")
+	}
+	at := in.DeliverAt
+	if in.Delay != 0 {
+		at = now.Add(in.Delay)
+	}
+	if d := at.Sub(now); d < MinDelay || d > MaxDelay {
+		v.Add("deliver_at", "must be between 1 minute and 30 days from now")
+	}
+	return at, nil
+}
+
+// Scheduled returns a space's pending scheduled messages, earliest first.
+func (svc *Service) Scheduled(ctx context.Context, spaceID string) ([]*Message, error) {
+	rows, err := svc.s.R().ListScheduledMessages(ctx, db.ListScheduledMessagesParams{SpaceID: spaceID, Now: micros(svc.now()), Lim: MaxScheduled * 2})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*Message, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fromRow(r))
+	}
+	if _, err := svc.withAttachments(ctx, out...); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Cancel cancels a scheduled message that is not yet due: it is resolved with CancelledResolution and never delivered.
+func (svc *Service) Cancel(ctx context.Context, actor audit.Actor, spaceID, id string) (*Message, error) {
+	err := svc.s.W().TxNamed(ctx, "messages.cancel", func(tx *store.Tx) error {
+		m, err := tx.Q.GetMessage(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && m.SpaceID != spaceID) {
+			return errNotFound
+		} else if err != nil {
+			return err
+		}
+		n, err := tx.Q.CancelScheduledMessage(ctx, db.CancelScheduledMessageParams{Now: micros(svc.now()), Resolution: CancelledResolution, ID: id})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return apperr.New(apperr.CodeConflict, "message %s is not a scheduled message that is still pending", id)
+		}
+		if err := svc.changes.Record(ctx, tx, spaceID, "message", id, "updated", m.Version+1); err != nil {
+			return err
+		}
+		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "message.cancelled", Target: audit.Target{Type: "message", ID: id},
+			Details: map[string]any{"space_id": spaceID}})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return svc.Get(ctx, spaceID, id)
 }
 
 // Get returns a message of a space.
@@ -313,7 +446,7 @@ type Inbox struct {
 func (svc *Service) Fetch(ctx context.Context, rc Recipient) (*Inbox, error) {
 	out := &Inbox{Messages: []*Message{}, Human: []HumanNotice{}}
 	err := svc.s.W().TxNamed(ctx, "messages.fetch", func(tx *store.Tx) error {
-		rows, err := tx.Q.ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: rc.SpaceID, RunID: rc.RunID, Role: rc.Role, IsControl: b2i(rc.Control), Lim: 100})
+		rows, err := tx.Q.ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: rc.SpaceID, Now: micros(svc.now()), RunID: rc.RunID, Role: rc.Role, IsControl: b2i(rc.Control), Lim: 100})
 		if err != nil {
 			return err
 		}
@@ -411,12 +544,11 @@ func addressedTo(m db.Message, rc Recipient) bool {
 	return false
 }
 
-// sentBy reports whether a run sent a message.
 // Waiting reports whether something waits for a run that it has not been shown yet: a stored message to it (not sent
 // by it) or a pending human response that wakes it. Control idle stop leaves such a run running (ADR-0056).
 func (svc *Service) Waiting(ctx context.Context, spaceID, runID, role string, control bool) (bool, error) {
 	q := svc.s.R()
-	msgs, err := q.ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: spaceID, RunID: runID, Role: role, IsControl: b2i(control), Lim: 100})
+	msgs, err := q.ListMessagesFor(ctx, db.ListMessagesForParams{SpaceID: spaceID, Now: micros(svc.now()), RunID: runID, Role: role, IsControl: b2i(control), Lim: 100})
 	if err != nil {
 		return false, err
 	}
@@ -437,7 +569,11 @@ func (svc *Service) Waiting(ctx context.Context, spaceID, runID, role string, co
 	return false, nil
 }
 
-func sentBy(m db.Message, runID string) bool { return m.FromKind == "run" && m.FromID == runID }
+// sentBy reports whether a run sent a message (a run never receives its own role or control broadcasts). A scheduled
+// message is the exception: it is a reminder its sender set for itself (ADR-0065).
+func sentBy(m db.Message, runID string) bool {
+	return m.FromKind == "run" && m.FromID == runID && !m.DeliverAt.Valid
+}
 
 func (svc *Service) ack(ctx context.Context, tx *store.Tx, actor audit.Actor, m db.Message, by string, now sql.NullInt64) error {
 	n, err := tx.Q.AckMessage(ctx, db.AckMessageParams{Now: now, By: by, ID: m.ID})

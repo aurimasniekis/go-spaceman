@@ -262,6 +262,7 @@ var Table = map[string]Entry{
 
 	// Messages.
 	"ack-message":     {Write, rSpaceWrite},
+	"cancel-message":  {Write, rSpaceWrite},
 	"get-message":     {Read, rRead},
 	"list-messages":   {Read, rRead},
 	"reply-message":   {Write, rSpaceWrite},

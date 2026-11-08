@@ -779,6 +779,7 @@ type Message struct {
 	Resolution     string
 	CreatedAt      int64
 	Version        int64
+	DeliverAt      sql.NullInt64
 }
 
 type MfaTotp struct {

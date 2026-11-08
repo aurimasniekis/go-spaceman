@@ -2916,6 +2916,54 @@
     watching; in a takeover the wheel scrolls them the way it would in a desktop terminal (LIMITATIONS, Web UI).
   - Not security-relevant: watch mode still sends no input, and a takeover holder's wheel reports go through the same
     audited takeover input as their keys.
+
+### ADR-0065 — Control schedules reminders to itself: scheduled messages to control
+- **Status:** Accepted, 2026-11-07 (operator request: control asks to be woken later, e.g. in 6 h, when the inbox and
+  queue are empty and it has stopped).
+- **Context:**
+  - With control auto-start and idle stop (ADR-0056), an idle control stops and is started again only for waiting work:
+    a stored message to control, or a pending human response that wakes it. Control had no way to have itself woken
+    later to check on something nobody will report, such as a deploy, a slow review or an answer that should arrive.
+  - The `schedule` package runs recurring schedules (cron with missed-run policies) that create inbox items. A
+    one-off, agent-set time doesn't fit it, and an inbox item would be work for people too.
+  - Messages already carry everything else: the dedup key, audit, the notifier's terminal notice, the "a new control is
+    told once" path (SM-COMM-003), and the auto-start sweep (`ListSpacesWantingControl`).
+- **Decision:**
+  - **A scheduled message is a message to `control` with `deliver_at`** (migration 0041, a new nullable column with a
+    partial index on pending ones). `spaceman_message_send` takes `deliver_at` (RFC 3339) or `delay` (a Go duration),
+    from 1 minute to 30 days ahead. Only control runs may schedule (`forbidden` otherwise), only `to: control`, and not
+    replies. Operators don't schedule. The API's send operation is unchanged.
+  - **Until it is due, it does not exist for delivery.** `ListMessagesFor` (fetch, notices, `Waiting` for idle stop)
+    and `ListSpacesWantingControl` (auto-start) skip messages whose `deliver_at` is in the future. A pending reminder
+    therefore doesn't keep control running and doesn't start it.
+  - **When it is due, it is an ordinary stored message to control.** A running idle control gets the usual notice; with
+    none running, the notifier's sweep asks the supervisor to start control within `control_autostart` and its hourly
+    cap; a control started later is told about it once. A run never receives its own messages, *except* a scheduled
+    one: the control that set a reminder and is still running receives it. `deliver_at` stays set after delivery, so
+    the UI keeps showing "scheduled for".
+  - **The notifier wakes for the earliest due reminder** (`NextScheduledMessage`), instead of waiting up to its
+    one-minute sweep. Due times come from `messages.Service.Clock` (default: the store's clock), so tests inject a
+    fake clock.
+  - **Limits:** at most 50 pending per space (`rate_limited`). A `dedup_key` on a scheduled send returns the pending
+    reminder with that key from any sender, so a later control run re-scheduling is idempotent. A key the sender
+    already used for a message that is not a pending reminder (one already delivered, or a plain message) is a
+    `conflict`, so a reminder is never silently dropped. Moving one means cancel and send again.
+  - **Listing and cancelling:** control has `spaceman_message_scheduled` and `spaceman_message_cancel`. Operators use
+    `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel` (`message:write`), and the Messages page's
+    Scheduled view. A cancelled reminder is resolved as "cancelled before delivery". Audit: `message.sent` carries
+    `deliver_at`, and a cancel is `message.cancelled`.
+- **Alternatives:**
+  - **A future `available_at`:** no migration, but `available_at` is overwritten at delivery, so nothing would mark the
+    message as scheduled afterwards, and the control that set it would never receive it.
+  - **One-shot schedules in the `schedule` package:** they create inbox items for everyone rather than a note for
+    control, and they need a second listing and cancelling surface.
+  - **Deferred tasks (`spaceman_task_create` with `not_before`):** the request asks for a wake-up rather than queued
+    work. Recorded as a possible follow-up.
+- **Consequences:** the change adds no new authority. Scheduling is limited to control writing to control, the
+  existing message permissions cover the operator operations, and the content stays untrusted data that is never
+  typed into a terminal. The limits on reminders (50 pending, 30 days, auto-start's hourly cap) mean a control can't
+  wake itself in a tight loop.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
