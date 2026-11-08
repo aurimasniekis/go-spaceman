@@ -107,7 +107,7 @@ func TestCoveringBudgetsSelection(t *testing.T) {
 	if !cov[0].Blocking || cov[1].Blocking || cov[4].Blocking || cov[4].State != BudgetDisabled {
 		t.Fatalf("blocking flags %+v", cov)
 	}
-	if cov[0].Spent != "0.12" || cov[0].Limit != "0.10" || cov[0].PeriodEnd != time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC) {
+	if cov[0].Spent != "0.12" || cov[0].Limit != "0.10" || cov[0].PeriodEnd == nil || !cov[0].PeriodEnd.Equal(time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)) || cov[0].Remaining != "0.00" {
 		t.Fatalf("amounts %+v", cov[0])
 	}
 	if CoveringBudgets(all, "prj_web", "", "")[0].BudgetID == "bdg_w" {

@@ -122,9 +122,22 @@
 - **Failed revocations need a person.** A revocation Harbor Pilot refuses, or one whose parent was replaced before it
   could be done, is audited, counted (connection page, `spaceman_gateway_revocations_failed`) and left to a person;
   no human action is raised.
-- **Older gateways are detected by a feature probe.** Harbor Pilot has no version endpoint; a gateway that does not know
-  `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
-- **Demo evidence only.** Everything real ran against `harbor-pilot serve --demo` 0.1.3 with its synthetic upstreams:
+- **The 0.1.3 minimum is still checked by a feature probe.** A gateway that does not know `check_budget` on mint
+  (before 0.1.3) is refused; a later gateway that dropped the field would look old too. Harbor Pilot 0.1.4's
+  `GET /api/v1/system` is read only with the service-principal token (it needs `config.read`), so without one the
+  version shows as unknown and budget status, when it can be read at all, takes the 0.1.3 path. SpaceMan never compares
+  version numbers: a gateway that answers `/api/v1/system` is treated as 0.1.4 or later.
+- **Budget status by project only on 0.1.4 or later.** On 0.1.3 SpaceMan still reads every budget (the list is not
+  paginated) and looks the project's workspace up. A 0.1.4 gateway whose version can't be read for a moment (a failed
+  `/api/v1/system` read is retried after 5 s) is read the 0.1.3 way meanwhile.
+- **Inactive and unknown budget states never refuse.** Scheduled, expired, disabled and any state a later Harbor Pilot
+  adds are shown but never refuse a launch, so SpaceMan's early check can't refuse more than Harbor Pilot would; Harbor
+  Pilot's own mint check and request enforcement still apply.
+- **A re-sent budget alert is a new inbox item.** After an upgrade to Harbor Pilot 0.1.4, or after a limit is raised,
+  a budget alert that already fired in the current period fires again. SpaceMan makes it one more item in the same
+  correlation as the first (only a redelivery of the same event is a duplicate); it does not merge them.
+- **Demo evidence only.** Everything real ran against `harbor-pilot serve --demo` 0.1.3 (and 0.1.4 for the
+  `make test-harbor-pilot` suite) with its synthetic upstreams:
   connection checks, run tokens, real Claude Code and Codex runs, budgets, per-run usage, events and the Terraform
   example. No run has gone through a production gateway to a real model provider (Q7: the operator will provide one;
   the evidence map is in RELEASE_READINESS §13).
