@@ -5,13 +5,13 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, idempotencyKey, unwrap, type Message } from '@/api/client'
-import { keys, useMe, useMessages, useRuns } from '@/api/queries'
+import { keys, useMe, useMessages, useRuns, useScheduledMessages } from '@/api/queries'
 import { AttachmentList } from '@/components/AttachmentList'
 import { Composer } from '@/components/composer/Composer'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { useAppForm } from '@/components/form/appForm'
 import { MarkdownView } from '@/components/MarkdownView'
-import { pendingSchedule } from '@/features/messages/scheduled'
+import { isSystem, messagesInView, pendingSchedule, type MessageView } from '@/features/messages/scheduled'
 import { ScheduledBadge, ScheduledNote } from '@/features/messages/ScheduledParts'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { atLeast, roleIn } from '@/lib/access'
@@ -35,27 +35,25 @@ function party(kind: string, id?: string, label?: string) {
 function MessagesPage() {
   const { spaceId } = Route.useParams()
   const list = useMessages(spaceId)
+  const pending = useScheduledMessages(spaceId)
   const me = useMe().data
   const canWrite = atLeast(roleIn(me, spaceId), 'operator')
   const [composing, setComposing] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
   const [onlyMine, setOnlyMine] = useState(false)
   // People and agents by default: SpaceMan's own notifications to control would otherwise bury them (UX review).
-  const [view, setView] = useState<'people' | 'system' | 'scheduled' | 'all'>('people')
+  const [view, setView] = useState<MessageView>('people')
   const all = list.data?.items ?? []
-  const isSystem = (m: (typeof all)[number]) => m.from_kind === 'system' || m.kind === 'notification'
   const systemCount = all.filter(isSystem).length
-  const scheduled = all.filter((m) => pendingSchedule(m))
-  const inView = (m: (typeof all)[number]) =>
-    view === 'all' || (view === 'scheduled' ? pendingSchedule(m) : (view === 'system') === isSystem(m))
-  const items = (view === 'scheduled' ? [...scheduled].sort((a, b) => Date.parse(a.deliver_at ?? '') - Date.parse(b.deliver_at ?? '')) : all)
-    .filter((m) => inView(m) && (!onlyMine || m.to_kind === 'operators'))
-  const current = all.find((m) => m.id === open) ?? null
+  const scheduled = pending.data ?? []
+  const items = messagesInView(view, all, scheduled, onlyMine)
+  const current = all.find((m) => m.id === open) ?? scheduled.find((m) => m.id === open) ?? null
+  const shown = view === 'scheduled' ? pending : list
   return (
     <>
       <SectionHeader title="Messages" description="Messages between agents, control and operators"
         actions={canWrite && <Button leftSection={<IconMessagePlus size={14} />} onClick={() => setComposing(true)}>Send message</Button>} />
-      <ErrorAlert error={list.error} />
+      <ErrorAlert error={list.error ?? pending.error} />
       <Group justify="space-between" mb={6}>
         <Group gap="sm">
           <SegmentedControl size="xs" value={view} onChange={(v) => setView(v as typeof view)} aria-label="Which messages"
@@ -80,9 +78,9 @@ function MessagesPage() {
             </Group>
           </Card>
         ))}
-        {list.isSuccess && items.length === 0 && (
+        {shown.isSuccess && items.length === 0 && (
           <Text size="sm" c="dimmed" ta="center" p="lg">
-            {all.length === 0 ? 'No messages yet.' : view === 'scheduled' ? 'No scheduled messages. Control schedules reminders to itself with spaceman_message_send.' : view === 'people' ? `No messages between people and agents. ${systemCount} system notifications are under System.` : 'Nothing here.'}
+            {view === 'scheduled' ? 'No scheduled messages. Control schedules reminders to itself with spaceman_message_send.' : all.length === 0 ? 'No messages yet.' : view === 'people' ? `No messages between people and agents. ${systemCount} system notifications are under System.` : 'Nothing here.'}
           </Text>
         )}
       </Stack>
