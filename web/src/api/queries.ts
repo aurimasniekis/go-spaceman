@@ -62,6 +62,7 @@ export const keys = {
   dreams: (spaceId: string) => ['dreams', spaceId] as const,
   mcpGrants: (id: string) => ['mcp-grants', id] as const,
   spaceMcp: (id: string) => ['space-mcp', id] as const,
+  spacemanTools: (preset: string, tools: string[], grants: string[]) => ['spaceman-tools', preset, tools, grants] as const,
   spaceHumanTypes: (space: string) => ['space-human-types', space] as const,
   /** Human-action policies of a space, or the installation defaults for ''. */
   humanPolicies: (space: string) => ['human-policies', space] as const,
@@ -389,6 +390,20 @@ export const useSkills = () => useQuery({ queryKey: keys.skills, queryFn: async 
 export const useMcpServers = () => useQuery({ queryKey: keys.mcpServers, queryFn: async () => unwrap(await api.GET('/mcp-servers')).items })
 export const useMcpGrants = (id: string) =>
   useQuery({ queryKey: keys.mcpGrants(id), queryFn: async () => unwrap(await api.GET('/mcp-servers/{server_id}/grants', { params: { path: { server_id: id } } })).items })
+/** The SpaceMan MCP tool picker (ADR-0063): every tool, marked with what a preset, named tools and grants make of it. */
+export const useSpacemanTools = (preset: string, tools: string[], grants: string[], enabled = true) =>
+  useQuery({
+    queryKey: keys.spacemanTools(preset, tools, grants),
+    queryFn: async () =>
+      unwrap(await api.GET('/mcp-servers/spaceman/tools', {
+        params: { query: { preset: preset as 'read' | 'operate' | 'admin' | 'custom', tools: tools.length ? tools : undefined, grants: grants.length ? grants : undefined } },
+        // The API reads comma-separated lists (tools=a,b).
+        querySerializer: { array: { style: 'form', explode: false } },
+      })),
+    enabled,
+    placeholderData: (prev) => prev,
+    staleTime: 60_000,
+  })
 export const useSpaceMcp = (spaceId: string) =>
   useQuery({ queryKey: keys.spaceMcp(spaceId), queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/mcp-servers', { params: { path: { space_id: spaceId } } })).items })
 export const useApprovalPolicies = () => useQuery({ queryKey: keys.approvalPolicies, queryFn: async () => unwrap(await api.GET('/approval-policies')).items })
