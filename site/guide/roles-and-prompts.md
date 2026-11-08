@@ -105,9 +105,20 @@ Things to know:
   [human actions](./human-actions#agents-ask-here-not-in-the-terminal) instead. To allow one anyway, add it to the
   profile's **Allow** rules (ADR-0066). Like the renderer default, the node adds this, and the resolved settings don't
   show it.
-- **`skipAutoPermissionPrompt` doesn't stop permission dialogs.** It only skips the one-time notice shown when auto
-  mode starts. Auto mode still asks in the terminal for **Ask** rules, for reads outside the run's working
-  directories, and when its classifier falls back to asking after repeated blocks.
+- **Runs never wait at a permission dialog.** Even in auto mode, Claude Code asks in the terminal in three cases: for
+  **Ask** rules, for reads outside the run's working directories, and when its classifier falls back to asking after
+  repeated blocks (3 in a row or 20 in total). `skipAutoPermissionPrompt` doesn't change that: it only skips the
+  one-time notice shown when auto mode starts. So SpaceMan adds two things to every run's settings (ADR-0068):
+  - **A PermissionRequest hook** (`spaceman-agent hook permission-request`, part of the node agent) that answers every
+    dialog with "deny" and tells the agent to ask through [human actions](./human-actions#agents-ask-here-not-in-the-terminal)
+    instead of retrying. It can only deny, never allow, so an **Ask** rule works like a **Deny** rule: to let runs do
+    something, put it under **Allow**.
+  - **The run's own space folder** in `additionalDirectories` (only that space's folder), so reading the space's plans
+    and notes from a checkout doesn't raise a dialog. The Claude Code and Codex login files in it are denied.
+
+  Both are added after the profile's own hooks, **Deny** rules and directories, which stay as they are (each entry
+  once). A profile that sets `disableAllHooks` also turns SpaceMan's hook off. Like the other defaults, the node adds
+  these, and the resolved settings don't show them.
 
 ## Space roles
 

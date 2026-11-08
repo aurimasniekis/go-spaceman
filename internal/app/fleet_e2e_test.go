@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -264,6 +265,25 @@ func TestFleetLifecycle(t *testing.T) {
 		if strings.Contains(strings.Join(spec.Argv, " "), "stub-claude-token") {
 			t.Fatal("credential in the runner argv")
 		}
+	}
+	// ADR-0068: the run's settings.json has SpaceMan's deny-only PermissionRequest hook, run by the shipped agent binary,
+	// and the run's own space folder (its real path), nothing wider, as an additional directory.
+	spaceDir, _ := filepath.EvalSymlinks(filepath.Join(e.agentDir, "spaces", sp.Workdir))
+	raw, err := os.ReadFile(filepath.Join(spaceDir, "instances", e.run1(ctrl.ID).InstanceID, "claude", "settings.json"))
+	var settings struct {
+		Hooks struct {
+			PermissionRequest []struct {
+				Hooks []struct{ Command string } `json:"hooks"`
+			} `json:"PermissionRequest"`
+		} `json:"hooks"`
+		Permissions struct {
+			AdditionalDirectories []string `json:"additionalDirectories"`
+		} `json:"permissions"`
+	}
+	if err != nil || json.Unmarshal(raw, &settings) != nil || len(settings.Hooks.PermissionRequest) != 1 ||
+		settings.Hooks.PermissionRequest[0].Hooks[0].Command != "'/usr/bin/true' hook permission-request" ||
+		!slices.Equal(settings.Permissions.AdditionalDirectories, []string{spaceDir}) {
+		t.Fatalf("run settings %s %v", raw, err)
 	}
 	if e.run1(ctrl.ID).Launch.AccountRef != accts["claude_oauth_token"] {
 		t.Fatalf("run account %q", e.run1(ctrl.ID).Launch.AccountRef)

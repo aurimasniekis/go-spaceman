@@ -3214,7 +3214,7 @@
   settings in the API don't show the deny. Claude Code's own permission dialogs are unchanged: they follow the
   permission mode, and `skipAutoPermissionPrompt` only skips the one-time notice shown when auto mode starts (auto mode
   still asks for `ask` rules, reads outside the working directories, and when its classifier falls back after repeated
-  blocks). A built-in PermissionRequest hook for those is a separate follow-up. A run whose permission mode is `plan`
+  blocks). A built-in PermissionRequest hook for those is a separate follow-up (since done: ADR-0068). A run whose permission mode is `plan`
   (a profile setting) still starts in plan mode and ends in the `ExitPlanMode` dialog.
 
 ### ADR-0067 — The System page: an administrator's view of the instance; the version stays public
@@ -3246,6 +3246,63 @@
   private address: no UI, and it would expose the data directory to anything that reaches it).
 - **Consequences:** a new admin-only read with no new authority. The boot ID lets an operator tell a restart from a
   long-running instance and match logs to a start.
+
+### ADR-0068 — No permission dialogs in SpaceMan's Claude Code runs: a deny-only PermissionRequest hook and the run's own space folder
+- **Status:** Accepted, 2026-11-08 (operator request for v0.1.0). **Security-relevant change:** each run's file tools may
+  now read and write its own space folder without asking (they previously stopped at a dialog), and every permission
+  dialog is answered with a deny.
+- **Context:**
+  - Every SpaceMan run is unattended, so a Claude Code permission dialog stalls it: nobody types an answer into its
+    terminal, nothing reminds anyone, and the run holds its slot.
+  - In auto mode, Claude Code still shows a dialog in three cases: for an `ask` rule, for a read outside the working
+    directories, and when its classifier falls back to asking after repeated blocks (3 in a row or 20 in total).
+    `skipAutoPermissionPrompt` doesn't help with any of them: it only skips the one-time notice shown when auto mode
+    starts.
+  - Claude Code runs a `PermissionRequest` hook before it shows a dialog. Its input carries `hook_event_name`,
+    `tool_name`, `tool_input` and `permission_suggestions`; its output
+    `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"…"}}}` denies
+    the request and hands the message to the model as the tool's result (`interrupt` unset, so the turn continues). In
+    auto mode a hook can't approve anything (Claude Code ignores an allow there). Checked in Claude Code 2.1.317's
+    hook schema and live (docs/contracts/harnesses.md).
+  - Runs start in a checkout (`worktrees/…`) or in `work/`, so reading the space's own files (plans and notes under
+    `work/`, other checkouts) was a read outside the working directories, and so a dialog.
+  - The operator worked around both through the profiles' `claude_settings` (a PermissionRequest hook script and the
+    node's whole `spaces/` folder as an additional directory). The product should do this itself, and more narrowly.
+- **Decision:**
+  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets a `hooks.PermissionRequest`
+    entry (`matcher` `*`) in its own `settings.json`. The entry runs `'<agent binary>' hook permission-request`, a
+    subcommand of the node agent binary, so nothing extra has to be installed on the node.
+  - **The hook only denies.** Whatever its input (none, malformed, any event), it writes a deny whose message says the
+    run is unattended, not to retry or work around it, and to ask a person with `spaceman_human_ask` or tell its control
+    with `spaceman_message_send`. It names the tool only when the name looks like a tool name. It can never answer
+    "allow", so it can't widen what a run may do. It reads nothing but its input and needs no configuration.
+  - **The run's own space folder** (`<data_dir>/spaces/<space-dir>`, its real path) is added to
+    `permissions.additionalDirectories`, and only that folder, never the node's whole `spaces/` folder.
+  - **Its login files are denied.** The space folder also holds the instances' harness config dirs, which can hold a
+    Claude Code login (`instances/*/claude/.credentials.json`) or a Codex login (`instances/*/codex/auth.json`). Those
+    two paths get `Read` and `Edit` deny rules (verified: such a read fails with "denied by your permission settings").
+  - **Merge, never replace** (as in ADR-0066). The profile's own hooks of every event come first, in their order, and
+    SpaceMan's entry is appended to `PermissionRequest` (and not added again when the profile already has it). The
+    profile's directories and deny rules come first, and duplicates are dropped. The profile's stored settings are not
+    changed. A `hooks` value that isn't valid Claude Code settings (not an object, or a `PermissionRequest` value that
+    isn't a list) is replaced.
+- **Alternatives:**
+  - **Prompt guidance only:** the dialog comes from Claude Code, not the model; the model can't avoid an `ask` rule.
+  - **A hook that allows** (approving the dialog's request): it would turn every `ask` rule into an allow and bypass
+    the classifier's fallback. Approval stays with people, through human actions.
+  - **The whole `spaces/` folder** (the operator's workaround): it would let one space's runs read every other space.
+  - **Turning off `permissions.blockReadsOutsideWorkingDirectories` or the sandbox:** much wider than one folder.
+  - **A shell script shipped next to the binary:** another file to install and keep in step.
+- **Consequences:**
+  - A run never waits at a Claude Code permission dialog. A denied request reaches the model as a tool error that
+    names `spaceman_human_ask`.
+  - What was "ask a person in the terminal" (who was usually not there) is now "denied". An `ask` rule therefore
+    works like a deny in SpaceMan runs; a profile that wants the call to happen must allow it.
+  - A run's file tools reach its own space without a dialog: other instances' transcripts, settings and checkouts, but
+    not the two login files. The runs already ran as the same OS user, so their shell could read these files before
+    (subject to auto mode's classifier). A profile that sets `disableAllHooks` turns SpaceMan's hook off too.
+  - The node writes both when it builds the launch, so they take nodes on this release or later. The profile's
+    resolved settings in the API don't show them. Codex is unchanged.
 
 ## 2. Open items and unresolved contracts
 

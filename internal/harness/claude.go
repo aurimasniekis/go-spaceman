@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
@@ -73,6 +74,115 @@ func denyTerminalPrompts(own map[string]any) {
 		own["permissions"] = perms
 	}
 }
+
+// ClaudePermissionHookArgs are the spaceman-agent arguments of the PermissionRequest hook every run gets (ADR-0068).
+var ClaudePermissionHookArgs = []string{"hook", "permission-request"}
+
+// denyPermissionDialogs appends SpaceMan's PermissionRequest hook to the run's hooks. Claude Code still shows a
+// permission dialog in auto mode for an "ask" rule, for a read outside the working directories and when the classifier
+// falls back to asking after repeated blocks; nobody answers it in an unattended run, so the run would stall. The hook
+// (spaceman-agent hook permission-request, shipped with the node agent) answers every such dialog with a deny whose
+// message points the model at spaceman_human_ask. It can only deny, never allow. The profile's own hooks, of every
+// event, come first and are kept; the entry is not added twice. A hooks value that is not an object, or a
+// PermissionRequest value that is not a list, is not valid Claude Code settings and is replaced. The profile's settings
+// map is never modified: the hooks object is copied.
+func denyPermissionDialogs(own map[string]any, agentBinary string) {
+	command := shellQuote(agentBinary)
+	for _, a := range ClaudePermissionHookArgs {
+		command += " " + a
+	}
+	hooks := map[string]any{}
+	if cur, ok := own["hooks"].(map[string]any); ok {
+		for k, v := range cur {
+			hooks[k] = v
+		}
+	}
+	var groups []any
+	switch l := hooks["PermissionRequest"].(type) {
+	case []any:
+		groups = append(groups, l...)
+	case []map[string]any:
+		for _, g := range l {
+			groups = append(groups, g)
+		}
+	}
+	for _, g := range groups {
+		if hasHookCommand(g, command) {
+			own["hooks"] = hooks
+			return
+		}
+	}
+	groups = append(groups, map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 30}}})
+	hooks["PermissionRequest"] = groups
+	own["hooks"] = hooks
+}
+
+// hasHookCommand reports whether a hooks matcher group already runs command.
+func hasHookCommand(group any, command string) bool {
+	g, ok := group.(map[string]any)
+	if !ok {
+		return false
+	}
+	var hs []any
+	switch l := g["hooks"].(type) {
+	case []any:
+		hs = l
+	case []map[string]any:
+		for _, h := range l {
+			hs = append(hs, h)
+		}
+	}
+	for _, h := range hs {
+		if m, ok := h.(map[string]any); ok && m["type"] == "command" && m["command"] == command {
+			return true
+		}
+	}
+	return false
+}
+
+// ClaudeSpaceCredentialFiles are the harness login files a space folder can hold, in its instances' config dirs
+// (relative to the space folder, Claude Code permission-rule globs). The own-space directory a run gets would let its
+// file tools read them without a dialog, so they are denied (ADR-0068).
+var ClaudeSpaceCredentialFiles = []string{"instances/*/claude/.credentials.json", "instances/*/codex/auth.json"}
+
+// addSpaceDirectory adds the run's own space folder to permissions.additionalDirectories, so reading the space's files
+// (plans, notes, other checkouts of the space) from a run that starts in a checkout does not end in a "read outside the
+// working directories" dialog. Only that space's folder is added, never the node's whole spaces folder; the instances'
+// login files in it get Read and Edit deny rules (ClaudeSpaceCredentialFiles). The profile's directories and deny rules
+// come first and are kept, duplicates are dropped and every other permissions key is kept; the profile's settings map
+// is never modified (ADR-0068).
+func addSpaceDirectory(own map[string]any, spaceDir string) {
+	if spaceDir == "" {
+		return
+	}
+	perms := map[string]any{}
+	if cur, ok := own["permissions"].(map[string]any); ok {
+		for k, v := range cur {
+			perms[k] = v
+		}
+	}
+	var dirs []string
+	for _, d := range append(stringsOf(perms["additionalDirectories"]), spaceDir) {
+		if !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	perms["additionalDirectories"] = dirs
+	deny := stringsOf(perms["deny"])
+	for _, f := range ClaudeSpaceCredentialFiles {
+		// "//" starts an absolute path in a Claude Code permission rule.
+		for _, tool := range []string{"Read", "Edit"} {
+			if rule := tool + "(/" + filepath.ToSlash(filepath.Join(spaceDir, f)) + ")"; !slices.Contains(deny, rule) {
+				deny = append(deny, rule)
+			}
+		}
+	}
+	perms["deny"] = deny
+	own["permissions"] = perms
+}
+
+// shellQuote quotes s for the shell Claude Code runs a command hook with.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // stringsOf returns a settings list ([]string or a JSON []any of strings, as Validate accepts) as a new []string.
 func stringsOf(v any) []string {
@@ -167,6 +277,8 @@ func (Claude) Build(c Context) (Launch, error) {
 		own["tui"] = ClaudeTUI
 	}
 	denyTerminalPrompts(own)
+	denyPermissionDialogs(own, c.AgentBinary)
+	addSpaceDirectory(own, c.SpaceDir)
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
 	secrets := secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")

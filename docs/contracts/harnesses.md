@@ -65,6 +65,21 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   neither appeared (12 and 23 tools; `ExitPlanMode` stays listed, as it only acts inside plan mode). Print mode (`-p`)
   never offers `AskUserQuestion`. SpaceMan appends both rules to the profile's deny list unless the profile allows a
   tool itself.
+- **PermissionRequest hook and additional directories (ADR-0068, verified 2026-11-08 with Claude Code 2.1.317, live,
+  no model):** the binary's hook schemas (`strings`): input = the common fields (`session_id`, `transcript_path`,
+  `cwd`, `permission_mode`, …) plus `hook_event_name: "PermissionRequest"`, `tool_name`, `tool_input`,
+  `permission_suggestions?`, `mcp_server?`; output `hookSpecificOutput: {hookEventName: "PermissionRequest", decision:
+  {behavior: "allow", updatedInput?, updatedPermissions?} | {behavior: "deny", message?, interrupt?}}`. Only `command`
+  and `http` hooks may answer it (agent and prompt hooks are refused for this event), and in auto mode Claude Code
+  ignores a hook's allow ("a hook cannot approve"). Checked in an isolated tmux session (fresh `HOME` and
+  `CLAUDE_CONFIG_DIR`, `DISABLE_AUTOUPDATER=1`, onboarding and trust seeded, a local fake API that answered with one
+  scripted `tool_use` and recorded the following `tool_result`): without a hook, a `Read` of a file outside the
+  working directory stopped at the "Read outside the working directories" dialog. With
+  `hooks.PermissionRequest = [{matcher: "*", hooks: [{type: "command", command: "'<agent>' hook permission-request"}]}]`
+  the same read, and a `Bash` call matched by an `ask` rule, came back to the model as `is_error` tool results carrying
+  the hook's message; the terminal showed "Denied by PermissionRequest hook". A file under a directory in
+  `permissions.additionalDirectories` was read without a dialog. A deny rule `Read(//<abs path glob>)` (a leading `//`
+  is an absolute path) refused a read there with "File is in a directory that is denied by your permission settings."
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).
