@@ -24,7 +24,6 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
-	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -89,10 +88,6 @@ type Options struct {
 	// takes longer goes on in the background; the launch stays pending, the loop moves on to the node's other commands
 	// (stops and kills never wait behind a mint), and the node is kicked when the mint is done.
 	GatewayMintWait time.Duration
-	// GatewayMinMinor is the lowest node protocol minor a gateway launch is dispatched to (0: proto.MinorGatewayToken).
-	// Tests only, to exercise token delivery over a scripted node before an agent speaks that minor; it is not
-	// configurable, since a lower value lets an agent that drops the token start the harness on the node's own login.
-	GatewayMinMinor int
 }
 
 // Admission is a launch about to be admitted.
@@ -136,9 +131,6 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	}
 	if o.DisconnectGrace < 0 {
 		o.DisconnectGrace = 0
-	}
-	if o.GatewayMinMinor <= 0 {
-		o.GatewayMinMinor = proto.MinorGatewayToken
 	}
 	if o.GatewayMintWait <= 0 {
 		o.GatewayMintWait = 5 * time.Second

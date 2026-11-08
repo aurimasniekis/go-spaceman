@@ -140,3 +140,17 @@ func writeSecretFiles(files map[string][]byte) error {
 	}
 	return nil
 }
+
+// removeCredentialFiles removes credential files a launch must not have (harness.Launch.RemoveFiles): a link itself,
+// never its target. It fails when one is still there afterwards, so the launch never starts next to it.
+func removeCredentialFiles(paths []string) error {
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s is still there", filepath.Base(path))
+		}
+	}
+	return nil
+}

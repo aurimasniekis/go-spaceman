@@ -201,7 +201,7 @@ func (svc *Service) connOut(ctx context.Context, r db.HarborPilotConnection) (*C
 	for _, e := range enabled {
 		c.EnabledSpaces = append(c.EnabledSpaces, e.SpaceID)
 	}
-	if c.FailedRevocations, err = svc.s.R().CountFailedGatewayRevocations(ctx); err != nil {
+	if c.FailedRevocations, err = svc.s.R().CountFailedGatewayRevocations(ctx, svc.s.Now().UnixMicro()); err != nil {
 		return nil, err
 	}
 	if c.FailedRevocations > 0 {

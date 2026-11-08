@@ -15,6 +15,8 @@ import (
 //
 //   - isolation: CODEX_HOME=<config>/codex per space and instance
 //   - --no-daemon: required under herdr-core, otherwise commands run outside hc (hc manual)
+//   - -c features.shell_snapshot=false: the snapshot would keep the run's environment, its tokens included, in
+//     $CODEX_HOME/shell_snapshots (verified with codex-cli 0.166.0 `features list`)
 //   - MCP: -c mcp_servers.spaceman.command=… -c mcp_servers.spaceman.args=[…] (TOML overrides)
 //   - session: Codex chooses its own session ID; resume is `codex resume <id>` (the ID is discovered from
 //     $CODEX_HOME/sessions after launch — not a fixed-ID capability)
@@ -23,6 +25,11 @@ import (
 //     ChatGPT login: $CODEX_HOME/auth.json and auth.lock linked to the node's live copy of the account's login, which
 //     Codex refreshes in place (ADR-0053)
 //   - skills: $CODEX_HOME/skills/<name>/SKILL.md (verified with codex-cli 0.166.0 `debug prompt-input`)
+//   - gateway (ADR-0060): a custom model provider set with five -c overrides (model_provider="harbor-pilot", its name,
+//     base_url <origin>/v1, wire_api "responses", env_key "HARBOR_PILOT_TOKEN") and the child token as
+//     HARBOR_PILOT_TOKEN through the shim. Codex then needs no auth.json and shows no sign-in screen (verified with
+//     codex-cli 0.166.0, docs/contracts/harnesses.md); the node removes any auth.json and login links in CODEX_HOME.
+//     The run's model must be one the gateway routes (Codex's own default may not be).
 type Codex struct{}
 
 // Kind implements Harness.
@@ -44,14 +51,25 @@ func (Codex) Build(c Context) (Launch, error) {
 		return Launch{}, err
 	}
 	p := c.Payload
+	gw, err := gatewayFor(p)
+	if err != nil {
+		return Launch{}, err
+	}
 	home := filepath.Join(c.ConfigDir, "codex")
 	args := make([]string, 0, len(bridgeArgs(c)))
 	for _, a := range bridgeArgs(c) {
 		args = append(args, tomlString(a))
 	}
 	argv := []string{c.Binary, "--no-daemon",
+		// Codex's shell snapshot writes the run's environment, SPACEMAN_RUN_TOKEN and a gateway token included, to
+		// $CODEX_HOME/shell_snapshots/*.sh, where it outlives the run (found by the HP-T4 real run, codex-cli 0.166.0):
+		// secrets reach a run only through its environment (ADR-0009), never a file the harness keeps.
+		"-c", "features.shell_snapshot=false",
 		"-c", "mcp_servers.spaceman.command=" + tomlString(c.AgentBinary),
 		"-c", "mcp_servers.spaceman.args=[" + strings.Join(args, ", ") + "]",
+	}
+	if gw != nil {
+		argv = append(argv, codexGatewayArgs(gw.Origin)...)
 	}
 	if p.Model != "" {
 		argv = append(argv, "-m", p.Model)
@@ -93,6 +111,13 @@ func (Codex) Build(c Context) (Launch, error) {
 		SessionID:  p.SessionID,
 		LoginLinks: map[string]string{filepath.Join(home, "auth.json"): "auth.json", filepath.Join(home, "auth.lock"): "auth.lock"},
 	}
+	if gw != nil {
+		// The gateway is the only credential: no API-key auth.json, no ChatGPT login (gatewayFor refused both secrets),
+		// and whatever auth.json an earlier launch left is removed; the login links are removed as for an API key.
+		l.SecretEnv = map[string]string{CodexGatewayEnv: gw.Token}
+		l.RemoveFiles = []string{filepath.Join(home, "auth.json")}
+		return l, nil
+	}
 	if key := firstNonEmpty(p.Secrets["OPENAI_API_KEY"], p.Secrets["CODEX_API_KEY"]); key != "" {
 		b, err := json.Marshal(map[string]string{"auth_mode": "apikey", "OPENAI_API_KEY": key})
 		if err != nil {
@@ -107,6 +132,25 @@ func (Codex) Build(c Context) (Launch, error) {
 		l.Login = &Login{Account: p.AccountRef, Seed: []byte(seed)}
 	}
 	return l, nil
+}
+
+// CodexGatewayEnv is the variable a gateway run's Codex reads its token from (the provider's env_key).
+const CodexGatewayEnv = "HARBOR_PILOT_TOKEN"
+
+// codexGatewayProvider is the model provider ID a gateway run's Codex uses.
+const codexGatewayProvider = "harbor-pilot"
+
+// codexGatewayArgs are the -c overrides that send Codex's model traffic to the gateway's Responses API (the shape the
+// HP-T1 spike verified with codex-cli 0.166.0).
+func codexGatewayArgs(origin string) []string {
+	pfx := "model_providers." + codexGatewayProvider + "."
+	return []string{
+		"-c", "model_provider=" + tomlString(codexGatewayProvider),
+		"-c", pfx + "name=" + tomlString("Harbor Pilot"),
+		"-c", pfx + "base_url=" + tomlString(origin+"/v1"),
+		"-c", pfx + "wire_api=" + tomlString("responses"),
+		"-c", pfx + "env_key=" + tomlString(CodexGatewayEnv),
+	}
 }
 
 func firstNonEmpty(vs ...string) string {

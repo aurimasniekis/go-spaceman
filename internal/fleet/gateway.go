@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -33,6 +34,10 @@ type Gateway interface {
 	// re-dispatch. session is the harness session the launch starts or resumes (the bound session ref). A failure
 	// wraps ErrGatewayUnavailable (the run fails as gateway_unavailable) or ErrAgentTooOld.
 	Token(ctx context.Context, run *Run, session string) (map[string]string, error)
+	// Address is where a gateway run's harness reaches the gateway (the connection's run-facing URL), read at dispatch
+	// after Token. Moving the gateway needs the parent token again, which revokes every run token, so a launch never
+	// carries a token to another address than the one it was minted for. A failure wraps ErrGatewayUnavailable.
+	Address(ctx context.Context) (*proto.GatewayLaunch, error)
 }
 
 // ErrGatewayUnavailable is returned (wrapped) when a gateway run's token can't be had: no connection, or Harbor Pilot
@@ -40,7 +45,7 @@ type Gateway interface {
 var ErrGatewayUnavailable = errors.New("the run's LLM gateway is unavailable")
 
 // ErrAgentTooOld is returned (wrapped) when a gateway launch goes to a node whose agent can't deliver gateway
-// credentials (HP-T4 refuses those); the run fails as agent_too_old.
+// credentials (below proto.MinorGatewayToken); the run fails as agent_too_old.
 var ErrAgentTooOld = errors.New("the node's agent is too old for gateway runs")
 
 // Revocation reasons recorded with a queued gateway revocation (bounded, not free text).

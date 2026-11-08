@@ -89,6 +89,10 @@ type Launch struct {
 	// node's shared login folder. With Login they are linked to the account's live copy; without it, links left from
 	// an earlier login are removed (a regular file there is the harness's own and is kept).
 	LoginLinks map[string]string
+	// RemoveFiles are credential files that must not exist for this launch (absolute paths in the harness's config dir):
+	// a gateway run's harness gets the gateway's token and nothing else (ADR-0060 decision 6). Each is removed (a link
+	// itself, never its target) before the secrets file is written, and the launch fails if one is still there.
+	RemoveFiles []string
 	// SessionID is the conversation ID when the harness lets SpaceMan choose it.
 	SessionID string
 }

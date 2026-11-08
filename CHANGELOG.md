@@ -28,6 +28,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     Reads filtered by the caller's grants (`list-spaces` and ten others) are tools; personal operations are not.
     A revoked token empties the catalog, and calls are refused with the reason.
   - CLI (AM-6): `spaceman mcp spaceman create`, `update` and `reissue`.
+- Gateway runs reach their harness (ADR-0060, Proposed; HP-T4; node protocol minor 9). **Update every node of a space
+  before opting it in to Harbor Pilot:** a launch to an older agent fails as `agent_too_old` ("gateway runs need
+  protocol minor 9 …: upgrade its agent") before a token is minted.
+  - Central sends the address runs use (`run_base_url`, or `base_url`) with the run's token. The node checks it
+    itself: https, unless the connection allows plain HTTP, with no loopback exemption.
+  - The token reaches the harness only through the launcher's secrets file, never the terminal's saved state, the
+    node's records or argv, and no other credential comes with it. Claude Code gets `ANTHROPIC_BASE_URL` and
+    `ANTHROPIC_AUTH_TOKEN`. Codex gets a `harbor-pilot` model provider pointed at the gateway's Responses API, with
+    the token in `HARBOR_PILOT_TOKEN`.
+  - A gateway run fails with a reason when its Claude Code profile settings would add a credential or endpoint:
+    `apiKeyHelper`, `proxyAuthHelper`, the cloud credential helpers, `forceLoginMethod`, or `env` entries named
+    `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_*` or `CLAUDE_CODE_USE_*`. A Claude login stored in the instance's config folder,
+    and a Codex `auth.json` left from an API key or ChatGPT login, are removed before the run starts.
+  - Verified with real Claude Code 2.1.317 and Codex 0.166.0 through SpaceMan against `harbor-pilot serve --demo`
+    0.1.3 (`make test-real-harbor-pilot`). Codex needs a model the Harbor Pilot plan routes: set the role's model.
 - Control can schedule a reminder to itself (ADR-0065). `spaceman_message_send` to `control` takes `deliver_at` (RFC
   3339) or `delay` (e.g. `6h`), from 1 minute to 30 days ahead.
   - The message stays hidden and doesn't count as work until it's due. Then it wakes control, or starts it within the
@@ -37,10 +52,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     the Messages page's **Scheduled** view, `GET …/messages?scheduled=true` and `POST …/messages/{id}/cancel`, or
     `spaceman message list --scheduled` and `spaceman message cancel`.
   - Scheduling and cancelling are audited. Migration 0041 adds `messages.deliver_at`.
-- Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). Nodes deliver them to harnesses from HP-T4 on
-  (protocol minor 9). Until then every launch of a harness a space routes through Harbor Pilot fails as
-  `agent_too_old` before a token is minted, so don't enable Harbor Pilot for a space yet. A gateway run never starts on
-  the node's own login.
+- Harbor Pilot run tokens on central (ADR-0060, Proposed; HP-T3). A gateway run never starts on the node's own login.
   - A harness a space routes through Harbor Pilot uses no account: a launch that names one is refused, a model outside
     the space's allowed aliases is refused, and there is never a fallback to a direct account. A launch is refused
     before it starts when no connection is configured. The run's manifest records the gateway and project.
@@ -58,7 +70,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     revocation is recorded as failed, audited, shown on the connection (`failed_revocations` and the Harbor Pilot
     page) and counted in the new `spaceman_gateway_revocations_failed` gauge.
   - A slow mint never holds up a node's other commands: dispatch waits at most 5 s, then the mint goes on in the
-    background and sends the launch when it is done.
+    background and sends the launch when it is done. While it runs, later dispatches skip that launch at once, and
+    central's shutdown waits for (then cancels) mints still running before it closes the database.
+  - Failed revocations stay in `failed_revocations` and the gauge only until their tokens expire.
 - Shipped event templates for Harbor Pilot events (HP-T6, ADR-0060 §7): `harbor-pilot-budget` (budget warnings and
   exhausted budgets; `project_id` sends a project's budgets to its space), `harbor-pilot-quota` (provider quota windows
   that ran out or recovered) and `harbor-pilot-access-blocked` (requests Harbor Pilot refused by policy, including
@@ -101,6 +115,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Tests: most tests run in parallel; `make race` caps per-package parallelism with `RACE_PARALLEL` (default 4).
 
 ### Fixed
+- Codex runs no longer leave their environment, the run's SpaceMan token included, in the instance's
+  `CODEX_HOME/shell_snapshots`: SpaceMan now turns off Codex's shell snapshot (`features.shell_snapshot=false`). Found
+  with codex-cli 0.166.0; snapshots left by earlier runs stay until the instance's folder is removed.
 - A relocation whose source was unavailable marked the source's runs lost without ending them: no `run_ended` event,
   no end count, and nothing that reacts to a run's end (recordings, KB sessions, control) learnt of it. They now
   end like runs a node reports ended.

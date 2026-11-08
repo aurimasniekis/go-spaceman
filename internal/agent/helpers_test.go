@@ -14,7 +14,8 @@ import (
 // The launcher shim never passes another harness session's markers or node-level provider keys to a run.
 func TestScrubEnv(t *testing.T) {
 	in := []string{"PATH=/bin", "CLAUDECODE=1", "CLAUDE_CODE_CHILD_SESSION=1", "CLAUDE_CODE_OAUTH_TOKEN=node", "ANTHROPIC_API_KEY=node",
-		"OPENAI_API_KEY=node", "CODEX_ACCESS_TOKEN=node", "CODEX_SANDBOX_NETWORK_DISABLED=1", "CLAUDE_CONFIG_DIR=/x", "CODEX_HOME=/y", "HC_TERMINAL_ID=t1", "SPACEMAN_RUN_ID=run_1"}
+		"OPENAI_API_KEY=node", "CODEX_ACCESS_TOKEN=node", "CODEX_SANDBOX_NETWORK_DISABLED=1", "ANTHROPIC_BASE_URL=https://elsewhere",
+		"ANTHROPIC_AUTH_TOKEN=node", "HARBOR_PILOT_TOKEN=node", "SPACEMAN_GATEWAY_TOKEN=node", "CLAUDE_CONFIG_DIR=/x", "CODEX_HOME=/y", "HC_TERMINAL_ID=t1", "SPACEMAN_RUN_ID=run_1"}
 	got := scrubEnv(in)
 	want := []string{"PATH=/bin", "CLAUDE_CONFIG_DIR=/x", "CODEX_HOME=/y", "HC_TERMINAL_ID=t1", "SPACEMAN_RUN_ID=run_1"}
 	if !slices.Equal(got, want) {

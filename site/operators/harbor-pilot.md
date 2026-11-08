@@ -5,10 +5,10 @@ per-project spend limits and usage for every harness. SpaceMan can route a space
 its own short-lived Harbor Pilot token instead of an [account](./accounts), revoked when the run ends.
 
 ::: warning Work in progress
-This page covers the connection, the per-space settings, how central mints and revokes run tokens, and events. Handing the
-token to the harness, and the budget status on the Limits page, come in later releases. Until node agents can hand the
-token over (protocol minor 9), central refuses to start a run routed through Harbor Pilot: it fails as `agent_too_old`
-before any token is minted, and it never starts on the node's own login. So don't opt a space in yet.
+This page covers the connection, the per-space settings, run tokens and how runs get them, and events. The budget
+status on the Limits page comes in a later release. Runs routed through Harbor Pilot need node agents at protocol minor
+9 (this release): central refuses to send one to an older agent, which fails it as `agent_too_old` before any token is
+minted, so it never starts on the node's own login. Update every node of a space before opting the space in.
 The design is ADR-0060 (Proposed) in [Decisions](../security/decisions).
 :::
 
@@ -97,6 +97,19 @@ For a harness the space routes through Harbor Pilot:
 - **Revoked when the run ends**, whichever way: it exits or fails, it is stopped or the space paused, its launch can't
   be sent, the space is relocated or purged, or its node stays away past the lease. The revocation is recorded in the
   same step as the end, so a restart can't lose it, and SpaceMan retries until the token expires.
+- **Handed to the harness only through the launcher's secrets file**, which the launcher reads and deletes before it
+  starts the harness. It never appears in the terminal's saved state, the node's records or logs, and the harness gets
+  no other model credential, even when the space has accounts bound:
+  - **Claude Code** gets `ANTHROPIC_BASE_URL` (the gateway) and `ANTHROPIC_AUTH_TOKEN` (the run's token). A profile
+    whose Claude Code settings add another credential or endpoint (`apiKeyHelper`, `proxyAuthHelper`, the cloud
+    credential helpers, `forceLoginMethod`, or `env` entries named `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_*` or
+    `CLAUDE_CODE_USE_*`) fails the run with that reason. A Claude login stored in the instance's config folder is removed.
+  - **Codex** is pointed at the gateway's Responses API as a custom model provider, with the token in
+    `HARBOR_PILOT_TOKEN`. No `auth.json` is written, and one left from an earlier API-key or ChatGPT login is removed.
+    Codex's own default model may not be one your Harbor Pilot plan routes: give the role a model the plan routes (for
+    the demo, `coding/default`), or list the allowed models in the space settings.
+  - The node checks the gateway address itself before it hands over a token: https, unless the connection allows plain
+    HTTP.
 - **Replacing the parent token revokes the tokens of running runs** with the old parent first (the new parent can't
   revoke them). Those runs then have no model access until they are started again, and the page says how many.
 
@@ -112,9 +125,15 @@ Harbor Pilot picked it up.
 
 ## Verified
 
-The connection checks and the run-token lifecycle were run against a real `harbor-pilot serve --demo` 0.1.3 (with
-synthetic upstreams): a parent without `tokens:mint`, project checks, a run's token answering `/v1/models` with the
-expected references, the token refused after the run ended, and a revoked parent failing the next run as
-`gateway_unavailable`. The node side is scripted in that test; harnesses don't receive the token yet. The event
-templates were tested on events captured from the same demo and with its own relay publishing into SpaceMan's
-Pulse-shaped test server, not a production Pulse.
+Against a real `harbor-pilot serve --demo` 0.1.3 (with synthetic upstreams):
+
+- the connection checks: a parent without `tokens:mint`, project checks;
+- the run-token lifecycle with a scripted node: a run's token answering `/v1/models` with the expected references, the
+  token refused after the run ended, and a revoked parent failing the next run as `gateway_unavailable`;
+- real Claude Code 2.1.317 and real Codex 0.166.0 runs through SpaceMan (`make test-real-harbor-pilot`): each harness
+  started with only the gateway's variables, Harbor Pilot recorded each request with the client binding and the space,
+  run and session references, the run's two turns were grouped in one Harbor Pilot session, no token was stored at
+  rest, and the token was refused (401) once the run was stopped.
+
+A real model provider behind Harbor Pilot was not used. The event templates were tested on events captured from the
+same demo and with its own relay publishing into SpaceMan's Pulse-shaped test server, not a production Pulse.

@@ -91,8 +91,10 @@ SELECT g.credential_id, g.run_id, g.space_id, g.expires_at, CAST(coalesce(g.pare
 FROM gateway_revocations g WHERE g.state = 'pending' AND (g.parent_fp = sqlc.arg(parent_fp) OR g.parent_fp IS NULL)
 ORDER BY 1;
 
+-- Failed revocations whose tokens are still valid: a token past its expiry is dead whatever happened to its
+-- revocation, so the count (the connection's warning and the gauge) drops back once it expires.
 -- name: CountFailedGatewayRevocations :one
-SELECT count(*) FROM gateway_revocations WHERE state = 'failed';
+SELECT count(*) FROM gateway_revocations WHERE state = 'failed' AND expires_at > sqlc.arg(now);
 
 -- Lease loss (HP-T3): runs left unknown by a node that never came back keep live child tokens; the node's lease guard
 -- stops them once the lease and its grace pass. The earliest lease expiry among such runs.
@@ -108,6 +110,10 @@ JOIN execution_leases l ON l.space_id = r.space_id
 JOIN run_gateway_credentials c ON c.run_id = r.id
 WHERE r.observed = 'unknown' AND c.token_enc IS NOT NULL AND l.expires_at <= sqlc.arg(before)
 ORDER BY r.id;
+
+-- When the next failed revocation's token expires (0: none), so the failed count drops back on time.
+-- name: NextFailedGatewayRevocationExpiry :one
+SELECT CAST(coalesce(min(expires_at), 0) AS INTEGER) FROM gateway_revocations WHERE state = 'failed' AND expires_at > sqlc.arg(now);
 
 -- name: NextGatewayRevocation :one
 SELECT CAST(coalesce(min(next_attempt_at), 0) AS INTEGER) FROM gateway_revocations WHERE state = 'pending';

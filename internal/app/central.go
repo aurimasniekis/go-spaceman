@@ -156,9 +156,6 @@ type Options struct {
 	// StoreReaders overrides the store's reader pool size (0 keeps the default, max(4, GOMAXPROCS)). Opening the store
 	// opens and checks every reader connection, which on a many-core host under the race detector takes seconds.
 	StoreReaders int
-	// GatewayMinMinor lowers the node protocol minor gateway launches are dispatched to (fleet.Options.GatewayMinMinor;
-	// tests of token delivery over a scripted node, before an agent speaks proto.MinorGatewayToken).
-	GatewayMinMinor int
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -225,7 +222,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{Metrics: m})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
-		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock, GatewayMinMinor: o.GatewayMinMinor,
+		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
 		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
@@ -523,6 +520,9 @@ const (
 )
 
 // Close closes node connections, then releases storage and the data-directory lock.
+// mintShutdownGrace is how long Close lets background gateway mints finish before it cancels them.
+const mintShutdownGrace = 5 * time.Second
+
 func (c *Central) Close() error {
 	if c.Backups != nil {
 		c.Backups.Wait()
@@ -532,6 +532,7 @@ func (c *Central) Close() error {
 	}
 	if c.Fleet != nil {
 		c.Fleet.Hub().CloseAll("central shutting down")
+		c.Fleet.Hub().StopMints(mintShutdownGrace)
 		c.Fleet.Recordings().Close()
 	}
 	if c.Gateway != nil {

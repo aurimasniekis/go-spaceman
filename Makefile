@@ -160,7 +160,7 @@ PORCH_SRC ?= $(SIBLINGS)/porch
 PULSE_SRC ?= $(SIBLINGS)/pulse
 PULSE_GITHUB_SRC ?= $(SIBLINGS)/pulse-github
 
-.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd test-harbor-pilot
+.PHONY: test-real-porch test-real-pulse test-real-s3 test-real-s3-external test-real-codex test-real-systemd test-harbor-pilot test-real-harbor-pilot
 # Real Porch (built from PORCH_SRC into a temp dir, with Porch's own fake Google upstream): SpaceMan OIDC sign-in.
 test-real-porch:
 	SPACEMAN_REAL_PORCH=1 SPACEMAN_PORCH_SRC=$(PORCH_SRC) $(GO) test -tags real -count=1 -timeout 15m -run '^TestRealPorch' -v ./test/real/
@@ -193,6 +193,13 @@ test-real-codex:
 # internal/app covers the run-token lifecycle (mint at dispatch, revoke at the end) over a scripted node.
 test-harbor-pilot:
 	SPACEMAN_HARBOR_PILOT=1 $(GO) test -count=1 -timeout 15m -run '^TestRealHarborPilot' -v ./internal/harborpilot/... ./internal/events/ ./internal/app/
+
+# Real Claude Code and Codex runs through SpaceMan (real central, agent, herdr-core and launcher shim) and the real
+# gateway above. No provider credentials and no cost (synthetic upstreams). Codex from SPACEMAN_REAL_CODEX_BIN or PATH
+# (npm install --prefix <dir> @openai/codex@0.166.0 works without root).
+test-real-harbor-pilot:
+	env -u HC_TERMINAL_ID -u HC_TERMINAL_SOCKET -u HC_SCOPE SPACEMAN_REAL=1 SPACEMAN_HARBOR_PILOT=1 $(GO) test -tags real -count=1 -timeout 15m \
+	  -run '^TestRealHarborPilotGatewayRuns$$' -v ./test/real/
 
 # Linux/systemd: a Debian 13 container with systemd as PID 1 running the linux release binary and the shipped units.
 test-real-systemd:

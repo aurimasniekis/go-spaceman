@@ -80,15 +80,27 @@
   after the first refresh. The copy stays on the node (0600, readable by the agent's user and root) and is not removed
   when the account is deleted. A real ChatGPT login has not been used: the layout was verified with codex-cli 0.166.0
   using an API-key file (ADR-0053, SM-ACCT-002).
-- **No real Codex run yet.** The Codex adapter is tested with fakes; only Claude Code has real-run evidence. codex-cli
-  0.166.0 is installed on the development machine, but there is no Codex or OpenAI credential to run it with.
+- **No real Codex run on an OpenAI account yet.** There is no Codex or OpenAI credential to run with. Real codex-cli
+  0.166.0 runs through SpaceMan were made only against Harbor Pilot `serve --demo` with synthetic upstreams
+  (`TestRealHarborPilotGatewayRuns`, 2026-11-08). They show the launch through the shim, a model turn and a second
+  prompt by safe input, but not an API-key or ChatGPT login.
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
 ## Harbor Pilot gateway
-- **Gateway runs fail until HP-T4.** Central mints, stores and revokes run tokens (HP-T3), but no node agent delivers
-  them to a harness yet (protocol minor 9, HP-T4). Central therefore fails every launch of a routed harness as
-  `agent_too_old` before minting, rather than let the harness start on the node's own login (ADR-0060, Proposed).
+- **Gateway runs need updated agents.** A node agent below protocol minor 9 can't hand the token to a harness, so
+  central fails a routed launch to it as `agent_too_old` before minting, rather than let the harness start on the
+  node's own login (ADR-0060, Proposed). Update every node of a space before opting the space in.
+- **Codex's default model may not be routed.** A gateway Codex run without a model uses Codex's own default
+  (`gpt-6.1-sol` in 0.166.0), which a Harbor Pilot plan may not route: the demo answers 403 "no eligible account". Set
+  the role's model, or the space's allowed models, to one the plan routes. SpaceMan doesn't pick one.
+- **Repository and harness-written settings are not checked.** In a gateway run SpaceMan refuses Claude Code profile
+  settings that add a credential or endpoint, and removes stored logins. It does not inspect a Claude Code project
+  `.claude/settings.json` in the run's working directory (repository content), keys Claude Code or the agent wrote
+  into the instance's own `settings.json`, or a Codex `config.toml` in `CODEX_HOME`. Whether a project file's `env`
+  can redirect Claude Code's base URL was not tested. The same holds for direct accounts (THREAT_MODEL T-36).
+- **The run can read its own token.** A gateway run's token is in its harness's environment, as account credentials
+  are. It is bound to the run in Harbor Pilot and revoked when the run ends, but stays usable until then.
 - **A crash right after a mint leaves an untracked token.** If central stops between Harbor Pilot's answer to a mint
   and the transaction that stores the token, nothing records that child token. It stays valid until its TTL (the
   space's token lifetime, 24 h by default) unless it, or the parent, is revoked in Harbor Pilot.

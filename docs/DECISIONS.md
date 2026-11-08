@@ -2317,7 +2317,8 @@
   control proposed. Implemented so far (HP-T2): the connection and space settings (decision 1; decision 2 for
   the stored tokens; decision 3's central-side rules) and the version probe of decision 8. HP-T3: central's side of
   decisions 4 and 5 (routing without fallback, mint-or-reuse at dispatch, revocation on every end path; see
-  "Implementation notes (HP-T3)" below). Harnesses get the token from HP-T4 on; the budget pre-check is HP-T5. Contract:
+  "Implementation notes (HP-T3)" below). HP-T4: decision 6, delivery to the harness on the node (protocol minor 9; see
+  "Implementation notes (HP-T4)" below). The budget pre-check is HP-T5. Contract:
   `docs/contracts/harbor-pilot.md` (v0.1.3); live spike: `docs/contracts/harnesses.md` (Harbor Pilot gateway spike, and
   the 0.1.3 re-run).
   - **Updated 2026-11-07 for Harbor Pilot 0.1.2/0.1.3**, which answered SpaceMan's upstream requests (Q5): per-run usage
@@ -2510,7 +2511,10 @@
     transaction, and a node that stays offline past the TTL would receive an expired token. Early refusal comes from a
     pre-check instead.
 - **Open points:**
-  - **HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces? Not decided.**
+  - ~~**HP-T4: should the gateway env win over a profile's env in gateway-enabled spaces?**~~ **Settled in HP-T4
+    (2026-11-08) by control's instruction that no other Anthropic or Claude credential may sit next to the gateway's:
+    the second option, refused, done on the node** (see "Implementation notes (HP-T4)"). The operator can still revisit
+    this when accepting the ADR.
     - ADR-0059 lets a claude-code profile's `claude_settings.env` set any variable, `ANTHROPIC_BASE_URL` included. The
       operator accepted this on 2026-11-07 (ADR-0059 accepted risk, THREAT_MODEL T-32).
     - In a space with HP enabled for Claude Code, a profile `env` could point a run's model traffic away from HP or
@@ -2579,17 +2583,54 @@
   - **Agents before HP-T4 are refused (review F2, 2026-11-07).** A node whose agent doesn't know
     `SPACEMAN_GATEWAY_TOKEN` drops it, and the harness then starts on whatever login the node user has. That is a
     fallback to a direct account, which Q1 forbids. A gateway launch to a node below `proto.MinorGatewayToken` (9)
-    therefore fails as `agent_too_old`, before anything is minted. 9 is above `MaxMinor` (8) until HP-T4 ships, so
-    until then every gateway launch fails this way, and opting a space in only makes its routed runs fail.
-    `fleet.Options.GatewayMinMinor` is a code-only seam that lets tests check token delivery over a scripted node.
+    therefore fails as `agent_too_old`, before anything is minted: "gateway runs need protocol minor 9, which delivers
+    the run's token to the harness; the node negotiated 8: upgrade its agent". HP-T4 raised `MaxMinor` to 9 and removed
+    the test-only `GatewayMinMinor` seam that HP-T3 needed before any agent spoke minor 9.
   - **Dispatch is never held up by a mint (review F3).** A node's dispatch loop waits at most 5 s
     (`fleet.Options.GatewayMintWait`) for a token. A slower mint (Harbor Pilot retries take about 75 s at worst) goes
     on in the background, once per run and bounded to 2 min. The launch stays pending, the node's other commands
     (stops and kills included) are sent, and the finished mint kicks the loop, which then reuses the stored token.
+    Only the pass that starts a mint waits for it; while it runs, later passes skip that launch at once, so many slow
+    mints don't add up before a stop (HP-T3 review N1, fixed in HP-T4). Central's shutdown waits up to 5 s for
+    background mints, then cancels the rest and waits for them before it closes the store. A cancelled mint that already
+    reached Harbor Pilot still queues its credential for revocation (N3).
+  - **Failed revocations decay (HP-T3 review N2, fixed in HP-T4).** `failed_revocations` and the gauge count only
+    failed rows whose token hasn't expired yet. The deadline timer also wakes at the next such expiry, so the gauge
+    drops back without other activity. The rows are kept for the record.
   - **Known gaps.** A crash between a successful mint and the transaction that stores the token leaves a child that
     SpaceMan doesn't track; it stays valid until its TTL. The deadline timer that runs the revoker and the lease-loss
     sweep runs only in `spaceman serve`; anything queued by another process is done at the next `serve` start. Both
     are in LIMITATIONS.
+- **Implementation notes (HP-T4, 2026-11-08).** Decision 6 on the node; none weakens it.
+  - **Wire shape (minor 9).** At dispatch, central adds `gateway: {kind: "harbor-pilot", base_url, allow_insecure_http}`
+    to the launch next to `secrets[SPACEMAN_GATEWAY_TOKEN]`. `base_url` is the connection's `run_base_url`, or its
+    `base_url`. The plan's `kind: anthropic | openai-responses` was not used: the harness, not the gateway, decides the
+    API, so the kind names the gateway. The address is read at dispatch (`fleet.Gateway.Address`), after the token.
+    Moving the gateway needs the parent token again, which revokes every run token (decision 2), so a launch never
+    carries a token to an address it wasn't minted for. Both are dispatch-time only: the stored command has neither.
+  - **The node checks before it writes the secrets file.** `proto.GatewayLaunch.Origin`: absolute https, no
+    credentials, query or fragment; plain http only with `allow_insecure_http`, and no loopback exemption. A launch
+    whose token and address don't travel together, or that carries any other secret or names an account, is refused
+    (`build launch`). That would be a central bug, and the node doesn't guess.
+  - **Claude Code.** `SecretEnv` is exactly `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`. The shim scrubs every
+    inherited `ANTHROPIC_*`, and now also `HARBOR_PILOT_TOKEN` and `SPACEMAN_GATEWAY_TOKEN`. The ADR-0021 seed is kept.
+    A stored login (`$CLAUDE_CONFIG_DIR/.credentials.json`, from a `/login` inside an earlier run) is removed before
+    the launch. A profile whose `claude_settings` would add another credential or endpoint fails the launch with the
+    key named. That covers `apiKeyHelper`, `proxyAuthHelper`, `awsCredentialExport`, `awsAuthRefresh`, `gcpAuthRefresh`
+    and `forceLoginMethod` (from the 2.1.317 settings schema), and `env` entries `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_*`
+    and `CLAUDE_CODE_USE_*` (Bedrock, Vertex, Foundry). The check is on the node, so it holds whatever central sent.
+  - **Codex.** The five `-c model_provider…` overrides from the HP-T1 spike, `base_url = <origin>/v1`, and
+    `HARBOR_PILOT_TOKEN` in `SecretEnv`. No `auth.json` is written. Any `auth.json` in the instance's `CODEX_HOME` is
+    removed, and the launch fails if it is still there. That covers an ADR-0054 API-key file, and a link to an ADR-0053
+    login, whose `auth.lock` link goes too.
+  - **Codex's shell snapshot is off for every Codex run** (`-c features.shell_snapshot=false`). The real HP-T4 run found
+    that codex-cli 0.166.0 writes the run's environment, `HARBOR_PILOT_TOKEN` and `SPACEMAN_RUN_TOKEN` included, to
+    `$CODEX_HOME/shell_snapshots/*.sh`, where it outlives the run (`docs/contracts/harnesses.md`, THREAT_MODEL T-36).
+  - **Model choice.** Not changed. Codex's own default model may not be routed by the plan (the demo refuses it with
+    403), so a gateway Codex run needs the role's model or the space's allowed aliases. This is in LIMITATIONS.
+  - **Evidence.** Unit tests (`internal/harness`, `internal/proto`, `internal/agent`, `internal/fleet`), the fleet e2e
+    test with the real node agent (`TestHarborPilotGatewayDeliveryOnNode`), and real Claude Code 2.1.317 and codex-cli
+    0.166.0 runs through SpaceMan against `serve --demo` v0.1.3 (`TestRealHarborPilotGatewayRuns`, 2026-11-08).
 - **Operator questions and answers (asked and answered 2026-11-06):**
   - **Q1, fallback to a direct account:** never.
   - **Q2, token TTL:** 24 h by default, set per space between 15 min and 7 days.
