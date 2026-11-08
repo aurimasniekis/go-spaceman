@@ -58,6 +58,9 @@ type Options struct {
 	// OnSpacePurged is called after a space was purged, with its runs' IDs, to delete artifacts kept elsewhere
 	// (transcripts). Nil: nothing more is deleted.
 	OnSpacePurged func(ctx context.Context, runIDs []string)
+	// OnRunLaunched is called after a launch committed (the run exists, pending): a response held for the run's agent
+	// instance can be pinned to it at once.
+	OnRunLaunched func(runID string)
 	// OnRunEnded is called after a run was recorded as ended (exited, failed or lost).
 	OnRunEnded func(runID string)
 	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.

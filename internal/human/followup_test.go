@@ -3,6 +3,7 @@ package human
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -479,6 +480,45 @@ func TestDeadlineLoop(t *testing.T) {
 	f.svc.Kick() // never blocks
 	f.svc.Kick()
 	_ = json.RawMessage{}
+}
+
+// A round in which a job failed is tried again soon, without a kick: what it left undone (a stranded response) does
+// not wait for the next deadline, which can be an hour away.
+func TestDeadlineLoopRetriesAFailedRound(t *testing.T) {
+	f := newFx(t)
+	defer func(first, maxWait time.Duration) { retryFirst, retryMax = first, maxWait }(retryFirst, retryMax)
+	retryFirst, retryMax = 10*time.Millisecond, 40*time.Millisecond
+	calls := make(chan int, 10)
+	n := 0
+	extra := Deadline{Name: "flaky", Next: func(context.Context) (time.Time, error) { return time.Time{}, nil },
+		Due: func(context.Context) (int, error) {
+			n++
+			calls <- n
+			if n < 4 {
+				return 0, errors.New("transient")
+			}
+			return 0, nil
+		}}
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { f.svc.Run(ctx, extra); close(done) }()
+	defer func() { cancel(); <-done }()
+	for want := 1; want <= 4; want++ {
+		select {
+		case got := <-calls:
+			if got != want {
+				t.Fatalf("round %d, want %d", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d not retried", want)
+		}
+	}
+	// After a round that succeeded, the loop waits for the next deadline (idle here) again.
+	select {
+	case got := <-calls:
+		t.Fatalf("round %d after a successful one", got)
+	case <-time.After(200 * time.Millisecond):
+	}
 }
 
 // ADR-0056: with control auto-start on, a response whose run is gone goes to control even while no control runs (it
