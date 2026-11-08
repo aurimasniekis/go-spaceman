@@ -192,7 +192,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   hook can only deny, never allow, so an `ask` rule now works like a deny. Each run also gets its own space folder
   (`<data_dir>/spaces/<space>`, only that one) in `permissions.additionalDirectories`, with `Read` and `Edit` denied
   for the instances' login files in it. Its file tools can't edit:
-  - other instances' folders;
+  - other instances' folders (up to 50 other instances; beyond that, only the next item applies);
   - any instance's settings or other harness configuration (`settings.json`, `.claude.json`, `CLAUDE.md`, agents,
     commands, skills, plugins, hooks, Codex's config dir).
 

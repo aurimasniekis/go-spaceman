@@ -3288,7 +3288,8 @@
     classifier (verified live with Claude Code 2.1.317 in `acceptEdits`), and a key planted there (`disableAllHooks`,
     `env.ANTHROPIC_BASE_URL`, `apiKeyHelper`, …) took effect at that instance's next launch. Now:
     - every instance folder other than the run's own that exists at launch gets `Edit(//<space>/instances/<id>/**)`
-      (its settings, memory and transcripts);
+      (its settings, memory and transcripts), up to 50 of them. With more, a run gets none of them, so the settings stay
+      bounded, and only the next two measures apply;
     - every instance, the run's own included, gets `Edit` deny rules for the files that configure the harness:
       `claude/settings.json`, `settings.local.json`, the keys record, `.claude.json`, `CLAUDE.md`, `agents/`,
       `commands/`, `skills/`, `plugins/`, `output-styles/`, `hooks/`, and all of `codex/`. These also cover an instance
@@ -3307,7 +3308,9 @@
     `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `processWrapper`, `statusLine`, `subagentStatusLine`,
     `fileSuggestion`, `sshHostCommands`, `permissions`, `autoMode`, `sandbox`, the plugin and project-MCP keys,
     `allowedHttpHookUrls`, `httpHookAllowedEnvVars`, `autoMemoryDirectory`). Keys Claude Code keeps there itself
-    (`feedbackSurveyState`, `model` and the like) stay. A removal is logged with the key names, never the values.
+    (`feedbackSurveyState`, `model` and the like) stay. A removal is logged with the key names, never the values. It
+    doesn't depend on the keys record, so settings planted in a new instance's folder before its first launch are
+    stripped at that launch too.
   - **The hook fails closed** (review fix S1). The command is
     `'<agent>' hook permission-request 2>/dev/null || printf '%s' '<fixed deny>'`. When the binary is missing, crashes or
     exits non-zero, the run still gets a deny, not a dialog: Claude Code shows the dialog for a failed hook, and exit
@@ -3335,8 +3338,11 @@
     configuration (M1 above). This is wider than before. The shell runs as the same OS user, but every shell command
     goes through auto mode's classifier (or a dialog in other modes), so the shell did not already reach these files
     without a check. File tools inside a working directory skip both.
-  - **Accepted residuals.** Reading other instances' transcripts. Writing the memory and transcripts of an instance
-    created after the run launched, until the run's next launch.
+  - **Accepted residuals.**
+    - Reading other instances' transcripts.
+    - Writing the memory and transcripts of an instance created after the run launched, until the run's next launch.
+      Its settings are never writable this way.
+    - In a space with more than 50 other instances, writing every other instance's memory and transcripts.
   - **Hook precedence and profile hooks** (S2). A profile that sets `disableAllHooks` turns SpaceMan's hook off too.
     When the profile has its own `PermissionRequest` hook, Claude Code runs both. Outside auto mode the first answer
     wins, so a profile hook that allows can win over SpaceMan's deny. In auto mode Claude Code ignores any hook's

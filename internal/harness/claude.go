@@ -168,6 +168,11 @@ var ClaudeSpaceProtectedFiles = []string{
 	"instances/*/codex/**",
 }
 
+// MaxInstanceDenyRules caps the per-instance Edit deny rules a run gets: with more other instances than this, it gets
+// none of them, only the rules for every instance's harness configuration (ClaudeSpaceProtectedFiles) and the key
+// stripping at launch, so other instances' memory and transcripts are then writable (ADR-0068, T-40).
+const MaxInstanceDenyRules = 50
+
 // globUnsafe are the characters a path must not hold to be used in a Claude Code permission-rule glob: escaping them is
 // not documented, so a space folder or instance name with one gets no directory at all (N2).
 const globUnsafe = "*?[]{}\\!"
@@ -178,7 +183,8 @@ const globUnsafe = "*?[]{}\\!"
 // the run's file tools away from the instances' config dirs: Read and Edit for the login files
 // (ClaudeSpaceCredentialFiles), Edit for the harness configuration of every instance (ClaudeSpaceProtectedFiles) and
 // Edit for the whole folder of every other instance that exists at launch (instances, listing the space's instances
-// folder, without the run's own, configDir's name): their settings, memory and transcripts. A space folder holding a
+// folder, without the run's own, configDir's name): their settings, memory and transcripts; at most
+// MaxInstanceDenyRules of them, else none. A space folder holding a
 // glob character gets no directory and no rules, since the rules could not be written exactly; a folder in instances
 // named with one is not an instance and is skipped. The
 // profile's directories and deny rules come first and are kept, duplicates are dropped and every other permissions key
@@ -200,6 +206,11 @@ func addSpaceDirectory(own map[string]any, spaceDir, configDir string, instances
 		}
 	}
 	slices.Sort(others)
+	if len(others) > MaxInstanceDenyRules {
+		// A space with very many instances would get a settings file that grows with each one: the named configuration
+		// paths and the key stripping at launch still cover every instance's settings (T-40).
+		others = nil
+	}
 	perms := map[string]any{}
 	if cur, ok := own["permissions"].(map[string]any); ok {
 		for k, v := range cur {

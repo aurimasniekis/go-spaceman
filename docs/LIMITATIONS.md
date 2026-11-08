@@ -326,7 +326,9 @@
   Every instance's harness configuration is denied to edits, the run's own included. The Claude Code and Codex login
   files are denied entirely. Two gaps remain:
   - an instance created after the run started has its memory and transcripts writable by that run until the run's next
-    launch;
+    launch (its settings are not);
+  - in a space with more than 50 other instances, a run gets no per-instance rules, so the memory and transcripts of
+    every other instance are writable;
   - the node strips dangerous settings keys at every launch, but keeps keys the profile set.
 
   This is wider than before: the shell runs as the same OS user, but each shell command passes auto mode's classifier,

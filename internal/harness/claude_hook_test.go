@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,6 +185,25 @@ func TestClaudeDeniesOtherInstances(t *testing.T) {
 			t.Fatalf("%s: %v", space, p)
 		}
 	}
+	// More other instances than MaxInstanceDenyRules: no per-instance rules (the list stays bounded), the named
+	// configuration paths stay; exactly the cap still gets them all.
+	for _, n := range []int{MaxInstanceDenyRules, MaxInstanceDenyRules + 1} {
+		c := ctxFor(proto.LaunchPayload{Kind: "worker"})
+		c.SpaceInstances = []string{"ins_1"}
+		for i := range n {
+			c.SpaceInstances = append(c.SpaceInstances, fmt.Sprintf("ins_x%03d", i))
+		}
+		l, _ := Claude{}.Build(c)
+		deny := l.OwnJSON[cfgSettings]["permissions"].(map[string]any)["deny"].([]string)
+		want := len(withCreds("AskUserQuestion", "EnterPlanMode"))
+		if n == MaxInstanceDenyRules {
+			want += n
+		}
+		if len(deny) != want || !slices.Contains(deny, "Edit(//data/spaces/spc_a/instances/*/claude/settings.json)") {
+			t.Fatalf("%d instances: %d rules", n, len(deny))
+		}
+	}
+
 	// A folder in instances named with a glob character is not an instance: skipped, the directory and rules stay.
 	c = ctxFor(proto.LaunchPayload{Kind: "worker"})
 	c.SpaceInstances = []string{"ins_1", "ins_2", "x*", "in?_3", "ins_[4]", "a{b}"}
