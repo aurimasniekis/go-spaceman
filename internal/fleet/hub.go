@@ -763,46 +763,73 @@ func (h *Hub) credentialLoop(ctx context.Context, s *session) {
 	}
 }
 
+// dispatchRetryFirst and dispatchRetryMax bound the backoff after a pass that left a command undelivered for a
+// transient reason (a failed read, secrets that could not be resolved): the pass is repeated on its own instead of
+// waiting for the next kick, which may never come.
+var dispatchRetryFirst, dispatchRetryMax = 250 * time.Millisecond, 30 * time.Second
+
 // dispatchLoop delivers undelivered commands whenever kicked. Delivery is at-least-once: a command stays "sent"
 // until acknowledged and is re-sent on the next connection; the node acknowledges repeats as duplicates.
 func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
+	var again <-chan time.Time
+	backoff := time.Duration(0)
 	for {
 		select {
 		case <-s.done:
 			return
 		case <-s.kick:
+		case <-again:
 		}
-		if err := h.syncLeases(ctx, s, nil); err != nil {
-			s.log.Warn("lease sync", obs.Err(err))
+		retry, ok := h.dispatch(ctx, s)
+		if !ok {
+			return
 		}
-		cmds, err := h.svc.s.R().ListUndeliveredCommands(ctx, s.nodeID)
-		if err != nil {
-			s.log.Warn("list commands", obs.Err(err))
-			continue
-		}
-		for _, c := range cmds {
-			msg, err := h.materialize(ctx, c, s.nodeID, s.minor)
-			if endReason := undispatchable(err); endReason != "" && c.RunID.Valid {
-				if ferr := h.svc.failUndispatched(ctx, c.RunID.String, endReason, err.Error()); ferr != nil {
-					s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
-				}
-				continue
-			}
-			if errors.Is(err, errMintPending) {
-				continue // the mint kicks this loop when it is done
-			}
-			if err != nil {
-				s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
-				continue
-			}
-			if err := s.send(proto.TypeCommand, h.svc.now(), msg); err != nil {
-				return
-			}
-			_ = h.svc.s.W().TxNamed(ctx, "fleet.command_sent", func(tx *store.Tx) error {
-				return tx.Q.MarkCommandSent(ctx, db.MarkCommandSentParams{SentAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: c.ID})
-			})
+		again = nil
+		if retry {
+			backoff = min(max(2*backoff, dispatchRetryFirst), dispatchRetryMax)
+			again = time.After(backoff)
+		} else {
+			backoff = 0
 		}
 	}
+}
+
+// dispatch is one pass of dispatchLoop. retry reports a command left undelivered for a transient reason; ok is false
+// once the connection is gone.
+func (h *Hub) dispatch(ctx context.Context, s *session) (retry, ok bool) {
+	if err := h.syncLeases(ctx, s, nil); err != nil {
+		s.log.Warn("lease sync", obs.Err(err))
+	}
+	cmds, err := h.svc.s.R().ListUndeliveredCommands(ctx, s.nodeID)
+	if err != nil {
+		s.log.Warn("list commands", obs.Err(err))
+		return true, true
+	}
+	for _, c := range cmds {
+		msg, err := h.materialize(ctx, c, s.nodeID, s.minor)
+		if endReason := undispatchable(err); endReason != "" && c.RunID.Valid {
+			if ferr := h.svc.failUndispatched(ctx, c.RunID.String, endReason, err.Error()); ferr != nil {
+				s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
+				retry = true
+			}
+			continue
+		}
+		if errors.Is(err, errMintPending) {
+			continue // the mint kicks this loop when it is done
+		}
+		if err != nil {
+			s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
+			retry = true
+			continue
+		}
+		if err := s.send(proto.TypeCommand, h.svc.now(), msg); err != nil {
+			return false, false
+		}
+		_ = h.svc.s.W().TxNamed(ctx, "fleet.command_sent", func(tx *store.Tx) error {
+			return tx.Q.MarkCommandSent(ctx, db.MarkCommandSentParams{SentAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: c.ID})
+		})
+	}
+	return retry, true
 }
 
 // undispatchable returns the end reason for a materialize error that fails the run instead of retrying it, or "".
