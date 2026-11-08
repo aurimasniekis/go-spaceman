@@ -10,6 +10,10 @@ come from the run's credential; tool arguments can never name another space.
 Runs of a role granted an external MCP server also see that server's tools in the same SpaceMan server, named
 `<server>__<tool>`; see [MCP gateway](./mcp-gateway).
 
+Agents ask people with `spaceman_human_ask`, never through an interactive terminal prompt: nobody may be watching the
+run's terminal, so the run would wait silently. Every run's orientation says so, and Claude Code runs don't get Claude
+Code's own question picker (`AskUserQuestion`); see [Human actions](./human-actions#agents-ask-here-not-in-the-terminal).
+
 | Tool | What it does | Control | Worker | KB, dreamer | Diagnostic |
 |---|---|:-:|:-:|:-:|:-:|
 | `spaceman_whoami` | The run's identity: run, space, role, kind, harness | ✓ | ✓ | ✓ | ✓ |

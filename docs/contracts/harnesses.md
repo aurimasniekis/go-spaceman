@@ -54,6 +54,14 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   `"tui": "fullscreen"` gave `alternate_on=1`, `mouse_any_flag=1`, `mouse_sgr_flag=1`; `"tui": "default"` gave 0, 0, 0.
   The "Scroll wheel is sending arrow keys" hint did not show for bursts of `ESC[A` in an empty, signed-out session
   (it is in the operator's screenshot of a real run).
+- **Terminal question picker denied (ADR-0066, verified 2026-11-08 with Claude Code 2.1.317, live, no model):**
+  `AskUserQuestion` draws its picker in the terminal and waits there. A whole-tool rule in `settings.json`
+  `permissions.deny` drops it from the tools Claude Code sends (`filterToolsByDenyRules`). Checked in an isolated tmux
+  session (fresh `HOME` and `CLAUDE_CONFIG_DIR`, `DISABLE_AUTOUPDATER=1`, onboarding and folder trust seeded,
+  `ANTHROPIC_BASE_URL` pointing to a local fake API that answered 400 and recorded each request's tool names,
+  `ANTHROPIC_AUTH_TOKEN` a dummy): without the rule every request carried `AskUserQuestion` (13 and 25 tools); with
+  `{"permissions":{"deny":["AskUserQuestion"]}}` none did (12 and 24). Print mode (`-p`) never offers it. SpaceMan adds the
+  rule to every run unless the profile allows the tool itself.
 - **Skills (spike S-6, verified live 2026-11-02, `claude-haiku-5-5`, $0.0004 print-mode check):** Claude Code 2.1.316
   loads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (frontmatter `name`, `description`) and lists it among its skills.
   SpaceMan writes assigned skills there (SM-MCP-004).
@@ -100,6 +108,11 @@ for this inspection. Real-run evidence is recorded in `docs/TRACEABILITY.md` onc
   - Not verified: a real ChatGPT login (no account) and a real model turn.
   - Env `OPENAI_API_KEY` and `CODEX_API_KEY` (strings-verified).
 - **Notify hook:** `notify = [argv…]` in config.toml, called at turn end.
+- **Question tool (ADR-0066; code: codex-cli 0.166.0 binary strings, 2026-11-08, not run):** Codex has its own
+  blocking question tool, `request_user_input` (`core/src/tools/handlers/request_user_input.rs`). Its instructions offer it
+  in Plan mode, and in Default mode only with the `default_mode_request_user_input` feature; it is refused in `codex exec`.
+  There is also a `request_user_input_async` variant, and MCP tool approvals can use it (`mcp_tool_call_approval`).
+  SpaceMan runs start in Default mode and set no feature override for it (not verified against a live session).
 - **Status:** OSC 7501 emitter present.
 
 ## Harbor Pilot gateway spike (2026-11-06)

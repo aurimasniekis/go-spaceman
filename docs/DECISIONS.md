@@ -3169,7 +3169,45 @@
   typed into a terminal. The limits on reminders (50 pending, 30 days, auto-start's hourly cap) mean a control can't
   wake itself in a tight loop.
 
-### ADR-0066 — The System page: an administrator's view of the instance; the version stays public
+### ADR-0066 — Agents ask people only through human actions: Claude Code's terminal question picker denied by default
+- **Status:** Accepted, 2026-11-08 (operator request: a control run asked the operator through Claude Code's
+  AskUserQuestion picker in its terminal and then waited there; "we should somehow limit agents from doing this").
+- **Context:**
+  - Claude Code's `AskUserQuestion` tool draws a picker in the run's terminal and waits for an answer typed there.
+    SpaceMan runs are unattended: nobody may be watching the terminal, nothing reminds anyone, and the run stalls
+    silently. It also holds its slot and its idle-stop timer.
+  - `spaceman_human_ask` (SM-HUM-008) does the same job durably: the action is listed under Needs you, people are
+    reminded per policy, and the answer wakes the agent (SM-HUM-009).
+  - Claude Code drops a tool that a whole-tool `permissions.deny` rule names from the tools it sends to the model
+    (`filterToolsByDenyRules`). Verified with Claude Code 2.1.317 (2026-11-08, throwaway config dir, a local fake API
+    that recorded each request's tool list): an interactive session offered `AskUserQuestion` in every request without
+    the rule (13 and 25 tools) and in none with it (12 and 24). In print mode Claude Code doesn't offer it at all.
+- **Decision:**
+  - **Every Claude Code run SpaceMan launches** (control, worker, KB, dreamer, diagnostic) gets `AskUserQuestion` in
+    `permissions.deny` of the run's own `settings.json`. The adapter adds it after the profile's Claude Code settings
+    (ADR-0059): the profile's other permission keys and deny rules are kept, an existing entry is not repeated, and
+    the profile's stored settings are not changed. The model never sees the tool, so it never tries it.
+  - **Opt-in:** a profile that lists `AskUserQuestion` in its own `permissions.allow` gets no deny (a deny would win
+    over its allow). That is the only way back; the default is not a setting.
+  - **Prompts:** SpaceMan's own orientation (the first section of every run's system text) and the starter role prompts
+    say "Never ask through an interactive terminal prompt; use spaceman_human_ask". The orientation reaches existing
+    installations; starter prompts already seeded are not rewritten (ADR-0051).
+  - **Codex:** codex-cli 0.166.0 has its own question tool, `request_user_input`, offered in Plan mode and in Default
+    mode only with a feature flag (`default_mode_request_user_input`); found in the binary's strings, not run. Runs start
+    in Default mode, and the orientation tells Codex agents the same. SpaceMan sets no override for it yet (unverified
+    against a live session; LIMITATIONS).
+- **Alternatives:**
+  - **`--disallowedTools AskUserQuestion` on the command line:** the same effect, but a profile could not opt back in,
+    and the run's settings would not show it.
+  - **Prompt guidance only:** the operator's run already had human actions and used the picker anyway.
+  - **Detecting a waiting picker and raising an attention item:** useful for prompts SpaceMan can't deny (a harness's
+    own permission dialog, Codex), but it needs a reliable "waiting for input" signal from the terminal. A follow-up
+    (LIMITATIONS).
+- **Consequences:** no new authority, no protocol change. The deny is written by the node when it builds the launch,
+  so it takes nodes on this release or later; runs on older nodes still see the tool, and the profile's resolved
+  settings in the API don't show the deny. Claude Code's own permission dialogs are unchanged (they follow the
+  permission mode).
+### ADR-0067 — The System page: an administrator's view of the instance; the version stays public
 - **Status:** Accepted, 2026-11-08 (operator request for v0.1.0: a System page like Hallpass's, and a version API).
 - **Context:**
   - Hallpass's System page shows lockdown, storage, break-glass, version, boot ID, policy version and live counts;
