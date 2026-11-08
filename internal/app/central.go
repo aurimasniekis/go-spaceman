@@ -762,7 +762,7 @@ func (c *Central) Serve(ctx context.Context) error {
 	}
 	c.Health.MarkReady()
 	c.Log.Info("spaceman serving", slog.String("listen", c.Cfg.HTTP.Listen), slog.String("management", c.Cfg.HTTP.ManagementListen),
-		slog.String("public_url", c.Cfg.PublicURL))
+		slog.String("public_url", c.Cfg.PublicURL), slog.String("boot_id", c.BootID))
 
 	var runErr error
 	select {
