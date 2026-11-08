@@ -108,7 +108,8 @@ jobs:
         # 290 ms); the write-transaction guard is still enforced by the non-race coverage job (250 ms there, ADR-0062).
         env:
           SM_TEST_TX_MAX: 1s
-        run: make race
+        # RACE_COUNT=1: every test runs, never a cached pass from the restored build cache (only local runs cache).
+        run: make race RACE_COUNT=1
 
   coverage:
     name: go coverage floor

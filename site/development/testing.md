@@ -26,13 +26,18 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 | `ci` | nightly | all of the above with the full audit, and every fuzz target for 10 minutes |
 | `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
 
-Store-backed tests fail when a write transaction takes longer than 100 ms (Hallpass HP-DB-004), or the value of
-`SM_TEST_TX_MAX`. GitHub's hosted runners are slower, so the coverage steps in `ci` and `release` use 250 ms; the race
-steps use 1 s (ADR-0062).
+Store-backed tests fail when a write transaction holds the write lock for longer than 100 ms (Hallpass HP-DB-004), or
+the value of `SM_TEST_TX_MAX`. Time spent waiting for the writer and retrying a busy database doesn't count
+(ADR-0070). GitHub's hosted runners are slower, so the coverage steps in `ci` and `release` use 250 ms; the race steps
+use 1 s (ADR-0062).
+
+Locally, `make race` uses go test's cache, so it reruns only the packages whose code, dependencies or test inputs
+changed. CI and the release workflow run `make race RACE_COUNT=1`, which runs every test (ADR-0070). To rerun a
+suspected flake, run its package with `-count=1`.
 
 ### When a release gate fails
 
-- **`write transaction "…" took … (> 250ms, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
+- **`write transaction "…" held the write lock for … (> 250ms, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
   (`gh run rerun <run-id> --failed`). Hosted runners have noisy neighbours. If it fails again, or the same transaction
   shows up in several runs, treat it as a regression: run `make coverage` locally, where the limit is 100 ms, and move
   the slow work out of the transaction. Don't raise `SM_TEST_TX_MAX` to get a release through.

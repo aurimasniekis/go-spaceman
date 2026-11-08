@@ -28,8 +28,12 @@ test:
 # Most tests call t.Parallel; RACE_PARALLEL caps them per package (go test's default is GOMAXPROCS, multiplied by the
 # packages running at once), so a many-core machine doesn't starve leases and write transactions. 4 matches CI's runners.
 RACE_PARALLEL ?= 4
+# Locally the race run uses go test's cache, so rerunning `make check` after a change (or a merge) reruns only the
+# packages whose code, dependencies or test inputs changed. CI sets RACE_COUNT=1 so that every test runs there: its
+# build cache is restored between runs, and a cached pass must not stand in for a run on the commit under test.
+RACE_COUNT ?=
 race:
-	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race -count=1 -parallel $(RACE_PARALLEL) -timeout 30m ./...
+	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race $(if $(RACE_COUNT),-count=$(RACE_COUNT)) -parallel $(RACE_PARALLEL) -timeout 30m ./...
 
 $(BIN)/spaceman-vet: $(shell find tools -name '*.go' -not -path '*/testdata/*')
 	cd tools && $(GO) build -o ../$(BIN)/spaceman-vet ./cmd/spaceman-vet

@@ -58,6 +58,10 @@ Which check to run when (commands: [site/development/testing.md](site/developmen
   floor, then race tests; it stops at the first failure), on the final committed tree after merging the branch you
   target. Start it in the background and keep working on docs, the CHANGELOG and the PR text instead of waiting on it.
   Don't run it in a loop.
+- **The race run uses go test's cache locally:** `make race` (and so `make check`) reruns only the packages whose code,
+  dependencies or test inputs changed, so a second `make check` after a merge that touched no Go code costs little.
+  `make race RACE_COUNT=1` runs every test again, which CI and the release workflow always do. A cached pass is not
+  evidence for a flaky test: rerun that package with `-count=1`.
 - **Only when they are affected:** `make web-check` when `web/` changed. `make site-check` when `site/`, `docs/`, `web/`,
   `api/`, `CHANGELOG.md` or the `Makefile` changed (the rule CI uses for the accessibility audit). `make e2e` when UI
   behavior changed.

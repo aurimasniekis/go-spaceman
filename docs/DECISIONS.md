@@ -3412,6 +3412,58 @@
   - `check-fast` passing is not a pre-push signal: race tests and the strict coverage run happen only in `make check`
     and CI.
 
+### ADR-0070 — The write-transaction guard measures lock hold time; local race runs use the test cache (security-relevant change)
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, questions Q1 and Q2; subtask T3).
+  **Security-relevant change:** it changes what the evidence for Hallpass HP-DB-004 (short write transactions)
+  measures. The limits and the rule are unchanged.
+- **Context:**
+  - `storetest` fails a test when a successful write transaction takes longer than `MaxTxDuration` (100 ms by default,
+    `SM_TEST_TX_MAX`; ADR-0062). The duration it got from `store.Writer.TxNamed` started before the first attempt, so
+    it also counted the wait for the single writer connection (`MaxOpenConns(1)`), the wait for `BEGIN IMMEDIATE` to
+    acquire the database lock, and every `SQLITE_BUSY` retry with its backoff sleep.
+  - HP-DB-004 is about how long a transaction *holds* the writer: a long hold blocks every other write. Waiting for the
+    writer is a different property, already metered (HP-DB-003: `spaceman_store_writer_wait_seconds`,
+    `spaceman_store_writer_queue_depth`, `spaceman_store_tx_busy_retries_total`).
+  - Under CPU contention (parallel packages and tests, Argon2 in the auth tests, several gates on one node) the queueing
+    made short transactions look long. The guard failed on unchanged code, locally and on hosted runners, in whichever
+    transaction happened to queue behind another one.
+  - The race run passed `-count=1`, so every local `make race` (and `make check`) reran every package, even after a
+    merge that touched no Go code.
+- **Decision:**
+  - **The observer gets the lock hold time (Q2).** `store.TxObserver` now receives, for the attempt that ended the
+    transaction, the time from `BEGIN IMMEDIATE` returning (the lock is held) to the end of its commit or rollback. On
+    success that is how long the transaction held the writer; it includes the callback and the commit. It is zero when
+    the last attempt never got the lock. The `storetest` guard compares it with `MaxTxDuration` as before, and its
+    message now says `held the write lock for`.
+  - **Wait and retries stay in metrics.** `spaceman_store_tx_duration_seconds` keeps the end-to-end duration, retries
+    and waits included (its help text already said so); writer wait, queue depth and busy retries are unchanged.
+  - **Local race runs use go test's cache (Q1).** `make race` passes `-count` only when `RACE_COUNT` is set. CI's race
+    job and the release workflow run `make race RACE_COUNT=1`, so every test runs there on every commit; their build
+    cache is restored from earlier runs, and a cached pass must not stand in for a run on the commit under test.
+- **Alternatives:**
+  - **Keep measuring from before the first attempt and raise the limit:** it would hide real long holds in exactly the
+    runs where contention is low.
+  - **Measure from the start of the successful attempt**, pool wait included: still counts queueing for the in-process
+    writer connection, the larger share under `t.Parallel`.
+  - **Keep `-count=1` locally:** every rerun of `make check` repays the full race run (about 10 minutes on this
+    project's development nodes) for packages that didn't change.
+- **Consequences:**
+  - A transaction that waits behind another writer for longer than the limit no longer fails a test; one that holds
+    the writer for longer still does (`internal/store/storetest` `TestGuardCountsLockHoldNotWait`, `internal/store`
+    `TestTxObserverGetsLockHoldTime`). Starvation and queueing show up in the writer-wait metrics instead, and in tests
+    only when they make something time out.
+  - The full non-race suite passes at the 100 ms default (PLAN.md §3). Hold time still includes the commit's fsync
+    (`synchronous(FULL)`) and any time the holding goroutine is descheduled, so a heavily loaded machine can still
+    trip the guard: on a node where several other suites ran, single-statement transactions held 100–270 ms.
+    Those are real holds and the guard reports them.
+  - A local cached race pass can come from an earlier run of the same package build and inputs. A flaky test is judged
+    with `-count=1` (AGENTS.md "Gates").
+  - **Follow-up: re-evaluate ADR-0062's 250 ms on hosted CI and the race relaxations** (500 ms in `make race`, 1 s in
+    CI's race job and the release gate). Those values were set against the old measurement, whose failures were
+    mostly queueing. Collect the guard's failures (if any) and the hold times of the slowest transactions on hosted CI
+    over a couple of weeks of runs with this change; if the coverage job holds 100 ms there and the race jobs hold
+    their limits with margin, lower them in a separate ADR. Until then they stay as they are.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

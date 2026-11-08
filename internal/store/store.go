@@ -46,7 +46,7 @@ type Options struct {
 	SkipMigrate bool
 	Logger      *slog.Logger
 	Clock       clock.Clock
-	// TxObserver, if set, receives the duration and outcome of every write transaction.
+	// TxObserver, if set, receives the lock hold time and outcome of every write transaction (see TxObserver).
 	TxObserver TxObserver
 	// Metrics, if set, records write transaction duration and results, busy retries and writer wait time
 	// (Hallpass HP-DB-003, Hallpass HP-DB-004). Nil disables metrics.

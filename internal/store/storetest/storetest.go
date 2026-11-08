@@ -15,7 +15,8 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
-// MaxTxDuration is the longest a write transaction may take in tests (Hallpass HP-DB-004).
+// MaxTxDuration is the longest a write transaction may hold the write lock in tests (Hallpass HP-DB-004). Time spent
+// waiting for the writer and SQLITE_BUSY retries does not count (ADR-0070).
 // SM_TEST_TX_MAX overrides it for slow runners; the default matches the requirement. CI on GitHub's hosted runners uses
 // 250ms (ADR-0062), the race steps more.
 var MaxTxDuration = func() time.Duration {
@@ -35,7 +36,7 @@ func WithClock(c clock.Clock) Option { return func(o *store.Options) { o.Clock =
 func WithDir(dir string) Option { return func(o *store.Options) { o.DataDir = dir } }
 
 // Open opens a store in a new temporary data directory and closes it at test cleanup. Any successful write
-// transaction slower than MaxTxDuration fails the test.
+// transaction that holds the write lock for longer than MaxTxDuration fails the test.
 func Open(t testing.TB, opts ...Option) *store.Store {
 	t.Helper()
 	var mu sync.Mutex
@@ -45,7 +46,7 @@ func Open(t testing.TB, opts ...Option) *store.Store {
 			if err == nil && d > MaxTxDuration {
 				mu.Lock()
 				defer mu.Unlock()
-				t.Errorf("write transaction %q took %s (> %s, Hallpass HP-DB-004)", name, d, MaxTxDuration)
+				t.Errorf("write transaction %q held the write lock for %s (> %s, Hallpass HP-DB-004)", name, d, MaxTxDuration)
 			}
 		},
 	}
