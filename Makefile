@@ -22,18 +22,28 @@ build-ui: web-build
 test:
 	$(GO) test ./...
 
+# The heavy gates (race, coverage, site-a11y, e2e, screenshots) take a node-wide slot first (scripts/gate-slot.sh:
+# SM_GATE_SLOTS slots, default 2 on 16 or more CPUs and otherwise 1, in SM_GATE_LOCK_DIR), so several agents' runs on one
+# machine take turns instead of contending. SM_GATE_SLOTS=0 disables it; it is off when CI=true.
+GATE := $(CURDIR)/scripts/gate-slot.sh
+
 # The race detector slows SQLite transactions several-fold; as in CI, the 100 ms write-transaction guard is relaxed here
-# and enforced by the non-race coverage run.
-# internal/app's end-to-end tests take about 9 minutes under the race detector, close to go test's 10-minute default.
-# Most tests call t.Parallel; RACE_PARALLEL caps them per package (go test's default is GOMAXPROCS, multiplied by the
-# packages running at once), so a many-core machine doesn't starve leases and write transactions. 4 matches CI's runners.
+# (SM_TEST_TX_MAX, default 500ms) and enforced by the non-race coverage run.
+# scripts/race.sh runs internal/app, the critical path (its end-to-end tests add up to about an hour of test time under
+# the race detector), as its own go test invocation started first, alongside one for every other package; with 16 or
+# more CPUs its serial tests run in a second process next to its parallel ones (RACE_APP_SPLIT).
+# RACE_PARALLEL caps t.Parallel tests per package for the other packages (go test's default is GOMAXPROCS, multiplied by
+# the packages running at once), so a many-core machine doesn't starve leases and write transactions; 4 matches CI's
+# runners. RACE_APP_PARALLEL is internal/app's own cap: empty means min(16, nproc/2), at least 4; CI sets 4.
 RACE_PARALLEL ?= 4
+RACE_APP_PARALLEL ?=
 # Locally the race run uses go test's cache, so rerunning `make check` after a change (or a merge) reruns only the
 # packages whose code, dependencies or test inputs changed. CI sets RACE_COUNT=1 so that every test runs there: its
 # build cache is restored between runs, and a cached pass must not stand in for a run on the commit under test.
 RACE_COUNT ?=
 race:
-	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race $(if $(RACE_COUNT),-count=$(RACE_COUNT)) -parallel $(RACE_PARALLEL) -timeout 30m ./...
+	GO=$(GO) RACE_PARALLEL=$(RACE_PARALLEL) RACE_APP_PARALLEL=$(RACE_APP_PARALLEL) RACE_COUNT=$(RACE_COUNT) \
+	  $(GATE) race ./scripts/race.sh
 
 $(BIN)/spaceman-vet: $(shell find tools -name '*.go' -not -path '*/testdata/*')
 	cd tools && $(GO) build -o ../$(BIN)/spaceman-vet ./cmd/spaceman-vet
@@ -66,7 +76,7 @@ fuzz-smoke:
 	echo "fuzz-smoke: $$n targets"; test "$$n" -gt 0
 
 coverage:
-	./scripts/coverage-floor.sh
+	$(GATE) coverage ./scripts/coverage-floor.sh
 
 # Every GOAL.md requirement ID must have a row in docs/TRACEABILITY.md.
 traceability:
@@ -79,8 +89,10 @@ generate:
 	$(GO) generate ./...
 
 # The pre-push gate (AGENTS.md "Gates"). Ordered to fail fast: the static checks, then the non-race coverage floor
-# (about 20 s, and it already runs most security-critical tests), then the race run, which takes most of the time.
-check: vet custom-vet lint traceability tools-test coverage race
+# (about 20 s, and it already runs most security-critical tests), then the race run, which takes most of the time. The
+# coverage floor and the race run share one heavy-gate slot, taken once for both.
+check: vet custom-vet lint traceability tools-test
+	$(GATE) check $(MAKE) --no-print-directory coverage race
 
 # The inner-loop gate: the static checks and every test without the race detector and with go test's cache, so only
 # packages whose code, dependencies or test inputs changed run again (seconds when nothing changed). The sqlc and
@@ -146,7 +158,7 @@ web-check:
 
 # Browser journey against a fresh local stack with a real agent and an isolated herdr-core core (needs hc).
 e2e:
-	scripts/e2e.sh --reporter=list
+	$(GATE) e2e scripts/e2e.sh --reporter=list
 
 .PHONY: demo
 # The scripted end-to-end demonstration of the brief's §41 (SM-VER-003, docs/DEMO.md): a real central with the UI, two
@@ -159,8 +171,8 @@ demo:
 # The same journey in Firefox and WebKit (Playwright's builds: cd web && pnpm exec playwright install firefox webkit).
 # The journey is a first run (setup with the root token), so each engine gets its own fresh stack.
 e2e-browsers:
-	SM_E2E_BROWSERS=firefox,webkit scripts/e2e.sh --reporter=list --project=firefox
-	SM_E2E_BROWSERS=firefox,webkit scripts/e2e.sh --reporter=list --project=webkit
+	SM_E2E_BROWSERS=firefox,webkit $(GATE) e2e scripts/e2e.sh --reporter=list --project=firefox
+	SM_E2E_BROWSERS=firefox,webkit $(GATE) e2e scripts/e2e.sh --reporter=list --project=webkit
 
 .PHONY: test-fault test-real test-pulse
 # Fault-injection suite (crashes, disk full, interrupted recordings, disconnects); Go only.
@@ -240,6 +252,15 @@ test-pulse:
 
 # ---- Docs site and screenshots ----
 .PHONY: site site-dev site-check site-verify site-a11y screenshots
+
+# Extra Chromium launch arguments for the browser targets (e2e, screenshots, the site's Mermaid check and axe audit),
+# space-separated: taken from the environment (a node whose sandbox stops Chromium sets SM_CHROMIUM_ARGS, for example
+# '--no-sandbox --disable-gpu --disable-dev-shm-usage --no-zygote'); a machine that doesn't set it, CI included, passes
+# none. The site targets add --single-process to a non-empty value (the Mermaid check and the audit crash without it on
+# such hosts; the app's e2e journey doesn't work with it, so only here).
+SM_CHROMIUM_ARGS ?=
+export SM_CHROMIUM_ARGS
+site site-verify site-check site-a11y: SM_CHROMIUM_ARGS := $(strip $(SM_CHROMIUM_ARGS) $(if $(and $(strip $(SM_CHROMIUM_ARGS)),$(if $(filter --single-process,$(SM_CHROMIUM_ARGS)),,x)),--single-process))
 site:
 	cd site && pnpm install --frozen-lockfile && pnpm build
 
@@ -259,11 +280,11 @@ site-verify: cli-docs config-docs site
 
 # The axe audit (WCAG 2.1 A/AA) of every page of the built site (make site) in both color schemes.
 site-a11y:
-	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
+	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist $(GATE) site-a11y pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).
 screenshots:
-	./scripts/screenshots.sh
+	$(GATE) screenshots ./scripts/screenshots.sh
 
 # ---- Packaging and release (site/operators/install.md, site/operators/containers.md, ADR-0034) ----
 IMAGE ?= spaceman:local

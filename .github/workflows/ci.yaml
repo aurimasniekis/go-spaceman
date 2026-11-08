@@ -106,8 +106,11 @@ jobs:
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
         # 290 ms); the write-transaction guard is still enforced by the non-race coverage job (250 ms there, ADR-0062).
+        # internal/app runs as its own invocation next to the other packages (scripts/race.sh); on a 4-vCPU runner its
+        # cap stays 4, as before. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
           SM_TEST_TX_MAX: 1s
+          RACE_APP_PARALLEL: "4"
         # RACE_COUNT=1: every test runs, never a cached pass from the restored build cache (only local runs cache).
         run: make race RACE_COUNT=1
 

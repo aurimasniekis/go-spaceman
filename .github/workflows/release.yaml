@@ -93,6 +93,7 @@ jobs:
       - name: vet and race tests
         env:
           SM_TEST_TX_MAX: 1s # race detector overhead on shared runners; see ci.yaml
+          RACE_APP_PARALLEL: "4" # internal/app's own invocation keeps the runner-sized cap; see ci.yaml
         run: make vet race RACE_COUNT=1 # every test runs (only local runs use go test's cache)
       - name: coverage floor (non-race, so the write-transaction guard applies)
         # 250 ms on GitHub's hosted runners, as in ci.yaml; 100 ms locally (ADR-0062).

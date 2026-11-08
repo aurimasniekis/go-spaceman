@@ -35,6 +35,21 @@ Locally, `make race` uses go test's cache, so it reruns only the packages whose 
 changed. CI and the release workflow run `make race RACE_COUNT=1`, which runs every test (ADR-0070). To rerun a
 suspected flake, run its package with `-count=1`.
 
+### Heavy gates on a shared machine
+
+`make race`, `make coverage`, `make site-a11y`, `make e2e` and `make screenshots` take a slot of a machine-wide
+semaphore first (`scripts/gate-slot.sh`, `flock` lock files), so several people's or agents' full suites on one
+machine take turns instead of slowing each other down. `make check` takes one slot for the coverage floor and the race
+tests together. A run that has to wait prints a `waiting for a heavy-gate slot` line naming the holders.
+`SM_GATE_SLOTS` sets the number of slots (2 on 16 or more CPUs, otherwise 1; `0` turns it off, and it's off in CI) and
+`SM_GATE_LOCK_DIR` the shared directory (`~/.cache/spaceman-gates` by default). A slot is released when its holder
+exits, even when it's killed.
+
+`make race` runs `internal/app`, the slowest package, as its own `go test -race` next to the others, with its own
+`-parallel` cap `RACE_APP_PARALLEL` (`min(16, nproc/2)`, at least 4; CI uses 4); the other packages keep
+`RACE_PARALLEL` (4). On 16 or more CPUs, internal/app's serial tests run in a second process at the same time
+(`RACE_APP_SPLIT`, `0` turns it off).
+
 ### When a release gate fails
 
 - **`write transaction "…" held the write lock for … (> 250ms, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
