@@ -95,7 +95,8 @@ too wide. By default a program runs at its node's size (`runner.terminal_size`, 
 The size menu above a live terminal changes it while the run is running:
 
 - **Fit to window** sizes the run's terminal to your terminal area at the regular font size, and fits it again when
-  your window changes while it stays selected.
+  your window changes size while it stays selected. If someone else resizes the run, their size stands: your browser
+  stops fitting and shows their size as selected. Choose Fit to window again to take it back.
 - **80 × 24, 120 × 40, 160 × 50, 200 × 60** and **Custom…** set a fixed size: 40–400 columns and 10–200 rows.
 - **Node default** goes back to the node's size.
 
@@ -103,9 +104,9 @@ The node applies the size to the program's terminal, so the agent's program redr
 such as Claude Code, its whole screen reflows.
 
 - **Who can resize:** resizing needs the `terminal:takeover` permission (admins by default), because it changes what
-  the agent's program sees. Operators see the menu disabled with the reason, and viewers don't see it. While someone
-  has taken over the terminal, only they can resize it. When two admins resize, the last one wins. Every change is
-  audited as `run.terminal_resized`, with the previous size.
+  the agent's program sees. Operators see the menu disabled, with the reason as its tooltip and its description for
+  screen readers, and viewers don't see it. While someone has taken over the terminal, only they can resize it. When
+  two admins resize, the last one wins. Every change is audited as `run.terminal_resized`, with the previous size.
 - **Your choice is remembered:** your browser remembers your last choice and shows it selected next time, but it never
   applies it on its own. Opening a run's page never resizes it for the others watching.
 - **It lasts until cleared:** a size lasts until it is set back to the node default or the run ends. It survives
@@ -118,7 +119,9 @@ such as Claude Code, its whole screen reflows.
 
 **Default size for new runs.** A space's **Limits** page has **Terminal columns** and **Terminal rows**
 (`terminal_cols`, `terminal_rows`). When both are set, every new run of the space starts at that size. 0 (the
-default) keeps the node's size. The CLI sets them like any limit:
+default) keeps the node's size. Changing them needs the `terminal:takeover` permission (admins by default), like
+resizing a running run: an operator who changes them gets **403**, but can still change the space's other limits.
+A node agent older than node protocol 1.10 can't hold a size, so its new runs keep the node's size. The CLI sets them like any limit:
 `spaceman limits set --space <space> --set terminal_cols=132 --set terminal_rows=43`.
 
 From the command line: `spaceman run terminal-size set --space <space> <run> --cols 120 --rows 40` and `spaceman run

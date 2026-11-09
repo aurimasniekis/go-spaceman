@@ -66,6 +66,7 @@ test('resizing a live run terminal', async ({ page, browser, baseURL }) => {
   const control = page.getByTestId('terminal-size')
   await expect(control).toHaveText(/Node default/)
   await expect(control).toBeEnabled()
+  await expect(control).not.toHaveAttribute('aria-disabled')
 
   // A preset: the node holds the PTY at it and the program redraws for it.
   await control.click()
@@ -99,6 +100,37 @@ test('resizing a live run terminal', async ({ page, browser, baseURL }) => {
   await shot(page, 'terminal-size-fit-1280')
   await page.setViewportSize({ width: 900, height: 900 })
   await expect.poll(async () => (await fitted())?.cols ?? 0, { timeout: 10_000 }).toBeLessThan(wide.cols)
+  // The same window always fits to the same size.
+  const narrow = (await fitted())!
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await expect.poll(fitted, { timeout: 10_000 }).toEqual(wide)
+  await page.setViewportSize({ width: 900, height: 900 })
+  await expect.poll(fitted, { timeout: 10_000 }).toEqual(narrow)
+
+  // Someone else resizes while this browser is on Fit: their size stands. B, a second admin in another browser with
+  // the run open, sets 80x24 through the API; A stops fitting and shows it, even when its terminal box changes size
+  // with the run's new size, and only A's own choice brings Fit back.
+  await asRoot.call('POST', '/users', { display_name: 'Size Admin B', email: 'size-admin-b@example.com', password, grants: [{ role: 'admin', domain: sp.id }] })
+  const ctxB = await browser.newContext({ baseURL })
+  const pageB = await ctxB.newPage()
+  const apiB = new Api(pageB.request, base)
+  await apiB.signIn('size-admin-b@example.com', password)
+  await pageB.goto(runPath)
+  await expect(pageB.getByText('Live · watch-only')).toBeVisible({ timeout: 20_000 })
+  await apiB.call('PUT', `${runPath}/terminal-size`, { cols: 80, rows: 24 })
+  await expect(control).toHaveText(/^80×24$/, { timeout: 10_000 })
+  await expect(pageB.getByTestId('terminal-size')).toHaveText(/80×24/)
+  await page.waitForTimeout(2_500) // longer than the refit debounce and the box's resize
+  expect(await fitted()).toEqual({ cols: 80, rows: 24 })
+  await page.setViewportSize({ width: 1000, height: 900 })
+  await page.waitForTimeout(1_000)
+  expect(await fitted()).toEqual({ cols: 80, rows: 24 })
+  await control.click()
+  await expect(page.getByTestId('terminal-size-80x24')).toHaveAttribute('aria-checked', 'true')
+  await expect(page.getByTestId('terminal-size-fit')).toHaveAttribute('aria-checked', 'false')
+  await page.keyboard.press('Escape')
+  await ctxB.close()
+  await page.setViewportSize({ width: 900, height: 900 })
 
   // The remembered choice is preselected on the next visit, never applied on its own.
   const before = await fitted()
@@ -130,7 +162,14 @@ test('resizing a live run terminal', async ({ page, browser, baseURL }) => {
     await other.goto(runPath)
     if (p.disabled) {
       await expect(other.getByText('Live · watch-only')).toBeVisible({ timeout: 20_000 })
-      await expect(other.getByTestId('terminal-size')).toBeDisabled()
+      // Focusable, with the reason as its description (keyboard and screen readers), and it opens nothing.
+      const blocked = other.getByTestId('terminal-size')
+      await expect(blocked).toHaveAttribute('aria-disabled', 'true')
+      await expect(blocked).toHaveAccessibleDescription(/terminal takeover permission/)
+      await blocked.focus()
+      await expect(blocked).toBeFocused()
+      await other.keyboard.press('Enter')
+      await expect(other.getByTestId('terminal-size-fit')).toHaveCount(0)
     } else {
       // Viewers see the run but not its terminal stream (no terminal:watch), and no size control.
       await expect(other.getByTestId('run-header')).toBeVisible({ timeout: 20_000 })

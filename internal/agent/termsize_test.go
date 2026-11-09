@@ -168,6 +168,62 @@ func TestTerminalSizeHoldEnds(t *testing.T) {
 	}
 }
 
+// ADR-0075: reconcileHolds plans its starts under a.mu and calls startHold after unlocking. A start planned before
+// the size was cleared, the space's holds were stopped or the agent stopped never opens a hold.
+func TestTerminalSizeStaleStart(t *testing.T) {
+	a, f, row := sizeAgent(t)
+	ctx := context.Background()
+	w := proto.TerminalSize{SpaceID: "spc_size", RunID: row.RunID, Generation: 3, Cols: 120, Rows: 40}
+	plan := func() {
+		a.mu.Lock()
+		a.sizeWant = map[string]proto.TerminalSize{w.RunID: w}
+		a.mu.Unlock()
+	}
+	noHold := func(what string) {
+		t.Helper()
+		time.Sleep(50 * time.Millisecond)
+		a.mu.Lock()
+		_, held := a.holds[w.RunID]
+		a.mu.Unlock()
+		if n := f.TakeoverAttached(row.TerminalID); n != 0 || held {
+			t.Fatalf("%s: %d attaches, hold listed %v", what, n, held)
+		}
+	}
+
+	// Cleared between the plan and the start.
+	plan()
+	a.applyTerminalSizes(ctx, sizes())
+	a.startHold(ctx, w)
+	noHold("cleared")
+	if a.holdWanted(w.RunID) {
+		t.Fatal("a cleared size is still wanted")
+	}
+	// Changed between the plan and the start: the stale size is not held (the newer set's own start holds it).
+	plan()
+	a.mu.Lock()
+	a.sizeWant[w.RunID] = proto.TerminalSize{SpaceID: w.SpaceID, RunID: w.RunID, Generation: 3, Cols: 80, Rows: 24}
+	a.mu.Unlock()
+	a.startHold(ctx, w)
+	noHold("changed")
+	// The space's holds stopped (lease revoked or expired) between the plan and the start.
+	plan()
+	a.stopSpaceHolds(w.SpaceID)
+	a.startHold(ctx, w)
+	noHold("space stopped")
+	// Still wanted: held.
+	plan()
+	a.startHold(ctx, w)
+	waitFor(t, "held", func() bool { return f.TakeoverAttached(row.TerminalID) == 1 })
+	a.stopHolds()
+	waitFor(t, "released", func() bool { return f.TakeoverAttached(row.TerminalID) == 0 })
+	// The agent stopped between the plan and the start.
+	a.mu.Lock()
+	a.sizeWant = map[string]proto.TerminalSize{w.RunID: w}
+	a.mu.Unlock()
+	a.startHold(ctx, w)
+	noHold("agent stopped")
+}
+
 // ADR-0075: the recording notes each size change (the hold's own resizes and the runner's size events, such as the
 // hold closing), so a replay redraws at the size the output was drawn for.
 func TestTerminalSizeRecorded(t *testing.T) {

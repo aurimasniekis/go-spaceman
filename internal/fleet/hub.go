@@ -219,6 +219,9 @@ type session struct {
 	memory chan struct{}
 	// minor is the negotiated protocol minor version (set before the session is registered).
 	minor int
+	// sizes serializes terminal.sizes pushes: each reads the run sizes and sends them under it, so a push that read
+	// older sizes can never be sent after a newer one (ADR-0075).
+	sizes sync.Mutex
 }
 
 func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }

@@ -132,16 +132,22 @@ export function fitFont(term: Terminal, box: HTMLElement) {
 }
 
 /**
- * The character cell at the regular font size, in CSS pixels, from what the canvas shows now (fitFont may have scaled
- * the font down): "Fit to window" sizes the run's terminal so its text is shown at the regular size (ADR-0075).
+ * The character cell at the regular font size, in CSS pixels: "Fit to window" sizes the run's terminal so its text is
+ * shown at the regular size (ADR-0075). It is measured the way ghostty-web 0.4.0's renderer measures its cell
+ * (measureFont: the width of "M" rounded up, the ink height rounded up plus 2), at MAX_FONT whatever size fitFont
+ * shows now. Scaling the canvas's current cell instead was unstable: cell widths are whole pixels at every font size,
+ * so the same window fitted to 90×37 or 91×41 depending on the size shown at the time.
  */
 export function regularCell(term: Terminal): { width: number; height: number } | null {
-  const canvas = term.element?.querySelector('canvas')
-  const font = term.options.fontSize
-  if (!canvas || term.cols <= 0 || term.rows <= 0 || !font) return null
-  const r = canvas.getBoundingClientRect()
-  const scale = MAX_FONT / font
-  return { width: (r.width / term.cols) * scale, height: (r.height / term.rows) * scale }
+  if (typeof document === 'undefined') return null
+  const ctx = document.createElement('canvas').getContext('2d')
+  if (!ctx) return null
+  ctx.font = `${MAX_FONT}px ${term.options.fontFamily || FONT_FAMILY}`
+  const m = ctx.measureText('M')
+  const ascent = m.actualBoundingBoxAscent || MAX_FONT * 0.8
+  const descent = m.actualBoundingBoxDescent || MAX_FONT * 0.2
+  const width = Math.ceil(m.width)
+  return width > 0 ? { width, height: Math.ceil(ascent + descent) + 2 } : null
 }
 
 /** The height of one terminal row on screen, in CSS pixels (0 before the first render). */

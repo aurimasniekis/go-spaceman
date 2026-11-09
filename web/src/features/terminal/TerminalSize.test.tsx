@@ -1,9 +1,10 @@
 import { MantineProvider } from '@mantine/core'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { createRef, type ReactNode } from 'react'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type Run } from '@/api/client'
+import { keys } from '@/api/queries'
 import { choiceKey, fitDimensions, inBounds, loadChoice, parseChoice, resizeBlocker, saveChoice, sizeLabel, TerminalSizeControl } from './TerminalSize'
 
 beforeEach(() => {
@@ -57,8 +58,14 @@ describe('terminal size choices', () => {
 
 describe('TerminalSizeControl', () => {
   it('is disabled with the reason when the viewer cannot resize', () => {
-    wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="Resizing needs terminal takeover permission" measure={() => null} observe={createRef()} />)
-    expect(screen.getByTestId('terminal-size')).toBeDisabled()
+    wrap(<TerminalSizeControl spaceId="spc_1" run={run()} blocker="Resizing needs terminal takeover permission" measure={() => null} />)
+    // Focusable, with its reason as its description (keyboard and screen readers), and opens nothing.
+    const b = screen.getByTestId('terminal-size')
+    expect(b).not.toBeDisabled()
+    expect(b).toHaveAttribute('aria-disabled', 'true')
+    expect(b).toHaveAccessibleDescription('Resizing needs terminal takeover permission')
+    fireEvent.click(b)
+    expect(screen.queryByTestId('terminal-size-fit')).toBeNull()
   })
 
   it('applies a preset, fit and the node default, and never on its own', async () => {
@@ -66,10 +73,13 @@ describe('TerminalSizeControl', () => {
     const put = vi.spyOn(api, 'PUT').mockResolvedValue({ data: run({ terminal_size: { cols: 120, rows: 40 } }), response: new Response() } as never)
     const del = vi.spyOn(api, 'DELETE').mockResolvedValue({ data: run(), response: new Response() } as never)
     const r = run({ terminal_size: { cols: 100, rows: 30 } })
-    wrap(<TerminalSizeControl spaceId="spc_1" run={r} blocker="" measure={() => ({ cols: 150, rows: 41 })} observe={createRef()} />)
+    wrap(<TerminalSizeControl spaceId="spc_1" run={r} blocker="" measure={() => ({ cols: 150, rows: 41 })} />)
     expect(put).not.toHaveBeenCalled() // the remembered 200x60 is only preselected
     fireEvent.click(screen.getByTestId('terminal-size'))
     await screen.findByTestId('terminal-size-120x40')
+    // The choices are a radio group: the remembered one is checked.
+    expect(screen.getByRole('menuitemradio', { name: '200 × 60', hidden: true })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('menuitemradio', { name: 'Fit to window', hidden: true })).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(screen.getByTestId('terminal-size-120x40'))
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put.mock.calls[0][1]).toMatchObject({ params: { path: { space_id: 'spc_1', run_id: 'run_1' } }, body: { cols: 120, rows: 40 } })
@@ -84,5 +94,49 @@ describe('TerminalSizeControl', () => {
     fireEvent.click(await screen.findByTestId('terminal-size-default'))
     await waitFor(() => expect(del).toHaveBeenCalledTimes(1))
     expect(loadChoice()).toEqual({ kind: 'default' })
+  })
+
+  it('refits on window resizes only, and stops once someone else resized the run', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let fit = { cols: 150, rows: 41 }
+      const put = vi.spyOn(api, 'PUT').mockImplementation(async (_p, init) => {
+        const b = (init as { body: { cols: number; rows: number } }).body
+        return { data: run({ terminal_size: { cols: b.cols, rows: b.rows } }), response: new Response() } as never
+      })
+      // The page shows the run from the query cache, as RunPage does: this browser's own resizes land there, and so
+      // does someone else's (setQueryData stands in for the live update).
+      const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
+      qc.setQueryData(keys.run('spc_1', 'run_1'), run({ terminal_size: { cols: 100, rows: 30 } }))
+      function Page() {
+        const { data } = useQuery({ queryKey: keys.run('spc_1', 'run_1'), queryFn: () => Promise.reject(new Error('not fetched')) })
+        return data ? <TerminalSizeControl spaceId="spc_1" run={data as Run} blocker="" measure={() => fit} /> : null
+      }
+      render(<MantineProvider><QueryClientProvider client={qc}><Page /></QueryClientProvider></MantineProvider>)
+      const label = () => screen.getByTestId('terminal-size')
+      fireEvent.click(label())
+      fireEvent.click(await screen.findByTestId('terminal-size-fit'))
+      await waitFor(() => expect(label()).toHaveTextContent(/^150×41 · fit$/))
+
+      // Only a change of the window's size refits (debounced).
+      fit = { cols: 160, rows: 45 }
+      window.dispatchEvent(new Event('resize'))
+      await vi.advanceTimersByTimeAsync(500)
+      await waitFor(() => expect(label()).toHaveTextContent(/^160×45 · fit$/))
+      expect(put).toHaveBeenCalledTimes(2)
+
+      // Someone else set 80x24: this browser stops fitting, shows their size, and a later window resize sends nothing.
+      act(() => qc.setQueryData(keys.run('spc_1', 'run_1'), run({ terminal_size: { cols: 80, rows: 24 } })))
+      await waitFor(() => expect(label()).toHaveTextContent(/^80×24$/))
+      fit = { cols: 170, rows: 50 }
+      window.dispatchEvent(new Event('resize'))
+      await vi.advanceTimersByTimeAsync(500)
+      expect(put).toHaveBeenCalledTimes(2)
+      fireEvent.click(label())
+      expect(await screen.findByRole('menuitemradio', { name: '80 × 24', hidden: true })).toHaveAttribute('aria-checked', 'true')
+      expect(loadChoice()).toEqual({ kind: 'fit' }) // the remembered choice stays this viewer's own
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -66,6 +66,9 @@ const (
 // RetentionKeys are the limits that delete data in the daily retention pass.
 var RetentionKeys = []string{RetainRecordings, RetainTranscripts, RetainAttachments, RetainHumanActions}
 
+// TerminalSizeKeys are the limits that set a new run's held terminal size (ADR-0075).
+var TerminalSizeKeys = []string{TerminalCols, TerminalRows}
+
 const retentionLower = "The next daily retention pass deletes what is older than the new period; deleted data is not recovered (restore a backup)."
 
 // On-lower policies of the run concurrency limit.
@@ -235,6 +238,17 @@ func New(s *store.Store, aw *audit.Writer, ch *changefeed.Recorder, defaults map
 // RetentionChanged reports whether replacing a space's overrides with in would change one of its retention overrides
 // (set, cleared or a different value). The API requires retention:write for such a change.
 func (svc *Service) RetentionChanged(ctx context.Context, spaceID string, in Input) (bool, error) {
+	return svc.KeysChanged(ctx, spaceID, in, RetentionKeys)
+}
+
+// TerminalSizeChanged reports whether replacing a space's overrides with in would change its new-run terminal size
+// override. A new run is held at that size, which other people see: the API requires terminal:takeover (ADR-0075).
+func (svc *Service) TerminalSizeChanged(ctx context.Context, spaceID string, in Input) (bool, error) {
+	return svc.KeysChanged(ctx, spaceID, in, TerminalSizeKeys)
+}
+
+// KeysChanged reports whether replacing a space's overrides with in would set, clear or change one of keys' overrides.
+func (svc *Service) KeysChanged(ctx context.Context, spaceID string, in Input, keys []string) (bool, error) {
 	cur := map[string]int64{}
 	row, err := svc.s.R().GetSpaceLimits(ctx, spaceID)
 	switch {
@@ -244,7 +258,7 @@ func (svc *Service) RetentionChanged(ctx context.Context, spaceID string, in Inp
 	default:
 		cur = parseOverrides(row.ValuesJson)
 	}
-	for _, k := range RetentionKeys {
+	for _, k := range keys {
 		a, inCur := cur[k]
 		b, inNew := in.Values[k]
 		if inCur != inNew || a != b {

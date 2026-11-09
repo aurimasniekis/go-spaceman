@@ -138,6 +138,8 @@ func (h *Hub) pushTerminalSizes(ctx context.Context, nodeID string) {
 }
 
 func (h *Hub) sendTerminalSizes(ctx context.Context, s *session) error {
+	s.sizes.Lock()
+	defer s.sizes.Unlock()
 	rows, err := h.svc.s.R().ListNodeTerminalSizes(ctx, s.nodeID)
 	if err != nil {
 		return err

@@ -178,7 +178,9 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
   const measure = useCallback(() => {
     const cell = term ? regularCell(term) : null
     if (!cell || !box.current) return null
-    return fitDimensions(box.current.clientWidth - 14, areaHeight(), cell.width, cell.height)
+    // The box's outer width (less its padding and border), not clientWidth: a vertical scrollbar that comes and goes
+    // with the content would change the fit by a column.
+    return fitDimensions(box.current.getBoundingClientRect().width - 14, areaHeight(), cell.width, cell.height)
   }, [term, box])
   const { away, jump } = useScrolledAway(term, box)
   // Watch-only unless the viewer holds a takeover; ghostty-web reads disableStdin on every key (0.4.0 source).
@@ -237,7 +239,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     <Stack gap="xs" style={{ minWidth: 0 }}>
       <Group justify="space-between" gap="xs" wrap="wrap">
         <StatusBadges sum={sum} live={state} typing={!!onInput} />
-        {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} observe={box} />}
+        {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} />}
       </Group>
       {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}

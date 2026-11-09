@@ -145,7 +145,12 @@ func (a *Agent) startHold(ctx context.Context, w proto.TerminalSize) {
 	if a.holds == nil {
 		a.holds = map[string]*sizeHold{}
 	}
-	if _, ok := a.holds[w.RunID]; ok {
+	// reconcileHolds planned this start under a.mu but calls it after unlocking, and the lease and run were read
+	// without it: check again under a.mu, so a hold is never opened after the size was cleared or changed, the
+	// space's holds were stopped (lease revoked or expired) or the agent stopped. A hold inserted here is seen and
+	// closed by every one of those.
+	_, leased := a.leaseLocked(w.SpaceID, w.Generation)
+	if _, ok := a.holds[w.RunID]; ok || a.holdsStopped || !leased || a.sizeWant[w.RunID] != w {
 		a.mu.Unlock()
 		cancel()
 		return

@@ -78,16 +78,22 @@ func TestTerminalSize(t *testing.T) {
 	opTok, _ := mkToken("oscar@example.com", "Oscar", []auth.GrantInput{{Role: authz.RoleOperator, Domain: sp.ID}})
 	viewTok, _ := mkToken("vera@example.com", "Vera", []auth.GrantInput{{Role: authz.RoleViewer, Domain: sp.ID}})
 	elsewhereTok, _ := mkToken("eve@example.com", "Eve", []auth.GrantInput{{Role: authz.RoleAdmin, Domain: other.ID}})
-	call := func(tok, method, spaceID, path string, body any) (int, []byte) {
+	call := func(tok, method, spaceID, path string, body any, hdr ...string) (int, []byte) {
 		t.Helper()
 		var rd io.Reader = http.NoBody
 		if body != nil {
 			b, _ := json.Marshal(body)
 			rd = bytes.NewReader(b)
 		}
-		req, _ := http.NewRequest(method, e.srv.URL+api.Prefix+"/spaces/"+spaceID+"/runs/"+r.ID+path, rd)
+		if !strings.HasPrefix(path, "/limits") {
+			path = "/runs/" + r.ID + path
+		}
+		req, _ := http.NewRequest(method, e.srv.URL+api.Prefix+"/spaces/"+spaceID+path, rd)
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("Content-Type", "application/json")
+		for i := 0; i+1 < len(hdr); i += 2 {
+			req.Header.Set(hdr[i], hdr[i+1])
+		}
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -215,8 +221,19 @@ func TestTerminalSize(t *testing.T) {
 	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.TerminalCols: 39, limits.TerminalRows: 30}}); err == nil {
 		t.Fatal("a 39-column default was accepted")
 	}
-	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.TerminalCols: 132, limits.TerminalRows: 43}}); err != nil {
-		t.Fatal(err)
+	// Changing them needs terminal:takeover, like resizing a live run: an operator holds space_config:write but not
+	// takeover, so the operator is refused and the admin succeeds.
+	sized := map[string]any{"values": map[string]int64{limits.TerminalCols: 132, limits.TerminalRows: 43}}
+	if code, b := call(opTok, http.MethodPut, sp.ID, "/limits", sized); code != http.StatusForbidden || !strings.Contains(string(b), "terminal:takeover") {
+		t.Fatalf("an operator set the new-run size: %d %s", code, b)
+	}
+	if code, b := call(adminTok, http.MethodPut, sp.ID, "/limits", sized); code != http.StatusOK {
+		t.Fatalf("an admin set the new-run size: %d %s", code, b)
+	}
+	// Other limits stay operator-writable as long as the size is left as it is.
+	sized["values"].(map[string]int64)[limits.ControlIdleStop] = 45
+	if code, b := call(opTok, http.MethodPut, sp.ID, "/limits", sized, "If-Match", `"1"`); code != http.StatusOK {
+		t.Fatalf("an operator changed another limit: %d %s", code, b)
 	}
 	r2, term2 := launch(sp.ID)
 	if got := e.run1(r2.ID).TerminalSize; got == nil || *got != (fleet.TerminalSize{Cols: 132, Rows: 43}) {
@@ -253,9 +270,17 @@ func TestTerminalSizeOldNode(t *testing.T) {
 	}
 	bindStubAccounts(t, e.c, sp.ID)
 	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	// The space's new-run size is not stored for a run the node cannot hold it for: the run would show a size it
+	// doesn't have.
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.TerminalCols: 132, limits.TerminalRows: 43}}); err != nil {
+		t.Fatal(err)
+	}
 	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: hns.KindClaude})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := e.run1(r.ID).TerminalSize; got != nil {
+		t.Fatalf("launched on a minor-9 node with size %+v", got)
 	}
 	if e.run1(r.ID).TerminalSizing {
 		t.Fatal("a minor-9 node's run claims it can be resized")

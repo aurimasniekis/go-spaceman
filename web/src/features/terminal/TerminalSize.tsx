@@ -1,7 +1,7 @@
-import { Button, Group, Menu, NumberInput, Popover, Stack, Text, Tooltip } from '@mantine/core'
+import { Button, Group, Menu, NumberInput, Popover, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
 import { IconCheck, IconChevronDown, IconDimensions } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { api, unwrap, type Run } from '@/api/client'
 import { keys } from '@/api/queries'
 import { notifyError } from '@/lib/notify'
@@ -80,17 +80,32 @@ export function resizeBlocker(run: Run, canTakeOver: boolean, holder: string, en
 }
 
 /**
- * The size menu of a live terminal. measure returns the size that fits the viewer's terminal area at the regular font
- * size (null before it can be measured). "Fit to window" refits while it stays selected and this page is open.
+ * Makes a menu item a radio item (one size is chosen at a time). Mantine's Menu.Item always renders role="menuitem"
+ * after the props it is given, so the role is set on the element; React leaves it alone because its own value never
+ * changes.
  */
-export function TerminalSizeControl({ spaceId, run, blocker, measure, observe }: {
+function asRadio(el: HTMLElement | null) {
+  el?.setAttribute('role', 'menuitemradio')
+}
+
+/** The choice that shows a run's size as it is: its held size, or the node's default. */
+export function choiceOf(size: Run['terminal_size']): SizeChoice {
+  return size ? { kind: 'fixed', cols: size.cols, rows: size.rows } : { kind: 'default' }
+}
+
+/**
+ * The size menu of a live terminal. measure returns the size that fits the viewer's terminal area at the regular font
+ * size (null before it can be measured). "Fit to window" refits when this browser's window changes size, while it
+ * stays selected and this page is open. It never refits because the terminal changed: the terminal box follows the
+ * run's size, so refitting on it would undo someone else's resize. Once the run's size is not the one this browser
+ * last sent (someone else resized it, or cleared it), this browser stops fitting and shows the run's size instead.
+ */
+export function TerminalSizeControl({ spaceId, run, blocker, measure }: {
   spaceId: string
   run: Run
   /** Why the viewer cannot resize ('' when they can). */
   blocker: string
   measure: () => { cols: number; rows: number } | null
-  /** The element whose size changes refit while "Fit to window" is applied. */
-  observe: React.RefObject<HTMLElement | null>
 }) {
   const qc = useQueryClient()
   const [choice, setChoice] = useState<SizeChoice>(loadChoice)
@@ -100,14 +115,20 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure, observe }:
   const [rows, setRows] = useState<number | string>(run.terminal_size?.rows ?? 40)
   const [busy, setBusy] = useState(false)
   const path = { space_id: spaceId, run_id: run.id }
+  const reasonId = useId()
   const current = useRef(run.terminal_size)
   useEffect(() => {
     current.current = run.terminal_size
   }, [run.terminal_size])
+  // What this browser last asked for while fitting, and how many of its requests are still open.
+  const sent = useRef<{ cols: number; rows: number } | null>(null)
+  const pending = useRef(0)
 
   const put = useCallback(async (c: number, r: number) => {
+    sent.current = { cols: c, rows: r }
     if (current.current && current.current.cols === c && current.current.rows === r) return
     setBusy(true)
+    pending.current++
     try {
       qc.setQueryData(keys.run(spaceId, run.id), unwrap(await api.PUT('/spaces/{space_id}/runs/{run_id}/terminal-size', {
         params: { path: { space_id: spaceId, run_id: run.id } }, body: { cols: c, rows: r } })))
@@ -116,6 +137,7 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure, observe }:
       setFitting(false)
     } finally {
       setBusy(false)
+      pending.current--
     }
   }, [qc, spaceId, run.id])
 
@@ -124,6 +146,7 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure, observe }:
     saveChoice(c)
     setCustom(false)
     setFitting(c.kind === 'fit')
+    sent.current = null
     if (c.kind === 'fixed') return put(c.cols, c.rows)
     if (c.kind === 'fit') {
       const m = measure()
@@ -141,46 +164,76 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure, observe }:
     }
   }
 
-  // Fit to window keeps fitting while it is applied: the window or the layout changed (debounced, so a drag sends one).
+  // Fit to window keeps fitting while it is applied and this browser's window (or its visual viewport, such as a
+  // phone's rotation) changes size, debounced so a drag sends one request.
   useEffect(() => {
-    const el = observe.current
-    if (!fitting || blocker || !el) return
+    if (!fitting || blocker) return
     let timer: ReturnType<typeof setTimeout> | undefined
-    const ro = new ResizeObserver(() => {
+    const refit = () => {
       clearTimeout(timer)
       timer = setTimeout(() => {
         const m = measure()
         if (m) void put(m.cols, m.rows)
       }, 400)
-    })
-    ro.observe(el)
+    }
+    window.addEventListener('resize', refit)
+    window.visualViewport?.addEventListener('resize', refit)
     return () => {
       clearTimeout(timer)
-      ro.disconnect()
+      window.removeEventListener('resize', refit)
+      window.visualViewport?.removeEventListener('resize', refit)
     }
-  }, [fitting, blocker, observe, measure, put])
+  }, [fitting, blocker, measure, put])
   useEffect(() => {
     if (blocker) setFitting(false)
   }, [blocker])
+  // Someone else resized or cleared the run: their size stands. Stop fitting and show the run's size as selected. This
+  // looks only at changes of the run's size, and none while this browser's own request is open: the response brings
+  // this browser's size (a newer one from someone else arrives after it, and is caught then).
+  const size = run.terminal_size
+  const fittingRef = useRef(fitting)
+  fittingRef.current = fitting
+  useEffect(() => {
+    const s = sent.current
+    if (!fittingRef.current || pending.current > 0 || !s) return
+    if (size && size.cols === s.cols && size.rows === s.rows) return
+    setFitting(false)
+    setChoice(choiceOf(size))
+  }, [size?.cols, size?.rows]) // only on a change of the run's size
 
   const selected = choiceKey(choice)
   const item = (c: SizeChoice, label: string) => (
     <Menu.Item key={choiceKey(c)} onClick={() => void apply(c)} leftSection={selected === choiceKey(c) ? <IconCheck size={14} /> : <span style={{ width: 14 }} />}
-      data-testid={`terminal-size-${choiceKey(c)}`}>
+      ref={asRadio} aria-checked={selected === choiceKey(c)} data-testid={`terminal-size-${choiceKey(c)}`}>
       {label}
     </Menu.Item>
   )
+  const customChecked = choice.kind === 'fixed' && !PRESETS.some(([c, r]) => c === choice.cols && r === choice.rows)
   const customValid = typeof cols === 'number' && typeof rows === 'number' && inBounds(cols, rows)
   // An out-of-range number is shown as it is, with the field marked (not clamped silently).
   const colsBad = typeof cols === 'number' && (cols < BOUNDS.minCols || cols > BOUNDS.maxCols)
   const rowsBad = typeof rows === 'number' && (rows < BOUNDS.minRows || rows > BOUNDS.maxRows)
   const button = (
-    <Button size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} rightSection={blocker ? undefined : <IconChevronDown size={12} />}
-      disabled={!!blocker} loading={busy} aria-label={`Terminal size: ${sizeLabel(run)}`} data-testid="terminal-size">
-      {sizeLabel(run)}{fitting && !blocker ? ' · fit' : ''}
+    <Button size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} rightSection={<IconChevronDown size={12} />}
+      loading={busy} aria-label={`Terminal size: ${sizeLabel(run)}`} data-testid="terminal-size">
+      {sizeLabel(run)}{fitting ? ' · fit' : ''}
     </Button>
   )
-  if (blocker) return <Tooltip label={blocker} multiline w={260}><span>{button}</span></Tooltip>
+  // Blocked: the button stays focusable (aria-disabled, not disabled) and its reason is its description, so keyboard
+  // and screen reader users get it as well as the tooltip.
+  if (blocker) {
+    return (
+      <>
+        <Tooltip label={blocker} multiline w={260}>
+          <Button size="compact-xs" variant="default" leftSection={<IconDimensions size={14} />} data-disabled aria-disabled="true"
+            aria-describedby={reasonId} aria-label={`Terminal size: ${sizeLabel(run)}`} onClick={(e) => e.preventDefault()} data-testid="terminal-size">
+            {sizeLabel(run)}
+          </Button>
+        </Tooltip>
+        <VisuallyHidden id={reasonId}>{blocker}</VisuallyHidden>
+      </>
+    )
+  }
   return (
     <Popover opened={custom} onChange={setCustom} position="bottom-start" withinPortal trapFocus>
       <Popover.Target>
@@ -191,8 +244,8 @@ export function TerminalSizeControl({ spaceId, run, blocker, measure, observe }:
               <Menu.Label>Size of the run’s terminal</Menu.Label>
               {item({ kind: 'fit' }, 'Fit to window')}
               {PRESETS.map(([c, r]) => item({ kind: 'fixed', cols: c, rows: r }, `${c} × ${r}`))}
-              <Menu.Item onClick={() => setCustom(true)} leftSection={choice.kind === 'fixed' && !PRESETS.some(([c, r]) => c === choice.cols && r === choice.rows)
-                ? <IconCheck size={14} /> : <span style={{ width: 14 }} />} data-testid="terminal-size-custom">
+              <Menu.Item onClick={() => setCustom(true)} leftSection={customChecked ? <IconCheck size={14} /> : <span style={{ width: 14 }} />}
+                ref={asRadio} aria-checked={customChecked} data-testid="terminal-size-custom">
                 Custom…
               </Menu.Item>
               <Menu.Divider />

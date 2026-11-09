@@ -3421,11 +3421,29 @@
     before the next output chunk. Replay already redraws at `size` records.
   - **Default for new runs:** the space limits `terminal_cols` and `terminal_rows` (installation defaults in
     `limits:`, 0 = the node's default). A size applies only when both are set. Each must be 0 or within the bounds.
-    Launch resolution copies them to the new run, and the node holds it from the start.
+    Launch resolution copies them to the new run, and the node holds it from the start. A node connected below minor
+    10 cannot hold it, so its new runs keep no size (they would show one they don't have). **Changing either key needs
+    `terminal:takeover`** in the space, like resizing a live run: `set-space-limits` otherwise needs only
+    `space_config:write`, which operators hold, and that would let them set every new run's held size. A change that
+    leaves both keys as they are needs only `space_config:write`, the same way retention periods need
+    `retention:write` (review of PR #33, S1).
+  - **Node holds are race-free.** `reconcileHolds` plans under the agent's lock and opens holds after unlocking, so
+    `startHold` checks again under the lock before it records a hold: the size is still wanted exactly as planned,
+    the space's lease is valid and the agent has not stopped. Otherwise it opens nothing. Central serializes its
+    `terminal.sizes` pushes per node session (read and send under one lock), so an older set is never sent after a
+    newer one.
   - **Web:** the live terminal has a size menu: Fit to window (the terminal area at the regular font size, refitted
     after the window changes while it stays applied), 80×24, 120×40, 160×50, 200×60, Custom… and Node default. The
     browser remembers the last choice and shows it selected, but **never applies it on its own**, so opening a run's
     page never resizes it for everyone else.
+    - Fit refits only when the browser's window or visual viewport changes size, never when the terminal box does:
+      the box follows the run's size, so refitting on it undid other people's resizes. Once the run's size differs
+      from the last size this browser sent (someone else resized or cleared it), the browser stops fitting and shows
+      the run's size as the selected choice.
+    - The fit measures the regular cell the way ghostty-web 0.4.0's renderer does (`measureText("M")` at the
+      regular font size), not by scaling the cell shown now, so the same window always fits to the same size.
+    - When the viewer can't resize, the control stays focusable (`aria-disabled`) and its reason is its accessible
+      description. The choices are `menuitemradio` items with `aria-checked`.
 - **Alternatives:**
   - Sizing tied to a takeover. This needs no migration, but the size is lost on release and resizing needs a takeover
     that pauses automated input. Rejected by control.

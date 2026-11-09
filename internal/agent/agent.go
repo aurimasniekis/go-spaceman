@@ -529,6 +529,11 @@ func (a *Agent) poke() {
 func (a *Agent) lease(spaceID string, gen int64) (leaseRow, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.leaseLocked(spaceID, gen)
+}
+
+// leaseLocked is lease with a.mu held.
+func (a *Agent) leaseLocked(spaceID string, gen int64) (leaseRow, bool) {
 	l, ok := a.leases[spaceID]
 	return l, ok && l.Generation == gen && a.now().Before(l.ExpiresAt.Add(l.Grace))
 }

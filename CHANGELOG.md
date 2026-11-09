@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Recordings note every size change, so replays redraw at the right size.
   - API: `PUT` and `DELETE /api/v1/spaces/{space}/runs/{run}/terminal-size`; CLI: `spaceman run terminal-size set|clear`.
 - Space limits `terminal_cols` and `terminal_rows` set the terminal size new runs start at (0, the default, keeps the
-  node's `runner.terminal_size`).
+  node's `runner.terminal_size`). Changing them needs `terminal:takeover`, like resizing a running run.
 
 ### Fixed
 - Web: switching between run terminals no longer shows lines of a terminal viewed earlier inside the new one, and no

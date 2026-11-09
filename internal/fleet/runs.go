@@ -289,6 +289,10 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		manifest, _ := json.Marshal(m)
 		var termCols, termRows sql.NullInt64
+		// A node known to predate minor 10 cannot hold a size: storing one would show a size the run doesn't have.
+		if minor, ok := svc.hub.minor(sp.NodeID); ok && minor < proto.MinorTerminalSize {
+			in.TerminalSize = nil
+		}
 		if ts := in.TerminalSize; ts != nil && proto.CheckTerminalSize(ts.Cols, ts.Rows) == nil {
 			termCols, termRows = sql.NullInt64{Int64: int64(ts.Cols), Valid: true}, sql.NullInt64{Int64: int64(ts.Rows), Valid: true}
 			tx.AfterCommit(func() { svc.hub.pushTerminalSizes(context.WithoutCancel(ctx), sp.NodeID) })
