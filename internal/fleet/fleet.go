@@ -93,6 +93,8 @@ type Options struct {
 	WakeDeadlines func()
 	// StaleRunGrace overrides staleRunGrace (tests; 0 keeps the default).
 	StaleRunGrace time.Duration
+	// StaleLeaseMargin overrides staleLeaseMargin (tests; 0 keeps the default).
+	StaleLeaseMargin time.Duration
 }
 
 // Admission is a launch about to be admitted.
@@ -148,6 +150,9 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	}
 	if o.StaleRunGrace <= 0 {
 		o.StaleRunGrace = staleRunGrace
+	}
+	if o.StaleLeaseMargin <= 0 {
+		o.StaleLeaseMargin = staleLeaseMargin
 	}
 	if o.Clock == nil {
 		o.Clock = clock.System{}

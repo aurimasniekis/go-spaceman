@@ -3380,7 +3380,8 @@
 ### ADR-0074 — Concurrency limits count live runs only; a stale-run sweeper ends runs whose process is gone
 - **Status:** Accepted, 2026-11-09 (operator request after a node agent restart left its runs holding slots).
   **Security-relevant change:** a disconnected node's runs no longer stay `unknown` indefinitely: once the space's
-  lease, the disconnect grace and a sweep grace have passed, central records them as `lost` (SM-NODE-005 refined below).
+  lease, the disconnect grace and a 15-minute margin have passed, central records them as `lost` (SM-NODE-005 refined
+  below). A run swept wrongly is killed by the fence at its next report, so the safeguards below are part of the decision.
 - **Context:**
   - The space concurrency limit and the node capacity counted runs with `desired = 'running' OR observed IN (pending,
     starting, running, stopping, unknown)`. A run that ends on its own (exits, fails, or is reported lost after a node
@@ -3399,33 +3400,65 @@
     dreamer runs have their own pools (SM-LIMIT-002).
   - **Refusals name what they count.** The space refusal lists the counted runs (ID, kind, role, observed state); the
     node refusal counts other spaces' runs without naming them and lists this space's. Both say which runs don't count.
-  - **Stale-run sweeper** (`fleet/stale.go`, on the deadline timer, woken on node connect and disconnect). It ends a run
-    as `lost` on one of two authoritative signals, each after `staleRunGrace` (2 minutes):
-    - **`stale_not_on_node`**: the node is connected to this central, and no accepted report has touched the run since
-      the connection began (`staleRunGrace` ago). The hello reported every run the node has, so this one isn't there.
-      A run created after the connection began is never a candidate.
+  - **Stale-run sweeper** (`fleet/stale.go`, on the deadline timer, woken on node connect and disconnect). Its rule:
+    it must never end a run whose process exists or might still start; when in doubt, it doesn't sweep. It ends a
+    run as `lost` on one of two signals:
+    - **`stale_not_on_node`**: the node is connected, and its hello reports every run in its journal. The
+      `fleet.node_connect` transaction reads the node's live runs (with their versions), and the session records the
+      run IDs the hello contained. A run is swept only if it was live at connect, the hello didn't contain it, its
+      version hasn't changed since connect, and `staleRunGrace` (2 minutes) has passed since the connection, measured
+      on the clock's monotonic reading (a wall-clock step doesn't move it). No stored timestamp is compared. If any
+      hello report failed to apply, the sweeper leaves that connection's runs alone entirely. A run created after the
+      connection began is never a candidate.
     - **`stale_lease_lost`**: the node isn't connected, and the space's lease on that node expired more than the
-      disconnect grace plus `staleRunGrace` ago. The lease guard has stopped the process on the node.
-    - Pending runs (a launch may be in flight) and runs whose space now belongs to another node (relocation ends them)
-      are never candidates.
-  - **Safety.** The sweeper only changes central's record. It never sends a stop or kill, so it can't end a live
-    process. Each run ends in its own transaction, and only if its version is unchanged since it was chosen, so a report
-    that arrives at the same time wins. It goes through the node-report path: credentials and gateway tokens revoked,
-    `run_ended` published, the task released (`OnRunEnded`). It is idempotent (an ended run is no longer a candidate),
-    and a central restart mid-sweep just finds the remaining runs again.
+      disconnect grace plus `staleLeaseMargin` (15 minutes) ago. The grace is the larger of the one the lease was last
+      granted with (stored on the lease, migration 0046) and the current one, so lowering the grace in the config
+      doesn't shorten the wait. The node's lease guard has stopped the process by then.
+    - Never candidates: pending runs; runs with an unacknowledged launch command (`pending` or `sent`: the dispatch
+      loop may still deliver it); runs no node has ever reported (`observed_at` is NULL: a pending launch turns
+      `unknown` on disconnect without one); runs whose space now belongs to another node (relocation ends them).
+  - **Clock assumption.** The node's lease guard compares central's lease expiry with the node's own clock, with no
+    skew correction. `stale_lease_lost` therefore assumes the clocks of central and the nodes are synchronised (NTP).
+    The 15-minute margin is far beyond any plausible skew of a synchronised clock; a node whose clock runs more than
+    that behind central's could still be running a process when central records it lost.
+  - **End transaction.** Each run ends in its own transaction, which re-checks the signal: the run's version is
+    unchanged since it was chosen, it is still live past its launch and has no unacknowledged launch, and for
+    `stale_not_on_node` the node's connection is still the one whose hello didn't contain it, for `stale_lease_lost`
+    the node is still not connected. A report, a reconnect or a queued launch at the same time wins. The run then ends
+    through the node-report path: credentials and gateway tokens revoked, `run_ended` published, `OnRunEnded` called.
+    The same transaction cancels every undelivered or unacknowledged command of the run and sets its desired state to
+    `stopped`, so `sendReconcile` stops listing it to the node, and archive and relocation aren't blocked by it. The
+    sweep is idempotent (an ended run is no longer a candidate). A central restart mid-sweep finds the remaining runs
+    again on the new connections, after a new grace.
+  - **Safety, and what a false positive costs.** The sweeper itself never sends a stop or a kill. But once a run is
+    swept, any later report of it is fenced, and a report that it is still running is answered with the fence's
+    `stop kill` (SM-NODE-006). So a run swept wrongly is killed at the node's next report of it. The safeguards
+    against that are the rules above: only runs that were live at connect and missing from a hello that applied in
+    full, never a pending launch or one never reported, a monotonic grace, a 15-minute margin on a lost lease with the
+    largest grace, and the re-check in the end transaction.
   - **Visibility.** The run shows end reason `stale_not_on_node` or `stale_lease_lost` and an explanation in its error.
     An audit record `run.reconciled_stale` names the reason and the previous state, and
     `spaceman_runs_reconciled_stale_total{reason}` counts sweeps.
 - **Consequences:**
   - **One-time effect on upgrade:** runs that had already ended but kept `desired = 'running'` stop counting at once.
     Spaces that were refused may admit new workers right after the upgrade.
+  - **One-time sweep on the first deploy.** Every historic run left `running` or `unknown` that meets the rules (after
+    the nodes reconnect and the grace passes, or 15 minutes past a lost lease) is ended in the first sweeps. Each one
+    publishes `run_ended`, has its credentials and gateway tokens revoked and its desired state set to `stopped`, and
+    goes through `OnRunEnded`. For a worker run, that tells the space's control the run ended and names its task;
+    control may then re-queue or relaunch that task, so old tasks can come back to life. Operators should look at
+    these notices (audit action `run.reconciled_stale`) and close tasks that are no longer wanted. A swept control run
+    isn't restarted by the control supervisor (its desired state is `stopped`), so a space whose control is swept
+    needs control launched again.
   - **Fencing trade-off.** Once swept, a run stays exactly as the sweeper ended it: any later report for it is fenced.
     A node that reconnects after `stale_lease_lost` and reports the run's real exit (its exit code) doesn't change the
-    record. A report that the run is still running is answered with the existing fence stop. By the rules above, that
-    can only happen if the node's lease guard failed (SM-NODE-008).
+    record.
   - SM-NODE-005 is refined, not withdrawn: execution on a disconnected node is `unknown` while it may still be running.
     It is never recorded as `failed`, and it becomes `lost` only once the lease guard must have stopped it.
-  - No migration and no node-protocol change.
+  - Migration 0046 adds `execution_leases.grace_us`. No node-protocol change.
+  - Follow-up: `ListActiveRunsBySpace` and `ListActiveRunsByNode` still count ended runs with `desired = 'running'` as
+    active (archive, relocation and `sendReconcile` use them); runs swept from now on no longer match, but they should
+    move to the live definition too.
 
 ## 2. Open items and unresolved contracts
 

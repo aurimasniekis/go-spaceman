@@ -71,7 +71,9 @@ The agent logs `central connection lost` on every disconnect and retries with ba
 ## Runs stop or show "unknown"
 
 - A run on a disconnected node is shown as **unknown**, never failed: central does not guess. It updates when the node
-  reports again.
+  reports again, or becomes **lost** (`stale_lease_lost`) once the lease, the grace and a 15-minute margin pass with the
+  node still away. A run its reconnected node didn't report becomes lost (`stale_not_on_node`) two minutes later. The
+  audit event `run.reconciled_stale` records each one ([nodes and leases](./nodes#when-central-is-unreachable)).
 - `lease expired without central; stopping the space's runs` (agent log) means the node lost central for longer than the
   lease (`nodes.lease_ttl`, 45 s) plus the grace (`nodes.disconnect_grace`, 2 min). The space's disconnect policy decides
   whether runs are interrupted or stopped. `lease guard: lease expired at …` means the agent itself was gone and the

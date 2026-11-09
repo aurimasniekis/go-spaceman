@@ -22,6 +22,12 @@ type rawNode struct {
 
 func dialRawNode(t *testing.T, e *fleetEnv, maxMinor int) *rawNode {
 	t.Helper()
+	return dialRawNodeHello(t, e, proto.Hello{AgentVersion: "test", MinMinor: proto.MinMinor, MaxMinor: maxMinor, Runs: []proto.RunReport{}, Leases: []proto.LeaseState{}})
+}
+
+// dialRawNodeHello is dialRawNode with the given hello.
+func dialRawNodeHello(t *testing.T, e *fleetEnv, hello proto.Hello) *rawNode {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	u := "ws" + strings.TrimPrefix(e.srv.URL, "http") + proto.ConnectPath
@@ -33,7 +39,7 @@ func dialRawNode(t *testing.T, e *fleetEnv, maxMinor int) *rawNode {
 	conn.SetReadLimit(proto.MaxMessage)
 	t.Cleanup(func() { _ = conn.CloseNow() })
 	n := &rawNode{conn: conn, ch: make(chan proto.Envelope, 64)}
-	n.send(t, proto.TypeHello, proto.Hello{AgentVersion: "test", MinMinor: proto.MinMinor, MaxMinor: maxMinor, Runs: []proto.RunReport{}, Leases: []proto.LeaseState{}})
+	n.send(t, proto.TypeHello, hello)
 	go func() {
 		for {
 			_, b, err := conn.Read(ctx)

@@ -584,8 +584,9 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 }
 
 // applyRunReport is applyReport; with sweep set, the report is central's own reconciliation of a stale run (ADR-0074):
-// it applies only while the run is unchanged since the sweeper chose it (same version, still past its launch and
-// live), and the run's end is audited and counted as a sweep. A sweep that no longer applies is skipped, not fenced.
+// it applies only while the sweep's signal still holds (stillStale), it also cancels the run's unacknowledged commands
+// and sets its desired state to stopped, and the run's end is audited and counted as a sweep. A sweep that no longer
+// applies is skipped, not fenced.
 func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto.RunReport, sweep *staleRun) (fenced bool, err error) {
 	becameIdle, justEnded, skipped := false, false, false
 	switch rep.State {
@@ -601,9 +602,11 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		} else if err != nil {
 			return err
 		}
-		if sweep != nil && (r.Version != sweep.Version || !Live(r.Observed) || r.Observed == proto.RunPending) {
-			skipped = true // a report (or another sweep) got there first
-			return nil
+		if sweep != nil {
+			if ok, err := svc.stillStale(ctx, tx, r, sweep); err != nil || !ok {
+				skipped = true // a report, a reconnect or another sweep got there first
+				return err
+			}
 		}
 		if r.NodeID != nodeID || r.SpaceID != rep.SpaceID || r.Generation != rep.Generation {
 			fenced = true
@@ -639,6 +642,19 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			MarkStarted: b2i(rep.State == proto.RunRunning || rep.State == proto.RunExited || rep.State == proto.RunFailed), MarkEnded: b2i(ended(rep.State)),
 			ID: r.ID, Generation: r.Generation}); err != nil {
 			return err
+		}
+		version := r.Version + 1
+		if sweep != nil {
+			// Nothing for the run may reach the node any more, and the node is no longer told to keep it (sendReconcile).
+			if _, err := tx.Q.CancelAllRunCommands(ctx, db.CancelAllRunCommandsParams{Reason: "run ended by the stale-run sweeper", RunID: sql.NullString{String: r.ID, Valid: true}}); err != nil {
+				return err
+			}
+			if r.Desired != "stopped" {
+				if _, err := tx.Q.SetRunDesired(ctx, db.SetRunDesiredParams{Desired: "stopped", UpdatedAt: tx.NowMicros(), ID: r.ID}); err != nil {
+					return err
+				}
+				version++
+			}
 		}
 		if r.Observed != rep.State {
 			svc.opts.Metrics.RunStarted(metrics.Harness(r.Harness), startResult(rep))
@@ -683,7 +699,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				}
 			}
 		}
-		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
+		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", version)
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
 		svc.opts.OnRunIdle(rep.RunID)

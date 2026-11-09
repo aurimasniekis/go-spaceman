@@ -219,23 +219,33 @@ type session struct {
 	memory chan struct{}
 	// minor is the negotiated protocol minor version (set before the session is registered).
 	minor int
-	// since is when the session was registered, before its hello reports were applied (microsecond precision, like the
-	// store's timestamps). A run of the node that no accepted report has touched since then is not in the node's
-	// journal (the stale-run sweeper, ADR-0074).
-	since time.Time
+	// The stale-run sweeper's view of this connection (ADR-0074). connectedAt, liveAtConnect and inHello are set before
+	// the session is registered and never change; helloApplied is guarded by Hub.mu.
+	//
+	// connectedAt is the clock's reading when the session was registered. It is only ever subtracted from another
+	// reading of the same clock (the system clock's readings carry a monotonic part), so a wall-clock step does not move
+	// the sweeper's grace.
+	connectedAt time.Time
+	// liveAtConnect holds the node's live runs (ID to version) as fleet.node_connect read them, in its transaction.
+	liveAtConnect map[string]int64
+	// inHello holds the IDs of the runs the node's hello reported, whether or not their report applied.
+	inHello map[string]bool
+	// helloApplied is true once every hello report applied; it stays false when one failed (the sweeper then leaves the
+	// connection's runs alone).
+	helloApplied bool
 }
 
 func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }
 
-// connectedSince returns when the node's live connection was registered (false: no live connection).
-func (h *Hub) connectedSince(nodeID string) (time.Time, bool) {
+// staleView returns the node's live connection and whether all its hello reports applied (nil: no live connection).
+func (h *Hub) staleView(nodeID string) (*session, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := h.sessions[nodeID]
 	if s == nil {
-		return time.Time{}, false
+		return nil, false
 	}
-	return s.since, true
+	return s, s.helloApplied
 }
 
 // Connected reports whether a node has a live connection.
@@ -358,14 +368,30 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	}
 	s.minor = minor
 	caps, _ := json.Marshal(hello.Capabilities)
+	s.inHello = make(map[string]bool, len(hello.Runs))
+	for _, rep := range hello.Runs {
+		s.inHello[rep.RunID] = true
+	}
 	if err := svc.s.W().TxNamed(ctx, "fleet.node_connect", func(tx *store.Tx) error {
-		return tx.Q.RecordNodeConnect(ctx, db.RecordNodeConnectParams{AgentVersion: truncate(hello.AgentVersion, 64), ProtocolMinor: int64(minor),
-			CapabilitiesJson: string(caps), Capacity: int64(hello.Capacity), Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, LastIp: ip, ID: s.nodeID})
+		if err := tx.Q.RecordNodeConnect(ctx, db.RecordNodeConnectParams{AgentVersion: truncate(hello.AgentVersion, 64), ProtocolMinor: int64(minor),
+			CapabilitiesJson: string(caps), Capacity: int64(hello.Capacity), Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, LastIp: ip, ID: s.nodeID}); err != nil {
+			return err
+		}
+		// The stale-run sweeper only ever considers the runs that were live when the node connected (ADR-0074).
+		live, err := tx.Q.ListLiveRunVersionsByNode(ctx, s.nodeID)
+		if err != nil {
+			return err
+		}
+		s.liveAtConnect = make(map[string]int64, len(live))
+		for _, r := range live {
+			s.liveAtConnect[r.ID] = r.Version
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
 	s.minor = minor
-	s.since = svc.now().Truncate(time.Microsecond)
+	s.connectedAt = svc.opts.Clock.Now()
 	h.mu.Lock()
 	old := h.sessions[s.nodeID]
 	h.sessions[s.nodeID] = s
@@ -384,11 +410,16 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		return err
 	}
 	// Reconcile before anything new is sent: the node's observations update central first (SM-NODE-009).
+	applied := true
 	for _, rep := range hello.Runs {
 		if _, err := svc.applyReport(ctx, s.nodeID, rep); err != nil {
+			applied = false
 			s.log.Warn("apply hello report", obs.Err(err))
 		}
 	}
+	h.mu.Lock()
+	s.helloApplied = applied // false: the stale-run sweeper leaves this connection's runs alone (ADR-0074)
+	h.mu.Unlock()
 	// The leases the node claims are checked at once: one it no longer holds (for example after a relocation) is
 	// revoked before any command is delivered.
 	if err := h.syncLeases(ctx, s, hello.Leases); err != nil {
