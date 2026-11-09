@@ -309,6 +309,9 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		return nil, err
 	}
 	svc.hub.Kick(nodeID)
+	if svc.opts.OnRunLaunched != nil {
+		svc.opts.OnRunLaunched(runID)
+	}
 	return svc.GetRun(ctx, runID)
 }
 
@@ -580,7 +583,15 @@ func (svc *Service) ListRuns(ctx context.Context, spaceID string, limit int) ([]
 // applyReport records a node's observation of a run. Reports for another node or an older lease generation are
 // fenced (SM-NODE-006); a run central wants stopped but the node reports running gets a new stop command.
 func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.RunReport) (fenced bool, err error) {
-	becameIdle, justEnded := false, false
+	return svc.applyRunReport(ctx, nodeID, rep, nil)
+}
+
+// applyRunReport is applyReport; with sweep set, the report is central's own reconciliation of a stale run (ADR-0074):
+// it applies only while the sweep's signal still holds (stillStale), it also cancels the run's unacknowledged commands
+// and sets its desired state to stopped, and the run's end is audited and counted as a sweep. A sweep that no longer
+// applies is skipped, not fenced.
+func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto.RunReport, sweep *staleRun) (fenced bool, err error) {
+	becameIdle, justEnded, skipped := false, false, false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:
 	default:
@@ -593,6 +604,12 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			return nil
 		} else if err != nil {
 			return err
+		}
+		if sweep != nil {
+			if ok, err := svc.stillStale(ctx, tx, r, sweep); err != nil || !ok {
+				skipped = true // a report, a reconnect or another sweep got there first
+				return err
+			}
 		}
 		if r.NodeID != nodeID || r.SpaceID != rep.SpaceID || r.Generation != rep.Generation {
 			fenced = true
@@ -611,6 +628,12 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			fenced = true
 			return nil
 		}
+		// A run the stale-run sweeper ended stays exactly as it ended it (ADR-0074): a node that reconnects later and
+		// reports a final state from its journal would otherwise end the run a second time or replace the sweep's reason.
+		if (r.EndReason == EndStaleNotOnNode || r.EndReason == EndStaleLeaseLost) && ended(r.Observed) {
+			fenced = true
+			return nil
+		}
 		var exit sql.NullInt64
 		if rep.ExitCode != nil {
 			exit = sql.NullInt64{Int64: int64(*rep.ExitCode), Valid: true}
@@ -622,6 +645,19 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			MarkStarted: b2i(rep.State == proto.RunRunning || rep.State == proto.RunExited || rep.State == proto.RunFailed), MarkEnded: b2i(ended(rep.State)),
 			ID: r.ID, Generation: r.Generation}); err != nil {
 			return err
+		}
+		version := r.Version + 1
+		if sweep != nil {
+			// Nothing for the run may reach the node any more, and the node is no longer told to keep it (sendReconcile).
+			if _, err := tx.Q.CancelAllRunCommands(ctx, db.CancelAllRunCommandsParams{Reason: "run ended by the stale-run sweeper", RunID: sql.NullString{String: r.ID, Valid: true}}); err != nil {
+				return err
+			}
+			if r.Desired != "stopped" {
+				if _, err := tx.Q.SetRunDesired(ctx, db.SetRunDesiredParams{Desired: "stopped", UpdatedAt: tx.NowMicros(), ID: r.ID}); err != nil {
+					return err
+				}
+				version++
+			}
 		}
 		if r.Observed != rep.State {
 			svc.opts.Metrics.RunStarted(metrics.Harness(r.Harness), startResult(rep))
@@ -660,8 +696,13 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			if err := svc.runEvent(ctx, tx, r, ev); err != nil {
 				return err
 			}
+			if sweep != nil {
+				if err := svc.auditStaleRun(ctx, tx, r, sweep); err != nil {
+					return err
+				}
+			}
 		}
-		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
+		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", version)
 	})
 	if err == nil && becameIdle && svc.opts.OnRunIdle != nil {
 		svc.opts.OnRunIdle(rep.RunID)
@@ -672,8 +713,14 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 	if err == nil && justEnded {
 		svc.kickSpaceRelocation(ctx, rep.SpaceID)
 	}
-	if fenced {
+	if err == nil && justEnded && sweep != nil {
+		svc.opts.Metrics.RunReconciledStale(metrics.StaleReason(sweep.Reason))
+	}
+	if fenced && sweep == nil {
 		svc.opts.Metrics.LeaseFenced()
+	}
+	if skipped || (fenced && sweep != nil) {
+		return true, err
 	}
 	return fenced, err
 }
@@ -690,6 +737,22 @@ func (svc *Service) runEvent(ctx context.Context, tx *store.Tx, r db.Run, p outb
 }
 
 func ended(s string) bool { return s == proto.RunExited || s == proto.RunFailed || s == proto.RunLost }
+
+// RunUnknown is the observed state central records for the runs of a node that disconnected (SM-NODE-005); nodes
+// never report it.
+const RunUnknown = "unknown"
+
+// Live reports whether a run in this observed state is live: not yet exited, failed or lost. It is the one definition
+// of an active run that spaceman_runs_list shows and the space and node concurrency limits count (the SQL of
+// ListLiveWorkRunsInSpace and ListLiveWorkRunsOnNode spells out the same states). desired is not part of it: a run
+// that ended on its own keeps desired = "running".
+func Live(observed string) bool {
+	switch observed {
+	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, RunUnknown:
+		return true
+	}
+	return false
+}
 
 func startResult(rep proto.RunReport) metrics.RunStartResult {
 	switch {

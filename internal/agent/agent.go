@@ -66,6 +66,8 @@ type Agent struct {
 	o   Options
 	j   *Journal
 	log *slog.Logger
+	// fetchChunk reads one range of an attachment from central for a save (forwardTool; tests replace it).
+	fetchChunk func(context.Context, bridgeRequest) bridgeResponse
 
 	mu        sync.Mutex
 	loginMu   sync.Mutex // shared harness logins (login.go)

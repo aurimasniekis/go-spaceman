@@ -16,6 +16,7 @@ import (
 // its project (who pays), which needs account:write too (checked in the handler: it depends on the body).
 var HarborPilotRules = map[string]Rule{
 	"get-harbor-pilot-connection":    Global(authz.AccountRead),
+	"get-harbor-pilot-gateway":       Global(authz.AccountRead),
 	"put-harbor-pilot-connection":    StepUp(authz.AccountWrite),
 	"delete-harbor-pilot-connection": StepUp(authz.AccountWrite),
 	"get-space-harbor-pilot":         InSpace(authz.SpaceConfigRead),
@@ -27,6 +28,10 @@ var HarborPilotRules = map[string]Rule{
 type harborPilotConnectionOut struct {
 	ETag string `header:"ETag"`
 	Body *harborpilot.Connection
+}
+
+type harborPilotGatewayOut struct {
+	Body *harborpilot.GatewayInfo
 }
 
 type spaceHarborPilotOut struct {
@@ -50,6 +55,20 @@ func RegisterHarborPilot(svc *harborpilot.Service, budgets *harborpilot.Budgets)
 					return nil, d.fail(ctx, "harborpilot.get_connection", err)
 				}
 				return &harborPilotConnectionOut{ETag: ETag(c.Version), Body: c}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "get-harbor-pilot-gateway", Method: http.MethodGet, Path: "/harbor-pilot/gateway",
+			Summary: "The connected Harbor Pilot's version",
+			Description: "Read with the connection's service-principal token from Harbor Pilot's GET /api/v1/system (0.1.4 or later; source system). " +
+				"A gateway without it is older than 0.1.4 (source legacy): the connection's check_budget probe showed it is 0.1.3 or later. Without a " +
+				"service-principal token, or when Harbor Pilot can't be read, source is unknown with the reason. project_filter says whether budget " +
+				"status is read filtered by project. Reused for 10 minutes.",
+			Tags: tags},
+			func(ctx context.Context, _ *struct{}) (*harborPilotGatewayOut, error) {
+				gi, err := budgets.Gateway(ctx)
+				if err != nil {
+					return nil, d.fail(ctx, "harborpilot.gateway", err)
+				}
+				return &harborPilotGatewayOut{Body: gi}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "put-harbor-pilot-connection", Method: http.MethodPut, Path: "/harbor-pilot/connection",
 			Summary: "Connect Harbor Pilot, or replace the connection",

@@ -72,6 +72,9 @@ func (c *Config) Validate() error {
 	if c.Nodes.LeaseTTL.D() < 3*c.Nodes.HeartbeatInterval.D() {
 		v.add("nodes.lease_ttl must be at least 3× nodes.heartbeat_interval so one missed heartbeat does not expire leases")
 	}
+	if c.Nodes.LeaseTTL.D() > MaxLeaseTTL {
+		v.add("nodes.lease_ttl must be at most %s: a node holds a lease that long after central last renewed or revoked it", MaxLeaseTTL)
+	}
 	v.durationRange("nodes.disconnect_grace", c.Nodes.DisconnectGrace, 0, time.Hour)
 	v.durationRange("nodes.enrollment_ttl", c.Nodes.EnrollmentTTL, time.Minute, 30*24*time.Hour)
 	v.durationRange("nodes.command_timeout", c.Nodes.CommandTimeout, time.Second, 10*time.Minute)
