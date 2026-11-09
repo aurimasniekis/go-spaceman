@@ -36,7 +36,7 @@ its `issues_opened` fixture.
 | Template | Subject (after `evt.github.<account>.webhook.`) | Accepts | Urgency | Correlation |
 |---|---|---|---|---|
 | `github-issue` | `issues.*` | every issue action (opened, edited, closed, reopened, assigned, labeled, …) | normal | `github:<repo>#<number>` |
-| `github-pull-request` | `pull_request.*` | every pull request action (opened, synchronize, closed and merged, reopened, ready_for_review, review_requested, …) | normal | `github:<repo>#<number>` |
+| `github-pull-request` | `pull_request.*` | every pull request action (opened, synchronize, edited, closed and merged, reopened, ready_for_review, review_requested, …); version 2 can drop `synchronize` and `edited` | normal | `github:<repo>#<number>` |
 | `github-pr-comment` | `issue_comment.created` | new comments in a pull request's conversation | normal | `github:<repo>#<number>` |
 | `github-issue-comment` | `issue_comment.created` | new comments on issues that are not pull requests | normal | `github:<repo>#<number>` |
 | `github-pr-review` | `pull_request_review.submitted` | submitted reviews: approved, changes requested, commented | normal | `github:<repo>#<number>` |
@@ -49,9 +49,10 @@ Variables:
 | Variable | Templates | Meaning |
 |---|---|---|
 | `account_key` | all, required | the monitored account configured in pulse-github (the subject token) |
-| `repository` | required in `github-issue` and `github-pull-request`, optional in the others | only this repository, as `owner/name` |
-| `owner` | all but `github-issue` and `github-pull-request` | only repositories of this owner |
-| `exclude_author` | all but `github-issue` and `github-pull-request` | ignore events by this login, for example the space's own agent account (agents comment on pull requests too) |
+| `repository` | required in `github-issue` and `github-pull-request` version 1, optional in the others | only this repository, as `owner/name` |
+| `owner` | all but `github-issue` and `github-pull-request` version 1 | only repositories of this owner |
+| `exclude_author` | all but `github-issue` and `github-pull-request` version 1 | ignore events by this login, for example the space's own agent account (agents push to and comment on pull requests too) |
+| `ignore_updates` | `github-pull-request` version 2 | `true` ignores new commits pushed to a pull request (`synchronize`) and edits of its title, body or base (`edited`) |
 | `include_bots` | comment and review templates | `true` keeps events by bot accounts; by default they are ignored |
 | `exclude_bots` | CI templates | `true` ignores runs a bot triggered; by default they are kept, since a bot's pull request can fail CI too |
 | `include_successes` | CI templates | `true` accepts every conclusion, including `success`, `neutral` and `skipped` |
@@ -71,6 +72,75 @@ Notes on choosing templates:
 - Untrusted text stays out of item titles: titles hold only the repository, number, login, review state, CI
   conclusion and a short commit SHA. Issue and pull request titles, comments, file paths and workflow and branch names
   appear only in the body and the raw payload attachment, and instructions never contain event text.
+
+`github-pull-request` has two published versions. Version 2 (ADR-0072) adds the optional `owner`, `exclude_author`
+and `ignore_updates` filters, makes `repository` optional, and moves the pull request title from the item title to
+the body. Its subject is version 1's, so a version 1 subscription's variables work with it unchanged. Subscriptions
+that follow the latest version moved to it when central started on this release; pinned ones stay on version 1 until
+you switch them.
+
+### Ignoring your own agent's pull requests
+
+A space's agents push to and edit their own pull requests all the time, and with `github-pull-request` version 1 each
+push (`synchronize`) and each body edit (`edited`) becomes an inbox item that wakes control. To keep only what people
+do, plus the lifecycle events your agents cause (opened, closed and merged, ready for review), set `exclude_author` to
+the agent's GitHub login and `ignore_updates` to `true`. `exclude_author` drops every event the agent caused;
+`ignore_updates` drops every push and edit, whoever made them. Use either or both.
+
+Find the subscription and the template versions first:
+
+```sh
+spaceman event subscription list --space <space>
+spaceman event template list                      # github-pull-request's newest version ID
+spaceman event template get <template-id>        # every version's ID
+```
+
+**With version 2** (this release or later), switch each pull request subscription. `--var` replaces all variables,
+so repeat `account_key` and `repository`:
+
+```sh
+spaceman event subscription update --space <space> <subscription-id> \
+  --template-version <github-pull-request version 2 ID> --follow latest \
+  --var account_key=<account-key> --var repository=<owner>/<repo> \
+  --var exclude_author=<agent-login> --var ignore_updates=true
+```
+
+**Without version 2** (v0.1.0-rc.9 or v0.1.0), create a custom template with exactly version 2's definition and
+point the subscription at it. Save the definition (shown under **Events → Templates → GitHub pull requests**,
+version 2, on an upgraded instance; or copy it from `internal/events/template/github.go`, `GitHubPullRequestV2`) as
+`github-pull-request-quiet.json`, then:
+
+```sh
+spaceman event template create github-pull-request-quiet --name "GitHub pull requests (quiet)" \
+  --definition-file github-pull-request-quiet.json
+spaceman event template get <new template-id>     # the draft's version ID
+spaceman event template publish <draft version-id>
+spaceman event subscription update --space <space> <subscription-id> \
+  --template-version <quiet version-id> --follow pinned \
+  --var account_key=<account-key> --var repository=<owner>/<repo> \
+  --var exclude_author=<agent-login> --var ignore_updates=true
+```
+
+In the web UI, an administrator can create and publish the template under **Events → Templates**: **New template**,
+paste the definition, test it against a sample event, then **Publish v1**. The UI can't change an existing subscription's
+template or variables yet, so use the CLI or the API (`PUT /api/v1/spaces/{space_id}/subscriptions/{subscription_id}`)
+for that. A new subscription made in the UI instead gets a new durable consumer and needs its own Pulse grant.
+
+The subject stays the same either way, so the durable consumer, its Pulse grant and its cursor are unchanged. Check
+the result with `spaceman event subscription get --space <space> <subscription-id>`: it shows the template version
+and the variables, and the next pushes appear under **Deliveries** as filtered (`actor.login` or `github.action`).
+
+To hear about CI failures instead of every push, add a `github-workflow-run` subscription. By default it accepts
+only `failure`, `timed_out`, `cancelled` and `startup_failure`:
+
+```sh
+spaceman event subscription create --space <space> --name github-ci-failures --connection <connection-id> \
+  --template-version <github-workflow-run version ID> \
+  --var account_key=<account-key> --var repository=<owner>/<repo>
+```
+
+It has a new subject (`evt.github.<account-key>.webhook.workflow_run.completed`), so the Pulse operator must add the
+grant the subscription page shows before it delivers anything.
 
 <Shot name="event-template" alt="GitHub issues template with its definition and an accepted sample test" caption="Testing a template with a sample event" />
 

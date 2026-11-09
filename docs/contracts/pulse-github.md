@@ -58,7 +58,7 @@ type Payload struct {
 - The dedup key is the delivery ID, so a GitHub redelivery republishes the same `publication_id`.
 
 ## SpaceMan seed templates derived from this contract
-- `github-issue` and `github-pull-request` templates (repository required):
+- `github-issue` and `github-pull-request` version 1 templates (repository required):
   - variables `account_key` (validated against the regex above) and `repository` (`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`);
   - subject `evt.github.{{account_key}}.webhook.issues.*` or `…pull_request.*`;
   - payload filter `repository.full_name == {{repository}}`.
@@ -68,6 +68,9 @@ type Payload struct {
   (`check_suite.completed`): repository and owner are optional filters on `repository.full_name` and
   `repository.owner.login`; author and bot filters read `actor.login` and `actor.type`. Their samples
   (`internal/events/template/testdata/pulse-github-<event>-<action>*.json`) are derived, not captured.
+- `github-pull-request` version 2 (ADR-0072): the same scope filters, plus `ignore_updates`, which filters
+  `github.action` against `synchronize` and `edited`. Its sample `pulse-github-pull_request-opened.json` is derived
+  the same way (`resource` from `pull_request`, `occurred_at` from `pull_request.created_at`), not captured.
 - Observed from a running `pulse-github run` (v0.1.0, `TestRealPulseGitHub`, 2026-11-03): the `issues_opened.json` webhook publishes
   on `evt.github.<acct>.webhook.issues.opened` with the headers above, and `push.json` on `….webhook.push.none`. The publication also
   carries `account.github_id` and `github.payload_sha256`, which SpaceMan's derived sample

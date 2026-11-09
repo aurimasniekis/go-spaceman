@@ -2756,6 +2756,10 @@
     definitions lose the fields when read through its data source. That is a provider follow-up.
   - The existing `github-issue` and `github-pull-request` templates still put the issue or pull request title into
     the item title. Moving it to the body needs a new published version of each.
+  - **Follow-up (2026-11-08, ADR-0072):** `github-pull-request` version 2 adds `exclude_author`, `ignore_updates`
+    and the optional scope filters and moves the title to the body; built-ins can now gain versions on existing
+    installations. The provider's `TemplateFilter` gained `if_set` and `unless_set` in terraform-provider-spaceman
+    v0.1.0, and its acceptance test round-trips them (checked against version 2 as well). `github-issue` is unchanged.
   - The fixtures are derived from GitHub's documented payload shapes and pulse-github's normalisation code, not
     captured from a live pulse-github (SM-EVT-002 notes).
 
@@ -3565,6 +3569,39 @@
       still has an older parameter set verifies at that set's cost until its next successful login rehashes it, so
       for such an account a failed login can take measurably longer or shorter than one for an unknown account. This
       lasts only while older-parameter hashes remain, and the deterministic check covers accounts on the current set.
+
+### ADR-0072 — `github-pull-request` version 2: ignore your own agent's pushes and edits; built-ins gain versions on existing installations
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate-wait plan's T12 and T13).
+- **Context:** In one space, about 95 of roughly 130 pull request inbox items in 2.5 days were `synchronize` or
+  `edited` events that the space's own agent account caused (its pushes and pull request body edits). Each woke
+  control for a minute or more. The six ADR-0061 templates take `exclude_author`, but `github-pull-request` version 1
+  has no author or action filter, and it puts the pull request title into the item title. Changing a published
+  built-in needs a new version, and `SeedBuiltins` only created missing templates, so existing installations would
+  never have received one (ADR-0061 consequences).
+- **Decision:**
+  - **Version 2 of `github-pull-request`.** Same subject (`evt.github.<account>.webhook.pull_request.*`) and
+    correlation. It takes the ADR-0061 scope variables: `repository` (now optional), `owner` and `exclude_author`
+    (the webhook sender's login, normally the space's agent account). A new flag `ignore_updates` (only `true`) adds
+    `data.github.action ne synchronize` and `ne edited`, so new commits and title, body or base edits are dropped and
+    every other action (opened, closed, reopened, ready_for_review, review_requested, …) still passes. Bots are kept
+    (a bot's pull request can need review). The item title holds only the repository, number, action and login; the
+    pull request title moves to the body as inline code (T-03).
+  - **Built-ins gain later versions.** `builtinLaterVersions` lists a built-in's versions after version 1. At every
+    start `SeedBuiltins` publishes the missing ones in order, as `system`, and only on top of the built-in's own
+    newest version: if an administrator has made their own version or draft of the built-in, that version is never
+    replaced or renumbered, and seeding stops there with a warning. Version 1 and subscriptions pinned to it are not
+    touched. Subscriptions that follow the latest version move to the new version when it binds with their variables
+    and keeps their subject, exactly as on Publish (SM-EVT-006). A version 1 subscription's variables bind to
+    version 2 unchanged, so followers move. They then get the new title format, but their filters stay as before
+    until they set the new variables. The publication is audited as `event_template.published` by the system actor.
+- **Consequences:**
+  - Existing installations get version 2 at their next start. Pinned subscriptions must be switched by hand
+    (`spaceman event subscription update --template-version …`, or the API). The web UI cannot change a subscription's
+    template version or variables yet: switching there means a new subscription, which needs a new Pulse grant.
+  - On releases without version 2 (v0.1.0-rc.9 and later), a custom template with exactly version 2's definition
+    gives the same result (site guide: Events, "Ignoring your own agent's pull requests").
+  - Not solved here: several events on one pull request still wake control once each (coalescing by correlation is
+    a separate, optional follow-up).
 
 ## 2. Open items and unresolved contracts
 
