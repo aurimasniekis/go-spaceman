@@ -174,6 +174,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   role configuration and type permissions dialogs scroll in their own box. A new end-to-end check
   (`e2e/ui-overflow.spec.ts`) opens every page, modal and drawer at 390, 1280 and 1920 px in both themes with real
   scrollbars.
+- Web: opening a page (Spaces, Terminals, Needs you, …) in a tab that was open across an upgrade, or after a dropped
+  connection, no longer ends in "Something went wrong!" until a manual refresh. A part of the app that fails to
+  download (`import()` or Vite's stylesheet preload) reloads the page once to pick up the current build, guarded
+  against a reload loop; until the reload lands only a loader shows (no error screen flashes first), and if it still
+  fails the page says "SpaceMan was updated" with a Reload button. A chunk that downloaded but threw while it ran is
+  shown as the error it is, not reloaded. Other route errors show their message with Reload and Try again. A missing `/assets/*` file is a 404 with
+  `Cache-Control: no-store` (it carried the one-year `immutable` header before), and an `/assets/` directory is no
+  longer listed.
 
 ### Notes
 
