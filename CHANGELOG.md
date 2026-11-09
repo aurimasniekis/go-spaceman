@@ -40,6 +40,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `flock` semaphore first, so several runs on one machine take turns instead of contending (ADR-0069,
   `scripts/gate-slot.sh`). `SM_GATE_SLOTS` (default 2 on 16 or more CPUs, otherwise 1; `0` disables it, and it is off
   when `CI=true`) and `SM_GATE_LOCK_DIR` configure it; `make check` holds one slot for coverage and race together.
+- The site's axe audit runs in parallel shards (`SM_A11Y_SHARDS`, by default a quarter of the CPUs, at most 8) and
+  waits for VitePress to be ready instead of for network idle: about 1.5 minutes instead of nearly 10 on a 32-core
+  machine. A local `make site-check` skips the audit when nothing the site is built from changed
+  (`scripts/site-affected.sh`, the rule CI already used; `SM_SITE_A11Y=1` forces it).
 
 ### Fixed
 

@@ -14,7 +14,7 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 | `make check` | The gate to run once before pushing: `go vet`, the custom analyzers, golangci-lint, the requirement traceability check, the analyzer tests, the coverage floor (one `go test -cover` run over the security-critical packages) and the race-enabled tests, in that order, stopping at the first failure |
 | `make web-check` | UI typecheck, unit tests (vitest) and the production build |
 | `make api-check` | Regenerates `api/openapi.json` and the UI's TypeScript types and fails on drift |
-| `make site-check` | Builds this site (dead links, screenshot references), parses every Mermaid diagram, checks the API, CLI and configuration references for drift and audits every page with axe. `make site-verify` runs all of it except the audit; `make site-a11y` runs only the audit, on the built site. |
+| `make site-check` | Builds this site (dead links, screenshot references), parses every Mermaid diagram, checks the API, CLI and configuration references for drift and audits every page with axe. The audit runs only when something the site is built from changed against `main` (`scripts/site-affected.sh`, the same rule CI uses); `SM_SITE_A11Y=1` runs it regardless. `make site-verify` runs all of it except the audit; `make site-a11y` runs only the audit, on the built site, split over `SM_A11Y_SHARDS` parallel Chromium workers (default: a quarter of the CPUs, 1 to 8). |
 | `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` (30 s by default) |
 
 ## What CI runs
@@ -22,7 +22,7 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 | Workflow | When | What |
 |---|---|---|
 | `ci` | every pull request and push to `main` | lint, vet, sqlc drift, analyzer tests and traceability; race tests; the coverage floor; the web checks and API drift; `make site-verify`; govulncheck and gitleaks |
-| `ci` | pull requests that change `site/`, `docs/`, `web/`, `api/`, `CHANGELOG.md`, the `Makefile` or `ci.yaml`, and every push to `main` | the site's axe audit (`make site-a11y`) |
+| `ci` | pull requests that change `site/`, `docs/`, `web/`, `api/`, `CHANGELOG.md`, the `Makefile`, `ci.yaml` or `scripts/site-affected.sh` (the rule lives in that script), and every push to `main` | the site's axe audit (`make site-a11y`, two shards) |
 | `ci` | nightly | all of the above with the full audit, and every fuzz target for 10 minutes |
 | `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
 

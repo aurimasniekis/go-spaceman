@@ -270,9 +270,11 @@ site-dev:
 	cd site && pnpm dev
 
 # Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, API, CLI and configuration
-# reference drift, and an axe audit of every page in both color schemes.
+# reference drift, and an axe audit of every page in both color schemes. The audit is skipped when nothing the site is
+# built from changed against the main branch (scripts/site-affected.sh, the same rule CI uses; ADR-0062);
+# SM_SITE_A11Y=1 runs it regardless (the release gate does).
 site-check: site-verify
-	$(MAKE) site-a11y
+	@if [ "$${SM_SITE_A11Y:-}" = 1 ] || ./scripts/site-affected.sh; then $(MAKE) site-a11y; fi
 
 # Everything in site-check except the axe audit (CI runs the audit on pull requests only when the site can change;
 # ADR-0062).
@@ -280,9 +282,12 @@ site-verify: cli-docs config-docs site
 	cd site && pnpm check:mermaid
 	git diff --exit-code -- site/reference/api.md site/reference/cli site/reference/configuration.md
 
-# The axe audit (WCAG 2.1 A/AA) of every page of the built site (make site) in both color schemes.
+# The axe audit (WCAG 2.1 A/AA) of every page of the built site (make site) in both color schemes. The pages are split
+# into SM_A11Y_SHARDS parallel tests (both schemes each), run by as many Playwright workers (one Chromium each); the
+# default is a quarter of the CPUs, between 1 and 8.
+SM_A11Y_SHARDS ?= $(shell n=$$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); s=$$((n / 4)); [ $$s -gt 8 ] && s=8; [ $$s -lt 1 ] && s=1; echo $$s)
 site-a11y:
-	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist $(GATE) site-a11y pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
+	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist SM_A11Y_SHARDS=$(SM_A11Y_SHARDS) $(GATE) site-a11y pnpm exec playwright test e2e/site-a11y.spec.ts --workers=$(SM_A11Y_SHARDS) --reporter=list
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).
 screenshots:

@@ -2810,6 +2810,13 @@
     (`site/development/testing.md`).
   - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
+- **Update, 2026-11-08 (gate wait time, T9):** the Q2 b path rule moved from `ci.yaml` into
+  `scripts/site-affected.sh`, its one home; the list is unchanged except that the script itself is added. CI calls it
+  with `HEAD^1` on a pull request. A local `make site-check` calls it against the merge base with `main` (committed,
+  uncommitted and untracked files) and skips the audit when nothing site-affecting changed; it runs the audit when it
+  can't tell, and `SM_SITE_A11Y=1` forces it (the release workflow sets it, so the release still always audits). The
+  audit itself is sharded over `SM_A11Y_SHARDS` parallel tests and workers (two in CI) and waits for VitePress to
+  hydrate instead of for network idle; it audits the same pages, schemes and rules.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
