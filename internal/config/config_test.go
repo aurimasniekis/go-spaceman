@@ -230,3 +230,18 @@ func TestArtifactsS3Validation(t *testing.T) {
 		t.Fatalf("separate prefixes in one bucket: %v", err)
 	}
 }
+
+// nodes.lease_ttl is bounded above by MaxLeaseTTL: the stale-run sweeper's lease margin assumes a node never holds a lease
+// longer than that past central's last renewal or revoke (ADR-0074).
+func TestLeaseTTLBound(t *testing.T) {
+	cfg := Default()
+	cfg.PublicURL = "https://spaceman.example.com"
+	cfg.Nodes.LeaseTTL = Duration(MaxLeaseTTL)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("lease_ttl at the bound rejected: %v", err)
+	}
+	cfg.Nodes.LeaseTTL = Duration(MaxLeaseTTL + time.Second)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "nodes.lease_ttl must be at most 10m0s") {
+		t.Fatalf("lease_ttl past the bound: %v", err)
+	}
+}

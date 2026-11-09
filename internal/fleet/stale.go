@@ -29,7 +29,9 @@ import (
 //     the disconnect grace (the larger of the one the lease was granted with and the current one) plus
 //     staleLeaseMargin ago. The node's lease guard stops a space's runs once its lease and the grace pass without
 //     central (SM-NODE-007), so the process is gone. The guard compares central's expiry with the node's own clock, so
-//     this assumes the node's clock is synchronised (NTP); the margin covers any plausible skew.
+//     this assumes the node's clock is synchronised (NTP); the margin covers any plausible skew. Only an active lease
+//     counts: a revoke stores the revoke time as the expiry, while the node may hold the lease for up to lease_ttl
+//     (config.MaxLeaseTTL, 10 minutes) longer, so the runs of a revoked lease wait for the node's report instead.
 //
 // A run is never a candidate while it is pending, while a launch command for it is unacknowledged (pending or sent), or
 // when no node has ever reported it: its launch may still be in flight. Runs whose space now belongs to another node
@@ -84,7 +86,7 @@ func (svc *Service) staleRuns(ctx context.Context) ([]staleRun, error) {
 			c.Reason, c.Due, c.ready, c.session = EndStaleNotOnNode, now.Add(max(left, 0)), left <= 0, s
 		} else {
 			if r.LeaseNodeID != r.NodeID || r.LeaseExpiresAt == 0 {
-				continue // no lease of this node to have missed
+				continue // no active lease of this node to have missed (a revoked one is not joined)
 			}
 			grace := max(time.Duration(r.LeaseGraceUs)*time.Microsecond, svc.opts.DisconnectGrace)
 			c.Reason, c.Due = EndStaleLeaseLost, time.UnixMicro(r.LeaseExpiresAt).Add(grace+svc.opts.StaleLeaseMargin)

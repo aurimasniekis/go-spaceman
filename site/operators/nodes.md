@@ -44,7 +44,9 @@ If the node doesn't come back, central's stale-run sweeper records the space's r
 and a further 15 minutes have passed. That frees their slots in the space's limit and the node's capacity. If the node
 reconnects and its hello doesn't report a run central still counts as live (its agent restarted and the process didn't
 survive), the sweeper records that run as lost (`stale_not_on_node`) two minutes after the connection. It never ends a
-pending launch, a run whose launch is still unacknowledged, or a run no node has reported. Each sweep writes the audit
+pending launch, a run whose launch is still unacknowledged, or a run no node has reported, and it does not use a
+revoked lease (a revoke records the revoke time, while the node may hold the lease for up to `nodes.lease_ttl`, at
+most 10 minutes, longer): those runs wait for the node to report. Each sweep writes the audit
 event `run.reconciled_stale` and counts in `spaceman_runs_reconciled_stale_total` (ADR-0074).
 
 ::: warning Keep node clocks synchronised

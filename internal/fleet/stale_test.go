@@ -338,3 +338,77 @@ func TestStaleRunSweeperVersionRace(t *testing.T) {
 		t.Fatalf("stale sweep applied over a queued launch: skipped %v, %v", skipped, err)
 	}
 }
+
+// ADR-0074: a hello report that fails after the sweeper chose a run (helloApplied turns false on the same connection)
+// voids the choice: the end transaction re-checks it.
+func TestStaleRunSweeperHelloAppliedRecheck(t *testing.T) {
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+	e.run("run_gone", "spc_a", "nod_1", "unknown", e.us(-time.Hour))
+	s := e.connect("nod_1", true)
+	e.clk.Set(e.t0.Add(staleRunGrace))
+	cands, err := e.svc.staleRuns(e.ctx)
+	if err != nil || len(cands) != 1 || cands[0].ID != "run_gone" || !cands[0].ready || cands[0].session != s {
+		t.Fatalf("candidates %+v %v", cands, err)
+	}
+	e.svc.hub.mu.Lock()
+	s.helloApplied = false
+	e.svc.hub.mu.Unlock()
+	if skipped, err := e.svc.applyRunReport(e.ctx, "nod_1", proto.RunReport{RunID: "run_gone", SpaceID: "spc_a", Generation: 1, State: proto.RunLost,
+		Reason: EndStaleNotOnNode}, &cands[0]); err != nil || !skipped {
+		t.Fatalf("a sweep applied after a hello report failed: skipped %v, %v", skipped, err)
+	}
+	if r := e.observed("run_gone"); r.Observed != "unknown" || r.Desired != "running" {
+		t.Fatalf("run changed: %+v", r)
+	}
+}
+
+// ADR-0074: a run no node ever reported (observed_at NULL) is never swept, even with its launch acknowledged (so the
+// unacknowledged-launch guard does not cover it): the candidate query leaves it out, and the end transaction refuses it
+// when it is chosen anyway.
+func TestStaleRunSweeperNeverObserved(t *testing.T) {
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+	e.run("run_unrep", "spc_a", "nod_1", "unknown", nil)
+	e.command("cmd_1", "nod_1", "spc_a", "run_unrep", "run.launch", "accepted")
+	s := e.connect("nod_1", true)
+	e.clk.Set(e.t0.Add(staleRunGrace))
+	cands, err := e.svc.staleRuns(e.ctx)
+	if err != nil || len(cands) != 0 {
+		t.Fatalf("a never-reported run is a candidate: %+v %v", cands, err)
+	}
+	e.sweep(e.t0.Add(staleRunGrace), 0)
+
+	// Chosen anyway (as if it had been reported when chosen): the end transaction still refuses it.
+	r := e.observed("run_unrep")
+	sweep := &staleRun{Reason: EndStaleNotOnNode, Due: e.t0.Add(staleRunGrace), ready: true, session: s}
+	sweep.ID, sweep.NodeID, sweep.SpaceID, sweep.Version, sweep.Observed = r.ID, r.NodeID, r.SpaceID, r.Version, r.Observed
+	if skipped, err := e.svc.applyRunReport(e.ctx, "nod_1", proto.RunReport{RunID: r.ID, SpaceID: r.SpaceID, Generation: r.Generation, State: proto.RunLost,
+		Reason: EndStaleNotOnNode}, sweep); err != nil || !skipped {
+		t.Fatalf("a never-reported run was swept: skipped %v, %v", skipped, err)
+	}
+	if r := e.observed("run_unrep"); r.Observed != "unknown" {
+		t.Fatalf("run changed: %+v", r)
+	}
+}
+
+// ADR-0074: a revoked lease is never the basis of a lease-lost sweep. Its stored expiry is the revoke time, but the
+// node may hold the lease up to lease_ttl longer, so the space's runs wait for the node to report.
+func TestStaleRunSweeperRevokedLease(t *testing.T) {
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_2', 'n2', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_b', 'bbb', 'B', 'nod_2', 'active', 'b', 0, 't', 0)`)
+	e.exec(`INSERT INTO execution_leases (space_id, node_id, generation, state, granted_at, renewed_at, expires_at, grace_us) VALUES
+		('spc_b', 'nod_2', 1, 'revoked', 0, 0, ?, 0)`, e.us(-time.Hour))
+	e.run("run_away", "spc_b", "nod_2", "unknown", e.us(-2*time.Hour))
+	e.next(time.Time{})
+	e.sweep(e.t0.Add(24*time.Hour), 0)
+	if r := e.observed("run_away"); r.Observed != "unknown" {
+		t.Fatalf("a run of a revoked lease was swept: %+v", r)
+	}
+	// The same lease while active is swept (the test above would pass vacuously otherwise).
+	e.exec(`UPDATE execution_leases SET state = 'active' WHERE space_id = 'spc_b'`)
+	e.sweep(e.t0.Add(24*time.Hour), 1)
+}
