@@ -3384,6 +3384,122 @@
   - The node writes both when it builds the launch, so they take nodes on this release or later. The profile's
     resolved settings in the API don't show them. Codex is unchanged.
 
+### ADR-0069 — Tiered local gates, a one-run coverage floor and cached CI tools
+- **Status:** Accepted, 2026-11-08 (gate wait-time work, subtasks T1, T2, T10, and T7 and T8 below). Not a relaxation: every check in
+  `make check` and in CI still runs. The coverage floor applies to the same packages with the same rules.
+- **Context:**
+  - Agents spent much of their time waiting for `make check` (about 13.5 minutes on a 32-core node). It ran a median
+    of twice and up to nine times per task.
+  - The coverage floor ran 28 packages one `go test` at a time (154 s); the same packages in one invocation take
+    about 20 s.
+  - CI's lint job failed whole runs on GitHub 504s while downloading golangci-lint or sqlc release assets.
+- **Decision:**
+  - **Two local gates.** `make check-fast` is for iterating: vet, custom vet, lint, traceability, the analyzer tests
+    and `go test ./...` without `-race` and with the test cache, plus `sqlc-check`/`api-check` when their inputs
+    changed since the merge base. `make check` is the pre-push gate. It runs once per task on the final tree and
+    checks what it checked before, now fail-fast: vet, custom vet, lint, traceability, analyzer tests, coverage,
+    race. AGENTS.md "Gates" says which to run when.
+  - **Coverage floor in one invocation.** `scripts/coverage-floor.sh` runs one `go test -count=1 -cover` and reads
+    each package's summary line. A package fails when go test reports it failed (tests, build or setup), when it
+    has no coverage line, or when its coverage is below the floor. A non-zero exit that no package explains fails
+    too. `COVERAGE_PARALLEL` (go test `-p`) bounds how many packages run their tests at once. The default is a
+    quarter of the CPUs, at least 1 and at most 8. CI and the release workflow set 1, the concurrency they had
+    before. All 28 at once exceeded the 250 ms write-transaction guard on a 4-core hosted runner, so the guard's
+    calibration (ADR-0062) is kept. The test binaries are built first with full parallelism.
+  - **CI tools from caches.** `bin/sqlc` is cached under the hash of `scripts/install-sqlc.sh`, which holds the
+    pinned version and SHA-256 sums. A miss installs it as before (checksum verified), with curl retries.
+    golangci-lint is built with `go install …@<pinned version>` through the Go module proxy (modules verified
+    against the checksum database), cached per version, OS, architecture and Go toolchain. A step checks the
+    binary's version before the action runs it (`install-mode: none`). The release workflow downloads neither tool.
+  - **The race run's critical path (T7).** `internal/app` (about an hour of test time under `-race`) alone took about
+    9 minutes at `-parallel 4`, with most of a many-core machine idle. Its ~20 serial tests alone take about 260 s,
+    since go test runs them one after another before any parallel test. `scripts/race.sh` runs it as its own `go test
+    -race` invocation, started first, with `RACE_APP_PARALLEL` (default `min(16, nproc/2)`, at least 4), and on 16 or
+    more CPUs splits it into two concurrent processes, the serial tests (`-run`) and the rest (`-skip`, the same
+    pattern, so each test runs exactly once; `RACE_APP_SPLIT`), alongside one
+    invocation for every other package at `RACE_PARALLEL` (4, unchanged: the small packages starve when everything runs
+    at full load). CI and the release workflow set `RACE_APP_PARALLEL=4`, the cap they had.
+  - **A node-wide heavy-gate semaphore (T8).** Several agents' full suites on one node slowed each other down and
+    tripped the write-transaction guard and timing tests. `scripts/gate-slot.sh` runs `race`, `coverage`, `site-a11y`,
+    `e2e`/`e2e-browsers` and `screenshots` while holding one of `SM_GATE_SLOTS` `flock` slots in `SM_GATE_LOCK_DIR`
+    (defaults: 2 slots on 16 or more CPUs, otherwise 1; `${XDG_CACHE_HOME:-~/.cache}/spaceman-gates`). `make check`
+    takes one slot for coverage and race together. A waiting run prints one line naming the holders. The kernel
+    releases a lock when its holder exits, a `kill -9` included. `SM_GATE_SLOTS=0` disables it, and it is off when
+    `CI=true`.
+- **Alternatives:** `install-mode: goinstall` in the action (it rebuilds golangci-lint from source on every run,
+  because the Go module cache key doesn't cover it); caching the golangci-lint release archive (still a GitHub release
+  download on a miss); making local `make race` use the test cache (operator question Q1 of the plan, not decided
+  here); deriving `RACE_PARALLEL` from the CPU count for every package (T7: the small packages starve their leases and
+  write transactions under full load); a semaphore inside SpaceMan, a per-node "heavy job" capacity exposed to runs (a
+  possible product follow-up, out of scope).
+- **Consequences:**
+  - A cached sqlc binary is not re-verified on a hit: the checksum covers the release archive, which a hit doesn't
+    download. The cache entry was written by a run of this repository after verification. Actions caches are
+    scoped to the branch, so a pull request can't plant one for `main` (THREAT_MODEL T-41).
+  - `check-fast` passing is not a pre-push signal: race tests and the strict coverage run happen only in `make check`
+    and CI.
+  - A heavy gate can wait for minutes behind other agents' runs; that wait costs no CPU. The slots only coordinate runs
+    that share `SM_GATE_LOCK_DIR`. Killing only the wrapper releases the slot while its command goes on; stopping
+    the process group stops both.
+
+### ADR-0070 — The write-transaction guard measures lock hold time; local race runs use the test cache (security-relevant change)
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, questions Q1 and Q2; subtask T3).
+  **Security-relevant change:** it changes what the evidence for Hallpass HP-DB-004 (short write transactions)
+  measures. The limits and the rule are unchanged.
+- **Context:**
+  - `storetest` fails a test when a successful write transaction takes longer than `MaxTxDuration` (100 ms by default,
+    `SM_TEST_TX_MAX`; ADR-0062). The duration it got from `store.Writer.TxNamed` started before the first attempt, so
+    it also counted the wait for the single writer connection (`MaxOpenConns(1)`), the wait for `BEGIN IMMEDIATE` to
+    acquire the database lock, and every `SQLITE_BUSY` retry with its backoff sleep.
+  - HP-DB-004 is about how long a transaction *holds* the writer: a long hold blocks every other write. Waiting for the
+    writer is a different property, already metered (HP-DB-003: `spaceman_store_writer_wait_seconds`,
+    `spaceman_store_writer_queue_depth`, `spaceman_store_tx_busy_retries_total`).
+  - Under CPU contention (parallel packages and tests, Argon2 in the auth tests, several gates on one node) the queueing
+    made short transactions look long. The guard failed on unchanged code, locally and on hosted runners, in whichever
+    transaction happened to queue behind another one.
+  - The race run passed `-count=1`, so every local `make race` (and `make check`) reran every package, even after a
+    merge that touched no Go code.
+- **Decision:**
+  - **The observer gets the lock hold time (Q2).** `store.TxObserver` now receives the longest lock hold of the
+    transaction's attempts: for each attempt, the time from `BEGIN IMMEDIATE` returning (the lock is held) to the end
+    of its commit or rollback, callback and commit included. Taking the longest, not the last, keeps an attempt that
+    held the writer for long and then rolled back on `SQLITE_BUSY` from being hidden by a quick retry. It is zero when
+    no attempt got the lock. The `storetest` guard compares it with `MaxTxDuration`, and its message now says `held the
+    write lock for`. The guard checks failed transactions too (it checked only successful ones), except those that
+    ended because their context was canceled or timed out.
+  - **What is observed:** only transactions run through `Writer.Tx` and `Writer.TxNamed`. `Writer.Exec`
+    (maintenance statements such as checkpoints), migrations and snapshots (`VACUUM INTO`) are not, so the guard does
+    not cover them.
+  - **Wait and retries stay in metrics.** `spaceman_store_tx_duration_seconds` keeps the end-to-end duration, retries
+    and waits included (its help text already said so); writer wait, queue depth and busy retries are unchanged.
+  - **Local race runs use go test's cache (Q1).** `make race` passes `-count` only when `RACE_COUNT` is set. CI's race
+    job and the release workflow run `make race RACE_COUNT=1`, so every test runs there on every commit; their build
+    cache is restored from earlier runs, and a cached pass must not stand in for a run on the commit under test.
+- **Alternatives:**
+  - **Keep measuring from before the first attempt and raise the limit:** it would hide real long holds in exactly the
+    runs where contention is low.
+  - **Measure from the start of the successful attempt**, pool wait included: still counts queueing for the in-process
+    writer connection, the larger share under `t.Parallel`.
+  - **Keep `-count=1` locally:** every rerun of `make check` repays the full race run (about 10 minutes on this
+    project's development nodes) for packages that didn't change.
+- **Consequences:**
+  - A transaction that waits behind another writer for longer than the limit no longer fails a test; one that holds
+    the writer for longer still does (`internal/store/storetest` `TestGuardCountsLockHoldNotWait`, `internal/store`
+    `TestTxObserverGetsLockHoldTime`, `internal/store/storetest` `TestGuardCountsTheLongestAttempt`,
+    `TestGuardChecksFailedTransactions`). Starvation and queueing show up in the writer-wait metrics instead, and in tests
+    only when they make something time out.
+  - The full non-race suite passes at the 100 ms default (PLAN.md §3). Hold time still includes the commit's fsync
+    (`synchronous(FULL)`) and any time the holding goroutine is descheduled, so a heavily loaded machine can still
+    trip the guard: on a node where several other suites ran, single-statement transactions held 100–270 ms.
+    Those are real holds and the guard reports them.
+  - A local cached race pass can come from an earlier run of the same package build and inputs. A flaky test is judged
+    with `-count=1` (AGENTS.md "Gates").
+  - **Follow-up: re-evaluate ADR-0062's 250 ms on hosted CI and the race relaxations** (500 ms in `make race`, 1 s in
+    CI's race job and the release gate). Those values were set against the old measurement, whose failures were
+    mostly queueing. Collect the guard's failures (if any) and the hold times of the slowest transactions on hosted CI
+    over a couple of weeks of runs with this change; if the coverage job holds 100 ms there and the race jobs hold
+    their limits with margin, lower them in a separate ADR. Until then they stay as they are.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
