@@ -88,18 +88,20 @@ function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
   return (
     <Stack gap="sm">
       <Text size="sm" c="dimmed">What a launch of this role gets now, and where each value comes from. Later layers override earlier ones; policy ceilings apply last.</Text>
-      <Table>
-        <Table.Thead><Table.Tr><Table.Th>Field</Table.Th><Table.Th>Value</Table.Th><Table.Th>From</Table.Th></Table.Tr></Table.Thead>
-        <Table.Tbody>
-          {Object.entries(p.effective).sort(([a], [b]) => a.localeCompare(b)).map(([k, f]) => (
-            <Table.Tr key={k}>
-              <Table.Td><Text size="xs" className="mono">{k}</Text></Table.Td>
-              <Table.Td><Text size="xs" className="mono">{f.value.length > 40 ? `${f.value.slice(0, 40)}…` : f.value}</Text></Table.Td>
-              <Table.Td><Badge size="xs" variant="light" color={originColor[f.origin]}>{f.origin.replace('_', ' ')}</Badge></Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
+      <Table.ScrollContainer minWidth={520}>
+        <Table>
+          <Table.Thead><Table.Tr><Table.Th>Field</Table.Th><Table.Th>Value</Table.Th><Table.Th>From</Table.Th></Table.Tr></Table.Thead>
+          <Table.Tbody>
+            {Object.entries(p.effective).sort(([a], [b]) => a.localeCompare(b)).map(([k, f]) => (
+              <Table.Tr key={k}>
+                <Table.Td><Text size="xs" className="mono">{k}</Text></Table.Td>
+                <Table.Td><Text size="xs" className="mono">{f.value.length > 40 ? `${f.value.slice(0, 40)}…` : f.value}</Text></Table.Td>
+                <Table.Td><Badge size="xs" variant="light" color={originColor[f.origin]}>{f.origin.replace('_', ' ')}</Badge></Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
       {p.prompt && <Text size="sm">Prompt <b>{p.prompt.slug}</b> v{p.prompt.number} ({p.prompt.pinned ? 'pinned' : 'follows the latest'})</Text>}
       {p.skills.length > 0 && (
         <Text size="sm">Skills: {p.skills.map((sk) => `${sk.slug} v${sk.number}${sk.pinned ? ' (pinned)' : ''}`).join(', ')}</Text>

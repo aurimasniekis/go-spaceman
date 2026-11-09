@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Web UI: no unwanted scrollbars. Dialogs scroll vertically only and wrap long IDs, keys and URLs, so they no longer
+  show a horizontal scrollbar (and with it a vertical one) for a few stray pixels. The space sections row no longer
+  shows a vertical scrollbar and fits 1280 px screens. On phones, the inbox, an inbox item and the human actions list
+  no longer scroll sideways, and message subjects and human action titles keep a readable width. Wide tables in the
+  role configuration and type permissions dialogs scroll in their own box. A new end-to-end check (`e2e/overflow.spec.ts`)
+  opens every page, modal and drawer at 390, 1280 and 1920 px in both themes with real scrollbars.
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim

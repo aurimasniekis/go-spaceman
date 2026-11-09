@@ -67,10 +67,11 @@ function MessagesPage() {
         {items.map((m) => (
           <Card key={m.id} p="xs" role="listitem" tabIndex={0} aria-label={`${m.subject}, ${m.state}`} style={{ cursor: 'pointer' }}
             onClick={() => setOpen(m.id)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(m.id) }}>
-            <Group gap="xs" wrap="nowrap">
+            {/* The row wraps on a phone, so the subject keeps a readable width instead of shrinking to nothing. */}
+            <Group gap="xs">
               <Badge variant="light" color={m.kind === 'request' ? 'owlYellow' : m.kind === 'notification' ? 'gray' : 'owlBlue'}>{m.kind}</Badge>
               <Text size="xs" c="dimmed" w={260} truncate>{party(m.from_kind, m.from_id, m.from_label)} <IconArrowRight size={10} /> {party(m.to_kind, m.to_id)}</Text>
-              <Text size="sm" style={{ flex: 1 }} truncate>{m.subject}</Text>
+              <Text size="sm" style={{ flex: '1 1 200px', minWidth: 0 }} truncate>{m.subject}</Text>
               {pendingSchedule(m)
                 ? <ScheduledBadge m={m} />
                 : <Text size="xs" c="dimmed" w={70} ta="right">{ago(m.created_at)}</Text>}

@@ -39,14 +39,17 @@ export function SpaceNav({ spaceId }: { spaceId: string }) {
     { key: 'cross-space', to: '/spaces/$spaceId/cross-space', label: 'Cross-space', extra: count(incoming, 'owlYellow') },
   ]
   return (
-    <Box component="nav" aria-label="Space sections" mb="md" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
-      <Group gap={0} wrap="nowrap" style={{ overflowX: 'auto' }}>
+    <Box component="nav" aria-label="Space sections" mb="md">
+      {/* The baseline and the active underline are inset shadows, not borders with a negative margin: a link that sticks
+          out of the row by even a pixel makes the scrolling row show a vertical scrollbar. The active link's shadow paints
+          over the row's. */}
+      <Group gap={0} wrap="nowrap" style={{ overflowX: 'auto', scrollbarWidth: 'thin', boxShadow: 'inset 0 -1px 0 var(--mantine-color-default-border)' }}>
         {items.map((it) => {
           const on = it.key === active
           return (
             <UnstyledButton key={it.key} renderRoot={(props) => <Link {...props} to={it.to} params={{ spaceId }} />} aria-current={on ? 'page' : undefined}
-              px="sm" py={6} fz="sm" fw={on ? 600 : 400}
-              style={{ borderBottom: `2px solid ${on ? 'var(--mantine-primary-color-filled)' : 'transparent'}`, marginBottom: -1, whiteSpace: 'nowrap' }}>
+              px={{ base: 10, xl: 'sm' }} pt={6} pb={8} fz="sm" fw={on ? 600 : 400}
+              style={{ boxShadow: on ? 'inset 0 -2px 0 var(--mantine-primary-color-filled)' : undefined, whiteSpace: 'nowrap' }}>
               <Group gap={6} wrap="nowrap">{it.label}{it.extra}</Group>
             </UnstyledButton>
           )
