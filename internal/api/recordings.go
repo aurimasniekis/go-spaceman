@@ -168,7 +168,7 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 			if rec.Seq <= after {
 				continue
 			}
-			if v.Lagged() || rec.Seq != after+1 {
+			if v.TakeLagged() || rec.Seq != after+1 {
 				_, _ = fmt.Fprintf(w, "event: gap\ndata: {\"after\":%d}\n\n", after)
 				if !catchUp() {
 					return

@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   longer grows the page's memory until the tab freezes on "Connecting…" and crashes. ghostty-web 0.4.0 ran every
   terminal in one shared WebAssembly memory that a freed terminal leaves uncleared; each terminal now runs in an
   instance of its own, released with it. The first terminal of a page also waits briefly for its font.
+- Terminal stream: a viewer that fell behind once no longer re-reads the whole recording from storage for every later
+  record; it catches up once and then streams live again. This also fixes a data race on the viewer's lagged flag.
 
 ## [0.1.0] - 2026-11-08
 
