@@ -7,7 +7,7 @@ LDFLAGS := -s -w -X github.com/aurimasniekis/go-spaceman/internal/buildinfo.Vers
 FUZZTIME ?= 30s
 TAGS ?=
 
-.PHONY: all build build-ui test race lint vet custom-vet fuzz-smoke coverage vuln tools-test generate check clean traceability
+.PHONY: all build build-ui test race lint vet custom-vet fuzz-smoke coverage vuln tools-test generate check check-fast clean traceability
 
 all: check build
 
@@ -22,14 +22,28 @@ build-ui: web-build
 test:
 	$(GO) test ./...
 
+# The heavy gates (race, coverage, site-a11y, e2e, screenshots) take a node-wide slot first (scripts/gate-slot.sh:
+# SM_GATE_SLOTS slots, default 2 on 16 or more CPUs and otherwise 1, in SM_GATE_LOCK_DIR), so several agents' runs on one
+# machine take turns instead of contending. SM_GATE_SLOTS=0 disables it; it is off when CI=true.
+GATE := $(CURDIR)/scripts/gate-slot.sh
+
 # The race detector slows SQLite transactions several-fold; as in CI, the 100 ms write-transaction guard is relaxed here
-# and enforced by the non-race coverage run.
-# internal/app's end-to-end tests take about 9 minutes under the race detector, close to go test's 10-minute default.
-# Most tests call t.Parallel; RACE_PARALLEL caps them per package (go test's default is GOMAXPROCS, multiplied by the
-# packages running at once), so a many-core machine doesn't starve leases and write transactions. 4 matches CI's runners.
+# (SM_TEST_TX_MAX, default 500ms) and enforced by the non-race coverage run.
+# scripts/race.sh runs internal/app, the critical path (its end-to-end tests add up to about an hour of test time under
+# the race detector), as its own go test invocation started first, alongside one for every other package; with 16 or
+# more CPUs its serial tests run in a second process next to its parallel ones (RACE_APP_SPLIT).
+# RACE_PARALLEL caps t.Parallel tests per package for the other packages (go test's default is GOMAXPROCS, multiplied by
+# the packages running at once), so a many-core machine doesn't starve leases and write transactions; 4 matches CI's
+# runners. RACE_APP_PARALLEL is internal/app's own cap: empty means min(16, nproc/2), at least 4; CI sets 4.
 RACE_PARALLEL ?= 4
+RACE_APP_PARALLEL ?=
+# Locally the race run uses go test's cache, so rerunning `make check` after a change (or a merge) reruns only the
+# packages whose code, dependencies or test inputs changed. CI sets RACE_COUNT=1 so that every test runs there: its
+# build cache is restored between runs, and a cached pass must not stand in for a run on the commit under test.
+RACE_COUNT ?=
 race:
-	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -race -count=1 -parallel $(RACE_PARALLEL) -timeout 30m ./...
+	GO=$(GO) RACE_PARALLEL=$(RACE_PARALLEL) RACE_APP_PARALLEL=$(RACE_APP_PARALLEL) RACE_COUNT=$(RACE_COUNT) \
+	  $(GATE) race ./scripts/race.sh
 
 $(BIN)/spaceman-vet: $(shell find tools -name '*.go' -not -path '*/testdata/*')
 	cd tools && $(GO) build -o ../$(BIN)/spaceman-vet ./cmd/spaceman-vet
@@ -40,8 +54,10 @@ custom-vet: $(BIN)/spaceman-vet
 vet:
 	$(GO) vet ./...
 
+# golangci-lint takes a per-user lock file in the temporary directory; --allow-serial-runners makes a second run on the
+# machine (another worktree's make check) wait for it instead of failing with "parallel golangci-lint is running".
 lint:
-	golangci-lint run ./...
+	golangci-lint run --allow-serial-runners ./...
 
 tools-test:
 	cd tools && $(GO) test ./...
@@ -62,7 +78,7 @@ fuzz-smoke:
 	echo "fuzz-smoke: $$n targets"; test "$$n" -gt 0
 
 coverage:
-	./scripts/coverage-floor.sh
+	$(GATE) coverage ./scripts/coverage-floor.sh
 
 # Every GOAL.md requirement ID must have a row in docs/TRACEABILITY.md.
 traceability:
@@ -74,7 +90,24 @@ vuln:
 generate:
 	$(GO) generate ./...
 
-check: vet custom-vet lint race tools-test coverage traceability
+# The pre-push gate (AGENTS.md "Gates"). Ordered to fail fast: the static checks, then the non-race coverage floor
+# (about 20 s, and it already runs most security-critical tests), then the race run, which takes most of the time. The
+# coverage floor and the race run share one heavy-gate slot, taken once for both.
+check: vet custom-vet lint traceability tools-test
+	$(GATE) check $(MAKE) --no-print-directory coverage race
+
+# The inner-loop gate: the static checks and every test without the race detector and with go test's cache, so only
+# packages whose code, dependencies or test inputs changed run again (seconds when nothing changed). The sqlc and
+# OpenAPI drift checks run only when their inputs changed since the merge base (scripts/changed.sh). It does not
+# replace `make check`, which runs once before pushing.
+check-fast: vet custom-vet lint traceability tools-test
+	SM_TEST_TX_MAX=$${SM_TEST_TX_MAX:-500ms} $(GO) test -timeout 15m ./...
+	@rc=0; ./scripts/changed.sh '^(internal/store/(migrations|queries)/|sqlc\.yaml$$)' || rc=$$?; \
+	if [ $$rc -ne 1 ]; then $(MAKE) sqlc-check; \
+	else echo "check-fast: sqlc-check skipped (no change in internal/store/migrations, internal/store/queries or sqlc.yaml)"; fi
+	@rc=0; ./scripts/changed.sh '^(internal/api/|api/openapi\.json$$|web/src/api/)' || rc=$$?; \
+	if [ $$rc -ne 1 ]; then $(MAKE) api-check; \
+	else echo "check-fast: api-check skipped (no change in internal/api, api/openapi.json or web/src/api)"; fi
 
 clean:
 	rm -rf $(BIN)
@@ -127,7 +160,7 @@ web-check:
 
 # Browser journey against a fresh local stack with a real agent and an isolated herdr-core core (needs hc).
 e2e:
-	scripts/e2e.sh --reporter=list
+	$(GATE) e2e scripts/e2e.sh --reporter=list
 
 .PHONY: demo
 # The scripted end-to-end demonstration of the brief's §41 (SM-VER-003, docs/DEMO.md): a real central with the UI, two
@@ -140,10 +173,17 @@ demo:
 # The same journey in Firefox and WebKit (Playwright's builds: cd web && pnpm exec playwright install firefox webkit).
 # The journey is a first run (setup with the root token), so each engine gets its own fresh stack.
 e2e-browsers:
-	SM_E2E_BROWSERS=firefox,webkit scripts/e2e.sh --reporter=list --project=firefox
-	SM_E2E_BROWSERS=firefox,webkit scripts/e2e.sh --reporter=list --project=webkit
+	SM_E2E_BROWSERS=firefox,webkit $(GATE) e2e scripts/e2e.sh --reporter=list --project=firefox
+	SM_E2E_BROWSERS=firefox,webkit $(GATE) e2e scripts/e2e.sh --reporter=list --project=webkit
 
-.PHONY: test-fault test-real test-pulse
+.PHONY: test-fault test-real test-pulse test-login-timing
+# The wall-clock half of the login enumeration check (Hallpass HP-AUTH-005): failed logins for a known and an unknown
+# account must take about as long. It needs a quiet machine and no race detector or coverage instrumentation, so it is
+# not part of `make test`, `race`, `coverage` or `check`; CI runs it as its own job (ADR-0071). The deterministic check
+# (one verification against a same-parameter dummy hash) runs in every suite.
+test-login-timing:
+	SPACEMAN_LOGIN_TIMING=1 $(GO) test -count=1 -run '^TestLoginTimingWallClock$$' -v ./internal/auth/
+
 # Fault-injection suite (crashes, disk full, interrupted recordings, disconnects); Go only.
 test-fault:
 	$(GO) test -tags fault -count=1 -timeout 20m ./test/fault/
@@ -221,6 +261,15 @@ test-pulse:
 
 # ---- Docs site and screenshots ----
 .PHONY: site site-dev site-check site-verify site-a11y screenshots
+
+# Extra Chromium launch arguments for the browser targets (e2e, screenshots, the site's Mermaid check and axe audit),
+# space-separated: taken from the environment (a node whose sandbox stops Chromium sets SM_CHROMIUM_ARGS, for example
+# '--no-sandbox --disable-gpu --disable-dev-shm-usage --no-zygote'); a machine that doesn't set it, CI included, passes
+# none. The site targets add --single-process to a non-empty value (the Mermaid check and the audit crash without it on
+# such hosts; the app's e2e journey doesn't work with it, so only here).
+SM_CHROMIUM_ARGS ?=
+export SM_CHROMIUM_ARGS
+site site-verify site-check site-a11y: SM_CHROMIUM_ARGS := $(strip $(SM_CHROMIUM_ARGS) $(if $(and $(strip $(SM_CHROMIUM_ARGS)),$(if $(filter --single-process,$(SM_CHROMIUM_ARGS)),,x)),--single-process))
 site:
 	cd site && pnpm install --frozen-lockfile && pnpm build
 
@@ -228,9 +277,11 @@ site-dev:
 	cd site && pnpm dev
 
 # Site build (dead links, screenshot references), Mermaid syntax in docs/ and site/, API, CLI and configuration
-# reference drift, and an axe audit of every page in both color schemes.
+# reference drift, and an axe audit of every page in both color schemes. The audit is skipped when nothing the site is
+# built from changed against the main branch (scripts/site-affected.sh, the same rule CI uses; ADR-0062);
+# SM_SITE_A11Y=1 runs it regardless (the release gate does).
 site-check: site-verify
-	$(MAKE) site-a11y
+	@if [ "$${SM_SITE_A11Y:-}" = 1 ] || ./scripts/site-affected.sh; then $(MAKE) site-a11y; fi
 
 # Everything in site-check except the axe audit (CI runs the audit on pull requests only when the site can change;
 # ADR-0062).
@@ -238,13 +289,16 @@ site-verify: cli-docs config-docs site
 	cd site && pnpm check:mermaid
 	git diff --exit-code -- site/reference/api.md site/reference/cli site/reference/configuration.md
 
-# The axe audit (WCAG 2.1 A/AA) of every page of the built site (make site) in both color schemes.
+# The axe audit (WCAG 2.1 A/AA) of every page of the built site (make site) in both color schemes. The pages are split
+# into SM_A11Y_SHARDS parallel tests (both schemes each), run by as many Playwright workers (one Chromium each); the
+# default is a quarter of the CPUs, between 1 and 8.
+SM_A11Y_SHARDS ?= $(shell n=$$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); s=$$((n / 4)); [ $$s -gt 8 ] && s=8; [ $$s -lt 1 ] && s=1; echo $$s)
 site-a11y:
-	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist pnpm exec playwright test e2e/site-a11y.spec.ts --reporter=list
+	cd web && SM_SITE_DIST=$(CURDIR)/site/.vitepress/dist SM_A11Y_SHARDS=$(SM_A11Y_SHARDS) $(GATE) site-a11y pnpm exec playwright test e2e/site-a11y.spec.ts --workers=$(SM_A11Y_SHARDS) --reporter=list
 
 # Regenerates every screenshot from a seeded demo instance (docs/SCREENSHOTS.md).
 screenshots:
-	./scripts/screenshots.sh
+	$(GATE) screenshots ./scripts/screenshots.sh
 
 # ---- Packaging and release (site/operators/install.md, site/operators/containers.md, ADR-0034) ----
 IMAGE ?= spaceman:local

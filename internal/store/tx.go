@@ -21,7 +21,13 @@ const (
 	txMaxBackoff  = time.Second
 )
 
-// TxObserver receives the duration and final error of each write transaction.
+// TxObserver receives the lock hold time and final error of each write transaction run through Writer.Tx or TxNamed
+// (ADR-0070). An attempt's hold runs from the moment BEGIN IMMEDIATE acquired the write lock to the end of its commit
+// or rollback; d is the longest hold of all the transaction's attempts, so an attempt that held the writer for long and
+// then rolled back on SQLITE_BUSY is not hidden by a quick retry (Hallpass HP-DB-004). Waiting for the writer
+// connection and the lock, and SQLITE_BUSY retries with their backoff, are not included: they are metered as writer
+// wait (HP-DB-003), busy retries and the end-to-end transaction duration. d is zero when no attempt acquired the lock.
+// Writer.Exec, migrations and snapshots (VACUUM INTO) are not observed.
 type TxObserver func(name string, d time.Duration, err error)
 
 // Writer is the single write connection. All mutations go through Tx.
@@ -62,13 +68,20 @@ func (w *Writer) Tx(ctx context.Context, fn func(tx *Tx) error) error {
 // TxNamed is Tx with a name for observability.
 func (w *Writer) TxNamed(ctx context.Context, name string, fn func(tx *Tx) error) error {
 	start := time.Now()
-	var err error
+	var (
+		err  error
+		held time.Duration
+	)
 	for attempt := 1; ; attempt++ {
-		var hooks []func()
-		hooks, err = w.attempt(ctx, fn)
+		var (
+			hooks []func()
+			h     time.Duration
+		)
+		hooks, h, err = w.attempt(ctx, fn)
+		held = max(held, h) // the longest hold: an earlier attempt may have held the lock longer than the last one
 		if err == nil {
 			w.health.Observe(nil)
-			w.observe(name, time.Since(start), nil)
+			w.observe(name, time.Since(start), held, nil)
 			for _, h := range hooks {
 				h()
 			}
@@ -84,16 +97,17 @@ func (w *Writer) TxNamed(ctx context.Context, name string, fn func(tx *Tx) error
 			break
 		}
 	}
-	w.observe(name, time.Since(start), err)
+	w.observe(name, time.Since(start), held, err)
 	return err
 }
 
-// observe reports a finished transaction to the observer and metrics.
-func (w *Writer) observe(name string, d time.Duration, err error) {
+// observe reports a finished transaction: its lock hold time to the observer (the HP-DB-004 guard, ADR-0070) and its
+// end-to-end duration, retries and waits included, to metrics.
+func (w *Writer) observe(name string, total, held time.Duration, err error) {
 	if w.observer != nil {
-		w.observer(name, d, err)
+		w.observer(name, held, err)
 	}
-	w.metrics.StoreTx(name, d, TxResult(err))
+	w.metrics.StoreTx(name, total, TxResult(err))
 }
 
 // TxResult classifies a transaction error for metrics.
@@ -122,14 +136,17 @@ func TxResult(err error) metrics.TxResult {
 	}
 }
 
-func (w *Writer) attempt(ctx context.Context, fn func(tx *Tx) error) (hooks []func(), err error) {
+// attempt runs fn once. held is how long the attempt held the write lock: from BEGIN IMMEDIATE returning to the end of
+// the commit or rollback (zero when BEGIN failed).
+func (w *Writer) attempt(ctx context.Context, fn func(tx *Tx) error) (hooks []func(), held time.Duration, err error) {
 	waitStart := time.Now()
 	w.metrics.StoreWriterQueue(1)
 	sqlTx, err := w.db.BeginTx(ctx, nil)
 	w.metrics.StoreWriterQueue(-1)
-	w.metrics.StoreWriterWait(time.Since(waitStart)) // pool wait + BEGIN IMMEDIATE lock acquisition (Hallpass HP-DB-003)
+	locked := time.Now()
+	w.metrics.StoreWriterWait(locked.Sub(waitStart)) // pool wait + BEGIN IMMEDIATE lock acquisition (Hallpass HP-DB-003)
 	if err != nil {
-		return nil, classify(fmt.Errorf("begin: %w", err))
+		return nil, 0, classify(fmt.Errorf("begin: %w", err))
 	}
 	tx := &Tx{Q: db.New(sqlTx), SQL: sqlTx, Now: w.clock.Now().UTC()}
 	defer func() {
@@ -140,13 +157,13 @@ func (w *Writer) attempt(ctx context.Context, fn func(tx *Tx) error) (hooks []fu
 	}()
 	if err := fn(tx); err != nil {
 		_ = sqlTx.Rollback()
-		return nil, classify(err)
+		return nil, time.Since(locked), classify(err)
 	}
 	if err := sqlTx.Commit(); err != nil {
 		_ = sqlTx.Rollback()
-		return nil, classify(fmt.Errorf("commit: %w", err))
+		return nil, time.Since(locked), classify(fmt.Errorf("commit: %w", err))
 	}
-	return tx.afterCommit, nil
+	return tx.afterCommit, time.Since(locked), nil
 }
 
 // spaceProbe commits a transaction that allocates 64 KiB of new pages and frees them again: it succeeds only when

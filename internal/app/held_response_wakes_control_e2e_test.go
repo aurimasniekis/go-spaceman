@@ -116,3 +116,45 @@ func TestHeldResponseForWorkerInstanceDoesNotStartControl(t *testing.T) {
 		t.Fatalf("held response moved: %+v %v", a, err)
 	}
 }
+
+// A held response is pinned to its instance's next run when that run launches, not only when something else happens
+// to wake the deadline loop afterwards (the run reporting idle, the hold ending an hour later): the launch itself kicks
+// the loop. The fake runner reports the new run as working, so nothing else wakes the loop here.
+func TestHeldResponsePinnedWhenItsInstanceLaunches(t *testing.T) {
+	t.Parallel()
+	w := newWakeEnv(t, 6)
+	w.nextLaunch(t)
+	wrk, err := w.c.Fleet.LaunchRun(w.ctx, admin, w.spaceID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: hns.KindClaude})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "worker running", func() bool { return w.run1(wrk.ID).Observed == "running" })
+	res := w.bridgeCall(wrk.ID, w.runToken(wrk.ID), "spaceman_human_ask", map[string]any{"type": "question", "title": "Which bucket?"})
+	if !res.OK {
+		t.Fatalf("ask: %+v", res)
+	}
+	var asked struct {
+		ActionID string `json:"action_id"`
+	}
+	_ = json.Unmarshal(res.Result, &asked)
+	if _, err := w.c.Fleet.StopRun(w.ctx, admin, wrk.ID, "kill", "done"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "worker ended", func() bool { o := w.run1(wrk.ID).Observed; return o == "exited" || o == "failed" })
+	instance := w.run1(wrk.ID).InstanceID
+	if n := w.respond(t, asked.ActionID); n.TargetKind != human.TargetInstance || n.TargetInstance != instance {
+		t.Fatalf("not held for the worker's instance: %+v", n)
+	}
+	// Let the rounds the response and the run's end started finish, so that only the launch can wake the loop.
+	time.Sleep(time.Second)
+	next, err := w.c.Fleet.LaunchRun(w.ctx, admin, w.spaceID, fleet.LaunchInput{Kind: "worker", Role: "implementor", Harness: hns.KindClaude, InstanceID: instance})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "held response pinned to the instance's new run", func() bool {
+		a, err := w.c.Human.Get(w.ctx, w.spaceID, asked.ActionID)
+		return err == nil && a.Notifications[0].TargetRun == next.ID
+	})
+	// The node is still starting the run (pinning needs only the pending run): let it finish before cleanup.
+	eventually(t, "new run running", func() bool { return w.run1(next.ID).Observed == "running" })
+}
