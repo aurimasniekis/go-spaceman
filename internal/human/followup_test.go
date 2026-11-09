@@ -3,7 +3,9 @@ package human
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -479,6 +481,79 @@ func TestDeadlineLoop(t *testing.T) {
 	f.svc.Kick() // never blocks
 	f.svc.Kick()
 	_ = json.RawMessage{}
+}
+
+// A round in which a job failed is tried again soon, without a kick: what it left undone (a stranded response) does
+// not wait for the next deadline, which can be an hour away.
+func TestDeadlineLoopRetriesAFailedRound(t *testing.T) {
+	// Not parallel: it shortens the package's retry backoff (parallel tests start only after it has restored it).
+	f := newFx(t)
+	defer func(first, maxWait time.Duration) { retryFirst, retryMax = first, maxWait }(retryFirst, retryMax)
+	retryFirst, retryMax = 10*time.Millisecond, 40*time.Millisecond
+	calls := make(chan int, 10)
+	n := 0
+	extra := Deadline{Name: "flaky", Next: func(context.Context) (time.Time, error) { return time.Time{}, nil },
+		Due: func(context.Context) (int, error) {
+			n++
+			calls <- n
+			if n < 4 {
+				return 0, errors.New("transient")
+			}
+			return 0, nil
+		}}
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { f.svc.Run(ctx, extra); close(done) }()
+	defer func() { cancel(); <-done }()
+	for want := 1; want <= 4; want++ {
+		select {
+		case got := <-calls:
+			if got != want {
+				t.Fatalf("round %d, want %d", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d not retried", want)
+		}
+	}
+	// After a round that succeeded, the loop waits for the next deadline (idle here) again.
+	select {
+	case got := <-calls:
+		t.Fatalf("round %d after a successful one", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// A job whose deadline is due and whose round keeps failing backs off like any failed round: the loop does not spin
+// on the past deadline (it once ran hundreds of rounds in half a second).
+func TestDeadlineLoopBacksOffWhileAFailingJobIsDue(t *testing.T) {
+	// Not parallel: it changes the package's retry backoff (parallel tests start only after it has restored it).
+	f := newFx(t)
+	defer func(first, maxWait time.Duration) { retryFirst, retryMax = first, maxWait }(retryFirst, retryMax)
+	retryFirst, retryMax = time.Hour, time.Hour // after the first failed round, the next one is an hour away
+	first := make(chan struct{})
+	var rounds atomic.Int64
+	extra := Deadline{Name: "stuck",
+		Next: func(context.Context) (time.Time, error) { return f.clk.Now().Add(-time.Minute), nil }, // always due
+		Due: func(context.Context) (int, error) {
+			if rounds.Add(1) == 1 {
+				close(first)
+			}
+			return 0, errors.New("permanent")
+		}}
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { f.svc.Run(ctx, extra); close(done) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-first:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first round did not run")
+	}
+	// A loop that waits for the (past) deadline instead of the backoff runs a round every few milliseconds.
+	time.Sleep(300 * time.Millisecond)
+	if n := rounds.Load(); n != 1 {
+		t.Fatalf("%d rounds while backing off after the first failed one", n)
+	}
 }
 
 // ADR-0056: with control auto-start on, a response whose run is gone goes to control even while no control runs (it

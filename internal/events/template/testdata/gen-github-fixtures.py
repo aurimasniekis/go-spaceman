@@ -67,15 +67,18 @@ events = {
                         "app": {"id": 29310, "slug": "example-ci", "name": "Example CI"}, "latest_check_runs_count": 3,
                         "check_runs_url": API + "/check-suites/118578147/check-runs",
                         "created_at": "2026-10-21T10:00:00Z", "updated_at": "2026-10-21T10:30:00Z"}}),
+    "pull_request-opened": ("pull_request", {"action": "opened", "number": 7,
+        "pull_request": dict(PULL, body="PR description\n\n" + INJECT, created_at="2026-10-21T09:00:00Z",
+                             updated_at="2026-10-21T09:00:00Z")}),
 }
-resource_field = {"issue_comment": ("comment", "issue_comment"), "pull_request_review": ("review", "pull_request_review"),
+resource_field = {"pull_request": ("pull_request", "pull_request"), "issue_comment": ("comment", "issue_comment"), "pull_request_review": ("review", "pull_request_review"),
                   "pull_request_review_comment": ("comment", "pull_request_review_comment"),
                   "workflow_run": ("workflow_run", "workflow_run"), "check_suite": ("check_suite", "check_suite")}
-occurred = {"issue_comment.created": "comment.created_at", "pull_request_review.submitted": "review.submitted_at",
+occurred = {"pull_request.opened": "pull_request.created_at", "issue_comment.created": "comment.created_at", "pull_request_review.submitted": "review.submitted_at",
             "pull_request_review_comment.created": "comment.created_at"}
 
 for i, (name, (event, body)) in enumerate(events.items()):
-    sender = BOB if event in ("workflow_run", "check_suite") else body.get("comment", body.get("review", {})).get("user", ALICE)
+    sender = BOB if event in ("workflow_run", "check_suite") else body.get("comment", body.get("review", body.get("pull_request", {}))).get("user", ALICE)
     raw = dict(body, repository=REPO, organization=ORG, sender=sender, installation=INST)
     raw_bytes = json.dumps(raw, separators=(",", ":")).encode()
     field, kind = resource_field[event]

@@ -422,6 +422,11 @@
   read-only machine user. Built-in host-key pins cover github.com only; other hosts need the repository's known_hosts. A relocation's
   destination does not clone repositories that have a key: the first sync after the move does. Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
   `file://` and local paths need development mode.
+- **Some permanent delivery failures are retried.** A node command central can't prepare for a transient reason is
+  retried with a backoff (250 ms up to 30 s) while the node is connected. A run's command whose stored payload doesn't
+  decode fails the run as `invalid_command`, but a few failures that can't heal are retried the same way, with a
+  warning in central's log on every pass: a repository SSH key that can't be decrypted, and a command not tied to a run
+  (a repository sync, a relocation's prepare) whose payload doesn't decode. Fix the key or remove the repository.
 - **Unlisted folders still work.** Workers may still use a repository folder that is not in the space's list; such a
   folder is reported as unlisted but not tracked, and a relocation carries it only as the source has it. A space has at
   most 50 repositories. A repository's name and folder are fixed; changing the folder means adding another repository
