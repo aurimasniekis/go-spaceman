@@ -79,9 +79,10 @@ function QueuePage() {
         )} />
       <ErrorAlert error={queue.error} />
       <Card mb="sm" p="sm">
-        <Group gap="xs" wrap="nowrap">
+        {/* Wraps on a phone, so the next task's title keeps a readable width. */}
+        <Group gap="xs">
           <Text size="sm" fw={600}>Next:</Text>
-          {next.data?.selected ? <Text size="sm" truncate>{next.data.selected.title}</Text> : <Text size="sm" c="dimmed">nothing can start now</Text>}
+          {next.data?.selected ? <Text size="sm" truncate style={{ minWidth: 'min(160px, 100%)' }}>{next.data.selected.title}</Text> : <Text size="sm" c="dimmed">nothing can start now</Text>}
           {(next.data?.skipped ?? []).length > 0 && (
             <Tooltip multiline w={420} label={(next.data?.skipped ?? []).slice(0, 8).map((s) => `${s.title}: ${s.reason}`).join('\n')} style={{ whiteSpace: 'pre-line' }}>
               <Text size="sm" c="dimmed" td="underline" style={{ textDecorationStyle: 'dotted', cursor: 'help', whiteSpace: 'nowrap' }}>

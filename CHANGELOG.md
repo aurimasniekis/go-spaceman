@@ -167,6 +167,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   instance of its own, released with it. The first terminal of a page also waits briefly for its font.
 - Terminal stream: a viewer that fell behind once no longer re-reads the whole recording from storage for every later
   record; it catches up once and then streams live again. This also fixes a data race on the viewer's lagged flag.
+- Web UI: no unwanted scrollbars. Dialogs scroll vertically only and wrap long IDs, keys and URLs, so they no longer
+  show a horizontal scrollbar (and with it a vertical one) for a few stray pixels. The space sections row no longer
+  shows a vertical scrollbar and fits 1280 px screens. On phones, the inbox, an inbox item and the human actions list
+  no longer scroll sideways, and message subjects and human action titles keep a readable width. Wide tables in the
+  role configuration and type permissions dialogs scroll in their own box. A new end-to-end check
+  (`e2e/ui-overflow.spec.ts`) opens every page, modal and drawer at 390, 1280 and 1920 px in both themes with real
+  scrollbars.
 
 ### Notes
 

@@ -49,33 +49,35 @@ export function TypePermissionsModal({ spaceId, canAdmin, onClose }: { spaceId: 
           (it never widens the roles' own permissions; approvals still need approval:decide). Changing permissions needs the admin role.
         </Text>
         <ErrorAlert error={list.error} />
-        <Table aria-label="Type permissions">
-          <Table.Thead>
-            <Table.Tr><Table.Th>Type</Table.Th><Table.Th>Sees</Table.Th><Table.Th>Asks</Table.Th><Table.Th>Responds</Table.Th><Table.Th>Agents</Table.Th><Table.Th /></Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {rows.map((r) => {
-              const p = r.current
-              return (
-                <Table.Tr key={r.ref}>
-                  <Table.Td><Text size="sm" fw={500}>{r.label}</Text>{p ? <Badge size="xs" color="owlPurple">set</Badge> : <Badge size="xs" variant="outline" color="gray">defaults</Badge>}</Table.Td>
-                  <Table.Td>{p?.view_role ?? 'viewer'}</Table.Td>
-                  <Table.Td>{p?.create_role ?? 'operator'}</Table.Td>
-                  <Table.Td>{p?.respond_role ?? 'operator'}</Table.Td>
-                  <Table.Td>{!p || p.agents === 'any' ? 'any' : p.agents === 'none' ? 'none' : p.agent_roles.join(', ')}</Table.Td>
-                  <Table.Td>
-                    {canAdmin && (
-                      <Group gap={4} justify="flex-end" wrap="nowrap">
-                        <Button size="xs" variant="default" onClick={() => setEditing(r)} aria-label={`Edit the permission of ${r.label}`}>Edit</Button>
-                        {p && <Button size="xs" variant="subtle" color="owlRed" onClick={() => void remove(r.ref)} aria-label={`Reset ${r.label} to the defaults`}>Reset</Button>}
-                      </Group>
-                    )}
-                  </Table.Td>
-                </Table.Tr>
-              )
-            })}
-          </Table.Tbody>
-        </Table>
+        <Table.ScrollContainer minWidth={560}>
+          <Table aria-label="Type permissions">
+            <Table.Thead>
+              <Table.Tr><Table.Th>Type</Table.Th><Table.Th>Sees</Table.Th><Table.Th>Asks</Table.Th><Table.Th>Responds</Table.Th><Table.Th>Agents</Table.Th><Table.Th /></Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {rows.map((r) => {
+                const p = r.current
+                return (
+                  <Table.Tr key={r.ref}>
+                    <Table.Td><Text size="sm" fw={500}>{r.label}</Text>{p ? <Badge size="xs" color="owlPurple">set</Badge> : <Badge size="xs" variant="outline" color="gray">defaults</Badge>}</Table.Td>
+                    <Table.Td>{p?.view_role ?? 'viewer'}</Table.Td>
+                    <Table.Td>{p?.create_role ?? 'operator'}</Table.Td>
+                    <Table.Td>{p?.respond_role ?? 'operator'}</Table.Td>
+                    <Table.Td>{!p || p.agents === 'any' ? 'any' : p.agents === 'none' ? 'none' : p.agent_roles.join(', ')}</Table.Td>
+                    <Table.Td>
+                      {canAdmin && (
+                        <Group gap={4} justify="flex-end" wrap="nowrap">
+                          <Button size="xs" variant="default" onClick={() => setEditing(r)} aria-label={`Edit the permission of ${r.label}`}>Edit</Button>
+                          {p && <Button size="xs" variant="subtle" color="owlRed" onClick={() => void remove(r.ref)} aria-label={`Reset ${r.label} to the defaults`}>Reset</Button>}
+                        </Group>
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                )
+              })}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       </Stack>
       {editing && <PermissionForm spaceId={spaceId} target={editing} onClose={() => setEditing(null)} />}
     </Modal>

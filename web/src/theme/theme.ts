@@ -56,8 +56,19 @@ export const theme = createTheme({
     Tooltip: { defaultProps: { openDelay: 300, fz: 'xs' } },
     NavLink: { defaultProps: { py: 5 } },
     // Close buttons have no visible text; give them a name (axe button-name).
-    Modal: { defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } }, styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' } } },
-    Drawer: { defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' } }, styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' } } },
+    // Dialogs scroll vertically only. Mantine's content box sets overflow-y: auto, and CSS then makes overflow-x auto as
+    // well, so anything a pixel wider than the dialog (or a node a browser extension adds next to the editor) gave the
+    // dialog a horizontal scrollbar and, with it, a vertical one. Long unbreakable values (IDs, fingerprints, URLs) wrap;
+    // wide content (tables, code) scrolls in its own box; e2e/ui-overflow.spec.ts fails when a dialog's content is wider
+    // than the dialog.
+    Modal: {
+      defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } },
+      styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, content: { overflowX: 'hidden' }, body: { overflowWrap: 'break-word' } },
+    },
+    Drawer: {
+      defaultProps: { closeButtonProps: { 'aria-label': 'Close panel' } },
+      styles: { title: { fontWeight: 600, fontSize: 'var(--mantine-font-size-lg)' }, content: { overflowX: 'hidden' }, body: { overflowWrap: 'break-word' } },
+    },
   },
 })
 
