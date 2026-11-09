@@ -148,6 +148,8 @@ function BudgetCard({ l }: { l: Limits }) {
 
 /** Retention periods delete data when shortened, so only space admins (retention:write) change them. */
 const isRetention = (x: Limit) => x.unit === 'days'
+// The terminal size limits say what 0 means in their own scope text ("0: the node's default size").
+const isTerminal = (x: Limit) => x.unit === 'columns' || x.unit === 'rows'
 
 function EditLimits({ spaceId, l, canRetain, onClose }: { spaceId: string; l: Limits; canRetain: boolean; onClose: () => void }) {
   const qc = useQueryClient()
@@ -177,7 +179,7 @@ function EditLimits({ spaceId, l, canRetain, onClose }: { spaceId: string; l: Li
           data={[{ value: '', label: `Default (${limitValue(x.default, x.unit)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }]}
           onChange={(v) => f.handleChange(v === '1' ? 1 : v === '0' ? 0 : '')} />
       ) : <NumberInput label={x.label} disabled={isRetention(x) && !canRetain}
-        description={`${x.scope}${x.zero_means_none ? (isRetention(x) ? ' (0: keep)' : x.unit === 'minutes' ? ' (0: never)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
+        description={`${x.scope}${x.zero_means_none && !isTerminal(x) ? (isRetention(x) ? ' (0: keep)' : x.unit === 'minutes' ? ' (0: never)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
         min={x.min} max={x.max} allowDecimal={false}
         thousandSeparator="," placeholder={`Default: ${limitValue(x.default, x.unit, x.zero_means_none)}`} value={f.state.value ?? ''}
         onChange={(v) => f.handleChange(typeof v === 'number' ? v : '')} />}

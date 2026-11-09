@@ -3231,6 +3231,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/runs/{run_id}/terminal-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Resize a run's terminal
+         * @description Holds the running run's terminal at this size (40-400 columns, 10-200 rows), so the agent's program redraws for it; everyone watching sees the run at this size, scaled to their window. While the terminal is taken over only the holder resizes. The size lasts until it is cleared or the run ends. 409 when the run's node agent predates node protocol 1.10. Audited.
+         */
+        put: operations["set-terminal-size"];
+        post?: never;
+        /**
+         * Return a run's terminal to the node's default size
+         * @description The node stops holding the size and the terminal goes back to the node's default size (runner.terminal_size). Audited.
+         */
+        delete: operations["clear-terminal-size"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/runs/{run_id}/transcript": {
         parameters: {
             query?: never;
@@ -6251,6 +6275,10 @@ export interface components {
             /** @description The terminal takeover in force: an operator types into the terminal and automated input is paused */
             takeover?: components["schemas"]["FleetTakeover"];
             terminal_id?: string;
+            /** @description The size the run's terminal is held at; absent: the node's default size */
+            terminal_size?: components["schemas"]["FleetTerminalSize"];
+            /** @description Whether the run's node is connected at node protocol 1.10 or later, so its terminal can be resized (set on a single run) */
+            terminal_sizing?: boolean;
             /** Format: int64 */
             turn: number;
             /** Format: int64 */
@@ -6352,6 +6380,18 @@ export interface components {
             run_id: string;
             /** Format: date-time */
             started_at: string;
+        };
+        FleetTerminalSize: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetTerminalSize.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            cols: number;
+            /** Format: int64 */
+            rows: number;
         };
         FleetUpdateNodeInput: {
             /**
@@ -7794,7 +7834,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** @description 0 means no limit */
             zero_means_none: boolean;
         };
@@ -7879,7 +7919,7 @@ export interface components {
              * @description switch: 1 on, 0 off
              * @enum {string}
              */
-            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch";
+            unit: "count" | "bytes" | "per_minute" | "minutes" | "days" | "tokens" | "usd_cents" | "percent" | "depth" | "switch" | "columns" | "rows";
             /** Format: int64 */
             value: number;
             /** @description 0 means no limit */
@@ -18598,6 +18638,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FleetTakeover"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "set-terminal-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetTerminalSize"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRun"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "clear-terminal-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetRun"];
                 };
             };
             /** @description Error */

@@ -131,6 +131,19 @@ export function fitFont(term: Terminal, box: HTMLElement) {
   }
 }
 
+/**
+ * The character cell at the regular font size, in CSS pixels, from what the canvas shows now (fitFont may have scaled
+ * the font down): "Fit to window" sizes the run's terminal so its text is shown at the regular size (ADR-0075).
+ */
+export function regularCell(term: Terminal): { width: number; height: number } | null {
+  const canvas = term.element?.querySelector('canvas')
+  const font = term.options.fontSize
+  if (!canvas || term.cols <= 0 || term.rows <= 0 || !font) return null
+  const r = canvas.getBoundingClientRect()
+  const scale = MAX_FONT / font
+  return { width: (r.width / term.cols) * scale, height: (r.height / term.rows) * scale }
+}
+
 /** The height of one terminal row on screen, in CSS pixels (0 before the first render). */
 export function rowHeight(term: Terminal): number {
   const canvas = term.element?.querySelector('canvas')
