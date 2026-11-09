@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+
+- CI's and the release workflow's login-timing and fuzz jobs use the same 250 ms write-transaction guard on GitHub's
+  hosted runners as the coverage job, instead of the 100 ms default (ADR-0062). The login-timing job failed on it
+  while its timing check passed. Local runs keep 100 ms.
+
 ## [0.1.1] - 2026-11-09
 
 Patch release on top of v0.1.0. It makes no production-readiness claim (docs/RELEASE_READINESS.md §15). It contains:
