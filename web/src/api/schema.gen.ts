@@ -841,6 +841,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/harbor-pilot/gateway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The connected Harbor Pilot's version
+         * @description Read with the connection's service-principal token from Harbor Pilot's GET /api/v1/system (0.1.4 or later; source system). A gateway without it is older than 0.1.4 (source legacy): the connection's check_budget probe showed it is 0.1.3 or later. Without a service-principal token, or when Harbor Pilot can't be read, source is unknown with the reason. project_filter says whether budget status is read filtered by project. Reused for 10 minutes.
+         */
+        get: operations["get-harbor-pilot-gateway"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/harness-profiles": {
         parameters: {
             query?: never;
@@ -6838,11 +6858,13 @@ export interface components {
             period: string;
             /**
              * Format: date-time
-             * @description When the current period ends and the budget resets
+             * @description When the current period ends and the budget resets; for a one-time budget (period once), when its window ends; absent when it has no end
              */
-            period_end: string;
+            period_end?: string;
             /** Format: date-time */
             period_start: string;
+            /** @description What is left of the limit: limit - spent - reserved, never below 0 */
+            remaining: string;
             /** @description Estimated cost of requests in flight */
             reserved: string;
             /**
@@ -6852,8 +6874,44 @@ export interface components {
             scope: "global" | "workspace" | "project" | "binding";
             scope_id: string;
             spent: string;
-            /** @enum {string} */
-            state: "ok" | "warning" | "exceeded" | "disabled";
+            /**
+             * @description scheduled: a one-time budget whose window has not started; expired: one whose window ended (it no longer applies); unknown: a state this SpaceMan doesn't know. Only exceeded can refuse launches
+             * @enum {string}
+             */
+            state: "ok" | "warning" | "exceeded" | "disabled" | "scheduled" | "expired" | "unknown";
+        };
+        HarborpilotGatewayInfo: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/HarborpilotGatewayInfo.json
+             */
+            readonly $schema?: string;
+            commit?: string;
+            /**
+             * Format: date-time
+             * @description When Harbor Pilot was read (reused for 10 minutes)
+             */
+            fetched_at?: string;
+            /** @description The oldest Harbor Pilot SpaceMan supports */
+            min_version: string;
+            /** @description Budget status is read filtered by project (Harbor Pilot 0.1.4 or later) instead of reading every budget */
+            project_filter: boolean;
+            /** @description The Harbor Pilot SpaceMan recommends */
+            recommended_version: string;
+            /** Format: int64 */
+            schema_version?: number;
+            /**
+             * @description system: read from GET /api/v1/system (Harbor Pilot 0.1.4 or later); legacy: the gateway has no such endpoint, so it is older than 0.1.4 (the connection's check_budget probe showed it is at least 0.1.3); unknown: it could not be read
+             * @enum {string}
+             */
+            source: "system" | "legacy" | "unknown";
+            /** Format: date-time */
+            started_at?: string;
+            /** @description Why the version could not be read */
+            unavailable?: string;
+            /** @description Harbor Pilot's version as it reports it (untrusted text) */
+            version?: string;
         };
         HarborpilotProjectUsage: {
             /** Format: int64 */
@@ -6883,7 +6941,7 @@ export interface components {
              * @description Requests whose usage the provider did not report (not counted as zero)
              */
             unknown_usage_requests: number;
-            /** @description What From covers: the current period of the project's budget (e.g. day), or last_30_days */
+            /** @description What From covers: the current period of the project's budget (e.g. day), once (since a one-time budget started counting), or last_30_days */
             window: string;
         };
         HarborpilotSpaceInput: {
@@ -12870,6 +12928,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-harbor-pilot-gateway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarborpilotGatewayInfo"];
+                };
             };
             /** @description Error */
             default: {

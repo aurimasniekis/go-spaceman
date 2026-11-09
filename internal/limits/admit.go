@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 
 	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -28,6 +29,25 @@ const BudgetNote = "Budgets use the usage the harnesses report, which arrives la
 // workers cannot starve support and support cannot starve workers (SM-LIMIT-002).
 func workKind(kind string) bool { return kind == "worker" || kind == "diagnostic" }
 
+// notCounted tells a refused caller which runs are not part of the count, so a mismatch with spaceman_runs_list (which
+// shows every live run of the space) can be explained.
+const notCounted = "Only live worker and diagnostic runs count; control, KB support and dreamer runs, and runs that exited, failed or were lost, do not"
+
+// countedRun is a live run named in a concurrency refusal.
+type countedRun struct{ id, kind, role, observed string }
+
+// describeRuns lists counted runs by ID, kind, role and observed state ("none" when empty).
+func describeRuns(runs []countedRun) string {
+	if len(runs) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(runs))
+	for _, r := range runs {
+		parts = append(parts, fmt.Sprintf("%s (%s %s, %s)", r.id, r.kind, r.role, r.observed))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // Admit refuses a launch beyond the space's concurrency limit, the node's capacity, or an exceeded budget. It runs
 // inside the launch transaction, so concurrent launches cannot both take the last slot.
 func (svc *Service) Admit(ctx context.Context, tx *store.Tx, a fleet.Admission) error {
@@ -36,24 +56,42 @@ func (svc *Service) Admit(ctx context.Context, tx *store.Tx, a fleet.Admission) 
 		return err
 	}
 	if workKind(a.Kind) {
-		n, err := tx.Q.CountActiveWorkRunsInSpace(ctx, a.SpaceID)
+		// Only live runs count (fleet.Live, the runs spaceman_runs_list shows): a run that exited, failed or was lost
+		// frees its slot even while its desired state is still "running".
+		runs, err := tx.Q.ListLiveWorkRunsInSpace(ctx, a.SpaceID)
 		if err != nil {
 			return err
 		}
-		if limit := v.Get(ConcurrentRuns); n >= limit {
-			return apperr.New(apperr.CodeRateLimited, "the space has %d worker and diagnostic runs active (limit %d); start more when one ends", n, limit)
+		if limit := v.Get(ConcurrentRuns); int64(len(runs)) >= limit {
+			counted := make([]countedRun, 0, len(runs))
+			for _, r := range runs {
+				counted = append(counted, countedRun{r.ID, r.Kind, r.Role, r.Observed})
+			}
+			return apperr.New(apperr.CodeRateLimited, "the space has %d worker and diagnostic runs active (limit %d): %s. %s; start more when one ends",
+				len(runs), limit, describeRuns(counted), notCounted)
 		}
 		capacity, err := tx.Q.GetNodeCapacity(ctx, a.NodeID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if capacity > 0 {
-			m, err := tx.Q.CountActiveWorkRunsOnNode(ctx, a.NodeID)
+			onNode, err := tx.Q.ListLiveWorkRunsOnNode(ctx, a.NodeID)
 			if err != nil {
 				return err
 			}
-			if m >= capacity {
-				return apperr.New(apperr.CodeRateLimited, "the space's node runs %d worker and diagnostic runs (its capacity is %d); start more when one ends", m, capacity)
+			if int64(len(onNode)) >= capacity {
+				// Other spaces' runs are only counted, never named: this space's caller may not see them.
+				var own []countedRun
+				others := 0
+				for _, r := range onNode {
+					if r.SpaceID != a.SpaceID {
+						others++
+						continue
+					}
+					own = append(own, countedRun{r.ID, r.Kind, r.Role, r.Observed})
+				}
+				return apperr.New(apperr.CodeRateLimited, "the space's node runs %d worker and diagnostic runs (its capacity is %d, shared by every space on the node): "+
+					"%d of other spaces and %d of this space (%s). %s; start more when one ends", len(onNode), capacity, others, len(own), describeRuns(own), notCounted)
 			}
 		}
 	}

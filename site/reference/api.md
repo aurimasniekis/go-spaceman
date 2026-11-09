@@ -262,6 +262,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/harbor-pilot/connection` | `delete-harbor-pilot-connection` | Remove the Harbor Pilot connection |
 | `GET` | `/harbor-pilot/connection` | `get-harbor-pilot-connection` | The Harbor Pilot connection (never its tokens) |
 | `PUT` | `/harbor-pilot/connection` | `put-harbor-pilot-connection` | Connect Harbor Pilot, or replace the connection |
+| `GET` | `/harbor-pilot/gateway` | `get-harbor-pilot-gateway` | The connected Harbor Pilot's version |
 | `DELETE` | `/spaces/{space_id}/harbor-pilot` | `delete-space-harbor-pilot` | Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) |
 | `GET` | `/spaces/{space_id}/harbor-pilot` | `get-space-harbor-pilot` | A space's Harbor Pilot settings |
 | `PUT` | `/spaces/{space_id}/harbor-pilot` | `put-space-harbor-pilot` | Set a space's Harbor Pilot settings |

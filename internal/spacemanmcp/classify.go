@@ -177,6 +177,7 @@ var Table = map[string]Entry{
 	"put-harbor-pilot-connection":    {Dangerous, rSecret},
 	"delete-harbor-pilot-connection": {Dangerous, rSecret},
 	"get-harbor-pilot-connection":    {Read, rRead},
+	"get-harbor-pilot-gateway":       {Read, rRead},
 	"get-space-harbor-pilot":         {Read, rRead},
 	"get-space-harbor-pilot-status":  {Read, rRead},
 	"put-space-harbor-pilot":         {Dangerous, "chooses which Harbor Pilot project (and spend) a space's runs bill against"},

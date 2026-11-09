@@ -93,12 +93,30 @@ jobs:
       - name: vet and race tests
         env:
           SM_TEST_TX_MAX: 1s # race detector overhead on shared runners; see ci.yaml
-        run: make vet race
+          RACE_APP_PARALLEL: "4" # internal/app's own invocation keeps the runner-sized cap; see ci.yaml
+        run: make vet race RACE_COUNT=1 # every test runs (only local runs use go test's cache)
       - name: coverage floor (non-race, so the write-transaction guard applies)
         # 250 ms on GitHub's hosted runners, as in ci.yaml; 100 ms locally (ADR-0062).
         env:
           SM_TEST_TX_MAX: 250ms
+          # One package at a time, as before ADR-0069: more at once on a 4-core runner trips the 250 ms guard.
+          COVERAGE_PARALLEL: "1"
         run: make coverage
+
+  login-timing:
+    name: login timing, known vs unknown account (release gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: login timing
+        # The wall-clock comparison of Hallpass HP-AUTH-005, alone on its runner without the race detector or coverage,
+        # as in ci.yaml (ADR-0071).
+        run: make test-login-timing
 
   fuzz:
     name: fuzz smoke (release gate)
@@ -141,6 +159,8 @@ jobs:
         run: npx --yes playwright@1.64.1 install --with-deps chromium
       # Always the full audit, whatever changed since the last release (ADR-0062).
       - name: build, Mermaid, API reference drift and axe on every page
+        env:
+          SM_SITE_A11Y: "1"
         run: make site-check
 
   web:
@@ -172,7 +192,7 @@ jobs:
 
   binaries:
     name: static binaries, SBOMs, checksums
-    needs: [meta, test, fuzz, site, web]
+    needs: [meta, test, login-timing, fuzz, site, web]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -227,7 +247,7 @@ jobs:
 
   images:
     name: container images (linux/amd64, build and smoke test, no push)
-    needs: [meta, test, fuzz, site]
+    needs: [meta, test, login-timing, fuzz, site]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

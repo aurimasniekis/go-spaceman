@@ -393,7 +393,7 @@ func (svc *Service) leaseFor(ctx context.Context, tx *store.Tx, sp db.Space) (pr
 		}
 	}
 	if err := tx.Q.UpsertLease(ctx, db.UpsertLeaseParams{SpaceID: sp.ID, NodeID: sp.NodeID, Generation: gen, GrantedAt: tx.NowMicros(),
-		RenewedAt: tx.NowMicros(), ExpiresAt: exp.UnixMicro()}); err != nil {
+		RenewedAt: tx.NowMicros(), ExpiresAt: exp.UnixMicro(), GraceUs: svc.opts.DisconnectGrace.Microseconds()}); err != nil {
 		return proto.LeaseGrant{}, err
 	}
 	return proto.LeaseGrant{LeaseState: proto.LeaseState{SpaceID: sp.ID, Generation: gen, ExpiresAt: exp}, Workdir: sp.Workdir,

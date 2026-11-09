@@ -81,7 +81,7 @@ Configures node connectivity and execution leases (ADR-0006).
 | Key | Default | Environment | Description |
 |---|---|---|---|
 | `nodes.heartbeat_interval` | `10s` | `SPACEMAN_NODES_HEARTBEAT_INTERVAL` | How often a connected node reports in and renews its leases (1s to 1m). |
-| `nodes.lease_ttl` | `45s` | `SPACEMAN_NODES_LEASE_TTL` | How long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval). |
+| `nodes.lease_ttl` | `45s` | `SPACEMAN_NODES_LEASE_TTL` | How long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval, at most 10m). |
 | `nodes.disconnect_grace` | `2m0s` | `SPACEMAN_NODES_DISCONNECT_GRACE` | How long a node keeps runs going after losing central before stopping them (SM-NODE-007; 0 to 1h). |
 | `nodes.enrollment_ttl` | `24h0m0s` | `SPACEMAN_NODES_ENROLLMENT_TTL` | How long a node enrollment token stays valid (1m to 720h). |
 | `nodes.command_timeout` | `30s` | `SPACEMAN_NODES_COMMAND_TIMEOUT` | Validated (1s to 10m) but not read by this build; node commands use their own fixed timeouts. |

@@ -131,6 +131,15 @@ const (
 	RunLaunchFailed RunEndReason = "launch_failed" // the launch could not be dispatched (node too old, account unusable)
 )
 
+// StaleReason is why central's stale-run sweeper ended a run (ADR-0074); the values are the runs' end reasons.
+type StaleReason string
+
+// Stale-run reasons.
+const (
+	StaleNotOnNode StaleReason = "stale_not_on_node" // the connected node's hello did not report the run
+	StaleLeaseLost StaleReason = "stale_lease_lost"  // the disconnected node's lease and grace passed
+)
+
 // Volume names a filesystem whose capacity is exported.
 type Volume string
 
@@ -172,6 +181,7 @@ var (
 	enumHarness       = newEnum(HarnessClaude, HarnessCodex)
 	enumRunStart      = newEnum(RunLaunched, RunAdopted, RunFailed)
 	enumRunEnd        = newEnum(RunExited, RunStopped, RunKilled, RunLeaseExpired, RunLost, RunLaunchFailed)
+	enumStaleReason   = newEnum(StaleNotOnNode, StaleLeaseLost)
 )
 
 // bounded admits label values that match a pattern, up to a fixed number of distinct values; the rest map to
