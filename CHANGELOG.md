@@ -87,6 +87,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   memory fetch or commit ran detached and kept writing into the repository after the call returned.
 - Tests: `eventually` in the end-to-end tests prints the runs, leases, node commands, human notifications and
   terminals when a wait times out.
+- Attachments over 512 KiB (screenshots, for example) now reach agents whole (ADR-0073):
+  - The new `spaceman_attachment_save` tool, served by the node's MCP bridge, saves an attachment of any size as a
+    file in the run's own folder, with its size and SHA-256 checked. The agent then opens it with its own file tools:
+    Claude Code's Read tool shows images, with no permission dialog.
+  - The file name is sanitized, the file is `0600`, one save is at most 50 MiB, and the folder is removed when the
+    run ends.
+  - `spaceman_attachment_get` no longer cuts a file silently. Every result says `truncated`, `offset`,
+    `returned_bytes` and `next_offset`. A large binary file is no longer returned as partial base64, and a large text
+    file comes in chunks. New `offset`/`length` arguments read a range.
+  - The node never resolves a folder the run can write by path on the way to the attachments folder, so a run that
+    swaps a folder for a link can't redirect a save or a cleanup (security review M1). Saved files of runs found lost
+    after a node restart are removed too, a save that outlives its run leaves no file, and a ranged read of text
+    always returns bytes before the end of the file (`next_offset` is present whenever `truncated` is).
+  - Takes a node agent on this release for the save tool. Central and agent can be upgraded in any order; there is no
+    protocol change.
 
 ## [0.1.0] - 2026-11-08
 

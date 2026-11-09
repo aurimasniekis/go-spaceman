@@ -3603,6 +3603,88 @@
   - Not solved here: several events on one pull request still wake control once each (coalescing by correlation is
     a separate, optional follow-up).
 
+### ADR-0073 — Attachments of any size reach a run as a file in its own folder; the inline read never truncates silently
+- **Status:** Accepted, 2026-11-08 (operator request: screenshots over 512 KiB could not reach agents).
+  **Security-relevant change:** the node agent now writes attachment content (untrusted, named by its uploader) into
+  the run's own instance folder.
+- **Context:**
+  - `spaceman_attachment_get` returned at most 512 KiB, with only a `truncated` flag that was easy to miss, as ~700k
+    characters of base64. For an operator's 668 KB screenshot, the agent got 524 288 bytes it could not decode. The
+    result was also too large for Claude Code's tool output, so it spilled to a temporary file anyway.
+  - One node-protocol envelope is at most 4 MiB (`proto.MaxMessage`), and uploads go up to 25 MiB by default, so a
+    whole attachment can't travel in one tool result.
+  - The run's file tools read its own space folder without a dialog (ADR-0068), and Claude Code's Read tool shows
+    images (scaling large ones down itself).
+- **Decision:**
+  - **Ranged inline reads.** `spaceman_attachment_get` takes optional `offset` and `length` (at most 1 MiB,
+    `proto.AttachmentChunkBytes`; 512 KiB when no range is given). Every result says `truncated`, `offset`,
+    `returned_bytes`, `next_offset` when more follows, and a `note` on how to get the rest. `offset` given (0
+    included) makes a ranged read. `next_offset` is present exactly when `truncated` is; after a ranged or partial
+    read it is past `offset`, so following it always makes progress (review S2: a short `length` on multibyte text
+    once returned 0 bytes; now a chunk that can't be cut on a character boundary goes whole, as base64).
+    - A **binary** file over 512 KiB asked for without a range is **not returned inline**: just its record,
+      `truncated: true`, and a note pointing to `spaceman_attachment_save`.
+    - **Text** comes back in chunks cut on a character boundary.
+  - **`spaceman_attachment_save`, served by the node.** The MCP bridge offers it when the run's catalog has
+    `spaceman_attachment_get` (so the same run kinds may use it), and the node agent does the work:
+    - It copies the attachment through the existing `tool.call` path in ranged reads, so central authenticates and
+      authorizes every chunk exactly as for the inline tool. There is no protocol change and no new central route.
+    - The file is `<space folder>/instances/<instance>/attachments/<run>/<attachment>/<name>`, mode 0600 in 0700
+      folders. It is inside the space folder the run may read (ADR-0068) and outside every protected config path.
+    - The size and SHA-256 are checked against central's record before the temporary file is renamed into place. A
+      chunk from a different record, a wrong range or a mismatch fails the call and leaves no file.
+    - The result is the real path, size, SHA-256, MIME type and name.
+    - One save is at most 50 MiB (above central's default 25 MiB upload limit), so a run can't fill the node's disk
+      through it. A larger attachment is refused before anything is written; ranged reads still work.
+  - **Untrusted names.**
+    - The uploader's name is reduced to one plain element: the last element (either separator), `[A-Za-z0-9._-]`
+      (anything else becomes `_`), no leading dot, at most 100 bytes keeping a short extension, and `attachment` when
+      nothing is left.
+    - The attachment ID must be a valid `att_` ID, and the run and instance IDs valid too.
+    - **No run-writable folder is resolved by path** (review M1). The run can rename folders and plant links
+      anywhere in its space folder: its file tools may write there (ADR-0068) and its shell runs as the node's user.
+      The first version checked the attachments folder with `Lstat` and then opened it by path, and a run that swapped
+      the folder for a link between the two won the race (the save wrote into the link's target; the prune emptied
+      it). Now the node opens an `os.Root` on its own `<data_dir>/spaces` folder (outside every space folder; a run's
+      file tools are not given it) and walks `<space>`, `instances`, `<instance>` and `attachments` one level at a
+      time, each relative to the open handle above. Each level is opened first and checked after: `Lstat` through the
+      parent handle must show a real folder and `os.SameFile` must match the opened handle, so a link in place before,
+      between or after the two steps is refused, never followed (an `os.Root` alone would follow a link that stays
+      inside it, for example to the instance's own `claude/` folder). Every later mkdir, write, rename, listing and
+      removal is relative to the final handle. Residual: a run that can rename folders can move the opened folder
+      elsewhere while a save is writing; the save then writes the attachment's bytes, under its sanitized name, into
+      that moved folder, and a prune removes only entries of that folder. Both are things such a run could already do
+      itself.
+  - **Cleanup.** The run's folder is removed when the run ends, including runs the node finds lost or never started
+    when it reconciles with its runner after a restart (review S1). A save re-checks that the run is still running
+    before and after renaming its file into place, and removes it when the run has ended meanwhile (S4), and one save
+    is bounded as a whole by `saveTimeout`, 10 minutes (S3). A launch of the instance removes the folders of runs
+    that ended or that the journal no longer knows. The folder is per run because nothing stops two runs of one
+    instance.
+  - The built-in orientation tells every run to use `spaceman_attachment_save` for images and anything over 512 KiB.
+    The same tools serve every attachment reference: inbox items, tasks, human actions and messages list attachment
+    records and `spaceman://attachment/<id>` links.
+- **Alternatives:**
+  - **Chunked reads only** (the model reassembles base64 itself): the data passes through the model's context
+    and is easily corrupted. An earlier agent dropped about 2 KB retyping one by hand.
+  - **A server-side downscaled preview** (≤ 2000 px, re-encoded): needs an image library or a hand-written resampler
+    in central, decodes untrusted images in central, and puts the preview into the context on every call. Claude Code's
+    Read already scales images down, and Codex views local images. It can be added to the inline result later if a
+    harness can't read files.
+  - **A signed short-lived URL** the agent fetches: a new authenticated HTTP surface and a bearer credential in the
+    model's context, and the agent's shell would need network access to central.
+  - **Central writes the file:** central has no access to the node's filesystem. The node already holds the run's
+    authenticated connection.
+- **Consequences:**
+  - Attachments of any size (up to the upload limit) reach a run whole, checked, and readable with its own tools
+    without a dialog. Verified live with Claude Code 2.1.319: Read shows a saved 2.8 MB PNG as an image in
+    `acceptEdits` and `default` modes, while the same file outside the space folder is denied by SpaceMan's hook.
+  - A saved file takes node disk space until the run ends, at most the attachment sizes the run saved.
+  - A node agent from before this release doesn't offer the save tool. A newer node with an older central answers
+    "upgrade central".
+  - Other runs of the space can read a saved file through the space folder (ADR-0068), as they could fetch the
+    attachment themselves. They can't write it: other instances' folders are denied for `Edit`.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
