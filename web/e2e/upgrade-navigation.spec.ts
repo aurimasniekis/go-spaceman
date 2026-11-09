@@ -11,6 +11,8 @@ import { Api, env } from './stack'
  * build no longer has. The server answers those with a 404 (as a real upgrade does) and the client must recover with
  * one reload instead of "Something went wrong!". The phone sizes run in Chromium with the device's viewport, touch and
  * user agent (WebKit needs system libraries this host may not have).
+ *
+ * It creates its own user, so it must sort after smoke.spec.ts, which needs a stack that is not set up yet.
  */
 
 const emulate = ({ defaultBrowserType: _, ...d }: (typeof devices)[string]): BrowserContextOptions => d
