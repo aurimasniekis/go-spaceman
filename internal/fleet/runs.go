@@ -691,6 +691,22 @@ func (svc *Service) runEvent(ctx context.Context, tx *store.Tx, r db.Run, p outb
 
 func ended(s string) bool { return s == proto.RunExited || s == proto.RunFailed || s == proto.RunLost }
 
+// RunUnknown is the observed state central records for the runs of a node that disconnected (SM-NODE-005); nodes
+// never report it.
+const RunUnknown = "unknown"
+
+// Live reports whether a run in this observed state is live: not yet exited, failed or lost. It is the one definition
+// of an active run that spaceman_runs_list shows and the space and node concurrency limits count (the SQL of
+// ListLiveWorkRunsInSpace and ListLiveWorkRunsOnNode spells out the same states). desired is not part of it: a run
+// that ended on its own keeps desired = "running".
+func Live(observed string) bool {
+	switch observed {
+	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, RunUnknown:
+		return true
+	}
+	return false
+}
+
 func startResult(rep proto.RunReport) metrics.RunStartResult {
 	switch {
 	case rep.State == proto.RunFailed && rep.Error != "":
