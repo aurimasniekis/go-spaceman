@@ -444,6 +444,11 @@
   read-only machine user. Built-in host-key pins cover github.com only; other hosts need the repository's known_hosts. A relocation's
   destination does not clone repositories that have a key: the first sync after the move does. Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
   `file://` and local paths need development mode.
+- **Some permanent delivery failures are retried.** A node command central can't prepare for a transient reason is
+  retried with a backoff (250 ms up to 30 s) while the node is connected. A run's command whose stored payload doesn't
+  decode fails the run as `invalid_command`, but a few failures that can't heal are retried the same way, with a
+  warning in central's log on every pass: a repository SSH key that can't be decrypted, and a command not tied to a run
+  (a repository sync, a relocation's prepare) whose payload doesn't decode. Fix the key or remove the repository.
 - **Unlisted folders still work.** Workers may still use a repository folder that is not in the space's list; such a
   folder is reported as unlisted but not tracked, and a relocation carries it only as the source has it. A space has at
   most 50 repositories. A repository's name and folder are fixed; changing the folder means adding another repository
@@ -517,8 +522,12 @@
   not a reference: that link breaks when the attachment expires (SM-ATT-006).
 - **Exports exclude recordings and transcripts**, and an export is not encrypted (ADR-0045). Download recordings and
   transcripts per run.
-- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB); they are not copied
-  into the run's folder (SM-ATT-005).
+- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB per call, with ranged
+  reads; a larger binary is not returned inline) **or `spaceman_attachment_save`**, which copies the whole file into the
+  run's own folder on the node until the run ends (SM-ATT-005, ADR-0073). Attachments are not copied there unasked.
+  There is no server-side image downscale: the harness's own file reader scales images. A saved file stays until its
+  run ends; files of a run that ended while its node agent was not running are removed when the node reconciles at
+  its next start, or at the instance's next launch. A node that never starts again leaves them on disk.
 
 ## Audit and logs
 - **Audit retention trusts its own checkpoint.** After `retention.audit_days` pruned events, verification starts from

@@ -88,7 +88,8 @@ both audited (`message.sent` with `deliver_at`, and `message.cancelled`).
 
 Messages and replies to agents are written in the Markdown composer, so images and files can be pasted, dropped or
 attached. They are stored as the space's attachments and listed with the message; agents read them through
-`spaceman_attachment_get`.
+`spaceman_attachment_get`, or save images and large files with `spaceman_attachment_save`
+([Large attachments](./agent-tools#large-attachments-and-images)).
 
 ## For operators
 

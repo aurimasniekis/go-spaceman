@@ -135,10 +135,14 @@ func (svc *Service) login(ctx context.Context, in LoginInput) (*LoginResult, err
 	var cred db.UserLocalCredential
 	found := false
 	if eerr == nil {
-		if r, err := svc.s.R().GetUserByEmail(ctx, sql.NullString{String: email, Valid: true}); err == nil {
-			if c, err := svc.s.R().GetLocalCredential(ctx, r.ID); err == nil {
-				opRow, cred, found = r, c, true
-			}
+		// Both reads run for unknown accounts too (the credential lookup by an ID no user has), so the database work
+		// before the password check does not depend on whether the account exists (HP-AUTH-005).
+		r, uerr := svc.s.R().GetUserByEmail(ctx, sql.NullString{String: email, Valid: true})
+		if uerr != nil {
+			r = db.User{}
+		}
+		if c, err := svc.s.R().GetLocalCredential(ctx, r.ID); err == nil && uerr == nil {
+			opRow, cred, found = r, c, true
 		}
 	}
 	phc := dummyHash()

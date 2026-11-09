@@ -46,7 +46,7 @@ type Options struct {
 	SkipMigrate bool
 	Logger      *slog.Logger
 	Clock       clock.Clock
-	// TxObserver, if set, receives the duration and outcome of every write transaction.
+	// TxObserver, if set, receives the lock hold time and outcome of every write transaction (see TxObserver).
 	TxObserver TxObserver
 	// Metrics, if set, records write transaction duration and results, busy retries and writer wait time
 	// (Hallpass HP-DB-003, Hallpass HP-DB-004). Nil disables metrics.
@@ -55,6 +55,9 @@ type Options struct {
 	BusyTimeout time.Duration
 	// Migrations overrides the embedded central migrations (the node agent journal and tests use their own).
 	Migrations fs.FS
+	// ReadObserver, if set, receives the SQL text of every query run through R(), before it runs. Tests only: it lets
+	// a test check which reads a code path does (storetest.WithReadObserver).
+	ReadObserver func(query string)
 }
 
 // Store is an open SpaceMan database owned exclusively by this process.
@@ -169,7 +172,11 @@ func (s *Store) open(ctx context.Context, opts Options) error {
 	s.health.mu.Lock()
 	s.health.probe = s.writer.spaceProbe
 	s.health.mu.Unlock()
-	s.reader = db.New(s.rdb)
+	if opts.ReadObserver != nil {
+		s.reader = db.New(observedDB{DBTX: s.rdb, observe: opts.ReadObserver})
+	} else {
+		s.reader = db.New(s.rdb)
+	}
 	opts.Metrics.SetStoreSizes(s.Sizes())
 	return nil
 }
@@ -310,4 +317,30 @@ func (s *Store) ReadTx(ctx context.Context, fn func(q *db.Queries) error) error 
 	}
 	defer func() { _ = tx.Rollback() }()
 	return classify(fn(db.New(tx)))
+}
+
+// observedDB reports each query to observe before running it on DBTX (Options.ReadObserver).
+type observedDB struct {
+	db.DBTX
+	observe func(query string)
+}
+
+func (o observedDB) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
+	o.observe(q)
+	return o.DBTX.ExecContext(ctx, q, args...)
+}
+
+func (o observedDB) PrepareContext(ctx context.Context, q string) (*sql.Stmt, error) {
+	o.observe(q)
+	return o.DBTX.PrepareContext(ctx, q)
+}
+
+func (o observedDB) QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error) {
+	o.observe(q)
+	return o.DBTX.QueryContext(ctx, q, args...)
+}
+
+func (o observedDB) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {
+	o.observe(q)
+	return o.DBTX.QueryRowContext(ctx, q, args...)
 }
