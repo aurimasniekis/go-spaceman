@@ -11,6 +11,18 @@
  */
 
 const marker = 'spaceman:chunk-reload'
+/** The prefix of TanStack Router's per-message reload marker (lazyRouteComponent in @tanstack/react-router). */
+const tanstackMarker = 'tanstack_router_reload:'
+let pending = false
+
+/**
+ * Reports whether this page has asked for a reload that has not landed yet. Until it does, more errors follow from the
+ * same missing chunk (a route whose import failed, a component that never arrived), and the error screen shows the
+ * loader for all of them instead of a red alert that disappears a moment later.
+ */
+export function reloadPending(): boolean {
+  return pending
+}
 /** A second failure within this window after an automatic reload is shown instead of reloading again. */
 export const reloadWindowMs = 60_000
 
@@ -40,27 +52,56 @@ function lastReload(): number {
 }
 
 /**
+ * Tells TanStack Router's lazy route component that this failure is handled: it would otherwise call reload() again for
+ * it, and Chromium then starts the navigation a second time. A page made of several lazy routes (/spaces is spaces.tsx
+ * and spaces.index.tsx) fails once per chunk, each with its own message.
+ */
+function markHandled(cause: unknown) {
+  const message = (cause as { message?: unknown } | undefined)?.message
+  if (typeof message === 'string') sessionStorage.setItem(`${tanstackMarker}${message}`, '1')
+}
+
+/**
  * Reloads the page once to pick up the current build. Returns false, without reloading, when the page was already
  * reloaded for this within the last minute (or the marker cannot be stored), so the caller shows a message instead.
+ * While this page's reload is pending it returns true without reloading again, and marks `cause` as handled.
  */
-export function reloadOnce(now = Date.now(), reload: () => void = () => window.location.reload()): boolean {
-  const last = lastReload()
-  if (last && now - last >= 0 && now - last < reloadWindowMs) return false
+export function reloadOnce(now = Date.now(), reload: () => void = () => window.location.reload(), cause?: unknown): boolean {
   try {
+    if (pending) {
+      markHandled(cause)
+      return true
+    }
+    const last = lastReload()
+    if (last && now - last >= 0 && now - last < reloadWindowMs) return false
     sessionStorage.setItem(marker, String(now))
+    markHandled(cause)
   } catch {
     return false // without the marker a reload could loop
   }
+  pending = true
   reload()
   return true
 }
 
 /**
- * Handles Vite's preload failures (a chunk's stylesheet or dependency did not download): reloads once and stops the
- * error, or lets it reach the route's error boundary when a reload already happened.
+ * Handles Vite's preload failures: a chunk or its stylesheet did not download (also for a hover preload or an import
+ * outside the router). Vite raises the same event for a chunk that downloaded but threw while it ran; that is a bug to
+ * show, not a reason to reload, so only download failures reload.
+ *
+ * The error is not stopped (no preventDefault): stopped, Vite resolves the import with undefined, or runs the chunk
+ * without its stylesheet, and the code waiting for the module fails with an unrelated TypeError. Left alone, the real
+ * error reaches the route's error screen, which shows the loader while the reload is pending, or "SpaceMan was
+ * updated" when a reload already happened and did not help.
  */
 export function installChunkReload(target: Window = window) {
   target.addEventListener('vite:preloadError', (event) => {
-    if (reloadOnce()) event.preventDefault()
+    const { payload } = event as Event & { payload?: unknown }
+    if (isChunkLoadError(payload)) reloadOnce(Date.now(), undefined, payload)
   })
+}
+
+/** Resets the pending reload; for tests, which keep one page across cases. */
+export function resetChunkReload() {
+  pending = false
 }

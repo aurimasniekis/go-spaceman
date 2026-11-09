@@ -9,8 +9,16 @@ import { Api, env } from './stack'
  * Client-side navigation between the top-level pages, on a desktop and at phone size, and after an upgrade while the
  * tab was open. Routes are split into chunks with hashed names; a tab opened before an upgrade asks for names the new
  * build no longer has. The server answers those with a 404 (as a real upgrade does) and the client must recover with
- * one reload instead of "Something went wrong!". The phone sizes run in Chromium with the device's viewport, touch and
- * user agent (WebKit needs system libraries this host may not have).
+ * one reload instead of "Something went wrong!", and without showing any error screen while that reload is on its way.
+ * The phone sizes run in Chromium with the device's viewport, touch and user agent (WebKit needs system libraries this
+ * host may not have).
+ *
+ * What this does and does not cover: every browser here is Chromium, so the import fails with Chromium's wording
+ * ("Failed to fetch dynamically imported module: <url>"), including in the "iPhone 13" project, which only borrows
+ * Safari's user agent. TanStack Router reloads by itself for that wording, so on the build before this fix /spaces and
+ * /terminals already recovered here; what failed was the stylesheet preload (/human, "Unable to preload CSS"), the
+ * chunk that keeps failing, and the wrong error screen shown before the reload landed. Safari's wording ("Importing a
+ * module script failed.", the same for every module) is covered by the unit tests in RouteError.test.tsx.
  *
  * It creates its own user, so it must sort after smoke.spec.ts, which needs a stack that is not set up yet.
  */
@@ -47,9 +55,26 @@ test.beforeAll(async ({ playwright }) => {
   await req.dispose()
 })
 
-/** A signed-in page; uncaught page errors and the router's error screens are collected for the assertions. */
+const errorScreen = /Something went wrong|This page failed to load|SpaceMan was updated/
+const shownKey = 'e2e:error-screens'
+
+/**
+ * A signed-in page; uncaught page errors and full page loads are collected for the assertions, and so is every error
+ * screen the page shows at any moment (in sessionStorage, so it survives the reload), even one replaced a moment later.
+ */
 async function open(browser: Browser, options: BrowserContextOptions) {
   const context = await browser.newContext({ ...options, storageState: state, colorScheme: 'dark' })
+  await context.addInitScript(([key, source]) => {
+    const pattern = new RegExp(source)
+    new MutationObserver(() => {
+      for (const el of document.querySelectorAll('[role="alert"]')) {
+        const text = el.textContent ?? ''
+        if (!pattern.test(text)) continue
+        const shown: string[] = JSON.parse(sessionStorage.getItem(key) ?? '[]')
+        if (!shown.includes(text)) sessionStorage.setItem(key, JSON.stringify([...shown, text]))
+      }
+    }).observe(document, { childList: true, subtree: true, characterData: true })
+  }, [shownKey, errorScreen.source] as const)
   const page = await context.newPage()
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -82,10 +107,14 @@ async function navigate(page: Page, mobile: boolean, label: string | RegExp) {
   await link.click()
 }
 
+/** Every error screen the page has shown so far, including on the page before a reload. */
+const shownErrors = async (page: Page): Promise<string[]> => JSON.parse((await page.evaluate((k) => sessionStorage.getItem(k), shownKey)) ?? '[]')
+
 async function expectPage(page: Page, path: string) {
   await expect(page).toHaveURL((u) => u.pathname === path)
   await expect(page.getByRole('main')).toContainText(/\w/)
-  await expect(page.getByText(/Something went wrong|This page failed to load|SpaceMan was updated/)).toHaveCount(0)
+  await expect(page.getByText(errorScreen)).toHaveCount(0)
+  expect(await shownErrors(page), 'no error screen, not even before the reload').toEqual([])
 }
 
 /**
@@ -113,28 +142,31 @@ async function upgradeWhileOpen(page: Page, forever?: RegExp) {
 
 for (const vp of viewports) {
   test.describe(vp.name, () => {
-    test('every top-level page opens from the navigation', async ({ browser }) => {
-      test.setTimeout(180_000)
-      const { page, errors, reloads } = await open(browser, vp.options)
-      for (const [label, path] of pages) {
-        await navigate(page, vp.mobile, label)
-        await expectPage(page, path)
-      }
-      expect(reloads, 'client-side navigation only').toEqual([])
-      expect(errors).toEqual([])
-      await page.context().close()
-    })
+    // "iPhone 13" differs from Pixel 7 here only in size and user agent (both are Chromium), so it skips the walk
+    // through every page and keeps the upgrade cases.
+    if (vp.name !== 'iPhone 13')
+      test('every top-level page opens from the navigation', async ({ browser }) => {
+        test.setTimeout(180_000)
+        const { page, errors, reloads } = await open(browser, vp.options)
+        for (const [label, path] of pages) {
+          await navigate(page, vp.mobile, label)
+          await expectPage(page, path)
+        }
+        expect(reloads, 'client-side navigation only').toEqual([])
+        expect(errors).toEqual([])
+        await page.context().close()
+      })
 
-    // Spaces and Terminals are what the operator opened; Needs you's chunk also has its own stylesheet, whose failure
-    // ("Unable to preload CSS") TanStack Router does not reload for.
+    // Spaces and Terminals are what the operator opened; Spaces is two lazy routes (spaces.tsx, spaces.index.tsx), so
+    // it fails twice, once per chunk. Needs you's chunk also has its own stylesheet, whose failure ("Unable to preload
+    // CSS") TanStack Router does not reload for.
     for (const [label, path] of [['Spaces', '/spaces'], ['Terminals', '/terminals'], [/^Needs you/, '/human']] as const) {
       test(`after an upgrade while the tab was open, ${path} recovers with one reload`, async ({ browser }) => {
         const { page, reloads } = await open(browser, vp.options)
         await upgradeWhileOpen(page)
         await navigate(page, vp.mobile, label)
         await expectPage(page, path)
-        expect(reloads.length, `reloads: ${reloads.join(', ')}`).toBeGreaterThanOrEqual(1)
-        expect(reloads.length, `reloads: ${reloads.join(', ')}`).toBeLessThanOrEqual(2)
+        expect(reloads).toEqual([new URL(path, page.url()).href])
         await page.context().close()
       })
     }
@@ -148,7 +180,10 @@ test('a chunk that keeps failing shows "SpaceMan was updated" with Reload, witho
   const alert = page.getByRole('alert').filter({ hasText: 'SpaceMan was updated' })
   await expect(alert).toBeVisible()
   await expect(alert.getByRole('button', { name: 'Reload' })).toBeVisible()
+  // A loop would reload again after the message: the absence of a reload can only be seen by waiting a moment.
   await page.waitForTimeout(2_000)
-  expect(reloads.length, `reloads: ${reloads.join(', ')}`).toBeLessThanOrEqual(2)
+  expect(reloads).toEqual([new URL('/human', page.url()).href])
+  // Only the message after the reload: nothing on the page before it.
+  expect((await shownErrors(page)).map((t) => t.match(errorScreen)?.[0])).toEqual(['SpaceMan was updated'])
   await page.context().close()
 })

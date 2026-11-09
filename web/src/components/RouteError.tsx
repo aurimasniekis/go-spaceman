@@ -2,21 +2,23 @@ import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core
 import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react'
 import { useRouter, type ErrorComponentProps } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { isChunkLoadError, reloadOnce } from '@/lib/chunkReload'
+import { isChunkLoadError, reloadOnce, reloadPending } from '@/lib/chunkReload'
 import { errorMessage } from './ErrorAlert'
 
 /**
  * The router's error screen. A part of the app that failed to download (an upgrade while the tab was open, or a
  * dropped connection) reloads the page once to pick up the current build; if that already happened, it says so and
- * offers a reload. Any other error shows its message with Reload and Try again.
+ * offers a reload. While a reload is pending, every error shows the loader: they all follow from the missing chunk and
+ * are gone once the page reloads. Any other error shows its message with Reload and Try again.
  */
 export function RouteError({ error, reset }: ErrorComponentProps) {
   const router = useRouter()
   const chunk = isChunkLoadError(error)
-  const [reloading, setReloading] = useState(chunk)
+  const [reloading, setReloading] = useState(() => chunk || reloadPending())
   useEffect(() => {
-    if (chunk && !reloadOnce()) setReloading(false)
-  }, [chunk])
+    if (reloadPending()) return
+    if (chunk && !reloadOnce(Date.now(), undefined, error)) setReloading(false)
+  }, [chunk, error])
   const reload = () => window.location.reload()
 
   if (reloading) {

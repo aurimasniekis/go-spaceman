@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { installChunkReload, isChunkLoadError, reloadOnce, reloadWindowMs } from './chunkReload'
+import { installChunkReload, isChunkLoadError, reloadOnce, reloadPending, reloadWindowMs, resetChunkReload } from './chunkReload'
 
 afterEach(() => {
+  resetChunkReload()
   sessionStorage.clear()
   vi.restoreAllMocks()
 })
@@ -27,6 +28,7 @@ describe('reloadOnce', () => {
     const t = 1_800_000_000_000
     expect(reloadOnce(t, reload)).toBe(true)
     expect(reload).toHaveBeenCalledTimes(1)
+    resetChunkReload() // the reloaded page: a fresh document, the same tab's sessionStorage
     // The reloaded page failed again: no loop, the caller shows a message.
     expect(reloadOnce(t + 5_000, reload)).toBe(false)
     expect(reloadOnce(t + reloadWindowMs - 1, reload)).toBe(false)
@@ -45,19 +47,38 @@ describe('reloadOnce', () => {
     expect(reload).not.toHaveBeenCalled()
   })
 
-  it("stops Vite's preload error only when it reloads", () => {
+  it("marks the reload pending and sets TanStack Router's marker for the error, so it does not reload again", () => {
+    const reload = vi.fn()
+    expect(reloadPending()).toBe(false)
+    expect(reloadOnce(Date.now(), reload, new TypeError('Failed to fetch dynamically imported module: https://example.com/assets/a.js'))).toBe(true)
+    expect(reloadPending()).toBe(true)
+    expect(sessionStorage.getItem('tanstack_router_reload:Failed to fetch dynamically imported module: https://example.com/assets/a.js')).toBe('1')
+    // A second chunk of the same page (/spaces is two lazy routes) fails with its own message while the reload is
+    // pending: no second reload, from here or from TanStack Router.
+    expect(reloadOnce(Date.now(), reload, new TypeError('Failed to fetch dynamically imported module: https://example.com/assets/b.js'))).toBe(true)
+    expect(sessionStorage.getItem('tanstack_router_reload:Failed to fetch dynamically imported module: https://example.com/assets/b.js')).toBe('1')
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it("reloads for Vite's preload error only when a download failed, and never stops the error", () => {
     const reload = vi.fn()
     const target = new EventTarget() as unknown as Window
     vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location)
     installChunkReload(target)
-    const fire = () => {
-      const e = new Event('vite:preloadError', { cancelable: true })
+    const fire = (payload: unknown) => {
+      const e = Object.assign(new Event('vite:preloadError', { cancelable: true }), { payload })
       target.dispatchEvent(e)
       return e.defaultPrevented
     }
-    expect(fire()).toBe(true)
+    // A chunk that downloaded but threw while it ran is a bug to show, not a reason to reload.
+    expect(fire(new ReferenceError('process is not defined'))).toBe(false)
+    expect(reload).not.toHaveBeenCalled()
+    expect(reloadPending()).toBe(false)
+    // Not stopped either way: the real error reaches the route's error screen, which shows the loader meanwhile.
+    expect(fire(new Error('Unable to preload CSS for https://example.com/assets/composer-abc.css'))).toBe(false)
     expect(reload).toHaveBeenCalledTimes(1)
-    expect(fire()).toBe(false) // reaches the route's error screen instead of looping
-    expect(reload).toHaveBeenCalledTimes(1)
+    expect(reloadPending()).toBe(true)
+    expect(fire(new TypeError('Importing a module script failed.'))).toBe(false)
+    expect(reload).toHaveBeenCalledTimes(1) // no loop
   })
 })
