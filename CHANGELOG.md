@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Web UI: the New inbox item dialog (and any other dialog with the Markdown editor) no longer shows a vertical scrollbar
+  when a writing-assistant browser extension such as Grammarly is active. The extension's overlays, absolutely
+  positioned next to the editor, made the dialog scroll by however far they reached below it. The editor now contains
+  them (`contain: layout`). Long dialogs still scroll.
+
 ## [0.1.1] - 2026-11-09
 
 Patch release on top of v0.1.0. It makes no production-readiness claim (docs/RELEASE_READINESS.md §15). It contains:

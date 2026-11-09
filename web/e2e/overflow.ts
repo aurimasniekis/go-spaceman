@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { expect, type Page } from '@playwright/test'
+import { expect, type LaunchOptions, type Page } from '@playwright/test'
 
 import { Api, env, startAgent } from './stack'
 
@@ -13,11 +13,12 @@ import { Api, env, startAgent } from './stack'
  * that use these checks launch Chromium with real scrollbars (see `realScrollbars`).
  */
 
-/** Launch options for Chromium with classic (space-taking) scrollbars, keeping SM_CHROMIUM_ARGS. */
-export const realScrollbars = {
-  ignoreDefaultArgs: ['--hide-scrollbars'],
-  args: (process.env.SM_CHROMIUM_ARGS ?? '').split(/\s+/).filter(Boolean),
-}
+/**
+ * Launch options for Chromium with classic (space-taking) scrollbars, keeping SM_CHROMIUM_ARGS. Chromium only: the
+ * opt-in Firefox and WebKit projects (SM_E2E_BROWSERS) launch with their defaults (WebKit refuses Chromium's flags).
+ */
+export const realScrollbars = async ({ browserName }: { browserName: string }, use: (o: LaunchOptions) => Promise<void>) =>
+  use(browserName === 'chromium' ? { ignoreDefaultArgs: ['--hide-scrollbars'], args: (process.env.SM_CHROMIUM_ARGS ?? '').split(/\s+/).filter(Boolean) } : {})
 
 export interface Problem {
   /** A short CSS-like description of the element. */
