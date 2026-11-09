@@ -191,3 +191,49 @@ func TestRecordingsLocalStoreStaysInPlace(t *testing.T) {
 		t.Fatal("archived local recording")
 	}
 }
+
+// SM-UI-004, SM-AUTH-004: a live viewer only ever receives its own run's records. Viewers of two runs subscribe side by
+// side; each run's chunks reach only that run's viewers, and catch-up reads only that run's recording, so one run's
+// terminal can never be delivered on another run's stream (the web terminal reconnects per run, never per page).
+func TestRecordingsViewersAreScopedByRun(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	defer r.Close()
+	const runB = "run_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+	va, vb := r.Subscribe(recRun), r.Subscribe(runB)
+	defer r.Unsubscribe(va)
+	defer r.Unsubscribe(vb)
+	if _, err := r.apply(chunk(t, out(1, "secret of A"))); err != nil {
+		t.Fatal(err)
+	}
+	cb := chunk(t, out(1, "output of B"))
+	cb.RunID = runB
+	if _, err := r.apply(cb); err != nil {
+		t.Fatal(err)
+	}
+	got := func(v *Viewer) []string {
+		var s []string
+		for {
+			select {
+			case rec := <-v.C:
+				s = append(s, string(rec.Data))
+			default:
+				return s
+			}
+		}
+	}
+	if a, b := got(va), got(vb); len(a) != 1 || a[0] != "secret of A" || len(b) != 1 || b[0] != "output of B" {
+		t.Fatalf("viewer A got %q, viewer B got %q", a, b)
+	}
+	res, err := r.Read(context.Background(), runB, 0)
+	if err != nil || len(res.Records) != 1 || string(res.Records[0].Data) != "output of B" {
+		t.Fatalf("catch-up of B: %+v %v", res.Records, err)
+	}
+	// Unsubscribing one run's last viewer leaves the other run's viewers in place.
+	r.Unsubscribe(va)
+	if _, err := r.apply(chunk(t, out(2, "more of A"))); err != nil {
+		t.Fatal(err)
+	}
+	if b := got(vb); len(b) != 0 {
+		t.Fatalf("viewer B got A's output %q", b)
+	}
+}

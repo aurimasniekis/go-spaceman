@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- Web: switching between run terminals no longer shows lines of a terminal viewed earlier inside the new one, and no
+  longer grows the page's memory until the tab freezes on "Connecting…" and crashes. ghostty-web 0.4.0 ran every
+  terminal in one shared WebAssembly memory that a freed terminal leaves uncleared; each terminal now runs in an
+  instance of its own, released with it. The first terminal of a page also waits briefly for its font.
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim

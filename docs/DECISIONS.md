@@ -2062,7 +2062,11 @@
     40-400×10-200) into its core's `config.toml`; programs started afterwards use it, with no core restart. Running
     programs keep their size.
   - **Web terminal.** A terminal is reset (RIS, `ESC c`) before it is disposed; `Terminal.reset()` does not avoid the
-    hang. The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
+    hang. *Amended 2026-11-09:* the reset only hid part of the cause and is gone. ghostty-web's shared instance does not
+    clear a freed terminal's memory, so the next terminal started out with its cells (another run's lines showed
+    through, reset or not), and memory of a terminal with many styles was never reused (the page grew until the tab
+    crashed). Each terminal now runs in a WebAssembly instance of its own, released with it
+    (`web/src/features/terminal/ghostty.ts`, `wasm.test.ts`, `e2e/terminal-switch.spec.ts`). The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
     the box before it reaches ghostty-web's scrollback.
   - **Connections.** One change-feed stream serves all tabs of a browser: the tab holding the Web Lock
     `spaceman-watch` opens it and relays it over a BroadcastChannel; another tab takes over when it closes. Without
@@ -2072,7 +2076,7 @@
   - Control and workers get notices after every turn, as SM-COMM-003 intended. The fake runner always behaved this
     way, which is why the tests did not catch it; `TestRealSendIdleOrDone` now runs against real herdr-core.
   - `make e2e` reopens a full-screen run terminal (the stub harness's `/fullscreen` prints the start-up with neutral
-    text); without the reset the journey hangs.
+    text); without the reset the journey hung (with an instance per terminal, since 2026-11-09, it needs none).
   - Existing runs keep 200×120 until relaunched; an agent restart applies the new size to later launches.
   - ghostty-web's `onRender` is declared but never fired in 0.4.0; the view follows `onCursorMove` and resizes.
 
