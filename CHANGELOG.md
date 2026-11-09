@@ -6,7 +6,63 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `make check-fast`, the inner-loop gate (ADR-0069): vet, the custom analyzers, golangci-lint, traceability, the
+  analyzer tests and every Go test without the race detector, from go test's cache. With nothing changed it takes
+  seconds. `sqlc-check` and `api-check` run only when their inputs changed since the merge base
+  (`scripts/changed.sh`). AGENTS.md has a new "Gates" section on which check to run when.
+
+### Changed
+
+- The wall-clock comparison of failed logins for known and unknown accounts (Hallpass HP-AUTH-005) moved out of
+  `make test`, `race`, `coverage` and `check` into `make test-login-timing`, which CI runs as its own job and the
+  release workflow as a gate before building binaries and images (ADR-0071).
+  Under load the Argon2id check's own run time varied by more than the 25% band, so the comparison failed on
+  unchanged code. The deterministic check (one verification against a same-parameter dummy hash) still runs in every
+  suite.
+- Faster `make check` (ADR-0069):
+  - the coverage floor tests its packages in one `go test -cover` run instead of one run per package (about 150 s
+    down to under 30 s on a 32-core machine); a failing test, a package below the floor and a package with no
+    coverage line still fail. `COVERAGE_PARALLEL` sets how many packages test at once (default: a quarter of the
+    CPUs, 1 to 8; CI uses 1, as before, so the write-transaction guard keeps its calibration);
+  - `make check` runs its steps fail-fast: vet, custom vet, lint, traceability, analyzer tests, the coverage floor,
+    then the race tests.
+- CI no longer downloads sqlc or golangci-lint from GitHub release assets on a cache hit (ADR-0069). `bin/sqlc` is
+  cached under the hash of `scripts/install-sqlc.sh` (pinned version and checksums), and its download retries
+  transient errors. golangci-lint is built with `go install` through the Go module proxy and cached per version and Go
+  toolchain.
+- Local `make race` (and so `make check`) uses go test's cache and reruns only what changed (ADR-0070). CI and the
+  release workflow run `make race RACE_COUNT=1`, so every test still runs there.
+- `make race` runs `internal/app`, its critical path, as its own `go test -race` invocation alongside the other
+  packages, with its own `-parallel` cap `RACE_APP_PARALLEL` (default `min(16, nproc/2)`, at least 4; CI keeps 4)
+  (ADR-0069, `scripts/race.sh`). On 16 or more CPUs its serial tests run in a second process at the same time
+  (`RACE_APP_SPLIT`).
+- The Makefile's browser targets take `SM_CHROMIUM_ARGS` from the environment (nothing when it is unset, as in CI), and
+  the site targets add `--single-process` to a non-empty value.
+- `make lint` waits for another golangci-lint run on the machine (`--allow-serial-runners`) instead of failing with
+  "parallel golangci-lint is running", so `make check` runs started together in different worktrees both get through.
+- The heavy gates (`race`, `coverage`, `site-a11y`, `e2e`, `e2e-browsers`, `screenshots`) take a slot of a node-wide
+  `flock` semaphore first, so several runs on one machine take turns instead of contending (ADR-0069,
+  `scripts/gate-slot.sh`). `SM_GATE_SLOTS` (default 2 on 16 or more CPUs, otherwise 1; `0` disables it, and it is off
+  when `CI=true`) and `SM_GATE_LOCK_DIR` configure it; `make check` holds one slot for coverage and race together.
+- The site's axe audit runs in parallel shards (`SM_A11Y_SHARDS`, by default a quarter of the CPUs, at most 8) and
+  waits for VitePress to be ready instead of for network idle: about 1.5 minutes instead of nearly 10 on a 32-core
+  machine. A local `make site-check` skips the audit when nothing the site is built from changed
+  (`scripts/site-affected.sh`, the rule CI already used; `SM_SITE_A11Y=1` forces it).
+
 ### Fixed
+
+- A failed login for an unknown account now does the same two database reads as one for a known account (the
+  credential lookup runs with an ID no user has), so the work before the password check no longer depends on whether
+  the account exists (Hallpass HP-AUTH-005, ADR-0071). `TestLoginReadsSameForUnknownAccounts` checks that both
+  paths run the same reads, using the new test-only `storetest.WithReadObserver`.
+- The test guard for short write transactions (Hallpass HP-DB-004) measures how long a transaction holds the write
+  lock, no longer the time it waited for the writer or retried a busy database (ADR-0070). Under load, short
+  transactions that queued behind another writer failed tests on unchanged code. It takes the longest hold of a
+  transaction's attempts, so an attempt that held the lock for long before a busy rollback still counts, and it now
+  checks failed transactions too (not those whose context ended). The guard's limits are unchanged;
+  `spaceman_store_tx_duration_seconds` still reports the end-to-end duration.
 - **A launch whose delivery failed once is delivered again on its own.** When central could not prepare a command for
   a node for a transient reason (a failed read, the run's secrets not resolved), the command waited until something else
   woke the node's dispatch, which might never happen, and the run stayed pending. The dispatch now retries with a

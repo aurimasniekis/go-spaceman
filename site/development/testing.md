@@ -10,28 +10,54 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 
 | Command | What it runs |
 |---|---|
-| `make check` | `go vet`, the custom analyzers, golangci-lint, race-enabled tests, coverage floors and the requirement traceability check |
+| `make check-fast` | The inner loop: `go vet`, the custom analyzers, golangci-lint, the traceability check, the analyzer tests and every Go test without the race detector, from go test's cache (only what changed runs again). `make sqlc-check` and `make api-check` run when their inputs changed since the merge base with `origin/main`. |
+| `make check` | The gate to run once before pushing: `go vet`, the custom analyzers, golangci-lint, the requirement traceability check, the analyzer tests, the coverage floor (one `go test -cover` run over the security-critical packages) and the race-enabled tests, in that order, stopping at the first failure |
 | `make web-check` | UI typecheck, unit tests (vitest) and the production build |
 | `make api-check` | Regenerates `api/openapi.json` and the UI's TypeScript types and fails on drift |
-| `make site-check` | Builds this site (dead links, screenshot references), parses every Mermaid diagram, checks the API, CLI and configuration references for drift and audits every page with axe. `make site-verify` runs all of it except the audit; `make site-a11y` runs only the audit, on the built site. |
+| `make site-check` | Builds this site (dead links, screenshot references), parses every Mermaid diagram, checks the API, CLI and configuration references for drift and audits every page with axe. The audit runs only when something the site is built from changed against `main` (`scripts/site-affected.sh`, the same rule CI uses); `SM_SITE_A11Y=1` runs it regardless. `make site-verify` runs all of it except the audit; `make site-a11y` runs only the audit, on the built site, split over `SM_A11Y_SHARDS` parallel Chromium workers (default: a quarter of the CPUs, 1 to 8). |
 | `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` (30 s by default) |
 
 ## What CI runs
 
 | Workflow | When | What |
 |---|---|---|
-| `ci` | every pull request and push to `main` | lint, vet, sqlc drift, analyzer tests and traceability; race tests; the coverage floor; the web checks and API drift; `make site-verify`; govulncheck and gitleaks |
-| `ci` | pull requests that change `site/`, `docs/`, `web/`, `api/`, `CHANGELOG.md`, the `Makefile` or `ci.yaml`, and every push to `main` | the site's axe audit (`make site-a11y`) |
+| `ci` | every pull request and push to `main` | lint, vet, sqlc drift, analyzer tests and traceability; race tests; the coverage floor; the login timing comparison (`make test-login-timing`, on its own runner); the web checks and API drift; `make site-verify`; govulncheck and gitleaks |
+| `ci` | pull requests that change `site/`, `docs/`, `web/`, `api/`, `CHANGELOG.md`, the `Makefile`, `ci.yaml` or `scripts/site-affected.sh` (the rule lives in that script), and every push to `main` | the site's axe audit (`make site-a11y`, two shards) |
 | `ci` | nightly | all of the above with the full audit, and every fuzz target for 10 minutes |
-| `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
+| `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, the login timing comparison, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
 
-Store-backed tests fail when a write transaction takes longer than 100 ms (Hallpass HP-DB-004), or the value of
-`SM_TEST_TX_MAX`. GitHub's hosted runners are slower, so the coverage steps in `ci` and `release` use 250 ms; the race
-steps use 1 s (ADR-0062).
+Store-backed tests fail when a write transaction holds the write lock for longer than 100 ms (Hallpass HP-DB-004), or
+the value of `SM_TEST_TX_MAX`. Time spent waiting for the writer and retrying a busy database doesn't count
+(ADR-0070). GitHub's hosted runners are slower, so the coverage steps in `ci` and `release` use 250 ms; the race steps
+use 1 s (ADR-0062).
+
+The wall-clock comparison of failed logins for known and unknown accounts (Hallpass HP-AUTH-005) needs a quiet
+machine without the race detector or coverage, so it runs only through `make test-login-timing`, which CI and the
+release workflow run as their own job. The deterministic checks (one Argon2id verification against a dummy hash with
+the same parameters, and the same database reads for both accounts) run in every suite (ADR-0071).
+
+Locally, `make race` uses go test's cache, so it reruns only the packages whose code, dependencies or test inputs
+changed. CI and the release workflow run `make race RACE_COUNT=1`, which runs every test (ADR-0070). To rerun a
+suspected flake, run its package with `-count=1`.
+
+### Heavy gates on a shared machine
+
+`make race`, `make coverage`, `make site-a11y`, `make e2e` and `make screenshots` take a slot of a machine-wide
+semaphore first (`scripts/gate-slot.sh`, `flock` lock files), so several people's or agents' full suites on one
+machine take turns instead of slowing each other down. `make check` takes one slot for the coverage floor and the race
+tests together. A run that has to wait prints a `waiting for a heavy-gate slot` line naming the holders.
+`SM_GATE_SLOTS` sets the number of slots (2 on 16 or more CPUs, otherwise 1; `0` turns it off, and it's off in CI) and
+`SM_GATE_LOCK_DIR` the shared directory (`~/.cache/spaceman-gates` by default). A slot is released when its holder
+exits, even when it's killed.
+
+`make race` runs `internal/app`, the slowest package, as its own `go test -race` next to the others, with its own
+`-parallel` cap `RACE_APP_PARALLEL` (`min(16, nproc/2)`, at least 4; CI uses 4); the other packages keep
+`RACE_PARALLEL` (4). On 16 or more CPUs, internal/app's serial tests run in a second process at the same time
+(`RACE_APP_SPLIT`, `0` turns it off).
 
 ### When a release gate fails
 
-- **`write transaction "…" took … (> 250ms, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
+- **`write transaction "…" held the write lock for … (> 250ms, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
   (`gh run rerun <run-id> --failed`). Hosted runners have noisy neighbours. If it fails again, or the same transaction
   shows up in several runs, treat it as a regression: run `make coverage` locally, where the limit is 100 ms, and move
   the slow work out of the transaction. Don't raise `SM_TEST_TX_MAX` to get a release through.
