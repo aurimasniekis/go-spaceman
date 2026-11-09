@@ -271,6 +271,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 				c.Usage.PurgeTranscripts(ctx, runIDs)
 			}
 		},
+		OnRunLaunched: func(string) {
+			if c.Human != nil {
+				c.Human.Kick() // a response held for the run's instance goes to it (SM-HUM-009)
+			}
+		},
 		OnRunEnded: func(runID string) {
 			if c.Fleet != nil {
 				c.Fleet.Recordings().RunEnded(runID) // archived to the artifact store (S3) once the run ended

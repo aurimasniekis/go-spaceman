@@ -13,7 +13,9 @@ gateway with synthetic upstreams, not yet with a real model provider (see [Verif
 ADR-0060 (Accepted) in [Decisions](../security/decisions); Terraform support is in the provider's next release.
 :::
 
-SpaceMan needs **Harbor Pilot 0.1.3 or later**.
+SpaceMan needs **Harbor Pilot 0.1.3 or later; 0.1.4 or later is recommended**. With 0.1.4, SpaceMan reads the
+gateway's version (shown on the connection page) and reads only the budgets that cover each space instead of every
+budget. With 0.1.3 the page shows "older than 0.1.4" and everything else works as before.
 
 ## Connecting Harbor Pilot
 
@@ -40,6 +42,9 @@ Saving checks the connection with Harbor Pilot before anything is stored:
   token lacks tokens:mint"), which client binding it belongs to, and when it expires;
 - a gateway older than 0.1.3 is refused;
 - a service-principal token must be able to read budget status and projects.
+
+With a service-principal token the page also shows **Harbor Pilot version**, read from Harbor Pilot's
+`GET /api/v1/system` (0.1.4 or later; reused for 10 minutes). The CLI shows it with `spaceman harbor-pilot version`.
 
 Both tokens are sealed with the server's keyring and never shown again: not on this page, in the API, the audit log,
 the change feed, exports or logs. The page shows only whether each is set, how many times it was replaced, the
@@ -134,7 +139,9 @@ budgets) and uses it in three places:
 - **The Limits page** of a space that routes runs through Harbor Pilot has a **Harbor Pilot budgets** card. It lists the
   budgets that cover the space: its project's, its project's workspace's, the connection's client binding's, and
   global ones (budgets on an upstream account are left out). Each shows what it covers, whether it is a hard limit or
-  only warns, its spend of its limit, its state and when it resets. The card's state is **within budgets**, **warning**
+  only warns, its spend of its limit (and what is left), its state and when it resets. A **one-time** budget (Harbor
+  Pilot 0.1.4) never resets: the card shows **Never**, or when its window ends. One that hasn't started is
+  **Scheduled**, one whose window ended is **Ended**; like disabled budgets, they never refuse a launch. The card's state is **within budgets**, **warning**
   (a budget passed its warning level, or a warn-only one is over), **budget used up: launches refused** (a hard-limit
   budget is used up) or **status unavailable** (with the reason). Below it, the **project's usage** in the budget's
   current period: requests, tokens and Harbor Pilot's cost. It counts **all clients** of the project, not only this
@@ -143,7 +150,8 @@ budgets) and uses it in three places:
   once with the budget's name, its spend and when it resets, for example: `Harbor Pilot budget "payments-daily"
   (project prj_payments) is used up for this day: 25.42 of 25.00 USD spent; it resets at 2026-11-09T00:00:00Z`. When
   control's automatic start is refused this way, the space gets a **Control could not start** action with that reason.
-  Warn-only budgets never refuse.
+  A used-up one-time budget says it never resets (a person has to raise its limit, start it over or disable it in
+  Harbor Pilot). Warn-only, disabled, scheduled and ended budgets never refuse.
 - **When the run's token is minted**, SpaceMan asks Harbor Pilot to check its budgets too (`check_budget`, Harbor
   Pilot's own figures). A refusal fails the run as `gateway_unavailable` with Harbor Pilot's reason before the harness
   starts.
@@ -177,9 +185,14 @@ Give each space's budget subscription the same project id as its settings above.
 budgets that aren't per project reach only spaces that subscribe to them. A destination only sends events from after
 Harbor Pilot picked it up.
 
+After upgrading Harbor Pilot to 0.1.4, a budget that already warned or was used up in its current period sends that
+alert once more (Harbor Pilot's upgrade note). It becomes one more inbox item, in the same thread as the first; a
+redelivered event never does. Raising a budget's limit lets its alerts fire again in the same period too.
+
 ## Verified
 
-Against a real `harbor-pilot serve --demo` 0.1.3 (with synthetic upstreams):
+Against a real `harbor-pilot serve --demo` 0.1.3, and the budget, connection, run-token, usage and event checks again
+against 0.1.4 (with synthetic upstreams):
 
 - the connection checks: a parent without `tokens:mint`, project checks;
 - the run-token lifecycle with a scripted node: a run's token answering `/v1/models` with the expected references, the
@@ -188,6 +201,9 @@ Against a real `harbor-pilot serve --demo` 0.1.3 (with synthetic upstreams):
 - budgets and usage: a tiny hard-limit budget used up by the project's traffic shows as used up with its spend, the
   launch is refused naming it, and Harbor Pilot refuses the run's token mint; a run's two requests read back as its
   usage with source `harbor-pilot`;
+- 0.1.4: the version read from `GET /api/v1/system`, budget status read by project, and one-time budgets: scheduled,
+  ended and disabled used-up budgets show their state and never refuse a launch or the token mint, and a used-up
+  one-time budget without an end refuses the launch saying it never resets;
 - real Claude Code 2.1.317 and real Codex 0.166.0 runs through SpaceMan (`make test-real-harbor-pilot`): each harness
   started with only the gateway's variables, Harbor Pilot recorded each request with the client binding and the space,
   run and session references, the run's two turns were grouped in one Harbor Pilot session, no token was stored at

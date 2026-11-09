@@ -70,7 +70,12 @@ func TestHarborPilotPermissionsOverHTTP(t *testing.T) {
 	conn := map[string]any{"base_url": f.URL(), "allow_insecure_http": true, "parent_token": f.Parent}
 	for _, c := range []*client{spaceAdmin, op, viewer, other} {
 		expect(t, c.do("GET", "/harbor-pilot/connection", nil), 403)
+		expect(t, c.do("GET", "/harbor-pilot/gateway", nil), 403)
 		expect(t, c.do("PUT", "/harbor-pilot/connection", conn), 403)
+	}
+	// The gateway's version: account:read; without a connection it is unknown, with the reason.
+	if r := root.do("GET", "/harbor-pilot/gateway", nil); r.status != 200 || !strings.Contains(string(r.body), `"source":"unknown"`) {
+		t.Fatalf("gateway without a connection: %d %s", r.status, r.body)
 	}
 	expect(t, root.do("GET", "/harbor-pilot/connection", nil), 404)
 	r := global.do("PUT", "/harbor-pilot/connection", conn)

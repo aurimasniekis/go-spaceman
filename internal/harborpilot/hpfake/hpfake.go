@@ -1,5 +1,6 @@
 // Package hpfake is a test double of the Harbor Pilot 0.1.3 endpoints SpaceMan calls (mint, revoke, budget status,
-// projects, usage summary; docs/contracts/harbor-pilot.md). It is never evidence of a working integration: the real gateway is
+// projects, usage summary; docs/contracts/harbor-pilot.md), and, when Version is set, of 0.1.4's (GET /api/v1/system
+// and budget status filtered by project). It is never evidence of a working integration: the real gateway is
 // exercised by the opt-in hptest tests.
 package hpfake
 
@@ -47,6 +48,13 @@ type HP struct {
 	Budgets     string
 	FailBudgets int
 	BudgetReads int
+	// BudgetQueries records every budget status read's raw query string.
+	BudgetQueries []string
+	// Version, when set, makes the fake a Harbor Pilot 0.1.4 or later: GET /api/v1/system answers it (config.read),
+	// and budget status honours project_id and binding_id (only the budgets covering that project, its workspace and
+	// the binding). Empty: a 0.1.3 gateway, which answers 404 there and ignores the filters. SystemReads counts reads.
+	Version     string
+	SystemReads int
 	// Usage maps a usage summary query to its JSON answer: the key is the "ref" filter (e.g. "spaceman.run:run_x"), or
 	// "group_by=<dim>" for a query without one; an unknown query answers no groups. FailUsage, when non-zero, makes
 	// usage summary answer that status. UsageQueries records every usage query's raw query string.
@@ -128,6 +136,7 @@ func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.BudgetReads++
+		f.BudgetQueries = append(f.BudgetQueries, r.URL.RawQuery)
 		if f.FailBudgets != 0 {
 			problem(w, f.FailBudgets, "budget status failed")
 			return
@@ -137,8 +146,22 @@ func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 			items = `[{"budget_id":"bdg_1","name":"daily","scope":"project","scope_id":"prj_web","period":"day","currency":"USD",` +
 				`"enforcement":"block","enabled":true,"limit_e10":10000000000,"spent_e10":5,"reserved_e10":0,"fraction":0.1,"state":"ok"}]`
 		}
+		if f.Version != "" && r.URL.Query().Get("project_id") != "" {
+			var ok bool
+			if items, ok = f.filterCovering(w, items, r.URL.Query().Get("project_id"), r.URL.Query().Get("binding_id")); !ok {
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"items":`+items+`}`)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system" && f.Version != "":
+		if !f.authAPI(w, r, "config.read") {
+			return
+		}
+		f.SystemReads++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"version": f.Version, "commit": "0123456789abcdef0123456789abcdef01234567",
+			"started_at": "2026-11-08T10:00:00Z", "schema_version": 20261108100000000})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/usage/summary":
 		if !f.authAPI(w, r, "usage.read") {
 			return
@@ -173,6 +196,55 @@ func (f *HP) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		problem(w, 404, "no route")
 	}
+}
+
+// filterCovering keeps the budgets covering a project as Harbor Pilot 0.1.4 does: global, the project's workspace, the
+// project and, with bindingID, the binding; an unknown project or binding is 404.
+func (f *HP) filterCovering(w http.ResponseWriter, items, projectID, bindingID string) (string, bool) {
+	id, ok := f.Projects[projectID]
+	if !ok || id != projectID {
+		problem(w, 404, "project not found")
+		return "", false
+	}
+	if bindingID != "" && bindingID != f.BindingID {
+		problem(w, 404, "client binding not found")
+		return "", false
+	}
+	var all []map[string]any
+	if err := json.Unmarshal([]byte(items), &all); err != nil {
+		problem(w, 500, "bad fixture")
+		return "", false
+	}
+	out := []map[string]any{}
+	for _, b := range all {
+		sid, _ := b["scope_id"].(string)
+		switch b["scope"] {
+		case "global":
+		case "workspace":
+			if sid != f.workspace() {
+				continue
+			}
+		case "project":
+			if sid != projectID {
+				continue
+			}
+		case "binding":
+			if bindingID == "" || sid != bindingID {
+				continue
+			}
+		default:
+			continue
+		}
+		if _, ok := b["remaining_e10"]; !ok { // 0.1.4 always sends it
+			lim, _ := b["limit_e10"].(float64)
+			spent, _ := b["spent_e10"].(float64)
+			res, _ := b["reserved_e10"].(float64)
+			b["remaining_e10"] = max(int64(lim-spent-res), 0)
+		}
+		out = append(out, b)
+	}
+	raw, _ := json.Marshal(out)
+	return string(raw), true
 }
 
 func (f *HP) authAPI(w http.ResponseWriter, r *http.Request, perm string) bool {

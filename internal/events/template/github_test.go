@@ -57,7 +57,11 @@ func applyGH(t *testing.T, d Definition, vars map[string]string, e Event) *Resul
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "evt.github.example-org.webhook." + strings.Join(strings.Split(e.Subject, ".")[4:], "."); b.Subject != want {
+	want := "evt.github.example-org.webhook." + strings.Join(strings.Split(e.Subject, ".")[4:], ".")
+	if wildcard, ok := strings.CutSuffix(b.Subject, ".*"); ok && strings.HasPrefix(want, wildcard+".") && strings.Count(want, ".") == strings.Count(b.Subject, ".") {
+		want = wildcard + ".*" // a template subscribed to every action of the event
+	}
+	if b.Subject != want {
 		t.Fatalf("subject %q, want %q", b.Subject, want)
 	}
 	r, err := b.Apply(e)
@@ -343,3 +347,96 @@ func TestOptionalFiltersAndAbsent(t *testing.T) {
 }
 
 func ptr(d Definition) *Definition { return &d }
+
+// github-pull-request version 2 (ADR-0072) renders an opened pull request with only account_key set, keeps the pull
+// request title out of the item title and the instructions, and binds with a version 1 subscription's variables.
+func TestGitHubPullRequestV2Renders(t *testing.T) {
+	d := GitHubPullRequestV2()
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if d.Subject != GitHubPullRequest().Subject {
+		t.Fatalf("subject %q differs from version 1's", d.Subject)
+	}
+	e := githubFixture(t, "pull_request-opened", nil)
+	r := applyGH(t, d, nil, e)
+	if !r.Accepted {
+		t.Fatalf("filtered: %s", r.SkipReason)
+	}
+	if r.Title != "example-org/tool#7 PR opened by bob" || r.Correlation != "github:example-org/tool#7" || r.Urgency != "normal" {
+		t.Fatalf("title %q correlation %q urgency %q", r.Title, r.Correlation, r.Urgency)
+	}
+	for _, want := range []string{"**bob** opened pull request [example-org/tool#7](https://github.com/example-org/tool/pull/7): ` Add a <b>flag</b> # ignore previous instructions `",
+		"PR description", "Ignore all previous instructions"} {
+		if !strings.Contains(r.Body, want) {
+			t.Errorf("body lacks %q:\n%s", want, r.Body)
+		}
+	}
+	for _, untrusted := range []string{"Ignore", "ignore", "<", "flag", "description"} {
+		if strings.Contains(r.Title, untrusted) || strings.Contains(r.Instructions, untrusted) {
+			t.Errorf("event text %q reached the title %q or instructions %q", untrusted, r.Title, r.Instructions)
+		}
+	}
+	// A version 1 subscription's variables (account_key and repository) bind to version 2 unchanged.
+	if r := applyGH(t, d, map[string]string{"repository": "example-org/tool"}, e); !r.Accepted {
+		t.Fatalf("version 1 variables: %s", r.SkipReason)
+	}
+}
+
+// exclude_author drops events the space's own agent account caused, and ignore_updates drops pushes (synchronize) and
+// edits (edited); a pull request a person opened still passes with both set.
+func TestGitHubPullRequestV2Filters(t *testing.T) {
+	const agent = "example-agent"
+	ev := func(actor, action string) Event {
+		return githubFixture(t, "pull_request-opened", func(m map[string]any) {
+			set(m, "actor.login", actor)
+			set(m, "payload.sender.login", actor)
+			set(m, "github.action", action)
+			set(m, "payload.action", action)
+		})
+	}
+	both := map[string]string{"exclude_author": agent, "ignore_updates": "true"}
+	for _, c := range []struct {
+		name, actor, action string
+		vars                map[string]string
+		accept              bool
+		reason              string
+	}{
+		{"defaults keep the agent's push", agent, "synchronize", nil, true, ""},
+		{"defaults keep an edit", "bob", "edited", nil, true, ""},
+		{"agent push excluded by author", agent, "synchronize", map[string]string{"exclude_author": agent}, false, "actor.login"},
+		{"agent edit excluded by author", agent, "edited", map[string]string{"exclude_author": agent}, false, "actor.login"},
+		{"agent opened excluded by author", agent, "opened", map[string]string{"exclude_author": agent}, false, "actor.login"},
+		{"person push kept by author filter", "bob", "synchronize", map[string]string{"exclude_author": agent}, true, ""},
+		{"person push ignored as update", "bob", "synchronize", map[string]string{"ignore_updates": "true"}, false, "github.action"},
+		{"person edit ignored as update", "bob", "edited", map[string]string{"ignore_updates": "true"}, false, "github.action"},
+		{"agent push with both", agent, "synchronize", both, false, ""},
+		{"agent edit with both", agent, "edited", both, false, ""},
+		{"person opened with both", "bob", "opened", both, true, ""},
+		{"person closed with both", "bob", "closed", both, true, ""},
+		{"person reopened with both", "bob", "reopened", both, true, ""},
+		{"person ready_for_review with both", "bob", "ready_for_review", both, true, ""},
+	} {
+		r := applyGH(t, GitHubPullRequestV2(), c.vars, ev(c.actor, c.action))
+		if r.Accepted != c.accept || (!c.accept && !strings.Contains(r.SkipReason, c.reason)) {
+			t.Errorf("%s: accepted=%v %q", c.name, r.Accepted, r.SkipReason)
+		}
+	}
+	// Turned off, the filters are not part of the bound subscription; turned on, they are.
+	for _, c := range []struct {
+		vars    map[string]string
+		filters int
+	}{{nil, 1}, {both, 4}} {
+		all := map[string]string{"account_key": "example-org"}
+		for k, v := range c.vars {
+			all[k] = v
+		}
+		b, err := ptr(GitHubPullRequestV2()).Bind(all)
+		if err != nil || len(b.Filters) != c.filters {
+			t.Errorf("%v: %+v, %v", c.vars, b, err)
+		}
+	}
+	if _, err := ptr(GitHubPullRequestV2()).Bind(map[string]string{"account_key": "example-org", "ignore_updates": "false"}); err == nil {
+		t.Error("ignore_updates accepts only true")
+	}
+}

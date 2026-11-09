@@ -9,7 +9,6 @@
 package metrics
 
 import (
-	"context"
 	"errors"
 	"maps"
 	"net/http"
@@ -191,24 +190,6 @@ func (m *Metrics) StoreTx(name string, d time.Duration, r TxResult) {
 	n := m.txNames.norm(name)
 	m.txDuration.WithLabelValues(n).Observe(d.Seconds())
 	m.txTotal.WithLabelValues(n, enumTxResult.norm(string(r))).Inc()
-}
-
-// TxObserver adapts StoreTx to internal/store.TxObserver's signature; classify maps errors to a TxResult
-// (nil error → TxOK is handled here). A nil classify maps every error to TxError.
-func (m *Metrics) TxObserver(classify func(error) TxResult) func(name string, d time.Duration, err error) {
-	return func(name string, d time.Duration, err error) {
-		r := TxOK
-		switch {
-		case err == nil:
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			r = TxCanceled
-		case classify != nil:
-			r = classify(err)
-		default:
-			r = TxError
-		}
-		m.StoreTx(name, d, r)
-	}
 }
 
 // StoreTxBusyRetry counts a write attempt retried after SQLITE_BUSY.

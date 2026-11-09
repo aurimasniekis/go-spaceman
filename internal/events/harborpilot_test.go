@@ -116,3 +116,45 @@ func TestHarborPilotEventsReachTheRightSpace(t *testing.T) {
 		t.Fatalf("redelivery: %d items, %v", len(f.items("spc_a")), f.outcomes("spc_a", a.ID))
 	}
 }
+
+// Harbor Pilot 0.1.4: a one-time budget's events (period once, period_start its starts_at) pass the budget template,
+// and the alerts re-sent once after an upgrade to 0.1.4 (a new event id for a budget and window that already warned or
+// was exhausted, Harbor Pilot's upgrade note) make exactly one more item each, in the same correlation as the first,
+// while a redelivery of any of them stays a duplicate.
+func TestHarborPilotOneTimeBudgetAndUpgradeResend(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	sub := f.subscribeSlug("spc_a", "budgets", "harbor-pilot-budget", nil)
+	data, _, name, typ := hpEnvelope(t, "budget-threshold-exceeded")
+	var env map[string]any
+	must(t, json.Unmarshal(data, &env))
+	process := func(id, period string) {
+		t.Helper()
+		env["id"] = id
+		env["data"].(map[string]any)["period"] = period
+		raw, err := json.Marshal(env)
+		must(t, err)
+		must(t, f.svc.Process(f.ctx, sub.ID, template.Event{ID: id, Subject: "evt.harborpilot." + name, Type: typ, Data: raw}, 1, Origin{}))
+	}
+	process("evt_01m6yk0000000000000000once", "once")
+	process("evt_01m6yk0000000000000000once", "once") // redelivery
+	process("evt_01m6yk00000000000000resent", "day")  // the post-upgrade re-send of an alert already delivered
+	process("evt_01m6yk00000000000000resent", "day")  // and its redelivery
+	got := f.outcomes("spc_a", sub.ID)
+	if got[OutcomeAccepted] != 2 || got[OutcomeDuplicate] != 2 || got[OutcomeQuarantined] != 0 {
+		t.Fatalf("outcomes %v", got)
+	}
+	items := f.items("spc_a")
+	if len(items) != 2 {
+		t.Fatalf("%d items", len(items))
+	}
+	corr := map[string]bool{}
+	for _, it := range items {
+		full, err := f.inbox.Get(f.ctx, "spc_a", it.ID)
+		must(t, err)
+		corr[full.CorrelationID] = true
+	}
+	if len(corr) != 1 {
+		t.Fatalf("correlations %v", corr)
+	}
+}
