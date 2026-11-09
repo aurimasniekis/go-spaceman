@@ -138,6 +138,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     once: each publishes `run_ended`, has its credentials revoked and notifies the space's control, which may re-queue
     or relaunch the run's old task. Review the `run.reconciled_stale` audit events and close tasks that are no longer
     wanted. A swept control run is not restarted automatically.
+- A run that ended on its own (it keeps `desired = running`) no longer blocks archiving its space or relocating it
+  without `stop_runs`, and isn't counted among the space's "active runs" (ADR-0074).
+- When a node reconnected while its old connection was still open, the old connection's end recorded a disconnect and
+  marked the node's runs `unknown` although the node was connected again. A replaced connection's end now records
+  nothing.
+- The stale-run sweeper doesn't use a revoked lease for `stale_lease_lost`, since the node may hold it up to
+  `nodes.lease_ttl` longer than central records. `nodes.lease_ttl` must now be at most 10 minutes (ADR-0074).
 
 ### Notes
 

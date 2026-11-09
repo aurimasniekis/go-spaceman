@@ -3775,9 +3775,25 @@
   - SM-NODE-005 is refined, not withdrawn: execution on a disconnected node is `unknown` while it may still be running.
     It is never recorded as `failed`, and it becomes `lost` only once the lease guard must have stopped it.
   - Migration 0046 adds `execution_leases.grace_us`. No node-protocol change.
-  - Follow-up: `ListActiveRunsBySpace` and `ListActiveRunsByNode` still count ended runs with `desired = 'running'` as
-    active (archive, relocation and `sendReconcile` use them); runs swept from now on no longer match, but they should
-    move to the live definition too.
+  - ~~Follow-up: `ListActiveRunsBySpace` and `ListActiveRunsByNode` still count ended runs with `desired = 'running'` as
+    active.~~ Resolved by the amendment below.
+- **Amendment (2026-11-09, review follow-ups of #28):**
+  - **Active runs are live runs.** `ListActiveRunsBySpace` and `ListActiveRunsByNode` use the live predicate
+    (`fleet.Live`), not `desired`. A run that ended on its own no longer blocks archiving the space, a relocation without
+    `stop_runs` or a relocation's drain, and isn't counted in "N active run(s)". Pausing with interrupt or emergency no
+    longer queues a stop for such a run. `sendReconcile` needs nothing else: the node reports every journal run whether
+    or not it is listed and only acts on runs listed as `stopped` or with another generation, and an ended run with
+    `desired = 'running'` was listed as `running`, which the node treats like an unlisted run.
+  - **Only active leases count for `stale_lease_lost`.** `RevokeLease` stores the revoke time as the expiry, but the
+    node keeps the expiry it was last given, up to `lease_ttl` later. A revoked lease is therefore not a basis for the
+    sweep: those runs wait for the node to report them. `nodes.lease_ttl` is also bounded at 10 minutes
+    (`config.MaxLeaseTTL`), well inside the 15-minute margin.
+  - **A replaced connection's end records nothing.** Before, when a node reconnected while its old connection was
+    still open, the old connection's end still recorded a disconnect and marked the node's runs `unknown`, over the new
+    connection's state. Each connection now gets a sequence number and claims the node in its `fleet.node_connect`
+    transaction; the disconnect transaction records the disconnect only if its connection is still the node's newest.
+    Write transactions are serialized, so a disconnect and a reconnect can't interleave.
+  - No migration and no protocol change.
 
 ## 2. Open items and unresolved contracts
 

@@ -54,6 +54,10 @@ type Hub struct {
 	mu  sync.Mutex
 	// sessions maps node ID to its live connection (a newer connection replaces an older one).
 	sessions map[string]*session
+	// newest maps node ID to the sequence number of the node's newest connection whose fleet.node_connect transaction
+	// ran; seq numbers connections. Only that connection's end records the node's disconnect (onDisconnect).
+	newest map[string]uint64
+	seq    uint64
 	// Secrets attaches run secrets to launches (nil: none).
 	Secrets SecretsResolver
 	// RepoKey returns a space repository's private SSH key ("" when it has none) for the wire message of a clone or
@@ -223,6 +227,10 @@ type session struct {
 	memory chan struct{}
 	// minor is the negotiated protocol minor version (set before the session is registered).
 	minor int
+	// seq numbers the connection among all of the hub's connections (set before fleet.node_connect).
+	seq uint64
+	// counted is true once the connection counts toward the connected-nodes gauge.
+	counted bool
 	// The stale-run sweeper's view of this connection (ADR-0074). connectedAt, liveAtConnect and inHello are set before
 	// the session is registered and never change; helloApplied is guarded by Hub.mu.
 	//
@@ -239,7 +247,9 @@ type session struct {
 	helloApplied bool
 }
 
-func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }
+func newHub(svc *Service) *Hub {
+	return &Hub{svc: svc, sessions: map[string]*session{}, newest: map[string]uint64{}}
+}
 
 // staleView returns the node's live connection and whether all its hello reports applied (nil: no live connection).
 func (h *Hub) staleView(nodeID string) (*session, bool) {
@@ -376,7 +386,17 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	for _, rep := range hello.Runs {
 		s.inHello[rep.RunID] = true
 	}
+	h.mu.Lock()
+	h.seq++
+	s.seq = h.seq
+	h.mu.Unlock()
+	// From here on this connection's end records the node's disconnect, unless a newer connection has begun by then.
+	defer h.onDisconnect(ctx, s)
 	if err := svc.s.W().TxNamed(ctx, "fleet.node_connect", func(tx *store.Tx) error {
+		// Write transactions are serialized, so this and onDisconnect's check agree on which connection is the newest.
+		h.mu.Lock()
+		h.newest[s.nodeID] = s.seq
+		h.mu.Unlock()
 		if err := tx.Q.RecordNodeConnect(ctx, db.RecordNodeConnectParams{AgentVersion: truncate(hello.AgentVersion, 64), ProtocolMinor: int64(minor),
 			CapabilitiesJson: string(caps), Capacity: int64(hello.Capacity), Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, LastIp: ip, ID: s.nodeID}); err != nil {
 			return err
@@ -406,7 +426,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	}
 	m.NodeConnect(metrics.NodeAccepted)
 	m.NodeConnected(1)
-	defer h.onDisconnect(ctx, s)
+	s.counted = true
 
 	go h.writer(ctx, s)
 	if err := s.send(proto.TypeWelcome, svc.now(), proto.Welcome{NodeID: s.nodeID, Minor: minor, ServerTime: svc.now(),
@@ -1006,15 +1026,27 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	return msg, nil
 }
 
+// onDisconnect unregisters a connection that ended and records the node's disconnect. A connection that a newer one
+// replaced (or that ended while a newer one was starting) records nothing: the node is connected again, and marking its
+// runs unknown or recording a disconnect would overwrite what the newer connection established. The check runs in the
+// write transaction, which fleet.node_connect also claims the node in, so a disconnect and a reconnect cannot interleave.
 func (h *Hub) onDisconnect(ctx context.Context, s *session) {
 	h.mu.Lock()
 	if h.sessions[s.nodeID] == s {
 		delete(h.sessions, s.nodeID)
 	}
 	h.mu.Unlock()
-	h.svc.opts.Metrics.NodeConnected(-1)
+	if s.counted {
+		h.svc.opts.Metrics.NodeConnected(-1)
+	}
 	defer h.svc.wakeDeadlines()
 	_ = h.svc.s.W().TxNamed(ctx, "fleet.node_disconnect", func(tx *store.Tx) error {
+		h.mu.Lock()
+		newest := h.newest[s.nodeID] == s.seq
+		h.mu.Unlock()
+		if !newest {
+			return nil // replaced: the newer connection owns the node's state
+		}
 		if err := tx.Q.RecordNodeDisconnect(ctx, db.RecordNodeDisconnectParams{LastDisconnectAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 			UpdatedAt: tx.NowMicros(), ID: s.nodeID}); err != nil {
 			return err

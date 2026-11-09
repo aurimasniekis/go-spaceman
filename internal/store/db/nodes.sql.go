@@ -685,9 +685,11 @@ func (q *Queries) InsertSpace(ctx context.Context, arg InsertSpaceParams) error 
 }
 
 const listActiveRunsByNode = `-- name: ListActiveRunsByNode :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE node_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE node_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at
 `
 
+// The active runs of a node or a space are its live ones (fleet.Live: observed not exited, failed or lost). desired is
+// not consulted: a run that ended on its own keeps desired = 'running', and counting it blocked archive and relocation.
 func (q *Queries) ListActiveRunsByNode(ctx context.Context, nodeID string) ([]Run, error) {
 	rows, err := q.db.QueryContext(ctx, listActiveRunsByNode, nodeID)
 	if err != nil {
@@ -745,7 +747,7 @@ func (q *Queries) ListActiveRunsByNode(ctx context.Context, nodeID string) ([]Ru
 }
 
 const listActiveRunsBySpace = `-- name: ListActiveRunsBySpace :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE space_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE space_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at
 `
 
 func (q *Queries) ListActiveRunsBySpace(ctx context.Context, spaceID string) ([]Run, error) {
@@ -1185,7 +1187,7 @@ SELECT r.id, r.node_id, r.space_id, r.version, r.observed, CAST(coalesce(r.obser
 FROM nodes n
 JOIN runs r ON r.node_id = n.id
 JOIN spaces s ON s.id = r.space_id AND s.node_id = r.node_id
-LEFT JOIN execution_leases l ON l.space_id = r.space_id
+LEFT JOIN execution_leases l ON l.space_id = r.space_id AND l.state = 'active'
 WHERE r.observed IN ('starting', 'running', 'stopping', 'unknown') AND r.observed_at IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM node_commands c WHERE c.run_id = r.id AND c.kind = 'run.launch' AND c.state IN ('pending', 'sent'))
 ORDER BY r.id
@@ -1205,7 +1207,7 @@ type ListStaleRunCandidatesRow struct {
 
 // Runs the stale-run sweeper looks at (fleet/stale.go, ADR-0074): live runs past their launch (starting, running,
 // stopping or unknown) whose space is still pinned to the run's node (relocation owns the others), with the space's
-// lease. A run is never a candidate while a launch command for it is unacknowledged (pending or sent: the dispatch loop
+// lease while it is active (a revoked lease's stored expiry is the revoke time, not the expiry the node holds). A run is never a candidate while a launch command for it is unacknowledged (pending or sent: the dispatch loop
 // may still deliver it) or when no node has ever reported it (observed_at is NULL: its launch may still be in flight).
 func (q *Queries) ListStaleRunCandidates(ctx context.Context) ([]ListStaleRunCandidatesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listStaleRunCandidates)

@@ -117,11 +117,13 @@ SELECT * FROM runs WHERE id = ?;
 -- name: ListRunsBySpace :many
 SELECT * FROM runs WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?;
 
+-- The active runs of a node or a space are its live ones (fleet.Live: observed not exited, failed or lost). desired is
+-- not consulted: a run that ended on its own keeps desired = 'running', and counting it blocked archive and relocation.
 -- name: ListActiveRunsByNode :many
-SELECT * FROM runs WHERE node_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at;
+SELECT * FROM runs WHERE node_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at;
 
 -- name: ListActiveRunsBySpace :many
-SELECT * FROM runs WHERE space_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at;
+SELECT * FROM runs WHERE space_id = ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') ORDER BY created_at;
 
 -- name: SetRunDesired :execrows
 UPDATE runs SET desired = ?, version = version + 1, updated_at = ? WHERE id = ?;
@@ -187,7 +189,7 @@ SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed 
 
 -- Runs the stale-run sweeper looks at (fleet/stale.go, ADR-0074): live runs past their launch (starting, running,
 -- stopping or unknown) whose space is still pinned to the run's node (relocation owns the others), with the space's
--- lease. A run is never a candidate while a launch command for it is unacknowledged (pending or sent: the dispatch loop
+-- lease while it is active (a revoked lease's stored expiry is the revoke time, not the expiry the node holds). A run is never a candidate while a launch command for it is unacknowledged (pending or sent: the dispatch loop
 -- may still deliver it) or when no node has ever reported it (observed_at is NULL: its launch may still be in flight).
 -- name: ListStaleRunCandidates :many
 SELECT r.id, r.node_id, r.space_id, r.version, r.observed, CAST(coalesce(r.observed_at, 0) AS INTEGER) AS last_observed_at,
@@ -196,7 +198,7 @@ SELECT r.id, r.node_id, r.space_id, r.version, r.observed, CAST(coalesce(r.obser
 FROM nodes n
 JOIN runs r ON r.node_id = n.id
 JOIN spaces s ON s.id = r.space_id AND s.node_id = r.node_id
-LEFT JOIN execution_leases l ON l.space_id = r.space_id
+LEFT JOIN execution_leases l ON l.space_id = r.space_id AND l.state = 'active'
 WHERE r.observed IN ('starting', 'running', 'stopping', 'unknown') AND r.observed_at IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM node_commands c WHERE c.run_id = r.id AND c.kind = 'run.launch' AND c.state IN ('pending', 'sent'))
 ORDER BY r.id;
