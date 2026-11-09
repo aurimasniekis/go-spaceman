@@ -15,6 +15,7 @@ Aliases: `runs`.
 | [`spaceman run recording`](#spaceman-run-recording) | A run's terminal recording: read records, download or delete central's copy |
 | [`spaceman run stop`](#spaceman-run-stop) | Stop a run |
 | [`spaceman run takeover`](#spaceman-run-takeover) | Take over a run's terminal: type into it while automated input is paused (needs terminal:takeover) |
+| [`spaceman run terminal-size`](#spaceman-run-terminal-size) | Resize a running run's terminal, or return it to the node's default (needs terminal:takeover) |
 | [`spaceman run transcript`](#spaceman-run-transcript) | A run's stored native transcript: download or delete |
 | [`spaceman run usage`](#spaceman-run-usage) | A run's token usage and cost estimate (unknown usage is reported as unknown) |
 
@@ -273,6 +274,54 @@ spaceman run takeover type --space payments run_01… tko_01… --text 'y' --ent
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 | `--text` | string |  | text to type, as keystrokes (required) |
 | `--text-file` | string |  | read --text from a file (- reads standard input) |
+
+## spaceman run terminal-size
+
+Resize a running run's terminal, or return it to the node's default (needs terminal:takeover).
+
+| Subcommand | Description |
+|---|---|
+| [`spaceman run terminal-size clear`](#spaceman-run-terminal-size-clear) | Return a run's terminal to the node's default size |
+| [`spaceman run terminal-size set`](#spaceman-run-terminal-size-set) | Hold a running run's terminal at a size (40-400 columns, 10-200 rows) |
+
+## spaceman run terminal-size clear
+
+Return a run's terminal to the node's default size.
+
+```sh
+spaceman run terminal-size clear <run> [flags]
+```
+
+API: `clear-terminal-size` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman run terminal-size set
+
+Hold a running run's terminal at a size (40-400 columns, 10-200 rows).
+
+The node resizes the program's terminal, so the agent's program redraws for it; everyone watching sees the run at this size. While the terminal is taken over only the holder resizes. The size lasts until it is cleared or the run ends. Audited.
+
+```sh
+spaceman run terminal-size set <run> [flags]
+```
+
+API: `set-terminal-size` ([HTTP API](../api)).
+
+Example:
+
+```sh
+spaceman run terminal-size set --space payments run_01… --cols 120 --rows 40
+```
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--cols` | integer |  | columns, 40-400 (required) |
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--rows` | integer |  | rows, 10-200 (required) |
+| `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
 ## spaceman run transcript
 

@@ -80,10 +80,16 @@ func (f *fx) exec(qs ...string) {
 // run inserts an active run of a kind; it returns its ID.
 func (f *fx) run(space, kind string) string {
 	f.t.Helper()
+	return f.runIn(space, kind, "running", "running")
+}
+
+// runIn inserts a run of a kind with the given desired and observed states; it returns its ID.
+func (f *fx) runIn(space, kind, desired, observed string) string {
+	f.t.Helper()
 	f.runs++
 	id := fmt.Sprintf("run_%026d", f.runs)
 	f.exec(fmt.Sprintf(`INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed, launch_json, created_at, created_by, updated_at)
-		VALUES ('%s', '%s', 'nod_1', 1, '%s', '%s', 'claude-code', 'ins_%d', 'running', 'running', '{}', %d, 't', 0)`, id, space, kind, kind, f.runs,
+		VALUES ('%s', '%s', 'nod_1', 1, '%s', '%s', 'claude-code', 'ins_%d', '%s', '%s', '{}', %d, 't', 0)`, id, space, kind, kind, f.runs, desired, observed,
 		f.clk.Now().Add(time.Duration(f.runs)*time.Second).UnixMicro()))
 	return id
 }
@@ -217,6 +223,93 @@ func TestAdmissionPoolsAndCapacity(t *testing.T) {
 	f.exec(`UPDATE runs SET desired = 'stopped', observed = 'exited' WHERE space_id = 'spc_b' AND kind = 'worker'`)
 	if err := f.admit("spc_b", "worker"); err != nil {
 		t.Fatalf("after runs ended: %v", err)
+	}
+}
+
+// SM-LIMIT-001: the space and node limits count only live runs, with the same predicate as spaceman_runs_list
+// (fleet.Live). Runs that exited, failed or were lost (after a node agent restart, or orphaned with desired still
+// "running") free their slot; the refusal names the runs it counts.
+func TestAdmissionCountsOnlyLiveRuns(t *testing.T) {
+	f := newFx(t)
+	_, err := f.svc.Set(f.ctx, admin, "spc_a", 0, Input{Values: map[string]int64{ConcurrentRuns: 2}})
+	must(t, err)
+	// Ended runs whose desired state was never changed: the runs a node agent restart leaves behind (lost), a worker
+	// that finished on its own (exited) and a launch that failed.
+	for _, obs := range []string{"exited", "failed", "lost"} {
+		f.runIn("spc_a", "worker", "running", obs)
+		f.runIn("spc_a", "diagnostic", "stopped", obs)
+	}
+	// A control run is live but is not a worker.
+	f.runIn("spc_a", "control", "running", "running")
+	if err := f.admit("spc_a", "worker"); err != nil {
+		t.Fatalf("ended runs held a slot: %v", err)
+	}
+	live := f.runIn("spc_a", "worker", "running", "running")
+	gone := f.runIn("spc_a", "worker", "running", "unknown")
+	err = f.admit("spc_a", "worker")
+	if apperr.CodeOf(err) != apperr.CodeRateLimited {
+		t.Fatalf("at the limit: %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"2 worker and diagnostic runs active (limit 2)", live + " (worker worker, running)", gone + " (worker worker, unknown)",
+		"control, KB support and dreamer runs", "exited, failed or were lost, do not"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("refusal %q lacks %q", msg, want)
+		}
+	}
+	// Once the unknown run is reconciled to lost, its slot is free.
+	f.exec(`UPDATE runs SET observed = 'lost' WHERE id = '` + gone + `'`)
+	if err := f.admit("spc_a", "worker"); err != nil {
+		t.Fatalf("after the stale run was lost: %v", err)
+	}
+
+	// The node's capacity (4) uses the same predicate; other spaces' runs are counted but not named.
+	other := []string{f.runIn("spc_b", "worker", "running", "starting"), f.runIn("spc_b", "worker", "running", "stopping")}
+	f.runIn("spc_b", "worker", "running", "lost")
+	f.runIn("spc_b", "worker", "running", "exited")
+	pending := f.runIn("spc_a", "diagnostic", "running", "pending")
+	_, err = f.svc.Set(f.ctx, admin, "spc_a", 1, Input{Values: map[string]int64{ConcurrentRuns: 8}})
+	must(t, err)
+	err = f.admit("spc_a", "worker")
+	if apperr.CodeOf(err) != apperr.CodeRateLimited || !strings.Contains(err.Error(), "capacity is 4") {
+		t.Fatalf("node capacity: %v", err)
+	}
+	msg = err.Error()
+	for _, want := range []string{"runs 4 worker and diagnostic runs", "2 of other spaces and 2 of this space", live, pending + " (diagnostic diagnostic, pending)"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("node refusal %q lacks %q", msg, want)
+		}
+	}
+	for _, id := range other {
+		if strings.Contains(msg, id) {
+			t.Fatalf("node refusal names another space's run %s: %q", id, msg)
+		}
+	}
+}
+
+// The SQL behind the limits and fleet.Live (spaceman_runs_list) agree on every observed and desired state.
+func TestLiveRunQueriesMatchRunsList(t *testing.T) {
+	f := newFx(t)
+	want := 0
+	for _, obs := range []string{"pending", "starting", "running", "stopping", "unknown", "exited", "failed", "lost"} {
+		for _, desired := range []string{"running", "stopped"} {
+			f.runIn("spc_a", "worker", desired, obs)
+			if fleet.Live(obs) {
+				want++
+			}
+		}
+	}
+	inSpace, err := f.s.R().ListLiveWorkRunsInSpace(f.ctx, "spc_a")
+	must(t, err)
+	onNode, err := f.s.R().ListLiveWorkRunsOnNode(f.ctx, "nod_1")
+	must(t, err)
+	if len(inSpace) != want || len(onNode) != want || want != 10 {
+		t.Fatalf("live runs: space %d, node %d, fleet.Live %d (want 10)", len(inSpace), len(onNode), want)
+	}
+	for _, r := range inSpace {
+		if !fleet.Live(r.Observed) {
+			t.Fatalf("counted a %s run", r.Observed)
+		}
 	}
 }
 

@@ -2,13 +2,14 @@ import { ActionIcon, Badge, Box, Button, Group, Loader, SegmentedControl, Slider
 import { IconArrowDown, IconDownload, IconPlayerPauseFilled, IconPlayerPlayFilled, IconPlayerSkipBackFilled } from '@tabler/icons-react'
 import type { Terminal } from 'ghostty-web'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, unwrap, type RecordingRecord } from '@/api/client'
+import { api, unwrap, type RecordingRecord, type Run } from '@/api/client'
 import { API_PREFIX } from '@/api/session'
 import { endReason, sessionStillValid } from '@/api/streams'
 import { clock } from '@/lib/format'
-import { createTerminal, disposeTerminal, fitFont, followCursor, rowHeight, scrollWithWheelAndTouch } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, followCursor, regularCell, rowHeight, scrollWithWheelAndTouch } from './ghostty'
 import { jumpToLive, keepingPosition, scrolledAway } from './scroll'
 import { apply, emptySummary, indexAt, MAX_IDLE_MS, offsetMs, renderTo, type RecordingSummary } from './records'
+import { fitDimensions, TerminalSizeControl } from './TerminalSize'
 
 interface Props {
   spaceId: string
@@ -17,7 +18,12 @@ interface Props {
   mode: 'live' | 'replay'
   /** Set while the viewer holds a takeover of the terminal (SM-UI-004): the terminal's keys go here. */
   onInput?: ((data: string) => void) | null
+  /** The live terminal's size menu (ADR-0075): the run, and why this viewer cannot resize it ('' when they can). */
+  resize?: { run: Run; blocker: string }
 }
+
+/** The terminal area's height: the box's max-height (70vh) less its padding and border. */
+const areaHeight = () => Math.floor(window.innerHeight * 0.7) - 14
 
 /**
  * Mounts a ghostty-web terminal into a div and disposes it on unmount. `input` is the takeover holder's key handler
@@ -146,7 +152,7 @@ function StatusBadges({ sum, live, typing }: { sum: RecordingSummary; live?: Liv
       {live === 'connecting' && <Badge color="owlYellow">Connecting…</Badge>}
       {live === 'ended' && <Badge color="gray">Stream ended</Badge>}
       {live === 'denied' && <Badge color="owlRed">Access lost</Badge>}
-      {sum.cols > 0 && <Badge color="gray" variant="outline">{sum.cols}×{sum.rows}</Badge>}
+      {sum.cols > 0 && <Badge color="gray" variant="outline" data-testid="terminal-badge-size">{sum.cols}×{sum.rows}</Badge>}
       {sum.gaps > 0 && (
         <Tooltip label="The recorder re-attached or a viewer fell behind; output in between may be missing">
           <Badge color="owlYellow" variant="outline">{sum.gaps} gap{sum.gaps === 1 ? '' : 's'}</Badge>
@@ -167,8 +173,15 @@ function StatusBadges({ sum, live, typing }: { sum: RecordingSummary; live?: Liv
  * stream when the viewer's access does (SM-AUTH-007): a removed grant shows "Access lost"; an invalid session is
  * re-checked and either resumes (rotated session) or goes to sign-in.
  */
-function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
+function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) {
   const { ref, box, term, error } = useTerminal(onInput ?? null)
+  const measure = useCallback(() => {
+    const cell = term ? regularCell(term) : null
+    if (!cell || !box.current) return null
+    // The box's outer width (less its padding and border), not clientWidth: a vertical scrollbar that comes and goes
+    // with the content would change the fit by a column.
+    return fitDimensions(box.current.getBoundingClientRect().width - 14, areaHeight(), cell.width, cell.height)
+  }, [term, box])
   const { away, jump } = useScrolledAway(term, box)
   // Watch-only unless the viewer holds a takeover; ghostty-web reads disableStdin on every key (0.4.0 source).
   useEffect(() => {
@@ -224,7 +237,10 @@ function LiveTerminal({ spaceId, runId, onInput }: Omit<Props, 'mode'>) {
   }, [term, spaceId, runId, attempt, visible])
   return (
     <Stack gap="xs" style={{ minWidth: 0 }}>
-      <StatusBadges sum={sum} live={state} typing={!!onInput} />
+      <Group justify="space-between" gap="xs" wrap="wrap">
+        <StatusBadges sum={sum} live={state} typing={!!onInput} />
+        {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} />}
+      </Group>
       {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
       {error && <Text c="owlRed" size="sm">Terminal failed to load: {error}</Text>}
       <Box pos="relative" style={{ minWidth: 0 }}>
@@ -381,6 +397,11 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   )
 }
 
-export function TerminalView({ spaceId, runId, mode, onInput }: Props) {
-  return mode === 'live' ? <LiveTerminal spaceId={spaceId} runId={runId} onInput={onInput} /> : <ReplayTerminal spaceId={spaceId} runId={runId} />
+/**
+ * A run's terminal. Each run gets a terminal of its own (keyed by the run): what one run's terminal drew and how far
+ * its stream had read never carry over to another run's, whoever renders this.
+ */
+export function TerminalView({ spaceId, runId, mode, onInput, resize }: Props) {
+  const key = `${spaceId}/${runId}`
+  return mode === 'live' ? <LiveTerminal key={key} spaceId={spaceId} runId={runId} onInput={onInput} resize={resize} /> : <ReplayTerminal key={key} spaceId={spaceId} runId={runId} />
 }

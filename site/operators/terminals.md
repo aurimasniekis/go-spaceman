@@ -77,7 +77,7 @@ an interactive tool). **Take over terminal** on a running run's page lets one pe
   bytes were typed). The keystrokes themselves are never stored, logged or audited; the recording shows only what the
   program echoes, as for any output.
 - Typed keys reach the program through herdr-core's interactive attach on the node (node protocol 1.6; older agents
-  cannot be taken over). The terminal keeps its size rather than fitting your browser window.
+  cannot be taken over). Taking over does not change the terminal's size; resize it from the size menu (below).
 - While you hold the takeover, the wheel scrolls a full-screen program the way a desktop terminal would: it sends
   mouse-wheel reports when the program asks for mouse input (Claude Code's full-screen renderer then scrolls its
   history), and nothing otherwise. Programs on the normal screen scroll back locally, as when watching.
@@ -85,6 +85,49 @@ an interactive tool). **Take over terminal** on a running run's page lets one pe
 <Shot name="terminal-takeover" alt="A run's live terminal taken over by the signed-in admin: a banner says you have taken over this terminal, with a Release button" caption="A taken-over terminal: automated input waits until it is released" />
 
 From the command line: `spaceman run takeover start|type|renew|end` ([CLI reference](/reference/cli/run)).
+
+## Terminal size
+
+A run's terminal has one size, which every viewer shares. The size belongs to the run, not to your browser. Your
+browser scales the font to fit the run's columns into your window, and scrolls sideways when even the smallest font is
+too wide. By default a program runs at its node's size (`runner.terminal_size`, 160×48 unless the node sets another).
+
+The size menu above a live terminal changes it while the run is running:
+
+- **Fit to window** sizes the run's terminal to your terminal area at the regular font size, and fits it again when
+  your window changes size while it stays selected. If someone else resizes the run, their size stands: your browser
+  stops fitting and shows their size as selected. Choose Fit to window again to take it back.
+- **80 × 24, 120 × 40, 160 × 50, 200 × 60** and **Custom…** set a fixed size: 40–400 columns and 10–200 rows.
+- **Node default** goes back to the node's size.
+
+The node applies the size to the program's terminal, so the agent's program redraws for it. For a full-screen program
+such as Claude Code, its whole screen reflows.
+
+- **Who can resize:** resizing needs the `terminal:takeover` permission (admins by default), because it changes what
+  the agent's program sees. Operators see the menu disabled, with the reason as its tooltip and its description for
+  screen readers, and viewers don't see it. While someone has taken over the terminal, only they can resize it. When
+  two admins resize, the last one wins. Every change is audited as `run.terminal_resized`, with the previous size.
+- **Your choice is remembered:** your browser remembers your last choice and shows it selected next time, but it never
+  applies it on its own. Opening a run's page never resizes it for the others watching.
+- **It lasts until cleared:** a size lasts until it is set back to the node default or the run ends. It survives
+  restarts of central and of the node agent.
+- **Recordings:** the recording notes every size change, so a replay redraws at the size the output was drawn for.
+- **Node version:** resizing needs node protocol 1.10, and the node must be connected. With an older or disconnected
+  node the menu is disabled.
+
+<Shot name="terminal-size" alt="A run's live terminal with the size menu open: Fit to window, four presets, Custom and Node default" caption="Choosing a run's terminal size" />
+
+**Default size for new runs.** A space's **Limits** page has **Terminal columns** and **Terminal rows**
+(`terminal_cols`, `terminal_rows`). When both are set, every new run of the space starts at that size. 0 (the
+default) keeps the node's size. Changing them needs the `terminal:takeover` permission (admins by default), like
+resizing a running run: an operator who changes them gets **403**, but can still change the space's other limits.
+A node agent older than node protocol 1.10 can't hold a size, so its new runs keep the node's size. The CLI sets them like any limit:
+`spaceman limits set --space <space> --set terminal_cols=132 --set terminal_rows=43`.
+
+From the command line: `spaceman run terminal-size set --space <space> <run> --cols 120 --rows 40` and `spaceman run
+terminal-size clear` ([CLI reference](/reference/cli/run)). Through the API: `PUT
+/api/v1/spaces/{space}/runs/{run}/terminal-size` with `{"cols": 120, "rows": 40}`, and `DELETE` to go back to the node's
+default (ADR-0075 in the [decision log](/security/decisions)).
 
 ## Replay
 

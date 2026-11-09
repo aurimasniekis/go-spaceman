@@ -81,7 +81,7 @@ Configures node connectivity and execution leases (ADR-0006).
 | Key | Default | Environment | Description |
 |---|---|---|---|
 | `nodes.heartbeat_interval` | `10s` | `SPACEMAN_NODES_HEARTBEAT_INTERVAL` | How often a connected node reports in and renews its leases (1s to 1m). |
-| `nodes.lease_ttl` | `45s` | `SPACEMAN_NODES_LEASE_TTL` | How long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval). |
+| `nodes.lease_ttl` | `45s` | `SPACEMAN_NODES_LEASE_TTL` | How long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval, at most 10m). |
 | `nodes.disconnect_grace` | `2m0s` | `SPACEMAN_NODES_DISCONNECT_GRACE` | How long a node keeps runs going after losing central before stopping them (SM-NODE-007; 0 to 1h). |
 | `nodes.enrollment_ttl` | `24h0m0s` | `SPACEMAN_NODES_ENROLLMENT_TTL` | How long a node enrollment token stays valid (1m to 720h). |
 | `nodes.command_timeout` | `30s` | `SPACEMAN_NODES_COMMAND_TIMEOUT` | Validated (1s to 10m) but not read by this build; node commands use their own fixed timeouts. |
@@ -178,6 +178,8 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.export_max_bytes` | `2147483648` | `SPACEMAN_LIMITS_EXPORT_MAX_BYTES` | Bounds one space export archive (1 MiB-64 GiB, default 2 GiB): a larger export is refused. |
 | `limits.control_autostart` | `1` | `SPACEMAN_LIMITS_CONTROL_AUTOSTART` | Starts a space's control role when work arrives for control and no control run is live (1: on, the default; 0: off). It is skipped while the space is paused and when the launch is refused (no control role, account or budget); at most 6 starts an hour per space (ADR-0056). |
 | `limits.control_idle_stop_minutes` | `30` | `SPACEMAN_LIMITS_CONTROL_IDLE_STOP_MINUTES` | Stops a control run that has been idle this long (finished its turn, nothing waiting for it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at most 10080). |
+| `limits.terminal_cols` | `0` | `SPACEMAN_LIMITS_TERMINAL_COLS` | The width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_rows is set too. |
+| `limits.terminal_rows` | `0` | `SPACEMAN_LIMITS_TERMINAL_ROWS` | The height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_cols is set too. |
 
 ### `retention`
 

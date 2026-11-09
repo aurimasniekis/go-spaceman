@@ -31,8 +31,9 @@ const (
 	// before a backup (memory.flush / memory.flushed, ADR-0045); 6: terminal takeover (takeover.state, takeover.input,
 	// takeover.ended; SM-UI-004, ADR-0046); 7: repository SSH keys (ssh_key and known_hosts on repository sources,
 	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059); 9: gateway runs (the launch's gateway
-	// address and its child token in the secrets, delivered to the harness; ADR-0060)
-	MaxMinor = 9
+	// address and its child token in the secrets, delivered to the harness; ADR-0060); 10: run terminal sizes
+	// (terminal.sizes, ADR-0075)
+	MaxMinor = 10
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -540,6 +541,17 @@ type ToolCall struct {
 
 // ToolCatalog is the reserved tool name that lists a run's tools.
 const ToolCatalog = "_catalog"
+
+// ToolAttachmentGet is central's attachment read. Its offset/length arguments read a range (at most
+// AttachmentChunkBytes); the node's ToolAttachmentSave uses them to copy a whole attachment into the run's folder.
+const ToolAttachmentGet = "spaceman_attachment_get"
+
+// ToolAttachmentSave is served by the node's MCP bridge, not by central: it writes a whole attachment to a file in the
+// run's own folder (ADR-0073). The node offers it when the run's catalog has ToolAttachmentGet.
+const ToolAttachmentSave = "spaceman_attachment_save"
+
+// AttachmentChunkBytes bounds one ranged attachment read: its base64 must fit one envelope (MaxMessage).
+const AttachmentChunkBytes = 1 << 20
 
 // ToolResult answers a ToolCall. Code is an apperr code when OK is false.
 type ToolResult struct {

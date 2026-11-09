@@ -14,7 +14,11 @@
 // (fictional token counts, no cost) where Claude Code keeps it. A "/fullscreen" line prints a full-screen program's
 // start-up the way Claude Code 2.1.317 draws it (alternate screen, mouse and keyboard modes, synchronized output, a
 // path in its banner; fullscreen.bin, with neutral text), which the web terminal must survive being reopened after.
-// A "/lines <n>" line prints n numbered lines first, a reply longer than the screen for scrolling back.
+// A "/lines <n>" line prints n numbered lines first, a reply longer than the screen for scrolling back. A
+// "/styled <n>" line prints n numbered lines in as many 24-bit colours, the way Claude Code styles its output (a
+// terminal holding many styles needs much more memory than one of plain text). A "/size" line makes it draw a full-width
+// rule and its terminal size at the start and again whenever the terminal is resized (SIGWINCH), the way a full-screen
+// program redraws for a new size.
 // Not part of any release.
 package main
 
@@ -25,12 +29,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/sys/unix"
 )
 
 //go:embed fullscreen.bin
@@ -62,6 +69,9 @@ func main() {
 	if strings.Contains(prompt, "/fullscreen") {
 		_, _ = os.Stdout.Write(fullscreen)
 	}
+	if strings.Contains(prompt, "/size") {
+		reportSize()
+	}
 	if strings.Contains(prompt, "/transcript") {
 		transcript(args, wd)
 	}
@@ -78,7 +88,27 @@ func main() {
 	}
 }
 
-// longReply prints the numbered lines a "/lines <n>" prompt line asks for (at most 5000).
+// reportSize draws a rule as wide as the terminal and "terminal size COLSxROWS" now and after every resize.
+func reportSize() {
+	draw := func() {
+		ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "terminal size unknown: %v\r\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stdout, "%s\r\nterminal size %dx%d\r\n", strings.Repeat("─", int(ws.Col)), ws.Col, ws.Row)
+	}
+	draw()
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGWINCH)
+	go func() {
+		for range ch {
+			draw()
+		}
+	}()
+}
+
+// longReply prints the numbered lines a "/lines <n>" (at most 5000) or "/styled <n>" (at most 20000) prompt line asks for.
 func longReply(prompt string) {
 	for _, line := range strings.Split(prompt, "\n") {
 		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/lines ")
@@ -91,6 +121,19 @@ func longReply(prompt string) {
 		}
 		for i := 1; i <= min(n, 5000); i++ {
 			fmt.Fprintf(os.Stdout, "reply line %d of %d\r\n", i, n)
+		}
+	}
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/styled ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		for i := 1; i <= min(n, 20000); i++ {
+			fmt.Fprintf(os.Stdout, "\x1b[38;2;%d;%d;%dmstyled line %d of %d\x1b[0m\r\n", 40+i%200, 40+(i/200)%200, 120+i%97, i, n)
 		}
 	}
 }

@@ -2,7 +2,8 @@ package template
 
 import "encoding/json"
 
-// Seed templates for Harbor Pilot v0.1.3 events (docs/contracts/harbor-pilot.md, Events; ADR-0060 §7). Harbor Pilot's
+// Seed templates for Harbor Pilot v0.1.3 events, unchanged in v0.1.4 (one-time budgets send period "once", which the
+// budget schema accepts) (docs/contracts/harbor-pilot.md, Events; ADR-0060 §7). Harbor Pilot's
 // relay publishes every event on evt.harborpilot.<area>.<entity>.<action> with its envelope as the Pulse payload
 // ({schema_version, id, type, name, occurred_at, severity, correlation_id, subjects{…}, data{…}}) and the event id as
 // the Pulse id, so templates read data.subjects.* and data.data.*, and a redelivery is the same event id.

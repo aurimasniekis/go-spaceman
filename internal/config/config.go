@@ -154,6 +154,12 @@ type LimitsConfig struct {
 	// it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at
 	// most 10080).
 	ControlIdleStopMinutes int64 `yaml:"control_idle_stop_minutes"`
+	// TerminalCols is the width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the
+	// node's runner.terminal_size. A size applies only when terminal_rows is set too.
+	TerminalCols int64 `yaml:"terminal_cols"`
+	// TerminalRows is the height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's
+	// runner.terminal_size. A size applies only when terminal_cols is set too.
+	TerminalRows int64 `yaml:"terminal_rows"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual
@@ -260,11 +266,17 @@ type AuthConfig struct {
 	StreamRevalidate Duration `yaml:"stream_revalidate"`
 }
 
+// MaxLeaseTTL bounds nodes.lease_ttl. A node keeps a space's lease for up to lease_ttl after central last renewed it,
+// whatever central records later (a revoke stores the revoke time as the expiry), so the bound keeps that window well
+// inside the stale-run sweeper's margin past a lease's expiry (ADR-0074, 15 minutes).
+const MaxLeaseTTL = 10 * time.Minute
+
 // NodesConfig configures node connectivity and execution leases (ADR-0006).
 type NodesConfig struct {
 	// HeartbeatInterval is how often a connected node reports in and renews its leases (1s to 1m).
 	HeartbeatInterval Duration `yaml:"heartbeat_interval"`
-	// LeaseTTL is how long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval).
+	// LeaseTTL is how long one renewal of a space's execution lease is valid (at least 3x heartbeat_interval, at most
+	// 10m).
 	LeaseTTL Duration `yaml:"lease_ttl"`
 	// DisconnectGrace is how long a node keeps runs going after losing central before stopping them (SM-NODE-007;
 	// 0 to 1h).

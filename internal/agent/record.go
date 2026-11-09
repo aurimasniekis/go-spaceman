@@ -57,11 +57,34 @@ func (a *Agent) recordingQuota(runID string) int64 {
 	return n
 }
 
+// recorder is one run's live recording: cancel ends it, sizes carries the terminal's size changes into it.
+type recorder struct {
+	cancel context.CancelFunc
+	sizes  chan [2]int
+}
+
+// recordSize tells a run's recorder the terminal's size changed (or is about to: a hold notes the size before it
+// resizes, so the output drawn for the new size follows the record). The recorder writes a size record when the size
+// differs from the last one it recorded. It never blocks: a full queue drops the note, and the runner's size event
+// that follows the change brings it again.
+func (a *Agent) recordSize(runID string, cols, rows int) {
+	a.mu.Lock()
+	r := a.recorders[runID]
+	a.mu.Unlock()
+	if r == nil {
+		return
+	}
+	select {
+	case r.sizes <- [2]int{cols, rows}:
+	default:
+	}
+}
+
 // record attaches to a run's terminal as an observer and writes everything it outputs until the program ends. It is
 // independent of browsers (SM-REC-002): live viewers read the recording, never the other way round, so viewer
 // backpressure cannot slow the run (SM-REC-004). Interruptions (overflow, runner restart) re-attach and record a gap,
 // because herdr-core streams carry no offsets (S-3).
-func (a *Agent) record(ctx context.Context, row runRow) {
+func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 	log := a.log.With(slog.String(obs.FieldRunID, row.RunID))
 	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(row.RunID), MaxBytes: a.recordingQuota(row.RunID), Now: a.o.Clock.Now, Create: a.o.RecordingCreate})
 	if err != nil {
@@ -98,7 +121,7 @@ func (a *Agent) record(ctx context.Context, row runRow) {
 			}
 		}
 		cols, rows = p.Cols, p.Rows
-		done := a.pump(ctx, row, st, w, flush, prelude)
+		done := a.pump(ctx, row, st, w, flush, prelude, sizes, &cols, &rows)
 		_ = st.Close()
 		if done {
 			return
@@ -108,7 +131,9 @@ func (a *Agent) record(ctx context.Context, row runRow) {
 
 // pump copies one attachment into the recording; it returns true when the program ended. Records are shipped to
 // central after every flush (at most once a second); shipping never blocks recording.
-func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recording.Writer, flush *time.Ticker, prelude []recording.Record) bool {
+// sizes are the terminal's size changes; cols and rows are the size last recorded, kept across reattaches.
+func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recording.Writer, flush *time.Ticker, prelude []recording.Record,
+	sizes <-chan [2]int, cols, rows *int) bool {
 	var batch []recording.Record
 	// truncated adds the writer's trunc record (quota reached, or the local disk failed) after the records before it,
 	// so central's copy shows where and why the recording ended; the run itself is never affected (SM-REC-004).
@@ -149,6 +174,12 @@ func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recor
 		}
 	}
 	defer ship()
+	size := func(sz [2]int) {
+		if sz[0] != *cols || sz[1] != *rows {
+			*cols, *rows = sz[0], sz[1]
+			add(recording.Record{Kind: recording.KindSize, Cols: sz[0], Rows: sz[1]})
+		}
+	}
 	type chunk struct {
 		data   []byte
 		closed *runner.CloseInfo
@@ -177,7 +208,18 @@ func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recor
 			return true
 		case <-flush.C:
 			ship()
+		case sz := <-sizes:
+			size(sz)
 		case c, ok := <-ch:
+			// A size noted before this output arrived goes first (select picks among ready cases at random).
+			for drained := false; !drained; {
+				select {
+				case sz := <-sizes:
+					size(sz)
+				default:
+					drained = true
+				}
+			}
 			if !ok {
 				return false
 			}

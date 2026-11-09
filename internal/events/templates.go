@@ -64,12 +64,31 @@ var builtins = []builtin{
 	{"harbor-pilot-access-blocked", "Harbor Pilot blocked requests", "Model requests Harbor Pilot refused by policy, including blocking-budget refusals (evt.harborpilot.access.request.blocked); not scoped to a project.", template.HarborPilotAccessBlocked, harborPilotSeedNotes},
 }
 
-// SeedBuiltins creates the built-in templates (published version 1) when they do not exist yet.
+// builtinVersion is a later published version of a built-in template.
+type builtinVersion struct {
+	def   func() template.Definition
+	notes string
+}
+
+// builtinLaterVersions are the versions after version 1 of built-in templates, by slug: element i is version i+2.
+// Published versions never change (SM-EVT-004), so a built-in's definition changes only by appending here (ADR-0072).
+var builtinLaterVersions = map[string][]builtinVersion{
+	"github-pull-request": {{template.GitHubPullRequestV2,
+		"Version 2 (ADR-0072): optional repository, owner and exclude_author filters, an ignore_updates flag that drops synchronize " +
+			"and edited events, and the pull request title moved from the item title to the body."}},
+}
+
+// SeedBuiltins creates the built-in templates (published version 1) when they do not exist yet, and publishes the
+// later versions a built-in template is missing.
 func (svc *Service) SeedBuiltins(ctx context.Context) error {
 	for _, b := range builtins {
 		if r, err := svc.s.R().GetEventTemplateBySlug(ctx, b.slug); err == nil {
 			if r.Builtin != 1 {
 				svc.o.Log.Warn("built-in event template not seeded: a template already uses its slug", slog.String("slug", b.slug))
+				continue
+			}
+			if err := svc.seedLaterVersions(ctx, r.ID, b.slug); err != nil {
+				return err
 			}
 			continue
 		} else if !errors.Is(err, sql.ErrNoRows) {
@@ -98,6 +117,66 @@ func (svc *Service) SeedBuiltins(ctx context.Context) error {
 		})
 		if err != nil {
 			return err
+		}
+		if err := svc.seedLaterVersions(ctx, id, b.slug); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// seedLaterVersions publishes a built-in template's missing later versions in order. Version k is added only when the
+// template's newest version is k-1 and was seeded too: an administrator's own version or draft of a built-in is never
+// overwritten or renumbered, and the seeding stops there with a warning. Earlier versions and subscriptions pinned to
+// them are not touched; subscriptions that follow the latest version move as they do on Publish (SM-EVT-006).
+func (svc *Service) seedLaterVersions(ctx context.Context, templateID, slug string) error {
+	for i, lv := range builtinLaterVersions[slug] {
+		k := int64(i + 2)
+		def := lv.def()
+		if err := def.Validate(); err != nil {
+			return err
+		}
+		var blocked, seeded bool
+		var held []string
+		err := svc.s.W().TxNamed(ctx, "events.seed_template_version", func(tx *store.Tx) error {
+			blocked, seeded, held = false, false, nil
+			rows, err := tx.Q.ListEventTemplateVersions(ctx, templateID)
+			if err != nil {
+				return err
+			}
+			for _, r := range rows {
+				if r.Version == k {
+					blocked = r.CreatedBy != "system"
+					return nil
+				}
+			}
+			if len(rows) == 0 || rows[0].Version != k-1 || rows[0].CreatedBy != "system" || rows[0].Status != "published" {
+				blocked = true
+				return nil
+			}
+			vid := ids.New(ids.EventTemplVer)
+			if err := tx.Q.InsertEventTemplateVersion(ctx, db.InsertEventTemplateVersionParams{ID: vid, TemplateID: templateID, Version: k,
+				Status: "published", DefinitionJson: mustJSON(def), Notes: lv.notes, CreatedAt: tx.NowMicros(),
+				CreatedBy: "system", PublishedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}}); err != nil {
+				return err
+			}
+			if held, err = svc.moveFollowers(ctx, tx, templateID, vid, def); err != nil {
+				return err
+			}
+			seeded = true
+			_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "event_template.published", Target: audit.Target{Type: "event_template_version", ID: vid},
+				Details: map[string]any{"template_id": templateID, "version": k, "held_subscriptions": held, "builtin": true}})
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		if blocked {
+			svc.o.Log.Warn("built-in event template version not seeded: the template has other versions", slog.String("slug", slug), slog.Int64("version", k))
+			return nil
+		}
+		if seeded {
+			svc.notify()
 		}
 	}
 	return nil
@@ -260,7 +339,6 @@ func (svc *Service) Publish(ctx context.Context, actor audit.Actor, versionID st
 	}
 	var held []string
 	err = svc.s.W().TxNamed(ctx, "events.template_publish", func(tx *store.Tx) error {
-		held = nil
 		n, err := tx.Q.PublishTemplateVersion(ctx, db.PublishTemplateVersionParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: versionID})
 		if err != nil {
 			return err
@@ -268,28 +346,8 @@ func (svc *Service) Publish(ctx context.Context, actor audit.Actor, versionID st
 		if n == 0 {
 			return apperr.New(apperr.CodePrecondition, "only drafts can be published")
 		}
-		followers, err := tx.Q.ListFollowingSubscriptions(ctx, sql.NullString{String: v.TemplateID, Valid: true})
-		if err != nil {
+		if held, err = svc.moveFollowers(ctx, tx, v.TemplateID, versionID, v.Definition); err != nil {
 			return err
-		}
-		for _, s := range followers {
-			var vars map[string]string
-			_ = json.Unmarshal([]byte(s.VarsJson), &vars)
-			b, err := v.Definition.Bind(vars)
-			if err != nil || b.Subject != s.EffectiveSubject {
-				// A subject change needs a matching Pulse grant: never follow it silently.
-				held = append(held, s.ID)
-				continue
-			}
-			if _, err := tx.Q.UpdateEventSubscription(ctx, db.UpdateEventSubscriptionParams{Name: s.Name, TemplateVersionID: sql.NullString{String: versionID, Valid: true},
-				Follow: s.Follow, CustomJson: s.CustomJson, VarsJson: s.VarsJson, EffectiveSubject: s.EffectiveSubject, Enabled: s.Enabled,
-				CursorGeneration: s.CursorGeneration, StartPolicy: s.StartPolicy, StartTime: s.StartTime, StartSeq: s.StartSeq, Replay: s.Replay, WhilePaused: s.WhilePaused,
-				Now: tx.NowMicros(), ID: s.ID, Version: s.Version}); err != nil {
-				return err
-			}
-			if err := svc.changes.Record(ctx, tx, s.SpaceID, "event_subscription", s.ID, "updated", s.Version+1); err != nil {
-				return err
-			}
 		}
 		_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "event_template.published", Target: audit.Target{Type: "event_template_version", ID: versionID},
 			Details: map[string]any{"template_id": v.TemplateID, "version": v.Version, "held_subscriptions": held}})
@@ -301,4 +359,34 @@ func (svc *Service) Publish(ctx context.Context, actor audit.Actor, versionID st
 	svc.notify()
 	out, err := svc.GetVersion(ctx, versionID)
 	return out, held, err
+}
+
+// moveFollowers moves the subscriptions that follow a template's latest version to a newly published version when its
+// definition binds with their variables and keeps their subject, and returns the IDs of those it holds back.
+func (svc *Service) moveFollowers(ctx context.Context, tx *store.Tx, templateID, versionID string, def template.Definition) ([]string, error) {
+	followers, err := tx.Q.ListFollowingSubscriptions(ctx, sql.NullString{String: templateID, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	var held []string
+	for _, s := range followers {
+		var vars map[string]string
+		_ = json.Unmarshal([]byte(s.VarsJson), &vars)
+		b, err := def.Bind(vars)
+		if err != nil || b.Subject != s.EffectiveSubject {
+			// A subject change needs a matching Pulse grant: never follow it silently.
+			held = append(held, s.ID)
+			continue
+		}
+		if _, err := tx.Q.UpdateEventSubscription(ctx, db.UpdateEventSubscriptionParams{Name: s.Name, TemplateVersionID: sql.NullString{String: versionID, Valid: true},
+			Follow: s.Follow, CustomJson: s.CustomJson, VarsJson: s.VarsJson, EffectiveSubject: s.EffectiveSubject, Enabled: s.Enabled,
+			CursorGeneration: s.CursorGeneration, StartPolicy: s.StartPolicy, StartTime: s.StartTime, StartSeq: s.StartSeq, Replay: s.Replay, WhilePaused: s.WhilePaused,
+			Now: tx.NowMicros(), ID: s.ID, Version: s.Version}); err != nil {
+			return nil, err
+		}
+		if err := svc.changes.Record(ctx, tx, s.SpaceID, "event_subscription", s.ID, "updated", s.Version+1); err != nil {
+			return nil, err
+		}
+	}
+	return held, nil
 }

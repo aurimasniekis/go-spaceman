@@ -164,6 +164,8 @@ type Options struct {
 	// StoreReaders overrides the store's reader pool size (0 keeps the default, max(4, GOMAXPROCS)). Opening the store
 	// opens and checks every reader connection, which on a many-core host under the race detector takes seconds.
 	StoreReaders int
+	// StaleRunGrace overrides the stale-run sweeper's grace period (tests; 0 keeps the default, ADR-0074).
+	StaleRunGrace time.Duration
 }
 
 // OpenCentral opens storage (taking the data-directory lock), loads the KEK and keyring, and builds the core services.
@@ -231,7 +233,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.HarborPilotRuns = harborpilot.NewLifecycle(c.HarborPilot, harborpilot.LifecycleOptions{Metrics: m, Budget: c.HarborPilotBudgets})
 	c.Fleet = fleet.New(st, c.Keyring, c.Audit, c.Bus, c.Changes, fleet.Options{HeartbeatInterval: cfg.Nodes.HeartbeatInterval.D(),
 		LeaseTTL: cfg.Nodes.LeaseTTL.D(), DisconnectGrace: cfg.Nodes.DisconnectGrace.D(), EnrollmentTTL: cfg.Nodes.EnrollmentTTL.D(),
-		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock,
+		CredentialRecheck: cfg.Auth.StreamRevalidate.D(), Clock: o.Clock, WakeDeadlines: wakeDeadlines, StaleRunGrace: o.StaleRunGrace,
 		Log: log, Metrics: m, RecordingsDir: st.Path("recordings"), RecordingStore: c.Artifacts, RelocationsDir: st.Path("relocations"), ResolveAccount: accounts.Resolve,
 		ResolveLaunch: func(ctx context.Context, spaceID string, in *fleet.LaunchInput) (map[string]any, error) {
 			sp, err := st.R().GetSpace(ctx, spaceID)
@@ -246,6 +248,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			in.Kind, in.Harness, in.Model, in.Settings, in.SystemText = r.Kind, r.Harness, r.Model, r.Settings, r.SystemText
 			in.ClaudeSettings = r.ClaudeSettings
 			in.RecordingMaxBytes = c.Limits.Value(ctx, st.R(), spaceID, limits.RecordingQuota)
+			if lv, err := c.Limits.For(ctx, st.R(), spaceID); err == nil {
+				if cols, rows, ok := lv.TerminalSize(); ok {
+					in.TerminalSize = &fleet.TerminalSize{Cols: cols, Rows: rows}
+				}
+			}
 			in.Skills = nil
 			for _, sk := range r.Skills {
 				in.Skills = append(in.Skills, proto.Skill{Name: sk.Slug, Version: sk.Number, SHA256: sk.SHA256, Files: sk.Files})
@@ -267,6 +274,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		OnSpacePurged: func(ctx context.Context, runIDs []string) {
 			if c.Usage != nil {
 				c.Usage.PurgeTranscripts(ctx, runIDs)
+			}
+		},
+		OnRunLaunched: func(string) {
+			if c.Human != nil {
+				c.Human.Kick() // a response held for the run's instance goes to it (SM-HUM-009)
 			}
 		},
 		OnRunEnded: func(runID string) {
@@ -738,6 +750,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		// Harbor Pilot run tokens (ADR-0060): queued revocations, and runs a node left unknown past its lease.
 		human.Deadline{Name: "gateway_revocations", Next: c.HarborPilotRuns.NextRevocation, Due: c.HarborPilotRuns.RevokeDue},
 		human.Deadline{Name: "gateway_lease_sweep", Next: c.Fleet.NextGatewayLeaseSweep, Due: c.Fleet.SweepGatewayLeases},
+		// Runs counted as live whose process is gone (a node agent restart, a lost lease) end as lost (ADR-0074).
+		human.Deadline{Name: "stale_run_sweep", Next: c.Fleet.NextStaleRunSweep, Due: c.Fleet.SweepStaleRuns},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.

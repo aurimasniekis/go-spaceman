@@ -93,7 +93,7 @@ func eventuallyFor(t *testing.T, what string, d time.Duration, cond func() bool)
 	deadline := time.Now().Add(d)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
+			timedOut(t, what, d)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

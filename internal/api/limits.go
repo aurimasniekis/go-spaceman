@@ -98,6 +98,15 @@ func RegisterLimits(svc *limits.Service, sched *schedule.Service) func(api huma.
 				if p := PrincipalFrom(ctx); changed && (d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.RetentionWrite)) {
 					return nil, newProblem(http.StatusForbidden, apperr.CodeForbidden, "changing a retention period needs retention:write (space admins)", nil)
 				}
+				// A new run is held at the space's terminal size, which everyone watching it sees: changing it needs
+				// terminal:takeover (admins), like resizing a live run (ADR-0075).
+				sized, err := svc.TerminalSizeChanged(ctx, in.SpaceID, in.Body)
+				if err != nil {
+					return nil, d.fail(ctx, "limits.set", err)
+				}
+				if p := PrincipalFrom(ctx); sized && (d.Authz == nil || p == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.TerminalTakeover)) {
+					return nil, newProblem(http.StatusForbidden, apperr.CodeForbidden, "changing the new-run terminal size needs terminal:takeover (space admins)", nil)
+				}
 				e, err := svc.Set(ctx, Actor(ctx), in.SpaceID, v, in.Body)
 				if err != nil {
 					return nil, d.fail(ctx, "limits.set", err)
