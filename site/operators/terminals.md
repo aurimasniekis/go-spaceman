@@ -121,8 +121,10 @@ such as Claude Code, its whole screen reflows.
 default) keeps the node's size. The CLI sets them like any limit:
 `spaceman limits set --space <space> --set terminal_cols=132 --set terminal_rows=43`.
 
-Through the API: `PUT /api/v1/spaces/{space}/runs/{run}/terminal-size` with `{"cols": 120, "rows": 40}`, and `DELETE`
-to go back to the node's default (ADR-0075 in the [decision log](/security/decisions)).
+From the command line: `spaceman run terminal-size set --space <space> <run> --cols 120 --rows 40` and `spaceman run
+terminal-size clear` ([CLI reference](/reference/cli/run)). Through the API: `PUT
+/api/v1/spaces/{space}/runs/{run}/terminal-size` with `{"cols": 120, "rows": 40}`, and `DELETE` to go back to the node's
+default (ADR-0075 in the [decision log](/security/decisions)).
 
 ## Replay
 

@@ -470,8 +470,8 @@
   the size an admin set from the web (fit to their window, a preset or a custom size, ADR-0075). The size is per run,
   not per viewer: the view scales the font to the width, follows the cursor and scrolls with the wheel, and opening a
   page never resizes the program. Resizing needs node protocol 1.10; the node holds a set size through one extra
-  herdr-core connection per sized run. A CLI command to resize a live run, and the Terraform provider's
-  `spaceman_space_limits` attributes for the two limits, are not there yet (the API and `spaceman limits set` are).
+  herdr-core connection per sized run. The Terraform provider's `spaceman_space_limits` resource has no attributes for
+  the two limits yet (the API, `spaceman limits set` and `spaceman run terminal-size` work).
 - **Scrolling back reaches only what the terminal keeps.** The live view scrolls back through the browser terminal's
   scrollback (10,000 lines; a page reload rebuilds it from the stored recording), never by sending the run input. A
   full-screen program on the alternate screen keeps its history itself, so watchers see only its current screen: Claude

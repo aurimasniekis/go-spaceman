@@ -3435,8 +3435,8 @@
   - One extra herdr-core connection per sized run on the node.
   - This is not a security relaxation: the permission is takeover's, the hold types nothing, and the size is bounded
     and audited.
-  - CLI: `spaceman limits set --set terminal_cols=… --set terminal_rows=…` takes the new limits as they are (its keys
-    are generic). A CLI command to resize a live run is a follow-up (the API exists).
+  - CLI: `spaceman run terminal-size set|clear` resizes a live run. `spaceman limits set --set terminal_cols=… --set
+    terminal_rows=…` takes the new limits as they are (its keys are generic).
   - Terraform: the provider's `spaceman_space_limits` resource declares one attribute per known limit, so it cannot
     set these two yet. Its data source shows them in `values`. Adding the attributes is a follow-up in the provider
     (PLAN.md).
