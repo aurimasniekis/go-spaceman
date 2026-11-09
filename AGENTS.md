@@ -62,6 +62,11 @@ Which check to run when (commands: [site/development/testing.md](site/developmen
   dependencies or test inputs changed, so a second `make check` after a merge that touched no Go code costs little.
   `make race RACE_COUNT=1` runs every test again, which CI and the release workflow always do. A cached pass is not
   evidence for a flaky test: rerun that package with `-count=1`.
+- **Heavy gates take turns on the node:** `race`, `coverage`, `site-a11y`, `e2e` and `screenshots` (and so `make
+  check`) wait for a node-wide slot first (`scripts/gate-slot.sh`; `SM_GATE_SLOTS`, default 2 on 16 or more CPUs, and
+  `SM_GATE_LOCK_DIR`). A `gate-slot: … waiting for a heavy-gate slot` line means another run on the node holds it: keep
+  working while it waits, and don't bypass it with `SM_GATE_SLOTS=0`. A killed run releases its slot. It is off when
+  `CI=true`; a lock dir shared by several users is pre-created with mode 1777.
 - **Only when they are affected:** `make web-check` when `web/` changed. `make site-check` when `site/`, `docs/`, `web/`,
   `api/`, `CHANGELOG.md` or the `Makefile` changed (the rule CI uses for the accessibility audit). `make e2e` when UI
   behavior changed.

@@ -2810,6 +2810,13 @@
     (`site/development/testing.md`).
   - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
+- **Update, 2026-11-08 (gate wait time, T9):** the Q2 b path rule moved from `ci.yaml` into
+  `scripts/site-affected.sh`, its one home; the list is unchanged except that the script itself is added. CI calls it
+  with `HEAD^1` on a pull request. A local `make site-check` calls it against the merge base with `main` (committed,
+  uncommitted and untracked files) and skips the audit when nothing site-affecting changed; it runs the audit when it
+  can't tell, and `SM_SITE_A11Y=1` forces it (the release workflow sets it, so the release still always audits). The
+  audit itself is sharded over `SM_A11Y_SHARDS` parallel tests and workers (two in CI) and waits for VitePress to
+  hydrate instead of for network idle; it audits the same pages, schemes and rules.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
@@ -3378,7 +3385,7 @@
     resolved settings in the API don't show them. Codex is unchanged.
 
 ### ADR-0069 — Tiered local gates, a one-run coverage floor and cached CI tools
-- **Status:** Accepted, 2026-11-08 (gate wait-time work, subtasks T1, T2 and T10). Not a relaxation: every check in
+- **Status:** Accepted, 2026-11-08 (gate wait-time work, subtasks T1, T2, T10, and T7 and T8 below). Not a relaxation: every check in
   `make check` and in CI still runs. The coverage floor applies to the same packages with the same rules.
 - **Context:**
   - Agents spent much of their time waiting for `make check` (about 13.5 minutes on a 32-core node). It ran a median
@@ -3404,16 +3411,36 @@
     golangci-lint is built with `go install …@<pinned version>` through the Go module proxy (modules verified
     against the checksum database), cached per version, OS, architecture and Go toolchain. A step checks the
     binary's version before the action runs it (`install-mode: none`). The release workflow downloads neither tool.
+  - **The race run's critical path (T7).** `internal/app` (about an hour of test time under `-race`) alone took about
+    9 minutes at `-parallel 4`, with most of a many-core machine idle. Its ~20 serial tests alone take about 260 s,
+    since go test runs them one after another before any parallel test. `scripts/race.sh` runs it as its own `go test
+    -race` invocation, started first, with `RACE_APP_PARALLEL` (default `min(16, nproc/2)`, at least 4), and on 16 or
+    more CPUs splits it into two concurrent processes, the serial tests (`-run`) and the rest (`-skip`, the same
+    pattern, so each test runs exactly once; `RACE_APP_SPLIT`), alongside one
+    invocation for every other package at `RACE_PARALLEL` (4, unchanged: the small packages starve when everything runs
+    at full load). CI and the release workflow set `RACE_APP_PARALLEL=4`, the cap they had.
+  - **A node-wide heavy-gate semaphore (T8).** Several agents' full suites on one node slowed each other down and
+    tripped the write-transaction guard and timing tests. `scripts/gate-slot.sh` runs `race`, `coverage`, `site-a11y`,
+    `e2e`/`e2e-browsers` and `screenshots` while holding one of `SM_GATE_SLOTS` `flock` slots in `SM_GATE_LOCK_DIR`
+    (defaults: 2 slots on 16 or more CPUs, otherwise 1; `${XDG_CACHE_HOME:-~/.cache}/spaceman-gates`). `make check`
+    takes one slot for coverage and race together. A waiting run prints one line naming the holders. The kernel
+    releases a lock when its holder exits, a `kill -9` included. `SM_GATE_SLOTS=0` disables it, and it is off when
+    `CI=true`.
 - **Alternatives:** `install-mode: goinstall` in the action (it rebuilds golangci-lint from source on every run,
   because the Go module cache key doesn't cover it); caching the golangci-lint release archive (still a GitHub release
   download on a miss); making local `make race` use the test cache (operator question Q1 of the plan, not decided
-  here).
+  here); deriving `RACE_PARALLEL` from the CPU count for every package (T7: the small packages starve their leases and
+  write transactions under full load); a semaphore inside SpaceMan, a per-node "heavy job" capacity exposed to runs (a
+  possible product follow-up, out of scope).
 - **Consequences:**
   - A cached sqlc binary is not re-verified on a hit: the checksum covers the release archive, which a hit doesn't
     download. The cache entry was written by a run of this repository after verification. Actions caches are
     scoped to the branch, so a pull request can't plant one for `main` (THREAT_MODEL T-41).
   - `check-fast` passing is not a pre-push signal: race tests and the strict coverage run happen only in `make check`
     and CI.
+  - A heavy gate can wait for minutes behind other agents' runs; that wait costs no CPU. The slots only coordinate runs
+    that share `SM_GATE_LOCK_DIR`. Killing only the wrapper releases the slot while its command goes on; stopping
+    the process group stops both.
 
 ### ADR-0070 — The write-transaction guard measures lock hold time; local race runs use the test cache (security-relevant change)
 - **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, questions Q1 and Q2; subtask T3).
