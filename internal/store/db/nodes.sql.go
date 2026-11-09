@@ -1112,6 +1112,65 @@ func (q *Queries) ListSpacesByNode(ctx context.Context, nodeID string) ([]Space,
 	return items, nil
 }
 
+const listStaleRunCandidates = `-- name: ListStaleRunCandidates :many
+SELECT r.id, r.node_id, r.space_id, r.version, r.observed,
+  CAST(coalesce(r.observed_at, r.created_at) AS INTEGER) AS last_observed_at,
+  CAST(coalesce(l.node_id, '') AS TEXT) AS lease_node_id, CAST(coalesce(l.expires_at, 0) AS INTEGER) AS lease_expires_at
+FROM nodes n
+JOIN runs r ON r.node_id = n.id
+JOIN spaces s ON s.id = r.space_id AND s.node_id = r.node_id
+LEFT JOIN execution_leases l ON l.space_id = r.space_id
+WHERE r.observed IN ('starting', 'running', 'stopping', 'unknown')
+ORDER BY r.id
+`
+
+type ListStaleRunCandidatesRow struct {
+	ID             string
+	NodeID         string
+	SpaceID        string
+	Version        int64
+	Observed       string
+	LastObservedAt int64
+	LeaseNodeID    string
+	LeaseExpiresAt int64
+}
+
+// Runs the stale-run sweeper looks at (fleet/stale.go, ADR-0074): live runs past their launch (starting, running,
+// stopping or unknown; pending launches may still be in flight) whose space is still pinned to the run's node
+// (relocation owns the others), with the space's lease. last_observed_at is the last accepted node report, or the
+// run's creation when none arrived.
+func (q *Queries) ListStaleRunCandidates(ctx context.Context) ([]ListStaleRunCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listStaleRunCandidates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStaleRunCandidatesRow{}
+	for rows.Next() {
+		var i ListStaleRunCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.NodeID,
+			&i.SpaceID,
+			&i.Version,
+			&i.Observed,
+			&i.LastObservedAt,
+			&i.LeaseNodeID,
+			&i.LeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUndeliveredCommands = `-- name: ListUndeliveredCommands :many
 SELECT id, node_id, space_id, run_id, generation, kind, idempotency_key, payload_json, state, reason, attempts, created_at, sent_at, acked_at FROM node_commands WHERE node_id = ? AND state IN ('pending', 'sent') ORDER BY created_at, id
 `

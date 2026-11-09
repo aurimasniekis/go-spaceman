@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- The space concurrency limit and the node capacity count only live runs, the same runs `spaceman_runs_list` shows.
+  Runs that exited, failed or were lost (for example after a node agent restart) no longer hold their slot until an
+  operator stops them. **On upgrade**, runs that already ended but still had `desired = running` stop counting at
+  once. The refusal names the counted runs (ID, kind, role, state) and says which runs don't count: control, KB
+  support and dreamer runs (ADR-0074).
+- A stale-run sweeper moves runs that central still counted as live but whose process is gone to `lost`. These are
+  runs a reconnected node did not report (`stale_not_on_node`), and runs of a node that stayed disconnected past its
+  lease and the disconnect grace (`stale_lease_lost`). It frees their slots and releases their tasks. It never stops a
+  process. It records an audit event `run.reconciled_stale` and the metric
+  `spaceman_runs_reconciled_stale_total{reason}` (ADR-0074).
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim

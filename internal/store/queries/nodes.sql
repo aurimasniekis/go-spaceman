@@ -184,3 +184,18 @@ SELECT * FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at D
 
 -- name: ListIdleControlRuns :many
 SELECT id FROM runs WHERE kind = 'control' AND desired = 'running' AND observed = 'running' AND status IN ('idle', 'done');
+
+-- Runs the stale-run sweeper looks at (fleet/stale.go, ADR-0074): live runs past their launch (starting, running,
+-- stopping or unknown; pending launches may still be in flight) whose space is still pinned to the run's node
+-- (relocation owns the others), with the space's lease. last_observed_at is the last accepted node report, or the
+-- run's creation when none arrived.
+-- name: ListStaleRunCandidates :many
+SELECT r.id, r.node_id, r.space_id, r.version, r.observed,
+  CAST(coalesce(r.observed_at, r.created_at) AS INTEGER) AS last_observed_at,
+  CAST(coalesce(l.node_id, '') AS TEXT) AS lease_node_id, CAST(coalesce(l.expires_at, 0) AS INTEGER) AS lease_expires_at
+FROM nodes n
+JOIN runs r ON r.node_id = n.id
+JOIN spaces s ON s.id = r.space_id AND s.node_id = r.node_id
+LEFT JOIN execution_leases l ON l.space_id = r.space_id
+WHERE r.observed IN ('starting', 'running', 'stopping', 'unknown')
+ORDER BY r.id;

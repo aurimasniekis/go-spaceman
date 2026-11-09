@@ -580,7 +580,14 @@ func (svc *Service) ListRuns(ctx context.Context, spaceID string, limit int) ([]
 // applyReport records a node's observation of a run. Reports for another node or an older lease generation are
 // fenced (SM-NODE-006); a run central wants stopped but the node reports running gets a new stop command.
 func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.RunReport) (fenced bool, err error) {
-	becameIdle, justEnded := false, false
+	return svc.applyRunReport(ctx, nodeID, rep, nil)
+}
+
+// applyRunReport is applyReport; with sweep set, the report is central's own reconciliation of a stale run (ADR-0074):
+// it applies only while the run is unchanged since the sweeper chose it (same version, still past its launch and
+// live), and the run's end is audited and counted as a sweep. A sweep that no longer applies is skipped, not fenced.
+func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto.RunReport, sweep *staleRun) (fenced bool, err error) {
+	becameIdle, justEnded, skipped := false, false, false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:
 	default:
@@ -593,6 +600,10 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			return nil
 		} else if err != nil {
 			return err
+		}
+		if sweep != nil && (r.Version != sweep.Version || !Live(r.Observed) || r.Observed == proto.RunPending) {
+			skipped = true // a report (or another sweep) got there first
+			return nil
 		}
 		if r.NodeID != nodeID || r.SpaceID != rep.SpaceID || r.Generation != rep.Generation {
 			fenced = true
@@ -608,6 +619,12 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 		// node sends reports concurrently, and both it and central treat exited, failed and lost as final), so it must not
 		// reopen the run: that would end it a second time and publish a second run_ended event.
 		if ended(r.Observed) && !ended(rep.State) {
+			fenced = true
+			return nil
+		}
+		// A run the stale-run sweeper ended stays exactly as it ended it (ADR-0074): a node that reconnects later and
+		// reports a final state from its journal would otherwise end the run a second time or replace the sweep's reason.
+		if (r.EndReason == EndStaleNotOnNode || r.EndReason == EndStaleLeaseLost) && ended(r.Observed) {
 			fenced = true
 			return nil
 		}
@@ -660,6 +677,11 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 			if err := svc.runEvent(ctx, tx, r, ev); err != nil {
 				return err
 			}
+			if sweep != nil {
+				if err := svc.auditStaleRun(ctx, tx, r, sweep); err != nil {
+					return err
+				}
+			}
 		}
 		return svc.record(ctx, tx, r.SpaceID, "run", r.ID, "updated", r.Version+1)
 	})
@@ -672,8 +694,14 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 	if err == nil && justEnded {
 		svc.kickSpaceRelocation(ctx, rep.SpaceID)
 	}
-	if fenced {
+	if err == nil && justEnded && sweep != nil {
+		svc.opts.Metrics.RunReconciledStale(metrics.StaleReason(sweep.Reason))
+	}
+	if fenced && sweep == nil {
 		svc.opts.Metrics.LeaseFenced()
+	}
+	if skipped || (fenced && sweep != nil) {
+		return true, err
 	}
 	return fenced, err
 }

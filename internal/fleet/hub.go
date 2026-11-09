@@ -219,9 +219,24 @@ type session struct {
 	memory chan struct{}
 	// minor is the negotiated protocol minor version (set before the session is registered).
 	minor int
+	// since is when the session was registered, before its hello reports were applied (microsecond precision, like the
+	// store's timestamps). A run of the node that no accepted report has touched since then is not in the node's
+	// journal (the stale-run sweeper, ADR-0074).
+	since time.Time
 }
 
 func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }
+
+// connectedSince returns when the node's live connection was registered (false: no live connection).
+func (h *Hub) connectedSince(nodeID string) (time.Time, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.sessions[nodeID]
+	if s == nil {
+		return time.Time{}, false
+	}
+	return s.since, true
+}
 
 // Connected reports whether a node has a live connection.
 func (h *Hub) Connected(nodeID string) bool {
@@ -350,6 +365,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		return err
 	}
 	s.minor = minor
+	s.since = svc.now().Truncate(time.Microsecond)
 	h.mu.Lock()
 	old := h.sessions[s.nodeID]
 	h.sessions[s.nodeID] = s
@@ -381,6 +397,8 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	if err := h.sendReconcile(ctx, s); err != nil {
 		return err
 	}
+	// The stale-run sweep's due time depends on which nodes are connected and since when (ADR-0074).
+	svc.wakeDeadlines()
 	// The node learns which of its terminals are taken over before any command (it refuses run.input for them).
 	if s.minor >= proto.MinorTakeover {
 		if err := h.sendTakeovers(ctx, s); err != nil {
@@ -931,6 +949,7 @@ func (h *Hub) onDisconnect(ctx context.Context, s *session) {
 	}
 	h.mu.Unlock()
 	h.svc.opts.Metrics.NodeConnected(-1)
+	defer h.svc.wakeDeadlines()
 	_ = h.svc.s.W().TxNamed(ctx, "fleet.node_disconnect", func(tx *store.Tx) error {
 		if err := tx.Q.RecordNodeDisconnect(ctx, db.RecordNodeDisconnectParams{LastDisconnectAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 			UpdatedAt: tx.NowMicros(), ID: s.nodeID}); err != nil {
