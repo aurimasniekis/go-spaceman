@@ -23,7 +23,7 @@ func sizeAgent(t *testing.T) (*Agent, *runnertest.Fake, runRow) {
 	}
 	t.Cleanup(func() { _ = j.Close() })
 	f := runnertest.New()
-	a := New(j, Options{DataDir: dir, Runner: f, DefaultCols: 160, DefaultRows: 48})
+	a := New(j, Options{DataDir: dir, Runner: f, DefaultCols: 200, DefaultRows: 120}) // the fake starts programs at 200x120
 	a.mem.base = context.Background()
 	t.Cleanup(a.stopHolds)
 	t.Cleanup(a.stopRecorders)

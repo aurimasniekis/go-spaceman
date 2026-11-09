@@ -78,9 +78,14 @@ func (a *Agent) reconcileHolds(ctx context.Context) {
 	}
 }
 
-// releaseHold closes a hold. A takeover still open would keep the terminal at the held size (herdr-core sizes a
-// terminal by its newest interactive attach), so it is resized to the node's default size first.
+// releaseHold closes a hold: the terminal goes back to the node's default size. The recording notes that size first,
+// so the program's redraw for it follows the record (the runner's size event arrives on another connection, usually
+// after the redraw, and then repeats it). A takeover still open would keep the terminal at the held size (herdr-core
+// sizes a terminal by its newest interactive attach), so it is resized to the default too.
 func (a *Agent) releaseHold(h *sizeHold) {
+	if a.o.DefaultCols > 0 && a.o.DefaultRows > 0 {
+		a.recordSize(h.want.RunID, a.o.DefaultCols, a.o.DefaultRows)
+	}
 	h.cancel()
 	if a.o.DefaultCols > 0 && a.o.DefaultRows > 0 {
 		a.resizeTakeover(h.want.RunID, a.o.DefaultCols, a.o.DefaultRows)

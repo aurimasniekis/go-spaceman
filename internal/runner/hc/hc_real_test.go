@@ -337,8 +337,8 @@ func TestRealTerminalSize(t *testing.T) {
 // ADR-0075, S-7 (hc 0.1.17): the node holds a run's size through runner.Takeover (an interactive attach at the current
 // size on its own connection) and Resize. The program's size follows each resize (`stty size` and the terminal
 // record), events.subscribe reports every change as `size` {cols, rows}, the newest interactive attach sets the size
-// (a second one's resize wins; once it closes the first one's size is back), and closing the hold returns the program
-// to the core's headless size. Nothing is typed.
+// (a second one's resize wins; once it closes the first one's size is back), terminal.send is still delivered while
+// the hold is open, and closing the hold returns the program to the core's headless size.
 func TestRealTerminalSizeHold(t *testing.T) {
 	r, _ := realCore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -350,7 +350,8 @@ func TestRealTerminalSizeHold(t *testing.T) {
 	if first := <-evs; first.Kind != "snapshot" {
 		t.Fatalf("first event %+v", first)
 	}
-	p, err := r.Start(ctx, runner.Spec{Name: "r-hold", Argv: []string{"/bin/sh", "-c", "while :; do stty size; sleep 0.2; done"}, Cwd: "/tmp",
+	// It prints its size at the start and on every SIGWINCH, and is otherwise quiet (terminal.send waits for quiet output).
+	p, err := r.Start(ctx, runner.Spec{Name: "r-hold", Argv: []string{"/bin/sh", "-c", "trap 'stty size' WINCH; stty size; while :; do sleep 0.1; done"}, Cwd: "/tmp",
 		Labels: map[string]string{"spaceman.test": "size"}})
 	if err != nil {
 		t.Fatal(err)
@@ -404,13 +405,23 @@ func TestRealTerminalSizeHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seen strings.Builder
-	for !strings.Contains(seen.String(), "25 90") {
-		d, closed, err := obs.Next(ctx)
-		if err != nil || closed != nil {
-			t.Fatalf("observer: %v %+v (saw %q)", err, closed, seen.String())
+	waitOutput := func(want string) {
+		t.Helper()
+		for !strings.Contains(seen.String(), want) {
+			d, closed, err := obs.Next(ctx)
+			if err != nil || closed != nil {
+				t.Fatalf("observer: %v %+v (saw %q)", err, closed, seen.String())
+			}
+			seen.Write(d)
 		}
-		seen.Write(d)
 	}
+	waitOutput("25 90")
+	// A held attach types nothing and does not hold back automated input: terminal.send is delivered (the terminal
+	// echoes it).
+	if err := r.Send(ctx, p.ID, "sent-while-held", false); err != nil {
+		t.Fatal(err)
+	}
+	waitOutput("sent-while-held")
 	_ = obs.Close()
 	_ = hold.Close()
 	is(200, 120)
