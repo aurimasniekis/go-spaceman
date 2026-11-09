@@ -58,6 +58,9 @@ const (
 	// Control lifecycle (ADR-0056).
 	ControlAutostart = "control_autostart"
 	ControlIdleStop  = "control_idle_stop_minutes"
+	// A new run's terminal size (ADR-0075).
+	TerminalCols = "terminal_cols"
+	TerminalRows = "terminal_rows"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -82,7 +85,7 @@ const (
 type Def struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
-	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,days,tokens,usd_cents,percent,depth,switch" doc:"switch: 1 on, 0 off"`
+	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,days,tokens,usd_cents,percent,depth,switch,columns,rows" doc:"switch: 1 on, 0 off"`
 	Scope       string `json:"scope" doc:"What one limit value bounds"`
 	Min         int64  `json:"min"`
 	Max         int64  `json:"max"`
@@ -147,6 +150,24 @@ var Defs = []Def{
 	{Key: ControlIdleStop, Label: "Stop idle control", Unit: "minutes",
 		Scope: "how long control may sit idle (turn finished, nothing waiting for it, no operator at its terminal) before SpaceMan stops it; with control started on new work, the next event starts it again", ZeroNone: true,
 		Enforced: "control supervisor (idle timer)", OnLower: "Applies from control's next idle point.", Overridable: true},
+	{Key: TerminalCols, Label: "Terminal columns", Unit: "columns",
+		Scope: "the width new runs' terminals are held at (40-400; 0: the node's default size); applies only with terminal rows set too", ZeroNone: true,
+		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},
+	{Key: TerminalRows, Label: "Terminal rows", Unit: "rows",
+		Scope: "the height new runs' terminals are held at (10-200; 0: the node's default size); applies only with terminal columns set too", ZeroNone: true,
+		Enforced: "run launch (the node holds the size)", OnLower: terminalLower, Overridable: true},
+}
+
+const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."
+
+// TerminalSize returns the size a new run's terminal is held at from a space's effective limits; ok is false when
+// either is 0 (the node's default size applies).
+func (v Values) TerminalSize() (cols, rows int, ok bool) {
+	c, r := v.Get(TerminalCols), v.Get(TerminalRows)
+	if c == 0 || r == 0 {
+		return 0, 0, false
+	}
+	return int(c), int(r), true
 }
 
 func init() {
@@ -413,6 +434,8 @@ func (svc *Service) Set(ctx context.Context, actor audit.Actor, spaceID string, 
 			v.Add("values."+k, "is set in the %s, not here", d.EditAt)
 		case in.Values[k] < d.Min || in.Values[k] > d.Max:
 			v.Add("values."+k, "must be within %d..%d", d.Min, d.Max)
+		case in.Values[k] != 0 && in.Values[k] < config.TerminalLimitFloor[k]:
+			v.Add("values."+k, "must be 0 (the node's default) or within %d..%d", config.TerminalLimitFloor[k], d.Max)
 		}
 	}
 	if err := v.Err(); err != nil {

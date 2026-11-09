@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // AgentConfig is the node `spaceman-agent` configuration.
@@ -79,8 +80,9 @@ func ParseTerminalSize(s string) (cols, rows int, err error) {
 	if _, err := fmt.Sscanf(s, "%dx%d", &cols, &rows); err != nil || fmt.Sprintf("%dx%d", cols, rows) != s {
 		return 0, 0, fmt.Errorf("must be COLSxROWS, like 160x48 (got %q)", s)
 	}
-	if cols < 40 || cols > 400 || rows < 10 || rows > 200 {
-		return 0, 0, fmt.Errorf("must be 40-400 columns and 10-200 rows (got %s)", s)
+	if proto.CheckTerminalSize(cols, rows) != nil {
+		return 0, 0, fmt.Errorf("must be %d-%d columns and %d-%d rows (got %s)", proto.TerminalMinCols, proto.TerminalMaxCols,
+			proto.TerminalMinRows, proto.TerminalMaxRows, s)
 	}
 	return cols, rows, nil
 }

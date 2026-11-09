@@ -1102,6 +1102,8 @@ type Run struct {
 	ObservedAt         sql.NullInt64
 	UpdatedAt          int64
 	RecordingDeletedAt sql.NullInt64
+	TerminalCols       sql.NullInt64
+	TerminalRows       sql.NullInt64
 }
 
 type RunCredential struct {

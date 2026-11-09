@@ -59,6 +59,9 @@ type Options struct {
 	Wrap func(runDir string, l harness.Launch) []string
 	// RecordingCreate creates recording segment files; nil uses the filesystem (fault tests inject a full disk).
 	RecordingCreate func(path string) (recording.File, error)
+	// DefaultCols and DefaultRows are the size the runner starts programs at (runner.terminal_size); a takeover open
+	// when a run's held size is cleared is resized back to it (ADR-0075). 0: left as it is.
+	DefaultCols, DefaultRows int
 }
 
 // Agent is a running node agent.
@@ -74,7 +77,7 @@ type Agent struct {
 	leases    map[string]leaseRow
 	heartbeat time.Duration
 	// recorders are the live recordings by run ID.
-	recorders map[string]context.CancelFunc
+	recorders map[string]*recorder
 	// lostAt is when central was last lost (zero while connected).
 	lostAt time.Time
 	wake   chan struct{}
@@ -105,6 +108,11 @@ type Agent struct {
 	repoLocks map[string]*sync.Mutex
 	// takeovers are the runs whose terminal an operator has taken over (SM-UI-004), by run ID.
 	takeovers map[string]*takeover
+	// sizeWant is central's set of run terminal sizes and holds the attaches that keep them (ADR-0075), by run ID;
+	// holdsStopped is set at shutdown.
+	sizeWant     map[string]proto.TerminalSize
+	holds        map[string]*sizeHold
+	holdsStopped bool
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
@@ -164,7 +172,7 @@ func New(j *Journal, o Options) *Agent {
 		o.HTTPClient = http.DefaultClient
 	}
 	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
-		recorders: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, takeovers: map[string]*takeover{}}
+		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, takeovers: map[string]*takeover{}}
 	a.mem = newMemManager(a)
 	return a
 }
@@ -191,6 +199,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// recorder attached when the next one adopts the run.
 	defer a.stopRecorders()
 	defer a.stopTakeovers()
+	defer a.stopHolds()
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err
@@ -235,8 +244,8 @@ func (a *Agent) Run(ctx context.Context) error {
 func (a *Agent) stopRecorders() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for _, cancel := range a.recorders {
-		cancel()
+	for _, r := range a.recorders {
+		r.cancel()
 	}
 }
 
@@ -405,6 +414,11 @@ func (a *Agent) session(ctx context.Context) error {
 			var st proto.TakeoverState
 			if err := env.Decode(&st); err == nil {
 				a.applyTakeovers(ctx, st)
+			}
+		case proto.TypeTerminalSizes:
+			var st proto.TerminalSizes
+			if err := env.Decode(&st); err == nil {
+				a.applyTerminalSizes(ctx, st)
 			}
 		case proto.TypeTakeoverInput:
 			var in proto.TakeoverInput

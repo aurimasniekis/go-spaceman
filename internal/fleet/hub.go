@@ -387,6 +387,12 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 			return err
 		}
 	}
+	// And at which size to hold its runs' terminals (ADR-0075).
+	if s.minor >= proto.MinorTerminalSize {
+		if err := h.sendTerminalSizes(ctx, s); err != nil {
+			return err
+		}
+	}
 	go h.dispatchLoop(ctx, s)
 	go h.credentialLoop(ctx, s)
 	// Relocations waiting for this node resume now (for example after a central restart).

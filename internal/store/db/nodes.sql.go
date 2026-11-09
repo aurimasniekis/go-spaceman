@@ -114,7 +114,7 @@ func (q *Queries) GetActiveRunToken(ctx context.Context, runID string) ([]byte, 
 }
 
 const getLatestControlRun = `-- name: GetLatestControlRun :one
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at DESC, id DESC LIMIT 1
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows FROM runs WHERE space_id = ? AND kind = 'control' ORDER BY created_at DESC, id DESC LIMIT 1
 `
 
 func (q *Queries) GetLatestControlRun(ctx context.Context, spaceID string) (Run, error) {
@@ -153,6 +153,8 @@ func (q *Queries) GetLatestControlRun(ctx context.Context, spaceID string) (Run,
 		&i.ObservedAt,
 		&i.UpdatedAt,
 		&i.RecordingDeletedAt,
+		&i.TerminalCols,
+		&i.TerminalRows,
 	)
 	return i, err
 }
@@ -300,7 +302,7 @@ func (q *Queries) GetNodeEnrollment(ctx context.Context, mac []byte) (NodeEnroll
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE id = ?
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows FROM runs WHERE id = ?
 `
 
 func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
@@ -339,6 +341,8 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.ObservedAt,
 		&i.UpdatedAt,
 		&i.RecordingDeletedAt,
+		&i.TerminalCols,
+		&i.TerminalRows,
 	)
 	return i, err
 }
@@ -552,8 +556,10 @@ func (q *Queries) InsertNodeEnrollment(ctx context.Context, arg InsertNodeEnroll
 
 const insertRun = `-- name: InsertRun :exec
 INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, launch_json, manifest_json,
-  created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', ?, ?, ?, ?, ?)
+  created_at, created_by, updated_at, terminal_cols, terminal_rows)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+  ?8, ?9, 'running', 'pending', ?10, ?11, ?12,
+  ?13, ?14, ?15, ?16)
 `
 
 type InsertRunParams struct {
@@ -571,6 +577,8 @@ type InsertRunParams struct {
 	CreatedAt    int64
 	CreatedBy    string
 	UpdatedAt    int64
+	TerminalCols sql.NullInt64
+	TerminalRows sql.NullInt64
 }
 
 func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
@@ -589,6 +597,8 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
+		arg.TerminalCols,
+		arg.TerminalRows,
 	)
 	return err
 }
@@ -653,7 +663,7 @@ func (q *Queries) InsertSpace(ctx context.Context, arg InsertSpaceParams) error 
 }
 
 const listActiveRunsByNode = `-- name: ListActiveRunsByNode :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE node_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows FROM runs WHERE node_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at
 `
 
 func (q *Queries) ListActiveRunsByNode(ctx context.Context, nodeID string) ([]Run, error) {
@@ -698,6 +708,8 @@ func (q *Queries) ListActiveRunsByNode(ctx context.Context, nodeID string) ([]Ru
 			&i.ObservedAt,
 			&i.UpdatedAt,
 			&i.RecordingDeletedAt,
+			&i.TerminalCols,
+			&i.TerminalRows,
 		); err != nil {
 			return nil, err
 		}
@@ -713,7 +725,7 @@ func (q *Queries) ListActiveRunsByNode(ctx context.Context, nodeID string) ([]Ru
 }
 
 const listActiveRunsBySpace = `-- name: ListActiveRunsBySpace :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE space_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows FROM runs WHERE space_id = ? AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')) ORDER BY created_at
 `
 
 func (q *Queries) ListActiveRunsBySpace(ctx context.Context, spaceID string) ([]Run, error) {
@@ -758,6 +770,8 @@ func (q *Queries) ListActiveRunsBySpace(ctx context.Context, spaceID string) ([]
 			&i.ObservedAt,
 			&i.UpdatedAt,
 			&i.RecordingDeletedAt,
+			&i.TerminalCols,
+			&i.TerminalRows,
 		); err != nil {
 			return nil, err
 		}
@@ -958,7 +972,7 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 }
 
 const listRunsBySpace = `-- name: ListRunsBySpace :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows FROM runs WHERE space_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
 `
 
 type ListRunsBySpaceParams struct {
@@ -1008,6 +1022,8 @@ func (q *Queries) ListRunsBySpace(ctx context.Context, arg ListRunsBySpaceParams
 			&i.ObservedAt,
 			&i.UpdatedAt,
 			&i.RecordingDeletedAt,
+			&i.TerminalCols,
+			&i.TerminalRows,
 		); err != nil {
 			return nil, err
 		}

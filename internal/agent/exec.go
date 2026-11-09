@@ -72,6 +72,7 @@ func (a *Agent) revoke(ctx context.Context, r proto.LeaseRevoke) {
 	if mode != "kill" {
 		mode = "interrupt"
 	}
+	a.stopSpaceHolds(r.SpaceID)
 	a.stopSpaceRuns(ctx, r.SpaceID, func(runRow) bool { return true }, mode, "lease revoked: "+r.Reason)
 }
 
@@ -388,6 +389,9 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 	a.report(ctx, row)
 	if p.State == runner.StateLive {
 		a.startRecorder(ctx, row)
+		if a.holdWanted(row.RunID) {
+			a.reconcileHolds(ctx)
+		}
 	}
 	// Role memory checkpoints at idle points (debounced) and at once when the run ends (SM-MEM-004/005).
 	switch {
@@ -541,6 +545,14 @@ func (a *Agent) monitor(ctx context.Context) {
 				if err := a.reconcileRunner(ctx); err != nil {
 					a.log.Warn("runner reconcile", obs.Err(err))
 				}
+			case "size":
+				// The recording notes every size change (an operator's resize, a takeover, a hold that closed), so
+				// replay redraws at the size the output was drawn for (ADR-0075).
+				if cols, rows, ok := runnerSize(ev.Data); ok && ev.TerminalID != "" {
+					if row, err := a.j.runByTerminal(ctx, ev.TerminalID); err == nil {
+						a.recordSize(row.RunID, cols, rows)
+					}
+				}
 			case "finished", "status", "turn":
 				if ev.TerminalID == "" {
 					continue
@@ -581,6 +593,7 @@ func (a *Agent) enforce(ctx context.Context) {
 		a.mu.Unlock()
 		for _, l := range expired {
 			a.log.Warn("lease expired without central; stopping the space's runs", slog.String(obs.FieldSpaceID, l.SpaceID), slog.String("policy", l.DisconnectPolicy))
+			a.stopSpaceHolds(l.SpaceID)
 			a.stopSpaceRuns(ctx, l.SpaceID, func(runRow) bool { return true }, l.DisconnectPolicy, "central unreachable beyond lease and grace")
 		}
 		select {
@@ -680,15 +693,18 @@ func (a *Agent) startRecorder(ctx context.Context, row runRow) {
 		return
 	}
 	rctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	a.recorders[row.RunID] = cancel
+	rec := &recorder{cancel: cancel, sizes: make(chan [2]int, 16)}
+	a.recorders[row.RunID] = rec
 	go func() {
 		defer func() {
 			a.mu.Lock()
-			delete(a.recorders, row.RunID)
+			if a.recorders[row.RunID] == rec {
+				delete(a.recorders, row.RunID)
+			}
 			a.mu.Unlock()
 			cancel()
 		}()
-		a.record(rctx, row)
+		a.record(rctx, row, rec.sizes)
 	}()
 }
 
