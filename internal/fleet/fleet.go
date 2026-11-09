@@ -58,6 +58,9 @@ type Options struct {
 	// OnSpacePurged is called after a space was purged, with its runs' IDs, to delete artifacts kept elsewhere
 	// (transcripts). Nil: nothing more is deleted.
 	OnSpacePurged func(ctx context.Context, runIDs []string)
+	// OnRunLaunched is called after a launch committed (the run exists, pending): a response held for the run's agent
+	// instance can be pinned to it at once.
+	OnRunLaunched func(runID string)
 	// OnRunEnded is called after a run was recorded as ended (exited, failed or lost).
 	OnRunEnded func(runID string)
 	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.
@@ -88,6 +91,13 @@ type Options struct {
 	// takes longer goes on in the background; the launch stays pending, the loop moves on to the node's other commands
 	// (only the pass that starts a mint waits for it), and the node is kicked when the mint is done.
 	GatewayMintWait time.Duration
+	// WakeDeadlines wakes the deadline timer (the stale-run sweep's due time moves when a node connects or
+	// disconnects). Nil: the timer finds the change on its next round.
+	WakeDeadlines func()
+	// StaleRunGrace overrides staleRunGrace (tests; 0 keeps the default).
+	StaleRunGrace time.Duration
+	// StaleLeaseMargin overrides staleLeaseMargin (tests; 0 keeps the default).
+	StaleLeaseMargin time.Duration
 }
 
 // Admission is a launch about to be admitted.
@@ -141,6 +151,12 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	if o.CredentialRecheck <= 0 {
 		o.CredentialRecheck = 30 * time.Second
 	}
+	if o.StaleRunGrace <= 0 {
+		o.StaleRunGrace = staleRunGrace
+	}
+	if o.StaleLeaseMargin <= 0 {
+		o.StaleLeaseMargin = staleLeaseMargin
+	}
 	if o.Clock == nil {
 		o.Clock = clock.System{}
 	}
@@ -161,6 +177,12 @@ func (svc *Service) Recordings() *Recordings { return svc.rec }
 func (svc *Service) Hub() *Hub { return svc.hub }
 
 func (svc *Service) now() time.Time { return svc.opts.Clock.Now().UTC() }
+
+func (svc *Service) wakeDeadlines() {
+	if svc.opts.WakeDeadlines != nil {
+		svc.opts.WakeDeadlines()
+	}
+}
 
 func (svc *Service) record(ctx context.Context, tx *store.Tx, spaceID, typ, id, action string, version int64) error {
 	if svc.changes == nil {

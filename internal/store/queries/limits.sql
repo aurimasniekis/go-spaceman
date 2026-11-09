@@ -10,13 +10,18 @@ UPDATE space_limits SET values_json = sqlc.arg(values_json), on_lower = sqlc.arg
   updated_by = sqlc.arg(by), version = version + 1
 WHERE space_id = sqlc.arg(space_id) AND version = sqlc.arg(version);
 
--- name: CountActiveWorkRunsInSpace :one
-SELECT COUNT(*) FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic')
-  AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown'));
+-- Live runs are those whose observed state is not final (exited, failed, lost): exactly the runs spaceman_runs_list
+-- shows (fleet.Live). desired is not consulted: a run that ended on its own keeps desired = 'running', and counting it
+-- held its slot until an operator stopped it.
+-- name: ListLiveWorkRunsInSpace :many
+SELECT id, kind, role, observed FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic')
+  AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+ORDER BY created_at, id;
 
--- name: CountActiveWorkRunsOnNode :one
-SELECT COUNT(*) FROM runs WHERE node_id = ? AND kind IN ('worker', 'diagnostic')
-  AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown'));
+-- name: ListLiveWorkRunsOnNode :many
+SELECT id, space_id, kind, role, observed FROM runs WHERE node_id = ? AND kind IN ('worker', 'diagnostic')
+  AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+ORDER BY created_at, id;
 
 -- name: ListActiveWorkRunsInSpace :many
 SELECT * FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic') AND desired = 'running'

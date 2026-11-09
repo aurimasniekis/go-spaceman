@@ -4,7 +4,7 @@ import type { HarborPilotStatus } from '@/api/client'
 import { useHarborPilotStatus } from '@/api/queries'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { ago } from '@/lib/format'
-import { budgetBadge, costLabel, harnessLabel, scopeLabel, STATUS_BADGE, usedPercent, windowLabel } from './format'
+import { budgetBadge, costLabel, harnessLabel, periodLabel, resetLabel, scopeLabel, STATUS_BADGE, usedPercent, windowLabel } from './format'
 
 /** The Limits page's Harbor Pilot card (HP-T5): nothing when the space doesn't route runs through Harbor Pilot. */
 export function HarborPilotLimitsCard({ spaceId }: { spaceId: string }) {
@@ -59,7 +59,12 @@ export function HarborPilotLimits({ st }: { st: HarborPilotStatus }) {
       {blocking && (
         <Alert color="owlRed" variant="light" icon={<IconAlertTriangle size={16} />} mb="sm" title="New runs are refused">
           <Text size="sm">
-            Budget “{blocking.name}” is used up ({blocking.spent} of {blocking.limit} {blocking.currency}). It resets {ago(blocking.period_end)} ({new Date(blocking.period_end).toLocaleString()}).
+            Budget “{blocking.name}” is used up ({blocking.spent} of {blocking.limit} {blocking.currency}).{' '}
+            {blocking.period === 'once'
+              ? (blocking.period_end
+                ? <>It is a one-time budget: it does not reset, and its window ends {ago(blocking.period_end)} ({new Date(blocking.period_end).toLocaleString()}).</>
+                : <>It is a one-time budget that never resets: a person has to raise its limit, start it over or disable it in Harbor Pilot.</>)
+              : blocking.period_end && <>It resets {ago(blocking.period_end)} ({new Date(blocking.period_end).toLocaleString()}).</>}
           </Text>
         </Alert>
       )}
@@ -69,7 +74,7 @@ export function HarborPilotLimits({ st }: { st: HarborPilotStatus }) {
         <Table.ScrollContainer minWidth={560} mb="sm">
           <Table verticalSpacing="xs">
             <Table.Thead>
-              <Table.Tr><Table.Th>Budget</Table.Th><Table.Th>Enforcement</Table.Th><Table.Th>Spent</Table.Th><Table.Th>State</Table.Th><Table.Th>Resets</Table.Th></Table.Tr>
+              <Table.Tr><Table.Th>Budget</Table.Th><Table.Th>Enforcement</Table.Th><Table.Th>Spent</Table.Th><Table.Th>State</Table.Th><Table.Th>Resets / ends</Table.Th></Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {st.budgets.map((b) => {
@@ -78,13 +83,14 @@ export function HarborPilotLimits({ st }: { st: HarborPilotStatus }) {
                   <Table.Tr key={b.budget_id} data-testid="harbor-pilot-budget">
                     <Table.Td maw={240}>
                       <Text size="sm" fw={500}>{b.name}</Text>
-                      <Text size="xs" c="dimmed">{scopeLabel(b.scope, b.scope_id)} · per {b.period}</Text>
+                      <Text size="xs" c="dimmed">{scopeLabel(b.scope, b.scope_id)} · {periodLabel(b.period)}</Text>
                     </Table.Td>
                     <Table.Td>
                       <Badge variant="light" color={b.enforcement === 'block' ? 'owlRed' : 'gray'}>{b.enforcement === 'block' ? 'Hard limit' : 'Warn only'}</Badge>
                     </Table.Td>
                     <Table.Td miw={160}>
                       <Text size="sm" style={{ whiteSpace: 'nowrap' }}>{b.spent} of {b.limit} {b.currency}</Text>
+                      {b.remaining && b.remaining !== '0.00' && <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>{b.remaining} {b.currency} left</Text>}
                       <Tooltip label={`${b.reserved} ${b.currency} reserved by requests in flight`} events={{ hover: true, focus: true, touch: true }}>
                         {/* Focusable so keyboard users reach the reserved amount too; the bar's label carries it for screen readers. */}
                         <div tabIndex={0} data-testid="harbor-pilot-budget-bar">
@@ -94,7 +100,7 @@ export function HarborPilotLimits({ st }: { st: HarborPilotStatus }) {
                       </Tooltip>
                     </Table.Td>
                     <Table.Td><Badge color={bb.color} variant="light">{bb.label}</Badge></Table.Td>
-                    <Table.Td><Text size="xs" style={{ whiteSpace: 'nowrap' }}>{new Date(b.period_end).toLocaleString()}</Text></Table.Td>
+                    <Table.Td><Text size="xs" style={{ whiteSpace: 'nowrap' }} data-testid="harbor-pilot-budget-reset">{resetLabel(b)}</Text></Table.Td>
                   </Table.Tr>
                 )
               })}
@@ -118,7 +124,7 @@ export function HarborPilotLimits({ st }: { st: HarborPilotStatus }) {
       <Alert color="owlBlue" variant="light" icon={<IconInfoCircle size={16} />} p="xs">
         <Text size="xs">
           Budgets marked hard limit are enforced by Harbor Pilot: it refuses requests over them, and SpaceMan refuses to launch this space&apos;s
-          {' '}{st.harnesses.map(harnessLabel).join(' and ')} runs once one is used up. Warn-only budgets never refuse.
+          {' '}{st.harnesses.map(harnessLabel).join(' and ')} runs once one is used up. Warn-only, disabled, scheduled and ended budgets never refuse.
           {st.fetched_at && <> Read from Harbor Pilot {ago(st.fetched_at)}.</>}
         </Text>
       </Alert>

@@ -105,6 +105,7 @@ func (a *App) harborPilotCmd() *cobra.Command {
 				"changing --base-url or --run-base-url, or turning on --allow-insecure-http, needs --parent-token (and --service-token or " +
 				"--remove-service-token when one is stored) again. Needs account:write.",
 			example: "spaceman harbor-pilot connect --base-url https://harbor-pilot.example.com --parent-token-file ~/.hp/parent --service-token-file ~/.hp/reader"}),
+		a.cmd(opts{use: "version", short: "The connected Harbor Pilot's version (from its GET /api/v1/system, 0.1.4 or later)", op: "get-harbor-pilot-gateway"}),
 		a.cmd(opts{use: "disconnect", short: "Remove the connection (refused while a space uses it)", op: "delete-harbor-pilot-connection",
 			get: "get-harbor-pilot-connection", confirm: "remove the Harbor Pilot connection", done: "Harbor Pilot connection removed."}),
 		a.cmd(opts{use: "space", short: "A space's Harbor Pilot settings", op: "get-space-harbor-pilot", scoped: true}),

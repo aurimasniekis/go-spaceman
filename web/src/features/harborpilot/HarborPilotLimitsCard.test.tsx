@@ -85,6 +85,35 @@ describe('Harbor Pilot Limits card', () => {
     expect(screen.queryAllByTestId('harbor-pilot-budget')).toHaveLength(0)
   })
 
+  it('Harbor Pilot 0.1.4 budgets: one-time without an end, scheduled and ended ones render without a date of year 1', () => {
+    wrap(status({ budgets: [
+      budget({ budget_id: 'bdg_o', name: 'trial', period: 'once', period_end: undefined, state: 'ok', remaining: '7.50' }),
+      budget({ budget_id: 'bdg_s', name: 'later', period: 'once', period_end: undefined, state: 'scheduled' }),
+      budget({ budget_id: 'bdg_e', name: 'ended', period: 'once', period_end: '2026-10-31T00:00:00Z', state: 'expired', spent: '30.00', fraction: 3 }),
+      budget({ budget_id: 'bdg_u', name: 'odd', state: 'unknown' }),
+    ] }))
+    const card = screen.getByTestId('harbor-pilot-limits')
+    expect(screen.getByTestId('harbor-pilot-state')).toHaveTextContent('Within budgets')
+    expect(card).not.toHaveTextContent('New runs are refused')
+    expect(card).toHaveTextContent('Project prj_web · one time')
+    expect(card).toHaveTextContent('7.50 USD left')
+    expect(card).toHaveTextContent('Scheduled')
+    expect(card).toHaveTextContent('Unknown state')
+    const resets = screen.getAllByTestId('harbor-pilot-budget-reset').map((e) => e.textContent)
+    expect(resets[0]).toBe('Never')
+    expect(resets[1]).toBe('Never')
+    expect(resets[2]).toMatch(/^Ended /)
+    expect(card.textContent).not.toMatch(/\b1\/1\/1\b|0001|Invalid Date/)
+  })
+
+  it('a used-up one-time budget without an end says it never resets', () => {
+    wrap(status({ state: 'exceeded', budgets: [budget({ name: 'trial', period: 'once', period_end: undefined, state: 'exceeded', spent: '12.00', fraction: 1.2, blocking: true })] }))
+    const card = screen.getByTestId('harbor-pilot-limits')
+    expect(card).toHaveTextContent('New runs are refused')
+    expect(card).toHaveTextContent('one-time budget that never resets')
+    expect(card.textContent).not.toMatch(/Invalid Date|0001/)
+  })
+
   it('the budget bar is reachable from the keyboard and names the reserved amount', () => {
     wrap(status({ budgets: [budget({ reserved: '0.30' })] }))
     const bar = screen.getByTestId('harbor-pilot-budget-bar')

@@ -1,4 +1,4 @@
-// Package hptest runs a real Harbor Pilot gateway (`harbor-pilot serve --demo`, v0.1.3, docs/contracts/harbor-pilot.md)
+// Package hptest runs a real Harbor Pilot gateway (`harbor-pilot serve --demo`, v0.1.4, docs/contracts/harbor-pilot.md)
 // for opt-in tests. It is enabled with SPACEMAN_HARBOR_PILOT=1. It uses the binary at HARBOR_PILOT_BIN, or else installs
 // the pinned release with `go install`. The gateway listens on loopback with a temporary data directory, and the test's
 // cleanup stops it and deletes that directory.
@@ -40,10 +40,10 @@ import (
 const (
 	EnvOptIn = "SPACEMAN_HARBOR_PILOT"
 	EnvBin   = "HARBOR_PILOT_BIN"
-	Version  = "v0.1.3"
+	Version  = "v0.1.4"
 	Module   = "github.com/aurimasniekis/go-harbor-pilot/cmd/harbor-pilot"
 
-	// The demo seed's public administrator (internal/demo/demo.go at v0.1.3). It only exists in demo.db.
+	// The demo seed's public administrator (internal/demo/demo.go at v0.1.3 and v0.1.4). It only exists in demo.db.
 	demoAdminEmail    = "admin@example.test"
 	demoAdminPassword = "harbor-pilot-demo" //nolint:gosec // Harbor Pilot's documented, public demo credential
 
@@ -322,7 +322,7 @@ func (a *admin) lookup(ctx context.Context, path, name string) (string, error) {
 			return it.ID, nil
 		}
 	}
-	return "", fmt.Errorf("%s: no %q (not the v0.1.3 demo seed?)", path, name)
+	return "", fmt.Errorf("%s: no %q (not the v0.1.3/v0.1.4 demo seed?)", path, name)
 }
 
 // Provision signs in as the demo administrator at base and creates the fixture described in the package comment.
@@ -388,12 +388,22 @@ func Provision(ctx context.Context, base string) (*Gateway, error) {
 // CreateBudget creates an enabled, blocking daily USD budget of limit (a positive decimal) on a project, as the demo
 // administrator, and returns its id.
 func (g *Gateway) CreateBudget(ctx context.Context, name, projectID, limit string) (string, error) {
-	var o named
-	if err := g.admin.do(ctx, http.MethodPost, "/api/v1/budgets", map[string]any{"name": name, "spec": map[string]any{
+	return g.CreateBudgetSpec(ctx, name, projectID, limit, nil)
+}
+
+// CreateBudgetSpec is CreateBudget with spec fields replaced or added by over, e.g. {"enabled": false} or a one-time
+// budget (v0.1.4): {"period": "once", "starts_at": "…", "ends_at": "…"}.
+func (g *Gateway) CreateBudgetSpec(ctx context.Context, name, projectID, limit string, over map[string]any) (string, error) {
+	spec := map[string]any{
 		"scope": "project", "scope_id": projectID, "period": "day", "limit": limit, "currency": "USD",
 		"cost_kinds": []string{"actual_api_charge", "estimated_api_charge"}, "enforcement": "block", "warn_at": 0.8,
 		"timezone": "", "enabled": true,
-	}}, &o, http.StatusCreated); err != nil {
+	}
+	for k, v := range over {
+		spec[k] = v
+	}
+	var o named
+	if err := g.admin.do(ctx, http.MethodPost, "/api/v1/budgets", map[string]any{"name": name, "spec": spec}, &o, http.StatusCreated); err != nil {
 		return "", fmt.Errorf("budget: %w", err)
 	}
 	return o.ID, nil

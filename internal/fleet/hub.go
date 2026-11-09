@@ -36,6 +36,10 @@ var ErrCredentialsUnavailable = errors.New("the run's account is no longer usabl
 // the run is failed instead of starting without what it asked for.
 var ErrNodeTooOld = errors.New("the node's agent is too old for this run")
 
+// errBadPayload is returned (wrapped) when a stored command's payload doesn't decode. Stored payloads never change, so
+// retrying can't help: a run's command fails the run as invalid_command.
+var errBadPayload = errors.New("the stored command payload is invalid")
+
 // ToolDispatcher runs an authenticated agent's tool call (ADR-0012). The catalog call (proto.ToolCatalog) returns
 // the run's tools as []proto.AgentTool.
 type ToolDispatcher func(ctx context.Context, p *RunPrincipal, tool string, args json.RawMessage) (json.RawMessage, error)
@@ -50,6 +54,10 @@ type Hub struct {
 	mu  sync.Mutex
 	// sessions maps node ID to its live connection (a newer connection replaces an older one).
 	sessions map[string]*session
+	// newest maps node ID to the sequence number of the node's newest connection whose fleet.node_connect transaction
+	// ran; seq numbers connections. Only that connection's end records the node's disconnect (onDisconnect).
+	newest map[string]uint64
+	seq    uint64
 	// Secrets attaches run secrets to launches (nil: none).
 	Secrets SecretsResolver
 	// RepoKey returns a space repository's private SSH key ("" when it has none) for the wire message of a clone or
@@ -219,9 +227,40 @@ type session struct {
 	memory chan struct{}
 	// minor is the negotiated protocol minor version (set before the session is registered).
 	minor int
+	// seq numbers the connection among all of the hub's connections (set before fleet.node_connect).
+	seq uint64
+	// counted is true once the connection counts toward the connected-nodes gauge.
+	counted bool
+	// The stale-run sweeper's view of this connection (ADR-0074). connectedAt, liveAtConnect and inHello are set before
+	// the session is registered and never change; helloApplied is guarded by Hub.mu.
+	//
+	// connectedAt is the clock's reading when the session was registered. It is only ever subtracted from another
+	// reading of the same clock (the system clock's readings carry a monotonic part), so a wall-clock step does not move
+	// the sweeper's grace.
+	connectedAt time.Time
+	// liveAtConnect holds the node's live runs (ID to version) as fleet.node_connect read them, in its transaction.
+	liveAtConnect map[string]int64
+	// inHello holds the IDs of the runs the node's hello reported, whether or not their report applied.
+	inHello map[string]bool
+	// helloApplied is true once every hello report applied; it stays false when one failed (the sweeper then leaves the
+	// connection's runs alone).
+	helloApplied bool
 }
 
-func newHub(svc *Service) *Hub { return &Hub{svc: svc, sessions: map[string]*session{}} }
+func newHub(svc *Service) *Hub {
+	return &Hub{svc: svc, sessions: map[string]*session{}, newest: map[string]uint64{}}
+}
+
+// staleView returns the node's live connection and whether all its hello reports applied (nil: no live connection).
+func (h *Hub) staleView(nodeID string) (*session, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.sessions[nodeID]
+	if s == nil {
+		return nil, false
+	}
+	return s, s.helloApplied
+}
 
 // Connected reports whether a node has a live connection.
 func (h *Hub) Connected(nodeID string) bool {
@@ -343,13 +382,40 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	}
 	s.minor = minor
 	caps, _ := json.Marshal(hello.Capabilities)
+	s.inHello = make(map[string]bool, len(hello.Runs))
+	for _, rep := range hello.Runs {
+		s.inHello[rep.RunID] = true
+	}
+	h.mu.Lock()
+	h.seq++
+	s.seq = h.seq
+	h.mu.Unlock()
+	// From here on this connection's end records the node's disconnect, unless a newer connection has begun by then.
+	defer h.onDisconnect(ctx, s)
 	if err := svc.s.W().TxNamed(ctx, "fleet.node_connect", func(tx *store.Tx) error {
-		return tx.Q.RecordNodeConnect(ctx, db.RecordNodeConnectParams{AgentVersion: truncate(hello.AgentVersion, 64), ProtocolMinor: int64(minor),
-			CapabilitiesJson: string(caps), Capacity: int64(hello.Capacity), Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, LastIp: ip, ID: s.nodeID})
+		// Write transactions are serialized, so this and onDisconnect's check agree on which connection is the newest.
+		h.mu.Lock()
+		h.newest[s.nodeID] = s.seq
+		h.mu.Unlock()
+		if err := tx.Q.RecordNodeConnect(ctx, db.RecordNodeConnectParams{AgentVersion: truncate(hello.AgentVersion, 64), ProtocolMinor: int64(minor),
+			CapabilitiesJson: string(caps), Capacity: int64(hello.Capacity), Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, LastIp: ip, ID: s.nodeID}); err != nil {
+			return err
+		}
+		// The stale-run sweeper only ever considers the runs that were live when the node connected (ADR-0074).
+		live, err := tx.Q.ListLiveRunVersionsByNode(ctx, s.nodeID)
+		if err != nil {
+			return err
+		}
+		s.liveAtConnect = make(map[string]int64, len(live))
+		for _, r := range live {
+			s.liveAtConnect[r.ID] = r.Version
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
 	s.minor = minor
+	s.connectedAt = svc.opts.Clock.Now()
 	h.mu.Lock()
 	old := h.sessions[s.nodeID]
 	h.sessions[s.nodeID] = s
@@ -360,7 +426,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	}
 	m.NodeConnect(metrics.NodeAccepted)
 	m.NodeConnected(1)
-	defer h.onDisconnect(ctx, s)
+	s.counted = true
 
 	go h.writer(ctx, s)
 	if err := s.send(proto.TypeWelcome, svc.now(), proto.Welcome{NodeID: s.nodeID, Minor: minor, ServerTime: svc.now(),
@@ -368,11 +434,16 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		return err
 	}
 	// Reconcile before anything new is sent: the node's observations update central first (SM-NODE-009).
+	applied := true
 	for _, rep := range hello.Runs {
 		if _, err := svc.applyReport(ctx, s.nodeID, rep); err != nil {
+			applied = false
 			s.log.Warn("apply hello report", obs.Err(err))
 		}
 	}
+	h.mu.Lock()
+	s.helloApplied = applied // false: the stale-run sweeper leaves this connection's runs alone (ADR-0074)
+	h.mu.Unlock()
 	// The leases the node claims are checked at once: one it no longer holds (for example after a relocation) is
 	// revoked before any command is delivered.
 	if err := h.syncLeases(ctx, s, hello.Leases); err != nil {
@@ -381,6 +452,8 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	if err := h.sendReconcile(ctx, s); err != nil {
 		return err
 	}
+	// The stale-run sweep's due time depends on which nodes are connected and since when (ADR-0074).
+	svc.wakeDeadlines()
 	// The node learns which of its terminals are taken over before any command (it refuses run.input for them).
 	if s.minor >= proto.MinorTakeover {
 		if err := h.sendTakeovers(ctx, s); err != nil {
@@ -763,46 +836,73 @@ func (h *Hub) credentialLoop(ctx context.Context, s *session) {
 	}
 }
 
+// dispatchRetryFirst and dispatchRetryMax bound the backoff after a pass that left a command undelivered for a
+// transient reason (a failed read, secrets that could not be resolved): the pass is repeated on its own instead of
+// waiting for the next kick, which may never come.
+var dispatchRetryFirst, dispatchRetryMax = 250 * time.Millisecond, 30 * time.Second
+
 // dispatchLoop delivers undelivered commands whenever kicked. Delivery is at-least-once: a command stays "sent"
 // until acknowledged and is re-sent on the next connection; the node acknowledges repeats as duplicates.
 func (h *Hub) dispatchLoop(ctx context.Context, s *session) {
+	var again <-chan time.Time
+	backoff := time.Duration(0)
 	for {
 		select {
 		case <-s.done:
 			return
 		case <-s.kick:
+		case <-again:
 		}
-		if err := h.syncLeases(ctx, s, nil); err != nil {
-			s.log.Warn("lease sync", obs.Err(err))
+		retry, ok := h.dispatch(ctx, s)
+		if !ok {
+			return
 		}
-		cmds, err := h.svc.s.R().ListUndeliveredCommands(ctx, s.nodeID)
-		if err != nil {
-			s.log.Warn("list commands", obs.Err(err))
-			continue
-		}
-		for _, c := range cmds {
-			msg, err := h.materialize(ctx, c, s.nodeID, s.minor)
-			if endReason := undispatchable(err); endReason != "" && c.RunID.Valid {
-				if ferr := h.svc.failUndispatched(ctx, c.RunID.String, endReason, err.Error()); ferr != nil {
-					s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
-				}
-				continue
-			}
-			if errors.Is(err, errMintPending) {
-				continue // the mint kicks this loop when it is done
-			}
-			if err != nil {
-				s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
-				continue
-			}
-			if err := s.send(proto.TypeCommand, h.svc.now(), msg); err != nil {
-				return
-			}
-			_ = h.svc.s.W().TxNamed(ctx, "fleet.command_sent", func(tx *store.Tx) error {
-				return tx.Q.MarkCommandSent(ctx, db.MarkCommandSentParams{SentAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: c.ID})
-			})
+		again = nil
+		if retry {
+			backoff = min(max(2*backoff, dispatchRetryFirst), dispatchRetryMax)
+			again = time.After(backoff)
+		} else {
+			backoff = 0
 		}
 	}
+}
+
+// dispatch is one pass of dispatchLoop. retry reports a command left undelivered for a transient reason; ok is false
+// once the connection is gone.
+func (h *Hub) dispatch(ctx context.Context, s *session) (retry, ok bool) {
+	if err := h.syncLeases(ctx, s, nil); err != nil {
+		s.log.Warn("lease sync", obs.Err(err))
+	}
+	cmds, err := h.svc.s.R().ListUndeliveredCommands(ctx, s.nodeID)
+	if err != nil {
+		s.log.Warn("list commands", obs.Err(err))
+		return true, true
+	}
+	for _, c := range cmds {
+		msg, err := h.materialize(ctx, c, s.nodeID, s.minor)
+		if endReason := undispatchable(err); endReason != "" && c.RunID.Valid {
+			if ferr := h.svc.failUndispatched(ctx, c.RunID.String, endReason, err.Error()); ferr != nil {
+				s.log.Warn("fail undispatched run", slog.String(obs.FieldCommandID, c.ID), obs.Err(ferr))
+				retry = true
+			}
+			continue
+		}
+		if errors.Is(err, errMintPending) {
+			continue // the mint kicks this loop when it is done
+		}
+		if err != nil {
+			s.log.Warn("materialize command", slog.String(obs.FieldCommandID, c.ID), obs.Err(err))
+			retry = true
+			continue
+		}
+		if err := s.send(proto.TypeCommand, h.svc.now(), msg); err != nil {
+			return false, false
+		}
+		_ = h.svc.s.W().TxNamed(ctx, "fleet.command_sent", func(tx *store.Tx) error {
+			return tx.Q.MarkCommandSent(ctx, db.MarkCommandSentParams{SentAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: c.ID})
+		})
+	}
+	return retry, true
 }
 
 // undispatchable returns the end reason for a materialize error that fails the run instead of retrying it, or "".
@@ -816,6 +916,8 @@ func undispatchable(err error) string {
 		return "gateway_unavailable"
 	case errors.Is(err, ErrAgentTooOld):
 		return "agent_too_old"
+	case errors.Is(err, errBadPayload):
+		return "invalid_command"
 	}
 	return ""
 }
@@ -829,7 +931,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	if c.Kind == proto.CmdReposSync && keys {
 		var p proto.ReposSyncPayload
 		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-			return msg, err
+			return msg, fmt.Errorf("%w: %w", errBadPayload, err)
 		}
 		for i := range p.Repositories {
 			k, err := h.RepoKey(ctx, c.SpaceID, p.Repositories[i].ID)
@@ -844,7 +946,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	if c.Kind == proto.CmdRelocatePrepare && keys {
 		var p proto.RelocatePreparePayload
 		if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-			return msg, err
+			return msg, fmt.Errorf("%w: %w", errBadPayload, err)
 		}
 		keyed := false
 		for i := range p.Repos {
@@ -867,7 +969,7 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	}
 	var p proto.LaunchPayload
 	if err := json.Unmarshal([]byte(c.PayloadJson), &p); err != nil {
-		return msg, err
+		return msg, fmt.Errorf("%w: %w", errBadPayload, err)
 	}
 	// An older agent would ignore the settings and run without the rules they add, deny rules included.
 	if len(p.ClaudeSettings) > 0 && minor < proto.MinorClaudeSettings {
@@ -924,14 +1026,27 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 	return msg, nil
 }
 
+// onDisconnect unregisters a connection that ended and records the node's disconnect. A connection that a newer one
+// replaced (or that ended while a newer one was starting) records nothing: the node is connected again, and marking its
+// runs unknown or recording a disconnect would overwrite what the newer connection established. The check runs in the
+// write transaction, which fleet.node_connect also claims the node in, so a disconnect and a reconnect cannot interleave.
 func (h *Hub) onDisconnect(ctx context.Context, s *session) {
 	h.mu.Lock()
 	if h.sessions[s.nodeID] == s {
 		delete(h.sessions, s.nodeID)
 	}
 	h.mu.Unlock()
-	h.svc.opts.Metrics.NodeConnected(-1)
+	if s.counted {
+		h.svc.opts.Metrics.NodeConnected(-1)
+	}
+	defer h.svc.wakeDeadlines()
 	_ = h.svc.s.W().TxNamed(ctx, "fleet.node_disconnect", func(tx *store.Tx) error {
+		h.mu.Lock()
+		newest := h.newest[s.nodeID] == s.seq
+		h.mu.Unlock()
+		if !newest {
+			return nil // replaced: the newer connection owns the node's state
+		}
 		if err := tx.Q.RecordNodeDisconnect(ctx, db.RecordNodeDisconnectParams{LastDisconnectAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
 			UpdatedAt: tx.NowMicros(), ID: s.nodeID}); err != nil {
 			return err

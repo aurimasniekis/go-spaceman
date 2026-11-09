@@ -341,6 +341,7 @@ type ExecutionLease struct {
 	GrantedAt  int64
 	RenewedAt  int64
 	ExpiresAt  int64
+	GraceUs    int64
 }
 
 type GatewayRevocation struct {

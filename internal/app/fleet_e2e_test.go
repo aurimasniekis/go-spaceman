@@ -47,6 +47,8 @@ type fleetEnv struct {
 	done     chan struct{}
 	// bridge is the agent's MCP bridge socket (short path: unix socket limit).
 	bridge string
+	// staleGrace overrides the stale-run sweeper's grace on the next startCentral (0: the default, ADR-0074).
+	staleGrace time.Duration
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
@@ -81,6 +83,7 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	cfg.PublicURL = "http://" + e.srv.Listener.Addr().String()
 	e.startCentral()
 	e.srv.Start()
+	onTimeout(t, e.dump)
 	t.Cleanup(func() {
 		e.stopAgent()
 		e.srv.Close()
@@ -107,7 +110,7 @@ func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
 	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
 	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4})
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace})
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -186,16 +189,11 @@ func (e *fleetEnv) stopAgent() {
 }
 
 // eventually waits for cond. The deadline only bounds how long a failing test waits: most tests here run in parallel
-// (t.Parallel), so under the race detector on a small runner a condition can take several seconds to hold.
+// (t.Parallel), so under the race detector on a small runner a condition can take several seconds to hold. On a
+// timeout it prints the test's state dumps (onTimeout; every fleetEnv registers one).
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	eventuallyFor(t, what, 30*time.Second, cond)
 }
 
 func (e *fleetEnv) run1(id string) *fleet.Run {
