@@ -6,8 +6,174 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+**Upgrade notes:**
+- **Take a backup first.** Migration 0047 (a run's terminal size) is forward-only.
+- **Node protocol 1.10.** Upgrade central first, then the node agents. Older agents keep working, but their runs
+  can't be resized: the web disables the size menu and the API answers 409.
+
+### Added
+
+- `make check-fast`, the inner-loop gate (ADR-0069): vet, the custom analyzers, golangci-lint, traceability, the
+  analyzer tests and every Go test without the race detector, from go test's cache. With nothing changed it takes
+  seconds. `sqlc-check` and `api-check` run only when their inputs changed since the merge base
+  (`scripts/changed.sh`). AGENTS.md has a new "Gates" section on which check to run when.
+- **`github-pull-request` version 2** (ADR-0072): `exclude_author` ignores events the space's own agent account caused,
+  and `ignore_updates=true` ignores pushes (`synchronize`) and edits (`edited`), which were most of the pull request
+  items that woke control. `repository` is optional and `owner` is new, as in the ADR-0061 templates, and the pull
+  request title moves from the item title to the body. The site guide (Events) has the steps for switching a
+  subscription, and a custom template that does the same on v0.1.0.
+- Built-in event templates can gain new versions on existing installations: central publishes a built-in's missing
+  versions at start, never over an administrator's own version of it. Subscriptions that follow the latest version
+  move to the new one as on Publish; pinned subscriptions and version 1 are untouched.
+- Harbor Pilot 0.1.4 support (recommended; 0.1.3 stays the minimum). The connection page shows the gateway's version
+  (`get-harbor-pilot-gateway`, `GET /api/v1/harbor-pilot/gateway`, `spaceman harbor-pilot version`), read from Harbor
+  Pilot's `GET /api/v1/system` with the service-principal token; an older gateway shows as "older than 0.1.4". On
+  0.1.4 or later, budget status is read for the space's project and client binding only
+  (`budgets/status?project_id=…&binding_id=…`), and Harbor Pilot resolves the project's workspace, so SpaceMan no
+  longer reads every budget nor looks projects up. Older gateways keep the previous path, and so does a filtered read
+  that answers 404 (the project or binding is gone in Harbor Pilot) or that holds budgets a 0.1.4 filter never returns
+  (a gateway downgraded while its version was cached): such an answer drops the cached version. A launch's budget
+  check waits at most 15 s for Harbor Pilot in all, not 15 s per read.
+- The Limits card shows one-time budgets (Harbor Pilot 0.1.4 `period: once`): "one time", **Never** or when the window
+  ends, **Scheduled** and **Ended** badges, and what is left of each budget.
+- Web: the size of a run's terminal is configurable (ADR-0075, SM-UI-007).
+  - A size menu on the live terminal offers Fit to window, 80×24, 120×40, 160×50, 200×60, a custom size (40–400
+    columns, 10–200 rows) and Node default. The node resizes the program's terminal, so the agent redraws for it.
+  - The size belongs to the run: every viewer sees it, scaled to their window. Resizing needs `terminal:takeover`;
+    while the terminal is taken over, only the holder can resize it.
+  - Each change is audited (`run.terminal_resized`).
+  - The browser remembers your choice but never applies it on its own.
+  - Recordings note every size change, so replays redraw at the right size.
+  - API: `PUT` and `DELETE /api/v1/spaces/{space}/runs/{run}/terminal-size`; CLI: `spaceman run terminal-size set|clear`.
+- Space limits `terminal_cols` and `terminal_rows` set the terminal size new runs start at (0, the default, keeps the
+  node's `runner.terminal_size`). Changing them needs `terminal:takeover`, like resizing a running run.
+
+### Changed
+
+- The wall-clock comparison of failed logins for known and unknown accounts (Hallpass HP-AUTH-005) moved out of
+  `make test`, `race`, `coverage` and `check` into `make test-login-timing`, which CI runs as its own job and the
+  release workflow as a gate before building binaries and images (ADR-0071).
+  Under load the Argon2id check's own run time varied by more than the 25% band, so the comparison failed on
+  unchanged code. The deterministic check (one verification against a same-parameter dummy hash) still runs in every
+  suite.
+- Faster `make check` (ADR-0069):
+  - the coverage floor tests its packages in one `go test -cover` run instead of one run per package (about 150 s
+    down to under 30 s on a 32-core machine); a failing test, a package below the floor and a package with no
+    coverage line still fail. `COVERAGE_PARALLEL` sets how many packages test at once (default: a quarter of the
+    CPUs, 1 to 8; CI uses 1, as before, so the write-transaction guard keeps its calibration);
+  - `make check` runs its steps fail-fast: vet, custom vet, lint, traceability, analyzer tests, the coverage floor,
+    then the race tests.
+- CI no longer downloads sqlc or golangci-lint from GitHub release assets on a cache hit (ADR-0069). `bin/sqlc` is
+  cached under the hash of `scripts/install-sqlc.sh` (pinned version and checksums), and its download retries
+  transient errors. golangci-lint is built with `go install` through the Go module proxy and cached per version and Go
+  toolchain.
+- Local `make race` (and so `make check`) uses go test's cache and reruns only what changed (ADR-0070). CI and the
+  release workflow run `make race RACE_COUNT=1`, so every test still runs there.
+- `make race` runs `internal/app`, its critical path, as its own `go test -race` invocation alongside the other
+  packages, with its own `-parallel` cap `RACE_APP_PARALLEL` (default `min(16, nproc/2)`, at least 4; CI keeps 4)
+  (ADR-0069, `scripts/race.sh`). On 16 or more CPUs its serial tests run in a second process at the same time
+  (`RACE_APP_SPLIT`).
+- The Makefile's browser targets take `SM_CHROMIUM_ARGS` from the environment (nothing when it is unset, as in CI), and
+  the site targets add `--single-process` to a non-empty value.
+- `make lint` waits for another golangci-lint run on the machine (`--allow-serial-runners`) instead of failing with
+  "parallel golangci-lint is running", so `make check` runs started together in different worktrees both get through.
+- The heavy gates (`race`, `coverage`, `site-a11y`, `e2e`, `e2e-browsers`, `screenshots`) take a slot of a node-wide
+  `flock` semaphore first, so several runs on one machine take turns instead of contending (ADR-0069,
+  `scripts/gate-slot.sh`). `SM_GATE_SLOTS` (default 2 on 16 or more CPUs, otherwise 1; `0` disables it, and it is off
+  when `CI=true`) and `SM_GATE_LOCK_DIR` configure it; `make check` holds one slot for coverage and race together.
+- The site's axe audit runs in parallel shards (`SM_A11Y_SHARDS`, by default a quarter of the CPUs, at most 8) and
+  waits for VitePress to be ready instead of for network idle: about 1.5 minutes instead of nearly 10 on a 32-core
+  machine. A local `make site-check` skips the audit when nothing the site is built from changed
+  (`scripts/site-affected.sh`, the rule CI already used; `SM_SITE_A11Y=1` forces it).
+
 ### Fixed
 
+- A failed login for an unknown account now does the same two database reads as one for a known account (the
+  credential lookup runs with an ID no user has), so the work before the password check no longer depends on whether
+  the account exists (Hallpass HP-AUTH-005, ADR-0071). `TestLoginReadsSameForUnknownAccounts` checks that both
+  paths run the same reads, using the new test-only `storetest.WithReadObserver`.
+- The test guard for short write transactions (Hallpass HP-DB-004) measures how long a transaction holds the write
+  lock, no longer the time it waited for the writer or retried a busy database (ADR-0070). Under load, short
+  transactions that queued behind another writer failed tests on unchanged code. It takes the longest hold of a
+  transaction's attempts, so an attempt that held the lock for long before a busy rollback still counts, and it now
+  checks failed transactions too (not those whose context ended). The guard's limits are unchanged;
+  `spaceman_store_tx_duration_seconds` still reports the end-to-end duration.
+- **A launch whose delivery failed once is delivered again on its own.** When central could not prepare a command for
+  a node for a transient reason (a failed read, the run's secrets not resolved), the command waited until something else
+  woke the node's dispatch, which might never happen, and the run stayed pending. The dispatch now retries with a
+  backoff (250 ms up to 30 s). A run's command whose stored payload doesn't decode, which no retry can fix, fails the
+  run as `invalid_command` instead.
+- **A response held for an agent instance goes to the instance's next run when it launches.** Before, it was pinned
+  only when the deadline loop happened to run after the launch (the run reporting idle, another response, the hold
+  ending up to an hour later).
+- **Human-action deadlines retry after a failed round, with a backoff.** A round in which a job failed (routing a
+  stranded response, an expiry) is tried again after a second, backing off to a minute, instead of at the next
+  deadline, which could be an hour away. A job that kept failing while its deadline was due made the loop run rounds
+  back to back; it now waits for the backoff (other deadlines wait for it too, or for a change that wakes the loop).
+- **Role memory's git housekeeping finishes inside the call.** An automatic `git gc` or `git maintenance` started by a
+  memory fetch or commit ran detached and kept writing into the repository after the call returned.
+- Tests: `eventually` in the end-to-end tests prints the runs, leases, node commands, human notifications and
+  terminals when a wait times out.
+- Attachments over 512 KiB (screenshots, for example) now reach agents whole (ADR-0073):
+  - The new `spaceman_attachment_save` tool, served by the node's MCP bridge, saves an attachment of any size as a
+    file in the run's own folder, with its size and SHA-256 checked. The agent then opens it with its own file tools:
+    Claude Code's Read tool shows images, with no permission dialog.
+  - The file name is sanitized, the file is `0600`, one save is at most 50 MiB, and the folder is removed when the
+    run ends.
+  - `spaceman_attachment_get` no longer cuts a file silently. Every result says `truncated`, `offset`,
+    `returned_bytes` and `next_offset`. A large binary file is no longer returned as partial base64, and a large text
+    file comes in chunks. New `offset`/`length` arguments read a range.
+  - The node never resolves a folder the run can write by path on the way to the attachments folder, so a run that
+    swaps a folder for a link can't redirect a save or a cleanup (security review M1). Saved files of runs found lost
+    after a node restart are removed too, a save that outlives its run leaves no file, and a ranged read of text
+    always returns bytes before the end of the file (`next_offset` is present whenever `truncated` is).
+  - Takes a node agent on this release for the save tool. Central and agent can be upgraded in any order; there is no
+    protocol change.
+- Harbor Pilot 0.1.4 budget status: a one-time budget without an end (`period_end: null`) no longer shows a reset
+  date in year 1 on the Limits card or in a launch refusal; a used-up one-time budget's refusal says it never resets
+  (or when its window ends). Scheduled, expired, disabled and unknown budget states never refuse a launch (they
+  didn't before either) and no longer show as raw states. The project usage window ignores budgets that aren't
+  counting yet or any more.
+- The space concurrency limit and the node capacity count only live runs, the same runs `spaceman_runs_list` shows.
+  Runs that exited, failed or were lost (for example after a node agent restart) no longer hold their slot until an
+  operator stops them. **On upgrade**, runs that already ended but still had `desired = running` stop counting at
+  once. The refusal names the counted runs (ID, kind, role, state) and says which runs don't count: control, KB
+  support and dreamer runs (ADR-0074).
+- A stale-run sweeper moves runs that central still counted as live but whose process is gone to `lost`, freeing
+  their slots. These are runs that were live when a node reconnected and that its hello did not report
+  (`stale_not_on_node`, two minutes after the connection, measured on a monotonic clock), and runs of a node that stayed
+  disconnected past its lease, the larger of the old and current disconnect grace, and a 15-minute margin
+  (`stale_lease_lost`). It never sweeps a pending launch, a run with an unacknowledged launch command, a run no node has
+  reported, or any run of a connection whose hello reports did not all apply, and it re-checks its signal in each run's
+  end transaction. A swept run's undelivered commands are cancelled and its desired state becomes `stopped`. It
+  records an audit event `run.reconciled_stale` and the metric `spaceman_runs_reconciled_stale_total{reason}`
+  (ADR-0074). Migration 0046 stores the disconnect grace on each lease.
+  - **A false positive is killed.** The sweeper sends no stop itself, but a swept run's later "running" report is
+    fenced with a `stop kill`. The lease rule assumes synchronised clocks: run NTP on central and the nodes.
+  - **On the first deploy**, the sweeper ends every historic run left `running` or `unknown` that meets the rules, at
+    once: each publishes `run_ended`, has its credentials revoked and notifies the space's control, which may re-queue
+    or relaunch the run's old task. Review the `run.reconciled_stale` audit events and close tasks that are no longer
+    wanted. A swept control run is not restarted automatically.
+- A run that ended on its own (it keeps `desired = running`) no longer blocks archiving its space or relocating it
+  without `stop_runs`, and isn't counted among the space's "active runs" (ADR-0074).
+- When a node reconnected while its old connection was still open, the old connection's end recorded a disconnect and
+  marked the node's runs `unknown` although the node was connected again. A replaced connection's end now records
+  nothing.
+- The stale-run sweeper doesn't use a revoked lease for `stale_lease_lost`, since the node may hold it up to
+  `nodes.lease_ttl` longer than central records. `nodes.lease_ttl` must now be at most 10 minutes (ADR-0074).
+- Web: switching between run terminals no longer shows lines of a terminal viewed earlier inside the new one, and no
+  longer grows the page's memory until the tab freezes on "Connecting…" and crashes. ghostty-web 0.4.0 ran every
+  terminal in one shared WebAssembly memory that a freed terminal leaves uncleared; each terminal now runs in an
+  instance of its own, released with it. The first terminal of a page also waits briefly for its font.
+- Terminal stream: a viewer that fell behind once no longer re-reads the whole recording from storage for every later
+  record; it catches up once and then streams live again. This also fixes a data race on the viewer's lagged flag.
+- Web UI: no unwanted scrollbars. Dialogs scroll vertically only and wrap long IDs, keys and URLs, so they no longer
+  show a horizontal scrollbar (and with it a vertical one) for a few stray pixels. The space sections row no longer
+  shows a vertical scrollbar and fits 1280 px screens. On phones, the inbox, an inbox item and the human actions list
+  no longer scroll sideways, and message subjects and human action titles keep a readable width. Wide tables in the
+  role configuration and type permissions dialogs scroll in their own box. A new end-to-end check
+  (`e2e/ui-overflow.spec.ts`) opens every page, modal and drawer at 390, 1280 and 1920 px in both themes with real
+  scrollbars.
 - Web: opening a page (Spaces, Terminals, Needs you, …) in a tab that was open across an upgrade, or after a dropped
   connection, no longer ends in "Something went wrong!" until a manual refresh. A part of the app that fails to
   download (`import()` or Vite's stylesheet preload) reloads the page once to pick up the current build, guarded
@@ -16,6 +182,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   shown as the error it is, not reloaded. Other route errors show their message with Reload and Try again. A missing `/assets/*` file is a 404 with
   `Cache-Control: no-store` (it carried the one-year `immutable` header before), and an `/assets/` directory is no
   longer listed.
+
+### Notes
+
+- After upgrading Harbor Pilot to 0.1.4, budgets that already warned or were used up in the current period send their
+  `budget.threshold.*` event once more (Harbor Pilot's upgrade note), and raising a limit re-arms them. Each is a new
+  event, so the `harbor-pilot-budget` template makes one more inbox item, in the same correlation as the first; a
+  redelivered event is still a duplicate. Nothing else repeats.
 
 ## [0.1.0] - 2026-11-08
 

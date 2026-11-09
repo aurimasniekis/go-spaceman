@@ -1,7 +1,40 @@
 import type { Terminal } from 'ghostty-web'
-import { fitFont, scrollWithWheelAndTouch } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, scrollWithWheelAndTouch } from './ghostty'
 
-vi.mock('ghostty-web', () => ({ init: vi.fn(), Terminal: class {} }))
+const ghostty = vi.hoisted(() => {
+  const created: { options: { ghostty?: unknown }; disposed: boolean }[] = []
+  let n = 0
+  return {
+    created,
+    load: vi.fn(async () => ({ instance: ++n })),
+    Terminal: class {
+      disposed = false
+      constructor(public options: { ghostty?: unknown }) {
+        created.push(this)
+      }
+      open() {}
+      dispose() {
+        this.disposed = true
+      }
+    },
+  }
+})
+vi.mock('ghostty-web', () => ({ Ghostty: { load: ghostty.load }, Terminal: ghostty.Terminal }))
+
+describe('createTerminal', () => {
+  it('runs every terminal in a WebAssembly instance of its own, released on dispose', async () => {
+    const a = await createTerminal(document.createElement('div'))
+    const b = await createTerminal(document.createElement('div'))
+    expect(ghostty.load).toHaveBeenCalledTimes(2)
+    const [ta, tb] = ghostty.created
+    expect(ta.options.ghostty).toEqual({ instance: 1 })
+    expect(tb.options.ghostty).toEqual({ instance: 2 })
+    disposeTerminal(a)
+    expect(ta.disposed).toBe(true)
+    expect(tb.disposed).toBe(false)
+    disposeTerminal(b)
+  })
+})
 
 /** A terminal whose canvas is `cols` whole-pixel cells wide, resized as soon as the font size is set (ghostty-web 0.4.0). */
 function fakeTerm(fontSize: number, cols = 160) {

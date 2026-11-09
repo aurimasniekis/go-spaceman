@@ -539,7 +539,7 @@ func (q *Queries) ListRelocationsBySpace(ctx context.Context, arg ListRelocation
 }
 
 const listRunsLostForRelocation = `-- name: ListRunsLostForRelocation :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows FROM runs
 WHERE space_id = ?1 AND node_id = ?2 AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
 ORDER BY id
 `
@@ -591,6 +591,8 @@ func (q *Queries) ListRunsLostForRelocation(ctx context.Context, arg ListRunsLos
 			&i.ObservedAt,
 			&i.UpdatedAt,
 			&i.RecordingDeletedAt,
+			&i.TerminalCols,
+			&i.TerminalRows,
 		); err != nil {
 			return nil, err
 		}

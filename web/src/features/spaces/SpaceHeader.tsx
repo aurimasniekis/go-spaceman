@@ -131,12 +131,13 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
 /** A section's title row inside the space layout: the section name, a one-line purpose and its actions. */
 export function SectionHeader({ title, description, actions }: { title: ReactNode; description?: ReactNode; actions?: ReactNode }) {
   return (
-    <Group justify="space-between" align="flex-start" wrap="nowrap" mb="sm" gap="md">
-      <Stack gap={0} style={{ minWidth: 0 }}>
+    // On a phone the actions move under the title (and wrap) instead of pushing the page sideways.
+    <Group justify="space-between" align="flex-start" mb="sm" gap="md">
+      <Stack gap={0} style={{ flex: '1 1 240px', minWidth: 0 }}>
         <Title order={4}>{title}</Title>
         {description && <Text size="sm" c="dimmed" lineClamp={1}>{description}</Text>}
       </Stack>
-      {actions && <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>{actions}</Group>}
+      {actions && <Group gap="xs">{actions}</Group>}
     </Group>
   )
 }

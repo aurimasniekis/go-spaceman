@@ -2062,7 +2062,11 @@
     40-400×10-200) into its core's `config.toml`; programs started afterwards use it, with no core restart. Running
     programs keep their size.
   - **Web terminal.** A terminal is reset (RIS, `ESC c`) before it is disposed; `Terminal.reset()` does not avoid the
-    hang. The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
+    hang. *Amended 2026-11-09:* the reset only hid part of the cause and is gone. ghostty-web's shared instance does not
+    clear a freed terminal's memory, so the next terminal started out with its cells (another run's lines showed
+    through, reset or not), and memory of a terminal with many styles was never reused (the page grew until the tab
+    crashed). Each terminal now runs in a WebAssembly instance of its own, released with it
+    (`web/src/features/terminal/ghostty.ts`, `wasm.test.ts`, `e2e/terminal-switch.spec.ts`). The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
     the box before it reaches ghostty-web's scrollback.
   - **Connections.** One change-feed stream serves all tabs of a browser: the tab holding the Web Lock
     `spaceman-watch` opens it and relays it over a BroadcastChannel; another tab takes over when it closes. Without
@@ -2072,7 +2076,7 @@
   - Control and workers get notices after every turn, as SM-COMM-003 intended. The fake runner always behaved this
     way, which is why the tests did not catch it; `TestRealSendIdleOrDone` now runs against real herdr-core.
   - `make e2e` reopens a full-screen run terminal (the stub harness's `/fullscreen` prints the start-up with neutral
-    text); without the reset the journey hangs.
+    text); without the reset the journey hung (with an instance per terminal, since 2026-11-09, it needs none).
   - Existing runs keep 200×120 until relaunched; an agent restart applies the new size to later launches.
   - ghostty-web's `onRender` is declared but never fired in 0.4.0; the view follows `onCursorMove` and resizes.
 
@@ -2316,7 +2320,8 @@
   decisions (listed at the end; the points they settle are marked **(Qn)**). Proposed 2026-11-06. Accepted with:
   - **Project choice: option b** (2026-11-07). Setting or changing a space's `project_id` needs `account:write`, like
     binding an account to a space (decision 2, "Open points").
-  - **Minimum Harbor Pilot version 0.1.3** (decision 8), checked by the mint probe.
+  - **Minimum Harbor Pilot version 0.1.3** (decision 8), checked by the mint probe. **0.1.4 recommended** (2026-11-08,
+    below).
   - **Q3 as built:** a per-space `on_budget_status_unavailable`, `proceed` by default or `refuse`. Since HP-T8 it also
     covers SpaceMan's own failures while reading status (a token that can't be opened, a database error), with a fixed
     reason.
@@ -2339,6 +2344,14 @@
     by trusted ref, budget refusals as `access.request.blocked`, `system`-role messages (K-13 resolved), the minting
     credential as `created_by`, and an optional budget check on mint. **The minimum Harbor Pilot version is 0.1.3**
     (decision 8).
+  - **Updated 2026-11-08 for Harbor Pilot 0.1.4**, which answered SpaceMan's two later requests (PLAN §4 D-20's
+    candidates, filed through a cross-space request): a version endpoint (`GET /api/v1/system`) and budget status
+    filtered by project (`?project_id=…&binding_id=…`). Both are **closed**. SpaceMan reads the version with the
+    service-principal token and, when it answers, reads only the covering budgets; a 404 means older than 0.1.4 and
+    keeps the 0.1.3 path (every budget, workspace looked up). The minimum stays 0.1.3 (decision 8 is unchanged, its
+    probe still checks it); 0.1.4 is recommended. 0.1.4's one-time budgets (`period_end: null`, states `scheduled` and
+    `expired`) and `remaining_e10` are handled; only `exceeded` with `block` refuses, so no new state can refuse a
+    launch (decision 4 unchanged). Not a security-relevant change: no requirement, guarantee or default is relaxed.
 - **Context:**
   - **What operators want.** Run model traffic should go through Harbor Pilot (HP), a self-hosted LLM gateway. HP gives
     failover, hard per-project spend limits and usage for every harness.
@@ -2499,6 +2512,8 @@
      gateway before 0.1.3 answers 400 `invalid body: json: unknown field "check_budget"`, and the connection is
      refused as "older than Harbor Pilot 0.1.3". An older gateway is never used without `check_budget` or per-run
      usage. The probe can't tell a later gateway that dropped the field from an old one; HP's D-043 keeps it.
+     **Since 0.1.4** HP reports its version (`GET /api/v1/system`, `config.read`); SpaceMan reads it for display and to
+     choose the budget-status path, never to replace the probe (it needs a service-principal token, the probe doesn't).
 - **Consequences (security-relevant):**
   - **Agents can read their own child token.** A leaked one is worth one binding's routing and budget for at most the
     TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
@@ -2756,6 +2771,10 @@
     definitions lose the fields when read through its data source. That is a provider follow-up.
   - The existing `github-issue` and `github-pull-request` templates still put the issue or pull request title into
     the item title. Moving it to the body needs a new published version of each.
+  - **Follow-up (2026-11-08, ADR-0072):** `github-pull-request` version 2 adds `exclude_author`, `ignore_updates`
+    and the optional scope filters and moves the title to the body; built-ins can now gain versions on existing
+    installations. The provider's `TemplateFilter` gained `if_set` and `unless_set` in terraform-provider-spaceman
+    v0.1.0, and its acceptance test round-trips them (checked against version 2 as well). `github-issue` is unchanged.
   - The fixtures are derived from GitHub's documented payload shapes and pulse-github's normalisation code, not
     captured from a live pulse-github (SM-EVT-002 notes).
 
@@ -2810,6 +2829,13 @@
     (`site/development/testing.md`).
   - Not security-relevant: no product behaviour, default or requirement changes, and the 100 ms rule is still
     enforced by `make check`. Only how much variance CI tolerates on shared hardware changes.
+- **Update, 2026-11-08 (gate wait time, T9):** the Q2 b path rule moved from `ci.yaml` into
+  `scripts/site-affected.sh`, its one home; the list is unchanged except that the script itself is added. CI calls it
+  with `HEAD^1` on a pull request. A local `make site-check` calls it against the merge base with `main` (committed,
+  uncommitted and untracked files) and skips the audit when nothing site-affecting changed; it runs the audit when it
+  can't tell, and `SM_SITE_A11Y=1` forces it (the release workflow sets it, so the release still always audits). The
+  audit itself is sharded over `SM_A11Y_SHARDS` parallel tests and workers (two in CI) and waits for VitePress to
+  hydrate instead of for network idle; it audits the same pages, schemes and rules.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
@@ -3376,6 +3402,480 @@
     allow. A profile editor is trusted with this (T-32).
   - The node writes both when it builds the launch, so they take nodes on this release or later. The profile's
     resolved settings in the API don't show them. Codex is unchanged.
+
+### ADR-0069 — Tiered local gates, a one-run coverage floor and cached CI tools
+- **Status:** Accepted, 2026-11-08 (gate wait-time work, subtasks T1, T2, T10, and T7 and T8 below). Not a relaxation: every check in
+  `make check` and in CI still runs. The coverage floor applies to the same packages with the same rules.
+- **Context:**
+  - Agents spent much of their time waiting for `make check` (about 13.5 minutes on a 32-core node). It ran a median
+    of twice and up to nine times per task.
+  - The coverage floor ran 28 packages one `go test` at a time (154 s); the same packages in one invocation take
+    about 20 s.
+  - CI's lint job failed whole runs on GitHub 504s while downloading golangci-lint or sqlc release assets.
+- **Decision:**
+  - **Two local gates.** `make check-fast` is for iterating: vet, custom vet, lint, traceability, the analyzer tests
+    and `go test ./...` without `-race` and with the test cache, plus `sqlc-check`/`api-check` when their inputs
+    changed since the merge base. `make check` is the pre-push gate. It runs once per task on the final tree and
+    checks what it checked before, now fail-fast: vet, custom vet, lint, traceability, analyzer tests, coverage,
+    race. AGENTS.md "Gates" says which to run when.
+  - **Coverage floor in one invocation.** `scripts/coverage-floor.sh` runs one `go test -count=1 -cover` and reads
+    each package's summary line. A package fails when go test reports it failed (tests, build or setup), when it
+    has no coverage line, or when its coverage is below the floor. A non-zero exit that no package explains fails
+    too. `COVERAGE_PARALLEL` (go test `-p`) bounds how many packages run their tests at once. The default is a
+    quarter of the CPUs, at least 1 and at most 8. CI and the release workflow set 1, the concurrency they had
+    before. All 28 at once exceeded the 250 ms write-transaction guard on a 4-core hosted runner, so the guard's
+    calibration (ADR-0062) is kept. The test binaries are built first with full parallelism.
+  - **CI tools from caches.** `bin/sqlc` is cached under the hash of `scripts/install-sqlc.sh`, which holds the
+    pinned version and SHA-256 sums. A miss installs it as before (checksum verified), with curl retries.
+    golangci-lint is built with `go install …@<pinned version>` through the Go module proxy (modules verified
+    against the checksum database), cached per version, OS, architecture and Go toolchain. A step checks the
+    binary's version before the action runs it (`install-mode: none`). The release workflow downloads neither tool.
+  - **The race run's critical path (T7).** `internal/app` (about an hour of test time under `-race`) alone took about
+    9 minutes at `-parallel 4`, with most of a many-core machine idle. Its ~20 serial tests alone take about 260 s,
+    since go test runs them one after another before any parallel test. `scripts/race.sh` runs it as its own `go test
+    -race` invocation, started first, with `RACE_APP_PARALLEL` (default `min(16, nproc/2)`, at least 4), and on 16 or
+    more CPUs splits it into two concurrent processes, the serial tests (`-run`) and the rest (`-skip`, the same
+    pattern, so each test runs exactly once; `RACE_APP_SPLIT`), alongside one
+    invocation for every other package at `RACE_PARALLEL` (4, unchanged: the small packages starve when everything runs
+    at full load). CI and the release workflow set `RACE_APP_PARALLEL=4`, the cap they had.
+  - **A node-wide heavy-gate semaphore (T8).** Several agents' full suites on one node slowed each other down and
+    tripped the write-transaction guard and timing tests. `scripts/gate-slot.sh` runs `race`, `coverage`, `site-a11y`,
+    `e2e`/`e2e-browsers` and `screenshots` while holding one of `SM_GATE_SLOTS` `flock` slots in `SM_GATE_LOCK_DIR`
+    (defaults: 2 slots on 16 or more CPUs, otherwise 1; `${XDG_CACHE_HOME:-~/.cache}/spaceman-gates`). `make check`
+    takes one slot for coverage and race together. A waiting run prints one line naming the holders. The kernel
+    releases a lock when its holder exits, a `kill -9` included. `SM_GATE_SLOTS=0` disables it, and it is off when
+    `CI=true`.
+- **Alternatives:** `install-mode: goinstall` in the action (it rebuilds golangci-lint from source on every run,
+  because the Go module cache key doesn't cover it); caching the golangci-lint release archive (still a GitHub release
+  download on a miss); making local `make race` use the test cache (operator question Q1 of the plan, not decided
+  here); deriving `RACE_PARALLEL` from the CPU count for every package (T7: the small packages starve their leases and
+  write transactions under full load); a semaphore inside SpaceMan, a per-node "heavy job" capacity exposed to runs (a
+  possible product follow-up, out of scope).
+- **Consequences:**
+  - A cached sqlc binary is not re-verified on a hit: the checksum covers the release archive, which a hit doesn't
+    download. The cache entry was written by a run of this repository after verification. Actions caches are
+    scoped to the branch, so a pull request can't plant one for `main` (THREAT_MODEL T-41).
+  - `check-fast` passing is not a pre-push signal: race tests and the strict coverage run happen only in `make check`
+    and CI.
+  - A heavy gate can wait for minutes behind other agents' runs; that wait costs no CPU. The slots only coordinate runs
+    that share `SM_GATE_LOCK_DIR`. Killing only the wrapper releases the slot while its command goes on; stopping
+    the process group stops both.
+
+### ADR-0070 — The write-transaction guard measures lock hold time; local race runs use the test cache (security-relevant change)
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, questions Q1 and Q2; subtask T3).
+  **Security-relevant change:** it changes what the evidence for Hallpass HP-DB-004 (short write transactions)
+  measures. The limits and the rule are unchanged.
+- **Context:**
+  - `storetest` fails a test when a successful write transaction takes longer than `MaxTxDuration` (100 ms by default,
+    `SM_TEST_TX_MAX`; ADR-0062). The duration it got from `store.Writer.TxNamed` started before the first attempt, so
+    it also counted the wait for the single writer connection (`MaxOpenConns(1)`), the wait for `BEGIN IMMEDIATE` to
+    acquire the database lock, and every `SQLITE_BUSY` retry with its backoff sleep.
+  - HP-DB-004 is about how long a transaction *holds* the writer: a long hold blocks every other write. Waiting for the
+    writer is a different property, already metered (HP-DB-003: `spaceman_store_writer_wait_seconds`,
+    `spaceman_store_writer_queue_depth`, `spaceman_store_tx_busy_retries_total`).
+  - Under CPU contention (parallel packages and tests, Argon2 in the auth tests, several gates on one node) the queueing
+    made short transactions look long. The guard failed on unchanged code, locally and on hosted runners, in whichever
+    transaction happened to queue behind another one.
+  - The race run passed `-count=1`, so every local `make race` (and `make check`) reran every package, even after a
+    merge that touched no Go code.
+- **Decision:**
+  - **The observer gets the lock hold time (Q2).** `store.TxObserver` now receives the longest lock hold of the
+    transaction's attempts: for each attempt, the time from `BEGIN IMMEDIATE` returning (the lock is held) to the end
+    of its commit or rollback, callback and commit included. Taking the longest, not the last, keeps an attempt that
+    held the writer for long and then rolled back on `SQLITE_BUSY` from being hidden by a quick retry. It is zero when
+    no attempt got the lock. The `storetest` guard compares it with `MaxTxDuration`, and its message now says `held the
+    write lock for`. The guard checks failed transactions too (it checked only successful ones), except those that
+    ended because their context was canceled or timed out.
+  - **What is observed:** only transactions run through `Writer.Tx` and `Writer.TxNamed`. `Writer.Exec`
+    (maintenance statements such as checkpoints), migrations and snapshots (`VACUUM INTO`) are not, so the guard does
+    not cover them.
+  - **Wait and retries stay in metrics.** `spaceman_store_tx_duration_seconds` keeps the end-to-end duration, retries
+    and waits included (its help text already said so); writer wait, queue depth and busy retries are unchanged.
+  - **Local race runs use go test's cache (Q1).** `make race` passes `-count` only when `RACE_COUNT` is set. CI's race
+    job and the release workflow run `make race RACE_COUNT=1`, so every test runs there on every commit; their build
+    cache is restored from earlier runs, and a cached pass must not stand in for a run on the commit under test.
+- **Alternatives:**
+  - **Keep measuring from before the first attempt and raise the limit:** it would hide real long holds in exactly the
+    runs where contention is low.
+  - **Measure from the start of the successful attempt**, pool wait included: still counts queueing for the in-process
+    writer connection, the larger share under `t.Parallel`.
+  - **Keep `-count=1` locally:** every rerun of `make check` repays the full race run (about 10 minutes on this
+    project's development nodes) for packages that didn't change.
+- **Consequences:**
+  - A transaction that waits behind another writer for longer than the limit no longer fails a test; one that holds
+    the writer for longer still does (`internal/store/storetest` `TestGuardCountsLockHoldNotWait`, `internal/store`
+    `TestTxObserverGetsLockHoldTime`, `internal/store/storetest` `TestGuardCountsTheLongestAttempt`,
+    `TestGuardChecksFailedTransactions`). Starvation and queueing show up in the writer-wait metrics instead, and in tests
+    only when they make something time out.
+  - The full non-race suite passes at the 100 ms default (PLAN.md §3). Hold time still includes the commit's fsync
+    (`synchronous(FULL)`) and any time the holding goroutine is descheduled, so a heavily loaded machine can still
+    trip the guard: on a node where several other suites ran, single-statement transactions held 100–270 ms.
+    Those are real holds and the guard reports them.
+  - A local cached race pass can come from an earlier run of the same package build and inputs. A flaky test is judged
+    with `-count=1` (AGENTS.md "Gates").
+  - **Follow-up: re-evaluate ADR-0062's 250 ms on hosted CI and the race relaxations** (500 ms in `make race`, 1 s in
+    CI's race job and the release gate). Those values were set against the old measurement, whose failures were
+    mostly queueing. Collect the guard's failures (if any) and the hold times of the slowest transactions on hosted CI
+    over a couple of weeks of runs with this change; if the coverage job holds 100 ms there and the race jobs hold
+    their limits with margin, lower them in a separate ADR. Until then they stay as they are.
+
+### ADR-0071 — The login timing comparison runs on its own; unknown accounts do the same reads (security-relevant change)
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, subtask T5).
+  **Security-relevant change:** it changes where the wall-clock evidence for Hallpass HP-AUTH-005 (login response time
+  does not reveal whether an account exists) is collected. The guarantee and the deterministic check are unchanged,
+  and the product change makes the two paths more alike.
+- **Context:**
+  - `internal/auth` `TestLoginThrottlingAndEnumeration` checked HP-AUTH-005 two ways: deterministically (exactly one
+    Argon2id verification per failed attempt, for an unknown account against a dummy hash with the account's
+    parameters), then on the clock (median of 21 interleaved failed logins per kind within 0.75–1.33, best of three
+    rounds). The clock half failed under coverage and parallel load on unchanged code, with ratios of 1.34–1.41.
+  - Measured per segment (median of 60 interleaved failed logins each; idle node, then while a race run of
+    `internal/app`, `internal/store` and `internal/events` loaded the 32-core node to a load average of 57–101):
+    - **total ratio known/unknown:** idle 0.84–1.10, loaded 0.68–1.10, in both directions from run to run, under
+      plain, `-race` and `-cover` builds alike;
+    - **Argon2id verification alone:** the same spread (idle 0.84–1.11, loaded 0.67–1.05). The two hashes have the
+      same parameters, so this is CPU scheduling noise on a CPU-bound function;
+    - **everything except the verification (database reads, the failure transaction, audit):** known minus unknown
+      +0.05 ms idle (about 1 ms per attempt), at most ±2.7 ms under load and `-race`, in both directions;
+    - **the reads before the verification:** consistently slower for a known account (+0.02–0.06 ms idle, +1–3 ms
+      under `-race` and load), because only that path looked up the local credential.
+  - So there is one small real asymmetry, an extra read on the known path, and it is far below the noise the clock
+    check sees. The failures came from the verification's own run time under load, which no product change can make
+    equal.
+- **Decision:**
+  - **Same reads on both paths.** `Login` looks up the local credential for unknown accounts too, by an ID no user
+    has. After the change the pre-verification delta is 0.02–0.25 ms in plain, `-race` and `-cover` builds (from
+    0.06–3.2 ms). The failure transaction already did the same writes on both paths (one throttle upsert per key, one
+    audit row).
+  - **The deterministic check stays in every suite** (`TestLoginThrottlingAndEnumeration`: `make test`, `race`,
+    `coverage`, `check-fast`, `check`, CI and the release gate).
+  - **The wall-clock comparison moves to `TestLoginTimingWallClock`**, with the same rounds and band. It runs only with
+    `SPACEMAN_LOGIN_TIMING=1` (`make test-login-timing`), and skips under `-race` and `-cover`. CI runs it as its own
+    job (`login-timing`) on every pull request and push, alone on its runner, and the release workflow runs the same
+    job as a gate before `binaries` and `images`.
+  - **The equal reads are tested deterministically.** `TestLoginReadsSameForUnknownAccounts` records every query a
+    failed login runs through the store's readers (`storetest.WithReadObserver`) for a known and an unknown account,
+    and requires the same sequence, including the `GetLocalCredential` read. With that read removed from the unknown
+    path again, it fails.
+- **Alternatives:**
+  - **Widen the band:** a band wide enough for a loaded node (0.6–1.6) no longer tells a real asymmetry from noise
+    either. What matters, a missing or cheaper dummy hash (orders of magnitude), the deterministic check already
+    catches.
+  - **More samples or more rounds:** the skew comes from load that persists for seconds, so it moves every sample of a
+    round. It would also slow the suite further.
+  - **Skip it only under `-race` and `-cover`:** the plain `make test` and `check-fast` runs share the CPU with every
+    other package too.
+- **Consequences:**
+  - A local `make check` no longer measures login timing. CI's `login-timing` job does, on every change. Locally,
+    `make test-login-timing` on a quiet machine.
+  - A change that makes one path much faster or slower still fails the deterministic check, unless it keeps exactly one
+    same-parameter verification. A small asymmetry outside the verification (like the extra read fixed here) shows
+    only in the clock job, and only once it exceeds the band. An extra or missing read before the verification also
+    fails `TestLoginReadsSameForUnknownAccounts`.
+  - **Residual risk (accepted, not changed):**
+    - **Argon2id verification variance.** The verification is CPU-bound and its run time varies with scheduling and
+      load (0.67–1.11 between two same-parameter hashes in the measurements above). That noise hides small
+      differences rather than revealing the account, but it also means the clock check only bounds the asymmetry, it
+      does not prove it is zero.
+    - **Network and remote timing are not measured.** The ±25% band is checked in-process on a quiet runner. Timing as
+      seen over the network, through proxies, or on a loaded production host is not tested; the bound only applies on
+      a quiet machine.
+    - **Accounts hashed with older parameters.** The dummy hash uses `CurrentParams`. An account whose stored hash
+      still has an older parameter set verifies at that set's cost until its next successful login rehashes it, so
+      for such an account a failed login can take measurably longer or shorter than one for an unknown account. This
+      lasts only while older-parameter hashes remain, and the deterministic check covers accounts on the current set.
+
+### ADR-0072 — `github-pull-request` version 2: ignore your own agent's pushes and edits; built-ins gain versions on existing installations
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate-wait plan's T12 and T13).
+- **Context:** In one space, about 95 of roughly 130 pull request inbox items in 2.5 days were `synchronize` or
+  `edited` events that the space's own agent account caused (its pushes and pull request body edits). Each woke
+  control for a minute or more. The six ADR-0061 templates take `exclude_author`, but `github-pull-request` version 1
+  has no author or action filter, and it puts the pull request title into the item title. Changing a published
+  built-in needs a new version, and `SeedBuiltins` only created missing templates, so existing installations would
+  never have received one (ADR-0061 consequences).
+- **Decision:**
+  - **Version 2 of `github-pull-request`.** Same subject (`evt.github.<account>.webhook.pull_request.*`) and
+    correlation. It takes the ADR-0061 scope variables: `repository` (now optional), `owner` and `exclude_author`
+    (the webhook sender's login, normally the space's agent account). A new flag `ignore_updates` (only `true`) adds
+    `data.github.action ne synchronize` and `ne edited`, so new commits and title, body or base edits are dropped and
+    every other action (opened, closed, reopened, ready_for_review, review_requested, …) still passes. Bots are kept
+    (a bot's pull request can need review). The item title holds only the repository, number, action and login; the
+    pull request title moves to the body as inline code (T-03).
+  - **Built-ins gain later versions.** `builtinLaterVersions` lists a built-in's versions after version 1. At every
+    start `SeedBuiltins` publishes the missing ones in order, as `system`, and only on top of the built-in's own
+    newest version: if an administrator has made their own version or draft of the built-in, that version is never
+    replaced or renumbered, and seeding stops there with a warning. Version 1 and subscriptions pinned to it are not
+    touched. Subscriptions that follow the latest version move to the new version when it binds with their variables
+    and keeps their subject, exactly as on Publish (SM-EVT-006). A version 1 subscription's variables bind to
+    version 2 unchanged, so followers move. They then get the new title format, but their filters stay as before
+    until they set the new variables. The publication is audited as `event_template.published` by the system actor.
+- **Consequences:**
+  - Existing installations get version 2 at their next start. Pinned subscriptions must be switched by hand
+    (`spaceman event subscription update --template-version …`, or the API). The web UI cannot change a subscription's
+    template version or variables yet: switching there means a new subscription, which needs a new Pulse grant.
+  - On releases without version 2 (v0.1.0-rc.9 and later), a custom template with exactly version 2's definition
+    gives the same result (site guide: Events, "Ignoring your own agent's pull requests").
+  - Not solved here: several events on one pull request still wake control once each (coalescing by correlation is
+    a separate, optional follow-up).
+
+### ADR-0073 — Attachments of any size reach a run as a file in its own folder; the inline read never truncates silently
+- **Status:** Accepted, 2026-11-08 (operator request: screenshots over 512 KiB could not reach agents).
+  **Security-relevant change:** the node agent now writes attachment content (untrusted, named by its uploader) into
+  the run's own instance folder.
+- **Context:**
+  - `spaceman_attachment_get` returned at most 512 KiB, with only a `truncated` flag that was easy to miss, as ~700k
+    characters of base64. For an operator's 668 KB screenshot, the agent got 524 288 bytes it could not decode. The
+    result was also too large for Claude Code's tool output, so it spilled to a temporary file anyway.
+  - One node-protocol envelope is at most 4 MiB (`proto.MaxMessage`), and uploads go up to 25 MiB by default, so a
+    whole attachment can't travel in one tool result.
+  - The run's file tools read its own space folder without a dialog (ADR-0068), and Claude Code's Read tool shows
+    images (scaling large ones down itself).
+- **Decision:**
+  - **Ranged inline reads.** `spaceman_attachment_get` takes optional `offset` and `length` (at most 1 MiB,
+    `proto.AttachmentChunkBytes`; 512 KiB when no range is given). Every result says `truncated`, `offset`,
+    `returned_bytes`, `next_offset` when more follows, and a `note` on how to get the rest. `offset` given (0
+    included) makes a ranged read. `next_offset` is present exactly when `truncated` is; after a ranged or partial
+    read it is past `offset`, so following it always makes progress (review S2: a short `length` on multibyte text
+    once returned 0 bytes; now a chunk that can't be cut on a character boundary goes whole, as base64).
+    - A **binary** file over 512 KiB asked for without a range is **not returned inline**: just its record,
+      `truncated: true`, and a note pointing to `spaceman_attachment_save`.
+    - **Text** comes back in chunks cut on a character boundary.
+  - **`spaceman_attachment_save`, served by the node.** The MCP bridge offers it when the run's catalog has
+    `spaceman_attachment_get` (so the same run kinds may use it), and the node agent does the work:
+    - It copies the attachment through the existing `tool.call` path in ranged reads, so central authenticates and
+      authorizes every chunk exactly as for the inline tool. There is no protocol change and no new central route.
+    - The file is `<space folder>/instances/<instance>/attachments/<run>/<attachment>/<name>`, mode 0600 in 0700
+      folders. It is inside the space folder the run may read (ADR-0068) and outside every protected config path.
+    - The size and SHA-256 are checked against central's record before the temporary file is renamed into place. A
+      chunk from a different record, a wrong range or a mismatch fails the call and leaves no file.
+    - The result is the real path, size, SHA-256, MIME type and name.
+    - One save is at most 50 MiB (above central's default 25 MiB upload limit), so a run can't fill the node's disk
+      through it. A larger attachment is refused before anything is written; ranged reads still work.
+  - **Untrusted names.**
+    - The uploader's name is reduced to one plain element: the last element (either separator), `[A-Za-z0-9._-]`
+      (anything else becomes `_`), no leading dot, at most 100 bytes keeping a short extension, and `attachment` when
+      nothing is left.
+    - The attachment ID must be a valid `att_` ID, and the run and instance IDs valid too.
+    - **No run-writable folder is resolved by path** (review M1). The run can rename folders and plant links
+      anywhere in its space folder: its file tools may write there (ADR-0068) and its shell runs as the node's user.
+      The first version checked the attachments folder with `Lstat` and then opened it by path, and a run that swapped
+      the folder for a link between the two won the race (the save wrote into the link's target; the prune emptied
+      it). Now the node opens an `os.Root` on its own `<data_dir>/spaces` folder (outside every space folder; a run's
+      file tools are not given it) and walks `<space>`, `instances`, `<instance>` and `attachments` one level at a
+      time, each relative to the open handle above. Each level is opened first and checked after: `Lstat` through the
+      parent handle must show a real folder and `os.SameFile` must match the opened handle, so a link in place before,
+      between or after the two steps is refused, never followed (an `os.Root` alone would follow a link that stays
+      inside it, for example to the instance's own `claude/` folder). Every later mkdir, write, rename, listing and
+      removal is relative to the final handle. Residual: a run that can rename folders can move the opened folder
+      elsewhere while a save is writing; the save then writes the attachment's bytes, under its sanitized name, into
+      that moved folder, and a prune removes only entries of that folder. Both are things such a run could already do
+      itself.
+  - **Cleanup.** The run's folder is removed when the run ends, including runs the node finds lost or never started
+    when it reconciles with its runner after a restart (review S1). A save re-checks that the run is still running
+    before and after renaming its file into place, and removes it when the run has ended meanwhile (S4), and one save
+    is bounded as a whole by `saveTimeout`, 10 minutes (S3). A launch of the instance removes the folders of runs
+    that ended or that the journal no longer knows. The folder is per run because nothing stops two runs of one
+    instance.
+  - The built-in orientation tells every run to use `spaceman_attachment_save` for images and anything over 512 KiB.
+    The same tools serve every attachment reference: inbox items, tasks, human actions and messages list attachment
+    records and `spaceman://attachment/<id>` links.
+- **Alternatives:**
+  - **Chunked reads only** (the model reassembles base64 itself): the data passes through the model's context
+    and is easily corrupted. An earlier agent dropped about 2 KB retyping one by hand.
+  - **A server-side downscaled preview** (≤ 2000 px, re-encoded): needs an image library or a hand-written resampler
+    in central, decodes untrusted images in central, and puts the preview into the context on every call. Claude Code's
+    Read already scales images down, and Codex views local images. It can be added to the inline result later if a
+    harness can't read files.
+  - **A signed short-lived URL** the agent fetches: a new authenticated HTTP surface and a bearer credential in the
+    model's context, and the agent's shell would need network access to central.
+  - **Central writes the file:** central has no access to the node's filesystem. The node already holds the run's
+    authenticated connection.
+- **Consequences:**
+  - Attachments of any size (up to the upload limit) reach a run whole, checked, and readable with its own tools
+    without a dialog. Verified live with Claude Code 2.1.319: Read shows a saved 2.8 MB PNG as an image in
+    `acceptEdits` and `default` modes, while the same file outside the space folder is denied by SpaceMan's hook.
+  - A saved file takes node disk space until the run ends, at most the attachment sizes the run saved.
+  - A node agent from before this release doesn't offer the save tool. A newer node with an older central answers
+    "upgrade central".
+  - Other runs of the space can read a saved file through the space folder (ADR-0068), as they could fetch the
+    attachment themselves. They can't write it: other instances' folders are denied for `Edit`.
+
+### ADR-0074 — Concurrency limits count live runs only; a stale-run sweeper ends runs whose process is gone
+- **Status:** Accepted, 2026-11-09 (operator request after a node agent restart left its runs holding slots).
+  **Security-relevant change:** a disconnected node's runs no longer stay `unknown` indefinitely: once the space's
+  lease, the disconnect grace and a 15-minute margin have passed, central records them as `lost` (SM-NODE-005 refined
+  below). A run swept wrongly is killed by the fence at its next report, so the safeguards below are part of the decision.
+- **Context:**
+  - The space concurrency limit and the node capacity counted runs with `desired = 'running' OR observed IN (pending,
+    starting, running, stopping, unknown)`. A run that ends on its own (exits, fails, or is reported lost after a node
+    agent restart) keeps `desired = 'running'`, so it held its slot until an operator stopped it, while
+    `spaceman_runs_list`, which hides exited, failed and lost runs, showed nothing to explain the refusal.
+  - A run central still records as live but which its node never had (a launch lost with the agent's state) is not in
+    the node's journal, so no report ever ends it: it stays `running` or `unknown` and holds a slot forever.
+  - The node agent reports every run in its journal in its hello, and central applies those reports before anything
+    else (SM-NODE-009). Without central, the node's lease guard stops a space's runs once its lease and the disconnect
+    grace pass (SM-NODE-007); `SweepGatewayLeases` already relies on that to revoke gateway tokens.
+- **Decision:**
+  - **Live runs.** A run is live while its observed state is pending, starting, running, stopping or unknown
+    (`fleet.Live`); desired is not part of it. `spaceman_runs_list`, the space limit and the node capacity all use that
+    one definition (`ListLiveWorkRunsInSpace`, `ListLiveWorkRunsOnNode`; a store test checks they agree for every
+    observed and desired state). Which kinds count is unchanged: worker and diagnostic runs; control, KB support and
+    dreamer runs have their own pools (SM-LIMIT-002).
+  - **Refusals name what they count.** The space refusal lists the counted runs (ID, kind, role, observed state); the
+    node refusal counts other spaces' runs without naming them and lists this space's. Both say which runs don't count.
+  - **Stale-run sweeper** (`fleet/stale.go`, on the deadline timer, woken on node connect and disconnect). Its rule:
+    it must never end a run whose process exists or might still start; when in doubt, it doesn't sweep. It ends a
+    run as `lost` on one of two signals:
+    - **`stale_not_on_node`**: the node is connected, and its hello reports every run in its journal. The
+      `fleet.node_connect` transaction reads the node's live runs (with their versions), and the session records the
+      run IDs the hello contained. A run is swept only if it was live at connect, the hello didn't contain it, its
+      version hasn't changed since connect, and `staleRunGrace` (2 minutes) has passed since the connection, measured
+      on the clock's monotonic reading (a wall-clock step doesn't move it). No stored timestamp is compared. If any
+      hello report failed to apply, the sweeper leaves that connection's runs alone entirely. A run created after the
+      connection began is never a candidate.
+    - **`stale_lease_lost`**: the node isn't connected, and the space's lease on that node expired more than the
+      disconnect grace plus `staleLeaseMargin` (15 minutes) ago. The grace is the larger of the one the lease was last
+      granted with (stored on the lease, migration 0046) and the current one, so lowering the grace in the config
+      doesn't shorten the wait. The node's lease guard has stopped the process by then.
+    - Never candidates: pending runs; runs with an unacknowledged launch command (`pending` or `sent`: the dispatch
+      loop may still deliver it); runs no node has ever reported (`observed_at` is NULL: a pending launch turns
+      `unknown` on disconnect without one); runs whose space now belongs to another node (relocation ends them).
+  - **Clock assumption.** The node's lease guard compares central's lease expiry with the node's own clock, with no
+    skew correction. `stale_lease_lost` therefore assumes the clocks of central and the nodes are synchronised (NTP).
+    The 15-minute margin is far beyond any plausible skew of a synchronised clock; a node whose clock runs more than
+    that behind central's could still be running a process when central records it lost.
+  - **End transaction.** Each run ends in its own transaction, which re-checks the signal: the run's version is
+    unchanged since it was chosen, it is still live past its launch and has no unacknowledged launch, and for
+    `stale_not_on_node` the node's connection is still the one whose hello didn't contain it, for `stale_lease_lost`
+    the node is still not connected. A report, a reconnect or a queued launch at the same time wins. The run then ends
+    through the node-report path: credentials and gateway tokens revoked, `run_ended` published, `OnRunEnded` called.
+    The same transaction cancels every undelivered or unacknowledged command of the run and sets its desired state to
+    `stopped`, so `sendReconcile` stops listing it to the node, and archive and relocation aren't blocked by it. The
+    sweep is idempotent (an ended run is no longer a candidate). A central restart mid-sweep finds the remaining runs
+    again on the new connections, after a new grace.
+  - **Safety, and what a false positive costs.** The sweeper itself never sends a stop or a kill. But once a run is
+    swept, any later report of it is fenced, and a report that it is still running is answered with the fence's
+    `stop kill` (SM-NODE-006). So a run swept wrongly is killed at the node's next report of it. The safeguards
+    against that are the rules above: only runs that were live at connect and missing from a hello that applied in
+    full, never a pending launch or one never reported, a monotonic grace, a 15-minute margin on a lost lease with the
+    largest grace, and the re-check in the end transaction.
+  - **Visibility.** The run shows end reason `stale_not_on_node` or `stale_lease_lost` and an explanation in its error.
+    An audit record `run.reconciled_stale` names the reason and the previous state, and
+    `spaceman_runs_reconciled_stale_total{reason}` counts sweeps.
+- **Consequences:**
+  - **One-time effect on upgrade:** runs that had already ended but kept `desired = 'running'` stop counting at once.
+    Spaces that were refused may admit new workers right after the upgrade.
+  - **One-time sweep on the first deploy.** Every historic run left `running` or `unknown` that meets the rules (after
+    the nodes reconnect and the grace passes, or 15 minutes past a lost lease) is ended in the first sweeps. Each one
+    publishes `run_ended`, has its credentials and gateway tokens revoked and its desired state set to `stopped`, and
+    goes through `OnRunEnded`. For a worker run, that tells the space's control the run ended and names its task;
+    control may then re-queue or relaunch that task, so old tasks can come back to life. Operators should look at
+    these notices (audit action `run.reconciled_stale`) and close tasks that are no longer wanted. A swept control run
+    isn't restarted by the control supervisor (its desired state is `stopped`), so a space whose control is swept
+    needs control launched again.
+  - **Fencing trade-off.** Once swept, a run stays exactly as the sweeper ended it: any later report for it is fenced.
+    A node that reconnects after `stale_lease_lost` and reports the run's real exit (its exit code) doesn't change the
+    record.
+  - SM-NODE-005 is refined, not withdrawn: execution on a disconnected node is `unknown` while it may still be running.
+    It is never recorded as `failed`, and it becomes `lost` only once the lease guard must have stopped it.
+  - Migration 0046 adds `execution_leases.grace_us`. No node-protocol change.
+  - ~~Follow-up: `ListActiveRunsBySpace` and `ListActiveRunsByNode` still count ended runs with `desired = 'running'` as
+    active.~~ Resolved by the amendment below.
+- **Amendment (2026-11-09, review follow-ups of #28):**
+  - **Active runs are live runs.** `ListActiveRunsBySpace` and `ListActiveRunsByNode` use the live predicate
+    (`fleet.Live`), not `desired`. A run that ended on its own no longer blocks archiving the space, a relocation without
+    `stop_runs` or a relocation's drain, and isn't counted in "N active run(s)". Pausing with interrupt or emergency no
+    longer queues a stop for such a run. `sendReconcile` needs nothing else: the node reports every journal run whether
+    or not it is listed and only acts on runs listed as `stopped` or with another generation, and an ended run with
+    `desired = 'running'` was listed as `running`, which the node treats like an unlisted run.
+  - **Only active leases count for `stale_lease_lost`.** `RevokeLease` stores the revoke time as the expiry, but the
+    node keeps the expiry it was last given, up to `lease_ttl` later. A revoked lease is therefore not a basis for the
+    sweep: those runs wait for the node to report them. `nodes.lease_ttl` is also bounded at 10 minutes
+    (`config.MaxLeaseTTL`), well inside the 15-minute margin.
+  - **A replaced connection's end records nothing.** Before, when a node reconnected while its old connection was
+    still open, the old connection's end still recorded a disconnect and marked the node's runs `unknown`, over the new
+    connection's state. Each connection now gets a sequence number and claims the node in its `fleet.node_connect`
+    transaction; the disconnect transaction records the disconnect only if its connection is still the node's newest.
+    Write transactions are serialized, so a disconnect and a reconnect can't interleave.
+  - No migration and no protocol change.
+
+### ADR-0075 — Run terminal sizes: per run, held by the node through an attach that never types
+- **Status:** Accepted, 2026-11-09 (operator request for v0.1.1: "configurable terminal size from web"; design agreed
+  with control before building).
+- **Context:**
+  - herdr-core's `terminal.run` takes no size. A program starts at the core's `headless` size, which the node sets
+    from `runner.terminal_size` (default 160×48, S-6). The web view scaled the font to fit a run's columns, but the
+    size itself could not change.
+  - An interactive attach resizes a program only while it is open. Once it closes, the program goes back to the
+    headless size. With two interactive attaches open, the newer one (or its later resize) sets the size, and closing
+    it brings the other one's size back. `events.subscribe` reports each change as `size {cols, rows}`. These
+    behaviours were verified on hc 0.1.17 (docs/contracts/herdr-core.md S-7, `TestRealTerminalSizeHold`).
+  - The recorder attached as an observer and wrote a `size` record only when it re-attached. A live resize would
+    therefore have replayed at the wrong size.
+- **Decision:**
+  - **The size belongs to the run, not to a viewer.** An operator with `terminal:takeover` in the run's space sets it,
+    the same permission as takeover, because it changes what the agent's program sees. While the terminal is taken
+    over, only the holder may change it. With two operators, the last change wins. Every viewer sees the run at its
+    real size, and the browser scales the font to the viewer's window or scrolls horizontally, as before. Viewers
+    without the permission get no control. Operators see it disabled, with the reason.
+  - **Central stores it.** Migration 0047 adds `runs.terminal_cols` and `terminal_rows`. Both are NULL (the node's
+    default) or both set, with 40–400 columns and 10–200 rows, the bounds of `runner.terminal_size`.
+    `PUT /spaces/{space}/runs/{run}/terminal-size` sets the size and `DELETE` clears it. Both are audited as
+    `run.terminal_resized`, with the previous size. The run's `terminal_size` shows it, and `terminal_sizing` says
+    whether the run's node can hold a size now. The admin MCP excludes both operations (a person's at the keyboard,
+    like takeover).
+  - **Node protocol minor 10, additive.** Central sends `terminal.sizes`, the complete set of the node's sized runs
+    (space, run, generation, cols, rows), after the node connects and on every change, the same pattern as
+    `takeover.state`. For each listed run whose space lease and generation are valid, the node opens an interactive
+    attach on a connection of its own (`runner.Takeover`, at the current size) and resizes it. The hold **never
+    writes**: no input reaches the program through it. The node closes a hold when the run leaves the set, when the
+    run ends, when the space's lease is revoked or expires (fencing), and at shutdown. A run that is not live yet is
+    held once it is. A failed attach is retried while the size is still wanted. An open takeover attach is resized
+    along with the hold, and back to the node's default when the hold closes. A node below minor 10 is never sent the
+    set, and resizing one of its runs fails with **409**.
+  - **Recordings.** The recorder writes a `size` record for every change. The node notes the size itself before it
+    resizes or releases a hold, so the program's redraw for the new size follows the record. The runner's `size`
+    events note changes the node did not make (a takeover attach, a hold that dropped). A pending size note is written
+    before the next output chunk. Replay already redraws at `size` records.
+  - **Default for new runs:** the space limits `terminal_cols` and `terminal_rows` (installation defaults in
+    `limits:`, 0 = the node's default). A size applies only when both are set. Each must be 0 or within the bounds.
+    Launch resolution copies them to the new run, and the node holds it from the start. A node connected below minor
+    10 cannot hold it, so its new runs keep no size (they would show one they don't have). **Changing either key needs
+    `terminal:takeover`** in the space, like resizing a live run: `set-space-limits` otherwise needs only
+    `space_config:write`, which operators hold, and that would let them set every new run's held size. A change that
+    leaves both keys as they are needs only `space_config:write`, the same way retention periods need
+    `retention:write` (review of PR #33, S1).
+  - **Node holds are race-free.** `reconcileHolds` plans under the agent's lock and opens holds after unlocking, so
+    `startHold` checks again under the lock before it records a hold: the size is still wanted exactly as planned,
+    the space's lease is valid and the agent has not stopped. Otherwise it opens nothing. Central serializes its
+    `terminal.sizes` pushes per node session (read and send under one lock), so an older set is never sent after a
+    newer one.
+  - **Web:** the live terminal has a size menu: Fit to window (the terminal area at the regular font size, refitted
+    after the window changes while it stays applied), 80×24, 120×40, 160×50, 200×60, Custom… and Node default. The
+    browser remembers the last choice and shows it selected, but **never applies it on its own**, so opening a run's
+    page never resizes it for everyone else.
+    - Fit refits only when the browser's window or visual viewport changes size, never when the terminal box does:
+      the box follows the run's size, so refitting on it undid other people's resizes. Once the run's size differs
+      from the last size this browser sent (someone else resized or cleared it), the browser stops fitting and shows
+      the run's size as the selected choice.
+    - The fit measures the regular cell the way ghostty-web 0.4.0's renderer does (`measureText("M")` at the
+      regular font size), not by scaling the cell shown now, so the same window always fits to the same size.
+    - When the viewer can't resize, the control stays focusable (`aria-disabled`) and its reason is its accessible
+      description. The choices are `menuitemradio` items with `aria-checked`.
+- **Alternatives:**
+  - Sizing tied to a takeover. This needs no migration, but the size is lost on release and resizing needs a takeover
+    that pauses automated input. Rejected by control.
+  - Per-viewer sizing. A program has one size, so viewers would fight over it.
+  - Restarting the core with a new `headless` size. That changes every new program on the node and never a running one.
+- **Consequences:**
+  - One extra herdr-core connection per sized run on the node.
+  - This is not a security relaxation: the permission is takeover's, the hold types nothing, and the size is bounded
+    and audited.
+  - CLI: `spaceman run terminal-size set|clear` resizes a live run. `spaceman limits set --set terminal_cols=… --set
+    terminal_rows=…` takes the new limits as they are (its keys are generic).
+  - Terraform: the provider's `spaceman_space_limits` resource declares one attribute per known limit, so it cannot
+    set these two yet. Its data source shows them in `values`. Adding the attributes is a follow-up in the provider
+    (PLAN.md).
 
 ## 2. Open items and unresolved contracts
 

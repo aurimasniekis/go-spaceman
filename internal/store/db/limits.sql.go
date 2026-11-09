@@ -10,30 +10,6 @@ import (
 	"database/sql"
 )
 
-const countActiveWorkRunsInSpace = `-- name: CountActiveWorkRunsInSpace :one
-SELECT COUNT(*) FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic')
-  AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown'))
-`
-
-func (q *Queries) CountActiveWorkRunsInSpace(ctx context.Context, spaceID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveWorkRunsInSpace, spaceID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countActiveWorkRunsOnNode = `-- name: CountActiveWorkRunsOnNode :one
-SELECT COUNT(*) FROM runs WHERE node_id = ? AND kind IN ('worker', 'diagnostic')
-  AND (desired = 'running' OR observed IN ('pending', 'starting', 'running', 'stopping', 'unknown'))
-`
-
-func (q *Queries) CountActiveWorkRunsOnNode(ctx context.Context, nodeID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveWorkRunsOnNode, nodeID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countRunToolCall = `-- name: CountRunToolCall :exec
 INSERT INTO run_tool_calls (run_id, space_id, calls, refused, updated_at) VALUES (?, ?, ?3, ?4, ?5)
 ON CONFLICT (run_id) DO UPDATE SET calls = run_tool_calls.calls + excluded.calls, refused = run_tool_calls.refused + excluded.refused,
@@ -226,7 +202,7 @@ func (q *Queries) LastBudgetNotice(ctx context.Context, arg LastBudgetNoticePara
 }
 
 const listActiveWorkRunsInSpace = `-- name: ListActiveWorkRunsInSpace :many
-SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic') AND desired = 'running'
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic') AND desired = 'running'
   AND observed IN ('pending', 'starting', 'running', 'unknown')
 ORDER BY created_at DESC, id DESC
 `
@@ -273,6 +249,95 @@ func (q *Queries) ListActiveWorkRunsInSpace(ctx context.Context, spaceID string)
 			&i.ObservedAt,
 			&i.UpdatedAt,
 			&i.RecordingDeletedAt,
+			&i.TerminalCols,
+			&i.TerminalRows,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveWorkRunsInSpace = `-- name: ListLiveWorkRunsInSpace :many
+SELECT id, kind, role, observed FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic')
+  AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+ORDER BY created_at, id
+`
+
+type ListLiveWorkRunsInSpaceRow struct {
+	ID       string
+	Kind     string
+	Role     string
+	Observed string
+}
+
+// Live runs are those whose observed state is not final (exited, failed, lost): exactly the runs spaceman_runs_list
+// shows (fleet.Live). desired is not consulted: a run that ended on its own keeps desired = 'running', and counting it
+// held its slot until an operator stopped it.
+func (q *Queries) ListLiveWorkRunsInSpace(ctx context.Context, spaceID string) ([]ListLiveWorkRunsInSpaceRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveWorkRunsInSpace, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveWorkRunsInSpaceRow{}
+	for rows.Next() {
+		var i ListLiveWorkRunsInSpaceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Role,
+			&i.Observed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveWorkRunsOnNode = `-- name: ListLiveWorkRunsOnNode :many
+SELECT id, space_id, kind, role, observed FROM runs WHERE node_id = ? AND kind IN ('worker', 'diagnostic')
+  AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+ORDER BY created_at, id
+`
+
+type ListLiveWorkRunsOnNodeRow struct {
+	ID       string
+	SpaceID  string
+	Kind     string
+	Role     string
+	Observed string
+}
+
+func (q *Queries) ListLiveWorkRunsOnNode(ctx context.Context, nodeID string) ([]ListLiveWorkRunsOnNodeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveWorkRunsOnNode, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveWorkRunsOnNodeRow{}
+	for rows.Next() {
+		var i ListLiveWorkRunsOnNodeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Kind,
+			&i.Role,
+			&i.Observed,
 		); err != nil {
 			return nil, err
 		}

@@ -24,6 +24,8 @@ jobs:
   go:
     name: go (lint, vet, sqlc drift, analyzer tests, traceability)
     runs-on: ubuntu-24.04
+    env:
+      GOLANGCI_LINT_VERSION: v2.15.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,12 +42,41 @@ jobs:
             ~/go/pkg/mod
           key: go-lint-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
           restore-keys: go-lint-${{ runner.os }}-
+      # Tool downloads from GitHub release assets failed with 504s often enough to fail whole runs, so neither tool is
+      # fetched from there on a cache hit. golangci-lint is built with `go install` through the Go module proxy (module
+      # checksums verified against the checksum database) and cached per version and Go toolchain; the action then only
+      # runs it (install-mode: none). sqlc is the pinned, checksum-verified release binary (scripts/install-sqlc.sh),
+      # cached under the hash of that script, which holds the version and the checksums.
+      - name: Go toolchain version (golangci-lint cache key)
+        id: gover
+        run: echo "version=$(go env GOVERSION)" >>"$GITHUB_OUTPUT"
+      - name: golangci-lint binary cache
+        id: golangci-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/golangci-lint
+          key: golangci-lint-${{ env.GOLANGCI_LINT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.gover.outputs.version }}
+      - name: install golangci-lint (Go module proxy)
+        if: steps.golangci-cache.outputs.cache-hit != 'true'
+        run: GOBIN="$HOME/.local/golangci-lint" go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+      - name: golangci-lint version check
+        run: |
+          set -euo pipefail
+          echo "$HOME/.local/golangci-lint" >>"$GITHUB_PATH"
+          out="$("$HOME/.local/golangci-lint/golangci-lint" version)"
+          echo "$out"
+          grep -qE "has version v?${GOLANGCI_LINT_VERSION#v} " <<<"$out"
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.15.0
+          install-mode: none
       - name: vet
         run: make vet custom-vet
+      - name: sqlc binary cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin/sqlc
+          key: sqlc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-sqlc.sh') }}
       - name: sqlc drift check
         run: make sqlc-check
       - name: analyzer tests
@@ -75,9 +106,13 @@ jobs:
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
         # 290 ms); the write-transaction guard is still enforced by the non-race coverage job (250 ms there, ADR-0062).
+        # internal/app runs as its own invocation next to the other packages (scripts/race.sh); on a 4-vCPU runner its
+        # cap stays 4, as before. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
           SM_TEST_TX_MAX: 1s
-        run: make race
+          RACE_APP_PARALLEL: "4"
+        # RACE_COUNT=1: every test runs, never a cached pass from the restored build cache (only local runs cache).
+        run: make race RACE_COUNT=1
 
   coverage:
     name: go coverage floor
@@ -103,7 +138,33 @@ jobs:
         # slower and exceeded it by up to 78 ms on unchanged code, so hosted CI uses 250 ms (ADR-0062).
         env:
           SM_TEST_TX_MAX: 250ms
+          # One package at a time, as before ADR-0069: more at once on a 4-core runner trips the 250 ms guard.
+          COVERAGE_PARALLEL: "1"
         run: make coverage
+
+  login-timing:
+    name: login timing (known vs unknown account)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go module and build cache (login timing)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-login-timing-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
+          restore-keys: go-login-timing-${{ runner.os }}-
+      - name: login timing
+        # The wall-clock comparison of Hallpass HP-AUTH-005 runs alone on its runner, without the race detector or
+        # coverage, where Argon2id's CPU time is not shared with other tests (ADR-0071).
+        run: make test-login-timing
 
   # Fuzzing runs nightly (10 minutes per target) and in the release workflow (10 s smoke), not on pull requests or
   # pushes (ADR-0062).
@@ -169,25 +230,18 @@ jobs:
           persist-credentials: false
           # A pull request checks out its merge commit: with its parents, HEAD^1 is the base it is compared against.
           fetch-depth: 2
-      # The axe audit (about 4.5 minutes) runs on a pull request only when it changes what the site is built from
-      # (ADR-0062): the site, docs/ (included into site pages), the UI and its audit spec, the OpenAPI document (the API
-      # reference), CHANGELOG.md (the changelog page), the Makefile targets or this workflow. Pushes to main and the
-      # nightly run always audit.
+      # The axe audit runs on a pull request only when it changes what the site is built from (ADR-0062). The path rule
+      # lives in scripts/site-affected.sh, shared with a local `make site-check`. Pushes to main and the nightly run
+      # always audit.
       - name: does this change need the accessibility audit?
         id: a11y
         env:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT" != "pull_request" ]]; then
-            echo "run=true" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-          changed="$(git diff --name-only HEAD^1 HEAD)"
-          if grep -qE '^(site/|docs/|web/|api/|CHANGELOG\.md$|Makefile$|\.github/workflows/ci\.yaml$)' <<<"$changed"; then
+          if [[ "$EVENT" != "pull_request" ]] || ./scripts/site-affected.sh HEAD^1; then
             echo "run=true" >>"$GITHUB_OUTPUT"
           else
-            echo "No site, docs, web or API change: the accessibility audit is skipped."
             echo "run=false" >>"$GITHUB_OUTPUT"
           fi
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -213,6 +267,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: accessibility audit (axe, every page, both color schemes)
         if: steps.a11y.outputs.run == 'true'
+        env:
+          # Two parallel shards on the 4-vCPU hosted runner (the Makefile's default from the CPU count would be one).
+          SM_A11Y_SHARDS: "2"
         run: make site-a11y
 
   security:

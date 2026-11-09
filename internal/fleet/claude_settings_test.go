@@ -24,3 +24,16 @@ func TestClaudeSettingsNeedMinor8(t *testing.T) {
 		t.Fatal("end reasons")
 	}
 }
+
+// A run's command whose stored payload doesn't decode fails the run as invalid_command instead of being retried every
+// dispatch pass: the payload never changes.
+func TestUndecodablePayloadIsUndispatchable(t *testing.T) {
+	for _, kind := range []string{proto.CmdLaunch, proto.CmdReposSync, proto.CmdRelocatePrepare} {
+		c := db.NodeCommand{ID: "cmd_1", Kind: kind, SpaceID: "spc_a", PayloadJson: "{"}
+		h := &Hub{RepoKey: func(context.Context, string, string) (string, error) { return "", nil }}
+		_, err := h.materialize(context.Background(), c, "nod_1", proto.MinorRepoKeys)
+		if !errors.Is(err, errBadPayload) || undispatchable(err) != "invalid_command" {
+			t.Fatalf("%s: %v", kind, err)
+		}
+	}
+}

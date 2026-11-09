@@ -106,7 +106,8 @@ export function Workspace({ spaceId, runId, mode, onSelect, onMode }: {
             {sidebar}
           </Stack>
         )}
-        <Stack gap="xs" style={{ minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+        {/* Scrolls when the terminal (70vh) and its controls are taller than the column, by whatever the screen height leaves. */}
+        <Stack gap="xs" data-scroll-region style={{ minWidth: 0, minHeight: 0, overflow: 'auto' }}>
           {current ? (
             <>
               <Group justify="space-between" wrap="nowrap">

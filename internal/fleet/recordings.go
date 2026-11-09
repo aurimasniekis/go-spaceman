@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/artifacts"
@@ -50,13 +51,19 @@ type Recordings struct {
 
 // Viewer is one live subscription.
 type Viewer struct {
-	C      chan recording.Record
-	lagged bool
+	C chan recording.Record
+	// lagged is set by apply (under r.mu) and read by the viewer's own goroutine, so it is atomic.
+	lagged atomic.Bool
 	run    string
 }
 
 // Lagged reports whether the viewer dropped records (it must re-read from storage after its last seq).
-func (v *Viewer) Lagged() bool { return v.lagged }
+func (v *Viewer) Lagged() bool { return v.lagged.Load() }
+
+// TakeLagged reports whether the viewer dropped records and clears the flag, so a viewer catches up from storage once
+// per lag and then streams live records again. Clear it before re-reading: records dropped during the re-read set it
+// again.
+func (v *Viewer) TakeLagged() bool { return v.lagged.Swap(false) }
 
 var reRunID = regexp.MustCompile(`^run_[0-9a-z]{26}$`)
 
@@ -165,7 +172,7 @@ func (r *Recordings) apply(c proto.RecordingChunk) (uint64, error) {
 			select {
 			case v.C <- rec:
 			default:
-				v.lagged = true
+				v.lagged.Store(true)
 			}
 		}
 		if rec.Kind == recording.KindClose {

@@ -542,6 +542,13 @@ test('documentation screenshots', async ({ page, browser }) => {
     const held = await api.call<{ takeover?: { id: string } }>('GET', `/spaces/${payments.id}/runs/${control.id}`)
     if (held.takeover) await api.call('POST', `/spaces/${payments.id}/runs/${control.id}/takeover/${held.takeover.id}/end`, {})
   }
+  // The terminal size menu (ADR-0075): opening it changes nothing; the run keeps its size.
+  await capture(page, 'terminal-size', async () => {
+    await page.goto(`/spaces/${payments.id}/runs/${control.id}`)
+    await expect(page.getByText('Live · watch-only')).toBeVisible({ timeout: 20_000 })
+    await page.getByTestId('terminal-size').click()
+    await expect(page.getByTestId('terminal-size-fit')).toBeVisible()
+  })
   await capture(page, 'terminal-replay', async () => {
     await page.goto(`/spaces/${payments.id}/runs/${finished.id}?view=replay`)
     await expect(page.getByRole('button', { name: 'Play replay' })).toBeEnabled({ timeout: 20_000 })

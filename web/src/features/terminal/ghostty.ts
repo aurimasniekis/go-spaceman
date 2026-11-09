@@ -1,48 +1,104 @@
-import { init, Terminal } from 'ghostty-web'
+import { Ghostty, Terminal } from 'ghostty-web'
 import { terminalTheme } from '@/theme/nightowl'
 import { boxCanScroll, createScroller, liveScrollTop, wheelPixels } from './scroll'
 
-let ready: Promise<void> | null = null
+const FONT_FAMILY = "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, monospace"
+const FONT_SIZE = 13
 
-/** Loads the ghostty-web WebAssembly module once (the CSP allows 'wasm-unsafe-eval' for it, ADR-0020). */
-export function loadGhostty(): Promise<void> {
-  ready ??= init()
-  return ready
+/** The terminals open on the page (created and not yet disposed), each with the WebAssembly memory it runs in. */
+const live = new Map<Terminal, WebAssembly.Memory | undefined>()
+
+/** What the browser tests read through `window.__smTerminals` (the canvas has no text to query). */
+export interface TerminalProbe {
+  /** How many terminals are open. */
+  count(): number
+  /** Each open terminal's screen and scrollback as text, one string per terminal. */
+  texts(): string[]
+  /** The WebAssembly memory the open terminals hold, in bytes. */
+  wasmBytes(): number
+}
+
+/**
+ * Installs the probe when a test asked for it before the page loaded (Playwright's addInitScript sets
+ * `window.__smTerminalProbe = true`). Pages never install it otherwise.
+ */
+function installProbe() {
+  if (typeof window === 'undefined') return
+  const w = window as unknown as { __smTerminalProbe?: boolean; __smTerminals?: TerminalProbe }
+  if (w.__smTerminalProbe !== true || w.__smTerminals) return
+  w.__smTerminals = {
+    count: () => live.size,
+    texts: () =>
+      [...live.keys()].map((t) => {
+        const b = t.buffer.active
+        const lines: string[] = []
+        for (let y = 0; y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? '')
+        return lines.join('\n')
+      }),
+    wasmBytes: () => [...live.values()].reduce((n, m) => n + (m?.buffer.byteLength ?? 0), 0),
+  }
+}
+
+/**
+ * Loads a new instance of the ghostty-web WebAssembly module, one per terminal (the CSP allows 'wasm-unsafe-eval' and
+ * the module's data: URL for it, ADR-0020).
+ *
+ * ghostty-web 0.4.0's init() shares one instance, and so one memory, between every terminal on the page, and a freed
+ * terminal's memory is not cleared (wasm.test.ts, 2026-11-08):
+ * - the next terminal starts out with the freed one's cells: after switching runs, lines of the previous run's
+ *   terminal showed through the new one wherever it had not drawn yet, even with a full reset (RIS) written first;
+ * - the memory of a terminal holding many styles (Claude Code's 24-bit colours) is never reused, so every such terminal
+ *   viewed grows the page's memory for good (about 50 MB for a full scrollback) until the tab freezes and crashes;
+ * - without a full reset first, the third terminal's write failed with "memory access out of bounds" (the earlier
+ *   hang after closing a full-screen program, which the reset worked around).
+ * A terminal of its own instance starts from zeroed memory, and its whole memory goes with it (instantiating takes a
+ * few milliseconds).
+ */
+function loadGhostty(): Promise<Ghostty> {
+  return Ghostty.load()
+}
+
+/**
+ * Waits (briefly) for the terminal font, so the first terminal of a page measures its cells in the font it draws with:
+ * ghostty-web 0.4.0 measures the font when the terminal opens and when its size or family changes, never when a web
+ * font finishes loading, so a terminal opened before then keeps the fallback font's cell size.
+ */
+async function fontReady(): Promise<void> {
+  if (typeof document === 'undefined' || !document.fonts?.load) return
+  await Promise.race([document.fonts.load(`${FONT_SIZE}px ${FONT_FAMILY}`).catch(() => []), new Promise((r) => setTimeout(r, 1_500))])
 }
 
 /**
  * Creates a watch-only terminal: keyboard input is never sent anywhere (SM-UI-004). Only a takeover's holder turns
- * input on (TerminalView), and the server accepts their keys only while they hold it.
+ * input on (TerminalView), and the server accepts their keys only while they hold it. Every terminal runs in its own
+ * WebAssembly instance (loadGhostty); dispose it with disposeTerminal.
  */
 export async function createTerminal(el: HTMLElement, cols = 120, rows = 40): Promise<Terminal> {
-  await loadGhostty()
+  const [ghostty] = await Promise.all([loadGhostty(), fontReady()])
   const term = new Terminal({
+    ghostty,
     cols,
     rows,
     theme: terminalTheme,
-    fontSize: 13,
-    fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Menlo, monospace",
+    fontSize: FONT_SIZE,
+    fontFamily: FONT_FAMILY,
     disableStdin: true,
     scrollback: 10_000,
     cursorBlink: false,
   })
   term.open(el)
+  installProbe()
+  live.set(term, (ghostty as unknown as { memory?: WebAssembly.Memory }).memory)
   return term
 }
 
 /**
- * Disposes a terminal so the next one on the page still works. With ghostty-web 0.4.0, disposing a terminal that drew a
- * full-screen program (Claude Code's alternate screen at 200×120) leaves the shared WebAssembly module in a state where
- * the next terminal's resize never returns and the tab hangs (Chrome: RESULT_CODE_HUNG); a first page load is fine.
- * A full reset (RIS, ESC c) written first avoids it; Terminal.reset() does not. Reproduced with a real Claude Code
- * recording, 2026-11-03.
+ * Disposes a terminal: its render loop, listeners, canvas and WebAssembly state. Nothing else holds its instance, so
+ * the instance's memory is released with it.
  */
 export function disposeTerminal(term: Terminal) {
-  try {
-    term.write('\x1bc')
-  } finally {
-    term.dispose()
-  }
+  live.delete(term)
+  term.dispose()
 }
 
 const MIN_FONT = 8
@@ -73,6 +129,25 @@ export function fitFont(term: Terminal, box: HTMLElement) {
     next -= 0.5
     term.options.fontSize = next
   }
+}
+
+/**
+ * The character cell at the regular font size, in CSS pixels: "Fit to window" sizes the run's terminal so its text is
+ * shown at the regular size (ADR-0075). It is measured the way ghostty-web 0.4.0's renderer measures its cell
+ * (measureFont: the width of "M" rounded up, the ink height rounded up plus 2), at MAX_FONT whatever size fitFont
+ * shows now. Scaling the canvas's current cell instead was unstable: cell widths are whole pixels at every font size,
+ * so the same window fitted to 90×37 or 91×41 depending on the size shown at the time.
+ */
+export function regularCell(term: Terminal): { width: number; height: number } | null {
+  if (typeof document === 'undefined') return null
+  const ctx = document.createElement('canvas').getContext('2d')
+  if (!ctx) return null
+  ctx.font = `${MAX_FONT}px ${term.options.fontFamily || FONT_FAMILY}`
+  const m = ctx.measureText('M')
+  const ascent = m.actualBoundingBoxAscent || MAX_FONT * 0.8
+  const descent = m.actualBoundingBoxDescent || MAX_FONT * 0.2
+  const width = Math.ceil(m.width)
+  return width > 0 ? { width, height: Math.ceil(ascent + descent) + 2 } : null
 }
 
 /** The height of one terminal row on screen, in CSS pixels (0 before the first render). */

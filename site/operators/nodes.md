@@ -39,6 +39,22 @@ continue. After the lease and the grace period (`nodes.disconnect_grace`) it app
 **interrupt** (the harness session stays resumable) or **stop**. Central shows such runs as **unknown** until the node
 reports again.
 
+If the node doesn't come back, central's stale-run sweeper records the space's runs on it as **lost** (end reason
+`stale_lease_lost`) once the lease, the larger of the disconnect grace the lease was granted with and the current one,
+and a further 15 minutes have passed. That frees their slots in the space's limit and the node's capacity. If the node
+reconnects and its hello doesn't report a run central still counts as live (its agent restarted and the process didn't
+survive), the sweeper records that run as lost (`stale_not_on_node`) two minutes after the connection. It never ends a
+pending launch, a run whose launch is still unacknowledged, or a run no node has reported, and it does not use a
+revoked lease (a revoke records the revoke time, while the node may hold the lease for up to `nodes.lease_ttl`, at
+most 10 minutes, longer): those runs wait for the node to report. Each sweep writes the audit
+event `run.reconciled_stale` and counts in `spaceman_runs_reconciled_stale_total` (ADR-0074).
+
+::: warning Keep node clocks synchronised
+The lease guard compares central's lease expiry with the node's own clock, and the sweeper relies on that. Run NTP (or
+another time sync) on central and on every node. A node whose clock is more than about 15 minutes behind central's
+could still be running a process when central records it lost; the fence then kills it at its next report.
+:::
+
 ## When the agent itself dies
 
 A process cannot enforce its own timeout after it has died. SpaceMan therefore starts a **lease guard** per space: a small

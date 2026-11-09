@@ -8,7 +8,8 @@ import { api, check, unwrap, type Run } from '@/api/client'
 import { keys, useHumanActions, useMe, useNodes, useQueue, useSpaceAccounts } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { useAppForm } from '@/components/form/appForm'
-import { TakeoverPanel, useTakeoverInput } from '@/features/terminal/Takeover'
+import { holderRef, TakeoverPanel, useTakeoverInput } from '@/features/terminal/Takeover'
+import { resizeBlocker } from '@/features/terminal/TerminalSize'
 import { TerminalView } from '@/features/terminal/TerminalView'
 import { atLeast, roleIn } from '@/lib/access'
 import { useNarrow } from '@/lib/media'
@@ -138,7 +139,8 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
       {/* On a phone the inspector goes below the terminal instead of beside it. */}
       <Box data-testid="run-body" style={{ display: 'grid', gridTemplateColumns: inspector && !narrow ? 'minmax(0, 1fr) 300px' : 'minmax(0, 1fr)', gap: 'var(--mantine-spacing-sm)', alignItems: 'start' }}>
         <Stack gap="xs" style={{ minWidth: 0 }}>
-          <TerminalView key={`${r.id}:${mode}`} spaceId={spaceId} runId={r.id} mode={mode} onInput={mode === 'live' ? onKeys : null} />
+          <TerminalView key={`${r.id}:${mode}`} spaceId={spaceId} runId={r.id} mode={mode} onInput={mode === 'live' ? onKeys : null}
+            resize={operator ? { run: r, blocker: resizeBlocker(r, canTakeOver, holderRef(me), ended) } : undefined} />
           {ended ? (
             <Group gap="xs" justify="space-between" p="xs" style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--mantine-radius-sm)' }}>
               <Text size="sm" c="dimmed">

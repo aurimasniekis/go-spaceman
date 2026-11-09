@@ -1,9 +1,11 @@
 # Contract: Harbor Pilot gateway
 
-Pinned to **Harbor Pilot v0.1.3**, commit `2e957c71bf160660588a6468bfe7cc1ed855e3ca`
-(`github.com/aurimasniekis/go-harbor-pilot`, tag `v0.1.3`, released 2026-11-07). File paths below are in that
-repository at that revision; `D-0nn` are Harbor Pilot's own decisions in its `docs/DECISIONS.md`. SpaceMan's design on
-top of it is ADR-0060 (Accepted) in `docs/DECISIONS.md`. **SpaceMan's minimum Harbor Pilot version is 0.1.3.**
+Pinned to **Harbor Pilot v0.1.4**, commit `60d8d0236d187fb89d1216b7d7c1c177f214df49`
+(`github.com/aurimasniekis/go-harbor-pilot`, tag `v0.1.4`, released 2026-11-08), and before it to v0.1.3, commit
+`2e957c71bf160660588a6468bfe7cc1ed855e3ca` (released 2026-11-07). File paths below are in that repository at v0.1.3
+unless a line names v0.1.4; `D-0nn` are Harbor Pilot's own decisions in its `docs/DECISIONS.md`. SpaceMan's design on
+top of it is ADR-0060 (Accepted) in `docs/DECISIONS.md`. **SpaceMan's minimum Harbor Pilot version is 0.1.3; 0.1.4 is
+recommended** (version detection and budget status filtered by project, below).
 
 **How this was established:**
 - 2026-11-06, v0.1.1 (commit `68d6eae`): the tag was built from source, `harbor-pilot serve --demo` ran on loopback
@@ -13,6 +15,11 @@ top of it is ADR-0060 (Accepted) in `docs/DECISIONS.md`. **SpaceMan's minimum Ha
   fetches). The facts below were re-checked on that binary through the `hptest` tests and by hand, and Claude Code
   ran against it again (`harnesses.md`, "Harbor Pilot 0.1.3 re-run"). Facts that only changed in the source are
   re-cited at v0.1.3.
+- 2026-11-08, v0.1.4: built from the tag with the release's flags (`go install -trimpath -ldflags "-X
+  main.version=0.1.4 -X main.commit=60d8d02…"`; the release asset download is not reachable from the build node). The
+  0.1.4 facts below were checked on that binary by `TestRealHarborPilotOneTimeBudgets` and the whole `make
+  test-harbor-pilot` suite, and read in the source. A plain `go install …@v0.1.4` (what hptest does without
+  `HARBOR_PILOT_BIN`) reports version `dev` and an empty commit.
 - The demo's upstreams are synthetic, so no provider credentials were involved.
 
 **Labels:**
@@ -30,6 +37,11 @@ These answer SpaceMan's upstream requests (ADR-0060 Q5); each is detailed in its
   `spaceman.fleet`; the orchestrator and event docs were fixed.
 - **0.1.3:** optional `check_budget` on mint (D-043); per-model downgrade of mid-conversation `system` entries
   (D-042); `ref=` and `binding_id` filters on `/usage/series`; a generic 502 for internal mint errors.
+- **0.1.4** (SpaceMan's two requests of 2026-11-08: a version endpoint and budget status by project): `GET
+  /api/v1/system`; `project_id`/`binding_id` and `scope`/`scope_id` filters on budget status; one-time budgets
+  (`period: "once"`, D-044) with `period_end: null` and the states `scheduled` and `expired`; `remaining_e10`;
+  `check_budget` honours one-time windows; threshold events fire again after a limit is raised, and once more after
+  the upgrade for budgets that already warned or were exhausted in the current window.
 - **Unchanged:** a mint without `check_budget` ignores budgets. The Pulse relay is still not verified against a real
   `pulsed` deployment (by Harbor Pilot or by SpaceMan); SpaceMan ran it into its Pulse-shaped test server (Events).
 
@@ -138,18 +150,60 @@ Handler: `internal/gateway/models.go:361` (`revokeChild`).
 - **Request detail fields** (0.1.3, **live**) include `trusted_refs`, `claims`, `losses` (`{feature, detail,
   severity}`), `attempt_list`, `credential_id`, `harness`, `harness_version`, `final_model` and `final_account_id`.
 
+## System: `GET /api/v1/system` (0.1.4)
+Handler: `internal/app/system.go` (v0.1.4, op `get-system`). It needs `config.read`; service-principal tokens work.
+- **Answer:** `{version, commit, started_at, schema_version}`, nothing else (no hosts, data directory or key ids).
+  **live**: `{"version":"0.1.4","commit":"60d8d02…","started_at":"…","schema_version":20261108100000000}`
+  (fixture `internal/harborpilot/testdata/system_v014.json`).
+- **Older gateways:** the route does not exist before 0.1.4, so they answer 404 (**code**: 0.1.3 registers only
+  `/system/status`, `/system/bridges` and `/system/backups`). Unauthenticated: 401 (**code**).
+- **SpaceMan's use:** `Budgets.Gateway` reads it with the service-principal token (cached 10 min). 200: the gateway
+  is 0.1.4 or later and budget status is read filtered by project. 404: older (`legacy`), the 0.1.3 path. Anything
+  else (401, 403 without `config.read`, unreachable): `unknown`, and budget status takes the 0.1.3 path, which works on
+  every supported version. The version text is Harbor Pilot's (sanitised, bounded); SpaceMan never compares it.
+
 ## Budget status: `GET /api/v1/budgets/status`
-Handler: `internal/quota/quotaapi/quotaapi.go:208`. It needs an `hpa_` token or a session with `usage.read`. **live**
+Handler: `internal/quota/quotaapi/quotaapi.go:208` (v0.1.4: `:214`). It needs an `hpa_` token or a session with
+`usage.read`. **live**
 
 - **No filters.** Every budget is returned.
+- **Filters (0.1.4,** `quotaapi.go` `budgetFilter`**):**
+  - `project_id=<id>` returns the budgets that cover that project on the request path: global, the project's
+    workspace (resolved by Harbor Pilot) and the project's. With `binding_id=<id>` the binding's budgets too. Account
+    budgets never match. Inactive ones (disabled, scheduled, expired) are included with their `state`. **live**
+    (fixture `internal/harborpilot/testdata/budget_status_v014.json`).
+  - `scope=<scope>&scope_id=<id>` matches budgets defined on exactly that object (`scope_id` empty for global). **code**
+  - `project_id` with `scope`, `binding_id` without `project_id`, or `scope_id` without `scope`: 400
+    `invalid_request` (**code**). An unknown project or binding: 404 (**live** for the project).
+  - A 0.1.3 gateway ignores unknown query parameters (huma) and answers every budget, so SpaceMan sends the filters
+    only after `GET /api/v1/system` answered. A filtered answer holding another project's or binding's budget, an
+    account budget, two workspaces' or an item without `remaining_e10` is taken as unfiltered (a gateway downgraded while its version was cached):
+    SpaceMan drops the cached version and reads every budget. A filtered 404 falls back to reading every budget too.
 - **Fields of an item:** `budget_id, name, scope (global|workspace|project|binding|account), scope_id, period,
   period_start, period_end, currency, cost_kinds, enforcement (block|warn), enabled, limit_e10, spent_e10, reserved_e10,
   by_kind_e10, fraction, warn_at, projected_spend_e10, state (ok|warning|exceeded|disabled)`. **live**
+- **0.1.4 changes to items** (`internal/accounting/budgets.go` v0.1.4 `BudgetUsage`, `finish`):
+  - `period` can be `once`: a one-time budget, a total limit over `[starts_at, ends_at)` that never resets.
+    `period_start` is its `starts_at` (its creation when empty) and `period_end` its `ends_at`, **`null`** when it
+    has none. **live**
+  - `state` adds `scheduled` (before `starts_at`) and `expired` (at or after `ends_at`). The order is: `disabled`
+    when not enabled, then `scheduled`/`expired`, then `exceeded` (fraction ≥ 1), `warning`, `ok`. So `exceeded` is
+    only ever reported for an enabled budget inside its window. An expired budget no longer blocks or warns. **live**
+    + **code**
+  - `remaining_e10` = max(limit − spent − reserved, 0). **live**
+  - `projected_spend_e10` is null for a window without an end and outside a one-time window. **code**
+- **What SpaceMan relies on:** only `state == "exceeded"` with `enforcement == "block"` and `enabled` refuses a launch.
+  Every other state, including one a later Harbor Pilot adds, is shown (as "unknown" when SpaceMan doesn't know it) and
+  never refuses: Harbor Pilot still enforces its own budgets at mint (`check_budget`) and on every request.
 - **Demo spend.** In 0.1.1 the seeded traffic had spend on `data-pipeline`, so a fresh `0.000001 USD` budget there was
   `exceeded` at once. In 0.1.3 `data-pipeline` has no spend at start (the budget is `ok`, `spent_e10: 0`), while
   `web-app` has seeded spend (about 0.12 USD), so a tiny budget on `web-app` is used up at once. **live**
 - **Limits.** A budget `limit` must be a positive decimal; `"0"` gets 422. **live**
 - **Workspace lookup.** Finding a project's workspace needs `config.read` (`GET /api/v1/projects`, `spec.workspace_id`). **live**
+  Since 0.1.4 SpaceMan needs it only on older gateways: the `project_id` filter resolves the workspace server-side.
+- **Mint check and one-time windows (0.1.4).** `check_budget` uses the same `active` rule as status: a scheduled or
+  expired one-time budget does not refuse a mint. **live**: with only a scheduled, an expired and a disabled used-up
+  budget on the project, the dispatch mint with `check_budget` succeeded.
 
 ## Activity and usage
 - **Request list.** `GET /api/v1/activity/requests` (`internal/telemetry/activityapi/activityapi.go`, `activity.read`)
@@ -199,7 +253,7 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208`. It needs an `hpa_` token or 
 
   | Event | `subjects` | `data` keys | Observed |
   |---|---|---|---|
-  | `budget.threshold.exceeded` (and `.warning`) | `budget_id`, plus the scope's id only (`project_id` for a project budget) | `budget, currency, enforcement, fraction, limit, period, period_start, scope, spent` | **live**; still once per period (D-027), with the refused request's id as `correlation_id` (0.1.3) |
+  | `budget.threshold.exceeded` (and `.warning`) | `budget_id`, plus the scope's id only (`project_id` for a project budget) | `budget, currency, enforcement, fraction, limit, period, period_start, scope, spent` | **live**; still once per period (D-027), with the refused request's id as `correlation_id` (0.1.3). **0.1.4** (**code**, `accounting/budgets.go` `recordThreshold`): `period` can be `once` (its `period_start` is the window start); a threshold fires again in the same window when the limit was raised since it last fired, and once more after the upgrade for budgets that already fired in the current window (the new limit columns start empty). Each is a new event id with the same `budget_id` and `period_start`. |
   | `access.request.blocked` | `request_id, binding_id`, no project | `excluded, plan_id, reason, requested_model` | **live**, for the routing 403 (0.1.1) and, since 0.1.2, for every budget 429 (one per refused request, D-040). For a budget refusal `reason` is the budget message text and `excluded` is 0. |
   | `quota.window.exhausted` / `.recovered` | `monitor_id, account_id` | `monitor, bucket, label, reset_at, source` | **code**, `catalog.go:30` |
   | `access.credential.issued` | `credential_id, binding_id` | `child, prefix, scopes` | **live**; the docs say so since 0.1.2 |
@@ -220,6 +274,10 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208`. It needs an `hpa_` token or 
   (`pulsetest`, the server devpulse runs: JWT operator mode, the `EVENTS` stream on `evt.>`), and the relay's events
   reach SpaceMan subscriptions. Harbor Pilot 0.1.3 itself still says its relay is not verified against a real go-pulse
   deployment, and neither is it here.
+- **Re-sent alerts and SpaceMan (0.1.4).** A re-sent or re-armed alert is a new event, so it is a new inbox item, in
+  the same correlation (`harborpilot:budget:<budget>:<period_start>`) as the first; a redelivery of any event is
+  still a duplicate (`internal/events` `TestHarborPilotOneTimeBudgetAndUpgradeResend`). The upgrade re-send is one
+  more item per budget and threshold that already fired in the current window, once; nothing else repeats.
 - **Values the templates rely on.** Ids are `<prefix>_<26 lowercase ULID characters>` (`internal/platform/ids`:
   `bdg`, `prj`, `wsp`, `cbn`, `acc`, `qmn`, `req`, `pln`, `evt`, …). Resource names, including budget and monitor
   names, match `[a-z0-9][a-z0-9._-]{0,62}` (`internal/controlplane/kind.go:63`; **live**: a name with spaces gets 422).
@@ -233,13 +291,14 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208`. It needs an `hpa_` token or 
   (`quota/service.go:314-329`: `subjects {monitor_id, account_id when linked}`, `data {monitor, bucket, label,
   reset_at, source}` and `{monitor, bucket, label}`).
 
-## Demo seed (v0.1.3)
+## Demo seed (v0.1.3; v0.1.4 the same plus a one-time budget)
 - **Fixed names, new ids.** The names are fixed, but every id (ULID) is new on each start. Look ids up by name:
   - workspace `acme`;
   - projects `web-app` and `data-pipeline`;
   - routing plans `team-default` and `private-only`;
   - bindings `claude-code-laptop`, `codex-ci`, `spaceman-runs` and `private-notebook`;
-  - budgets `acme-monthly` (workspace, warn) and `ci-daily` (binding, block);
+  - budgets `acme-monthly` (workspace, warn) and `ci-daily` (binding, block); 0.1.4 adds `trial-credit` (project
+    `web-app`, one-time without an end, **live**);
   - service principal `demo-terraform`.
 - **Admin login.** The demo administrator is `admin@example.test` with the public password from `internal/demo/demo.go:17-18`.
   Sign-in is `POST /api/v1/session`, which returns `csrf_token`. Writes need `X-CSRF-Token` and an `Origin` equal to the
@@ -261,14 +320,15 @@ The three recorded at v0.1.1 are fixed in 0.1.2:
    `prefix, scopes, child`, as emitted. **code** + **live**
 3. **`created_by`.** It is the minting credential (D-040). **live**
 
-None are known at v0.1.3.
+None are known at v0.1.3 or v0.1.4.
 
 ## What SpaceMan's connection validation relies on (HP-T2)
 Checked 2026-11-07 against v0.1.3 by `TestRealHarborPilotConnection` (opt-in) and in the source.
 - **Version probe.** The mint body is decoded with unknown fields refused *before* any scope check
   (`internal/gateway/models.go:230-235`, **code**). So a mint that sends `"check_budget": false` is refused by any
   gateway before 0.1.3 with 400 `invalid body: json: unknown field "check_budget"`, whatever the token's scopes, and is
-  accepted by 0.1.3 (**live**). There is no version endpoint (see HP-T1b).
+  accepted by 0.1.3 (**live**). 0.1.3 has no version endpoint; 0.1.4's `GET /api/v1/system` (above) is read when there
+  is a service-principal token, and the probe stays the check of the 0.1.3 minimum (it needs no service token).
 - **A parent without `tokens:mint`** gets 403 `permission_error` with the message `invalid, expired or revoked gateway
   credential: parent credential lacks tokens:mint` (`credentials.go:168-170`, wrapped `ErrCredentialInvalid`).
   **live**, with a credential issued on the test binding with only `gateway:invoke` and `gateway:models`. A child used
@@ -315,8 +375,8 @@ Checked 2026-11-07 against v0.1.3 by `internal/app` `TestRealHarborPilotRunToken
 
 ## Test harness: `internal/harborpilot/hptest`
 - **Opt-in.** Set `SPACEMAN_HARBOR_PILOT=1`. The helper uses the binary at `HARBOR_PILOT_BIN`, or else runs
-  `go install github.com/aurimasniekis/go-harbor-pilot/cmd/harbor-pilot@v0.1.3` into the user cache directory
-  (`<cache>/spaceman/hptest/v0.1.3`). A cached binary is used only when its build information names that module and
+  `go install github.com/aurimasniekis/go-harbor-pilot/cmd/harbor-pilot@v0.1.4` into the user cache directory
+  (`<cache>/spaceman/hptest/v0.1.4`; v0.1.3 before 2026-11-08). A cached binary is used only when its build information names that module and
   version.
 - **Setup.** `Start(t)` runs `serve --demo --listen 127.0.0.1:<free port> --data-dir <t.TempDir()>/data` and waits for
   `/readyz`. It then provisions the following through the admin API:
@@ -344,4 +404,6 @@ Checked 2026-11-07 against v0.1.3 by `internal/app` `TestRealHarborPilotRunToken
 - **Status:**
   - v0.1.1: the self-test passed on 2026-11-06 with both a source-built binary and the `go install` path.
   - v0.1.3: both tests passed on 2026-11-07 with the `go install` binary, and `TestRealHarborPilotConnection` too.
+  - v0.1.4: the whole `make test-harbor-pilot` suite, `TestRealHarborPilotOneTimeBudgets` included, on 2026-11-08
+    with a binary built from the tag with the release's version flags (`HARBOR_PILOT_BIN`).
   - Without the opt-in both are skipped.
