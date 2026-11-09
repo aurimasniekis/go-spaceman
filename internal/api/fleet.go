@@ -39,6 +39,10 @@ var FleetRules = map[string]Rule{
 	"renew-takeover": TakeoverRules["renew-takeover"],
 	"takeover-input": TakeoverRules["takeover-input"],
 	"end-takeover":   TakeoverRules["end-takeover"],
+
+	// Run terminal size (takeover.go, ADR-0075).
+	"set-terminal-size":   TakeoverRules["set-terminal-size"],
+	"clear-terminal-size": TakeoverRules["clear-terminal-size"],
 }
 
 type spaceOut struct {

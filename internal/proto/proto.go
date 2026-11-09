@@ -31,8 +31,9 @@ const (
 	// before a backup (memory.flush / memory.flushed, ADR-0045); 6: terminal takeover (takeover.state, takeover.input,
 	// takeover.ended; SM-UI-004, ADR-0046); 7: repository SSH keys (ssh_key and known_hosts on repository sources,
 	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059); 9: gateway runs (the launch's gateway
-	// address and its child token in the secrets, delivered to the harness; ADR-0060)
-	MaxMinor = 9
+	// address and its child token in the secrets, delivered to the harness; ADR-0060); 10: run terminal sizes
+	// (terminal.sizes, ADR-0075)
+	MaxMinor = 10
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).

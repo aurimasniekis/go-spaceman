@@ -154,6 +154,12 @@ type LimitsConfig struct {
 	// it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at
 	// most 10080).
 	ControlIdleStopMinutes int64 `yaml:"control_idle_stop_minutes"`
+	// TerminalCols is the width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the
+	// node's runner.terminal_size. A size applies only when terminal_rows is set too.
+	TerminalCols int64 `yaml:"terminal_cols"`
+	// TerminalRows is the height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's
+	// runner.terminal_size. A size applies only when terminal_cols is set too.
+	TerminalRows int64 `yaml:"terminal_rows"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual

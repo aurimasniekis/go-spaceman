@@ -108,8 +108,10 @@ UPDATE execution_leases SET state = 'revoked', expires_at = sqlc.arg(now) WHERE 
 
 -- name: InsertRun :exec
 INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, launch_json, manifest_json,
-  created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', ?, ?, ?, ?, ?);
+  created_at, created_by, updated_at, terminal_cols, terminal_rows)
+VALUES (sqlc.arg(id), sqlc.arg(space_id), sqlc.arg(node_id), sqlc.arg(generation), sqlc.arg(kind), sqlc.arg(role), sqlc.arg(harness),
+  sqlc.arg(instance_id), sqlc.arg(session_id), 'running', 'pending', sqlc.arg(launch_json), sqlc.arg(manifest_json), sqlc.arg(created_at),
+  sqlc.arg(created_by), sqlc.arg(updated_at), sqlc.narg(terminal_cols), sqlc.narg(terminal_rows));
 
 -- name: GetRun :one
 SELECT * FROM runs WHERE id = ?;

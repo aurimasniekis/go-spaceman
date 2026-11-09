@@ -1,9 +1,15 @@
 import { bytes } from '@/lib/format'
 
-/** A limit's value in its unit: "No limit" for 0 where 0 means none ("Kept" for a retention period, "Never" for minutes), sizes in binary
- * units, cents as dollars, a switch as On or Off. */
+/** What 0 means for a limit whose 0 means none: "Kept" for a retention period, "Never" for minutes, "Node default" for a
+ * terminal size, otherwise "No limit". */
+export function zeroLabel(unit: string): string {
+  return unit === 'days' ? 'Kept' : unit === 'minutes' ? 'Never' : unit === 'columns' || unit === 'rows' ? 'Node default' : 'No limit'
+}
+
+/** A limit's value in its unit: zeroLabel for 0 where 0 means none, sizes in binary units, cents as dollars, a switch as
+ * On or Off, a terminal size in columns or rows. */
 export function limitValue(value: number, unit: string, zeroMeansNone = false): string {
-  if (zeroMeansNone && value === 0) return unit === 'days' ? 'Kept' : unit === 'minutes' ? 'Never' : 'No limit'
+  if (zeroMeansNone && value === 0) return zeroLabel(unit)
   switch (unit) {
     case 'days':
       return value === 1 ? '1 day' : `${value.toLocaleString('en-US')} days`
@@ -21,6 +27,10 @@ export function limitValue(value: number, unit: string, zeroMeansNone = false): 
       return `${value.toLocaleString('en-US')} tokens`
     case 'switch':
       return value === 0 ? 'Off' : 'On'
+    case 'columns':
+      return `${value} columns`
+    case 'rows':
+      return `${value} rows`
     default:
       return value.toLocaleString('en-US')
   }

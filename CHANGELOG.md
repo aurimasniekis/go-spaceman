@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+**Upgrade notes:**
+- **Take a backup first.** Migration 0047 (a run's terminal size) is forward-only.
+- **Node protocol 1.10.** Upgrade central first, then the node agents. Older agents keep working, but their runs
+  can't be resized: the web disables the size menu and the API answers 409.
+
 ### Added
 
 - `make check-fast`, the inner-loop gate (ADR-0069): vet, the custom analyzers, golangci-lint, traceability, the
@@ -31,6 +36,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   check waits at most 15 s for Harbor Pilot in all, not 15 s per read.
 - The Limits card shows one-time budgets (Harbor Pilot 0.1.4 `period: once`): "one time", **Never** or when the window
   ends, **Scheduled** and **Ended** badges, and what is left of each budget.
+- Web: the size of a run's terminal is configurable (ADR-0075, SM-UI-007).
+  - A size menu on the live terminal offers Fit to window, 80×24, 120×40, 160×50, 200×60, a custom size (40–400
+    columns, 10–200 rows) and Node default. The node resizes the program's terminal, so the agent redraws for it.
+  - The size belongs to the run: every viewer sees it, scaled to their window. Resizing needs `terminal:takeover`;
+    while the terminal is taken over, only the holder can resize it.
+  - Each change is audited (`run.terminal_resized`).
+  - The browser remembers your choice but never applies it on its own.
+  - Recordings note every size change, so replays redraw at the right size.
+  - API: `PUT` and `DELETE /api/v1/spaces/{space}/runs/{run}/terminal-size`; CLI: `spaceman run terminal-size set|clear`.
+- Space limits `terminal_cols` and `terminal_rows` set the terminal size new runs start at (0, the default, keeps the
+  node's `runner.terminal_size`). Changing them needs `terminal:takeover`, like resizing a running run.
 
 ### Changed
 

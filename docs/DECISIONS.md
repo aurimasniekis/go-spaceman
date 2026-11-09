@@ -3799,6 +3799,84 @@
     Write transactions are serialized, so a disconnect and a reconnect can't interleave.
   - No migration and no protocol change.
 
+### ADR-0075 — Run terminal sizes: per run, held by the node through an attach that never types
+- **Status:** Accepted, 2026-11-09 (operator request for v0.1.1: "configurable terminal size from web"; design agreed
+  with control before building).
+- **Context:**
+  - herdr-core's `terminal.run` takes no size. A program starts at the core's `headless` size, which the node sets
+    from `runner.terminal_size` (default 160×48, S-6). The web view scaled the font to fit a run's columns, but the
+    size itself could not change.
+  - An interactive attach resizes a program only while it is open. Once it closes, the program goes back to the
+    headless size. With two interactive attaches open, the newer one (or its later resize) sets the size, and closing
+    it brings the other one's size back. `events.subscribe` reports each change as `size {cols, rows}`. These
+    behaviours were verified on hc 0.1.17 (docs/contracts/herdr-core.md S-7, `TestRealTerminalSizeHold`).
+  - The recorder attached as an observer and wrote a `size` record only when it re-attached. A live resize would
+    therefore have replayed at the wrong size.
+- **Decision:**
+  - **The size belongs to the run, not to a viewer.** An operator with `terminal:takeover` in the run's space sets it,
+    the same permission as takeover, because it changes what the agent's program sees. While the terminal is taken
+    over, only the holder may change it. With two operators, the last change wins. Every viewer sees the run at its
+    real size, and the browser scales the font to the viewer's window or scrolls horizontally, as before. Viewers
+    without the permission get no control. Operators see it disabled, with the reason.
+  - **Central stores it.** Migration 0047 adds `runs.terminal_cols` and `terminal_rows`. Both are NULL (the node's
+    default) or both set, with 40–400 columns and 10–200 rows, the bounds of `runner.terminal_size`.
+    `PUT /spaces/{space}/runs/{run}/terminal-size` sets the size and `DELETE` clears it. Both are audited as
+    `run.terminal_resized`, with the previous size. The run's `terminal_size` shows it, and `terminal_sizing` says
+    whether the run's node can hold a size now. The admin MCP excludes both operations (a person's at the keyboard,
+    like takeover).
+  - **Node protocol minor 10, additive.** Central sends `terminal.sizes`, the complete set of the node's sized runs
+    (space, run, generation, cols, rows), after the node connects and on every change, the same pattern as
+    `takeover.state`. For each listed run whose space lease and generation are valid, the node opens an interactive
+    attach on a connection of its own (`runner.Takeover`, at the current size) and resizes it. The hold **never
+    writes**: no input reaches the program through it. The node closes a hold when the run leaves the set, when the
+    run ends, when the space's lease is revoked or expires (fencing), and at shutdown. A run that is not live yet is
+    held once it is. A failed attach is retried while the size is still wanted. An open takeover attach is resized
+    along with the hold, and back to the node's default when the hold closes. A node below minor 10 is never sent the
+    set, and resizing one of its runs fails with **409**.
+  - **Recordings.** The recorder writes a `size` record for every change. The node notes the size itself before it
+    resizes or releases a hold, so the program's redraw for the new size follows the record. The runner's `size`
+    events note changes the node did not make (a takeover attach, a hold that dropped). A pending size note is written
+    before the next output chunk. Replay already redraws at `size` records.
+  - **Default for new runs:** the space limits `terminal_cols` and `terminal_rows` (installation defaults in
+    `limits:`, 0 = the node's default). A size applies only when both are set. Each must be 0 or within the bounds.
+    Launch resolution copies them to the new run, and the node holds it from the start. A node connected below minor
+    10 cannot hold it, so its new runs keep no size (they would show one they don't have). **Changing either key needs
+    `terminal:takeover`** in the space, like resizing a live run: `set-space-limits` otherwise needs only
+    `space_config:write`, which operators hold, and that would let them set every new run's held size. A change that
+    leaves both keys as they are needs only `space_config:write`, the same way retention periods need
+    `retention:write` (review of PR #33, S1).
+  - **Node holds are race-free.** `reconcileHolds` plans under the agent's lock and opens holds after unlocking, so
+    `startHold` checks again under the lock before it records a hold: the size is still wanted exactly as planned,
+    the space's lease is valid and the agent has not stopped. Otherwise it opens nothing. Central serializes its
+    `terminal.sizes` pushes per node session (read and send under one lock), so an older set is never sent after a
+    newer one.
+  - **Web:** the live terminal has a size menu: Fit to window (the terminal area at the regular font size, refitted
+    after the window changes while it stays applied), 80×24, 120×40, 160×50, 200×60, Custom… and Node default. The
+    browser remembers the last choice and shows it selected, but **never applies it on its own**, so opening a run's
+    page never resizes it for everyone else.
+    - Fit refits only when the browser's window or visual viewport changes size, never when the terminal box does:
+      the box follows the run's size, so refitting on it undid other people's resizes. Once the run's size differs
+      from the last size this browser sent (someone else resized or cleared it), the browser stops fitting and shows
+      the run's size as the selected choice.
+    - The fit measures the regular cell the way ghostty-web 0.4.0's renderer does (`measureText("M")` at the
+      regular font size), not by scaling the cell shown now, so the same window always fits to the same size.
+    - When the viewer can't resize, the control stays focusable (`aria-disabled`) and its reason is its accessible
+      description. The choices are `menuitemradio` items with `aria-checked`.
+- **Alternatives:**
+  - Sizing tied to a takeover. This needs no migration, but the size is lost on release and resizing needs a takeover
+    that pauses automated input. Rejected by control.
+  - Per-viewer sizing. A program has one size, so viewers would fight over it.
+  - Restarting the core with a new `headless` size. That changes every new program on the node and never a running one.
+- **Consequences:**
+  - One extra herdr-core connection per sized run on the node.
+  - This is not a security relaxation: the permission is takeover's, the hold types nothing, and the size is bounded
+    and audited.
+  - CLI: `spaceman run terminal-size set|clear` resizes a live run. `spaceman limits set --set terminal_cols=… --set
+    terminal_rows=…` takes the new limits as they are (its keys are generic).
+  - Terraform: the provider's `spaceman_space_limits` resource declares one attribute per known limit, so it cannot
+    set these two yet. Its data source shows them in `values`. Adding the attributes is a follow-up in the provider
+    (PLAN.md).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

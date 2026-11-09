@@ -248,6 +248,11 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			in.Kind, in.Harness, in.Model, in.Settings, in.SystemText = r.Kind, r.Harness, r.Model, r.Settings, r.SystemText
 			in.ClaudeSettings = r.ClaudeSettings
 			in.RecordingMaxBytes = c.Limits.Value(ctx, st.R(), spaceID, limits.RecordingQuota)
+			if lv, err := c.Limits.For(ctx, st.R(), spaceID); err == nil {
+				if cols, rows, ok := lv.TerminalSize(); ok {
+					in.TerminalSize = &fleet.TerminalSize{Cols: cols, Rows: rows}
+				}
+			}
 			in.Skills = nil
 			for _, sk := range r.Skills {
 				in.Skills = append(in.Skills, proto.Skill{Name: sk.Slug, Version: sk.Number, SHA256: sk.SHA256, Files: sk.Files})

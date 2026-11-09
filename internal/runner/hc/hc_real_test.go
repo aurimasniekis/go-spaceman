@@ -5,6 +5,7 @@ package hc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -331,4 +332,97 @@ func TestRealTerminalSize(t *testing.T) {
 	if g, _ := r.Get(ctx, p.ID); g == nil || g.Cols != 160 || g.Rows != 48 {
 		t.Fatalf("after the attach and an observer: %+v, want the headless 160x48", g)
 	}
+}
+
+// ADR-0075, S-7 (hc 0.1.17): the node holds a run's size through runner.Takeover (an interactive attach at the current
+// size on its own connection) and Resize. The program's size follows each resize (`stty size` and the terminal
+// record), events.subscribe reports every change as `size` {cols, rows}, the newest interactive attach sets the size
+// (a second one's resize wins; once it closes the first one's size is back), terminal.send is still delivered while
+// the hold is open, and closing the hold returns the program to the core's headless size.
+func TestRealTerminalSizeHold(t *testing.T) {
+	r, _ := realCore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	evs, err := r.Subscribe(ctx, map[string]string{"spaceman.test": "size"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := <-evs; first.Kind != "snapshot" {
+		t.Fatalf("first event %+v", first)
+	}
+	// It prints its size at the start and on every SIGWINCH, and is otherwise quiet (terminal.send waits for quiet output).
+	p, err := r.Start(ctx, runner.Spec{Name: "r-hold", Argv: []string{"/bin/sh", "-c", "trap 'stty size' WINCH; stty size; while :; do sleep 0.1; done"}, Cwd: "/tmp",
+		Labels: map[string]string{"spaceman.test": "size"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sizeEvent := func(cols, rows int) {
+		t.Helper()
+		want := fmt.Sprintf(`{"cols":%d,"rows":%d}`, cols, rows)
+		for {
+			select {
+			case ev := <-evs:
+				if ev.Kind == "size" && ev.TerminalID == p.ID && strings.Contains(string(ev.Data), want) {
+					return
+				}
+			case <-ctx.Done():
+				t.Fatalf("no size event %s", want)
+			}
+		}
+	}
+	is := func(cols, rows int) {
+		t.Helper()
+		sizeEvent(cols, rows)
+		if g, err := r.Get(ctx, p.ID); err != nil || g.Cols != cols || g.Rows != rows {
+			t.Fatalf("terminal is %+v, want %dx%d (%v)", g, cols, rows, err)
+		}
+	}
+	hold, _, err := r.Takeover(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hold.Resize(120, 40); err != nil {
+		t.Fatal(err)
+	}
+	is(120, 40)
+	if err := hold.Resize(90, 25); err != nil {
+		t.Fatal(err)
+	}
+	is(90, 25)
+	second, _, err := r.Takeover(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Resize(70, 20); err != nil {
+		t.Fatal(err)
+	}
+	is(70, 20)
+	_ = second.Close()
+	is(90, 25)
+	// The program itself sees the size (its stty output, read through an observer).
+	obs, _, err := r.Attach(ctx, p.ID, true, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen strings.Builder
+	waitOutput := func(want string) {
+		t.Helper()
+		for !strings.Contains(seen.String(), want) {
+			d, closed, err := obs.Next(ctx)
+			if err != nil || closed != nil {
+				t.Fatalf("observer: %v %+v (saw %q)", err, closed, seen.String())
+			}
+			seen.Write(d)
+		}
+	}
+	waitOutput("25 90")
+	// A held attach types nothing and does not hold back automated input: terminal.send is delivered (the terminal
+	// echoes it).
+	if err := r.Send(ctx, p.ID, "sent-while-held", false); err != nil {
+		t.Fatal(err)
+	}
+	waitOutput("sent-while-held")
+	_ = obs.Close()
+	_ = hold.Close()
+	is(200, 120)
 }

@@ -366,6 +366,9 @@ var Table = map[string]Entry{
 	"renew-takeover": {Excluded, rTakeover},
 	"send-input":     {Excluded, rTakeover},
 	"takeover-input": {Excluded, rTakeover},
+	// Resizing a run's terminal needs terminal:takeover (ADR-0075): it is a person's at the keyboard too.
+	"set-terminal-size":   {Excluded, rTakeover},
+	"clear-terminal-size": {Excluded, rTakeover},
 
 	// Schedules.
 	"create-schedule":  {Write, rSpaceWrite},

@@ -406,6 +406,9 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-UI-004 Terminals are watch-only by default. Takeover needs explicit permission, is visibly shown, is audited, pauses automated input and is enforced server-side.
 - SM-UI-005 Task entry belongs in the inbox UI. External and agent content is treated as untrusted.
 - SM-UI-006 Accessibility, keyboard sorting, responsive layouts, useful errors, live views that reconnect.
+- SM-UI-007 A run's terminal size is configurable from the web: a live run can be resized (fit to window, presets, custom
+  size) by someone with takeover permission, the size is per run and shared by every viewer, bounded and audited, and
+  recordings follow it. A space sets the size new runs start at.
 
 ### SM-REC — Recordings, transcripts and usage
 - SM-REC-001 Terminal recordings, native transcripts and normalized metadata are kept distinct.

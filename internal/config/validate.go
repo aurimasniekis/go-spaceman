@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 // ValidationError aggregates every configuration problem found.
@@ -229,7 +230,14 @@ var LimitRanges = map[string][2]int64{
 	// Control lifecycle (ADR-0056): a switch (0 off, 1 on) and minutes (0: never).
 	"control_autostart":         {0, 1},
 	"control_idle_stop_minutes": {0, 10_080},
+	// A new run's terminal size (ADR-0075): 0 is the node's runner.terminal_size; otherwise the terminal size bounds
+	// (TerminalLimitFloor).
+	"terminal_cols": {0, proto.TerminalMaxCols},
+	"terminal_rows": {0, proto.TerminalMaxRows},
 }
+
+// TerminalLimitFloor is the smallest value other than 0 that the terminal_cols and terminal_rows limits accept.
+var TerminalLimitFloor = map[string]int64{"terminal_cols": proto.TerminalMinCols, "terminal_rows": proto.TerminalMinRows}
 
 // LimitValues returns the installation default of every limit, keyed like LimitRanges.
 func (c *Config) LimitValues() map[string]int64 {
@@ -243,7 +251,8 @@ func (c *Config) LimitValues() map[string]int64 {
 		"retention_recordings_days": l.RetentionRecordingsDays, "retention_transcripts_days": l.RetentionTranscriptsDays,
 		"retention_attachments_days": l.RetentionAttachmentsDays, "retention_human_actions_days": l.RetentionHumanActionsDays,
 		"recording_quota_bytes": l.RecordingQuotaBytes, "export_max_bytes": l.ExportMaxBytes,
-		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes}
+		"control_autostart": l.ControlAutostart, "control_idle_stop_minutes": l.ControlIdleStopMinutes,
+		"terminal_cols": l.TerminalCols, "terminal_rows": l.TerminalRows}
 }
 
 func (v *validator) limits(c *Config) {
@@ -256,6 +265,8 @@ func (v *validator) limits(c *Config) {
 		}
 		if n < r[0] || n > r[1] {
 			v.add("%s must be within %d..%d, got %d", name, r[0], r[1], n)
+		} else if floor := TerminalLimitFloor[k]; n != 0 && n < floor {
+			v.add("%s must be 0 (the node's default) or within %d..%d, got %d", name, floor, r[1], n)
 		}
 	}
 }

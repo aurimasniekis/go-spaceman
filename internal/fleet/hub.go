@@ -245,6 +245,9 @@ type session struct {
 	// helloApplied is true once every hello report applied; it stays false when one failed (the sweeper then leaves the
 	// connection's runs alone).
 	helloApplied bool
+	// sizes serializes terminal.sizes pushes: each reads the run sizes and sends them under it, so a push that read
+	// older sizes can never be sent after a newer one (ADR-0075).
+	sizes sync.Mutex
 }
 
 func newHub(svc *Service) *Hub {
@@ -457,6 +460,12 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	// The node learns which of its terminals are taken over before any command (it refuses run.input for them).
 	if s.minor >= proto.MinorTakeover {
 		if err := h.sendTakeovers(ctx, s); err != nil {
+			return err
+		}
+	}
+	// And at which size to hold its runs' terminals (ADR-0075).
+	if s.minor >= proto.MinorTerminalSize {
+		if err := h.sendTerminalSizes(ctx, s); err != nil {
 			return err
 		}
 	}

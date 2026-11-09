@@ -58,6 +58,10 @@ type Run struct {
 	ObservedAt *time.Time      `json:"observed_at,omitempty"`
 	// Takeover is the terminal takeover in force (SM-UI-004); set by GetRun.
 	Takeover *Takeover `json:"takeover,omitempty" doc:"The terminal takeover in force: an operator types into the terminal and automated input is paused"`
+	// TerminalSize is the size the run's terminal is held at (ADR-0075); nil is the node's default size.
+	TerminalSize *TerminalSize `json:"terminal_size,omitempty" doc:"The size the run's terminal is held at; absent: the node's default size"`
+	// TerminalSizing is set by GetRun: whether the run's node can hold a terminal size now.
+	TerminalSizing bool `json:"terminal_sizing,omitempty" doc:"Whether the run's node is connected at node protocol 1.10 or later, so its terminal can be resized (set on a single run)"`
 }
 
 // LaunchSpec is the non-secret launch description stored with the run.
@@ -83,6 +87,7 @@ func runFromRow(r db.Run) *Run {
 		out.ExitCode = &v
 	}
 	_ = json.Unmarshal([]byte(r.LaunchJson), &out.Launch)
+	out.TerminalSize = terminalSizeOf(r.TerminalCols, r.TerminalRows)
 	return out
 }
 
@@ -114,6 +119,9 @@ type LaunchInput struct {
 	AccountRef string           `json:"account_ref,omitempty"`
 	// RecordingMaxBytes is the space's recording quota, filled by launch resolution (not part of the API).
 	RecordingMaxBytes int64 `json:"-"`
+	// TerminalSize is the size the run's terminal is held at from the start: the space's terminal_cols and
+	// terminal_rows limits, filled by launch resolution (not part of the API, ADR-0075). nil: the node's default.
+	TerminalSize *TerminalSize `json:"-"`
 	// AuthorizeKind checks the caller may launch the resolved kind (the API: diagnostics need run:diagnose,
 	// SM-CTRL-004). It runs after the space role decided the kind and before anything is written.
 	AuthorizeKind func(kind string) error `json:"-"`
@@ -280,9 +288,18 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			m[k] = v
 		}
 		manifest, _ := json.Marshal(m)
+		var termCols, termRows sql.NullInt64
+		// A node known to predate minor 10 cannot hold a size: storing one would show a size the run doesn't have.
+		if minor, ok := svc.hub.minor(sp.NodeID); ok && minor < proto.MinorTerminalSize {
+			in.TerminalSize = nil
+		}
+		if ts := in.TerminalSize; ts != nil && proto.CheckTerminalSize(ts.Cols, ts.Rows) == nil {
+			termCols, termRows = sql.NullInt64{Int64: int64(ts.Cols), Valid: true}, sql.NullInt64{Int64: int64(ts.Rows), Valid: true}
+			tx.AfterCommit(func() { svc.hub.pushTerminalSizes(context.WithoutCancel(ctx), sp.NodeID) })
+		}
 		if err := tx.Q.InsertRun(ctx, db.InsertRunParams{ID: runID, SpaceID: spaceID, NodeID: sp.NodeID, Generation: lease.Generation, Kind: in.Kind,
 			Role: in.Role, Harness: in.Harness, InstanceID: in.InstanceID, SessionID: in.SessionID, LaunchJson: string(specJSON), ManifestJson: string(manifest),
-			CreatedAt: tx.NowMicros(), CreatedBy: actorRef(actor), UpdatedAt: tx.NowMicros()}); err != nil {
+			CreatedAt: tx.NowMicros(), CreatedBy: actorRef(actor), UpdatedAt: tx.NowMicros(), TerminalCols: termCols, TerminalRows: termRows}); err != nil {
 			if store.IsConstraint(err) && in.Kind == "control" {
 				return apperr.New(apperr.CodeConflict, "the space already has an authoritative control run")
 			}
@@ -564,6 +581,7 @@ func (svc *Service) GetRun(ctx context.Context, id string) (*Run, error) {
 	if out.Takeover, err = svc.ActiveTakeover(ctx, id); err != nil {
 		return nil, err
 	}
+	out.TerminalSizing = svc.TerminalSizing(r.NodeID)
 	return out, nil
 }
 

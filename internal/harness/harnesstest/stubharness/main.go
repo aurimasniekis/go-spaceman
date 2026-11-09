@@ -16,7 +16,9 @@
 // path in its banner; fullscreen.bin, with neutral text), which the web terminal must survive being reopened after.
 // A "/lines <n>" line prints n numbered lines first, a reply longer than the screen for scrolling back. A
 // "/styled <n>" line prints n numbered lines in as many 24-bit colours, the way Claude Code styles its output (a
-// terminal holding many styles needs much more memory than one of plain text).
+// terminal holding many styles needs much more memory than one of plain text). A "/size" line makes it draw a full-width
+// rule and its terminal size at the start and again whenever the terminal is resized (SIGWINCH), the way a full-screen
+// program redraws for a new size.
 // Not part of any release.
 package main
 
@@ -27,12 +29,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/sys/unix"
 )
 
 //go:embed fullscreen.bin
@@ -64,6 +69,9 @@ func main() {
 	if strings.Contains(prompt, "/fullscreen") {
 		_, _ = os.Stdout.Write(fullscreen)
 	}
+	if strings.Contains(prompt, "/size") {
+		reportSize()
+	}
 	if strings.Contains(prompt, "/transcript") {
 		transcript(args, wd)
 	}
@@ -78,6 +86,26 @@ func main() {
 		fmt.Fprintf(os.Stdout, "\x1b[36mtick\x1b[0m %d\r\n", i)
 		time.Sleep(time.Second)
 	}
+}
+
+// reportSize draws a rule as wide as the terminal and "terminal size COLSxROWS" now and after every resize.
+func reportSize() {
+	draw := func() {
+		ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "terminal size unknown: %v\r\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stdout, "%s\r\nterminal size %dx%d\r\n", strings.Repeat("─", int(ws.Col)), ws.Col, ws.Row)
+	}
+	draw()
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGWINCH)
+	go func() {
+		for range ch {
+			draw()
+		}
+	}()
 }
 
 // longReply prints the numbered lines a "/lines <n>" (at most 5000) or "/styled <n>" (at most 20000) prompt line asks for.

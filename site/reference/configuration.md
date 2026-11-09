@@ -178,6 +178,8 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.export_max_bytes` | `2147483648` | `SPACEMAN_LIMITS_EXPORT_MAX_BYTES` | Bounds one space export archive (1 MiB-64 GiB, default 2 GiB): a larger export is refused. |
 | `limits.control_autostart` | `1` | `SPACEMAN_LIMITS_CONTROL_AUTOSTART` | Starts a space's control role when work arrives for control and no control run is live (1: on, the default; 0: off). It is skipped while the space is paused and when the launch is refused (no control role, account or budget); at most 6 starts an hour per space (ADR-0056). |
 | `limits.control_idle_stop_minutes` | `30` | `SPACEMAN_LIMITS_CONTROL_IDLE_STOP_MINUTES` | Stops a control run that has been idle this long (finished its turn, nothing waiting for it, no operator at its terminal); the next event starts it again, resuming its session (0: never; default 30; at most 10080). |
+| `limits.terminal_cols` | `0` | `SPACEMAN_LIMITS_TERMINAL_COLS` | The width new runs' terminals are held at (ADR-0075): 40-400 columns, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_rows is set too. |
+| `limits.terminal_rows` | `0` | `SPACEMAN_LIMITS_TERMINAL_ROWS` | The height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_cols is set too. |
 
 ### `retention`
 

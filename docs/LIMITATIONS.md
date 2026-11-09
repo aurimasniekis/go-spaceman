@@ -489,12 +489,16 @@
   or on **Refresh**. Memory sync state and knowledge-base work stay on their pages (SM-UI-003).
 - **Terminal takeover is time-bound and keeps the terminal's size.** An admin (`terminal:takeover`) can take over a
   running terminal; automated input waits until it ends. It ends 30 seconds after the holder's page stops renewing it,
-  so revoking the holder's session ends it within 30 seconds (they cannot type after revocation). The terminal keeps its
-  size (the node's `runner.terminal_size`, 160×48 by default) rather than fitting the browser. Agents older than node protocol 1.6 cannot be taken over, and the
+  so revoking the holder's session ends it within 30 seconds (they cannot type after revocation). Taking over does not
+  change the terminal's size (see the next item). Agents older than node protocol 1.6 cannot be taken over, and the
   typed-byte count in the audit record is per central process (ADR-0046, SM-UI-004).
-- **Terminals do not fit the browser.** A program runs at the node's terminal size (`runner.terminal_size`, default
-  160×48; runs started before that setting keep herdr-core's 200×120). The view scales the font to the width, follows
-  the cursor as output arrives, and scrolls with the wheel; a watch-only view never resizes the program (ADR-0052).
+- **A terminal has one size, shared by everyone watching.** A program runs at the node's terminal size
+  (`runner.terminal_size`, default 160×48), at its space's `terminal_cols` × `terminal_rows` when both are set, or at
+  the size an admin set from the web (fit to their window, a preset or a custom size, ADR-0075). The size is per run,
+  not per viewer: the view scales the font to the width, follows the cursor and scrolls with the wheel, and opening a
+  page never resizes the program. Resizing needs node protocol 1.10; the node holds a set size through one extra
+  herdr-core connection per sized run. The Terraform provider's `spaceman_space_limits` resource has no attributes for
+  the two limits yet (the API, `spaceman limits set` and `spaceman run terminal-size` work).
 - **Scrolling back reaches only what the terminal keeps.** The live view scrolls back through the browser terminal's
   scrollback (10,000 lines; a page reload rebuilds it from the stored recording), never by sending the run input. A
   full-screen program on the alternate screen keeps its history itself, so watchers see only its current screen: Claude
