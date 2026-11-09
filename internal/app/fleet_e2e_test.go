@@ -47,6 +47,8 @@ type fleetEnv struct {
 	done     chan struct{}
 	// bridge is the agent's MCP bridge socket (short path: unix socket limit).
 	bridge string
+	// staleGrace overrides the stale-run sweeper's grace on the next startCentral (0: the default, ADR-0074).
+	staleGrace time.Duration
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
@@ -108,7 +110,7 @@ func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
 	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
 	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4})
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace})
 	if err != nil {
 		e.t.Fatal(err)
 	}

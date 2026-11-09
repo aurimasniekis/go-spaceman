@@ -41,6 +41,7 @@ func exercise(m *Metrics) {
 	m.SetRunsActive(HarnessClaude, 2)
 	m.RunStarted(HarnessCodex, RunAdopted)
 	m.RunEnded(HarnessClaude, RunLeaseExpired)
+	m.RunReconciledStale(StaleNotOnNode)
 	m.IngestProcessed(IngestCore, IngestLive, IngestCreated, time.Millisecond)
 	m.SetIngestPending(map[IngestDelivery]int64{IngestDurable: 3}, 1)
 	m.IngestCoreDropped(2)
@@ -113,6 +114,7 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_runs_active":                           "gauge:harness",
 		"spaceman_runs_started_total":                    "counter:harness,result",
 		"spaceman_runs_ended_total":                      "counter:harness,reason",
+		"spaceman_runs_reconciled_stale_total":           "counter:reason",
 		"spaceman_gateway_revocations_failed":            "gauge:",
 		"spaceman_storage_filesystem_size_bytes":         "gauge:volume",
 		"spaceman_storage_filesystem_avail_bytes":        "gauge:volume",
@@ -184,6 +186,7 @@ func TestEnumLabelsNormalized(t *testing.T) {
 	m.SetRunsActive(Harness(planted), 1)
 	m.RunStarted(Harness(planted), RunStartResult(planted))
 	m.RunEnded(Harness(planted), RunEndReason(planted))
+	m.RunReconciledStale(StaleReason(planted))
 	m.StoreTx("x", 0, TxResult(planted))
 	m.OIDCLogin(planted, LoginOutcome(planted))
 	m.UserLogin(LoginMethod(planted), LoginOutcome(planted))
@@ -317,6 +320,7 @@ func TestHandlerExposition(t *testing.T) {
 		`spaceman_http_requests_total{code="2xx",method="GET",route="/api/v1/spaces/{id}"} 1`,
 		`spaceman_outbox_dead 1`,
 		`spaceman_execution_lease_fenced_total 1`,
+		`spaceman_runs_reconciled_stale_total{reason="stale_not_on_node"} 1`,
 		`spaceman_ingest_deliveries_total{delivery="core",origin="live",result="created"} 1`,
 		`spaceman_ingest_consumer_pending{delivery="durable"} 3`,
 		`spaceman_ingest_consumer_pending{delivery="core"} 0`,

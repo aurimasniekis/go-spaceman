@@ -68,7 +68,7 @@ func Tools(fl *fleet.Service, q *queue.Service) func(r *agenttools.Registry) {
 				}
 				out := []RunRow{}
 				for _, x := range runs {
-					if x.Observed == "exited" || x.Observed == "failed" || x.Observed == "lost" {
+					if !fleet.Live(x.Observed) {
 						continue
 					}
 					out = append(out, RunRow{ID: x.ID, Kind: x.Kind, Role: x.Role, Harness: x.Harness, Observed: x.Observed, Status: x.Status, TaskID: byRun[x.ID]})

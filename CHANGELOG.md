@@ -118,6 +118,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (or when its window ends). Scheduled, expired, disabled and unknown budget states never refuse a launch (they
   didn't before either) and no longer show as raw states. The project usage window ignores budgets that aren't
   counting yet or any more.
+- The space concurrency limit and the node capacity count only live runs, the same runs `spaceman_runs_list` shows.
+  Runs that exited, failed or were lost (for example after a node agent restart) no longer hold their slot until an
+  operator stops them. **On upgrade**, runs that already ended but still had `desired = running` stop counting at
+  once. The refusal names the counted runs (ID, kind, role, state) and says which runs don't count: control, KB
+  support and dreamer runs (ADR-0074).
+- A stale-run sweeper moves runs that central still counted as live but whose process is gone to `lost`, freeing
+  their slots. These are runs that were live when a node reconnected and that its hello did not report
+  (`stale_not_on_node`, two minutes after the connection, measured on a monotonic clock), and runs of a node that stayed
+  disconnected past its lease, the larger of the old and current disconnect grace, and a 15-minute margin
+  (`stale_lease_lost`). It never sweeps a pending launch, a run with an unacknowledged launch command, a run no node has
+  reported, or any run of a connection whose hello reports did not all apply, and it re-checks its signal in each run's
+  end transaction. A swept run's undelivered commands are cancelled and its desired state becomes `stopped`. It
+  records an audit event `run.reconciled_stale` and the metric `spaceman_runs_reconciled_stale_total{reason}`
+  (ADR-0074). Migration 0046 stores the disconnect grace on each lease.
+  - **A false positive is killed.** The sweeper sends no stop itself, but a swept run's later "running" report is
+    fenced with a `stop kill`. The lease rule assumes synchronised clocks: run NTP on central and the nodes.
+  - **On the first deploy**, the sweeper ends every historic run left `running` or `unknown` that meets the rules, at
+    once: each publishes `run_ended`, has its credentials revoked and notifies the space's control, which may re-queue
+    or relaunch the run's old task. Review the `run.reconciled_stale` audit events and close tasks that are no longer
+    wanted. A swept control run is not restarted automatically.
 
 ### Notes
 

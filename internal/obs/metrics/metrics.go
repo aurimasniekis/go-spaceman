@@ -72,6 +72,7 @@ type Metrics struct {
 	runsActive      *prometheus.GaugeVec
 	runsStarted     *prometheus.CounterVec
 	runsEnded       *prometheus.CounterVec
+	runsStale       *prometheus.CounterVec
 	gwRevokeFailed  prometheus.Gauge
 	ingest          ingestMetrics
 	fs              *fsCollector
@@ -132,6 +133,7 @@ func New() *Metrics {
 	m.runsActive = f.gaugeVec("runs_active", "Runs currently observed live, by harness.", "harness")
 	m.runsStarted = f.counterVec("runs_started_total", "Run launches by harness and result.", "harness", "result")
 	m.runsEnded = f.counterVec("runs_ended_total", "Runs ended by harness and reason.", "harness", "reason")
+	m.runsStale = f.counterVec("runs_reconciled_stale_total", "Runs central's stale-run sweeper moved to lost, by end reason (ADR-0074).", "reason")
 	m.gwRevokeFailed = f.gauge("gateway_revocations_failed", "LLM gateway (Harbor Pilot) credential revocations that failed: each credential stays valid until it expires unless a person revokes it, or its parent, in the gateway.")
 	m.ingest = newIngestMetrics(f)
 
@@ -442,6 +444,14 @@ func (m *Metrics) RunEnded(h Harness, r RunEndReason) {
 		return
 	}
 	m.runsEnded.WithLabelValues(enumHarness.norm(string(h)), enumRunEnd.norm(string(r))).Inc()
+}
+
+// RunReconciledStale counts a run the stale-run sweeper ended.
+func (m *Metrics) RunReconciledStale(r StaleReason) {
+	if m == nil {
+		return
+	}
+	m.runsStale.WithLabelValues(enumStaleReason.norm(string(r))).Inc()
 }
 
 // --- Filesystems ---
