@@ -89,6 +89,39 @@ func TestTerminalStreamEndsOnRevocation(t *testing.T) {
 		}
 	})
 
+	// The stream is scoped by the run and the caller's grant in the run's own space: a grant in another space opens
+	// neither this run under that space's path nor under its own (both are "not found", never another run's output).
+	t.Run("another space's grant", func(t *testing.T) {
+		other, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "elsewhere", Name: "Elsewhere", NodeID: nodes[0].ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		elsewhere := []auth.GrantInput{{Role: authz.RoleOperator, Domain: other.ID}}
+		eve, err := e.c.Auth.Create(ctx, sys, auth.CreateInput{Email: "eve@example.com", DisplayName: "Eve", Grants: elsewhere})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, secret, err := e.c.Auth.CreateAPIToken(ctx, &auth.Principal{User: eve}, "term", elsewhere, 24*time.Hour, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range []string{
+			e.srv.URL + api.Prefix + "/spaces/" + other.ID + "/runs/" + r.ID + "/terminal",
+			termURL,
+		} {
+			req, _ := http.NewRequest(http.MethodGet, u, nil)
+			req.Header.Set("Authorization", "Bearer "+secret)
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = res.Body.Close()
+			if res.StatusCode != http.StatusNotFound || res.Header.Get("Content-Type") == "text/event-stream" {
+				t.Fatalf("%s: %d %s", u, res.StatusCode, res.Header.Get("Content-Type"))
+			}
+		}
+	})
+
 	t.Run("API token revoked", func(t *testing.T) {
 		secret := token()
 		ch := openSSE(t, http.DefaultClient, termURL, "Authorization", "Bearer "+secret)

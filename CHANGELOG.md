@@ -145,6 +145,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   nothing.
 - The stale-run sweeper doesn't use a revoked lease for `stale_lease_lost`, since the node may hold it up to
   `nodes.lease_ttl` longer than central records. `nodes.lease_ttl` must now be at most 10 minutes (ADR-0074).
+- Web: switching between run terminals no longer shows lines of a terminal viewed earlier inside the new one, and no
+  longer grows the page's memory until the tab freezes on "Connecting…" and crashes. ghostty-web 0.4.0 ran every
+  terminal in one shared WebAssembly memory that a freed terminal leaves uncleared; each terminal now runs in an
+  instance of its own, released with it. The first terminal of a page also waits briefly for its font.
 
 ### Notes
 

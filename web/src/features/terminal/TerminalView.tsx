@@ -381,6 +381,11 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   )
 }
 
+/**
+ * A run's terminal. Each run gets a terminal of its own (keyed by the run): what one run's terminal drew and how far
+ * its stream had read never carry over to another run's, whoever renders this.
+ */
 export function TerminalView({ spaceId, runId, mode, onInput }: Props) {
-  return mode === 'live' ? <LiveTerminal spaceId={spaceId} runId={runId} onInput={onInput} /> : <ReplayTerminal spaceId={spaceId} runId={runId} />
+  const key = `${spaceId}/${runId}`
+  return mode === 'live' ? <LiveTerminal key={key} spaceId={spaceId} runId={runId} onInput={onInput} /> : <ReplayTerminal key={key} spaceId={spaceId} runId={runId} />
 }
