@@ -20,6 +20,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Built-in event templates can gain new versions on existing installations: central publishes a built-in's missing
   versions at start, never over an administrator's own version of it. Subscriptions that follow the latest version
   move to the new one as on Publish; pinned subscriptions and version 1 are untouched.
+- Harbor Pilot 0.1.4 support (recommended; 0.1.3 stays the minimum). The connection page shows the gateway's version
+  (`get-harbor-pilot-gateway`, `GET /api/v1/harbor-pilot/gateway`, `spaceman harbor-pilot version`), read from Harbor
+  Pilot's `GET /api/v1/system` with the service-principal token; an older gateway shows as "older than 0.1.4". On
+  0.1.4 or later, budget status is read for the space's project and client binding only
+  (`budgets/status?project_id=…&binding_id=…`), and Harbor Pilot resolves the project's workspace, so SpaceMan no
+  longer reads every budget nor looks projects up. Older gateways keep the previous path, and so does a filtered read
+  that answers 404 (the project or binding is gone in Harbor Pilot) or that holds budgets a 0.1.4 filter never returns
+  (a gateway downgraded while its version was cached): such an answer drops the cached version. A launch's budget
+  check waits at most 15 s for Harbor Pilot in all, not 15 s per read.
+- The Limits card shows one-time budgets (Harbor Pilot 0.1.4 `period: once`): "one time", **Never** or when the window
+  ends, **Scheduled** and **Ended** badges, and what is left of each budget.
 
 ### Changed
 
@@ -102,6 +113,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     always returns bytes before the end of the file (`next_offset` is present whenever `truncated` is).
   - Takes a node agent on this release for the save tool. Central and agent can be upgraded in any order; there is no
     protocol change.
+- Harbor Pilot 0.1.4 budget status: a one-time budget without an end (`period_end: null`) no longer shows a reset
+  date in year 1 on the Limits card or in a launch refusal; a used-up one-time budget's refusal says it never resets
+  (or when its window ends). Scheduled, expired, disabled and unknown budget states never refuse a launch (they
+  didn't before either) and no longer show as raw states. The project usage window ignores budgets that aren't
+  counting yet or any more.
+
+### Notes
+
+- After upgrading Harbor Pilot to 0.1.4, budgets that already warned or were used up in the current period send their
+  `budget.threshold.*` event once more (Harbor Pilot's upgrade note), and raising a limit re-arms them. Each is a new
+  event, so the `harbor-pilot-budget` template makes one more inbox item, in the same correlation as the first; a
+  redelivered event is still a duplicate. Nothing else repeats.
 
 ## [0.1.0] - 2026-11-08
 

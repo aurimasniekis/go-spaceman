@@ -157,7 +157,7 @@ repository, author, bot and conclusion filters switchable.
 
 ## Built-in Harbor Pilot templates
 
-[Harbor Pilot](../operators/harbor-pilot.md) (0.1.3 or later) publishes its events to Pulse as `evt.harborpilot.<area>.<entity>.<action>`,
+[Harbor Pilot](../operators/harbor-pilot.md) (0.1.3 or later; 0.1.4 recommended) publishes its events to Pulse as `evt.harborpilot.<area>.<entity>.<action>`,
 with its event envelope as the payload, once an administrator adds a Pulse event destination in Harbor Pilot. Three
 built-in templates turn the ones that matter to agent work into inbox items:
 

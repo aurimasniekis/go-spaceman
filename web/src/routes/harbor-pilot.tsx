@@ -4,13 +4,14 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ApiError, api, check, ifMatch, unwrap, type HarborPilotConnection } from '@/api/client'
-import { keys, useHarborPilot, useSpaces } from '@/api/queries'
+import { keys, useHarborPilot, useHarborPilotGateway, useSpaces } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { ago, datetime } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { gatewayAddressChanged } from '@/features/harborpilot/format'
+import { GatewayVersion } from '@/features/harborpilot/GatewayVersion'
 
 export const Route = createFileRoute('/harbor-pilot')({ component: HarborPilotPage })
 
@@ -30,7 +31,7 @@ function HarborPilotPage() {
         <Text size="sm">
           The parent token mints a short-lived token for each run of a space that opts in (on its overview). It needs gateway:invoke,
           gateway:models and tokens:mint on one Harbor Pilot client binding. SpaceMan keeps it sealed, never shows it again and never sends it
-          to a node. Harbor Pilot 0.1.3 or later is required.
+          to a node. Harbor Pilot 0.1.3 or later is required; 0.1.4 or later is recommended.
         </Text>
       </Alert>
       <ErrorAlert error={conn.error} />
@@ -47,6 +48,7 @@ function ConnectionCard({ c }: { c: HarborPilotConnection }) {
   const qc = useQueryClient()
   const spaces = useSpaces().data ?? []
   const spaceName = (id: string) => spaces.find((s) => s.id === id)?.name ?? id
+  const gw = useHarborPilotGateway()
   const remove = async () => {
     if (!window.confirm('Remove the Harbor Pilot connection? Its tokens are deleted from SpaceMan; revoke the parent credential in Harbor Pilot too.')) return
     try {
@@ -73,6 +75,7 @@ function ConnectionCard({ c }: { c: HarborPilotConnection }) {
             {c.has_service_token ? <Badge color="owlGreen" variant="light">set</Badge> : <Badge color="gray" variant="light">not set</Badge>}{' '}
             <Text span size="xs" c="dimmed">version {c.service_token_version}</Text>
           </Field>
+          <Field label="Harbor Pilot version"><GatewayVersion g={gw.data} loading={gw.isPending} /></Field>
           <Field label="Client binding"><Text size="sm" className="mono">{c.binding_id || '—'}</Text></Field>
           <Field label="Validated"><Text size="sm">{ago(c.validated_at)}</Text>{c.allow_insecure_http && <Badge color="owlRed" variant="light" mt={4}>insecure HTTP allowed</Badge>}</Field>
           <Field label="Failed revocations">

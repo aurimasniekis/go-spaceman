@@ -2316,7 +2316,8 @@
   decisions (listed at the end; the points they settle are marked **(Qn)**). Proposed 2026-11-06. Accepted with:
   - **Project choice: option b** (2026-11-07). Setting or changing a space's `project_id` needs `account:write`, like
     binding an account to a space (decision 2, "Open points").
-  - **Minimum Harbor Pilot version 0.1.3** (decision 8), checked by the mint probe.
+  - **Minimum Harbor Pilot version 0.1.3** (decision 8), checked by the mint probe. **0.1.4 recommended** (2026-11-08,
+    below).
   - **Q3 as built:** a per-space `on_budget_status_unavailable`, `proceed` by default or `refuse`. Since HP-T8 it also
     covers SpaceMan's own failures while reading status (a token that can't be opened, a database error), with a fixed
     reason.
@@ -2339,6 +2340,14 @@
     by trusted ref, budget refusals as `access.request.blocked`, `system`-role messages (K-13 resolved), the minting
     credential as `created_by`, and an optional budget check on mint. **The minimum Harbor Pilot version is 0.1.3**
     (decision 8).
+  - **Updated 2026-11-08 for Harbor Pilot 0.1.4**, which answered SpaceMan's two later requests (PLAN §4 D-20's
+    candidates, filed through a cross-space request): a version endpoint (`GET /api/v1/system`) and budget status
+    filtered by project (`?project_id=…&binding_id=…`). Both are **closed**. SpaceMan reads the version with the
+    service-principal token and, when it answers, reads only the covering budgets; a 404 means older than 0.1.4 and
+    keeps the 0.1.3 path (every budget, workspace looked up). The minimum stays 0.1.3 (decision 8 is unchanged, its
+    probe still checks it); 0.1.4 is recommended. 0.1.4's one-time budgets (`period_end: null`, states `scheduled` and
+    `expired`) and `remaining_e10` are handled; only `exceeded` with `block` refuses, so no new state can refuse a
+    launch (decision 4 unchanged). Not a security-relevant change: no requirement, guarantee or default is relaxed.
 - **Context:**
   - **What operators want.** Run model traffic should go through Harbor Pilot (HP), a self-hosted LLM gateway. HP gives
     failover, hard per-project spend limits and usage for every harness.
@@ -2499,6 +2508,8 @@
      gateway before 0.1.3 answers 400 `invalid body: json: unknown field "check_budget"`, and the connection is
      refused as "older than Harbor Pilot 0.1.3". An older gateway is never used without `check_budget` or per-run
      usage. The probe can't tell a later gateway that dropped the field from an old one; HP's D-043 keeps it.
+     **Since 0.1.4** HP reports its version (`GET /api/v1/system`, `config.read`); SpaceMan reads it for display and to
+     choose the budget-status path, never to replace the probe (it needs a service-principal token, the probe doesn't).
 - **Consequences (security-relevant):**
   - **Agents can read their own child token.** A leaked one is worth one binding's routing and budget for at most the
     TTL. It is labelled with the run and revoked at the run's end. A run that outlives its TTL loses model access,
