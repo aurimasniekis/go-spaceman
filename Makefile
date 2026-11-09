@@ -176,7 +176,14 @@ e2e-browsers:
 	SM_E2E_BROWSERS=firefox,webkit $(GATE) e2e scripts/e2e.sh --reporter=list --project=firefox
 	SM_E2E_BROWSERS=firefox,webkit $(GATE) e2e scripts/e2e.sh --reporter=list --project=webkit
 
-.PHONY: test-fault test-real test-pulse
+.PHONY: test-fault test-real test-pulse test-login-timing
+# The wall-clock half of the login enumeration check (Hallpass HP-AUTH-005): failed logins for a known and an unknown
+# account must take about as long. It needs a quiet machine and no race detector or coverage instrumentation, so it is
+# not part of `make test`, `race`, `coverage` or `check`; CI runs it as its own job (ADR-0071). The deterministic check
+# (one verification against a same-parameter dummy hash) runs in every suite.
+test-login-timing:
+	SPACEMAN_LOGIN_TIMING=1 $(GO) test -count=1 -run '^TestLoginTimingWallClock$$' -v ./internal/auth/
+
 # Fault-injection suite (crashes, disk full, interrupted recordings, disconnects); Go only.
 test-fault:
 	$(GO) test -tags fault -count=1 -timeout 20m ./test/fault/

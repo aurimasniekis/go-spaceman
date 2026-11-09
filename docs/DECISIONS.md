@@ -3500,6 +3500,72 @@
     over a couple of weeks of runs with this change; if the coverage job holds 100 ms there and the race jobs hold
     their limits with margin, lower them in a separate ADR. Until then they stay as they are.
 
+### ADR-0071 — The login timing comparison runs on its own; unknown accounts do the same reads (security-relevant change)
+- **Status:** Accepted, 2026-11-08 (operator approval of the gate wait-time plan, subtask T5).
+  **Security-relevant change:** it changes where the wall-clock evidence for Hallpass HP-AUTH-005 (login response time
+  does not reveal whether an account exists) is collected. The guarantee and the deterministic check are unchanged,
+  and the product change makes the two paths more alike.
+- **Context:**
+  - `internal/auth` `TestLoginThrottlingAndEnumeration` checked HP-AUTH-005 two ways: deterministically (exactly one
+    Argon2id verification per failed attempt, for an unknown account against a dummy hash with the account's
+    parameters), then on the clock (median of 21 interleaved failed logins per kind within 0.75–1.33, best of three
+    rounds). The clock half failed under coverage and parallel load on unchanged code, with ratios of 1.34–1.41.
+  - Measured per segment (median of 60 interleaved failed logins each; idle node, then while a race run of
+    `internal/app`, `internal/store` and `internal/events` loaded the 32-core node to a load average of 57–101):
+    - **total ratio known/unknown:** idle 0.84–1.10, loaded 0.68–1.10, in both directions from run to run, under
+      plain, `-race` and `-cover` builds alike;
+    - **Argon2id verification alone:** the same spread (idle 0.84–1.11, loaded 0.67–1.05). The two hashes have the
+      same parameters, so this is CPU scheduling noise on a CPU-bound function;
+    - **everything except the verification (database reads, the failure transaction, audit):** known minus unknown
+      +0.05 ms idle (about 1 ms per attempt), at most ±2.7 ms under load and `-race`, in both directions;
+    - **the reads before the verification:** consistently slower for a known account (+0.02–0.06 ms idle, +1–3 ms
+      under `-race` and load), because only that path looked up the local credential.
+  - So there is one small real asymmetry, an extra read on the known path, and it is far below the noise the clock
+    check sees. The failures came from the verification's own run time under load, which no product change can make
+    equal.
+- **Decision:**
+  - **Same reads on both paths.** `Login` looks up the local credential for unknown accounts too, by an ID no user
+    has. After the change the pre-verification delta is 0.02–0.25 ms in plain, `-race` and `-cover` builds (from
+    0.06–3.2 ms). The failure transaction already did the same writes on both paths (one throttle upsert per key, one
+    audit row).
+  - **The deterministic check stays in every suite** (`TestLoginThrottlingAndEnumeration`: `make test`, `race`,
+    `coverage`, `check-fast`, `check`, CI and the release gate).
+  - **The wall-clock comparison moves to `TestLoginTimingWallClock`**, with the same rounds and band. It runs only with
+    `SPACEMAN_LOGIN_TIMING=1` (`make test-login-timing`), and skips under `-race` and `-cover`. CI runs it as its own
+    job (`login-timing`) on every pull request and push, alone on its runner, and the release workflow runs the same
+    job as a gate before `binaries` and `images`.
+  - **The equal reads are tested deterministically.** `TestLoginReadsSameForUnknownAccounts` records every query a
+    failed login runs through the store's readers (`storetest.WithReadObserver`) for a known and an unknown account,
+    and requires the same sequence, including the `GetLocalCredential` read. With that read removed from the unknown
+    path again, it fails.
+- **Alternatives:**
+  - **Widen the band:** a band wide enough for a loaded node (0.6–1.6) no longer tells a real asymmetry from noise
+    either. What matters, a missing or cheaper dummy hash (orders of magnitude), the deterministic check already
+    catches.
+  - **More samples or more rounds:** the skew comes from load that persists for seconds, so it moves every sample of a
+    round. It would also slow the suite further.
+  - **Skip it only under `-race` and `-cover`:** the plain `make test` and `check-fast` runs share the CPU with every
+    other package too.
+- **Consequences:**
+  - A local `make check` no longer measures login timing. CI's `login-timing` job does, on every change. Locally,
+    `make test-login-timing` on a quiet machine.
+  - A change that makes one path much faster or slower still fails the deterministic check, unless it keeps exactly one
+    same-parameter verification. A small asymmetry outside the verification (like the extra read fixed here) shows
+    only in the clock job, and only once it exceeds the band. An extra or missing read before the verification also
+    fails `TestLoginReadsSameForUnknownAccounts`.
+  - **Residual risk (accepted, not changed):**
+    - **Argon2id verification variance.** The verification is CPU-bound and its run time varies with scheduling and
+      load (0.67–1.11 between two same-parameter hashes in the measurements above). That noise hides small
+      differences rather than revealing the account, but it also means the clock check only bounds the asymmetry, it
+      does not prove it is zero.
+    - **Network and remote timing are not measured.** The ±25% band is checked in-process on a quiet runner. Timing as
+      seen over the network, through proxies, or on a loaded production host is not tested; the bound only applies on
+      a quiet machine.
+    - **Accounts hashed with older parameters.** The dummy hash uses `CurrentParams`. An account whose stored hash
+      still has an older parameter set verifies at that set's cost until its next successful login rehashes it, so
+      for such an account a failed login can take measurably longer or shorter than one for an unknown account. This
+      lasts only while older-parameter hashes remain, and the deterministic check covers accounts on the current set.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

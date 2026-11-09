@@ -103,6 +103,21 @@ jobs:
           COVERAGE_PARALLEL: "1"
         run: make coverage
 
+  login-timing:
+    name: login timing, known vs unknown account (release gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: login timing
+        # The wall-clock comparison of Hallpass HP-AUTH-005, alone on its runner without the race detector or coverage,
+        # as in ci.yaml (ADR-0071).
+        run: make test-login-timing
+
   fuzz:
     name: fuzz smoke (release gate)
     runs-on: ubuntu-24.04
@@ -177,7 +192,7 @@ jobs:
 
   binaries:
     name: static binaries, SBOMs, checksums
-    needs: [meta, test, fuzz, site, web]
+    needs: [meta, test, login-timing, fuzz, site, web]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -232,7 +247,7 @@ jobs:
 
   images:
     name: container images (linux/amd64, build and smoke test, no push)
-    needs: [meta, test, fuzz, site]
+    needs: [meta, test, login-timing, fuzz, site]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

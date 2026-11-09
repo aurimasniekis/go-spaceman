@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- The wall-clock comparison of failed logins for known and unknown accounts (Hallpass HP-AUTH-005) moved out of
+  `make test`, `race`, `coverage` and `check` into `make test-login-timing`, which CI runs as its own job and the
+  release workflow as a gate before building binaries and images (ADR-0071).
+  Under load the Argon2id check's own run time varied by more than the 25% band, so the comparison failed on
+  unchanged code. The deterministic check (one verification against a same-parameter dummy hash) still runs in every
+  suite.
 - Faster `make check` (ADR-0069):
   - the coverage floor tests its packages in one `go test -cover` run instead of one run per package (about 150 s
     down to under 30 s on a 32-core machine); a failing test, a package below the floor and a package with no
@@ -47,6 +53,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- A failed login for an unknown account now does the same two database reads as one for a known account (the
+  credential lookup runs with an ID no user has), so the work before the password check no longer depends on whether
+  the account exists (Hallpass HP-AUTH-005, ADR-0071). `TestLoginReadsSameForUnknownAccounts` checks that both
+  paths run the same reads, using the new test-only `storetest.WithReadObserver`.
 - The test guard for short write transactions (Hallpass HP-DB-004) measures how long a transaction holds the write
   lock, no longer the time it waited for the writer or retried a busy database (ADR-0070). Under load, short
   transactions that queued behind another writer failed tests on unchanged code. It takes the longest hold of a

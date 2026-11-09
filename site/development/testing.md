@@ -21,15 +21,20 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 
 | Workflow | When | What |
 |---|---|---|
-| `ci` | every pull request and push to `main` | lint, vet, sqlc drift, analyzer tests and traceability; race tests; the coverage floor; the web checks and API drift; `make site-verify`; govulncheck and gitleaks |
+| `ci` | every pull request and push to `main` | lint, vet, sqlc drift, analyzer tests and traceability; race tests; the coverage floor; the login timing comparison (`make test-login-timing`, on its own runner); the web checks and API drift; `make site-verify`; govulncheck and gitleaks |
 | `ci` | pull requests that change `site/`, `docs/`, `web/`, `api/`, `CHANGELOG.md`, the `Makefile`, `ci.yaml` or `scripts/site-affected.sh` (the rule lives in that script), and every push to `main` | the site's axe audit (`make site-a11y`, two shards) |
 | `ci` | nightly | all of the above with the full audit, and every fuzz target for 10 minutes |
-| `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
+| `release` | `v*` tags and manual runs | vet, race tests, the coverage floor, the login timing comparison, a 10 s fuzz smoke and the full `make site-check`; no archive or image is built until they pass |
 
 Store-backed tests fail when a write transaction holds the write lock for longer than 100 ms (Hallpass HP-DB-004), or
 the value of `SM_TEST_TX_MAX`. Time spent waiting for the writer and retrying a busy database doesn't count
 (ADR-0070). GitHub's hosted runners are slower, so the coverage steps in `ci` and `release` use 250 ms; the race steps
 use 1 s (ADR-0062).
+
+The wall-clock comparison of failed logins for known and unknown accounts (Hallpass HP-AUTH-005) needs a quiet
+machine without the race detector or coverage, so it runs only through `make test-login-timing`, which CI and the
+release workflow run as their own job. The deterministic checks (one Argon2id verification against a dummy hash with
+the same parameters, and the same database reads for both accounts) run in every suite (ADR-0071).
 
 Locally, `make race` uses go test's cache, so it reruns only the packages whose code, dependencies or test inputs
 changed. CI and the release workflow run `make race RACE_COUNT=1`, which runs every test (ADR-0070). To rerun a
