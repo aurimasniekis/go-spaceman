@@ -237,3 +237,102 @@ func TestRecordingsViewersAreScopedByRun(t *testing.T) {
 		t.Fatalf("viewer B got A's output %q", b)
 	}
 }
+
+// SM-REC-004: a viewer's lagged flag is set by apply and read by the viewer's own goroutine; under -race this must
+// not be a data race.
+func TestRecordingsViewerLaggedNoRace(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	defer r.Close()
+	v := r.Subscribe(recRun)
+	defer r.Unsubscribe(v)
+	done := make(chan error, 1)
+	go func() {
+		for seq := uint64(1); seq <= 600; seq++ {
+			if _, err := r.apply(chunk(t, out(seq, "x"))); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	took := false
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !took && !v.TakeLagged() {
+				t.Fatal("600 records into a 512-record queue: viewer never lagged")
+			}
+			return
+		default:
+			if v.Lagged() && v.TakeLagged() {
+				took = true
+			}
+		}
+	}
+}
+
+// SM-REC-004: a viewer that lagged catches up from storage once, then streams live records again. The loop below is
+// the terminal stream's (internal/api terminalStream): it re-reads storage when the viewer lagged or a sequence is
+// missing. Before the flag was cleared, every live record after one lag triggered a full re-read of the recording.
+func TestRecordingsLaggedViewerCatchesUpOnce(t *testing.T) {
+	r := newRecordings(t.TempDir(), nil, nil, time.Now)
+	defer r.Close()
+	v := r.Subscribe(recRun)
+	defer r.Unsubscribe(v)
+	var after uint64
+	catchUps := 0
+	catchUp := func() {
+		catchUps++
+		res, err := r.Read(context.Background(), recRun, after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rec := range res.Records {
+			after = rec.Seq
+		}
+	}
+	consume := func() {
+		for {
+			select {
+			case rec := <-v.C:
+				if rec.Seq <= after {
+					continue
+				}
+				if v.TakeLagged() || rec.Seq != after+1 {
+					catchUp()
+					continue
+				}
+				after = rec.Seq
+			default:
+				return
+			}
+		}
+	}
+	// Overflow the viewer's queue: records past its capacity are dropped and the viewer is marked lagged.
+	const overflow = 600
+	for seq := uint64(1); seq <= overflow; seq++ {
+		if _, err := r.apply(chunk(t, out(seq, "x"))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !v.Lagged() {
+		t.Fatal("viewer not lagged after overflowing its queue")
+	}
+	consume()
+	if catchUps != 1 || after != overflow || v.Lagged() {
+		t.Fatalf("after the lag: %d catch-ups (want 1), at seq %d (want %d), lagged %v", catchUps, after, overflow, v.Lagged())
+	}
+	// Live again: each new record is delivered in order with no further catch-up.
+	for seq := uint64(overflow + 1); seq <= overflow+50; seq++ {
+		if _, err := r.apply(chunk(t, out(seq, "y"))); err != nil {
+			t.Fatal(err)
+		}
+		consume()
+	}
+	if catchUps != 1 || after != overflow+50 {
+		t.Fatalf("live records after the catch-up: %d catch-ups (want 1), at seq %d (want %d)", catchUps, after, overflow+50)
+	}
+}
