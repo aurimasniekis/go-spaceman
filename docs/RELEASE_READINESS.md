@@ -7,6 +7,9 @@
 >
 > **v0.1.0 final (2026-11-08):** §14 records the final release: what it contains since rc.9, its migrations, node
 > protocol and tested Claude Code version, the known issues it ships with and the accepted risks.
+>
+> **v0.1.1 (2026-11-09):** §15 records the patch release: what it contains since v0.1.0, its migrations, node
+> protocol, upgrade notes and the known issues it ships with.
 
 ## 1. Verdict
 
@@ -295,3 +298,50 @@ with instance protection and the auto-memory relocation (ADR-0068), and the stor
 **Gates** (Linux, umask 022, `SM_TEST_TX_MAX=500ms`, at the PR #18 head named in the PR description):
 `make check`, `make site-check` and CI on PR #18, all passing before the PR left draft; the results and the head
 commit are in the PR description.
+
+## 15. v0.1.1 (2026-11-09)
+
+The operator authorized the v0.1.1 release on 2026-11-09. It is cut from `main` after PRs #19–#33 were merged
+in order (the release-prep PR follows them). It is tagged `v0.1.1`, and the release workflow builds the archives,
+images and SBOMs into a draft release that the operator publishes. It still makes **no production-readiness claim**:
+§1's verdict stands.
+
+**Contents since v0.1.0:**
+- concurrency limits that count live runs only, and a stale-run sweeper (ADR-0074, migration 0046);
+- per-run terminal sizes (ADR-0075, SM-UI-007, migration 0047, protocol minor 10);
+- attachments of any size reaching a run as a file (ADR-0073, T-42);
+- `github-pull-request` version 2, and built-ins that gain versions on existing installations (ADR-0072);
+- Harbor Pilot 0.1.4 support;
+- the web terminal lifecycle and lagged-viewer fixes, the scrollbar fixes, and the chunk-load recovery;
+- gate and CI changes: tiered gates and a one-run coverage floor (ADR-0069, T-41), the write-transaction guard
+  measuring lock hold time (ADR-0070), and the login timing comparison running in its own job (ADR-0071);
+- flaky-test fixes.
+
+The full list is in `CHANGELOG.md` `[0.1.1]`.
+
+| Item | v0.1.1 |
+|---|---|
+| Migrations since v0.1.0 | 0046 (the disconnect grace on each lease) and 0047 (a run's terminal size). Both are forward-only. Take a backup before upgrading; central also writes a pre-migration snapshot. |
+| Node protocol | 1.10 (`proto.MaxMinor = 10`; minor 10 is run terminal sizes). Agents back to 1.0 still connect; their runs can't be resized (the API answers 409). |
+| Configuration | `nodes.lease_ttl` must be at most 10m (ADR-0074); central refuses to start with a longer value. |
+| Claude Code tested | The real Claude Code suites last ran against 2.1.317 (v0.1.0). The new live attachment test, `TestRealClaudeCLIReadsSavedAttachment`, ran against 2.1.319. |
+| Harbor Pilot | 0.1.3 or later; 0.1.4 recommended. Verified against `serve --demo` only (§13). |
+
+**Upgrade notes from v0.1.0** (also in the CHANGELOG):
+- Upgrade central first, then every node agent.
+- Check `nodes.lease_ttl` (and `SPACEMAN_NODES_LEASE_TTL`) is at most 10m.
+- The first deploy's stale-run sweep ends every historic run that central still counted as live but whose process is
+  gone. It revokes their credentials and gateway tokens and reports them as ended. For worker runs, the space's
+  control may then re-queue or relaunch their tasks. Review the `run.reconciled_stale` audit events and close the
+  tasks you no longer want.
+
+**Known issues it ships with:** the §14 list still applies (see [LIMITATIONS.md](LIMITATIONS.md)). In addition:
+- The CI `login timing` job runs with the default 100 ms write-transaction guard, which can trip on hosted runners
+  (seen once while preparing this release, passing on rerun).
+- `make e2e` takes about 13 minutes longer because of the UI overflow guard.
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, at `main` after the last merge, PR #32): `SM_TEST_TX_MAX=500ms make check`,
+`make web-check`, `make e2e` and `make site-check`, plus CI on every merged PR head. The results are in the
+release-prep PR description.

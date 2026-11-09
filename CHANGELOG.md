@@ -6,10 +6,38 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
-**Upgrade notes:**
-- **Take a backup first.** Migration 0047 (a run's terminal size) is forward-only.
-- **Node protocol 1.10.** Upgrade central first, then the node agents. Older agents keep working, but their runs
+## [0.1.1] - 2026-11-09
+
+Patch release on top of v0.1.0. It makes no production-readiness claim (docs/RELEASE_READINESS.md §15). It contains:
+- concurrency limits that count live runs only, and a stale-run sweeper that ends runs whose process is gone
+  (ADR-0074);
+- a configurable terminal size per run (ADR-0075);
+- attachments of any size reaching agents (ADR-0073);
+- `github-pull-request` version 2, which ignores your own agent's pushes and edits (ADR-0072);
+- Harbor Pilot 0.1.4 support;
+- web fixes: switching terminals, scrollbars, and pages that failed to load after an upgrade;
+- faster and steadier gates and CI (ADR-0069 to ADR-0071).
+
+The real Claude Code suites last ran against 2.1.317 (v0.1.0). This release's new live attachment test ran against
+2.1.319.
+
+**Upgrade notes** (from v0.1.0):
+- **Take a backup first.** Migrations 0046 (the disconnect grace stored on each lease) and 0047 (a run's terminal
+  size) are forward-only. Central also writes a pre-migration snapshot; going back means restoring it.
+- **Node protocol 1.10.** Upgrade central first, then every node agent. Older agents keep working, but their runs
   can't be resized: the web disables the size menu and the API answers 409.
+- **`nodes.lease_ttl` must now be at most 10m.** Central refuses to start with a longer value, so check your
+  configuration (and `SPACEMAN_NODES_LEASE_TTL`) before upgrading. The default, 45s, is unaffected.
+- **The first deploy sweeps historic stale runs.** Once the nodes have reconnected and the grace has passed (or 15
+  minutes after a lost lease), the stale-run sweeper ends every old run that central still counted as `running` or
+  `unknown` but whose process is gone. Each one is moved to `lost`, has its credentials and gateway tokens revoked and
+  its desired state set to `stopped`, and is reported as ended. For a worker run, this tells the space's control that
+  the run ended and names its task, so **control may re-queue or relaunch old tasks**. After the upgrade, look at the
+  `run.reconciled_stale` audit events and close the tasks you no longer want. Runs that had already ended but kept
+  `desired = running` stop counting against limits at once, so spaces that were refused may admit new workers right
+  away.
+- For contributors: `make e2e` takes about 13 minutes longer, because the new UI overflow guard
+  (`e2e/ui-overflow.spec.ts`) opens every page, modal and drawer at three widths in both themes.
 
 ### Added
 
@@ -1217,7 +1245,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...v0.1.0
 [0.1.0-rc.9]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.9
 [0.1.0-rc.8]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.8
