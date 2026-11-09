@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/storetest"
@@ -80,5 +86,126 @@ func TestSeedLeavesExistingDBAlone(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("Seed replaced an existing database (%d bytes now)", len(got))
+	}
+}
+
+// guardTB records the guard's failures instead of failing the test, so a test can check which transactions tripped it.
+type guardTB struct {
+	testing.TB
+	mu   sync.Mutex
+	errs []string
+}
+
+func (g *guardTB) Errorf(format string, args ...any) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.errs = append(g.errs, fmt.Sprintf(format, args...))
+}
+
+func (g *guardTB) tripped(name string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, e := range g.errs {
+		if strings.Contains(e, fmt.Sprintf("%q", name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// holdWriter stands for a slow transaction body: it keeps the write lock for d. Only this test does that on purpose.
+func holdWriter(d time.Duration) { time.Sleep(d) }
+
+// Hallpass HP-DB-004 guard (ADR-0070): a transaction that holds the write lock for longer than MaxTxDuration fails the
+// test; one that only waits that long behind another writer does not.
+func TestGuardCountsLockHoldNotWait(t *testing.T) {
+	// Not parallel: it asserts that a quick transaction's hold stays under MaxTxDuration, which CPU contention from
+	// parallel tests could push over.
+	g := &guardTB{TB: t}
+	s := storetest.Open(g)
+	ctx := context.Background()
+	hold := 2 * storetest.MaxTxDuration
+
+	var holding atomic.Bool
+	slow := make(chan error, 1)
+	go func() {
+		slow <- s.W().TxNamed(ctx, "test.hold", func(tx *store.Tx) error {
+			holding.Store(true)
+			holdWriter(hold)
+			return nil
+		})
+	}()
+	for !holding.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	start := time.Now()
+	if err := s.W().TxNamed(ctx, "test.wait", func(tx *store.Tx) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	waited := time.Since(start)
+	if err := <-slow; err != nil {
+		t.Fatal(err)
+	}
+	if waited <= storetest.MaxTxDuration {
+		t.Fatalf("test.wait waited only %s behind the writer, want more than %s", waited, storetest.MaxTxDuration)
+	}
+	if g.tripped("test.wait") {
+		t.Errorf("the guard counted the wait for the writer (%s): %v", waited, g.errs)
+	}
+	if !g.tripped("test.hold") {
+		t.Errorf("a transaction holding the lock for %s did not trip the %s guard: %v", hold, storetest.MaxTxDuration, g.errs)
+	}
+}
+
+// ADR-0070: the guard sees the longest hold of all of a transaction's attempts. An attempt that holds the write lock
+// for long and then rolls back on SQLITE_BUSY trips it, even though the retry that commits is quick.
+func TestGuardCountsTheLongestAttempt(t *testing.T) {
+	t.Parallel()
+	g := &guardTB{TB: t}
+	s := storetest.Open(g)
+	hold := 2 * storetest.MaxTxDuration
+	attempts := 0
+	err := s.W().TxNamed(context.Background(), "test.retried", func(tx *store.Tx) error {
+		attempts++
+		if attempts == 1 {
+			holdWriter(hold)
+			return store.ErrBusy
+		}
+		return nil
+	})
+	if err != nil || attempts != 2 {
+		t.Fatalf("err %v after %d attempts, want a commit on the second", err, attempts)
+	}
+	if !g.tripped("test.retried") {
+		t.Errorf("an attempt holding the lock for %s before a busy rollback did not trip the %s guard", hold, storetest.MaxTxDuration)
+	}
+}
+
+// The guard also checks transactions that fail, except those whose context ended.
+func TestGuardChecksFailedTransactions(t *testing.T) {
+	t.Parallel()
+	g := &guardTB{TB: t}
+	s := storetest.Open(g)
+	hold := 2 * storetest.MaxTxDuration
+	failure := errors.New("the callback failed")
+	if err := s.W().TxNamed(context.Background(), "test.failed", func(tx *store.Tx) error {
+		holdWriter(hold)
+		return failure
+	}); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := s.W().TxNamed(ctx, "test.canceled", func(tx *store.Tx) error {
+		holdWriter(hold)
+		cancel()
+		return ctx.Err()
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if !g.tripped("test.failed") {
+		t.Errorf("a failed transaction holding the lock for %s did not trip the guard", hold)
+	}
+	if g.tripped("test.canceled") {
+		t.Errorf("a canceled transaction tripped the guard: %v", g.errs)
 	}
 }

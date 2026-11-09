@@ -20,7 +20,8 @@
 
 | Command | Suite | Evidence |
 |---|---|---|
-| `make test` / `make race` (in `make check`) | Unit and in-process end-to-end tests of every package, including `internal/app`: central on a real HTTP server, a node agent with the in-memory runner, real Git, real SQLite | simulated |
+| `make check-fast` | The inner-loop gate: vet, the custom analyzers, golangci-lint, traceability, the analyzer tests and `go test ./...` without `-race` and with go test's cache (only changed packages and their dependents run again); `sqlc-check` and `api-check` when their inputs changed since the merge base. `make check` (race, the coverage floor) runs once before pushing ([AGENTS.md](../AGENTS.md), "Gates") | simulated |
+| `make test` / `make race` (in `make check`) | Unit and in-process end-to-end tests of every package, including `internal/app`: central on a real HTTP server, a node agent with the in-memory runner, real Git, real SQLite. Locally `make race` uses go test's cache; CI and the release workflow run `make race RACE_COUNT=1`, so every test runs there (ADR-0070). `make race` runs `internal/app` as its own invocation next to the other packages, with its own `-parallel` cap (`RACE_APP_PARALLEL`; ADR-0069, below) | simulated |
 | `make test-fault` | `test/fault` (build tag `fault`): crashes, a full disk, interrupted recordings, disconnects, partitions, corrupted state, database contention (below) | simulated; central's crash is a real `SIGKILL` of a child process |
 | `make test-pulse` | Pulse/NATS integration: `internal/events/...` and `internal/outbox`, plus the central end-to-end event paths, against an embedded nats-server with the real go-pulse SDK | simulated; no `pulsed` |
 | `make test-real` | Build tag `real`: an isolated herdr-core core (`internal/runner/hc`, `test/real`). With `SPACEMAN_REAL_CLAUDE=1` and `CLAUDE_CODE_OAUTH_TOKEN`, also budget-bounded Claude Code runs (Haiku). The suites below are part of it and skip without their own variables | real |
@@ -39,7 +40,36 @@
 | `make site-check` | Site build with a dead-link check, screenshot references, Mermaid parsing, API-reference drift, and axe on every site page | real browser |
 | `make fuzz-smoke` | Every `Fuzz*` target for `FUZZTIME` | simulated |
 
-The browser rows (`make e2e`, `make screenshots`, `make site-check`) take `SM_CHROMIUM_ARGS`, extra Chromium launch arguments separated by spaces, for hosts whose sandbox stops Chromium from starting, for example `SM_CHROMIUM_ARGS='--no-sandbox --disable-gpu --no-zygote'` inside a container. It is unset by default and in CI.
+The browser rows (`make e2e`, `make screenshots`, `make site-check`) take `SM_CHROMIUM_ARGS`, extra Chromium launch arguments separated by spaces, for hosts whose sandbox stops Chromium from starting, for example `SM_CHROMIUM_ARGS='--no-sandbox --disable-gpu --disable-dev-shm-usage --no-zygote'` inside a container. The Makefile passes it through from the environment (a node can set it for every run); unset, as in CI, it adds nothing. The site targets (`make site`, `site-verify`, `site-check`, `site-a11y`) add `--single-process` to a non-empty value, which the Mermaid check and the audit need on such hosts.
+
+## Heavy gates on a shared node (ADR-0069)
+
+Several agents often run their gates on one machine. Full suites running at once slow each other down, and the
+contention trips the write-transaction guard and the timing tests. So the heavy targets (`make race`, `make coverage`,
+`make site-a11y`, `make e2e`, `make e2e-browsers` and `make screenshots`) run through `scripts/gate-slot.sh`, which
+holds one of a fixed number of `flock` slots while the command runs:
+
+- `SM_GATE_SLOTS`: the number of slots, 2 by default on a machine with 16 or more CPUs, otherwise 1. `0` disables
+  the semaphore, and it is always off when `CI=true` (each CI job has its own runner), even with `SM_GATE_SLOTS` set.
+- `SM_GATE_LOCK_DIR`: the directory of the lock files, `${XDG_CACHE_HOME:-~/.cache}/spaceman-gates` by default
+  (created when missing). Every run that should take turns must use the same directory, so a node shared by several
+  users sets it in their common environment and pre-creates it with mode 1777 (`install -d -m 1777 <dir>`); the
+  script creates the slot files readable by everyone, which is all `flock` needs.
+- Without `flock(1)` (macOS has none by default) the script prints a warning and runs the command without a slot.
+- `scripts/gate-scripts-test.sh` checks the slots and `scripts/race.sh`'s interrupt handling in a few seconds (no Go
+  build): run it after changing either script.
+- `make check` takes one slot for the coverage floor and the race run together; nested heavy targets don't take a second.
+- While every slot is busy the run prints `gate-slot: <target> waiting for a heavy-gate slot (N busy: …)` with what holds
+  them, then `got slot … after N s` when it starts. Waiting costs no CPU.
+- The kernel releases a slot when its holder exits, however it exits (`kill -9` included), so a crashed run never
+  leaks one.
+
+The race run's critical path is `internal/app` (about an hour of test time under `-race`). `scripts/race.sh` runs
+it as its own `go test -race` invocation, started first, with `-parallel` `RACE_APP_PARALLEL` (default
+`min(16, nproc/2)`, at least 4; CI uses 4), and every other package alongside with `RACE_PARALLEL` (4). With 16 or
+more CPUs (`RACE_APP_SPLIT=1`, the default there) internal/app's serial tests, which go test would otherwise run one
+after another before any parallel test starts, run in a second process at the same time (`-run` and `-skip` with the
+same pattern, so every test runs exactly once). Its output is printed when it finishes, after the other packages'.
 
 ## Fault suite (`make test-fault`)
 
