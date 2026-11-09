@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Web: opening a page (Spaces, Terminals, Needs you, …) in a tab that was open across an upgrade, or after a dropped
+  connection, no longer ends in "Something went wrong!" until a manual refresh. A part of the app that fails to
+  download (`import()` or Vite's stylesheet preload) reloads the page once to pick up the current build, guarded
+  against a reload loop; if it still fails, the page says "SpaceMan was updated" with a Reload button. Other route
+  errors show their message with Reload and Try again. A missing `/assets/*` file is a 404 with
+  `Cache-Control: no-store` (it carried the one-year `immutable` header before), and an `/assets/` directory is no
+  longer listed.
+
 ## [0.1.0] - 2026-11-08
 
 First release. It is ready for evaluation by trusted teams; it makes no production-readiness claim

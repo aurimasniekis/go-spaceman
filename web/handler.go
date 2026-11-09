@@ -27,7 +27,8 @@ func securityHeaders(h http.Header) {
 }
 
 // Handler serves the UI: hashed assets are immutable and cached, every other path gets index.html (client-side
-// routing) with no-cache. Missing asset files are 404, never index.html, so broken references fail visibly.
+// routing) with no-cache, so a tab always revalidates it and learns the current chunk names. Missing asset files are
+// 404 with no-store, never index.html, so a stale reference fails visibly and the 404 is not cached.
 func Handler(files fs.FS) http.Handler {
 	if files == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -46,12 +47,15 @@ func Handler(files fs.FS) http.Handler {
 		}
 		p := path.Clean("/" + r.URL.Path)
 		if strings.HasPrefix(p, "/assets/") || isStaticFile(files, p) {
-			if strings.HasPrefix(p, "/assets/") {
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			}
-			if _, err := fs.Stat(files, strings.TrimPrefix(p, "/")); err != nil {
+			if fi, err := fs.Stat(files, strings.TrimPrefix(p, "/")); err != nil || fi.IsDir() {
+				// An asset of another build (a tab opened before an upgrade): a real 404 that no browser or proxy
+				// keeps, so the client's import fails cleanly and a reload picks up the current build.
+				w.Header().Set("Cache-Control", "no-store")
 				http.NotFound(w, r)
 				return
+			}
+			if strings.HasPrefix(p, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 			assets.ServeHTTP(w, r)
 			return
