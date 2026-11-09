@@ -147,6 +147,8 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/end` | `end-takeover` | End a takeover |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/input` | `takeover-input` | Type into a taken-over terminal |
 | `POST` | `/spaces/{space_id}/runs/{run_id}/takeover/{takeover_id}/renew` | `renew-takeover` | Keep your takeover for another 30 s |
+| `DELETE` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `clear-terminal-size` | Return a run's terminal to the node's default size |
+| `PUT` | `/spaces/{space_id}/runs/{run_id}/terminal-size` | `set-terminal-size` | Resize a run's terminal |
 
 ### recordings
 

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+**Upgrade notes:**
+- **Take a backup first.** Migration 0047 (a run's terminal size) is forward-only.
+- **Node protocol 1.10.** Upgrade central first, then the node agents. Older agents keep working, but their runs
+  can't be resized: the web disables the size menu and the API answers 409.
+
+### Added
+- Web: the size of a run's terminal is configurable (ADR-0075, SM-UI-007).
+  - A size menu on the live terminal offers Fit to window, 80×24, 120×40, 160×50, 200×60, a custom size (40–400
+    columns, 10–200 rows) and Node default. The node resizes the program's terminal, so the agent redraws for it.
+  - The size belongs to the run: every viewer sees it, scaled to their window. Resizing needs `terminal:takeover`;
+    while the terminal is taken over, only the holder can resize it.
+  - Each change is audited (`run.terminal_resized`).
+  - The browser remembers your choice but never applies it on its own.
+  - Recordings note every size change, so replays redraw at the right size.
+  - API: `PUT` and `DELETE /api/v1/spaces/{space}/runs/{run}/terminal-size`.
+- Space limits `terminal_cols` and `terminal_rows` set the terminal size new runs start at (0, the default, keeps the
+  node's `runner.terminal_size`).
+
 ### Fixed
 - Web: switching between run terminals no longer shows lines of a terminal viewed earlier inside the new one, and no
   longer grows the page's memory until the tab freezes on "Connecting…" and crashes. ghostty-web 0.4.0 ran every

@@ -32,6 +32,7 @@
 | `space-terminals` | Terminals and recordings | A space's Terminals tab: every agent as a tab with its status, the selected agent's live terminal | current |
 | `terminals-workspace` | Terminals and recordings | The Terminals workspace: spaces and their agents in a sidebar, the selected space's agents as tabs | current |
 | `terminal-takeover` | Terminals and recordings | Live terminal taken over by the signed-in admin, with the takeover banner | current |
+| `terminal-size` | Terminals and recordings | Live terminal with the size menu open: fit to window, presets, custom, node default | current |
 | `terminal-replay` | Site landing, Terminals and recordings | Replay with seek and speed | current |
 | `auth-users` | Sign-in and access | Users and grants | current |
 | `auth-user-profile` | Sign-in and access | Editing a user's email, display name and MFA requirement | current |
