@@ -12,6 +12,7 @@ import { env, settle } from './stack'
  * (1280 px) and wide (1920 px) widths, in both themes, with real scrollbars (Playwright's Chromium hides them by default,
  * which hides this class of bug), and checked by `overflowProblems`: no page or dialog that scrolls sideways, no modal that
  * scrolls although its content fits, no scroll container that overflows by a sliver. A long form still scrolls.
+ * The file name sorts it after smoke.spec.ts, whose first-run journey needs a stack nobody has set up yet.
  */
 
 test.use({ launchOptions: realScrollbars })

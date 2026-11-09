@@ -73,7 +73,9 @@ export async function overflowProblems(page: Page, opts: { nested?: boolean } = 
       if (dx <= 0 && dy <= 0) continue
       // A terminal box scrolls by whatever its fixed rows exceed it (terminal-scroll.spec.ts), a few pixels included, and
       // so does a column marked as a scroll region (the terminals workspace) by whatever the screen height leaves.
-      const sliver = (dx > 0 && dx <= 4) || (dy > 0 && dy <= 4)
+      // A table that scrolls sideways is as wide as its data, by however little: only its vertical slivers count.
+      const table = e.querySelector('table') !== null
+      const sliver = (dx > 0 && dx <= 4 && !table) || (dy > 0 && dy <= 4)
       if (sliver && !e.matches('.sm-terminal, [data-scroll-region]')) out.push({ el: describe(e), what: 'overflows by a sliver', scroll })
       // Double scrollbars: the page scrolls and so does a tall panel inside it (reported by the audit, not asserted). The
       // navigation sidebar is fixed and scrolls on its own.

@@ -59,7 +59,7 @@ export const theme = createTheme({
     // Dialogs scroll vertically only. Mantine's content box sets overflow-y: auto, and CSS then makes overflow-x auto as
     // well, so anything a pixel wider than the dialog (or a node a browser extension adds next to the editor) gave the
     // dialog a horizontal scrollbar and, with it, a vertical one. Long unbreakable values (IDs, fingerprints, URLs) wrap;
-    // wide content (tables, code) scrolls in its own box; e2e/overflow.spec.ts fails when a dialog's content is wider
+    // wide content (tables, code) scrolls in its own box; e2e/ui-overflow.spec.ts fails when a dialog's content is wider
     // than the dialog.
     Modal: {
       defaultProps: { closeButtonProps: { 'aria-label': 'Close dialog' } },
