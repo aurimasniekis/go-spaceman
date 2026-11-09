@@ -61,8 +61,36 @@ export function budgetBadge(state: string, enforcement: string): { label: string
       return { label: 'OK', color: 'owlGreen' }
     case 'disabled':
       return { label: 'Disabled', color: 'gray' }
+    case 'scheduled':
+      return { label: 'Scheduled', color: 'owlBlue' }
+    case 'expired':
+      return { label: 'Ended', color: 'gray' }
   }
-  return { label: state, color: 'gray' }
+  return { label: 'Unknown state', color: 'gray' }
+}
+
+/** How a budget repeats: "per day", or "one time" for a one-time budget (Harbor Pilot 0.1.4, period once). */
+export const periodLabel = (period: string) => (period === 'once' ? 'one time' : `per ${period}`)
+
+/**
+ * When a budget resets or ends: a recurring budget resets at its period end; a one-time budget never resets, and its
+ * window ends at period_end, or never when it has none (Harbor Pilot 0.1.4 sends null).
+ */
+export function resetLabel(b: { period: string; period_end?: string | null; state: string }): string {
+  if (b.period !== 'once') return b.period_end ? new Date(b.period_end).toLocaleString() : '—'
+  if (b.state === 'expired') return b.period_end ? `Ended ${new Date(b.period_end).toLocaleString()}` : 'Ended'
+  return b.period_end ? `Never; ends ${new Date(b.period_end).toLocaleString()}` : 'Never'
+}
+
+/** What the connected gateway's version source means, for the connection page. */
+export function gatewayVersionLabel(g: { source: string; version?: string }): string {
+  switch (g.source) {
+    case 'system':
+      return g.version || 'unknown build'
+    case 'legacy':
+      return 'older than 0.1.4'
+  }
+  return 'unknown'
 }
 
 /** What a budget covers, e.g. "Project prj_…", "Client binding cbn_…", "Every request". */
@@ -95,4 +123,4 @@ const COST_KIND: Record<string, string> = {
 export const costLabel = (c: { kind: string; currency: string; amount: string }) => `${c.amount} ${c.currency} ${COST_KIND[c.kind] ?? c.kind}`
 
 /** What a project usage window covers: "this day", "this month", or "the last 30 days". */
-export const windowLabel = (w: string) => (w === 'last_30_days' ? 'the last 30 days' : `this ${w}`)
+export const windowLabel = (w: string) => (w === 'last_30_days' ? 'the last 30 days' : w === 'once' ? 'since the one-time budget started counting' : `this ${w}`)

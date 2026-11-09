@@ -15,6 +15,7 @@ Aliases: `hp`.
 | [`spaceman harbor-pilot space`](#spaceman-harbor-pilot-space) | A space's Harbor Pilot settings |
 | [`spaceman harbor-pilot status`](#spaceman-harbor-pilot-status) | A space's Harbor Pilot budget status (hard limits) and project usage |
 | [`spaceman harbor-pilot unset-space`](#spaceman-harbor-pilot-unset-space) | Remove a space's Harbor Pilot settings (it no longer routes runs through Harbor Pilot) |
+| [`spaceman harbor-pilot version`](#spaceman-harbor-pilot-version) | The connected Harbor Pilot's version (from its GET /api/v1/system, 0.1.4 or later) |
 
 ## spaceman harbor-pilot connect
 
@@ -144,4 +145,14 @@ API: `get-space-harbor-pilot`, `delete-space-harbor-pilot` ([HTTP API](../api)).
 |---|---|---|---|
 | `--if-match` | string |  | expected object version (from an earlier read); default: the version read just before the change |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
+
+## spaceman harbor-pilot version
+
+The connected Harbor Pilot's version (from its GET /api/v1/system, 0.1.4 or later).
+
+```sh
+spaceman harbor-pilot version [flags]
+```
+
+API: `get-harbor-pilot-gateway` ([HTTP API](../api)).
 

@@ -541,6 +541,17 @@ type ToolCall struct {
 // ToolCatalog is the reserved tool name that lists a run's tools.
 const ToolCatalog = "_catalog"
 
+// ToolAttachmentGet is central's attachment read. Its offset/length arguments read a range (at most
+// AttachmentChunkBytes); the node's ToolAttachmentSave uses them to copy a whole attachment into the run's folder.
+const ToolAttachmentGet = "spaceman_attachment_get"
+
+// ToolAttachmentSave is served by the node's MCP bridge, not by central: it writes a whole attachment to a file in the
+// run's own folder (ADR-0073). The node offers it when the run's catalog has ToolAttachmentGet.
+const ToolAttachmentSave = "spaceman_attachment_save"
+
+// AttachmentChunkBytes bounds one ranged attachment read: its base64 must fit one envelope (MaxMessage).
+const AttachmentChunkBytes = 1 << 20
+
 // ToolResult answers a ToolCall. Code is an apperr code when OK is false.
 type ToolResult struct {
 	CallID string          `json:"call_id"`

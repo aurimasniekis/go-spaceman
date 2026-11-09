@@ -1,5 +1,5 @@
 // Package harborpilot integrates the Harbor Pilot LLM gateway (ADR-0060, SM-GW-*; contract
-// docs/contracts/harbor-pilot.md, v0.1.3). Central holds one connection (a base URL, a parent token with tokens:mint and
+// docs/contracts/harbor-pilot.md, v0.1.3 minimum, v0.1.4 recommended). Central holds one connection (a base URL, a parent token with tokens:mint and
 // an optional read-only service-principal token, all sealed and write-only), spaces opt in per harness, and each run
 // gets its own child token.
 //
@@ -30,6 +30,10 @@ import (
 // MinVersion is the oldest Harbor Pilot SpaceMan supports (ADR-0060 decision 8).
 const MinVersion = "0.1.3"
 
+// RecommendedVersion is the Harbor Pilot SpaceMan recommends: 0.1.4 adds GET /api/v1/system (version detection) and
+// budget status filtered by project, which SpaceMan uses when it is there.
+const RecommendedVersion = "0.1.4"
+
 // Scopes.
 const (
 	ScopeInvoke = "gateway:invoke"
@@ -59,7 +63,7 @@ const (
 // Error is a Harbor Pilot failure. Message is Harbor Pilot's own error message, cut to a fixed bound and sanitised: it
 // is untrusted text (T-03), shown only as part of a reason.
 type Error struct {
-	Op       string // mint, revoke, budget_status, get_project, usage_summary
+	Op       string // mint, revoke, budget_status, get_project, usage_summary, system
 	Class    Class
 	Status   int    // HTTP status; 0 for a transport failure
 	Type     string // Harbor Pilot's error type (gateway routes), e.g. permission_error
@@ -302,33 +306,75 @@ func (c *Client) Revoke(ctx context.Context, parentToken, credentialID string) e
 }
 
 // Budget is one item of GET /api/v1/budgets/status. Amounts are in 1e-10 of the currency.
+//
+// Harbor Pilot 0.1.4 added one-time budgets (period "once"): PeriodEnd is null for one without an end, State can be
+// scheduled (before its window) or expired (after it), and items carry RemainingE10. Any other state SpaceMan doesn't
+// know is kept as it is and never refuses a launch (Harbor Pilot still enforces its own budgets).
 type Budget struct {
-	BudgetID    string    `json:"budget_id"`
-	Name        string    `json:"name"`
-	Scope       string    `json:"scope"` // global, workspace, project, binding or account
-	ScopeID     string    `json:"scope_id"`
-	Period      string    `json:"period"`
-	PeriodStart time.Time `json:"period_start"`
-	PeriodEnd   time.Time `json:"period_end"`
-	Currency    string    `json:"currency"`
-	Enforcement string    `json:"enforcement"` // block or warn
-	Enabled     bool      `json:"enabled"`
-	LimitE10    int64     `json:"limit_e10"`
-	SpentE10    int64     `json:"spent_e10"`
-	ReservedE10 int64     `json:"reserved_e10"`
-	Fraction    float64   `json:"fraction"`
-	State       string    `json:"state"` // ok, warning, exceeded or disabled
+	BudgetID     string     `json:"budget_id"`
+	Name         string     `json:"name"`
+	Scope        string     `json:"scope"` // global, workspace, project, binding or account
+	ScopeID      string     `json:"scope_id"`
+	Period       string     `json:"period"` // day, week, month, … or once (0.1.4)
+	PeriodStart  time.Time  `json:"period_start"`
+	PeriodEnd    *time.Time `json:"period_end"` // nil: a one-time budget without an end (0.1.4)
+	Currency     string     `json:"currency"`
+	Enforcement  string     `json:"enforcement"` // block or warn
+	Enabled      bool       `json:"enabled"`
+	LimitE10     int64      `json:"limit_e10"`
+	SpentE10     int64      `json:"spent_e10"`
+	ReservedE10  int64      `json:"reserved_e10"`
+	RemainingE10 *int64     `json:"remaining_e10"` // 0.1.4; nil from older gateways
+	Fraction     float64    `json:"fraction"`
+	State        string     `json:"state"` // ok, warning, exceeded, disabled, and since 0.1.4 scheduled or expired
 }
 
 // BudgetStatus reads every budget's current period (service-principal token with usage.read).
 func (c *Client) BudgetStatus(ctx context.Context, serviceToken string) ([]Budget, error) {
+	return c.budgetStatus(ctx, "/api/v1/budgets/status", serviceToken)
+}
+
+// BudgetStatusCovering reads the budgets covering a project on the request path, whatever their state: global ones,
+// the project's workspace (resolved by Harbor Pilot) and the project's, plus the client binding's when bindingID is
+// set (GET /api/v1/budgets/status?project_id=…&binding_id=…, Harbor Pilot 0.1.4 or later). An older gateway ignores
+// the filters and answers every budget, so callers use it only on a gateway known to be 0.1.4 or later (System). An
+// unknown project or binding is ClassNotFound.
+func (c *Client) BudgetStatusCovering(ctx context.Context, serviceToken, projectID, bindingID string) ([]Budget, error) {
+	q := url.Values{}
+	q.Set("project_id", projectID)
+	if bindingID != "" {
+		q.Set("binding_id", bindingID)
+	}
+	return c.budgetStatus(ctx, "/api/v1/budgets/status?"+q.Encode(), serviceToken)
+}
+
+func (c *Client) budgetStatus(ctx context.Context, path, serviceToken string) ([]Budget, error) {
 	var out struct {
 		Items []Budget `json:"items"`
 	}
-	if err := c.do(ctx, "budget_status", http.MethodGet, "/api/v1/budgets/status", serviceToken, nil, http.StatusOK, &out); err != nil {
+	if err := c.do(ctx, "budget_status", http.MethodGet, path, serviceToken, nil, http.StatusOK, &out); err != nil {
 		return nil, err
 	}
 	return out.Items, nil
+}
+
+// System is GET /api/v1/system (Harbor Pilot 0.1.4 or later): the running build and its schema version. It holds no
+// hosts, data directory or key ids.
+type System struct {
+	Version       string    `json:"version"`
+	Commit        string    `json:"commit"`
+	StartedAt     time.Time `json:"started_at"`
+	SchemaVersion int64     `json:"schema_version"`
+}
+
+// System reads the gateway's build (a token with config.read; service-principal tokens work). A gateway older than
+// 0.1.4 answers 404 (ClassNotFound).
+func (c *Client) System(ctx context.Context, serviceToken string) (*System, error) {
+	var s System
+	if err := c.do(ctx, "system", http.MethodGet, "/api/v1/system", serviceToken, nil, http.StatusOK, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // Project is a Harbor Pilot project.

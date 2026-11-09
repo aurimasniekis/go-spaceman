@@ -122,9 +122,31 @@
 - **Failed revocations need a person.** A revocation Harbor Pilot refuses, or one whose parent was replaced before it
   could be done, is audited, counted (connection page, `spaceman_gateway_revocations_failed`) and left to a person;
   no human action is raised.
-- **Older gateways are detected by a feature probe.** Harbor Pilot has no version endpoint; a gateway that does not know
-  `check_budget` on mint (before 0.1.3) is refused. A later gateway that dropped the field would look old too.
-- **Demo evidence only.** Everything real ran against `harbor-pilot serve --demo` 0.1.3 with its synthetic upstreams:
+- **The 0.1.3 minimum is still checked by a feature probe.** A gateway that does not know `check_budget` on mint
+  (before 0.1.3) is refused; a later gateway that dropped the field would look old too. Harbor Pilot 0.1.4's
+  `GET /api/v1/system` is read only with the service-principal token (it needs `config.read`), so without one the
+  version shows as unknown and budget status, when it can be read at all, takes the 0.1.3 path. SpaceMan never compares
+  version numbers: a gateway that answers `/api/v1/system` is treated as 0.1.4 or later.
+- **Budget status by project only on 0.1.4 or later.** On 0.1.3 SpaceMan still reads every budget (the list is not
+  paginated) and looks the project's workspace up. A 0.1.4 gateway whose version can't be read for a moment (a failed
+  `/api/v1/system` read is retried after 5 s) is read the 0.1.3 way meanwhile. The version is cached for 10 minutes:
+  when the gateway at the same address is downgraded below 0.1.4 meanwhile, it ignores the filters and answers every
+  budget. SpaceMan takes an answer holding another project's or binding's budget, an account budget, two workspaces' or
+  an item without `remaining_e10` (which 0.1.4 always sends) as unfiltered, drops the cached version and reads every
+  budget the 0.1.3 way. A gateway that sends `remaining_e10` but ignores the filters would not be detected when its
+  only foreign budget is one other workspace's. A filtered read that answers 404 (the space's project or the binding
+  was deleted in Harbor Pilot) also falls back to the 0.1.3 path.
+- **The launch check waits at most 15 s.** Every Harbor Pilot read of one launch's budget check (version, budget
+  status, a fallback) shares one 15 s deadline; when it passes, status counts as unavailable and the space's
+  `on_budget_status_unavailable` decides. The read itself goes on in the background and is cached for the next launch.
+- **Inactive and unknown budget states never refuse.** Scheduled, expired, disabled and any state a later Harbor Pilot
+  adds are shown but never refuse a launch, so SpaceMan's early check can't refuse more than Harbor Pilot would; Harbor
+  Pilot's own mint check and request enforcement still apply.
+- **A re-sent budget alert is a new inbox item.** After an upgrade to Harbor Pilot 0.1.4, or after a limit is raised,
+  a budget alert that already fired in the current period fires again. SpaceMan makes it one more item in the same
+  correlation as the first (only a redelivery of the same event is a duplicate); it does not merge them.
+- **Demo evidence only.** Everything real ran against `harbor-pilot serve --demo` 0.1.3 (and 0.1.4 for the
+  `make test-harbor-pilot` suite) with its synthetic upstreams:
   connection checks, run tokens, real Claude Code and Codex runs, budgets, per-run usage, events and the Terraform
   example. No run has gone through a production gateway to a real model provider (Q7: the operator will provide one;
   the evidence map is in RELEASE_READINESS §13).
@@ -422,6 +444,11 @@
   read-only machine user. Built-in host-key pins cover github.com only; other hosts need the repository's known_hosts. A relocation's
   destination does not clone repositories that have a key: the first sync after the move does. Production accepts `https://`, `ssh://` and scp-like URLs only; `http://`, `git://`,
   `file://` and local paths need development mode.
+- **Some permanent delivery failures are retried.** A node command central can't prepare for a transient reason is
+  retried with a backoff (250 ms up to 30 s) while the node is connected. A run's command whose stored payload doesn't
+  decode fails the run as `invalid_command`, but a few failures that can't heal are retried the same way, with a
+  warning in central's log on every pass: a repository SSH key that can't be decrypted, and a command not tied to a run
+  (a repository sync, a relocation's prepare) whose payload doesn't decode. Fix the key or remove the repository.
 - **Unlisted folders still work.** Workers may still use a repository folder that is not in the space's list; such a
   folder is reported as unlisted but not tracked, and a relocation carries it only as the source has it. A space has at
   most 50 repositories. A repository's name and folder are fixed; changing the folder means adding another repository
@@ -495,8 +522,12 @@
   not a reference: that link breaks when the attachment expires (SM-ATT-006).
 - **Exports exclude recordings and transcripts**, and an export is not encrypted (ADR-0045). Download recordings and
   transcripts per run.
-- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB); they are not copied
-  into the run's folder (SM-ATT-005).
+- **Agents fetch attachments through `spaceman_attachment_get`** (text, or base64 up to 512 KiB per call, with ranged
+  reads; a larger binary is not returned inline) **or `spaceman_attachment_save`**, which copies the whole file into the
+  run's own folder on the node until the run ends (SM-ATT-005, ADR-0073). Attachments are not copied there unasked.
+  There is no server-side image downscale: the harness's own file reader scales images. A saved file stays until its
+  run ends; files of a run that ended while its node agent was not running are removed when the node reconciles at
+  its next start, or at the instance's next launch. A node that never starts again leaves them on disk.
 
 ## Audit and logs
 - **Audit retention trusts its own checkpoint.** After `retention.audit_days` pruned events, verification starts from

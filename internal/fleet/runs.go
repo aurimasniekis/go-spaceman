@@ -309,6 +309,9 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		return nil, err
 	}
 	svc.hub.Kick(nodeID)
+	if svc.opts.OnRunLaunched != nil {
+		svc.opts.OnRunLaunched(runID)
+	}
 	return svc.GetRun(ctx, runID)
 }
 

@@ -83,6 +83,7 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 	cfg.PublicURL = "http://" + e.srv.Listener.Addr().String()
 	e.startCentral()
 	e.srv.Start()
+	onTimeout(t, e.dump)
 	t.Cleanup(func() {
 		e.stopAgent()
 		e.srv.Close()
@@ -188,16 +189,11 @@ func (e *fleetEnv) stopAgent() {
 }
 
 // eventually waits for cond. The deadline only bounds how long a failing test waits: most tests here run in parallel
-// (t.Parallel), so under the race detector on a small runner a condition can take several seconds to hold.
+// (t.Parallel), so under the race detector on a small runner a condition can take several seconds to hold. On a
+// timeout it prints the test's state dumps (onTimeout; every fleetEnv registers one).
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	eventuallyFor(t, what, 30*time.Second, cond)
 }
 
 func (e *fleetEnv) run1(id string) *fleet.Run {

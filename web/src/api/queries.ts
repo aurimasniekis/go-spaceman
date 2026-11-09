@@ -36,6 +36,7 @@ export const keys = {
   accounts: ['accounts'] as const,
   gitKeys: ['git-ssh-keys'] as const,
   harborPilot: ['harbor-pilot'] as const,
+  harborPilotGateway: ['harbor-pilot', 'gateway'] as const,
   spaceHarborPilot: (space: string) => ['space-harbor-pilot', space] as const,
   spaceHarborPilotStatus: (space: string) => ['space-harbor-pilot', space, 'status'] as const,
   spaceGitKeys: (space: string) => ['git-ssh-keys', 'space', space] as const,
@@ -473,6 +474,10 @@ export const useHarborPilot = (enabled = true) =>
     if (r.response.status === 404) return null
     return unwrap(r)
   } })
+
+/** The connected Harbor Pilot's version (GET /api/v1/system on 0.1.4 or later; legacy before). Under keys.harborPilot, so a connection change refreshes it. */
+export const useHarborPilotGateway = (enabled = true) =>
+  useQuery({ queryKey: keys.harborPilotGateway, enabled, queryFn: async () => unwrap(await api.GET('/harbor-pilot/gateway')) })
 
 /** A space's Harbor Pilot settings (the defaults when it never opted in). */
 export const useSpaceHarborPilot = (space: string) =>
