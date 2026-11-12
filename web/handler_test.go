@@ -25,7 +25,8 @@ func TestHandler(t *testing.T) {
 		t.Fatalf("SPA route: %d %v", r.Code, r.Header())
 	}
 	if r := get("/"); !strings.Contains(r.Header().Get("Content-Security-Policy"), "'wasm-unsafe-eval'") ||
-		strings.Contains(r.Header().Get("Content-Security-Policy"), "'unsafe-eval'") || r.Header().Get("X-Frame-Options") != "DENY" {
+		strings.Contains(r.Header().Get("Content-Security-Policy"), "'unsafe-eval'") || r.Header().Get("X-Frame-Options") != "DENY" ||
+		!strings.Contains(r.Header().Get("Content-Security-Policy"), "connect-src 'self';") {
 		t.Fatalf("UI security headers: %v", r.Header())
 	}
 	if r := get("/assets/app-abc123.js"); r.Code != 200 || !strings.Contains(r.Header().Get("Cache-Control"), "immutable") {

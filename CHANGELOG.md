@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Opening Terminals or Spaces no longer freezes the tab, which took about a minute on a desktop and minutes on a
+  phone (ADR-0076). Tracing a fresh-cache load with CPU throttling showed where the time went:
+  - A terminal applied its run's stored output record by record, and a replay applied all of it in one go. Both now
+    apply it in short slices, showing "Loading output…" and drawing once the terminal has caught up.
+  - ghostty-web 0.4.0 parsed the whole screen once for every row it drew, and drew every blank cell. Both are now
+    worked around on our side.
+
+  With 5 MB of output at 4× throttling, the longest task while a terminal loads is now 0.13 s (was 0.9 s live and
+  1.5 s replayed). The terminal's WebAssembly module is a cacheable asset compiled once per page, so the CSP's
+  `connect-src` no longer allows `data:` (ADR-0020 update). Every terminal still runs in an instance and memory of its
+  own. `web/e2e/terminal-load.spec.ts` covers it.
+
 ## [0.1.1] - 2026-11-09
 
 Patch release on top of v0.1.0. It makes no production-readiness claim (docs/RELEASE_READINESS.md §15). It contains:

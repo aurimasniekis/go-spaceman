@@ -1,12 +1,15 @@
 import type { Terminal } from 'ghostty-web'
-import { createTerminal, disposeTerminal, fitFont, scrollWithWheelAndTouch } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, holdDrawing, scrollWithWheelAndTouch, skipBlankCells } from './ghostty'
 
 const ghostty = vi.hoisted(() => {
   const created: { options: { ghostty?: unknown }; disposed: boolean }[] = []
-  let n = 0
   return {
     created,
-    load: vi.fn(async () => ({ instance: ++n })),
+    Ghostty: class {
+      constructor(public instance: unknown) {}
+    },
+    GhosttyTerminal: class {},
+    CanvasRenderer: class {},
     Terminal: class {
       disposed = false
       constructor(public options: { ghostty?: unknown }) {
@@ -19,20 +22,40 @@ const ghostty = vi.hoisted(() => {
     },
   }
 })
-vi.mock('ghostty-web', () => ({ Ghostty: { load: ghostty.load }, Terminal: ghostty.Terminal }))
+vi.mock('ghostty-web', () => ({
+  Ghostty: ghostty.Ghostty,
+  GhosttyTerminal: ghostty.GhosttyTerminal,
+  CanvasRenderer: ghostty.CanvasRenderer,
+  CellFlags: { UNDERLINE: 4, STRIKETHROUGH: 8 },
+  Terminal: ghostty.Terminal,
+}))
 
 describe('createTerminal', () => {
-  it('runs every terminal in a WebAssembly instance of its own, released on dispose', async () => {
-    const a = await createTerminal(document.createElement('div'))
-    const b = await createTerminal(document.createElement('div'))
-    expect(ghostty.load).toHaveBeenCalledTimes(2)
-    const [ta, tb] = ghostty.created
-    expect(ta.options.ghostty).toEqual({ instance: 1 })
-    expect(tb.options.ghostty).toEqual({ instance: 2 })
-    disposeTerminal(a)
-    expect(ta.disposed).toBe(true)
-    expect(tb.disposed).toBe(false)
-    disposeTerminal(b)
+  it('compiles the module once and runs every terminal in an instance of its own, released on dispose', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new Uint8Array([0, 97, 115, 109]), { headers: { 'Content-Type': 'application/octet-stream' } }))
+    const module = {} as WebAssembly.Module
+    const compile = vi.spyOn(WebAssembly, 'compile').mockResolvedValue(module)
+    let n = 0
+    const instantiate = vi.spyOn(WebAssembly, 'instantiate').mockImplementation((async () => ({ exports: { memory: { n: ++n } } })) as never)
+    try {
+      const a = await createTerminal(document.createElement('div'))
+      const b = await createTerminal(document.createElement('div'))
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(instantiate).toHaveBeenCalledTimes(2)
+      expect(instantiate.mock.calls.every(([m]) => m === module)).toBe(true)
+      const [ta, tb] = ghostty.created
+      expect((ta.options.ghostty as { instance: unknown }).instance).toEqual({ exports: { memory: { n: 1 } } })
+      expect((tb.options.ghostty as { instance: unknown }).instance).toEqual({ exports: { memory: { n: 2 } } })
+      disposeTerminal(a)
+      expect(ta.disposed).toBe(true)
+      expect(tb.disposed).toBe(false)
+      disposeTerminal(b)
+    } finally {
+      fetch.mockRestore()
+      compile.mockRestore()
+      instantiate.mockRestore()
+    }
   })
 })
 
@@ -152,5 +175,71 @@ describe('scrollWithWheelAndTouch', () => {
     expect(sent).toEqual(['\x1b[<64;6;3M\x1b[<64;6;3M', '\x1b[<65;6;5M'])
     expect(sent.join('')).not.toContain('\x1b[A')
     stop()
+  })
+})
+
+describe('holdDrawing', () => {
+  class Renderer {
+    calls: unknown[][] = []
+    render(...args: unknown[]) {
+      this.calls.push(args)
+    }
+  }
+  const termWith = (renderer: Renderer) => ({ renderer, wasmTerm: { id: 'wasm' }, viewportY: 3, scrollbarOpacity: 0 }) as unknown as Terminal
+
+  it('draws nothing while held and the whole terminal once on release', () => {
+    const r = new Renderer()
+    const term = termWith(r)
+    const release = holdDrawing(term)
+    r.render({}, false, 0)
+    expect(r.calls).toHaveLength(0)
+    release()
+    expect(r.calls).toEqual([[{ id: 'wasm' }, true, 3, term, 0]])
+    release() // only once
+    expect(r.calls).toHaveLength(1)
+    r.render('frame')
+    expect(r.calls).toHaveLength(2) // drawing again
+    expect(Object.prototype.hasOwnProperty.call(r, 'render')).toBe(false)
+  })
+
+  it('nests: an inner hold (fitFont during a catch-up) leaves the outer one in place', () => {
+    const r = new Renderer()
+    const term = termWith(r)
+    const outer = holdDrawing(term)
+    const inner = holdDrawing(term)
+    inner()
+    r.render('frame')
+    expect(r.calls).toHaveLength(0)
+    outer()
+    expect(r.calls).toHaveLength(1)
+  })
+})
+
+describe('skipBlankCells', () => {
+  it('skips the text of blank cells only', () => {
+    const drawn: number[] = []
+    class Renderer {
+      hoveredLinkRange: unknown = null
+      hoveredHyperlinkId = 0
+      renderCellText(cell: { codepoint: number }) {
+        drawn.push(cell.codepoint)
+      }
+    }
+    skipBlankCells(Renderer.prototype)
+    skipBlankCells(Renderer.prototype) // once
+    const r = new Renderer()
+    const cell = (codepoint: number, flags = 0, more: object = {}) => ({ codepoint, flags, grapheme_len: 0, hyperlink_id: 0, ...more })
+    r.renderCellText(cell(0))
+    r.renderCellText(cell(32))
+    r.renderCellText(cell(65))
+    r.renderCellText(cell(32, 4)) // underlined
+    r.renderCellText(cell(32, 8)) // struck through
+    r.renderCellText(cell(32, 0, { grapheme_len: 2 }))
+    r.renderCellText(cell(0, 0, { hyperlink_id: 7 })) // a link, not hovered
+    r.hoveredHyperlinkId = 7
+    r.renderCellText(cell(0, 0, { hyperlink_id: 7 })) // the hovered link
+    r.hoveredLinkRange = { startY: 0 }
+    r.renderCellText(cell(0))
+    expect(drawn).toEqual([65, 32, 32, 32, 0, 0])
   })
 })

@@ -1,4 +1,5 @@
-import { Ghostty, Terminal } from 'ghostty-web'
+import { CanvasRenderer, CellFlags, Ghostty, GhosttyTerminal, Terminal } from 'ghostty-web'
+import wasmUrl from 'ghostty-web/ghostty-vt.wasm?url'
 import { terminalTheme } from '@/theme/nightowl'
 import { boxCanScroll, createScroller, liveScrollTop, wheelPixels } from './scroll'
 
@@ -16,6 +17,8 @@ export interface TerminalProbe {
   texts(): string[]
   /** The WebAssembly memory the open terminals hold, in bytes. */
   wasmBytes(): number
+  /** Each open terminal's visible screen as text (cheap to read while output arrives, unlike texts). */
+  screens(): string[]
 }
 
 /**
@@ -36,12 +39,43 @@ function installProbe() {
         return lines.join('\n')
       }),
     wasmBytes: () => [...live.values()].reduce((n, m) => n + (m?.buffer.byteLength ?? 0), 0),
+    screens: () =>
+      [...live.keys()].map((t) => {
+        const b = t.buffer.active
+        const lines: string[] = []
+        for (let y = Math.max(0, b.length - t.rows); y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? '')
+        return lines.join('\n')
+      }),
   }
 }
 
+/** The ghostty-web WebAssembly module, compiled once per page: every terminal instantiates it (loadGhostty). */
+let compiled: Promise<WebAssembly.Module> | null = null
+
 /**
- * Loads a new instance of the ghostty-web WebAssembly module, one per terminal (the CSP allows 'wasm-unsafe-eval' and
- * the module's data: URL for it, ADR-0020).
+ * Compiles the module from its hashed asset (served cacheable, ADR-0076): compiling is asynchronous, off the main
+ * thread, and happens once, not once per terminal. ghostty-web 0.4.0's own Ghostty.load() fetched and compiled the
+ * module again from a 560 kB data: URL for every terminal. A failed compile is retried by the next terminal.
+ */
+export function wasmModule(): Promise<WebAssembly.Module> {
+  compiled ??= (async () => {
+    const res = await fetch(wasmUrl)
+    if (!res.ok) throw new Error(`terminal module: HTTP ${res.status}`)
+    // compileStreaming needs the application/wasm type; anything else (an odd proxy) compiles from the bytes.
+    if (typeof WebAssembly.compileStreaming === 'function' && res.headers.get('Content-Type')?.startsWith('application/wasm')) {
+      return WebAssembly.compileStreaming(res)
+    }
+    return WebAssembly.compile(await res.arrayBuffer())
+  })().catch((e: unknown) => {
+    compiled = null
+    throw e
+  })
+  return compiled
+}
+
+/**
+ * Loads a new instance of the ghostty-web WebAssembly module, one per terminal (the CSP allows 'wasm-unsafe-eval' for
+ * it, ADR-0020).
  *
  * ghostty-web 0.4.0's init() shares one instance, and so one memory, between every terminal on the page, and a freed
  * terminal's memory is not cleared (wasm.test.ts, 2026-11-08):
@@ -51,13 +85,57 @@ function installProbe() {
  *   viewed grows the page's memory for good (about 50 MB for a full scrollback) until the tab freezes and crashes;
  * - without a full reset first, the third terminal's write failed with "memory access out of bounds" (the earlier
  *   hang after closing a full-screen program, which the reset worked around).
- * A terminal of its own instance starts from zeroed memory, and its whole memory goes with it (instantiating takes a
- * few milliseconds).
+ * A terminal of its own instance starts from zeroed memory (the module defines its memory; nothing is imported but a
+ * log function), and its whole memory goes with it. Only the compiled code is shared (wasmModule), which holds no
+ * state.
  */
-function loadGhostty(): Promise<Ghostty> {
-  return Ghostty.load()
+export async function loadGhostty(): Promise<Ghostty> {
+  const module = await wasmModule()
+  let memory: WebAssembly.Memory | undefined
+  // The import ghostty-web's own loader gives the module: its log messages, read from this instance's memory.
+  const log = (ptr: number, len: number) => {
+    if (memory) console.log('[ghostty-vt]', new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len)))
+  }
+  const instance = await WebAssembly.instantiate(module, { env: { log } })
+  memory = instance.exports.memory as WebAssembly.Memory
+  cacheViewport()
+  skipBlankCells()
+  return new Ghostty(instance)
 }
 
+const patched = Symbol.for('spaceman.ghostty.viewportCache')
+
+/**
+ * Makes drawing a terminal linear in its size again. ghostty-web 0.4.0's GhosttyTerminal.getLine(y) copies and parses
+ * the whole viewport (every cell of every row) to return one row, and its renderer calls it for every row it draws, so
+ * a full redraw parsed rows × rows × columns cells (2.9 million for a 200×120 terminal), on every frame of output that
+ * scrolls (ADR-0076: it was most of a 22 MB recording's 33 s of blocked page at 4× CPU throttling, with the catch-up
+ * applied record by record). Here the parsed viewport is kept until the terminal changes
+ * (write, resize, free) or the current task ends, whichever comes first, so one redraw parses the viewport once.
+ * getViewport is the only reader of the parsed cells and the only writer of the pool it returns (0.4.0 source).
+ */
+export function cacheViewport(proto: object = GhosttyTerminal.prototype) {
+  const p = proto as Record<string | symbol, unknown> & { [k: string]: unknown }
+  if (p[patched] || typeof p.getViewport !== 'function') return
+  p[patched] = true
+  const views = new WeakMap<object, unknown>()
+  const getViewport = p.getViewport as (this: object) => unknown
+  p.getViewport = function (this: object) {
+    if (views.has(this)) return views.get(this)
+    const cells = getViewport.call(this)
+    views.set(this, cells)
+    queueMicrotask(() => views.delete(this))
+    return cells
+  }
+  for (const name of ['write', 'resize', 'free']) {
+    const orig = p[name] as ((this: object, ...args: unknown[]) => unknown) | undefined
+    if (typeof orig !== 'function') continue
+    p[name] = function (this: object, ...args: unknown[]) {
+      views.delete(this)
+      return orig.apply(this, args)
+    }
+  }
+}
 /**
  * Waits (briefly) for the terminal font, so the first terminal of a page measures its cells in the font it draws with:
  * ghostty-web 0.4.0 measures the font when the terminal opens and when its size or family changes, never when a web
@@ -101,6 +179,68 @@ export function disposeTerminal(term: Terminal) {
   term.dispose()
 }
 
+/** A cell as ghostty-web 0.4.0's renderer reads it. */
+interface Cell {
+  codepoint: number
+  flags: number
+  grapheme_len: number
+  hyperlink_id: number
+}
+
+const skipping = Symbol.for('spaceman.ghostty.skipBlankCells')
+
+/**
+ * Leaves out the text of blank cells when drawing. ghostty-web 0.4.0's renderer sets the font and calls fillText for
+ * every cell of a changed row, a space included, and most of a terminal is blank, so a screen of output that scrolled
+ * cost a canvas call per cell on every frame. A blank cell has no ink (its background is drawn separately,
+ * renderCellBackground), so it is skipped unless it carries a line of its own: underline, strikethrough, or a hovered
+ * link.
+ */
+export function skipBlankCells(proto: object = CanvasRenderer.prototype) {
+  const p = proto as Record<string | symbol, unknown>
+  if (p[skipping] || typeof p.renderCellText !== 'function') return
+  p[skipping] = true
+  const lines = CellFlags.UNDERLINE | CellFlags.STRIKETHROUGH
+  const renderCellText = p.renderCellText as (this: object, cell: Cell, ...rest: unknown[]) => unknown
+  p.renderCellText = function (this: { hoveredHyperlinkId?: number; hoveredLinkRange?: unknown }, cell: Cell, ...rest: unknown[]) {
+    const blank = (cell.codepoint === 0 || cell.codepoint === 32) && cell.grapheme_len === 0 && (cell.flags & lines) === 0
+    if (blank && !this.hoveredLinkRange && !(cell.hyperlink_id > 0 && cell.hyperlink_id === this.hoveredHyperlinkId)) return
+    return renderCellText.call(this, cell, ...rest)
+  }
+}
+
+/** The parts of a ghostty-web 0.4.0 Terminal that holdDrawing reaches (private in its typings). */
+interface Drawn {
+  renderer?: { render(buffer: unknown, forceAll: boolean, viewportY: number, terminal: unknown, scrollbarOpacity?: number): void }
+  wasmTerm?: unknown
+  viewportY: number
+  scrollbarOpacity?: number
+}
+
+/**
+ * Stops a terminal drawing until the returned function is called, which draws it once in full. ghostty-web 0.4.0
+ * redraws every changed row on every animation frame, and output that scrolls changes every row: while a backlog of
+ * stored output was applied a slice at a time, the frames in between redrew the whole screen (a canvas fillText per
+ * cell) six times longer than the output took to parse. A terminal catching up shows "Loading output…" instead and
+ * draws when it has caught up.
+ */
+export function holdDrawing(term: Terminal): () => void {
+  const t = term as unknown as Drawn
+  const renderer = t.renderer
+  if (!renderer || typeof renderer.render !== 'function') return () => {}
+  const own = Object.prototype.hasOwnProperty.call(renderer, 'render')
+  const render = renderer.render
+  renderer.render = () => {}
+  let held = true
+  return () => {
+    if (!held) return
+    held = false
+    if (own) renderer.render = render
+    else delete (renderer as { render?: unknown }).render
+    if (t.renderer === renderer && t.wasmTerm) renderer.render(t.wasmTerm, true, t.viewportY, term, t.scrollbarOpacity ?? 0)
+  }
+}
+
 const MIN_FONT = 8
 const MAX_FONT = 13
 
@@ -124,10 +264,16 @@ export function fitFont(term: Terminal, box: HTMLElement) {
   const start = term.options.fontSize
   let next = Math.max(MIN_FONT, Math.min(MAX_FONT, Math.floor(((start * want) / have) * 2) / 2))
   if (next === start && have <= want) return
-  term.options.fontSize = next
-  while (next > MIN_FONT && width() > want) {
-    next -= 0.5
+  // Every size set redraws the whole terminal (ghostty-web 0.4.0): draw once, at the size that fits.
+  const release = holdDrawing(term)
+  try {
     term.options.fontSize = next
+    while (next > MIN_FONT && width() > want) {
+      next -= 0.5
+      term.options.fontSize = next
+    }
+  } finally {
+    release()
   }
 }
 

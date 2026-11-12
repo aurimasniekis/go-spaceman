@@ -1,4 +1,5 @@
-// Fails the build when the production bundle contains development-only code or inline scripts (the CSP forbids them).
+// Fails the build when the production bundle contains development-only code or inline scripts (the CSP forbids them),
+// or lacks the terminal's WebAssembly asset.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -16,6 +17,8 @@ const walk = (d) => {
   }
 }
 walk(dist)
+// The terminal's WebAssembly module is a hashed asset, fetched under the CSP's connect-src 'self' (ADR-0076).
+if (!readdirSync(join(dist, 'assets')).some((f) => /^ghostty-vt-.*\.wasm$/.test(f))) bad.push(`${dist}/assets: no ghostty-vt-*.wasm`)
 if (bad.length) {
   console.error(bad.join('\n'))
   process.exit(1)
