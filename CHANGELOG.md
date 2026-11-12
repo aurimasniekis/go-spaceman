@@ -18,7 +18,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   With 5 MB of output at 4× throttling, the longest task while a terminal loads is now 0.13 s (was 0.9 s live and
   1.5 s replayed). The terminal's WebAssembly module is a cacheable asset compiled once per page, so the CSP's
   `connect-src` no longer allows `data:` (ADR-0020 update). Every terminal still runs in an instance and memory of its
-  own. `web/e2e/terminal-load.spec.ts` covers it.
+  own. `web/e2e/terminal-load.spec.ts` covers it. ghostty-web's unused inlined copy of the module is stripped from
+  the build, so the terminal's chunk drops from 687 kB to 122 kB. The workarounds apply only to ghostty-web 0.4.0,
+  the version they were checked against. Seeking a replay while it plays no longer lets a pending playback step write
+  into the freshly reset screen.
 
 ## [0.1.1] - 2026-11-09
 

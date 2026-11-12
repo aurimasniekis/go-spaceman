@@ -3888,7 +3888,7 @@
     nor the chunk-reload logic: it was the stored output a terminal applies when it opens.
   - A live terminal's stream starts with the run's whole recording (catch-up), which is tens of megabytes for a long
     Claude Code session. Each record was applied in the task that delivered it, with a React render per record. A
-    replay applied the whole recording in one task (`renderTo`).
+    replay applied the whole recording in one task (the former `renderTo`).
   - ghostty-web 0.4.0's `GhosttyTerminal.getLine(y)` copies and parses the whole viewport to return one row, and its
     renderer calls it for every row it draws. A full redraw therefore costs rows × rows × columns cell parses (2.9
     million at 200×120). Output that scrolls changes every row, so each frame during catch-up redrew the whole
@@ -3916,11 +3916,22 @@
 
     Both patches are checked against the real module (`viewport.test.ts`) or the 0.4.0 renderer's contract
     (`ghostty.test.ts`). They must be re-checked when ghostty-web is upgraded. Upstream ghostty-web has the defects;
-    these are our side's smallest fixes.
+    these are our side's smallest fixes (upstream report pending: drafted, not filed; the operator decides).
+
+    The patches are applied only when the installed ghostty-web is exactly 0.4.0 (`patchGhostty`, against the
+    version Vite reads from the package at build time). On any other version they are skipped with a console warning:
+    drawing is slower again, never wrong. `version.test.ts` fails while the package is not 0.4.0, so an upgrade
+    re-verifies them first.
   - **The module is compiled once per page** from the package's `ghostty-vt.wasm`, served as a hashed, immutable asset.
     Each terminal still instantiates it. The module defines its own memory and imports nothing but a log function, so
     every terminal keeps a fresh, zeroed memory of its own and no shared state, as #27 requires.
     `check-dist` fails a build without the asset.
+  - **ghostty-web's inlined copy of the module is stripped from the build.** Its `Ghostty.load()` carries the module
+    as a base64 `data:application/wasm` URL (564 kB of the terminal's chunk), which the page never uses. A Vite
+    transform (`vite.config.ts` `stripGhosttyInlineWasm`) replaces it with a URL that fails to load, so a stray
+    `Ghostty.load()` falls back to the package's `./ghostty-vt.wasm`. The `RunWorkbench` chunk goes from 687 kB
+    (204 kB gzipped) to 122 kB (37 kB). The transform fails the build when it finds nothing to strip, and `check-dist`
+    fails it when any `data:application/wasm` is left in `dist`.
 - **Consequences:**
   - At 4× CPU throttling on a cold cache, with 5 MB of stored output, the longest task is now 96–129 ms while a live
     terminal loads and 111–131 ms in a replay. At 6× they are 174 ms and 228 ms. A key press is handled within
