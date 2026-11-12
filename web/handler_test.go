@@ -10,10 +10,11 @@ import (
 
 func TestHandler(t *testing.T) {
 	files := fstest.MapFS{
-		"index.html":           {Data: []byte("<!doctype html><title>SpaceMan</title>")},
-		"favicon.svg":          {Data: []byte("<svg/>")},
-		"assets/app-abc123.js": {Data: []byte("console.log(1)")},
-		"assets/nested/y.js":   {Data: []byte("console.log(2)")},
+		"index.html":                    {Data: []byte("<!doctype html><title>SpaceMan</title>")},
+		"favicon.svg":                   {Data: []byte("<svg/>")},
+		"assets/app-abc123.js":          {Data: []byte("console.log(1)")},
+		"assets/nested/y.js":            {Data: []byte("console.log(2)")},
+		"assets/ghostty-vt-abc123.wasm": {Data: []byte("\x00asm\x01\x00\x00\x00")},
 	}
 	h := Handler(files)
 	get := func(path string) *httptest.ResponseRecorder {
@@ -31,6 +32,11 @@ func TestHandler(t *testing.T) {
 	}
 	if r := get("/assets/app-abc123.js"); r.Code != 200 || !strings.Contains(r.Header().Get("Cache-Control"), "immutable") {
 		t.Fatalf("asset: %d %v", r.Code, r.Header())
+	}
+	// The terminal's WebAssembly module (ADR-0076): compileStreaming needs application/wasm, and it is cached for good.
+	if r := get("/assets/ghostty-vt-abc123.wasm"); r.Code != 200 || r.Header().Get("Content-Type") != "application/wasm" ||
+		r.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("wasm asset: %d %v", r.Code, r.Header())
 	}
 	// A chunk of another build (a tab opened before an upgrade) is a plain 404 that nothing caches, never the SPA HTML.
 	for _, p := range []string{"/assets/missing.js", "/assets/spaces.index-OLD.js", "/assets/composer-OLD.css", "/assets/nested/x.js", "/assets/nested"} {

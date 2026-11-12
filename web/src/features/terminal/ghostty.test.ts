@@ -1,5 +1,5 @@
 import type { Terminal } from 'ghostty-web'
-import { createTerminal, disposeTerminal, fitFont, holdDrawing, scrollWithWheelAndTouch, skipBlankCells } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, holdDrawing, patchGhostty, PATCHED_GHOSTTY_WEB, scrollWithWheelAndTouch, skipBlankCells } from './ghostty'
 
 const ghostty = vi.hoisted(() => {
   const created: { options: { ghostty?: unknown }; disposed: boolean }[] = []
@@ -55,6 +55,36 @@ describe('createTerminal', () => {
       fetch.mockRestore()
       compile.mockRestore()
       instantiate.mockRestore()
+    }
+  })
+})
+
+describe('patchGhostty', () => {
+  const protos = () => {
+    const terminal = { getViewport() {}, write() {}, resize() {}, free() {} }
+    const renderer = { renderCellText() {} }
+    return { terminal, renderer, before: { getViewport: terminal.getViewport, renderCellText: renderer.renderCellText } }
+  }
+
+  it('patches the version the patches were written for', () => {
+    const { terminal, renderer, before } = protos()
+    expect(patchGhostty(PATCHED_GHOSTTY_WEB, { terminal, renderer })).toBe(true)
+    expect(terminal.getViewport).not.toBe(before.getViewport)
+    expect(renderer.renderCellText).not.toBe(before.renderCellText)
+  })
+
+  it('leaves any other version alone and warns once', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { terminal, renderer, before } = protos()
+      expect(patchGhostty('0.4.1', { terminal, renderer })).toBe(false)
+      expect(patchGhostty('0.5.0', { terminal, renderer })).toBe(false)
+      expect(terminal.getViewport).toBe(before.getViewport)
+      expect(renderer.renderCellText).toBe(before.renderCellText)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0][0])).toContain('0.4.1')
+    } finally {
+      warn.mockRestore()
     }
   })
 })

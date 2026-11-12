@@ -65,14 +65,6 @@ export function apply(screen: Screen | null, sum: RecordingSummary, r: Recording
   return next
 }
 
-/** Applies records[0..end) from a clean screen (seeking re-renders from the start: terminal state is not invertible). */
-export function renderTo(screen: Screen, records: RecordingRecord[], end: number): RecordingSummary {
-  screen.reset()
-  let sum = emptySummary()
-  for (let i = 0; i < Math.min(end, records.length); i++) sum = apply(screen, sum, records[i])
-  return sum
-}
-
 /** Milliseconds from the first record to records[i] (record times are unix microseconds). */
 export function offsetMs(records: RecordingRecord[], i: number): number {
   if (records.length === 0 || i <= 0) return 0

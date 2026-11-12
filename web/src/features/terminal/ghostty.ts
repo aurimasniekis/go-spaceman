@@ -98,9 +98,33 @@ export async function loadGhostty(): Promise<Ghostty> {
   }
   const instance = await WebAssembly.instantiate(module, { env: { log } })
   memory = instance.exports.memory as WebAssembly.Memory
-  cacheViewport()
-  skipBlankCells()
+  patchGhostty()
   return new Ghostty(instance)
+}
+
+/** The ghostty-web version the prototype patches below were written against and verified with (ADR-0076). */
+export const PATCHED_GHOSTTY_WEB = '0.4.0'
+
+let warned = false
+
+/**
+ * Applies the prototype patches (cacheViewport, skipBlankCells) when the installed ghostty-web is the version they were
+ * written against. They replace private methods of 0.4.0 whose behaviour they depend on, so on any other version they
+ * are left out (drawing is slower, never wrong) with a console warning: re-verify them before allowing that version.
+ * Returns whether they are applied.
+ */
+export function patchGhostty(
+  version: string = __GHOSTTY_WEB_VERSION__,
+  protos: { terminal?: object; renderer?: object } = {},
+): boolean {
+  if (version !== PATCHED_GHOSTTY_WEB) {
+    if (!warned) console.warn(`ghostty-web ${version}: terminal drawing patches skipped (written for ${PATCHED_GHOSTTY_WEB}, ADR-0076)`)
+    warned = true
+    return false
+  }
+  cacheViewport(protos.terminal)
+  skipBlankCells(protos.renderer)
+  return true
 }
 
 const patched = Symbol.for('spaceman.ghostty.viewportCache')

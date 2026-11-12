@@ -1,5 +1,5 @@
 import type { RecordingRecord } from '@/api/client'
-import { apply, decode, emptySummary, feed, indexAt, offsetMs, renderTo, type Screen } from './records'
+import { apply, decode, emptySummary, feed, indexAt, offsetMs, type RecordingSummary, type Screen } from './records'
 
 class FakeScreen implements Screen {
   out = ''
@@ -18,6 +18,8 @@ class FakeScreen implements Screen {
 }
 
 const b64 = (s: string) => btoa(s)
+/** Applies records in order from a clean summary, the way a seek's feed does. */
+const applyAll = (s: Screen, rs: RecordingRecord[]): RecordingSummary => rs.reduce((sum, r) => apply(s, sum, r), emptySummary())
 const recs: RecordingRecord[] = [
   { seq: 1, t: 1_000_000, k: 'open', cols: 200, rows: 120, run: 'run_x' },
   { seq: 2, t: 1_500_000, k: 'o', d: b64('hello ') },
@@ -36,20 +38,10 @@ describe('recording records', () => {
 
   it('renders output, sizes, gaps and the close', () => {
     const s = new FakeScreen()
-    const sum = renderTo(s, recs, recs.length)
+    const sum = applyAll(s, recs)
     expect(s.out).toBe('hello world')
     expect(s.size).toBe('80x24')
     expect(sum).toMatchObject({ gaps: 1, closed: true, exitCode: 3, reason: 'exited', lastSeq: 6, cols: 80, rows: 24 })
-  })
-
-  it('seeks by re-rendering from the start', () => {
-    const s = new FakeScreen()
-    renderTo(s, recs, 3)
-    expect(s.out).toBe('hello ')
-    expect(s.size).toBe('200x120')
-    renderTo(s, recs, 5)
-    expect(s.out).toBe('hello world')
-    expect(s.resets).toBe(2)
   })
 
   it('marks truncation without drawing it', () => {

@@ -281,7 +281,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
   return (
     <Stack gap="xs" style={{ minWidth: 0 }}>
       <Group justify="space-between" gap="xs" wrap="wrap">
-        <StatusBadges sum={sum} live={state} typing={!!onInput} loading={loading || !term} />
+        <StatusBadges sum={sum} live={state} typing={!!onInput} loading={loading || (!term && !error)} />
         {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} />}
       </Group>
       {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
@@ -360,6 +360,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
       posRef.current = end
       setPos(end)
       const done = (s: RecordingSummary) => {
+        feedRef.current = null
         sumRef.current = s
         setSum(s)
         setRendering(false)
@@ -391,6 +392,9 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
     if (!playing || rendering || !term || !records) return
     let timer: ReturnType<typeof setTimeout>
     const step = () => {
+      // A seek is rendering from a clean screen: a step scheduled before it (its timer can fire before this effect is
+      // cleaned up) would write a record into the middle of that. Playback restarts when the seek is done (rendering).
+      if (feedRef.current) return
       const i = posRef.current
       if (i >= records.length) {
         setPlaying(false)
@@ -458,7 +462,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
           size="xs"
         />
       )}
-      <StatusBadges sum={sum} loading={rendering || !term} />
+      <StatusBadges sum={sum} loading={rendering || (!term && !error)} />
       {(error || loadError) && <Text c="owlRed" size="sm">{error || loadError}</Text>}
       {!records && !loadError && <Loader size="xs" />}
       {records?.length === 0 && <Text size="sm" c="dimmed">No recording is stored for this run yet.</Text>}

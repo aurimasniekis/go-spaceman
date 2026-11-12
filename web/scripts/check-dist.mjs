@@ -1,5 +1,5 @@
 // Fails the build when the production bundle contains development-only code or inline scripts (the CSP forbids them),
-// or lacks the terminal's WebAssembly asset.
+// lacks the terminal's WebAssembly asset, or still inlines a WebAssembly module as a data: URL.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -9,10 +9,12 @@ const walk = (d) => {
   for (const f of readdirSync(d)) {
     const p = join(d, f)
     if (statSync(p).isDirectory()) walk(p)
-    else if (/\.(js|html)$/.test(f)) {
+    else if (/\.(js|mjs|css|html)$/.test(f)) {
       const s = readFileSync(p, 'utf8')
       if (/ReactQueryDevtools|TanStackRouterDevtools/.test(s)) bad.push(`${p}: devtools in production bundle`)
       if (f.endsWith('.html') && /<script(?![^>]*\bsrc=)[^>]*>/.test(s)) bad.push(`${p}: inline <script>`)
+      // ghostty-web's own copy of the module (vite.config.ts stripGhosttyInlineWasm): the terminal loads the asset.
+      if (s.includes('data:application/wasm')) bad.push(`${p}: inlined data:application/wasm module`)
     }
   }
 }
