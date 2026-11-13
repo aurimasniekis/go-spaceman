@@ -245,9 +245,36 @@ func (a *Agent) ship(ctx context.Context, runID, spaceID string, recs []recordin
 			raws = append(raws, b)
 		}
 	}
-	if err := a.send(ctx, proto.TypeRecording, proto.RecordingChunk{RunID: runID, SpaceID: spaceID, Records: raws}); err != nil {
-		a.markUnshipped(runID)
+	for _, part := range shipParts(raws, shipChunkBytes) {
+		if err := a.send(ctx, proto.TypeRecording, proto.RecordingChunk{RunID: runID, SpaceID: spaceID, Records: part}); err != nil {
+			// The rest goes after a reconnect, from central's acknowledged sequence (catchUpRecordings).
+			a.markUnshipped(runID)
+			return
+		}
 	}
+}
+
+// shipChunkBytes bounds the records of one recording message, well inside proto.MaxMessage. A burst of output
+// (megabytes within one flush interval) used to go as one message; central closed the connection for a message over
+// MaxMessage, and the records in it were lost from its copy (ADR-0081).
+const shipChunkBytes = 1 << 20
+
+// shipParts splits encoded records into runs of at most limit bytes each, in order; a record larger than limit goes
+// alone.
+func shipParts(raws []json.RawMessage, limit int) [][]json.RawMessage {
+	var parts [][]json.RawMessage
+	start, size := 0, 0
+	for i, r := range raws {
+		if i > start && size+len(r) > limit {
+			parts = append(parts, raws[start:i])
+			start, size = i, 0
+		}
+		size += len(r)
+	}
+	if start < len(raws) {
+		parts = append(parts, raws[start:])
+	}
+	return parts
 }
 
 func (a *Agent) markUnshipped(runID string) {
