@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- The web terminal keeps at least 10,000 rows of scrollback at 160 columns (about 11,000-12,000). ghostty-web's
+  `scrollback` option is a byte limit, not a line count, so the old setting of 10,000 kept only about 300 rows at 160
+  columns. It is now 24 MiB: a terminal with a full scrollback of plain text holds about 30 MiB of WebAssembly memory
+  (ADR-0080).
+
 ## [0.1.3] - 2026-11-13
 
 Patch release on top of v0.1.2. It makes no production-readiness claim (docs/RELEASE_READINESS.md §17). It contains:
