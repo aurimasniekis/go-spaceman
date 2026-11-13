@@ -2844,14 +2844,14 @@
   jobs (nightly and the release smoke; `internal/keyring`'s targets open a store) ran with the 100 ms default. The
   login-timing job failed on it with `auth.login_failed` holding the lock 120–186 ms while its timing check passed.
   They now set `SM_TEST_TX_MAX=250ms` too. The race steps keep 1 s. Not security-relevant, for the reasons above.
-- **Update, 2026-11-13 (hosted coverage at 1 s, operator decision):** during the v0.1.2 merges the hosted coverage job
+- **Update, 2026-11-13, coverage at 1 s (operator decision):** during the v0.1.2 merges the hosted coverage job
   failed repeatedly on transactions holding the lock 260–750 ms in packages the pull requests didn't touch (auth,
   human, oidc, keyring, messages), and passed on rerun. Shared runners vary more than the 250 ms margin allows. The
   coverage step in `ci.yaml` and in the release gate now sets `SM_TEST_TX_MAX=1s`, the same as the race steps. Local
   runs keep the 100 ms default and the full gate (`SM_TEST_TX_MAX=500ms make check`) keeps 500 ms, so a slow
   transaction is still caught before a pull request; I/O in a transaction is still rejected by `txscope`. The
   login-timing and fuzz jobs keep 250 ms. Not security-relevant, for the reasons above.
-- **Update, 2026-11-13 (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
+- **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
   the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
   tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock
   waits never counted), the callback and commit split, and the transaction's own on-CPU time (thread CPU time). The

@@ -32,7 +32,7 @@ the value of `SM_TEST_TX_MAX`. Time spent waiting for the writer and retrying a 
 the login-timing and fuzz jobs 250 ms (ADR-0062).
 
 A store opened by `storetest.Open` is set up so that setup work doesn't land inside a test's transactions (ADR-0062,
-update 2026-11-13). `storetest.Seed` flushes its copy of the database to disk before the store opens, because
+update 2026-11-13, hold analysis). `storetest.Seed` flushes its copy of the database to disk before the store opens, because
 otherwise the first commit flushes it. The store has 2 reader connections (`storetest.Readers`; `WithReaders` sets
 another size) instead of the production `max(4, GOMAXPROCS)`, because each one parses the whole schema when it opens.
 `make race` builds modernc.org's SQLite without the race detector's `checkptr` instrumentation. A transaction that

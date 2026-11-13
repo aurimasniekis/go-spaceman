@@ -17,8 +17,8 @@ import (
 
 // MaxTxDuration is the longest a write transaction may hold the write lock in tests (Hallpass HP-DB-004). Time spent
 // waiting for the writer and SQLITE_BUSY retries does not count (ADR-0070).
-// SM_TEST_TX_MAX overrides it for slow runners; the default matches the requirement. CI on GitHub's hosted runners uses
-// 250ms (ADR-0062), the race steps more.
+// SM_TEST_TX_MAX overrides it for slow runners; the default matches the requirement. On GitHub's hosted runners CI's
+// coverage and race steps use 1s, its login-timing and fuzz jobs 250ms (ADR-0062).
 var MaxTxDuration = func() time.Duration {
 	if v, err := time.ParseDuration(os.Getenv("SM_TEST_TX_MAX")); err == nil && v > 0 {
 		return v
