@@ -4210,11 +4210,11 @@
       - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.
       - **Q3 keep-alive versus park:** keep alive up to 6 h, park longer waits.
       - **Q4 node capacity:** a kept-alive run counts against the node limit, not the space limit.
-      - **Q5 people:** one human action (type `message`, priority `normal`) in the affected space, per account window,
-        only for waits over 12 h.
-      - **Q6 priority:** control first, then the oldest task; a resume never pre-empts a new launch.
-      - **Q7 early stop:** yes, later (T13, a separate amendment): stop new launches on an account at ≥ 95 % of a
-        window, from a SpaceMan-owned statusline.
+      - **Q5 people:** one human action (type `message`, priority `normal`) to the affected space's operators, once per
+        account window, only for waits over 12 h.
+      - **Q6 priority:** control first, then the oldest task; a resume never pre-empts a launch already running.
+      - **Q7 early stop:** a later, optional step (T13, a separate amendment): stop new launches on an account at
+        ≥ 95 % of a window, from a SpaceMan-owned statusline. Not part of this decision.
       - **Q8 cross-space:** the hold applies to every space bound to the account.
       - **Q9 gateway estimate:** accepted (earliest reset, re-checked every 15 min); no per-project board view requested.
   11. **Telling control and people once.** Control gets one durable message per space and account window when a
