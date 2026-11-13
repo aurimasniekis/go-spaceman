@@ -2,10 +2,13 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -103,9 +106,16 @@ func TestHelloReapplyOfUnchangedRunsWritesNothing(t *testing.T) {
 		return took
 	}
 
-	// The first hello ends the runs: each changes.
+	// The first hello ends the runs central still thinks are live: each is a real transition, with exactly one change.
+	before, _ := counts()
 	connect(reports("done"))
 	changes, versions = counts()
+	if changes-before != helloRuns {
+		t.Fatalf("a hello ending %d live runs wrote %d change entries; want one each", helloRuns, changes-before)
+	}
+	if got := e.run1(ids[0]); got.Observed != proto.RunExited || got.EndedAt == nil {
+		t.Fatalf("ended run %+v", got)
+	}
 	// The same journal again (the node reconnected): nothing changes, so nothing is written.
 	took := connect(reports("done"))
 	c, v := counts()
@@ -118,13 +128,18 @@ func TestHelloReapplyOfUnchangedRunsWritesNothing(t *testing.T) {
 	}
 	t.Logf("hello of %d unchanged runs applied in %v", helloRuns, took)
 
-	// One run's report differs: exactly that run is updated.
+	// One run's report differs: exactly that run is updated. Another differs but names an older lease generation: it
+	// is fenced, as before.
 	again := reports("done")
 	again[7].Status, again[7].StatusKind = "error", "error"
+	again[8].Status, again[8].Generation = "error", r.Generation-1
 	connect(again)
-	c, _ = counts()
-	if c != changes+1 {
-		t.Fatalf("a hello with one changed run wrote %d change entries; want 1", c-changes)
+	c, v = counts()
+	if c != changes+1 || v <= versions {
+		t.Fatalf("a hello with one changed run wrote %d change entries (version sum %d → %d); want 1", c-changes, versions, v)
+	}
+	if got := e.run1(ids[8]); got.Status != "done" {
+		t.Fatalf("a report of an older generation was applied: status %q", got.Status)
 	}
 	if got := e.run1(ids[7]); got.Status != "error" {
 		t.Fatalf("changed run's status %q", got.Status)
@@ -139,4 +154,39 @@ func n2id(t *testing.T, e *fleetEnv) string {
 		t.Fatalf("nodes %v %v", nodes, err)
 	}
 	return nodes[0].ID
+}
+
+// Run lists leave out each run's manifest (its resolved prompts and settings: large, and the UI refetches lists on every
+// run change) unless include=manifest asks for it; a single run always has it.
+func TestRunListOmitsManifest(t *testing.T) {
+	t.Parallel()
+	e := newFleetEnv(t)
+	e.enroll()
+	ctx := context.Background()
+	n, sp := hvNode(t, e, "lists", proto.MaxMinor, true)
+	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Role: "free", Kind: "worker", Harness: "claude-code", Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.next(t, proto.TypeCommand)
+	call := fleetCaller{t: t, url: e.srv.URL}
+	tok := userToken(t, e.c.Auth, "vera@example.com", []auth.GrantInput{{Role: authz.RoleViewer, Domain: sp.ID}})
+	base := "/spaces/" + sp.ID + "/runs"
+	var list struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	call.want(tok, "GET", base, nil, 200, &list)
+	if len(list.Items) != 1 || list.Items[0]["manifest"] != nil || list.Items[0]["id"] == nil {
+		t.Fatalf("list %v", list.Items)
+	}
+	call.want(tok, "GET", base+"?include=manifest", nil, 200, &list)
+	if len(list.Items) != 1 || len(list.Items[0]["manifest"]) < 10 {
+		t.Fatalf("list with manifests %v", list.Items)
+	}
+	call.want(tok, "GET", base+"?include=everything", nil, 422, nil)
+	var one map[string]json.RawMessage
+	call.want(tok, "GET", base+"/"+r.ID, nil, 200, &one)
+	if len(one["manifest"]) < 10 {
+		t.Fatalf("run %v", one)
+	}
 }
