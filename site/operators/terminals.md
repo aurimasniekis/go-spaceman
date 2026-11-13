@@ -49,6 +49,12 @@ trackpad, or drag on a phone. Scrolling up first moves the terminal within its f
 the terminal keeps (up to 10,000 lines). Scrolling never sends anything to the run. While you read, new output keeps
 arriving below without moving your place. **Jump to live** returns to the newest output.
 
+A terminal opens on its newest output: it loads only the last megabyte of the run's recording, so the current screen
+appears quickly even after hours of output, also on a phone. When you scroll to the top of what it loaded and the run
+printed more before that, **Load earlier output** fetches more (4 MB, then 16 MB, then the rest) and keeps your place.
+It stops offering more once the terminal's scrollback is full; the run's **Replay** has everything (ADR-0081 in the
+[decision log](/security/decisions)).
+
 <Shot name="terminal-scrollback" alt="A run's live, watch-only terminal scrolled back into earlier output, with a Jump to live button over its bottom edge" caption="Reading earlier output while the run goes on" />
 
 Earlier output is there only when the program printed it to the terminal's normal screen. Full-screen programs draw on

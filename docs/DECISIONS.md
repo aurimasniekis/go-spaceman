@@ -4244,6 +4244,114 @@
   with the old value: 485 rows).
 - **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
 
+### ADR-0081 — A terminal shows the end of its recording first: tail catch-up with a mode prelude, earlier output on demand
+- **Status:** Accepted, 2026-11-13 (follows ADR-0076 and ADR-0080). No recording format change, no node protocol
+  change, no migration.
+- **Context (code, at v0.1.3 plus ADR-0080):**
+  - A live terminal's catch-up streamed the run's whole stored recording from seq 0, and the page applied it in slices
+    (ADR-0076). The tab stayed responsive, but a long run (tens of MB) downloaded and replayed everything before the
+    current screen was right: slow on a phone, and wasted bandwidth.
+  - Central read the whole recording into memory for each viewer's catch-up (`Recordings.Read`), and once per replay
+    page.
+  - Terminal output can't be read from the middle without the state before it. So the question was whether
+    recordings have natural checkpoints. Five real Claude Code recordings on a node (8 to 16 MB of output each) were
+    replayed in a reference emulator (xterm headless), and each final screen was compared with one drawn from only
+    the tail, at 25, 50, 75, 90 and 100% of each recording:
+    - **No usable clears.** One ED2 at the start, no ED3, no RIS.
+    - **Sync frames don't help.** Nearly every record opens a synchronized update (`CSI ? 2026 h`), but the classic
+      renderer repaints only its prompt area: a tail of quiet stretches holds the spinner and none of the text above
+      it.
+    - **The one exact checkpoint is rare.** The repaint after each recorder reattach (herdr-core's first paint, a
+      `gap` record followed by a reset of modes and the visible screen).
+  - Results of the comparison:
+    - **Classic renderer** (which SpaceMan sets with `tui: "default"`, ADR-0064): **1 MiB of tail drew the same 48 rows
+      as the whole recording at every point**. 256 KiB was wrong at about a third of them; 64 KiB at nearly all.
+    - **Modes matter.** A run that left the alternate screen at its end was drawn wrong from the tail, until the
+      DEC private modes in effect before it were restored.
+    - **The full-screen renderer** (alternate screen, differential repaint): 43–45 of 48 rows. Rows it never repaints,
+      such as the prompt's borders and the status line, are in no tail.
+- **Options considered:**
+  - (a) Snapshots in the recording (screen and modes, e.g. a periodic herdr-core first paint): exact for any program,
+    but a new record kind, a node change and a protocol minor. **Recorded as the follow-up for the full-screen
+    renderer; not built.**
+  - (b) **Tail catch-up with a mode prelude: chosen.** It needs no format or protocol change, and the measurements show
+    it is exact for the renderer SpaceMan runs.
+  - (c) Replay seeks use the same tail.
+- **Decision:**
+  - **Server** (`internal/recording`, `internal/api`):
+    - `ScanSegments` reads a recording one record at a time. `TailSegments` keeps only a window of the last N bytes of
+      output (at least one record, at most `MaxTailBytes` = 16 MiB). Records leaving the window pass through a
+      `ModeTracker`, which follows `CSI ? Pm h/l` (split across records too) and RIS for an allowlist: cursor keys (1),
+      origin (6), autowrap (7), cursor visibility (25), the alternate screens (47, 1047, 1049), mouse reporting
+      (1000–1006, 1015) and bracketed paste (2004).
+    - `GET …/terminal?tail=<bytes>` applies only to a fresh catch-up (no `after`, no `Last-Event-ID`). It first sends
+      an `event: tail` with `{from, skipped_bytes, cols, rows, modes[], gaps, truncated}` (what the output before the
+      tail left), then the tail's records, then live output. Reconnects resume after the last record, as before.
+    - `GET …/recording?tail=<bytes>` returns the same tail as one page, with `tail` set.
+    - Catch-ups without a tail, gap re-reads and plain pages now stream: a page keeps only its own records.
+      `httpguard` (ADR-0078) still bounds writes to a client that stops reading.
+  - **Live terminal** (`web/src/features/terminal`):
+    - Asks for a 1 MiB tail (`TAIL_BYTES`). It applies the `tail` event as records with seq 0 (size, the mode prelude,
+      gaps), then the tail, still in #37's slices.
+    - **Earlier output:** when the viewer is at the top of the scrollback (or the scrollback is empty) and output was
+      left out, it offers **Load earlier output**. That reconnects with 4× the tail: 1, then 4, then 16 MiB, and after
+      16 MiB the whole recording through the streamed, untailed path. It redraws on a clean terminal while the old
+      picture stays (`holdDrawing`), then returns the viewer to the lines they were reading.
+    - It stops offering once the scrollback holds `scrollbackRows(cols)` rows (ADR-0080): the terminal could not keep
+      earlier output anyway, and Replay has all of it.
+  - **Replay:**
+    - Fetches the tail first and draws the run's last screen from it. The full record list then loads page by page for
+      play and seeking, and isn't drawn again when it ends in the same record.
+    - A seek draws at most 1 MiB of output before its position, after the size and modes there (`ReplayIndex`: mode
+      checkpoints every 512 records, indexed a slice at a time), instead of everything from the start.
+  - **Compatibility:** only optional fields are added to the API.
+    - An older UI sends no `tail` and gets the whole recording as before.
+    - This UI against an older central gets no `tail` event or field, and draws the whole recording as before.
+    - Existing recordings are read unchanged.
+- **Measurements:** see the table below (`e2e/terminal-tail.spec.ts`, `SM_E2E_TAIL_MEASURE=1`).
+  The table shows time from navigation until the end of the output is on screen, and bytes received by then. It
+  covers a running run (live) and a finished one (replay). Each run is Claude-like output from the stub's `/redraw`:
+  about 5 MB and 22 MB, i.e. 7,000 and 31,000 repaints. Each measurement uses a fresh browser context in headless
+  Chromium on Linux, with central on the same machine, 2026-11-13. Before is the base of this change (ADR-0080) with
+  the shipping fix below applied, so that its central had the whole recording.
+
+  | Output | View | Device | Before: screen, received | After: screen, received |
+  |---|---|---|---|---|
+  | 5 MB | live | desktop 1× | 1.1 s, 6.7 MB | 0.9 s, 1.4 MB |
+  | 5 MB | live | desktop 4× CPU | 5.1 s, 6.7 MB | 3.6 s, 1.4 MB |
+  | 5 MB | live | phone 390 px, 4× | 5.2 s, 6.7 MB | 3.4 s, 1.4 MB |
+  | 5 MB | replay | desktop 1× | 1.0 s, 6.7 MB | 1.2 s, 8.1 MB¹ |
+  | 5 MB | replay | desktop 4× | 5.2 s, 6.7 MB | 4.0 s, 8.1 MB¹ |
+  | 5 MB | replay | phone 390 px, 4× | 5.1 s, 6.7 MB | 3.9 s, 8.1 MB¹ |
+  | 22 MB | live | desktop 1× | 3.2 s, 29.8 MB | 0.9 s, 1.4 MB |
+  | 22 MB | live | desktop 4× | 13.8 s, 29.8 MB | 3.3 s, 1.4 MB |
+  | 22 MB | live | phone 390 px, 4× | 13.7 s, 29.8 MB | 3.6 s, 1.4 MB |
+  | 22 MB | replay | desktop 1× | 2.8 s, 29.8 MB | 0.9 s, 21.6 MB¹ |
+  | 22 MB | replay | desktop 4× | 12.1 s, 29.8 MB | 3.5 s, 21.6 MB¹ |
+  | 22 MB | replay | phone 390 px, 4× | 12.0 s, 29.8 MB | 3.4 s, 21.6 MB¹ |
+
+  ¹ A replay draws its last screen from the 1.4 MB tail, but goes on to load the whole recording for play and seeking.
+  Over the local connection most of that arrived while the tail was being drawn. Everything was loaded after
+  4.9 s at 4×, against 12.2 s before; that is 31.2 MB, i.e. the 1.4 MB tail on top of the recording. A live
+  terminal stops at its tail.
+  - **What's left doesn't grow with the recording.** After the change, the 5 MB and 22 MB times are the same (3.3 to
+    3.6 s at 4×). What remains is the same for any length of output: the page, its chunks and the terminal starting,
+    plus drawing 1 MiB.
+  - **Found while measuring:** the node shipped a second's records to central as one message. A burst over the
+    protocol's 4 MiB message limit closed the connection, and those records never reached central's copy. The 22 MB
+    run kept only its last megabyte. Fixed separately: the node splits shipments into messages of at most 1 MiB.
+- **Consequences:**
+  - The current screen of a long run appears after about 1 MiB of output, whatever the run's length. Central holds
+    about one tail per viewer in memory: 3.9 MiB of heap while scanning a 50 MiB recording (`TestTailMemoryBounded`).
+  - Each catch-up still decompresses the whole recording on central, which costs CPU (under a second for 50 MiB in the test)
+    but not memory. An index of checkpoints per segment would remove that; it is not needed yet.
+  - The full-screen renderer's never-repainted rows can be missing from a tail until the viewer loads earlier output.
+    The fix is option (a), a follow-up.
+  - Colours are not part of the prelude: a tail that starts inside coloured text draws its first characters
+    uncoloured. This was invisible in every comparison.
+- **Not a security-relevant change:** nothing is relaxed. The same `terminal:watch` and `recording:read` checks apply,
+  and less output reaches the browser.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

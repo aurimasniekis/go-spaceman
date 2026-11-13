@@ -520,7 +520,10 @@
   the two limits yet (the API, `spaceman limits set` and `spaceman run terminal-size` work).
 - **Scrolling back reaches only what the terminal keeps.** The live view scrolls back through the browser terminal's
   scrollback (a 24 MiB limit: at least 10,000 rows at 160 columns, ADR-0080; a page reload rebuilds it from the stored
-  recording), never by sending the run input. A full-screen program on the alternate screen keeps its history itself,
+  recording), never by sending the run input. A terminal first loads only the last 1 MiB of output; earlier output loads
+  when the viewer asks at the top of the scrollback (ADR-0081). A tail restores the terminal size and the DEC private
+  modes in effect where it starts, not colours, and a full-screen program's rows that it never repaints can be missing
+  from a tail until earlier output is loaded. A full-screen program on the alternate screen keeps its history itself,
   so watchers see only its current screen: Claude Code runs therefore use its classic renderer unless the profile sets
   `"tui": "fullscreen"`, and other full-screen
   programs (Codex's alternate screen, editors) are the same. During a takeover the wheel scrolls such a program only

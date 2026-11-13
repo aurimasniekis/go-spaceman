@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+- A run's terminal opens on its newest output. The live view and replay load only the last 1 MiB of a run's recording
+  first, with the terminal size and modes in effect there, instead of the whole recording (tens of MB for a long
+  session). **Load earlier output** at the top of the scrollback fetches more on demand. Replay seeks draw at most 1 MiB
+  before their position. Central streams catch-ups and recording pages instead of reading whole recordings into memory
+  for each viewer. The API adds optional `tail` parameters to the terminal stream and the recording endpoint; older
+  clients and servers keep working (ADR-0081).
+
 ### Fixed
 - The web terminal keeps at least 10,000 rows of scrollback at 160 columns (about 11,000-12,000). ghostty-web's
   `scrollback` option is a byte limit, not a line count, so the old setting of 10,000 kept only about 300 rows at 160
