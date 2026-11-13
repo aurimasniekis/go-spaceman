@@ -40,6 +40,10 @@ func ccAgent(t *testing.T, dir string, m *dist.Manager, edit func(*Options)) (*A
 	a := New(j, o)
 	a.mem.base = context.Background()
 	t.Cleanup(a.stopRecorders)
+	// Review N1: the agent's tracked background work (a run-ended memory flush, an idle checkpoint) writes under dir
+	// and into the journal. Registered after the caller's TempDir and the journal, this runs first: it waits for that
+	// work and refuses more, so neither is removed or closed under it.
+	t.Cleanup(func() { a.drain(10 * time.Second) })
 	a.leases[ccSpace] = leaseRow{SpaceID: ccSpace, Generation: 1, ExpiresAt: time.Now().Add(time.Hour), Workdir: "cc"}
 	return a, f
 }
@@ -82,7 +86,8 @@ func TestManagedClaudeLaunch(t *testing.T) {
 	srv.SetPointer(dist.ChannelLatest, "2.1.900")
 	dir := t.TempDir()
 	m := srv.Manager(t, filepath.Join(dir, "harness", "claude-code"), nil)
-	a, f := ccAgent(t, dir, m, nil)
+	// A managed node needs no claude_binary: the run gets the cached binary's path.
+	a, f := ccAgent(t, dir, m, func(o *Options) { delete(o.HarnessBinaries, harness.KindClaude) })
 
 	ccLaunch(a, "run_cc1")
 	spec, argv := runSpec(t, f, "run_cc1")
@@ -216,6 +221,94 @@ func TestManagedClaudeDownloadTimeout(t *testing.T) {
 	}
 }
 
+// notStarted fails the test when runID's program was started.
+func notStarted(t *testing.T, f *runnertest.Fake, runID string) {
+	t.Helper()
+	for _, s := range f.Specs {
+		if s.Name == RunName(runID) {
+			t.Fatalf("%s was started", runID)
+		}
+	}
+}
+
+// Review S1 (PR #42): a stop while the launch waits for the download is not undone when the download completes: the
+// run stays stopped before start, and its program never starts.
+func TestManagedClaudeStopDuringDownload(t *testing.T) {
+	srv := disttest.New(t)
+	srv.Add("2.1.7", disttest.StubBinary("2.1.7"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.7")
+	srv.Hold()
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), nil)
+	a, f := ccAgent(t, dir, m, nil)
+	done := make(chan struct{})
+	go func() { defer close(done); ccLaunch(a, "run_stop") }()
+	waitFor(t, "the download to start", func() bool { return srv.BinaryHits.Load() == 1 })
+	a.stop(context.Background(), "run_stop", "interrupt", time.Second, "test")
+	if r := getRun(t, a, "run_stop"); r.State != proto.RunExited || r.Desired != "stopped" {
+		t.Fatalf("after the stop: state %s, desired %s", r.State, r.Desired)
+	}
+	srv.Release()
+	<-done
+	r := getRun(t, a, "run_stop")
+	if r.State != proto.RunExited || r.Desired != "stopped" || r.Reason != "stopped before start" || r.TerminalID != "" {
+		t.Fatalf("after the download: state %s (%s / %s), desired %s, terminal %q", r.State, r.Reason, r.Error, r.Desired, r.TerminalID)
+	}
+	notStarted(t, f, "run_stop")
+	if len(m.Held()) != 0 {
+		t.Fatalf("held %v", m.Held())
+	}
+}
+
+// Review S1: a stop that arrives after the version was resolved, while the launch is being prepared, also wins.
+func TestManagedClaudeStopBeforeStart(t *testing.T) {
+	srv := disttest.New(t)
+	srv.Add("2.1.7", disttest.StubBinary("2.1.7"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.7")
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), nil)
+	a, f := ccAgent(t, dir, m, nil)
+	a.claudeStage = func(stage string, _ dist.Resolution) {
+		if stage == "released" {
+			a.stop(context.Background(), "run_late", "kill", 0, "test")
+		}
+	}
+	ccLaunch(a, "run_late")
+	if r := getRun(t, a, "run_late"); r.State != proto.RunExited || r.Desired != "stopped" || r.TerminalID != "" {
+		t.Fatalf("state %s (%s / %s), desired %s, terminal %q", r.State, r.Reason, r.Error, r.Desired, r.TerminalID)
+	}
+	notStarted(t, f, "run_late")
+	if _, err := os.Stat(filepath.Join(a.runDir("run_late"), SecretsFile)); !os.IsNotExist(err) {
+		t.Fatalf("the abandoned launch left its secrets file: %v", err)
+	}
+}
+
+// Review S1: the space's lease is revoked (fenced) while the launch waits for the download: the run does not start.
+func TestManagedClaudeLeaseLostDuringDownload(t *testing.T) {
+	srv := disttest.New(t)
+	srv.Add("2.1.7", disttest.StubBinary("2.1.7"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.7")
+	srv.Hold()
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), nil)
+	a, f := ccAgent(t, dir, m, nil)
+	done := make(chan struct{})
+	go func() { defer close(done); ccLaunch(a, "run_fenced") }()
+	waitFor(t, "the download to start", func() bool { return srv.BinaryHits.Load() == 1 })
+	a.mu.Lock()
+	l := a.leases[ccSpace]
+	l.Generation = 2 // central fenced generation 1
+	a.leases[ccSpace] = l
+	a.mu.Unlock()
+	srv.Release()
+	<-done
+	r := getRun(t, a, "run_fenced")
+	if r.State != proto.RunFailed || !strings.Contains(r.Error, "no valid lease") {
+		t.Fatalf("state %s, error %q", r.State, r.Error)
+	}
+	notStarted(t, f, "run_fenced")
+}
+
 // A run adopted after an agent restart keeps its version protected from GC while it is live, and the startup
 // re-check leaves a good version alone; once the run has ended its version may go.
 func TestClaudeAdoptedRunKeepsVersion(t *testing.T) {
@@ -274,8 +367,8 @@ func TestClaudeAdoptedRunKeepsVersion(t *testing.T) {
 
 // Review S4 at the agent: a GC at any point of a managed launch never removes the version it runs. The launch gets an
 // older cached version as a fallback (the channel's target is downloading), which nothing but the launch hold and then
-// the run's journal entry protects; GC runs right after the launch took its hold and right after it released the hold
-// (the journal records the version by then), and once more after the run started. (dist's TestAcquireRacesGC and
+// the run's journal entry protects; GC runs right after the launch took its hold, once the journal records the version
+// (the hold still taken), right after it released the hold, and once more after the run started. (dist's TestAcquireRacesGC and
 // TestAcquireStressGC cover a GC between the decision and the hold.)
 func TestClaudeGCRacesLaunch(t *testing.T) {
 	srv := disttest.New(t)
@@ -293,6 +386,24 @@ func TestClaudeGCRacesLaunch(t *testing.T) {
 	a, f := ccAgent(t, dir, m, nil)
 	var stages []string
 	a.claudeStage = func(stage string, res dist.Resolution) {
+		// Review N2: the hold is released only once the journal records the version, so GC never sees the version
+		// neither held nor in use.
+		held := slices.Contains(m.Held(), res.Version)
+		recorded := getRun(t, a, "run_race").Bin.Version == res.Version
+		switch stage {
+		case "acquired":
+			if !held || recorded {
+				t.Errorf("at %q: held %v, recorded %v; want held, not yet recorded", stage, held, recorded)
+			}
+		case "recorded":
+			if !held || !recorded {
+				t.Errorf("at %q: held %v, recorded %v; want both (the hold is released after the journal has it)", stage, held, recorded)
+			}
+		case "released":
+			if held || !recorded {
+				t.Errorf("at %q: held %v, recorded %v", stage, held, recorded)
+			}
+		}
 		a.claudeGC(context.Background())
 		if _, err := os.Stat(res.Path); err != nil {
 			t.Errorf("GC at %q removed %s: %v", stage, res.Version, err)
@@ -300,7 +411,7 @@ func TestClaudeGCRacesLaunch(t *testing.T) {
 		stages = append(stages, stage)
 	}
 	ccLaunch(a, "run_race")
-	if !slices.Equal(stages, []string{"acquired", "recorded"}) {
+	if !slices.Equal(stages, []string{"acquired", "recorded", "released"}) {
 		t.Fatalf("stages %v", stages)
 	}
 	r := getRun(t, a, "run_race")
@@ -343,4 +454,41 @@ func TestWarnClaudeUpdateSettings(t *testing.T) {
 	if buf.Len() != 0 {
 		t.Fatalf("warned about %q", buf.String())
 	}
+}
+
+// Review N4: the launch warns about the profile's updater settings only when the node turns the updater off; with
+// self_update on (unmanaged) they take effect, so there is nothing to warn about.
+func TestUpdateSettingsWarnedOnlyWhenUpdaterOff(t *testing.T) {
+	for _, selfUpdate := range []bool{false, true} {
+		var buf syncBuffer
+		dir := t.TempDir()
+		a, _ := ccAgent(t, dir, nil, func(o *Options) {
+			o.Claude = ClaudeOptions{SelfUpdate: selfUpdate}
+			o.Log = slog.New(slog.NewTextHandler(&buf, nil))
+		})
+		a.launch(context.Background(), proto.Command{CommandID: "cmd_w", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_w", Generation: 1},
+			proto.LaunchPayload{Harness: harness.KindClaude, Kind: "worker", Role: "implementor", InstanceID: "ins_cc", Prompt: "hello",
+				ClaudeSettings: proto.ClaudeSettings{"autoUpdatesChannel": "stable"}})
+		if warned := strings.Contains(buf.String(), "updater settings have no effect"); warned == selfUpdate {
+			t.Errorf("self_update %v: warned %v", selfUpdate, warned)
+		}
+	}
+}
+
+// syncBuffer is a strings.Builder safe for the agent's concurrent logging.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

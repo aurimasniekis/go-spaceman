@@ -275,3 +275,55 @@ func TestAcquireGivesUp(t *testing.T) {
 		t.Fatalf("Acquire with a cancelled context: %v", err)
 	}
 }
+
+// Review S2 (PR #42): Verify removes a version only when it really failed verification. A cancelled or expired context
+// ends the hash early, which says nothing about the binary: the version stays installed (and is hashed again later).
+func TestVerifyCancelledContextKeepsVersion(t *testing.T) {
+	fr := newFakeRelease(t)
+	m := newManager(t, fr, t.TempDir(), nil)
+	installAll(t, fr, m, "2.1.1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	errs := m.Verify(ctx, "2.1.1")
+	if errs["2.1.1"] == nil || errors.Is(errs["2.1.1"], ErrVerify) || !errors.Is(errs["2.1.1"], context.Canceled) {
+		t.Fatalf("Verify on a cancelled context = %v, want context.Canceled, not ErrVerify", errs)
+	}
+	if _, ok := m.lookup("2.1.1"); !ok {
+		t.Fatal("Verify on a cancelled context removed a good version")
+	}
+	if errs := m.Verify(context.Background(), "2.1.1"); len(errs) != 0 {
+		t.Fatalf("Verify after = %v", errs)
+	}
+}
+
+// Review S2: a launch whose acquire context has expired while it re-hashes the binary (its fingerprint is unknown)
+// fails, but the version it checked stays installed.
+func TestAcquireExpiredContextKeepsVersion(t *testing.T) {
+	fr := newFakeRelease(t)
+	m := newManager(t, fr, t.TempDir(), nil)
+	installAll(t, fr, m, "2.1.1")
+	m.forgetHashed("2.1.1") // as after a restart: the launch must hash it
+	ctx, cancel := context.WithCancel(context.Background())
+	m.afterHold = func(Resolution) { cancel() } // the deadline passes between the hold and the launch check
+	if _, _, err := m.Acquire(ctx, "2.1.1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire = %v, want context.Canceled", err)
+	}
+	if err := m.launchCheck(ctx, "2.1.1"); err == nil {
+		t.Fatal("launchCheck on an expired context passed without hashing")
+	}
+	if _, ok := m.lookup("2.1.1"); !ok {
+		t.Fatal("an expired launch removed a good version")
+	}
+	if len(m.Held()) != 0 {
+		t.Fatalf("held %v after a failed Acquire", m.Held())
+	}
+	m.afterHold = nil
+	res, release, err := m.Acquire(context.Background(), "2.1.1")
+	if err != nil || res.Version != "2.1.1" {
+		t.Fatalf("Acquire after = %+v, %v", res, err)
+	}
+	release()
+	if n := fr.binaryHits.Load(); n != 1 {
+		t.Fatalf("binary downloaded %d times, want 1", n)
+	}
+}

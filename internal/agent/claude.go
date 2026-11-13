@@ -66,6 +66,13 @@ func channelName(c string) string {
 	return c
 }
 
+// stage runs the test hook at a managed Claude Code launch's stage (see Agent.claudeStage).
+func (a *Agent) stage(name string, res dist.Resolution) {
+	if a.claudeStage != nil {
+		a.claudeStage(name, res)
+	}
+}
+
 // claudeVersionsInUse is GC's inUse: the versions of the journal's live and adoptable Claude Code runs.
 func (a *Agent) claudeVersionsInUse(ctx context.Context) ([]string, error) {
 	return a.j.harnessVersionsInUse(ctx, harness.KindClaude)
@@ -100,7 +107,11 @@ func (a *Agent) startClaude(ctx context.Context, wg *sync.WaitGroup) {
 	}
 	sort.Strings(list)
 	for v, err := range m.Verify(ctx, list...) {
-		log.Warn("claude code cache: a version failed verification and was removed", slog.String("version", v), obs.Err(err))
+		if errors.Is(err, dist.ErrVerify) && ctx.Err() == nil {
+			log.Warn("claude code cache: a version failed verification and was removed", slog.String("version", v), obs.Err(err))
+		} else {
+			log.Warn("claude code cache: a version could not be verified and was kept", slog.String("version", v), obs.Err(err))
+		}
 	}
 	a.claudeGC(ctx)
 	if dist.ValidVersion(a.o.Claude.Channel) {
@@ -154,8 +165,9 @@ func (a *Agent) claudeInfo(ctx context.Context) proto.HarnessInfo {
 	return proto.HarnessInfo{Kind: harness.KindClaude, Error: "managed: no version cached yet", Capabilities: []string{}}
 }
 
-// warnClaudeUpdateSettings logs the profile's Claude Code settings that would steer its updater: the node decides the
-// version, so they have no effect on what runs (ADR-0077).
+// warnClaudeUpdateSettings logs the profile's Claude Code settings that would steer its updater. The caller warns only
+// when the node turns the updater off (manage on, or self_update off): then the node decides the version and they have
+// no effect on what runs (ADR-0077). With self_update on they do, and nothing is logged.
 func warnClaudeUpdateSettings(log *slog.Logger, cs proto.ClaudeSettings) {
 	var keys []string
 	for _, k := range []string{"autoUpdatesChannel", "minimumVersion"} {

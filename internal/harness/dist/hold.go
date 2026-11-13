@@ -28,8 +28,10 @@ type fingerprint struct {
 // Acquire then checks the binary at launch (the tamper policy, ADR-0077): when its stat fingerprint (device, inode,
 // size, mode and ctime) is the one recorded when this manager last hashed it (at install or Verify), it runs as is;
 // otherwise it is hashed again (about 0.35 s for 340 MB) and, when that fails, removed and resolved again. This finds a
-// binary changed before the launch, not one replaced between the check and the exec by something running as the node's
-// user: runs share that uid, so the cache is no boundary against them.
+// binary changed before the check, not one replaced between the check (Acquire) and the exec by something running as
+// the node's user; that gap includes whatever launch preparation the caller does after Acquire (the agent acquires
+// right before it builds the launch, then writes the launch files and starts it). Runs share that uid, so the cache is
+// no boundary against them. A check cut short by ctx keeps the version (Verify).
 func (m *Manager) Acquire(ctx context.Context, requested string) (Resolution, func(), error) {
 	requested, target, perr, err := m.target(ctx, requested)
 	if err != nil {

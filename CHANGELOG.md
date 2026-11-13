@@ -23,12 +23,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   versions are read-only and looked up without following links; a damaged one is reinstalled; a channel never falls
   back to a version newer than its target; redirects stay on the release host; musl is detected from `/bin/sh`. New node
   settings `harness.claude.{manage, channel, base_url, cache_keep, refresh, download_timeout, self_update}`;
-  `manage` defaults to off, so nothing changes on upgrade.
+  `manage` defaults to off. The cache itself changes nothing on upgrade, but the updater change below does (see the
+  upgrade note under "Changed").
 
 ### Changed
 - Every Claude Code run now gets `DISABLE_AUTOUPDATER=1` and `DISABLE_UPDATES=1`, on unmanaged nodes too, so runs no
   longer update themselves into the agent's `HOME`. `harness.claude.self_update: true` restores self-updates on an
-  unmanaged node; it is refused together with `manage: true`.
+  unmanaged node; it is refused together with `manage: true`. The node warns about a profile's updater settings only
+  when it turns the updater off.
+
+  **Upgrade note:** a node whose `claude` stayed current only through Claude Code's own self-update (the copy in
+  `~/.local/bin/claude`) now **stays on its current version**. Nothing updates it any more until you do one of these:
+  set `harness.claude.manage: true`, update it with your own tooling, or set `harness.claude.self_update: true`.
+
+### Fixed
+- Managed Claude Code launches: a stop (or a fenced lease) while a launch waits for the download is no longer undone
+  when the download completes; the run stays stopped and never starts. The version is acquired after the clone,
+  worktree and memory preparation, right before the launch is built. A startup or launch check interrupted by a
+  cancelled or expired context no longer removes a good cached version.
 
 ## [0.1.1] - 2026-11-09
 

@@ -173,7 +173,7 @@ func (a *Agent) command(ctx context.Context, c proto.Command) {
 // exists (a repeated delivery, or a restart between start and journal update) it is adopted (SM-NODE-004/009).
 func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPayload) {
 	log := a.log.With(slog.String(obs.FieldRunID, c.RunID), slog.String(obs.FieldSpaceID, c.SpaceID))
-	l, _ := a.lease(c.SpaceID, c.Generation)
+	l, ok := a.lease(c.SpaceID, c.Generation)
 	row := runRow{RunID: c.RunID, SpaceID: c.SpaceID, Generation: c.Generation, Kind: p.Kind, Role: p.Role, Harness: p.Harness, InstanceID: p.InstanceID,
 		TerminalName: RunName(c.RunID), Desired: "running", State: proto.RunPending, SessionID: p.SessionID}
 	if err := a.j.insertRun(ctx, row); err != nil {
@@ -189,7 +189,17 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		a.observe(ctx, row, found[0], true)
 		return
 	}
+	// abandoned re-reads the run before a step that would act on it: when it was stopped meanwhile (stop journaled
+	// desired stopped and ended it) the launch must neither start it nor overwrite that.
+	abandoned := func() bool {
+		r, err := a.j.getRun(ctx, c.RunID)
+		return err == nil && (r.Desired == "stopped" || ended(r.State))
+	}
 	fail := func(msg string, err error) {
+		if abandoned() {
+			log.Info("launch abandoned: the run was stopped before it started", slog.String("at", msg))
+			return
+		}
 		row.State, row.Error = proto.RunFailed, msg
 		if err != nil {
 			row.Error = msg + ": " + err.Error()
@@ -198,6 +208,25 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		a.report(ctx, row)
 		log.Warn("launch failed", slog.String("reason", msg), obs.Err(err))
 	}
+	// stillWanted is checked after every wait: the run was not stopped, and the space's lease still authorizes this
+	// generation (central may have fenced it meanwhile).
+	stillWanted := func() bool {
+		if abandoned() {
+			log.Info("launch abandoned: the run was stopped before it started")
+			return false
+		}
+		fresh, valid := a.lease(c.SpaceID, c.Generation)
+		if !valid {
+			fail("no valid lease for this space and generation", nil)
+			return false
+		}
+		l = fresh
+		return true
+	}
+	if !ok {
+		fail("no valid lease for this space and generation", nil)
+		return
+	}
 	h, err := harness.Get(p.Harness)
 	if err != nil {
 		fail("unknown harness", err)
@@ -205,44 +234,30 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	}
 	bin := a.o.HarnessBinaries[p.Harness]
 	selfUpdate := a.o.Claude.SelfUpdate
-	if p.Harness == harness.KindClaude {
+	managed := p.Harness == harness.KindClaude && a.managedClaude()
+	if p.Harness == harness.KindClaude && (managed || !selfUpdate) {
 		warnClaudeUpdateSettings(log, p.ClaudeSettings)
 	}
-	if p.Harness == harness.KindClaude && a.managedClaude() {
+	if managed {
 		// Node-managed Claude Code (ADR-0077): the run waits in starting while its version is resolved, and downloaded
-		// when nothing it may run is cached, then runs the verified cached binary by absolute path, so the core's PATH
-		// no longer matters. The version is held against GC until the journal records it; from then on GC keeps it
-		// while the run is live or adoptable.
+		// when nothing it may run is cached. This first wait holds nothing (no guard lock, no version), so a long
+		// download blocks no other launch of the space; the version the run gets is acquired again, from the cache,
+		// right before the launch is built (see below).
 		selfUpdate = false
 		row.State = proto.RunStarting
 		_ = a.j.updateRun(ctx, row)
 		a.report(ctx, row)
-		res, release, err := a.acquireClaude(ctx)
+		_, release, err := a.acquireClaude(ctx)
 		if err != nil {
 			fail("resolve the Claude Code version", err)
 			return
 		}
-		if a.claudeStage != nil {
-			a.claudeStage("acquired", res)
-		}
-		row.Bin = harnessRun{Version: res.Version, Path: res.Path, Requested: res.Requested, Fallback: res.Fallback}
-		err = a.j.setRunHarness(ctx, c.RunID, row.Bin)
 		release()
-		if a.claudeStage != nil {
-			a.claudeStage("recorded", res)
-		}
-		if err != nil {
-			fail("journal the Claude Code version", err)
+		if !stillWanted() {
 			return
 		}
-		if res.Fallback != "" {
-			log.Warn("claude code: the run gets another version than its channel's target", slog.String("requested", res.Requested),
-				slog.String("target", res.Target), slog.String("version", res.Version), slog.String("fallback", res.Fallback))
-		}
-		log.Info("claude code version resolved", slog.String("requested", res.Requested), slog.String("version", res.Version))
-		bin = res.Path
 	}
-	if bin == "" {
+	if bin == "" && !managed { // a managed launch takes the cached binary's path below
 		fail("harness not installed on this node", nil)
 		return
 	}
@@ -325,6 +340,33 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			return
 		}
 	}
+	if managed {
+		// The version is acquired as late as practical (after clone, worktree and memory preparation), so the tamper
+		// check's gap is only the build, the launch files and the start (ADR-0077). It runs the verified cached binary
+		// by absolute path, so the core's PATH no longer matters. The version is held against GC until the journal
+		// records it; from then on GC keeps it while the run is live or adoptable.
+		res, release, err := a.acquireClaude(ctx)
+		if err != nil {
+			fail("resolve the Claude Code version", err)
+			return
+		}
+		a.stage("acquired", res)
+		row.Bin = harnessRun{Version: res.Version, Path: res.Path, Requested: res.Requested, Fallback: res.Fallback}
+		err = a.j.setRunHarness(ctx, c.RunID, row.Bin)
+		a.stage("recorded", res) // the hold is still taken here (review N2: released only after the journal has it)
+		release()
+		a.stage("released", res)
+		if err != nil {
+			fail("journal the Claude Code version", err)
+			return
+		}
+		if res.Fallback != "" {
+			log.Warn("claude code: the run gets another version than its channel's target", slog.String("requested", res.Requested),
+				slog.String("target", res.Target), slog.String("version", res.Version), slog.String("fallback", res.Fallback))
+		}
+		log.Info("claude code version resolved", slog.String("requested", res.Requested), slog.String("version", res.Version))
+		bin = res.Path
+	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
 		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir,
 		AutoMemoryDir: autoMem, SelfUpdate: selfUpdate})
@@ -380,6 +422,14 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	argv := a.wrap(rd, built)
+	// The last check before the start, under the run's lock, which stop also takes: a stop either is seen here, or
+	// waits until the program is started and recorded and then stops it.
+	unlock := a.runLock(c.RunID)
+	defer unlock()
+	if !stillWanted() {
+		_ = os.Remove(filepath.Join(rd, SecretsFile))
+		return
+	}
 	row.State, row.SessionID = proto.RunStarting, built.SessionID
 	_ = a.j.updateRun(ctx, row)
 	a.report(ctx, row)
@@ -451,24 +501,30 @@ func (a *Agent) observe(ctx context.Context, row runRow, p runner.Process, adopt
 
 // stop ends a run: interrupt, then kill if still live after grace; or kill at once.
 func (a *Agent) stop(ctx context.Context, runID, mode string, grace time.Duration, reason string) {
+	// Under the run's lock: a launch about to start the run either sees this stop, or has started and recorded it.
+	unlock := a.runLock(runID)
 	row, err := a.j.getRun(ctx, runID)
 	if err != nil {
+		unlock()
 		return
 	}
 	row.Desired = "stopped"
 	if ended(row.State) {
 		_ = a.j.updateRun(ctx, row)
+		unlock()
 		a.report(ctx, row)
 		return
 	}
 	if row.TerminalID == "" {
 		row.State, row.Reason = proto.RunExited, "stopped before start"
 		_ = a.j.updateRun(ctx, row)
+		unlock()
 		a.report(ctx, row)
 		return
 	}
 	row.State = proto.RunStopping
 	_ = a.j.updateRun(ctx, row)
+	unlock()
 	a.report(ctx, row)
 	if mode != "kill" {
 		_, _ = a.o.Runner.Interrupt(ctx, row.TerminalID)
@@ -675,6 +731,34 @@ func (a *Agent) ensureGuard(ctx context.Context, spaceID string) (string, error)
 }
 
 // guardLock returns the lock that serializes a space's lease guard.
+// runLock locks one run against a concurrent launch and stop (the launch's last check and start, the stop's state
+// change) and returns its unlock. Entries are dropped when nobody holds or waits for them.
+func (a *Agent) runLock(runID string) func() {
+	a.mu.Lock()
+	l := a.runLocks[runID]
+	if l == nil {
+		l = &refMutex{}
+		a.runLocks[runID] = l
+	}
+	l.refs++
+	a.mu.Unlock()
+	l.mu.Lock()
+	return sync.OnceFunc(func() {
+		l.mu.Unlock()
+		a.mu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(a.runLocks, runID)
+		}
+		a.mu.Unlock()
+	})
+}
+
+// refMutex is a mutex with the number of its holders and waiters (runLock).
+type refMutex struct {
+	mu   sync.Mutex
+	refs int
+}
+
 func (a *Agent) guardLock(spaceID string) *sync.Mutex {
 	a.mu.Lock()
 	defer a.mu.Unlock()
