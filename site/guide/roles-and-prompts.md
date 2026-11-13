@@ -130,6 +130,21 @@ Things to know:
     answer wins, so a profile hook that allows can override SpaceMan's deny. Give it only to profiles whose editors
     you trust with that (profile editors are trusted with run credentials anyway).
 
+### Claude Code version
+
+A claude-code profile can pin the Claude Code version its runs get with **Claude Code version** (`harness_version` in
+the API; the Terraform provider attribute follows separately):
+
+- empty: the node's own channel (by default `latest`);
+- `latest` or `stable`: that release channel;
+- an exact version such as `2.1.322`: exactly that version. A node that manages Claude Code downloads it if needed
+  and never runs another version instead. Any other node runs the launch only if its installed version matches.
+
+A pin needs the node agent at protocol 1.11 or later; on an older node the run fails as `node_too_old`. An API update
+that leaves `harness_version` out keeps the pin, and `""` clears it. See
+[Managed Claude Code](/operators/claude-code#pinning-a-version-per-profile) for how nodes resolve, download and keep
+versions.
+
 ## Space roles
 
 A space configures the roles it uses from these templates on its **Overview**. A space role can override the profile,
@@ -158,6 +173,7 @@ Field by field:
 | Harness | From the profile, otherwise from the launch. A launch cannot contradict the profile. |
 | Model | The last layer that sets one wins. |
 | Settings | Merged key by key; the last layer that sets a key wins. |
+| Claude Code version | From the profile only (empty: the node's channel). |
 | System text | Concatenated in order: SpaceMan's orientation, the role prompt, the template's memory conventions, the space's goals and standing instructions, the space role's instructions, then the launch's text. |
 
 **Policy ceilings** apply last, whatever layer set the value. The central setting `harness.max_permission_mode`
@@ -169,6 +185,7 @@ the run's configuration shows that the policy decided.
 Each run stores a manifest of what it started with: the prompt version and its content, the profile, template and
 space-role revisions, every effective value with its origin, the account reference, the versions of SpaceMan, the
 node agent, the runner and the harness, and the policy version. Secrets are never part of it. The run page shows it
-under **Configuration at launch**.
+under **Configuration at launch**. From node protocol 1.11 on, the run also records the Claude Code version it actually
+launched (**Version** on the run page; `harness_version`, `harness_requested` and `harness_fallback` in the API).
 
 <Shot name="run-manifest" alt="A run's configuration at launch: role, template, profile and prompt versions with effective values and dependency versions" caption="A run's configuration at launch" />

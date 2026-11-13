@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Per-profile Claude Code version pins and per-run versions (ADR-0077, node protocol 1.11, migration 0048). A
+  claude-code harness profile can set **Claude Code version** (`harness_version`): empty follows the node's channel,
+  and `latest`, `stable` or an exact `X.Y.Z` override it. On a managed node an exact pin is downloaded when missing and
+  never falls back to another version, and the cache keeps pinned versions. On an unmanaged node a pin runs only when
+  it equals the installed version (by that absolute path); otherwise the launch fails with "this node does not manage
+  Claude Code versions". A node agent below protocol 1.11 never gets a pin: the run fails as `node_too_old` ("node X
+  doesn't support pinned Claude Code versions; upgrade it"). An API update that leaves `harness_version` out keeps
+  the pin.
+
+  Run reports carry the version a run launched, what it requested and the fallback reason. Central stores them on
+  the run (`harness_version`, `harness_requested`, `harness_fallback`), and the API and the run page show them. The
+  manifest's `dependencies["claude-code"]` becomes `{requested, node_default}` for protocol 1.11 nodes; older nodes
+  keep the version string. A managed node's capabilities add `managed`, `channel`, `resolved`, `cached` and
+  `cache_bytes`. Operator guide: "Pinning a version per profile".
 - Node-managed Claude Code launches (`harness.claude.manage: true`, ADR-0077): a Claude Code run launches the verified
   cached binary by absolute path, so the herdr-core core's `PATH` no longer decides which `claude` runs. With nothing
   usable cached the run waits in starting for the download, bounded by `download_timeout`. The agent's journal records
@@ -27,6 +41,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   upgrade note under "Changed").
 
 ### Changed
+- **Upgrade note (protocol 1.11, migration 0048):** upgrade central before the node agents. Central accepts older
+  agents, but it sends a pinned launch only to a 1.11 agent. Migration 0048 is forward-only (restore the pre-upgrade
+  backup to go back).
 - Every Claude Code run now gets `DISABLE_AUTOUPDATER=1` and `DISABLE_UPDATES=1`, on unmanaged nodes too, so runs no
   longer update themselves into the agent's `HOME`. `harness.claude.self_update: true` restores self-updates on an
   unmanaged node; it is refused together with `manage: true`. The node warns about a profile's updater settings only

@@ -58,7 +58,8 @@ harness:
 - **Launching.** A run launches that cached binary by **absolute path**, so the core's `PATH` doesn't matter. When the
   channel's new target is still downloading, the run gets the channel's previous target, or else the newest cached
   version not newer than the target. The node logs this, and records the requested channel, the version and why
-  another version ran in the run's journal entry. Reporting it to central comes with a later protocol version.
+  another version ran in the run's journal entry. A node at protocol 1.11 or later also reports them to central, which
+  shows them with the run (see [Versions on runs](#versions-on-runs)).
 - **Waiting.** When nothing usable is cached (the first launch on a new node, or a new exact version), the run waits
   in **starting** while the version downloads, up to `download_timeout`. Then it fails with "no Claude Code version …
   was available within the download timeout". A stop during the wait wins: the run ends as "stopped before start" and
@@ -77,6 +78,43 @@ harness:
   it.
 
 `harness.claude.self_update` can't be combined with `manage: true`: nothing would launch a self-updated copy.
+
+## Pinning a version per profile
+
+A claude-code harness profile can pin the version its runs get: set **Claude Code version** in the profile form, or
+`harness_version` in the API. The value is empty (follow the node's `channel`), `latest`, `stable` or an exact
+`X.Y.Z` such as `2.1.322`. The pin overrides the node's channel for that profile's runs:
+
+```text
+profile pin  →  node channel  →  latest
+```
+
+| Node | Pin `latest` / `stable` | Pin `X.Y.Z` |
+|---|---|---|
+| Managed (`manage: true`) | Follows that channel as described above, fallbacks included | Exactly that version: downloaded when it isn't cached (the run waits in starting), **never a fallback**. A version the release host doesn't have, or that doesn't download within `download_timeout`, fails the launch |
+| Unmanaged (`manage: false`) | Fails: "this node does not manage Claude Code versions" | Runs only when it equals the version detected at `claude_binary`, by that absolute path; otherwise it fails with "this node does not manage Claude Code versions" |
+| Agent below protocol 1.11 | Fails as `node_too_old`: "node X doesn't support pinned Claude Code versions; upgrade it" | Same |
+
+Pinning back to an older version is just launching the pin again: older releases stay downloadable, and a version a
+profile pinned is kept in the cache. The node learns pins only from launches it has seen. GC keeps the exact versions
+launched in the last 30 days, besides the usual `cache_keep`, channel targets and live runs.
+
+An API update that leaves `harness_version` out keeps the stored pin, so an older Terraform provider doesn't clear it.
+Send `""` to clear it. A pin is accepted on claude-code profiles only.
+
+## Versions on runs
+
+From node protocol 1.11 on, a run's detail (API `GET /spaces/{space_id}/runs/{run_id}`, and **Version** in the run
+workbench) shows what the node launched:
+
+- `harness_version`: the version that ran;
+- `harness_requested`: the profile's pin, or else the node's channel;
+- `harness_fallback`: why another version than the request's target ran (`previous_target`, `older_cached`,
+  `last_target`, `newest_cached`). It is absent when the target ran.
+
+The run manifest stays the configuration resolved at creation. Its `dependencies["claude-code"]` is then
+`{requested, node_default}`: the pin or channel, and the version the node last reported a new run would get. Runs on
+older nodes keep the plain version string. An unmanaged node reports a version only for pinned runs.
 
 ### Tamper policy
 
@@ -107,7 +145,10 @@ would not close that gap either, and it would cost a 340 MB read per run.
   - a fallback recorded in the journal;
   - an adopted run's version kept by GC;
   - GC racing a launch;
-  - the tamper check, and a cancelled check keeping the version.
+  - the tamper check, and a cancelled check keeping the version;
+  - a profile pin downloaded and run exactly, never a fallback, and kept by GC;
+  - an unmanaged node refusing a mismatching or channel pin;
+  - central refusing a pin to a node below protocol 1.11, and storing and showing a run's reported version (`internal/app`, a scripted node).
 - **Real** (opt-in): `SPACEMAN_REAL=1 go test -tags real -run TestRealManagedClaude ./internal/agent/` downloads a
   real release (about 340 MB) into a temporary cache and runs it with the updater variables. It hasn't been run as
   part of this change.

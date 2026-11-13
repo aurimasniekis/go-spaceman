@@ -3929,6 +3929,13 @@
        never changes after the rename. A failed check deletes the temporary directory and raises a node event, so
        nothing partial is ever executable. A per-version singleflight and a `flock` serialize downloads.
      - At start the agent re-checks size and SHA-256 of the versions it will use against `verified.json`.
+     - **Tamper check at launch.** When a launch acquires its version, the node compares the binary's stat
+       fingerprint (device, inode, size, mode, ctime) with the one recorded when it last hashed the file, at install
+       or at the startup check. It re-hashes only when the fingerprint changed, and removes and re-downloads a version
+       that fails. **Accepted:** runs share the node's uid, so a same-uid process can still replace the binary between
+       that check (`Acquire`/`HoldCached`) and the exec. The window includes the launch preparation done after the
+       hold: building the launch and writing its files. A same-uid process can already change much else the node
+       runs, and re-hashing every launch wouldn't close the window either.
      - GC keeps the newest `cache_keep` (default 3), every version a profile seen by the node pins, and every version
        a live or adoptable run in the journal uses. Nothing goes under `~/.local`.
   5. **Absolute-path launch with the updater off.**
@@ -3964,7 +3971,7 @@
        detection on the same timer.
   9. **Protocol minor 11 and migration 0048.** Minor 11 adds `LaunchPayload.harness_version`, the two `RunReport`
      fields, `node.capabilities` and the `HarnessInfo` fields, all additive. Migration 0048 adds
-     `profiles.harness_version` and `runs.harness_version` (`TEXT NOT NULL DEFAULT ''`).
+     `harness_profiles.harness_version` and `runs.harness_version` (`TEXT NOT NULL DEFAULT ''`).
 - **Alternatives:**
   - **Leave installation to configuration management** (a node-wide pin plus `DISABLE_AUTOUPDATER`). It is the
     interim, but it can't pin per profile and its version report stays stale.
@@ -3980,6 +3987,18 @@
   - Runs stop writing self-updates into the agent's `HOME`.
   - Evidence so far is the contract and the spike (`docs/contracts/harnesses.md`, Distribution); none of the
     decision is implemented yet (SM-HARN-005..008 are `todo`).
+
+- **Implementation notes (CC-4, 2026-11-13):**
+  - Migration 0048 adds the pin to `harness_profiles.harness_version` (decision 9 now names that table). Runs gain
+    `harness_version`, `harness_requested` and `harness_fallback`, and run reports carry all three
+    (`harness_fallback` is added to decision 8's fields).
+  - On an unmanaged node a channel pin (`latest`, `stable`) also fails, because such a node can't resolve a channel.
+    An exact pin that matches runs by the absolute path that was checked, so the core's `PATH` can't substitute
+    another binary.
+  - The node learns pins only from launches. GC keeps the pins seen in this process and the exact versions the
+    journal's runs requested in the last 30 days.
+  - An API update that leaves `harness_version` out keeps the stored pin, so an older Terraform provider never
+    clears it; `""` clears it.
 
 ## 2. Open items and unresolved contracts
 
