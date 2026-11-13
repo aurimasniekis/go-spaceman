@@ -4306,7 +4306,8 @@
       for `usage_limit` ends are folded in. People get the single action of Q5.
   12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind`,
       `limit_resets_at`, `limit_since`; tables `usage_limits` and `limit_waits`, no runs-table rebuild); agent
-      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_offset`). Space setting
+      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_since`, `limit_offset`; `limit_since` added in UL-2
+      so a restarted agent re-reports the same `since`). Space setting
       `usage_limit {failover, keep_alive_max, max_wait, notify_humans_after}`.
 - **Alternatives:**
   - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and

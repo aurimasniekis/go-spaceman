@@ -691,6 +691,30 @@ type KeyringKey struct {
 	UpdatedAt int64
 }
 
+type LimitWait struct {
+	ID           string
+	SpaceID      string
+	RunID        string
+	TaskID       string
+	RunKind      string
+	Role         string
+	NodeID       string
+	InstanceID   string
+	Harness      string
+	SessionID    string
+	LaunchJson   string
+	UsageLimitID string
+	ResumeAt     int64
+	ReleaseAt    sql.NullInt64
+	State        string
+	NewRunID     string
+	Attempts     int64
+	LastError    string
+	Version      int64
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
 type LoginThrottle struct {
 	Key           string
 	Failures      int64
@@ -1110,6 +1134,9 @@ type Run struct {
 	HarnessVersion     string
 	HarnessRequested   string
 	HarnessFallback    string
+	LimitKind          string
+	LimitResetsAt      sql.NullInt64
+	LimitSince         sql.NullInt64
 }
 
 type RunCredential struct {
@@ -1488,6 +1515,26 @@ type TaskPreemption struct {
 	ResumedAt  sql.NullInt64
 	ResumedBy  string
 	Outcome    string
+}
+
+type UsageLimit struct {
+	ID                string
+	SpaceID           string
+	Scope             string
+	AccountID         string
+	GatewayRef        string
+	Kind              string
+	ResetsAt          sql.NullInt64
+	Source            string
+	FirstRunID        string
+	SeenAt            int64
+	ClearedAt         sql.NullInt64
+	ClearedBy         string
+	NotifiedControlAt sql.NullInt64
+	NotifiedHumansAt  sql.NullInt64
+	Version           int64
+	CreatedAt         int64
+	UpdatedAt         int64
 }
 
 type User struct {
