@@ -2148,6 +2148,10 @@
             ],
             "type": "string"
           },
+          "harness_version": {
+            "description": "The Claude Code version the profile's runs get (claude-code profiles only): empty follows the node's channel; latest, stable or an exact X.Y.Z overrides it",
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
@@ -2186,6 +2190,7 @@
           "harness",
           "settings",
           "claude_settings",
+          "harness_version",
           "revision",
           "updated_at",
           "version"
@@ -5196,6 +5201,18 @@
               "claude-code",
               "codex"
             ],
+            "type": "string"
+          },
+          "harness_fallback": {
+            "description": "Why another version than the request's target ran (a node-managed channel whose target was not cached yet or unavailable); absent when the target ran",
+            "type": "string"
+          },
+          "harness_requested": {
+            "description": "What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z)",
+            "type": "string"
+          },
+          "harness_version": {
+            "description": "The harness version the run launched, as its node reported it (node protocol 1.11 or later)",
             "type": "string"
           },
           "id": {
@@ -12033,6 +12050,9 @@
           "harness": {
             "type": "string"
           },
+          "harness_version": {
+            "type": "string"
+          },
           "kind": {
             "type": "string"
           },
@@ -12252,6 +12272,11 @@
               "claude-code",
               "codex"
             ],
+            "type": "string"
+          },
+          "harness_version": {
+            "description": "Pin the Claude Code version the profile's runs get (claude-code profiles only): latest, stable or an exact X.Y.Z; empty follows the node's channel; omitted on an update keeps the current pin",
+            "maxLength": 32,
             "type": "string"
           },
           "model": {
@@ -12510,11 +12535,24 @@
           "available": {
             "type": "boolean"
           },
+          "cache_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cached": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "capabilities": {
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "channel": {
+            "type": "string"
           },
           "error": {
             "type": "string"
@@ -12522,8 +12560,17 @@
           "kind": {
             "type": "string"
           },
+          "managed": {
+            "type": "boolean"
+          },
           "path": {
             "type": "string"
+          },
+          "resolved": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ProtoHarnessResolved"
+            },
+            "type": "object"
           },
           "version": {
             "type": "string"
@@ -12533,6 +12580,22 @@
           "kind",
           "available",
           "capabilities"
+        ],
+        "type": "object"
+      },
+      "ProtoHarnessResolved": {
+        "additionalProperties": false,
+        "properties": {
+          "resolved_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version"
         ],
         "type": "object"
       },

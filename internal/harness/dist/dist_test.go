@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
 
 const (
@@ -454,6 +456,10 @@ func TestResolveChannel(t *testing.T) {
 	if got := m2.Resolved(); got["latest"] != "2.1.2" {
 		t.Fatalf("Resolved = %v", got)
 	}
+	// ResolvedTargets adds when the target was resolved (reported in capabilities, minor 11).
+	if got := m2.ResolvedTargets()["latest"]; got.Version != "2.1.2" || !got.ResolvedAt.Equal(clock.Now()) {
+		t.Fatalf("ResolvedTargets = %+v (now %s)", got, clock.Now())
+	}
 }
 
 func TestPointerOfflineFallsBackToCached(t *testing.T) {
@@ -888,5 +894,15 @@ func TestVersionsAndPlatform(t *testing.T) {
 	}
 	if p, err := Platform(); err == nil && !platforms[p] {
 		t.Errorf("Platform() = %q", p)
+	}
+}
+
+// The node's cache and the protocol accept exactly the same exact versions (a profile pin is checked by central with
+// proto.CheckHarnessVersion and used by the node with ValidVersion).
+func TestValidVersionMatchesProto(t *testing.T) {
+	for _, v := range []string{"", "0.0.0", "2.1.322", "02.1.3", "2.1", "2.1.3-rc1", "999999.1.1", "1000000.1.1", "latest"} {
+		if ValidVersion(v) != proto.IsHarnessVersion(v) {
+			t.Errorf("%q: dist %v, proto %v", v, ValidVersion(v), proto.IsHarnessVersion(v))
+		}
 	}
 }

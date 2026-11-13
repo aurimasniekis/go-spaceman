@@ -329,6 +329,9 @@ func (v *validator) claudeCode(c ClaudeCodeConfig) {
 	if c.CacheKeep < 1 || c.CacheKeep > 50 {
 		v.add("harness.claude.cache_keep must be within 1..50, got %d", c.CacheKeep)
 	}
+	if c.CacheKeepPinned < 1 || c.CacheKeepPinned > 50 {
+		v.add("harness.claude.cache_keep_pinned must be within 1..50, got %d", c.CacheKeepPinned)
+	}
 	v.durationRange("harness.claude.refresh", c.Refresh, time.Minute, 24*time.Hour)
 	v.durationRange("harness.claude.download_timeout", c.DownloadTimeout, 30*time.Second, 2*time.Hour)
 	if c.Manage && c.SelfUpdate {

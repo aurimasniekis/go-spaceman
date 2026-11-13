@@ -88,10 +88,15 @@
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
 ## Harness distribution
-- **Claude Code versions are not managed yet.** A run executes whatever `claude` its `PATH` resolves to, and the
-  version a node reports comes from its last connection. No profile can pin a version, and SpaceMan doesn't turn off
-  Claude Code's self-update, so interactive runs update themselves into the node agent's `HOME`. Node-managed versions
-  are designed (ADR-0077, Proposed; SM-HARN-005..008) but not implemented.
+- **Managed Claude Code is opt-in.** With `harness.claude.manage` off (the default) a run executes whatever `claude`
+  its `PATH` resolves to, and an unpinned run records no version. A profile pin on such a node runs only when it equals
+  the detected version, and a channel pin (`latest`, `stable`) fails there.
+- **A node's reported version can be stale.** A node reports its harness versions only when it connects, so the
+  manifest's `node_default` can lag. The run row holds what actually ran. The periodic re-report is planned
+  (SM-HARN-008).
+- **Pins need protocol 1.11.** Central refuses to send a pinned launch to an older node agent: the run fails as
+  `node_too_old`. A node learns pins only from launches it has seen, so GC may remove a pinned version that no launch
+  has used for 30 days. The next pinned launch downloads it again.
 - **Checksum-verified, not signature-verified.** Under ADR-0077 the node accepts a downloaded Claude Code binary when
   its SHA-256 and size match the version's `manifest.json`, fetched over HTTPS from the release host or the operator's
   mirror. The manifest's signature is not checked until the release key and procedure are documented (K-14), so

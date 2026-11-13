@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -25,6 +26,10 @@ type ClaudeOptions struct {
 	// DownloadTimeout bounds how long a launch waits in starting for a version when none it may run is cached.
 	// Default dist.DefaultDownloadTimeout.
 	DownloadTimeout time.Duration
+	// KeepPinned is how many profile-pinned versions GC keeps at most, the most recently used ones
+	// (harness.claude.cache_keep_pinned). Default dist.DefaultKeepPinned. A version a live or adoptable run uses is always
+	// kept, whatever the cap.
+	KeepPinned int
 	// SelfUpdate lets unmanaged runs update themselves: without it every Claude Code run gets the updater-off
 	// variables. Managed runs always get them (nothing would launch a self-updated copy).
 	SelfUpdate bool
@@ -33,13 +38,90 @@ type ClaudeOptions struct {
 // managedClaude reports whether this node manages Claude Code.
 func (a *Agent) managedClaude() bool { return a.o.Claude.Dist != nil }
 
-// claudePinned returns the versions the node itself pins: its channel when that is an exact version. (Profile pins
-// arrive with protocol minor 11, CC-4.)
-func (a *Agent) claudePinned() []string {
-	if dist.ValidVersion(a.o.Claude.Channel) {
-		return []string{a.o.Claude.Channel}
+// claudePinWindow is how long a profile's exact pin stays protected from GC after the node last launched a run with it:
+// the node learns pins only from the launches it sees (ADR-0077).
+const claudePinWindow = 30 * 24 * time.Hour
+
+// claudePinned returns the exact versions GC must keep as pinned: the node's channel when that is an exact version, and
+// the exact versions profiles pinned on runs this node started within claudePinWindow (in this process, or in the
+// journal), at most KeepPinned of them besides the ones inUse lists (a version a live or adoptable run uses is kept by
+// GC anyway): the most recently used ones.
+func (a *Agent) claudePinned(ctx context.Context, inUse []string) []string {
+	since := a.now().Add(-claudePinWindow)
+	last := map[string]time.Time{}
+	seen := func(v string, at time.Time) {
+		if dist.ValidVersion(v) && at.After(last[v]) {
+			last[v] = at
+		}
 	}
-	return nil
+	a.mu.Lock()
+	for v, at := range a.claudePins {
+		if at.Before(since) {
+			delete(a.claudePins, v) // expired: the set stays bounded by what was launched within the window
+			continue
+		}
+		seen(v, at)
+	}
+	a.mu.Unlock()
+	fromJournal, err := a.j.harnessRequestsSince(ctx, harness.KindClaude, since)
+	if err != nil && ctx.Err() == nil {
+		a.log.Warn("claude code cache: pinned versions from the journal", obs.Err(err))
+	}
+	for v, at := range fromJournal {
+		seen(v, at)
+	}
+	var pins, used []string
+	for v := range last {
+		if slices.Contains(inUse, v) {
+			// Not counted against the cap; still listed, so a run ending between this and GC's own check of the
+			// versions in use doesn't leave a recent pin unprotected.
+			used = append(used, v)
+			continue
+		}
+		pins = append(pins, v)
+	}
+	// Most recently used first; equal times by version, so the cut is deterministic.
+	sort.Slice(pins, func(i, j int) bool {
+		if !last[pins[i]].Equal(last[pins[j]]) {
+			return last[pins[i]].After(last[pins[j]])
+		}
+		return pins[i] < pins[j]
+	})
+	limit := a.o.Claude.KeepPinned
+	if limit <= 0 {
+		limit = dist.DefaultKeepPinned
+	}
+	if len(pins) > limit {
+		pins = pins[:limit]
+	}
+	pins = append(pins, used...)
+	if dist.ValidVersion(a.o.Claude.Channel) && !slices.Contains(pins, a.o.Claude.Channel) {
+		pins = append(pins, a.o.Claude.Channel) // the node's own exact channel is not a profile pin: never capped
+	}
+	sort.Strings(pins)
+	return pins
+}
+
+// notePin remembers a profile's exact pin for GC (claudePinned), once a run launched with it has started.
+func (a *Agent) notePin(v string) {
+	if !dist.ValidVersion(v) {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.claudePins == nil {
+		a.claudePins = map[string]time.Time{}
+	}
+	a.claudePins[v] = a.now()
+}
+
+// claudeRequest is what a Claude Code launch asks for: the profile's pin (minor ≥ 11, ADR-0077), which overrides the
+// node's channel, else the channel ("" means latest).
+func (a *Agent) claudeRequest(p proto.LaunchPayload) string {
+	if p.HarnessVersion != "" {
+		return p.HarnessVersion
+	}
+	return a.o.Claude.Channel
 }
 
 // claudeHoldAttempts bounds how often a managed launch waits for a version again because the one it waited for was no
@@ -56,13 +138,14 @@ func (a *Agent) claudeWait(ctx context.Context) (context.Context, context.Cancel
 	return ctx, cancel, limit
 }
 
-// waitClaude resolves the version a Claude Code run gets, waiting for a download when nothing usable is cached (bounded
-// by wctx, see claudeWait). It holds nothing when it returns: the caller holds the version with holdClaude once it is
-// ready to build the launch.
-func (a *Agent) waitClaude(wctx context.Context, limit time.Duration) (dist.Resolution, error) {
-	res, release, err := a.o.Claude.Dist.Acquire(wctx, a.o.Claude.Channel)
+// waitClaude resolves the version a Claude Code run gets for requested (claudeRequest), waiting for a download when
+// nothing usable is cached (bounded by wctx, see claudeWait). An exact version is that version only: it is downloaded
+// when missing and never falls back to another one. It holds nothing when it returns: the caller holds the version with
+// HoldCached once it is ready to build the launch.
+func (a *Agent) waitClaude(wctx context.Context, limit time.Duration, requested string) (dist.Resolution, error) {
+	res, release, err := a.o.Claude.Dist.Acquire(wctx, requested)
 	if errors.Is(err, context.DeadlineExceeded) {
-		return res, fmt.Errorf("no Claude Code version %s was available within the download timeout (%s): %w", channelName(a.o.Claude.Channel), limit, err)
+		return res, fmt.Errorf("no Claude Code version %s was available within the download timeout (%s): %w", channelName(requested), limit, err)
 	}
 	if err != nil {
 		return res, err
@@ -107,7 +190,7 @@ func (a *Agent) startClaude(ctx context.Context, wg *sync.WaitGroup) {
 		log.Warn("claude code cache: versions in use", obs.Err(err))
 	}
 	verify := map[string]bool{}
-	for _, v := range append(used, a.claudePinned()...) {
+	for _, v := range append(used, a.claudePinned(ctx, used)...) {
 		verify[v] = true
 	}
 	for _, v := range m.Resolved() {
@@ -147,7 +230,14 @@ func (a *Agent) startClaude(ctx context.Context, wg *sync.WaitGroup) {
 
 // claudeGC removes cached versions nothing needs any more.
 func (a *Agent) claudeGC(ctx context.Context) {
-	removed, err := a.o.Claude.Dist.GC(ctx, a.claudePinned(), a.claudeVersionsInUse)
+	used, err := a.claudeVersionsInUse(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.log.Warn("claude code cache: garbage collection: versions in use", obs.Err(err))
+		}
+		return // without the versions in use nothing is removed
+	}
+	removed, err := a.o.Claude.Dist.GC(ctx, a.claudePinned(ctx, used), a.claudeVersionsInUse)
 	if err != nil && ctx.Err() == nil {
 		a.log.Warn("claude code cache: garbage collection", obs.Err(err))
 	}
@@ -157,7 +247,8 @@ func (a *Agent) claudeGC(ctx context.Context) {
 }
 
 // claudeInfo is the capability inventory's Claude Code entry on a managed node: the cached version a new run would get
-// without waiting (the channel's memoised target, else the newest cached version). It detects nothing on PATH.
+// without waiting (the channel's memoised target, else the newest cached version). It detects nothing on PATH. From
+// minor 11 on it also carries the node's channel, the memoised channel targets and the cache's versions and size.
 func (a *Agent) claudeInfo(ctx context.Context) proto.HarnessInfo {
 	m := a.o.Claude.Dist
 	h, _ := harness.Get(harness.KindClaude)
@@ -166,15 +257,45 @@ func (a *Agent) claudeInfo(ctx context.Context) proto.HarnessInfo {
 		want = m.Resolved()[channelName(want)]
 	}
 	installed := m.Installed()
+	info := proto.HarnessInfo{Kind: harness.KindClaude, Error: "managed: no version cached yet", Capabilities: []string{}}
 	for _, inst := range installed {
 		if inst.Version == want {
-			return h.Detect(ctx, inst.Path)
+			info = h.Detect(ctx, inst.Path)
+			break
 		}
 	}
-	if len(installed) > 0 && !dist.ValidVersion(a.o.Claude.Channel) {
-		return h.Detect(ctx, installed[0].Path)
+	if info.Path == "" && len(installed) > 0 && !dist.ValidVersion(a.o.Claude.Channel) {
+		info = h.Detect(ctx, installed[0].Path)
 	}
-	return proto.HarnessInfo{Kind: harness.KindClaude, Error: "managed: no version cached yet", Capabilities: []string{}}
+	info.Managed, info.Channel = true, channelName(a.o.Claude.Channel)
+	for c, t := range m.ResolvedTargets() {
+		if info.Resolved == nil {
+			info.Resolved = map[string]proto.HarnessResolved{}
+		}
+		info.Resolved[c] = proto.HarnessResolved{Version: t.Version, ResolvedAt: t.ResolvedAt.UTC()}
+	}
+	for _, inst := range installed {
+		info.Cached = append(info.Cached, inst.Version)
+		info.CacheBytes += inst.Size
+	}
+	return info
+}
+
+// checkUnmanagedPin refuses a Claude Code profile pin on a node that doesn't manage Claude Code (manage: false,
+// ADR-0077): the pin must equal the version detected at bin, or the launch fails; a channel pin (latest, stable) can't
+// be checked there and fails too. It never runs another version than the one pinned. It returns the detected version.
+func (a *Agent) checkUnmanagedPin(ctx context.Context, bin, pin string) (proto.HarnessInfo, error) {
+	h, _ := harness.Get(harness.KindClaude)
+	info := h.Detect(ctx, bin)
+	switch {
+	case !dist.ValidVersion(pin):
+		return info, fmt.Errorf("this node does not manage Claude Code versions (harness.claude.manage is off), so it can't resolve the profile's pin %q; pin an exact version that matches the installed one, clear the pin, or let the node manage Claude Code", pin)
+	case !info.Available:
+		return info, fmt.Errorf("this node does not manage Claude Code versions, and the installed Claude Code could not be detected to check the profile's pin %s: %s", pin, info.Error)
+	case info.Version != pin:
+		return info, fmt.Errorf("this node does not manage Claude Code versions: the profile pins %s, but the installed Claude Code is %s", pin, info.Version)
+	}
+	return info, nil
 }
 
 // warnClaudeUpdateSettings logs the profile's Claude Code settings that would steer its updater. The caller warns only

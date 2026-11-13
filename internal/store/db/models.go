@@ -413,6 +413,7 @@ type HarnessProfile struct {
 	UpdatedAt          int64
 	Version            int64
 	ClaudeSettingsJson string
+	HarnessVersion     string
 }
 
 type HumanAction struct {
@@ -1105,6 +1106,9 @@ type Run struct {
 	RecordingDeletedAt sql.NullInt64
 	TerminalCols       sql.NullInt64
 	TerminalRows       sql.NullInt64
+	HarnessVersion     string
+	HarnessRequested   string
+	HarnessFallback    string
 }
 
 type RunCredential struct {

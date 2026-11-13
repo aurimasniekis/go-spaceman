@@ -73,6 +73,7 @@ func DefaultAgent() *AgentConfig {
 				Channel:         dist.ChannelLatest,
 				BaseURL:         dist.DefaultBaseURL,
 				CacheKeep:       dist.DefaultKeep,
+				CacheKeepPinned: dist.DefaultKeepPinned,
 				Refresh:         Duration(dist.DefaultRefresh),
 				DownloadTimeout: Duration(dist.DefaultDownloadTimeout),
 			},

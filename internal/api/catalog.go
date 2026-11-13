@@ -56,7 +56,9 @@ type ProfileInput struct {
 	Settings map[string]string `json:"settings,omitempty"`
 	// ClaudeSettings omitted on an update keeps the stored ones; an empty object clears them (ADR-0059).
 	ClaudeSettings *proto.ClaudeSettings `json:"claude_settings,omitempty" doc:"Claude Code settings.json keys for the profile's runs (claude-code profiles only); omitted on an update keeps the current ones, {} clears them"`
-	Description    string                `json:"description,omitempty" maxLength:"2000"`
+	// HarnessVersion omitted on an update keeps the stored pin; "" clears it (ADR-0077).
+	HarnessVersion *string `json:"harness_version,omitempty" maxLength:"32" doc:"Pin the Claude Code version the profile's runs get (claude-code profiles only): latest, stable or an exact X.Y.Z; empty follows the node's channel; omitted on an update keeps the current pin"`
+	Description    string  `json:"description,omitempty" maxLength:"2000"`
 }
 
 // TemplateInput creates or edits a role template (slug and kind are fixed after creation).
@@ -125,6 +127,8 @@ type Preview struct {
 	Skills     []catalog.ResolvedSkill  `json:"skills"`
 	// ClaudeSettings are the settings.json keys the run gets from its profile, after policy (ADR-0059); absent when none.
 	ClaudeSettings proto.ClaudeSettings `json:"claude_settings,omitempty"`
+	// HarnessVersion is the profile's Claude Code version pin (ADR-0077); absent: the node's channel.
+	HarnessVersion string `json:"harness_version,omitempty"`
 }
 
 // RegisterCatalog registers the catalog operations.
@@ -421,8 +425,12 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 						cs = proto.ClaudeSettings{}
 					}
 				}
+				var hv string // left out: kept on an update
+				if b.HarnessVersion != nil {
+					hv = *b.HarnessVersion
+				}
 				p, err := svc.SaveProfile(ctx, Actor(ctx), id, v, catalog.Profile{Slug: b.Slug, Name: b.Name, Harness: b.Harness, Model: b.Model, Settings: b.Settings,
-					ClaudeSettings: cs, Description: b.Description})
+					ClaudeSettings: cs, HarnessVersion: hv, KeepHarnessVersion: b.HarnessVersion == nil, Description: b.Description})
 				if err != nil {
 					return nil, d.fail(ctx, "profiles.save", err)
 				}
@@ -672,7 +680,8 @@ func RegisterCatalog(svc *catalog.Service, st *store.Store) func(api huma.API, d
 					return nil, d.fail(ctx, "roles.preview", err)
 				}
 				return &struct{ Body Preview }{Body: Preview{Kind: r.Kind, Harness: r.Harness, Model: r.Model, Settings: r.Settings, SystemText: r.SystemText,
-					Effective: r.Effective, Prompt: r.Prompt, Skills: append([]catalog.ResolvedSkill{}, r.Skills...), ClaudeSettings: r.ClaudeSettings}}, nil
+					Effective: r.Effective, Prompt: r.Prompt, Skills: append([]catalog.ResolvedSkill{}, r.Skills...), ClaudeSettings: r.ClaudeSettings,
+					HarnessVersion: r.HarnessVersion}}, nil
 			})
 	}
 }

@@ -257,7 +257,7 @@ func TestClaudeCodeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := cfg.Harness.Claude
-	if c.Manage || c.SelfUpdate || c.Channel != "2.1.322" || c.Refresh.D() != time.Hour || c.CacheKeep != 3 ||
+	if c.Manage || c.SelfUpdate || c.Channel != "2.1.322" || c.Refresh.D() != time.Hour || c.CacheKeep != 3 || c.CacheKeepPinned != 5 ||
 		c.BaseURL != "https://downloads.claude.ai/claude-code-releases" || c.DownloadTimeout.D() != 15*time.Minute {
 		t.Fatalf("harness.claude = %+v", c)
 	}
@@ -274,7 +274,7 @@ func TestClaudeCodeConfig(t *testing.T) {
 	err = bad.Validate()
 	for _, want := range []string{
 		"harness.claude.channel must be latest, stable or an exact X.Y.Z", "harness.claude.base_url", "must use https",
-		"harness.claude.cache_keep must be within 1..50", "harness.claude.refresh must be within",
+		"harness.claude.cache_keep must be within 1..50", "harness.claude.cache_keep_pinned must be within 1..50", "harness.claude.refresh must be within",
 		"harness.claude.download_timeout must be within", "harness.claude.self_update can't be on with harness.claude.manage",
 	} {
 		if err == nil || !strings.Contains(err.Error(), want) {

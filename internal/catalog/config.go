@@ -32,10 +32,16 @@ type Profile struct {
 	// ClaudeSettings are set in each run's Claude Code settings.json (claude-code profiles only, ADR-0059). Nil on an
 	// update (SaveProfile) keeps the stored ones; an empty object clears them.
 	ClaudeSettings proto.ClaudeSettings `json:"claude_settings" doc:"Claude Code settings.json keys for the profile's runs (claude-code profiles only); {} for none"`
-	Description    string               `json:"description,omitempty"`
-	Revision       int64                `json:"revision"`
-	UpdatedAt      time.Time            `json:"updated_at"`
-	Version        int64                `json:"version"`
+	// HarnessVersion pins the Claude Code version the profile's runs get (claude-code profiles only, ADR-0077): ""
+	// follows the node's channel; latest, stable or an exact X.Y.Z override it.
+	HarnessVersion string `json:"harness_version" doc:"The Claude Code version the profile's runs get (claude-code profiles only): empty follows the node's channel; latest, stable or an exact X.Y.Z overrides it"`
+	// KeepHarnessVersion keeps the stored pin on an update (SaveProfile), whatever HarnessVersion says: an API update
+	// that leaves harness_version out.
+	KeepHarnessVersion bool      `json:"-"`
+	Description        string    `json:"description,omitempty"`
+	Revision           int64     `json:"revision"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Version            int64     `json:"version"`
 }
 
 // RoleTemplate is reusable role configuration: kind, behavior prompt, profile and memory conventions.
@@ -131,6 +137,21 @@ func claudeSettingsJSON(v *apperr.Validation, harness string, c proto.ClaudeSett
 	return string(b)
 }
 
+// harnessVersionCheck validates a profile's harness version pin (ADR-0077): only claude-code profiles take one, and
+// it is "", latest, stable or an exact X.Y.Z.
+func harnessVersionCheck(v *apperr.Validation, harness, pin string) {
+	if pin == "" {
+		return
+	}
+	if harness != "claude-code" {
+		v.Add("harness_version", "only claude-code profiles can pin a harness version")
+		return
+	}
+	if proto.CheckHarnessVersion(pin) != nil {
+		v.Add("harness_version", "must be empty, latest, stable or an exact version such as 2.1.322")
+	}
+}
+
 // claudeSettingsAudit records in an audit entry's details which top-level Claude Code settings keys changed and the
 // sha256 of the new settings (their stored JSON), never the values: env and hooks may hold anything (ADR-0059).
 func claudeSettingsAudit(details map[string]any, before, after string) {
@@ -157,7 +178,7 @@ func claudeSettingsAudit(details map[string]any, before, after string) {
 
 func profileOut(r db.HarnessProfile) *Profile {
 	return &Profile{ID: r.ID, Slug: r.Slug, Name: r.Name, Harness: r.Harness, Model: r.Model, Settings: parseSettings(r.SettingsJson),
-		ClaudeSettings: parseClaudeSettings(r.ClaudeSettingsJson), Description: r.Description, Revision: r.Revision,
+		ClaudeSettings: parseClaudeSettings(r.ClaudeSettingsJson), HarnessVersion: r.HarnessVersion, Description: r.Description, Revision: r.Revision,
 		UpdatedAt: time.UnixMicro(r.UpdatedAt).UTC(), Version: r.Version}
 }
 
@@ -198,6 +219,12 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 	// Nil Claude settings on an update keep the stored ones (read in the transaction below); on a create they are none.
 	keepClaude := in.ClaudeSettings == nil && id != ""
 	cj := claudeSettingsJSON(v, harness, in.ClaudeSettings)
+	keepPin := in.KeepHarnessVersion && id != ""
+	pin := in.HarnessVersion
+	if keepPin {
+		pin = ""
+	}
+	harnessVersionCheck(v, harness, pin)
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
@@ -205,7 +232,7 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 		if id == "" {
 			id = ids.New(ids.Profile)
 			if err := tx.Q.InsertProfile(ctx, db.InsertProfileParams{ID: id, Slug: in.Slug, Name: in.Name, Harness: in.Harness, Model: in.Model, SettingsJson: sj,
-				ClaudeSettingsJson: cj, Description: in.Description, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()}); err != nil {
+				ClaudeSettingsJson: cj, HarnessVersion: pin, Description: in.Description, CreatedAt: tx.NowMicros(), CreatedBy: actor.ID, UpdatedAt: tx.NowMicros()}); err != nil {
 				if store.IsConstraint(err) {
 					return apperr.New(apperr.CodeAlreadyExists, "a profile %q exists", in.Slug)
 				}
@@ -213,6 +240,9 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 			}
 			details := map[string]any{"slug": in.Slug, "harness": in.Harness}
 			claudeSettingsAudit(details, "{}", cj)
+			if pin != "" {
+				details["harness_version"] = pin
+			}
 			return svc.log(ctx, tx, actor, "profile.created", "profile", id, details)
 		}
 		cur, err := tx.Q.GetProfile(ctx, id)
@@ -224,9 +254,13 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 		if keepClaude {
 			cj = cur.ClaudeSettingsJson
 		}
-		n, err := tx.Q.UpdateProfile(ctx, db.UpdateProfileParams{Name: in.Name, Model: in.Model, SettingsJson: sj, ClaudeSettingsJson: cj, Description: in.Description,
-			UpdatedAt: tx.NowMicros(),
-			ID:        id, Version: version})
+		if keepPin {
+			pin = cur.HarnessVersion
+		}
+		n, err := tx.Q.UpdateProfile(ctx, db.UpdateProfileParams{Name: in.Name, Model: in.Model, SettingsJson: sj, ClaudeSettingsJson: cj, HarnessVersion: pin,
+			Description: in.Description,
+			UpdatedAt:   tx.NowMicros(),
+			ID:          id, Version: version})
 		if err != nil {
 			return err
 		}
@@ -235,6 +269,9 @@ func (svc *Service) SaveProfile(ctx context.Context, actor audit.Actor, id strin
 		}
 		details := map[string]any{}
 		claudeSettingsAudit(details, cur.ClaudeSettingsJson, cj)
+		if pin != cur.HarnessVersion {
+			details["harness_version"] = map[string]any{"from": cur.HarnessVersion, "to": pin}
+		}
 		if len(details) == 0 {
 			details = nil
 		}

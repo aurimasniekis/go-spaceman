@@ -16,6 +16,7 @@ import { useNarrow } from '@/lib/media'
 import { datetime, isSet } from '@/lib/format'
 import { notifyError, notifyOk } from '@/lib/notify'
 import { harnessLabel, isEnded, kindLabel, RunDot, runDuration, runStateText } from './runInfo'
+import { type Dependency, dependencyText, runHarnessVersion } from './harnessVersion'
 
 /** A clock that ticks every second, for live durations. */
 export function useNow(ms = 1000): number {
@@ -253,6 +254,7 @@ function Inspector({ spaceId, run: r, now }: { spaceId: string; run: Run; now: n
               </Row>
             )}
             {r.launch.model && <Row label="Model">{r.launch.model}</Row>}
+            {r.harness_version && <Row label="Version"><Text size="sm" className="mono">{runHarnessVersion(r)}</Text></Row>}
           </Stack>
         </Section>
         <Accordion variant="default" multiple chevronPosition="right" styles={{ control: { paddingInline: 0 }, content: { paddingInline: 0 } }}>
@@ -275,7 +277,7 @@ function Inspector({ spaceId, run: r, now }: { spaceId: string; run: Run; now: n
                 {Object.entries(m.effective ?? {}).filter(([k]) => k !== 'system_text_sha256').map(([k, f]) => (
                   <Row key={k} label={k}><Text size="xs" className="mono" style={{ wordBreak: 'break-all' }}>{f.value} <Text span c="dimmed">({f.origin.replace('_', ' ')})</Text></Text></Row>
                 ))}
-                {m.dependencies && <Text size="xs" c="dimmed">{Object.entries(m.dependencies).filter(([, v]) => v !== '' && v !== undefined).map(([k, v]) => `${k} ${v}`).join(' · ')}</Text>}
+                {m.dependencies && <Text size="xs" c="dimmed">{Object.entries(m.dependencies).filter(([, v]) => v !== '' && v !== undefined).map(([k, v]) => dependencyText(k, v)).join(' · ')}</Text>}
                 {(m.skills_unavailable?.length ?? 0) > 0 && <Text size="xs" c="owlYellow">Not installed: {m.skills_unavailable!.join(', ')}</Text>}
               </Stack>
             </Accordion.Panel>
@@ -319,7 +321,7 @@ type Manifest = {
   space_role?: { name: string; revision: number }
   template?: { slug: string; revision: number }
   profile?: { slug: string; revision: number }
-  dependencies?: Record<string, string | number>
+  dependencies?: Record<string, Dependency>
   policy?: { version: number; max_permission_mode: string }
   skills?: { slug: string; number: number; pinned: boolean }[] | null
   skills_unavailable?: string[]

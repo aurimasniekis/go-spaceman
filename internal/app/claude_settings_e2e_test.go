@@ -52,3 +52,40 @@ func TestClaudeSettingsOverHTTP(t *testing.T) {
 	expect(t, root.do("PUT", "/harness-profiles/new", map[string]any{"slug": "tf-bad", "name": "Bad", "harness": "claude-code",
 		"claude_settings": map[string]any{"permissions": map[string]any{"defaultMode": "yolo"}}}), 422)
 }
+
+// ADR-0077 over HTTP: a claude-code profile takes a harness_version pin; an update that leaves it out keeps it (an older
+// client such as the Terraform provider doesn't clear it), "" clears it, and a malformed pin or one on a codex profile
+// is refused.
+func TestHarnessVersionOverHTTP(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	secret, _, _ := h.c.Auth.IssueRootToken(context.Background())
+	root := h.client()
+	root.bearer = secret
+	type profile struct {
+		ID             string
+		Version        int64
+		HarnessVersion string `json:"harness_version"`
+	}
+	var p profile
+	r := root.do("PUT", "/harness-profiles/new", map[string]any{"slug": "pinned", "name": "Pinned", "harness": "claude-code", "harness_version": "2.1.317"})
+	expect(t, r, 200)
+	r.json(t, &p)
+	if p.HarnessVersion != "2.1.317" {
+		t.Fatalf("created %+v", p)
+	}
+	r = root.do("PUT", "/harness-profiles/"+p.ID, map[string]any{"name": "Renamed"}, "If-Match", fmt.Sprintf(`"%d"`, p.Version))
+	expect(t, r, 200)
+	r.json(t, &p)
+	if p.HarnessVersion != "2.1.317" {
+		t.Fatalf("pin left out of an update was not kept: %+v", p)
+	}
+	r = root.do("PUT", "/harness-profiles/"+p.ID, map[string]any{"name": "Renamed", "harness_version": ""}, "If-Match", fmt.Sprintf(`"%d"`, p.Version))
+	expect(t, r, 200)
+	r.json(t, &p)
+	if p.HarnessVersion != "" {
+		t.Fatalf("not cleared: %+v", p)
+	}
+	expect(t, root.do("PUT", "/harness-profiles/new", map[string]any{"slug": "bad", "name": "Bad", "harness": "claude-code", "harness_version": "v2"}), 422)
+	expect(t, root.do("PUT", "/harness-profiles/new", map[string]any{"slug": "cx", "name": "Codex", "harness": "codex", "harness_version": "latest"}), 422)
+}

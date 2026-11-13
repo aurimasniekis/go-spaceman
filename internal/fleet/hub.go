@@ -985,6 +985,17 @@ func (h *Hub) materialize(ctx context.Context, c db.NodeCommand, nodeID string, 
 		return msg, fmt.Errorf("%w: the role's harness profile has Claude Code settings, which need protocol minor %d; the node negotiated %d: upgrade its agent",
 			ErrNodeTooOld, proto.MinorClaudeSettings, minor)
 	}
+	// An older agent would ignore the pin and run whatever version it has (ADR-0077).
+	if p.HarnessVersion != "" && minor < proto.MinorHarnessVersion {
+		name := nodeID
+		if h.svc != nil {
+			if n, err := h.svc.s.R().GetNode(ctx, nodeID); err == nil && n.Name != "" {
+				name = n.Name
+			}
+		}
+		return msg, fmt.Errorf("%w: node %s doesn't support pinned Claude Code versions; upgrade it (the role's harness profile pins %s, which needs protocol minor %d; the node negotiated %d)",
+			ErrNodeTooOld, name, p.HarnessVersion, proto.MinorHarnessVersion, minor)
+	}
 	if p.Repository != nil && keys {
 		k, err := h.RepoKey(ctx, c.SpaceID, p.Repository.ID)
 		if err != nil {

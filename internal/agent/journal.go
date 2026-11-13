@@ -79,7 +79,8 @@ func scanRun(sc interface{ Scan(...any) error }) (runRow, error) {
 func (r runRow) report() proto.RunReport {
 	return proto.RunReport{RunID: r.RunID, SpaceID: r.SpaceID, Generation: r.Generation, State: r.State, TerminalID: r.TerminalID, CoreID: r.CoreID,
 		Identity: r.Identity, PID: r.PID, ExitCode: r.ExitCode, Reason: r.Reason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind,
-		Turn: r.Turn, SessionID: r.SessionID, Adopted: r.Adopted, ObservedAt: time.UnixMicro(r.UpdatedAt).UTC()}
+		Turn: r.Turn, SessionID: r.SessionID, Adopted: r.Adopted, HarnessVersion: r.Bin.Version, HarnessRequested: r.Bin.Requested,
+		HarnessFallback: r.Bin.Fallback, ObservedAt: time.UnixMicro(r.UpdatedAt).UTC()}
 }
 
 func ended(state string) bool {
@@ -189,6 +190,28 @@ func (j *Journal) harnessVersionsInUse(ctx context.Context, kind string) ([]stri
 			return nil, err
 		}
 		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// harnessRequestsSince returns what the journal's started runs of kind updated since t requested (a channel or an exact
+// version, the run's profile pin or the node's channel), each with when a run requesting it was last updated. A launch
+// that failed before its program started (no terminal) doesn't count.
+func (j *Journal) harnessRequestsSince(ctx context.Context, kind string, t time.Time) (map[string]time.Time, error) {
+	rows, err := j.s.ReadDB().QueryContext(ctx, `SELECT harness_requested, MAX(updated_at) FROM runs
+		WHERE harness = ? AND harness_requested != '' AND terminal_id != '' AND updated_at >= ? GROUP BY harness_requested`, kind, t.UnixMicro())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var v string
+		var at int64
+		if err := rows.Scan(&v, &at); err != nil {
+			return nil, err
+		}
+		out[v] = time.UnixMicro(at).UTC()
 	}
 	return out, rows.Err()
 }
