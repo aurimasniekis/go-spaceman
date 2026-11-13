@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 )
@@ -313,8 +314,23 @@ func (c *AgentConfig) Validate() error {
 	if c.Capacity < 1 || c.Capacity > 256 {
 		v.add("capacity must be within 1..256")
 	}
+	v.claudeCode(c.Harness.Claude)
 	v.logConfig(c.Log)
 	return v.err()
+}
+
+func (v *validator) claudeCode(c ClaudeCodeConfig) {
+	if !dist.ValidTarget(c.Channel) {
+		v.add("harness.claude.channel must be latest, stable or an exact X.Y.Z version, got %q", c.Channel)
+	}
+	if _, err := dist.ParseBaseURL(c.BaseURL); err != nil {
+		v.add("harness.claude.base_url: %v", err)
+	}
+	if c.CacheKeep < 1 || c.CacheKeep > 50 {
+		v.add("harness.claude.cache_keep must be within 1..50, got %d", c.CacheKeep)
+	}
+	v.durationRange("harness.claude.refresh", c.Refresh, time.Minute, 24*time.Hour)
+	v.durationRange("harness.claude.download_timeout", c.DownloadTimeout, 30*time.Second, 2*time.Hour)
 }
 
 func defaultLog() obs.LogConfig { return obs.LogConfig{Level: "info", Format: "json"} }

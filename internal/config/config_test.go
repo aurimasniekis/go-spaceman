@@ -245,3 +245,40 @@ func TestLeaseTTLBound(t *testing.T) {
 		t.Fatalf("lease_ttl past the bound: %v", err)
 	}
 }
+
+// Node-managed Claude Code (design 2026-11-12 §3): off by default, channel latest, https-only base URL.
+func TestClaudeCodeConfig(t *testing.T) {
+	cfg, err := LoadAgent("", []string{
+		"SPACEMAN_AGENT_CENTRAL_URL=https://c.example.com",
+		"SPACEMAN_AGENT_HARNESS_CLAUDE_CHANNEL=2.1.322",
+		"SPACEMAN_AGENT_HARNESS_CLAUDE_REFRESH=1h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Harness.Claude
+	if c.Manage || c.SelfUpdate || c.Channel != "2.1.322" || c.Refresh.D() != time.Hour || c.CacheKeep != 3 ||
+		c.BaseURL != "https://downloads.claude.ai/claude-code-releases" || c.DownloadTimeout.D() != 15*time.Minute {
+		t.Fatalf("harness.claude = %+v", c)
+	}
+	if d := DefaultAgent().Harness.Claude; d.Manage || d.Channel != "latest" {
+		t.Fatalf("defaults %+v", d)
+	}
+
+	bad := DefaultAgent()
+	bad.Central.URL = "https://c.example.com"
+	bad.Harness.Claude = ClaudeCodeConfig{
+		Channel: "rc", BaseURL: "http://mirror.example.com", CacheKeep: 0,
+		Refresh: Duration(time.Second), DownloadTimeout: Duration(3 * time.Hour),
+	}
+	err = bad.Validate()
+	for _, want := range []string{
+		"harness.claude.channel must be latest, stable or an exact X.Y.Z", "harness.claude.base_url", "must use https",
+		"harness.claude.cache_keep must be within 1..50", "harness.claude.refresh must be within",
+		"harness.claude.download_timeout must be within",
+	} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("missing %q in %v", want, err)
+		}
+	}
+}

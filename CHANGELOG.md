@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- Node-managed Claude Code, groundwork (not used by launches yet): the `internal/harness/dist` package resolves
+  `latest`, `stable` or an exact version from the release server, downloads it into an immutable per-version cache
+  under the agent's data directory after checking the manifest's version, size and SHA-256 (checksum only, no
+  signature check yet), keeps the newest few plus pinned and in-use versions, and prefetches channel targets. Cached
+  versions are read-only and looked up without following links; a damaged one is reinstalled; a channel never falls
+  back to a version newer than its target; redirects stay on the release host; musl is detected from `/bin/sh`. New node
+  settings `harness.claude.{manage, channel, base_url, cache_keep, refresh, download_timeout, self_update}`;
+  `manage` defaults to off, so nothing changes on upgrade.
+
 ### Changed
 
 - CI's and the release workflow's login-timing and fuzz jobs use the same 250 ms write-transaction guard on GitHub's
