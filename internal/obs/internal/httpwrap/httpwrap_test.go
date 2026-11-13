@@ -71,10 +71,10 @@ func TestRecorderDropsSuperfluousWriteHeader(t *testing.T) {
 		want  []int
 		code  int
 	}{
-		{"twice", func(r *Recorder) { r.WriteHeader(200); r.WriteHeader(500) }, []int{200}, 200},
-		{"after body", func(r *Recorder) { _, _ = r.Write([]byte("x")); r.WriteHeader(500) }, nil, 200},
-		{"after flush", func(r *Recorder) { r.Flush(); r.WriteHeader(500) }, nil, 200},
-		{"informational", func(r *Recorder) { r.WriteHeader(103); r.WriteHeader(201) }, []int{103, 201}, 201},
+		{"twice", func(r *Recorder) { r.WriteHeader(http.StatusOK); r.WriteHeader(http.StatusInternalServerError) }, []int{200}, 200},
+		{"after body", func(r *Recorder) { _, _ = r.Write([]byte("x")); r.WriteHeader(http.StatusInternalServerError) }, nil, 200},
+		{"after flush", func(r *Recorder) { r.Flush(); r.WriteHeader(http.StatusInternalServerError) }, nil, 200},
+		{"informational", func(r *Recorder) { r.WriteHeader(http.StatusEarlyHints); r.WriteHeader(http.StatusCreated) }, []int{103, 201}, 201},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &countingWriter{ResponseWriter: httptest.NewRecorder()}
