@@ -4207,6 +4207,131 @@
   reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
 - **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
 
+### ADR-0079 — Usage limits pause runs, keep their sessions and hold the account until reset (security-relevant change)
+- **Status:** Proposed, 2026-11-13. The operator answered the design's questions Q1–Q9 on 2026-11-13 by accepting
+  every proposed default (decision 10, K-15). Not implemented: SM-RUN-004..006 are `todo`. Labelled
+  security-relevant not because it relaxes a requirement but because **content of a run's own transcript (untrusted)
+  now drives central scheduling**: it can park the run and hold an account.
+- **Context:**
+  - A claude.ai subscription has a 5-hour and a weekly window. When one is exhausted, Claude Code ends the turn and,
+    for waits under 24 h, arms its own timer and continues about a minute after the reset (contract
+    `docs/contracts/harnesses.md`, "Claude Code usage limits", 2.1.317–2.1.323). On SpaceMan runs that works only while
+    nothing ends the process: control's idle stop, control replacing a worker that looks stuck, a node restart (run
+    `lost`, ADR-0074) or control relaunching into the same limit. Of 21 armed waits in the examined transcripts, 16
+    fired; weekly waits (more than 24 h out) never arm at all.
+  - **The signal is in typed transcript fields, never the screen** (SM-RUN-002):
+    - **Error path:** an assistant record with `apiError: "usage_limit_reached"`, `quotaLimits.resetsAt` (epoch
+      seconds) and `rateLimitType` (`five_hour`, `seven_day`, …).
+    - **Wrap-up path:** a meta user record `usageLimitNote: "wrap_up"`, then the auto-continue arm record; **no reset
+      time and no kind** anywhere. Twelve of the 21 waits came this way.
+    - **Cleared:** the "reset" informational record and the `auto-continuation` turn, or any later assistant message
+      with usage.
+  - Gateway runs (Harbor Pilot, `ANTHROPIC_AUTH_TOKEN`) never arm auto-continue. When every candidate account is
+    exhausted, HP answers 429 `rate_limit_error` "no eligible account is available for model …" **without
+    `Retry-After`**, and Claude Code records it as a plain API-error message with that text and no typed kind or reset
+    (contracts `harbor-pilot.md`, "Quota board and the all-exhausted 429", and `harnesses.md`, "Gateway runs"). A
+    blocking budget's 429 differs only by its message. The reset can be estimated from HP's `GET /api/v1/quota/board`
+    `account_health[].until`, which has no project filter.
+  - A typed SpaceMan nudge while armed does not cancel the timer, but its request is refused at once and the nudge is
+    not acted on until the reset (contract, 4 cases). A process that exits or is relaunched loses the timer; a session
+    resumed with `--resume` needs a prompt to continue.
+  - `--resume` of a session under a different token works (live, fake API, 2.1.323); with two real claude.ai accounts
+    it is **not verified** (K-16).
+- **Decision:**
+  1. **Detection on the node.** On the OSC 7501 status turning `idle` or `error`, and once at run end, the node agent
+     tail-scans the run's transcript from a persisted offset and reads only typed fields: `type`, `subtype`, `error`,
+     `apiError`, `apiErrorStatus`, `quotaLimits.{resetsAt,rateLimitType,status}` (falling back to
+     `apiErrorParams.rate_limit_info`), `usageLimitNote`, `origin.kind` and `timestamp`.
+     - **Limit set** by a `usage_limit_reached` record, or an auto-continue arm record (wrap-up path), newer than the
+       last typed user turn.
+     - **Gateway limit set** by an API-error record with `apiErrorStatus: 429` whose text, after the fixed
+       `API Error: Request rejected (429) · ` prefix, starts with HP's `no eligible account is available for model `
+       (`gateway_quota`) or matches `budget <name> is exhausted ` (`gateway_budget`). Patterns are anchored and come
+       from the HP contract; anything else is not a limit.
+     - **Limit cleared** by the reset informational record, an `auto-continuation` turn, or a later assistant message
+       with non-zero usage.
+     - No screen text and no display wording is ever parsed for status or time (SM-RUN-002); the arm record counts by
+       its record type, not its text.
+  2. **The reported limit.** `RunReport.limit {kind, resets_at, since, cleared}` (protocol minor 12,
+     `MinorUsageLimit`). `kind` is from an allowlist (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
+     `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path reports `unknown`).
+     `resets_at` is the epoch clamped to `(now, now + 8 days]`, otherwise null. **No transcript text crosses the
+     wire or reaches a log.** A node below minor 12 never reports limits and everything behaves as before.
+  3. **Keep-alive for short waits.** When the reset is known and within `keep_alive_max` (default 6 h), or unknown on
+     a subscription run, the process stays up and Claude Code continues by itself. Meanwhile the run is
+     *limit-waiting*: it is excluded from the **space** limit but still counts against the **node** limit (Q4);
+     SpaceMan's idle-gated notices are held (the Notifier skips it and `QueueNotice` refuses idle-gated input; operator
+     force-input still works) and delivered after the clear; control's idle stop is not armed for a limit-waiting
+     control run.
+  4. **Park for long waits.** A wait beyond `keep_alive_max`, an unknown subscription reset still open after
+     `keep_alive_max`, an unknown gateway reset after 30 min, or a process that ends or is lost while limit-waiting,
+     ends the run with `end_reason = 'usage_limit'` and writes a durable **limit wait** in the same transaction. Its
+     resume is a **new run** of the same instance under the current lease generation with `--resume <session>`
+     (when the old run had a turn) and a fixed prompt telling the agent the limit reset and to continue. Ended runs are
+     never reopened, so fencing, the sweeper and the single-control index are unchanged.
+  5. **Resume job.** A deadline-timer job resumes due waits at `resets_at` + 2 min (unknown: retried with backoff from
+     1 h, each attempt re-detected and re-parked without new notices). A paused space, a still-open account limit, a
+     node with no lease or a full space keeps the wait waiting; node hello kicks it. Resumes go through `Admit`; when
+     several are due, control first, then the oldest task, and a resume never pre-empts a launch already admitted
+     (Q6). A space that relocated resumes without a session, and control is told.
+  6. **Release.** A worker's wait is released after `max_wait` (default 7 days, Q2): the task returns to `ready`
+     with its assignee cleared and control is told. A control wait is never released.
+  7. **Account hold.** A limit report opens a `usage_limits` row for the run's resolved account (or gateway
+     reference). While it is open, a launch or resume on that account is refused in the launch transaction (a DB read
+     only) with `CodeRateLimited` and the reset time in UTC. The hold applies **to every space bound to that account**;
+     control is notified per space (Q8). Control autostart is deferred silently to the reset, and the supervisor
+     neither restarts nor counts a control run that ended `usage_limit`. The hold clears when `resets_at` passes, a
+     node reports `cleared` on any run of the account, any other run on the account makes progress (an assistant
+     message with usage), the quota board shows a gateway account available, or an operator clears it.
+  8. **Failover is opt-in.** With the space setting `usage_limit.failover = true` (default **false**), `Resolve` picks
+     the next bound account for the same harness without an open limit, for launches and resumes. SpaceMan never falls
+     back from a gateway binding to a direct account (Q1).
+  9. **Gateway waits.** The reset is an **estimate**: the earliest `until` among the quota board's unavailable
+     accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
+     cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9).
+  10. **Operator answers (2026-11-13, all proposed defaults accepted).**
+      - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.
+      - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.
+      - **Q3 keep-alive versus park:** keep alive up to 6 h, park longer waits.
+      - **Q4 node capacity:** a kept-alive run counts against the node limit, not the space limit.
+      - **Q5 people:** one human action (type `message`, priority `normal`) to the affected space's operators, once per
+        account window, only for waits over 12 h.
+      - **Q6 priority:** control first, then the oldest task; a resume never pre-empts a launch already running.
+      - **Q7 early stop:** a later, optional step (T13, a separate amendment): stop new launches on an account at
+        ≥ 95 % of a window, from a SpaceMan-owned statusline. Not part of this decision.
+      - **Q8 cross-space:** the hold applies to every space bound to the account.
+      - **Q9 gateway estimate:** accepted (earliest reset, re-checked every 15 min); no per-project board view requested.
+  11. **Telling control and people once.** Control gets one durable message per space and account window when a
+      limit opens and one when it clears or resumes (dedup keys from the `usage_limits` id); worker `run-ended` notices
+      for `usage_limit` ends are folded in. People get the single action of Q5.
+  12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind`,
+      `limit_resets_at`, `limit_since`; tables `usage_limits` and `limit_waits`, no runs-table rebuild); agent
+      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_offset`). Space setting
+      `usage_limit {failover, keep_alive_max, max_wait, notify_humans_after}`.
+- **Alternatives:**
+  - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and
+    dateless under 24 h, and server-overridable wording.
+  - **Always park.** Simpler and frees memory, but discards in-memory state (background shells) and Claude Code's own
+    timer, which already handles the common 5-hour case (Q3).
+  - **A new `observed`/`waiting` run state.** Rejected: it would touch every literal live-state list, the sweeper and
+    the single-control index; columns plus two tables avoid that.
+  - **`StopFailure` hook or statusline `rate_limits`.** The hook carries no reset time and the statusline needs an
+    unsafe settings key; kept for T13 as accelerators, not the source.
+  - **Trust `Retry-After` for gateway runs.** HP doesn't send it in this case.
+- **Consequences:**
+  - A run's transcript can now park that run and hold its account. A forged record can block an account for at most
+    8 days (the clamp); only typed fields are read, no free text is stored, the kind is allowlisted, progress by any
+    other run on the account clears the hold, and an operator can clear it. THREAT_MODEL gains a row when the
+    detector lands.
+  - Claude Code's record format is undocumented; a rename silently stops detection and falls back to today's
+    behaviour. The contract records the versions, ADR-0077's managed versions let a fixture test follow the pinned
+    version, and a bounded metric counts unclassified 429 records.
+  - The wrap-up path gives no reset time, so more than half the subscription waits seen run with an unknown reset:
+    keep-alive covers them while the process lives, and a parked one is resumed by backoff.
+  - A gateway reset is an estimate and may resume early (re-detected, re-parked, no new notice) or up to 15 min late.
+  - A real subscription limit can't be forced in tests; until one is observed on a SpaceMan run, real evidence stays
+    empty (K-16).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -4225,3 +4350,5 @@
 | K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
+| K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
+| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds. A real limit can't be forced. | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run (T12). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |

@@ -205,6 +205,76 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208` (v0.1.4: `:214`). It needs an
   expired one-time budget does not refuse a mint. **live**: with only a scheduled, an expired and a disabled used-up
   budget on the project, the dispatch mint with `check_budget` succeeded.
 
+## Quota board and the all-exhausted 429 (v0.1.6, for ADR-0079)
+Read in the source of **v0.1.6** (commit `b04bbbb592a3408c42062597ced1bd819d2a4e63`; the files and lines cited are the
+same in v0.1.4 unless noted) and checked **live** on 2026-11-13 against a v0.1.6 binary (`go install …@v0.1.6` with
+the release's version flags) running `serve --demo` on loopback, deleted afterwards. The board exists with the same
+fields in v0.1.3 and v0.1.4 (**code**), so SpaceMan's minimum version is unchanged.
+
+**`GET /api/v1/quota/board`** (`internal/quota/quotaapi/quotaapi.go:74-88`). Permission `usage.read`
+(`auth.PermUsageRead`), which SpaceMan's service-principal token already has for budget status. **live**
+- Body `{monitors, observed_accounts, account_health, dropped_observations}` (`quotaapi.go:49-56`). **live**
+- `monitors[]`: each quota monitor with `id, name, adapter, account_id` (empty when not linked to an account),
+  `health`, `poll {…}` and `buckets[]`. A bucket has `key, label, scope, kind, unit, window_seconds, reset_semantics,
+  global, source (adapter|response_headers|cli_event), limit, used, remaining, remaining_fraction, reset_at,
+  observed_at, stale, exhausted, reset_passed` (`quota/board.go` `BucketView`). **live**
+- **`account_health[]`**, one per provider account in the current configuration, sorted by id (`quotaapi.go:37-47`,
+  `:79-85`). **live**:
+
+  ```json
+  {"account_id":"acc_…","name":"<account>","billing":"metered_api","available":false,
+   "reason":"quota exhausted: 5-hour session","until":"<RFC 3339>","remaining":0.675,
+   "reset_at":"<RFC 3339>","stale":false}
+  ```
+
+  - `available` / `reason` / `until` combine two sources (`gateway/gateway.go:211-226`; `quota/board.go:161-195`):
+    - **Gateway cooldown** after an upstream rate limit or auth failure: `reason` "cooling down after upstream rate limit
+      or auth failure", `until` = the cooldown's end. It wins over the quota view. **live**: right after the demo
+      starts, both Anthropic-shaped accounts showed it with `until` about 30 s ahead (its seeded upstream 429s carry
+      `Retry-After: 30`, `internal/demo/traffic.go:236-238`).
+    - **Quota exhausted**: a fresh adapter or CLI bucket at or below the monitor's `exhausted_below` (0 means "at or
+      below 0"; `quota/service.go:364-379`). `reason` "quota exhausted: <bucket label>", `until` = that bucket's
+      `reset_at` (null when the provider gives none). **live**
+  - `remaining` is the tightest fresh bucket's remaining fraction (null when unknown); `reset_at` is that bucket's
+    reset. `stale` is true when every observation is older than its stale threshold (default 15 min).
+  - An account with no monitor and no cooldown is `available: true` with nulls. **live**
+- **No project or binding filter**: the board lists every account of the installation. Which accounts a binding's plan
+  can route to is in the routing plan (`POST /api/v1/routing-plans/{id}/simulate` returns the candidates for a model,
+  `config.read`), not on the board. **live** (simulate); SpaceMan does not call it.
+
+**The 429 when no account is eligible** (`internal/routing/routing.go:335-345`, `gateway/handle.go:280-290`,
+v0.1.4: `:267`):
+- When every candidate of the plan was excluded **for health** (cooldown or exhausted quota), routing returns
+  `ErrQuotaExhausted` with the message `no eligible account is available for model <requested model>`. If any
+  candidate was excluded for another reason (policy, capability), the kind is `ErrPolicy` and the answer is **403**
+  with the same message (the existing "Unrouted models are refused" above).
+- `ErrQuotaExhausted` maps to **429** (`ir/ir.go:403`) and to the Anthropic type `rate_limit_error`
+  (`protocol/anthropic/response.go:196-197`).
+- **No `Retry-After`**: `writeError` sets it only when `RetryAfterSeconds > 0` (`gateway/gateway.go:155-162`), and the
+  routing error has none. **live**, with every candidate's demo monitor set to `exhausted_below: 0.99` (the board then
+  showed all three `available: false`):
+
+  ```
+  HTTP/1.1 429 Too Many Requests
+  Content-Type: application/json
+  X-Request-Id: req_…
+
+  {"error":{"message":"no eligible account is available for model claude-opus-5-5","type":"rate_limit_error"},"type":"error"}
+  ```
+
+  The same with `"stream": true`: a plain JSON 429, not an event stream. **live**
+- `Retry-After` appears only when a candidate was tried and its upstream refusal carried one, and that was the last
+  error (`gateway/handle.go:339-459` `dispatch` writes the last attempt's error with its `RetryAfterSeconds`; the Claude Code bridge sets it from the CLI's
+  429, `executor/bridge/claudecode/stream.go:137`, v0.1.4: `:115`). **code**
+- A blocking budget's refusal has the same status and type and differs only in the message: `budget <name> is exhausted
+  for this day (<spent> of <limit> USD)` (above). **live** (v0.1.6, a new tiny budget on the binding).
+- How Claude Code records either refusal in its transcript: `harnesses.md`, "Gateway runs: Harbor Pilot's 429".
+
+**Recovery signals.** `quota.window.recovered` (`events/catalog.go:30`, above in Events) when a monitored global window
+recovers, and `provider.account.recovered` (`events/catalog.go:36`, subjects `account_id, provider_id`, no data) when
+a cooldown ends; the gateway emits the latter when it next reads the account's health after the cooldown, not on a
+timer (`gateway/transitions.go:43-50`, called from `gateway.go:224`). Both in v0.1.4 and v0.1.6. **code**
+
 ## Activity and usage
 - **Request list.** `GET /api/v1/activity/requests` (`internal/telemetry/activityapi/activityapi.go`, `activity.read`)
   filters by binding, project, `session_id`, model, harness, time and similar. **live**: `binding_id` and `session_id`.
