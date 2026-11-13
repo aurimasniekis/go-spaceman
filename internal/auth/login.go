@@ -172,17 +172,23 @@ func (svc *Service) login(ctx context.Context, in LoginInput) (*LoginResult, err
 		}
 		return nil, ErrInvalidCredentials
 	}
+	// A hash with old parameters is replaced. It is computed before the transaction: Argon2id takes far longer than
+	// the write lock may be held (HP-DB-004).
+	var fresh string
+	if cred.ParamsVersion != int64(CurrentParams.Version) {
+		if h, err := HashPassword(pw, CurrentParams); err == nil {
+			fresh = h
+		}
+	}
 	var token string
 	err := svc.s.W().TxNamed(ctx, "auth.login", func(tx *store.Tx) error {
 		if err := tx.Q.DeleteThrottle(ctx, acctKey); err != nil {
 			return err
 		}
-		if cred.ParamsVersion != int64(CurrentParams.Version) {
-			if fresh, err := HashPassword(pw, CurrentParams); err == nil {
-				if err := tx.Q.UpsertLocalCredential(ctx, db.UpsertLocalCredentialParams{UserID: opRow.ID, PasswordPhc: fresh,
-					ParamsVersion: int64(CurrentParams.Version), ChangedAt: cred.ChangedAt, MustChange: cred.MustChange}); err != nil {
-					return err
-				}
+		if fresh != "" {
+			if err := tx.Q.UpsertLocalCredential(ctx, db.UpsertLocalCredentialParams{UserID: opRow.ID, PasswordPhc: fresh,
+				ParamsVersion: int64(CurrentParams.Version), ChangedAt: cred.ChangedAt, MustChange: cred.MustChange}); err != nil {
+				return err
 			}
 		}
 		var err error

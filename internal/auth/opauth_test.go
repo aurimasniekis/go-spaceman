@@ -699,3 +699,34 @@ func TestInvitationRevocation(t *testing.T) {
 		t.Fatal("malformed id accepted")
 	}
 }
+
+// A password hash stored with older parameters is replaced at the next successful login. The new hash is computed
+// before the login's write transaction, which only stores it (HP-DB-004).
+func TestLoginRehashesOldParams(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	op := f.bootstrap()
+	old, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+	must(t, err)
+	// A light hash labeled with another parameter version (the production set would only slow the test down).
+	phc, err := HashPassword([]byte(strongPW), CurrentParams)
+	must(t, err)
+	must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+		return tx.Q.UpsertLocalCredential(f.ctx, db.UpsertLocalCredentialParams{UserID: op.ID, PasswordPhc: phc,
+			ParamsVersion: int64(CurrentParams.Version) + 1, ChangedAt: old.ChangedAt, MustChange: old.MustChange})
+	}))
+
+	_, err = f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW})
+	must(t, err)
+	cred, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+	must(t, err)
+	if cred.ParamsVersion != int64(CurrentParams.Version) || cred.PasswordPhc == phc {
+		t.Fatalf("credential not rehashed: version %d, same hash %v", cred.ParamsVersion, cred.PasswordPhc == phc)
+	}
+	if ok, err := VerifyPassword([]byte(strongPW), cred.PasswordPhc); !ok || err != nil {
+		t.Fatalf("rehashed password does not verify: %v %v", ok, err)
+	}
+	if cred.ChangedAt != old.ChangedAt {
+		t.Fatal("a rehash changed the password's changed_at")
+	}
+}
