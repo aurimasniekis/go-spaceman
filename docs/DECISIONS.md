@@ -4255,7 +4255,7 @@
   2. **The reported limit.** `RunReport.limit {kind, resets_at, since, cleared}` (protocol minor 12,
      `MinorUsageLimit`). `kind` is from an allowlist (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
      `seven_day_overage_included`, `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path
-     reports `unknown`). `since` is bounded to `[now − 8 days, now]` (missing: now); `resets_at` is kept when it lies in
+     reports `unknown`). `since` is bounded to `[now − 8 days, now + 5 min]` (missing, or further ahead: now; the 5 min allow a node clock slightly ahead, so repeats compare equal); `resets_at` is kept when it lies in
      `(since, since + 8 days]`, even if it has already passed, otherwise null; a report with neither a kind nor
      `cleared` is not a limit (`proto.RunLimit.Normalized`). **No transcript text crosses the wire or reaches a log.**
      A node below minor 12 never reports limits, and central drops a limit on any report from a session negotiated
@@ -4272,6 +4272,10 @@
      resume is a **new run** of the same instance under the current lease generation with `--resume <session>`
      (when the old run had a turn) and a fixed prompt telling the agent the limit reset and to continue. Ended runs are
      never reopened, so fencing, the sweeper and the single-control index are unchanged.
+     Since UL-4, central records `end_reason = 'usage_limit'` (also on `run_ended` and in the end-reason metric) for a
+     run that ends while its limit is open, unless central had asked it to stop (`desired = stopped`) or the stale-run
+     sweeper ended it; a later `cleared` report doesn't change it. The `run_ended` event keeps the node's own reason as
+     `node_reason`. The limit wait itself comes with parking (UL-7).
   5. **Resume job.** A deadline-timer job resumes due waits at `resets_at` + 2 min (unknown: retried with backoff from
      1 h, each attempt re-detected and re-parked without new notices). A paused space, a still-open account limit, a
      node with no lease or a full space keeps the wait waiting; node hello kicks it. An open hold with an **unknown
@@ -4293,12 +4297,42 @@
        (or, with none waiting, one launch) on the account is let through. A probe that makes progress clears the
        hold; one that hits the limit again moves `check_at` on with backoff (from 1 h, doubling, capped at
        `keep_alive_max`). The gateway re-check of decision 9 uses the same column.
+     - **Scope of a hold** (amended 2026-11-13, UL-4). A direct run holds its resolved account (`scope = 'account'`).
+       A Harbor Pilot run holds a gateway reference whose granularity follows the cause: a quota exhaustion (`gateway_quota`,
+       or any kind other than a budget) is connection-wide, `gateway_ref = 'harbor-pilot'`, because no account behind the
+       one connection is eligible; a blocking budget (`gateway_budget`) belongs to one project,
+       `gateway_ref = 'harbor-pilot:project:<project id>'`, and holds only the spaces charged to it. A report opens a
+       row in the reporting space only. Every other space that binds the account (or routes through the same connection or
+       project) sees it as a **shared** hold, without the other space's identifiers. An unknown reset gets
+       `check_at = now + 1 h`; a later known reset fills the row in and drops the probe.
+     - **Model-specific weekly limits hold the whole account** (control's conservative default, 2026-11-13):
+       `seven_day_opus` and `seven_day_sonnet` hold the account for every model, not only the exhausted one.
      - **Clearing a hold across spaces** (control's decision, 2026-11-13). Accounts are global objects, so "clear
        now" on an account hold clears **every open row for that account and kind in all spaces**, and needs
        **account-level permission** (the same as managing accounts). An operator with only space-level permission
        clears **their space's row only**: that does not lift the hold in other spaces (the hold is read across
        spaces), and the UI says so. Every clear is audited; each other space whose row was cleared has its control
        told once.
+     - **Evidence clears** (UL-4, PR #55 review). A node's `cleared` report is evidence that the account works again.
+       It is separate from the operator's "clear now" above, whose permission rule it doesn't change.
+       - The clear names the `since` of the limit it ends. A clear of an older `since` than the run's stored limit is
+         late (the node repeats it on every later report) and changes nothing. A newer limit (another `since`) also
+         ends the stored one.
+       - Only rows of that kind first seen no later than the ended limit's `since` count. So a new window always gets
+         a row of its own: an open row whose reset passed before the new limit was seen is cleared, never reused.
+       - The same limit reclassified (the same `since`, a newer record of another kind, such as the wrap-up path's
+         `unknown` then a typed kind) supersedes the hold the run opened for the old kind.
+     - **Trust decision: nodes are trusted for their own runs; cross-space effects are limited to scheduling a probe.**
+       - The run's own space's rows are cleared, with `cleared_by = run:<id>`.
+       - Another space's row is cleared only when its reset has passed (within 2 min) or is unknown. It gets
+         `cleared_by = evidence` and is correlated on the hold, so that space never sees this space's run.
+       - A row whose reset is still ahead gets `check_at = now`: one probe launch decides.
+     - **Events and visibility.**
+       - Each cleared row publishes one `fleet.usage_limit.cleared` event in its own space, and each opened row one
+         `fleet.usage_limit.reached` event.
+       - A report that changes nothing writes nothing.
+       - A space's listing shows other spaces' open holds as one shared row per account (or gateway reference) and
+         kind, so it doesn't reveal how many spaces hit the limit.
   8. **Failover is opt-in.** With the space setting `usage_limit.failover = true` (default **false**), `Resolve` picks
      the next bound account for the same harness without an open limit, for launches and resumes. SpaceMan never falls
      back from a gateway binding to a direct account (Q1).

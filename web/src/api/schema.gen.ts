@@ -64,6 +64,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}/usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An account's open usage-limit holds in every space */
+        get: operations["list-account-usage-limits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/break-glass": {
         parameters: {
             query?: never;
@@ -2494,6 +2511,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/limit-waits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A space's runs parked at a usage limit, waiting to resume */
+        get: operations["list-space-limit-waits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/limits": {
         parameters: {
             query?: never;
@@ -3751,6 +3785,26 @@ export interface paths {
          * @description Totals cover runs with known usage only; runs with unknown usage are counted separately.
          */
         get: operations["get-space-usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A space's usage-limit holds
+         * @description The holds the space's runs opened when they reached a usage limit (newest first, cleared ones included), then the open holds other spaces opened on the accounts this space binds or the gateway it routes through: those hold this space too, and are marked shared, without the other space's identifiers.
+         */
+        get: operations["list-space-usage-limits"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6079,6 +6133,39 @@ export interface components {
             state: string;
             valid: boolean;
         };
+        FleetLimitWait: {
+            /** Format: int64 */
+            attempts: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            id: string;
+            instance_id: string;
+            last_error?: string;
+            new_run_id?: string;
+            node_id: string;
+            /**
+             * Format: date-time
+             * @description When a worker's task is given back to the queue; absent for control
+             */
+            release_at?: string;
+            /** Format: date-time */
+            resume_at: string;
+            role: string;
+            run_id: string;
+            /** @enum {string} */
+            run_kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
+            space_id: string;
+            /** @enum {string} */
+            state: "waiting" | "resuming" | "resumed" | "released" | "cancelled" | "failed";
+            task_id?: string;
+            /** Format: date-time */
+            updated_at: string;
+            usage_limit_id?: string;
+            /** Format: int64 */
+            version: number;
+        };
         FleetLossReport: {
             /**
              * Format: date-time
@@ -6264,6 +6351,7 @@ export interface components {
             created_by: string;
             /** @enum {string} */
             desired: "running" | "stopped";
+            /** @description Why the run ended: the node's reason (exited, stopped, killed, lease_expired, …), usage_limit when it ended while at a usage limit, or central's stale_not_on_node, stale_lease_lost or relocated_source_unavailable */
             end_reason?: string;
             /** Format: date-time */
             ended_at?: string;
@@ -6288,6 +6376,8 @@ export interface components {
             /** @enum {string} */
             kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
             launch: components["schemas"]["FleetLaunchSpec"];
+            /** @description The run's open usage limit, as its node reported it (node protocol 1.12 or later); a live run with one is waiting for the limit to reset */
+            limit?: components["schemas"]["FleetRunLimit"];
             /** @description Omitted from run lists unless include=manifest */
             manifest?: unknown;
             node_id: string;
@@ -6319,6 +6409,20 @@ export interface components {
             turn: number;
             /** Format: int64 */
             version: number;
+        };
+        FleetRunLimit: {
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "gateway_quota" | "gateway_budget" | "unknown";
+            /**
+             * Format: date-time
+             * @description When the limit resets; absent when unknown (Claude Code's wrap-up path and gateway limits carry none)
+             */
+            resets_at?: string;
+            /**
+             * Format: date-time
+             * @description When the node first saw the limit
+             */
+            since: string;
         };
         FleetSpace: {
             /**
@@ -6456,6 +6560,42 @@ export interface components {
             goals: string;
             name: string;
             standing_instructions: string;
+        };
+        FleetUsageLimit: {
+            account_id?: string;
+            /**
+             * Format: date-time
+             * @description When a hold with an unknown reset is next probed
+             */
+            check_at?: string;
+            /** Format: date-time */
+            cleared_at?: string;
+            /** @description run:<id> (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it */
+            cleared_by?: string;
+            first_run_id?: string;
+            /** @description harbor-pilot (a quota exhaustion: the whole connection) or harbor-pilot:project:<id> (a project's budget) */
+            gateway_ref?: string;
+            /** @description Absent on a shared hold */
+            id?: string;
+            /** @enum {string} */
+            kind: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage" | "gateway_quota" | "gateway_budget" | "unknown";
+            /**
+             * Format: date-time
+             * @description Absent when unknown
+             */
+            resets_at?: string;
+            /** @enum {string} */
+            scope: "account" | "gateway";
+            /** Format: date-time */
+            seen_at: string;
+            /** @description Opened by another space's run on an account or gateway this space uses; it holds this space too */
+            shared?: boolean;
+            /** @enum {string} */
+            source: "transcript" | "quota_board" | "budget_status" | "operator";
+            /** @description The space whose run opened it; absent on a shared hold */
+            space_id?: string;
+            /** Format: int64 */
+            version?: number;
         };
         "Fork-promptRequest": {
             /**
@@ -8040,6 +8180,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["AccountsKind"][];
         };
+        "List-account-usage-limitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-account-usage-limitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetUsageLimit"][];
+        };
         "List-approval-policiesResponse": {
             /**
              * Format: uri
@@ -8285,6 +8434,15 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["HumanSpaceType"][];
         };
+        "List-space-limit-waitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-limit-waitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetLimitWait"][];
+        };
         "List-space-mcp-grantsResponse": {
             /**
              * Format: uri
@@ -8302,6 +8460,15 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["CatalogSpaceRole"][];
+        };
+        "List-space-usage-limitsResponse": {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/List-space-usage-limitsResponse.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["FleetUsageLimit"][];
         };
         "List-spacesResponse": {
             /**
@@ -11205,6 +11372,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-account-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-account-usage-limitsResponse"];
+                };
             };
             /** @description Error */
             default: {
@@ -17055,6 +17253,37 @@ export interface operations {
             };
         };
     };
+    "list-space-limit-waits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-limit-waitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "get-space-limits": {
         parameters: {
             query?: never;
@@ -19979,6 +20208,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageSummary"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "list-space-usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["List-space-usage-limitsResponse"];
                 };
             };
             /** @description Error */

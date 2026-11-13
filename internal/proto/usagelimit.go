@@ -32,6 +32,10 @@ var LimitKinds = []string{LimitFiveHour, LimitSevenDay, LimitSevenDayOpus, Limit
 // (ADR-0079).
 const MaxLimitReset = 8 * 24 * time.Hour
 
+// MaxLimitSkew is how far ahead of central's clock a reported since may be and still be kept as the node sent it (a
+// node clock running slightly ahead). Clamping it to now instead would store a new since on every repeat.
+const MaxLimitSkew = 5 * time.Minute
+
 // LimitKind maps a reported kind onto the allowlist: an unlisted value becomes LimitUnknown.
 func LimitKind(k string) string {
 	for _, v := range LimitKinds {
@@ -49,13 +53,13 @@ type RunLimit struct {
 	Kind string `json:"kind,omitempty"`
 	// ResetsAt is when the limit resets, in (Since, Since+MaxLimitReset], possibly already past; nil when unknown.
 	ResetsAt *time.Time `json:"resets_at,omitempty"`
-	// Since is when the node first saw the limit, within [now-MaxLimitReset, now].
+	// Since is when the node first saw the limit, within [now-MaxLimitReset, now+MaxLimitSkew].
 	Since   time.Time `json:"since,omitzero"`
 	Cleared bool      `json:"cleared,omitempty"`
 }
 
 // Normalized returns l as it may be stored or sent, and false when it is not a limit at all (not cleared and no kind).
-// Since is bounded to [now-MaxLimitReset, now] (zero: now). The kind is mapped onto the allowlist. A reset outside
+// Since is bounded to [now-MaxLimitReset, now+MaxLimitSkew] (zero, or further ahead: now). The kind is mapped onto the allowlist. A reset outside
 // (Since, Since+MaxLimitReset] becomes unknown; one that already passed but is inside it is kept, so a limit seen
 // before a reset is not turned into an open unknown one. A cleared limit carries no kind and no reset.
 func (l RunLimit) Normalized(now time.Time) (RunLimit, bool) {
@@ -64,7 +68,7 @@ func (l RunLimit) Normalized(now time.Time) (RunLimit, bool) {
 	}
 	since := l.Since
 	switch earliest := now.Add(-MaxLimitReset); {
-	case since.IsZero(), since.After(now):
+	case since.IsZero(), since.After(now.Add(MaxLimitSkew)):
 		since = now
 	case since.Before(earliest):
 		since = earliest
