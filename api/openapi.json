@@ -5840,6 +5840,7 @@
             "type": "string"
           },
           "cleared_by": {
+            "description": "run:\u003cid\u003e (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it",
             "type": "string"
           },
           "first_run_id": {

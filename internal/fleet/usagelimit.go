@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -30,6 +31,11 @@ const (
 	gatewayRefHPProject = GatewayKindHarborPilot + ":project:"
 	// limitProbeFirst is when a hold whose reset is unknown is first probed (ADR-0079 decisions 5 and 7).
 	limitProbeFirst = time.Hour
+	// limitResetGrace is how far in the future another space's hold may still reset and be cleared by a node's evidence;
+	// one that resets later is only probed (ADR-0079 decision 7, trust).
+	limitResetGrace = 2 * time.Minute
+	// ClearedByEvidence is cleared_by on a hold another space's run proved over: that run is not named.
+	ClearedByEvidence = "evidence"
 	// maxLimitRows bounds a usage-limit or limit-wait listing.
 	maxLimitRows = 200
 )
@@ -58,7 +64,7 @@ type UsageLimit struct {
 	FirstRunID string     `json:"first_run_id,omitempty"`
 	SeenAt     time.Time  `json:"seen_at"`
 	ClearedAt  *time.Time `json:"cleared_at,omitempty"`
-	ClearedBy  string     `json:"cleared_by,omitempty"`
+	ClearedBy  string     `json:"cleared_by,omitempty" doc:"run:<id> (a run of this space reported the limit over), evidence (a run of another space did), or who cleared it"`
 	Version    int64      `json:"version,omitempty"`
 }
 
@@ -73,6 +79,8 @@ func (u UsageLimit) shared() UsageLimit {
 	u.ID, u.SpaceID, u.FirstRunID, u.ClearedBy, u.Version, u.Shared = "", "", "", "", 0, true
 	return u
 }
+
+var errAccountNotFound = apperr.New(apperr.CodeNotFound, "account not found")
 
 // LimitWait is a parked run that should come back as a new run of the same instance (ADR-0079 decision 4). The launch
 // input it resumes with is not part of it.
@@ -140,7 +148,10 @@ func reportedLimit(cur limitState, rep proto.RunReport, now time.Time) (limitSta
 		return limitState{}, false
 	}
 	if l.Cleared {
-		if cur.kind != "" && cur.since.Valid && cur.since.Int64 != l.Since.UnixMicro() && cur.since.Int64 != rep.Limit.Since.UnixMicro() {
+		// A clear of an older limit than the stored one is late: it says nothing about the stored limit. One naming the
+		// same or a newer since ends it (a newer one: the node saw a limit central never stored, and it is over too). The
+		// raw since counts as well as the normalized one, so a node whose clock runs ahead still matches.
+		if cur.kind != "" && cur.since.Valid && l.Since.UnixMicro() < cur.since.Int64 && rep.Limit.Since.UnixMicro() < cur.since.Int64 {
 			return limitState{}, false
 		}
 		return limitState{}, true
@@ -148,6 +159,11 @@ func reportedLimit(cur limitState, rep proto.RunReport, now time.Time) (limitSta
 	next := limitState{kind: l.Kind, since: sql.NullInt64{Int64: l.Since.UnixMicro(), Valid: true}}
 	if l.ResetsAt != nil {
 		next.resets = sql.NullInt64{Int64: l.ResetsAt.UnixMicro(), Valid: true}
+	}
+	// A since that had to be clamped (a node clock far ahead) is not a new window: every repeat would clamp it anew and
+	// write. With a limit of the same kind stored, the stored since stays.
+	if clamped := !rep.Limit.Since.IsZero() && !l.Since.Equal(rep.Limit.Since); clamped && cur.kind != "" && (next.kind == cur.kind || next.kind == proto.LimitUnknown) {
+		next.since = cur.since
 	}
 	if cur.kind != "" && cur.since == next.since {
 		if !next.resets.Valid {
@@ -194,6 +210,14 @@ func (svc *Service) openHoldTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	}
 	now := tx.NowMicros()
 	cur, err := tx.Q.GetOpenUsageLimit(ctx, db.GetOpenUsageLimitParams{SpaceID: r.SpaceID, Scope: scope, AccountID: account, GatewayRef: gw, Kind: lim.kind})
+	// An open hold whose window reset before this limit was seen belongs to an earlier window: it is over, and the new
+	// window gets a hold of its own (its own seen_at, so a late clear of the old window can't clear it).
+	if err == nil && cur.ResetsAt.Valid && lim.since.Valid && lim.since.Int64 > cur.ResetsAt.Int64 {
+		if err := svc.clearHoldTx(ctx, tx, cur, "run:"+r.ID, r.ID); err != nil {
+			return err
+		}
+		err = sql.ErrNoRows
+	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		row := db.UsageLimit{ID: ids.New(ids.UsageLimit), SpaceID: r.SpaceID, Scope: scope, AccountID: account, GatewayRef: gw, Kind: lim.kind,
@@ -234,10 +258,15 @@ func (svc *Service) openHoldTx(ctx context.Context, tx *store.Tx, r db.Run, lim 
 	return svc.record(ctx, tx, cur.SpaceID, "usage_limit", cur.ID, "updated", version)
 }
 
-// clearHoldsTx clears the holds of the cleared limit's kind that the run's account (or gateway reference) has in every
-// space: the run's node reported the limit over, so the account works again wherever it is used (ADR-0079 decision 7).
-// Only holds first seen no later than the cleared limit are cleared: a clear that reaches central late (on a hello
-// after a disconnect) is no evidence about a window seen after it. Each cleared hold publishes one usage_limit.cleared
+// clearHoldsTx ends the holds of an ended limit's kind that the run's account (or gateway reference) has in every space:
+// the run's node reported the limit over (or a newer one), so the account works again wherever it is used (ADR-0079
+// decision 7). Only holds first seen no later than the ended limit count: a clear that reaches central late (on a
+// hello after a disconnect) is no evidence about a window seen after it.
+//
+// Nodes are trusted for their own runs; across spaces their effect is limited (trust decision, ADR-0079): the run's
+// own space's holds are cleared, naming the run. Another space's hold is cleared only when its reset has passed (within
+// limitResetGrace) or is unknown, as cleared_by "evidence" and correlated on the hold, never naming this space's run;
+// one whose reset is still ahead is only probed now (check_at). Each cleared hold publishes one usage_limit.cleared
 // event in its own space.
 func (svc *Service) clearHoldsTx(ctx context.Context, tx *store.Tx, r db.Run, cleared limitState) error {
 	kind := cleared.kind
@@ -255,16 +284,37 @@ func (svc *Service) clearHoldsTx(ctx context.Context, tx *store.Tx, r db.Run, cl
 	if err != nil {
 		return err
 	}
-	by := "run:" + r.ID
+	grace := tx.Now.Add(limitResetGrace).UnixMicro()
 	for _, u := range rows {
 		if u.Kind != kind || cleared.since.Valid && u.SeenAt > cleared.since.Int64 {
 			continue
 		}
-		if err := svc.clearHoldTx(ctx, tx, u, by, r.ID); err != nil {
+		switch {
+		case u.SpaceID == r.SpaceID:
+			err = svc.clearHoldTx(ctx, tx, u, "run:"+r.ID, r.ID)
+		case u.ResetsAt.Valid && u.ResetsAt.Int64 > grace:
+			err = svc.probeHoldTx(ctx, tx, u)
+		default:
+			err = svc.clearHoldTx(ctx, tx, u, ClearedByEvidence, u.ID)
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// probeHoldTx makes an open hold due for its probe now (unless it already is): one launch or resume decides.
+func (svc *Service) probeHoldTx(ctx context.Context, tx *store.Tx, u db.UsageLimit) error {
+	now := tx.NowMicros()
+	if u.CheckAt.Valid && u.CheckAt.Int64 <= now {
+		return nil
+	}
+	n, err := tx.Q.SetUsageLimitCheck(ctx, db.SetUsageLimitCheckParams{CheckAt: sql.NullInt64{Int64: now, Valid: true}, Now: now, ID: u.ID, Version: u.Version})
+	if err != nil || n == 0 {
+		return err
+	}
+	return svc.record(ctx, tx, u.SpaceID, "usage_limit", u.ID, "updated", u.Version+1)
 }
 
 // clearHoldTx clears one open hold, publishing its usage_limit.cleared event.
@@ -290,6 +340,13 @@ func (svc *Service) applyLimitTx(ctx context.Context, tx *store.Tx, r db.Run, cu
 	}
 	switch {
 	case next.kind != "":
+		// A newer limit (another since) proves the stored one ended: its holds end first, as on a clear, so a new window
+		// never reuses the old window's hold.
+		if cur.kind != "" && cur.since != next.since {
+			if err := svc.clearHoldsTx(ctx, tx, r, cur); err != nil {
+				return 0, err
+			}
+		}
 		// The same limit reclassified (the same since, a newer record with another kind, such as the wrap-up path's
 		// unknown followed by a typed record): the hold this run opened for the old kind is superseded.
 		if cur.kind != "" && cur.kind != next.kind && cur.since == next.since {
@@ -365,9 +422,33 @@ func (svc *Service) UsageLimits(ctx context.Context, spaceID string) ([]UsageLim
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
+	// One shared row per account (or gateway reference) and kind, whatever the number of other spaces holding it, so a
+	// viewer can't count them: the earliest seen and the latest reset (unknown wins: it is held until probed).
+	type key struct{ scope, account, gw, kind string }
+	idx := map[key]int{}
 	for _, r := range shared {
-		if r.SpaceID != spaceID && len(out) < 2*maxLimitRows {
-			out = append(out, usageLimitFromRow(r).shared())
+		if r.SpaceID == spaceID {
+			continue
+		}
+		k := key{r.Scope, r.AccountID, r.GatewayRef, r.Kind}
+		u := usageLimitFromRow(r).shared()
+		i, ok := idx[k]
+		if !ok {
+			idx[k] = len(out)
+			out = append(out, u)
+			continue
+		}
+		o := &out[i]
+		if u.SeenAt.Before(o.SeenAt) {
+			o.SeenAt = u.SeenAt
+		}
+		switch {
+		case o.ResetsAt == nil:
+		case u.ResetsAt == nil || u.ResetsAt.After(*o.ResetsAt):
+			o.ResetsAt = u.ResetsAt
+		}
+		if o.CheckAt == nil || u.CheckAt != nil && u.CheckAt.Before(*o.CheckAt) {
+			o.CheckAt = u.CheckAt
 		}
 	}
 	return out, nil
@@ -375,6 +456,11 @@ func (svc *Service) UsageLimits(ctx context.Context, spaceID string) ([]UsageLim
 
 // AccountUsageLimits returns the open holds on an account in every space (the account-scoped view; account:read).
 func (svc *Service) AccountUsageLimits(ctx context.Context, accountID string) ([]UsageLimit, error) {
+	if _, err := svc.s.R().GetAccount(ctx, accountID); errors.Is(err, sql.ErrNoRows) {
+		return nil, errAccountNotFound
+	} else if err != nil {
+		return nil, err
+	}
 	rows, err := svc.s.R().ListOpenUsageLimitsByAccount(ctx, accountID)
 	if err != nil {
 		return nil, err

@@ -130,7 +130,7 @@ type UsageLimitReached struct {
 // UsageLimitCleared: a hold was cleared (a run on the account reported the limit over).
 type UsageLimitCleared struct {
 	UsageLimit
-	ClearedBy string `json:"cleared_by"` // run:<id>, or who cleared it
+	ClearedBy string `json:"cleared_by"` // run:<id> (a run of this space), evidence (a run of another space), or who cleared it
 }
 
 // Task describes a queue task (never its title, objective, acceptance criteria, reason or result).

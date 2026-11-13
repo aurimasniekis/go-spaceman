@@ -125,6 +125,9 @@ func TestRunLimitNormalized(t *testing.T) {
 		{"before since", RunLimit{Kind: LimitFiveHour, Since: at(-h), ResetsAt: ptr(-2 * h)}, LimitFiveHour, now.Add(-h), nil},
 		{"zero since", RunLimit{Kind: LimitFiveHour, ResetsAt: ptr(h)}, LimitFiveHour, now, ptr(h)},
 		{"future since", RunLimit{Kind: LimitFiveHour, Since: at(h), ResetsAt: ptr(2 * h)}, LimitFiveHour, now, ptr(2 * h)},
+		// A node clock slightly ahead keeps its since, so repeats compare equal.
+		{"skewed since", RunLimit{Kind: LimitFiveHour, Since: at(30 * time.Second), ResetsAt: ptr(2 * h)}, LimitFiveHour, now.Add(30 * time.Second), ptr(2 * h)},
+		{"skew bound", RunLimit{Kind: LimitFiveHour, Since: at(MaxLimitSkew)}, LimitFiveHour, now.Add(MaxLimitSkew), nil},
 		// A since older than the bound is moved up, and the reset is checked against the bounded since.
 		{"old since", RunLimit{Kind: LimitSevenDay, Since: at(-30 * 24 * h), ResetsAt: ptr(-25 * 24 * h)}, LimitSevenDay, now.Add(-MaxLimitReset), nil},
 		{"bad kind", RunLimit{Kind: "weekly", Since: at(0), ResetsAt: ptr(h)}, LimitUnknown, now, ptr(h)},

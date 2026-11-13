@@ -690,7 +690,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		}
 		// An end recorded as usage_limit stays so when a later report clears the limit.
 		nodeReason := rep.Reason
-		if sweep == nil && ended(rep.State) && (nextLimit.kind != "" && r.Desired != "stopped" || ended(r.Observed) && r.EndReason == EndUsageLimit) {
+		// The override applies to the report that ends the run; an end already recorded keeps its reason (only an end
+		// recorded as usage_limit is restored when a later report repeats the node's own reason).
+		if sweep == nil && ended(rep.State) && (!ended(r.Observed) && nextLimit.kind != "" && r.Desired != "stopped" || ended(r.Observed) && r.EndReason == EndUsageLimit) {
 			rep.Reason = EndUsageLimit
 		}
 		// A report that changes nothing (every hello re-reports the node's whole journal, ended runs included) writes
