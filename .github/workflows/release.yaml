@@ -115,7 +115,9 @@ jobs:
           go-version-file: go.mod
       - name: login timing
         # The wall-clock comparison of Hallpass HP-AUTH-005, alone on its runner without the race detector or coverage,
-        # as in ci.yaml (ADR-0071).
+        # as in ci.yaml (ADR-0071). 250 ms write-transaction guard on hosted runners, as in ci.yaml (ADR-0062).
+        env:
+          SM_TEST_TX_MAX: 250ms
         run: make test-login-timing
 
   fuzz:
@@ -129,6 +131,8 @@ jobs:
         with:
           go-version-file: go.mod
       - name: every Fuzz target for 10 s
+        env:
+          SM_TEST_TX_MAX: 250ms # write-transaction guard on hosted runners, as in ci.yaml (ADR-0062)
         run: make fuzz-smoke FUZZTIME=10s
 
   site:
