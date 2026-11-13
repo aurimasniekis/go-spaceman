@@ -1,4 +1,4 @@
-import type { QueryClient } from '@tanstack/react-query'
+import type { Query, QueryClient, QueryKey } from '@tanstack/react-query'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { keys } from './queries'
@@ -22,143 +22,196 @@ const ATTENTION = new Set(['space', 'run', 'node', 'task', 'human_action', 'even
 /** Listeners told of every change after the cache is invalidated (in-app notifications, SM-HUI-006). */
 export const changeListeners = new Set<(c: Change) => void>()
 
+/**
+ * How long invalidations are collected before they are applied. A node reconnecting or a busy space can produce
+ * hundreds of changes a second; each affected query is refetched once per window instead of once per change.
+ */
+export const INVALIDATE_WINDOW_MS = 250
+
+const pending = new WeakMap<QueryClient, { keys: Map<string, QueryKey>; timer: ReturnType<typeof setTimeout> }>()
+
+/** Queries with a fetch in flight that are invalidated again once it settles (refresh). */
+const recheck = new WeakSet<Query>()
+
+/**
+ * Invalidates the queries matching queryKey (every query without one) without restarting a fetch in flight
+ * (cancelRefetch: false): a stream of changes must never turn into a stream of requests. A fetch in flight may have
+ * read its data before the change, though, and its success would mark that data fresh; so such a query is invalidated
+ * once more when that fetch settles. That keeps at most one request per query in flight and loses no change.
+ */
+export function refresh(qc: QueryClient, queryKey?: QueryKey) {
+  const inFlight = qc.getQueryCache().findAll({ ...(queryKey ? { queryKey } : {}), fetchStatus: 'fetching' })
+  void qc.invalidateQueries(queryKey ? { queryKey } : undefined, { cancelRefetch: false })
+  for (const q of inFlight) {
+    const running = q.promise
+    if (!running || recheck.has(q)) continue
+    recheck.add(q)
+    void running
+      .catch(() => undefined)
+      .then(() => {
+        recheck.delete(q)
+        return qc.invalidateQueries({ queryKey: q.queryKey, exact: true }, { cancelRefetch: false })
+      })
+  }
+}
+
+/**
+ * Queues the invalidation of queryKey and applies the queued ones together at the end of the window, once per distinct
+ * key (refresh).
+ */
+export function invalidate(qc: QueryClient, queryKey: QueryKey) {
+  let p = pending.get(qc)
+  if (!p) {
+    const keys = new Map<string, QueryKey>()
+    p = {
+      keys,
+      timer: setTimeout(() => {
+        pending.delete(qc)
+        for (const k of keys.values()) refresh(qc, k)
+      }, INVALIDATE_WINDOW_MS),
+    }
+    pending.set(qc, p)
+  }
+  p.keys.set(JSON.stringify(queryKey), queryKey)
+}
+
 /** Invalidates the cached queries a change affects (SM-UI-006: pages update live, never by polling the resources). */
 export function applyChange(qc: QueryClient, c: Change) {
-  if (ATTENTION.has(c.resource_type)) void qc.invalidateQueries({ queryKey: ['attention'] })
+  if (ATTENTION.has(c.resource_type)) invalidate(qc, ['attention'])
   switch (c.resource_type) {
     case 'space':
-      void qc.invalidateQueries({ queryKey: keys.spaces })
-      void qc.invalidateQueries({ queryKey: keys.queue(c.resource_id) })
-      void qc.invalidateQueries({ queryKey: keys.space(c.resource_id) })
-      void qc.invalidateQueries({ queryKey: keys.spaceAccounts(c.resource_id) })
-      void qc.invalidateQueries({ queryKey: keys.restore })
-      void qc.invalidateQueries({ queryKey: keys.spaceRoles(c.resource_id) })
-      void qc.invalidateQueries({ queryKey: keys.spaceHumanTypes(c.resource_id) })
+      invalidate(qc, keys.spaces)
+      invalidate(qc, keys.queue(c.resource_id))
+      invalidate(qc, keys.space(c.resource_id))
+      invalidate(qc, keys.spaceAccounts(c.resource_id))
+      invalidate(qc, keys.restore)
+      invalidate(qc, keys.spaceRoles(c.resource_id))
+      invalidate(qc, keys.spaceHumanTypes(c.resource_id))
       break
     case 'harbor_pilot_connection':
-      void qc.invalidateQueries({ queryKey: keys.harborPilot })
-      void qc.invalidateQueries({ queryKey: ['space-harbor-pilot'] })
+      invalidate(qc, keys.harborPilot)
+      invalidate(qc, ['space-harbor-pilot'])
       break
     case 'space_harbor_pilot':
-      void qc.invalidateQueries({ queryKey: keys.spaceHarborPilot(c.resource_id) })
-      void qc.invalidateQueries({ queryKey: keys.harborPilot })
+      invalidate(qc, keys.spaceHarborPilot(c.resource_id))
+      invalidate(qc, keys.harborPilot)
       break
     case 'account':
-      void qc.invalidateQueries({ queryKey: keys.accounts })
-      void qc.invalidateQueries({ queryKey: ['space-accounts'] })
+      invalidate(qc, keys.accounts)
+      invalidate(qc, ['space-accounts'])
       break
     case 'run':
       if (c.space_id) {
-        void qc.invalidateQueries({ queryKey: keys.runs(c.space_id) })
-        void qc.invalidateQueries({ queryKey: keys.run(c.space_id, c.resource_id) })
-        void qc.invalidateQueries({ queryKey: ['usage', c.space_id] })
+        invalidate(qc, keys.runs(c.space_id))
+        invalidate(qc, keys.run(c.space_id, c.resource_id))
+        invalidate(qc, ['usage', c.space_id])
       }
       break
     case 'node':
-      void qc.invalidateQueries({ queryKey: keys.nodes })
-      void qc.invalidateQueries({ queryKey: keys.node(c.resource_id) })
+      invalidate(qc, keys.nodes)
+      invalidate(qc, keys.node(c.resource_id))
       break
     case 'inbox_item':
       if (c.space_id) {
-        void qc.invalidateQueries({ queryKey: keys.inbox(c.space_id) })
-        void qc.invalidateQueries({ queryKey: keys.inboxItem(c.space_id, c.resource_id) })
+        invalidate(qc, keys.inbox(c.space_id))
+        invalidate(qc, keys.inboxItem(c.space_id, c.resource_id))
       }
       break
     case 'event_subscription':
       if (c.space_id) {
-        void qc.invalidateQueries({ queryKey: keys.subscriptions(c.space_id) })
-        void qc.invalidateQueries({ queryKey: keys.subscription(c.space_id, c.resource_id) })
+        invalidate(qc, keys.subscriptions(c.space_id))
+        invalidate(qc, keys.subscription(c.space_id, c.resource_id))
       }
       break
     case 'task':
-      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.queue(c.space_id) })
+      if (c.space_id) invalidate(qc, keys.queue(c.space_id))
       break
     case 'message':
-      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.messages(c.space_id) })
+      if (c.space_id) invalidate(qc, keys.messages(c.space_id))
       break
     case 'prompt':
-      void qc.invalidateQueries({ queryKey: keys.prompts })
-      void qc.invalidateQueries({ queryKey: keys.prompt(c.resource_id) })
+      invalidate(qc, keys.prompts)
+      invalidate(qc, keys.prompt(c.resource_id))
       break
     case 'profile':
-      void qc.invalidateQueries({ queryKey: keys.profiles })
+      invalidate(qc, keys.profiles)
       break
     case 'dream':
-      void qc.invalidateQueries({ queryKey: ['dreams'] })
+      invalidate(qc, ['dreams'])
       break
     case 'kb':
-      void qc.invalidateQueries({ queryKey: ['kbs'] })
+      invalidate(qc, ['kbs'])
       break
     case 'memory':
-      void qc.invalidateQueries({ queryKey: ['memory'] })
+      invalidate(qc, ['memory'])
       break
     case 'relocation':
       if (c.space_id) {
-        void qc.invalidateQueries({ queryKey: keys.relocation(c.space_id) })
-        void qc.invalidateQueries({ queryKey: keys.space(c.space_id) })
+        invalidate(qc, keys.relocation(c.space_id))
+        invalidate(qc, keys.space(c.space_id))
       }
       break
     case 'approval':
-      void qc.invalidateQueries({ queryKey: ['approval'] })
+      invalidate(qc, ['approval'])
       break
     case 'approval_policy':
-      void qc.invalidateQueries({ queryKey: keys.approvalPolicies })
+      invalidate(qc, keys.approvalPolicies)
       break
     case 'mcp_server':
-      void qc.invalidateQueries({ queryKey: keys.mcpServers })
-      void qc.invalidateQueries({ queryKey: ['mcp-grants'] })
-      void qc.invalidateQueries({ queryKey: ['space-mcp'] })
+      invalidate(qc, keys.mcpServers)
+      invalidate(qc, ['mcp-grants'])
+      invalidate(qc, ['space-mcp'])
       break
     case 'skill':
-      void qc.invalidateQueries({ queryKey: keys.skills })
+      invalidate(qc, keys.skills)
       break
     case 'human_type':
-      void qc.invalidateQueries({ queryKey: keys.humanTypes })
-      void qc.invalidateQueries({ queryKey: ['space-human-types'] })
+      invalidate(qc, keys.humanTypes)
+      invalidate(qc, ['space-human-types'])
       break
     case 'role_template':
-      void qc.invalidateQueries({ queryKey: keys.roleTemplates })
+      invalidate(qc, keys.roleTemplates)
       break
     case 'human_policy':
-      void qc.invalidateQueries({ queryKey: ['human-policies'] })
+      invalidate(qc, ['human-policies'])
       break
     case 'human_action':
-      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.human(c.space_id) })
-      void qc.invalidateQueries({ queryKey: keys.humanPending })
-      void qc.invalidateQueries({ queryKey: ['human', 'search'] })
+      if (c.space_id) invalidate(qc, keys.human(c.space_id))
+      invalidate(qc, keys.humanPending)
+      invalidate(qc, ['human', 'search'])
       break
     case 'user':
-      void qc.invalidateQueries({ queryKey: keys.users })
+      invalidate(qc, keys.users)
       break
     case 'token':
-      void qc.invalidateQueries({ queryKey: ['tokens'] })
+      invalidate(qc, ['tokens'])
       break
     case 'backup':
-      void qc.invalidateQueries({ queryKey: keys.backups })
+      invalidate(qc, keys.backups)
       break
     case 'restore':
-      void qc.invalidateQueries({ queryKey: keys.restore })
+      invalidate(qc, keys.restore)
       break
     case 'space_limits':
-      void qc.invalidateQueries({ queryKey: keys.limits(c.resource_id) })
+      invalidate(qc, keys.limits(c.resource_id))
       break
     case 'schedule':
-      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.schedules(c.space_id) })
+      if (c.space_id) invalidate(qc, keys.schedules(c.space_id))
       break
     case 'space_repository':
     case 'space_repository_status':
-      if (c.space_id) void qc.invalidateQueries({ queryKey: keys.repositories(c.space_id) })
+      if (c.space_id) invalidate(qc, keys.repositories(c.space_id))
       break
     case 'xspace_request':
-      void qc.invalidateQueries({ queryKey: ['xspace-requests'] })
-      void qc.invalidateQueries({ queryKey: keys.xspaceAll })
+      invalidate(qc, ['xspace-requests'])
+      invalidate(qc, keys.xspaceAll)
       break
     case 'xspace_peer':
-      void qc.invalidateQueries({ queryKey: ['xspace-peers'] })
-      void qc.invalidateQueries({ queryKey: keys.xspaceAll })
+      invalidate(qc, ['xspace-peers'])
+      invalidate(qc, keys.xspaceAll)
       break
     case 'xspace_settings':
-      void qc.invalidateQueries({ queryKey: ['xspace-settings'] })
+      invalidate(qc, ['xspace-settings'])
       break
     default:
       break
@@ -186,8 +239,10 @@ export function retryDelay(attempt: number, rand: number = Math.random()): numbe
 }
 
 /**
- * Subscribes to the durable change feed (GET /api/v1/watch, Server-Sent Events). EventSource reconnects by itself and
- * resumes with Last-Event-ID; a "gap" (the position was pruned) refetches everything. When the server ends the stream
+ * Subscribes to the durable change feed (GET /api/v1/watch, Server-Sent Events). A tab without a position starts live
+ * (?live=1: no replay of the retained history), learns its position from the stream's first event and refreshes its
+ * active queries once. EventSource reconnects by itself and resumes with Last-Event-ID; a "gap" (the position was
+ * pruned) refetches everything. Changes invalidate the queries they affect through invalidate (batched). When the server ends the stream
  * because its session is no longer valid (SM-AUTH-007), the session is re-checked: a session that is gone goes to
  * sign-in, a rotated one reconnects (at once the first time; repeated quick ends back off like a closed stream).
  *
@@ -265,7 +320,9 @@ export function useWatch(enabled: boolean): WatchState {
         })
       }
       const connect = () => {
-        const src = new EventSource(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : ''}`)
+        // Without a position yet (this tab has just loaded its data) the stream starts at the newest change instead of
+        // replaying the retained history, which can be thousands of changes, each an invalidation.
+        const src = new EventSource(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : '?live=1'}`)
         es = src
         src.onopen = () => {
           attempt = 0
@@ -287,8 +344,15 @@ export function useWatch(enabled: boolean): WatchState {
             // A malformed event is ignored; the next list refetch is authoritative.
           }
         })
+        // A live stream's first event: where the feed is now. Whatever changed between this tab loading its data and
+        // that position is caught by refreshing the active queries once.
+        src.addEventListener('position', (ev) => {
+          const seq = Number((ev as MessageEvent<string>).lastEventId) || 0
+          if (seq > 0) last.current = Math.max(last.current, seq)
+          refresh(qc)
+        })
         src.addEventListener('gap', () => {
-          void qc.invalidateQueries()
+          refresh(qc)
           bc?.postMessage({ t: 'gap' } satisfies Relay)
         })
         src.addEventListener('end', (ev) => {
@@ -344,7 +408,7 @@ export function useWatch(enabled: boolean): WatchState {
       }
       if (leading) return
       if (m.t === 'change') deliver(m.c, m.seq)
-      else if (m.t === 'gap') void qc.invalidateQueries()
+      else if (m.t === 'gap') refresh(qc)
       else show(m.s)
     }
     const stop = new AbortController()

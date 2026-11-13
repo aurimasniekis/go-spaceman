@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `GET /api/v1/watch?live=1` starts the change feed at the newest change, without replaying the retained history, and
+  sends a first `position` event with that change's ID.
+
+### Changed
+
+- **API:** run lists (`GET /api/v1/spaces/{space_id}/runs`, `spaceman run list`) no longer return each run's
+  `manifest`, `launch.prompt` or `launch.system`. Those hold the run's resolved prompts, which made a list of 200 runs
+  megabytes, and the web UI refetches lists whenever a run changes. Ask for them with `include=manifest`,
+  `include=prompt` or both (`--include` in the CLI). Getting a single run still returns everything.
+- **API:** a run's `observed_at` is now when its node last reported a *change* to it. A report that changes nothing,
+  such as every hello re-reporting the node's runs, no longer moves it.
+
 ### Security
 
 - A password change or reset could be undone by a concurrent login that upgraded the old password's hash. The upgrade
@@ -14,6 +28,26 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Nodes could lose their connection to central every 15 s, while central's memory grew to gigabytes, after central
+  restarted with a web UI tab open. Every reconnect re-reports every run in the node's journal. Central stored each
+  report as a run change even when nothing had changed, and each change made every open tab refetch that space's runs
+  list. Superseded requests were never aborted, so a tab could hold hundreds of them open without reading them. Central
+  kept every response, and the memory pressure starved the nodes' connections, which reconnected and started over.
+  - A run report that changes nothing now writes nothing and emits no change. A node of 2500 runs reconnects in under
+    a second instead of 9 s, with no change entries instead of 2500.
+  - The web UI applies change-feed refetches at most once per 250 ms per query, keeps a fetch in flight instead of
+    restarting it, and aborts requests nobody waits for any more.
+  - Central disconnects a client that stops reading its response: each 32 KiB of a response must reach the client
+    within `http.write_idle_timeout` (default 1m). Slow transfers that keep moving are unaffected.
+  - Central stops applying a hello once that connection has ended.
+- Opening a web UI tab replayed the whole retained change feed and refetched the affected queries once per change:
+  with 60 space and 60 human-action changes in the history, opening the inbox made 318 API requests. It now makes 21.
+  - A new tab opens the change feed live (`GET /api/v1/watch?live=1`): from the newest change, with a first `position`
+    event, instead of replaying the history. It refreshes its open queries once.
+  - Cached data is fresh for 60 s instead of 5 s, since the change feed invalidates what changes. Every request the
+    UI makes for a query can be aborted.
+- Central no longer logs `superfluous response.WriteHeader call` when a handler writes an error after the client
+  aborted the response.
 - Break-glass recovery with a new administrator, and a login that replaces a password hash made with older
   parameters, no longer run Argon2id while holding the database write lock. They hash first and only store the
   result in the transaction.

@@ -299,3 +299,20 @@ describe('useWatch (leading tab)', () => {
     expect(FakeEventSource.all).toHaveLength(1)
   })
 })
+
+describe('useWatch (a fresh tab)', () => {
+  it('starts live instead of replaying the history, resumes from the position and refreshes its queries once', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    renderHook(() => useWatch(true), { wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider> })
+    expect(latest().url).toBe('/api/v1/watch?live=1')
+    act(() => latest().open())
+    act(() => latest().emit('position', '{"seq":4200}', '4200'))
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    expect(invalidate).toHaveBeenCalledWith(undefined, { cancelRefetch: false })
+
+    act(() => latest().fail())
+    await tick(1000)
+    expect(latest().url).toBe('/api/v1/watch?after=4200')
+  })
+})

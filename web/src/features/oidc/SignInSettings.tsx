@@ -15,7 +15,7 @@ export const signInSettingsKey = ['oidc-sign-in-settings'] as const
  * sign-in page continues to.
  */
 export function SignInSettingsCard({ providers }: { providers: OidcProvider[] }) {
-  const settings = useQuery({ queryKey: signInSettingsKey, queryFn: async () => unwrap(await api.GET('/oidc/settings')) })
+  const settings = useQuery({ queryKey: signInSettingsKey, queryFn: async ({ signal }) => unwrap(await api.GET('/oidc/settings', { signal })) })
   return (
     <Card>
       <Stack gap="sm">

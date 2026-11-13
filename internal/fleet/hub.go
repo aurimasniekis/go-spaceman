@@ -439,6 +439,13 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	// Reconcile before anything new is sent: the node's observations update central first (SM-NODE-009).
 	applied := true
 	for _, rep := range hello.Runs {
+		// A connection that ended stops here: every report is its own transaction and the next hello reports them all
+		// again, so what is left is applied then.
+		select {
+		case <-s.done:
+			return net.ErrClosed
+		default:
+		}
 		if _, err := svc.applyReport(ctx, s.nodeID, rep); err != nil {
 			applied = false
 			s.log.Warn("apply hello report", obs.Err(err))

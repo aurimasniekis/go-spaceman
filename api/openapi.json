@@ -4647,6 +4647,7 @@
             "type": "string"
           },
           "prompt": {
+            "description": "Omitted from run lists unless include=prompt",
             "type": "string"
           },
           "settings": {
@@ -4656,6 +4657,7 @@
             "type": "object"
           },
           "system": {
+            "description": "Omitted from run lists unless include=prompt",
             "type": "string"
           },
           "workspace": {
@@ -5238,7 +5240,9 @@
           "launch": {
             "$ref": "#/components/schemas/FleetLaunchSpec"
           },
-          "manifest": {},
+          "manifest": {
+            "description": "Omitted from run lists unless include=manifest"
+          },
           "node_id": {
             "type": "string"
           },
@@ -5256,6 +5260,7 @@
             "type": "string"
           },
           "observed_at": {
+            "description": "When the node last reported a change to the run (a report that changes nothing, such as a reconnect re-reporting it, doesn't move it)",
             "format": "date-time",
             "type": "string"
           },
@@ -5323,8 +5328,7 @@
           "launch",
           "version",
           "created_at",
-          "created_by",
-          "manifest"
+          "created_by"
         ],
         "type": "object"
       },
@@ -28907,6 +28911,23 @@
               "maximum": 500,
               "minimum": 1,
               "type": "integer"
+            }
+          },
+          {
+            "description": "What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text",
+            "explode": false,
+            "in": "query",
+            "name": "include",
+            "schema": {
+              "description": "What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text",
+              "items": {
+                "enum": [
+                  "manifest",
+                  "prompt"
+                ],
+                "type": "string"
+              },
+              "type": "array"
             }
           }
         ],
