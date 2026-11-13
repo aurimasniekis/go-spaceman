@@ -191,6 +191,15 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-HARN-002 No native configuration or session leaks across spaces.
 - SM-HARN-003 Every harness advertises its capabilities explicitly (resume, native messaging, approval hooks, usage, transcripts).
 - SM-HARN-004 Native mechanisms (such as Claude SendMessage) are used only where the actual session topology supports them, integrated with the durable contract.
+- SM-HARN-005 **Managed Claude Code versions.** A node resolves the Claude Code version for each run: the profile's pin, else the
+  node's channel, else `latest`. A pin is honoured exactly or the launch fails; it never silently runs another version. Runs start
+  the resolved binary by absolute path with Claude Code's self-updates off (ADR-0077).
+- SM-HARN-006 **Verified binary cache.** Claude Code is downloaded only from the release host or an operator-configured HTTPS
+  mirror, accepted only when its SHA-256 and size match the version's manifest, and kept in an immutable per-version cache whose
+  garbage collection never removes a version a pin or a live run uses.
+- SM-HARN-007 **Per-run harness version.** Every run records the harness version it actually ran and the version it requested.
+- SM-HARN-008 **Current node versions.** A node reports its harness versions and cache again whenever they change and periodically,
+  not only when it connects.
 
 ### SM-RUN — Runner adapter
 - SM-RUN-001 Start, inspect, attach, read, input, resize, stop, kill, process identity, attachment recovery, stream continuity and gap reporting.

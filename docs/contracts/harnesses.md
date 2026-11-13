@@ -340,6 +340,91 @@ key (in `config.toml` or as `-c profile=…`) fails at start: "legacy `profile =
 the adapter, unit-tested only); a Claude Code project `.claude/settings.json` in the working directory that sets `env`
 (not checked by SpaceMan: LIMITATIONS).
 
+## Claude Code distribution (ADR-0077, 2026-11-12/13)
+
+Evidence for node-managed Claude Code versions (ADR-0077, Proposed). **Labels:** **live** = observed over HTTP or by
+running the binary on the date given; **binary** = read from Claude Code 2.1.317's strings, not exercised.
+
+### Release metadata
+
+Base `https://downloads.claude.ai/claude-code-releases`, the same base compiled into Claude Code 2.1.317 (**binary**).
+Fetched 2026-11-12 (**live**); the pointers were re-read on 2026-11-13.
+
+| Path | Result | Notes |
+|---|---|---|
+| `/latest` | plain-text version: `2.1.322` on 2026-11-12, `2.1.323` on 2026-11-13 | `cache-control: public,no-cache,max-age=0`, `last-modified` set (**live**) |
+| `/stable` | `2.1.311` (both days) | **live** |
+| `/rc` | 404 | Settings accept `rc` (**binary**), but the pointer doesn't exist (**live**) |
+| `/<v>/manifest.json` | 200, 2101 B for 2.1.322 | `{version, manifestSignatureEnforcement: "flag", commit, buildDate, sdkCompat, platforms}` (**live**) |
+| `platforms` keys | `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `linux-arm64-musl`, `linux-x64-musl`, `win32-x64`, `win32-arm64` | **live** |
+| `platforms.linux-x64` | `{binary: "claude", checksum: <64 hex>, size: <bytes>}` | 2.1.322: 341914128 B; 2.1.317: 331362672 B. `checksum` is the binary's SHA-256: the updater hashes with `sha256` and compares (**binary**); the spike's downloads matched it (**live**, below) |
+| `/<v>/<platform>/<binary>` | `HEAD` 200, `content-length` equals the manifest size | Also object-store `x-goog-hash` (md5, crc32c) and an `etag` (**live**) |
+| `/<v>/manifest.json.raw-sig.json` | 200, 836 B | `{schema: 1, algorithm: "RSASSA-PKCS1-v1_5-SHA512", signature, publicKeySha256}` (**live**) |
+| `/<v>/manifest.json.sig` | 200, 833 B, `application/pgp-signature` | ASCII-armored detached PGP signature (**live**) |
+| `/2.1.317/manifest.json`, `/2.1.311/manifest.json.raw-sig.json` | 200 | Older versions stay available, so a pin can revert (**live**) |
+
+**How Claude Code's updater verifies (binary):** it checks the raw-sig sidecar against a public key compiled into the
+binary (the signature covers a fixed prefix followed by the manifest bytes, and `publicKeySha256` must match the key);
+requires the manifest's `version` to equal the requested version; streams the download through SHA-256, compares it
+with `checksum` and bounds the size by the manifest. `manifestSignatureEnforcement: "flag"` makes the signature check
+depend on a server-side flag. The key and the signed prefix are not documented publicly, so SpaceMan verifies only
+SHA-256 and size (ADR-0077, K-14).
+
+**Updater switches (binary, 2.1.317):** the updater checks `DISABLE_UPDATES`, then `DISABLE_AUTOUPDATER`, then
+configuration. `DISABLE_UPDATES` also turns `claude update` into "Updates are disabled by your administrator".
+`requiredMinimumVersion`/`requiredMaximumVersion` are enforced only from managed (policy) settings; they refuse to
+start and never select a version.
+
+### Spike (2026-11-13, live)
+
+**Setup.**
+- Claude Code **2.1.322** and **2.1.317** for `linux-x64`, downloaded into a private temporary directory (umask 077)
+  as `<tmp>/claude-code/<v>/claude`. Each matched its manifest's SHA-256 and size. They were deleted afterwards, with
+  every temporary `HOME`; the node's installed Claude Code and settings were not touched.
+- Every run used `env -i` with a fresh `HOME` (umask 077), `PATH=/usr/bin:/bin` (no `~/.local/bin`), and
+  `ANTHROPIC_BASE_URL` pointing to a local fake Messages API with a dummy `ANTHROPIC_AUTH_TOKEN`, so **no real model
+  was called and no credential was used**. `--model claude-haiku-5-5` was passed throughout. `latest` was `2.1.323`
+  during the spike, so 2.1.322 had an update to find.
+- Interactive runs were started in an isolated tmux server (`tmux -L <name> -f /dev/null`) with the ADR-0021
+  `.claude.json` seed, left at the prompt for 45–60 s with nothing typed, and then killed.
+- Print mode (`-p`) **never** started the updater, even without `DISABLE_AUTOUPDATER` (2.1.322: no
+  `~/.local/share/claude`, no `~/.local/bin/claude`). So (a) and (b) were checked interactively, the way SpaceMan runs
+  Claude Code, with no model call; (c) in print mode.
+
+**(a) `DISABLE_AUTOUPDATER=1` stops the download: confirmed on 2.1.322.**
+
+| 2.1.322, interactive, fresh `HOME` | `~/.local` after 45–60 s | `.claude.json` | Status line |
+|---|---|---|---|
+| no variable (baseline) | `share/claude/versions/2.1.323` and `bin/claude` → it, 346 MB; `.last-update-result.json`: `{path: "native", outcome: "success", version_from: "2.1.322", version_to: "2.1.323"}` | `installMethod: "native"`, `autoUpdates: false`, `autoUpdatesProtectedForNative: true` | "✔ Update installed · Restart to update" |
+| `DISABLE_AUTOUPDATER=1` | nothing of Claude Code's (4 KB, no `share/claude`, no `bin/claude`) | no `installMethod`, no `autoUpdates` | no update notice |
+| `DISABLE_UPDATES=1` | the same as `DISABLE_AUTOUPDATER=1` | the same | no update notice |
+
+`claude update` (2.1.322, non-interactive, fresh `HOME`):
+- with `DISABLE_AUTOUPDATER=1` it still updated: "Installation method set to: native", "Successfully updated from
+  2.1.322 to version 2.1.323", leaving `~/.local/share/claude/versions/2.1.323` and `~/.local/bin/claude`;
+- with `DISABLE_UPDATES=1` it refused: "Updates are disabled by your administrator. Contact your IT team to get the
+  latest version." Nothing was written.
+
+So `DISABLE_AUTOUPDATER` covers only the background updater. ADR-0077 sets both variables.
+
+**(b) A binary outside `~/.local/bin` is not relocated: confirmed on 2.1.322, with the updater off.**
+- With `DISABLE_AUTOUPDATER=1` (or `DISABLE_UPDATES=1`), `<tmp>/claude-code/2.1.322/claude` ran from where it was:
+  no `~/.local/bin/claude`, no `installMethod` written, no migration notice.
+- With the updater on (baseline above), the native-installer migration **did** run for this binary: it set
+  `installMethod: "native"` and installed the *new* version into `~/.local`, but it didn't move or change the launched
+  binary (its SHA-256 still matched the manifest afterwards, and it stayed in place).
+- So the absolute-path launch is safe only together with the updater variables, which ADR-0077 always sets.
+
+**(c) `--resume` across versions: works from 2.1.317 to 2.1.322 (print mode).**
+- 2.1.317 `-p "Remember the code word …" --session-id <uuid>`, then 2.1.322 `-p "What was the code word?" --resume
+  <uuid>`, in the same `HOME`; both exited 0.
+- 2.1.322's request carried the earlier turns: 5 `messages[]` entries (roles `user, system, assistant, user, system`)
+  including the code word, against 2 in the first request.
+- One transcript file held both: entries with `version: "2.1.317"` (the first turn), then `version: "2.1.322"`
+  (the resumed turn).
+- Not checked: an interactive `--resume`, a real model's answer (the fake API replied with fixed text), a newer
+  version resuming a session with tool calls, or going back to an older version.
+
 ## Capability advertisement (initial, conservative)
 | Capability | Claude Code | Codex |
 |---|---|---|
