@@ -134,13 +134,13 @@ The node resolves, downloads, verifies and launches Claude Code itself: the prof
 | CC-4 | Protocol minor 11, migration 0048, profile `harness_version` through API, web and Terraform, run-row version, manifest change | SM-HARN-005, SM-HARN-007 | todo |
 | CC-5 | Periodic `node.capabilities` and the node UI for cached and resolved versions | SM-HARN-008 | implemented (simulated); branch `feat/cc-rereport`, stacked on #43 |
 
-### UL — Usage limits (operator answers 2026-11-13, all defaults; ADR-0078, Proposed)
+### UL — Usage limits (operator answers 2026-11-13, all defaults; ADR-0079, Proposed)
 Runs that reach a Claude usage limit are kept alive or parked and resumed with their session; the account is held until
 the reset. One PR per WP; protocol minor 12, central migration 0050, agent migration 0008.
 
 | WP | Scope | Requirements | Status |
 |---|---|---|---|
-| UL-1 | ADR-0078, contracts (`harnesses.md` "Claude Code usage limits" for 2.1.317–2.1.323; `harbor-pilot.md` quota board and the all-exhausted 429 for v0.1.6), SM-RUN-004..006, K-15, K-16 | SM-RUN-004..006 (design) | implemented (docs); transcripts read and live checks against a fake API and HP `serve --demo` 2026-11-13 |
+| UL-1 | ADR-0079, contracts (`harnesses.md` "Claude Code usage limits" for 2.1.317–2.1.323; `harbor-pilot.md` quota board and the all-exhausted 429 for v0.1.6), SM-RUN-004..006, K-15, K-16 | SM-RUN-004..006 (design) | implemented (docs); transcripts read and live checks against a fake API and HP `serve --demo` 2026-11-13 |
 | UL-2 | Migration 0050, agent migration 0008, `proto.RunLimit`, minor 12 | SM-RUN-004..006 | todo |
 | UL-3 | Node detection: offset tail scan on idle/error/end, fake-harness limit behaviour | SM-RUN-006 | todo |
 | UL-4 | Central ingest, `usage_limits`, run `limit`, `end_reason usage_limit`, events, read endpoints | SM-RUN-004, SM-RUN-006 | todo |
@@ -151,7 +151,7 @@ the reset. One PR per WP; protocol minor 12, central migration 0050, agent migra
 | UL-9 | Long-wait human action, `usage_limit` space settings | SM-RUN-006 | todo |
 | UL-10 | Web: run badge, Limits page section and actions | SM-RUN-004 | todo |
 | UL-11 | Terraform provider `usage_limit` attributes | SM-RUN-004 | todo |
-| UL-12 | Docs, LIMITATIONS, CHANGELOG, ADR-0078 Accepted | SM-RUN-004..006 | todo |
+| UL-12 | Docs, LIMITATIONS, CHANGELOG, ADR-0079 Accepted | SM-RUN-004..006 | todo |
 
 ## 2. Phase checklist (run at the start and end of each WP)
 

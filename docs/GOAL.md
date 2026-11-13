@@ -206,12 +206,12 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-RUN-002 Uses only verified herdr-core APIs. Never screen-text heuristics for agent status.
 - SM-RUN-003 Managed worker creation goes only through SpaceMan.
 - SM-RUN-004 **A usage limit never loses a run's session.** When a run reaches its account's usage limit, SpaceMan keeps it alive
-  until the reset or parks it and resumes the same session after the reset; it never treats the limit as a failure (ADR-0078).
+  until the reset or parks it and resumes the same session after the reset; it never treats the limit as a failure (ADR-0079).
 - SM-RUN-005 **No launch into a known exhausted account.** While an account has an open usage limit, launches and resumes on it
-  are refused with the reset time, unless the space opted into failover to another bound account (ADR-0078).
+  are refused with the reset time, unless the space opted into failover to another bound account (ADR-0079).
 - SM-RUN-006 **Usage-limit status from typed records only.** Limits are detected from typed transcript fields, never from screen
   or display text; a run's limit report can hold its account for at most 8 days, and control and people are told once per
-  account window (ADR-0078).
+  account window (ADR-0079).
 
 ### SM-INBOX — Inbox
 - SM-INBOX-001 Accepts operator text and JSON, worker messages, routed human responses, dreamer findings, KB messages, cross-space requests,

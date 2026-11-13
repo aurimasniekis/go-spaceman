@@ -205,7 +205,7 @@ Handler: `internal/quota/quotaapi/quotaapi.go:208` (v0.1.4: `:214`). It needs an
   expired one-time budget does not refuse a mint. **live**: with only a scheduled, an expired and a disabled used-up
   budget on the project, the dispatch mint with `check_budget` succeeded.
 
-## Quota board and the all-exhausted 429 (v0.1.6, for ADR-0078)
+## Quota board and the all-exhausted 429 (v0.1.6, for ADR-0079)
 Read in the source of **v0.1.6** (commit `b04bbbb592a3408c42062597ced1bd819d2a4e63`; the files and lines cited are the
 same in v0.1.4 unless noted) and checked **live** on 2026-11-13 against a v0.1.6 binary (`go install …@v0.1.6` with
 the release's version flags) running `serve --demo` on loopback, deleted afterwards. The board exists with the same

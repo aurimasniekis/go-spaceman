@@ -427,7 +427,7 @@ So `DISABLE_AUTOUPDATER` covers only the background updater. ADR-0077 sets both 
 
 ## Claude Code usage limits (2.1.317–2.1.323, 2026-11-13)
 
-Evidence for ADR-0078 (usage limits). **Labels:**
+Evidence for ADR-0079 (usage limits). **Labels:**
 - **transcripts**: observed in Claude Code's own transcripts on a SpaceMan node: 343 files under the spaces'
   `instances/<ins>/claude/projects/<proj>/*.jsonl`, written by Claude Code 2.1.317, 2.1.319, 2.1.321, 2.1.322 and
   2.1.323 between 2026-11-07 and 2026-11-13, scanned read-only with `python3 -I`. The transcripts are private and not
@@ -550,7 +550,7 @@ auto-continue never fired (see the next sentence). Typed input that arrived **af
 binary lists `ctrl_c` as a cancel); auto-continue across a node agent restart that adopts the process (the process keeps
 running in herdr-core, so the timer should survive); the `seven_day_opus` and `seven_day_sonnet` kinds; the TUI layout.
 Auto-continue arms only on a real claude.ai limit, which can't be forced, so these stay unverified until a live limit
-is observed on a SpaceMan run (T3's agent restart test covers the adoption path with the fake harness; ADR-0078 never
+is observed on a SpaceMan run (T3's agent restart test covers the adoption path with the fake harness; ADR-0079 never
 interrupts a keep-alive run, and T7's park ends the process, so neither depends on the answer).
 
 ### `--resume` with a different token (live, 2.1.323, fake API)
@@ -564,7 +564,7 @@ interrupts a keep-alive run, and T7's park ends the process, so neither depends 
   credential.
 - **Not verified:** two real claude.ai accounts (no second account on this node; `CLAUDE_CODE_OAUTH_TOKEN` was not
   used). With OAuth, Claude Code may record the account (`oauthAccount` in `.claude.json`) and the binary has an
-  `account_switch` cancel reason for auto-continue. ADR-0078 failover (off by default) is verified with real
+  `account_switch` cancel reason for auto-continue. ADR-0079 failover (off by default) is verified with real
   accounts before it is relied on (T6/T7).
 
 ### Gateway runs: Harbor Pilot's 429 (live, 2.1.323 against Harbor Pilot v0.1.6 `serve --demo`)
