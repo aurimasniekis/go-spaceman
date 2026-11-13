@@ -81,7 +81,7 @@ export function SpaceRolesCard({ spaceId }: { spaceId: string }) {
 
 function RolePreview({ spaceId, name }: { spaceId: string; name: string }) {
   const q = useQuery({ queryKey: ['role-preview', spaceId, name],
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/roles/{name}/preview', { params: { path: { space_id: spaceId, name } } })) })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/roles/{name}/preview', { params: { path: { space_id: spaceId, name } }, signal })) })
   if (q.error) return <ErrorAlert error={q.error} />
   if (!q.data) return null
   const p = q.data

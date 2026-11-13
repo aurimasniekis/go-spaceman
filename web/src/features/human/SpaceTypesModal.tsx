@@ -11,7 +11,7 @@ export function SpaceTypesModal({ spaceId, onClose }: { spaceId: string; onClose
   const qc = useQueryClient()
   const enabled = useSpaceHumanTypes(spaceId).data ?? []
   const options = useQuery({ queryKey: ['human-type-options', spaceId],
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-type-options', { params: { path: { space_id: spaceId } } })).items })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/human-type-options', { params: { path: { space_id: spaceId } }, signal })).items })
   const form = useForm({ defaultValues: { labels: {} as Record<string, string>, pins: {} as Record<string, string> } })
   const refresh = () => void qc.invalidateQueries({ queryKey: keys.spaceHumanTypes(spaceId) })
   const enable = async (typeId: string) => {

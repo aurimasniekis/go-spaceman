@@ -17,9 +17,12 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 - **Creates** accept an `Idempotency-Key` header (8-128 printable ASCII characters). A retry with the same key within 24 hours
   returns the original result; the same key with a different request is `409`.
 - **Lists** that can grow use cursor pagination (`cursor`, `limit`, `next_cursor`).
+- **Run lists** (`GET /api/v1/spaces/{space_id}/runs`) leave out each run's `manifest`, `launch.prompt` and `launch.system`;
+  ask for them with `include=manifest`, `include=prompt` or `include=manifest,prompt`. Getting one run returns everything.
 - **Spaces you cannot read** look exactly like missing ones (`404`).
 - **Live updates**: `GET /api/v1/watch` streams the durable change feed as Server-Sent Events (`change`, `gap`, `heartbeat`),
-  filtered by your permissions and resumable with `Last-Event-ID`.
+  filtered by your permissions and resumable with `Last-Event-ID` or `after=<seq>`. Without a position it replays every
+  retained change; `live=1` starts at the newest change instead, with a first `position` event carrying its ID.
 - **Terminals**: `GET /api/v1/spaces/{space_id}/runs/{run_id}/terminal` streams a run's recording as Server-Sent Events
   (stored records, then live ones); `…/recording/download` returns the zstd-compressed JSONL recording.
 - **Raw content** (outside the OpenAPI document, same authentication and permissions):

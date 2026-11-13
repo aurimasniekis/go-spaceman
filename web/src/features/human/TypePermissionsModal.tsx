@@ -21,7 +21,7 @@ const permKey = (spaceId: string) => ['human-type-permissions', spaceId] as cons
 export function TypePermissionsModal({ spaceId, canAdmin, onClose }: { spaceId: string; canAdmin: boolean; onClose: () => void }) {
   const qc = useQueryClient()
   const list = useQuery({ queryKey: permKey(spaceId),
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/human-type-permissions', { params: { path: { space_id: spaceId } } })).items })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/human-type-permissions', { params: { path: { space_id: spaceId } }, signal })).items })
   const custom = useSpaceHumanTypes(spaceId).data ?? []
   const [editing, setEditing] = useState<{ ref: string; label: string; current?: TypePermission } | null>(null)
   const stored = list.data ?? []

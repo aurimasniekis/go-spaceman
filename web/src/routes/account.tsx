@@ -142,8 +142,8 @@ function RecoveryCodes() {
 /** The bootstrap root token (SM-AUTH-010): metadata, rotation and revocation; never stored in the browser. */
 function RootToken() {
   const qc = useQueryClient()
-  const rt = useQuery({ queryKey: keys.rootToken, queryFn: async () => {
-    const res = await api.GET('/admin/root-token')
+  const rt = useQuery({ queryKey: keys.rootToken, queryFn: async ({ signal }) => {
+    const res = await api.GET('/admin/root-token', { signal })
     return res.response.status === 404 ? null : unwrap(res)
   } })
   const [secret, setSecret] = useState<string | null>(null)

@@ -49,3 +49,45 @@ func TestRecorder(t *testing.T) {
 		t.Errorf("status=%d flushed=%v", r.Status(), base.Flushed)
 	}
 }
+
+// countingWriter counts WriteHeader calls that reach the underlying writer (net/http logs each one after the first as
+// "superfluous response.WriteHeader call").
+type countingWriter struct {
+	http.ResponseWriter
+	headers []int
+}
+
+func (c *countingWriter) WriteHeader(code int) {
+	c.headers = append(c.headers, code)
+	c.ResponseWriter.WriteHeader(code)
+}
+
+// A handler that writes an error after the response started (a request the client aborted) must not reach the server
+// with a second WriteHeader; informational 1xx headers still pass before the final one.
+func TestRecorderDropsSuperfluousWriteHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(r *Recorder)
+		want  []int
+		code  int
+	}{
+		{"twice", func(r *Recorder) { r.WriteHeader(http.StatusOK); r.WriteHeader(http.StatusInternalServerError) }, []int{200}, 200},
+		{"after body", func(r *Recorder) { _, _ = r.Write([]byte("x")); r.WriteHeader(http.StatusInternalServerError) }, nil, 200},
+		{"after flush", func(r *Recorder) { r.Flush(); r.WriteHeader(http.StatusInternalServerError) }, nil, 200},
+		{"informational", func(r *Recorder) { r.WriteHeader(http.StatusEarlyHints); r.WriteHeader(http.StatusCreated) }, []int{103, 201}, 201},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &countingWriter{ResponseWriter: httptest.NewRecorder()}
+			r := New(c)
+			tc.write(r)
+			if len(c.headers) != len(tc.want) || r.Status() != tc.code {
+				t.Fatalf("headers %v status %d; want %v %d", c.headers, r.Status(), tc.want, tc.code)
+			}
+			for i := range tc.want {
+				if c.headers[i] != tc.want[i] {
+					t.Fatalf("headers %v; want %v", c.headers, tc.want)
+				}
+			}
+		})
+	}
+}

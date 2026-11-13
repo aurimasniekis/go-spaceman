@@ -15,7 +15,7 @@ export const exportURL = (spaceId: string) => `/api/v1/spaces/${encodeURICompone
 export function ExportModal({ spaceId, onClose }: { spaceId: string; onClose: () => void }) {
   const summary = useQuery({
     queryKey: ['spaces', spaceId, 'export-summary'],
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/export/summary', { params: { path: { space_id: spaceId } } })),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/export/summary', { params: { path: { space_id: spaceId } }, signal })),
   })
   const s = summary.data
   const count = (label: string, n: number) => (

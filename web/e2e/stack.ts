@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { openSync, writeFileSync } from 'node:fs'
+import { openSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { APIRequestContext, Page } from '@playwright/test'
@@ -28,6 +28,26 @@ export function startAgent(token: string) {
   const child = spawn(agent, ['-c', env('SM_AGENT_CONFIG'), 'run'], { env: agentEnv(), stdio: ['ignore', log, log], detached: true })
   child.unref()
   writeFileSync(join(env('SM_DIR'), 'agent.pid'), String(child.pid))
+}
+
+/** Stops the stack's running node agent and starts it again (already enrolled): the node reconnects and says hello. */
+export async function restartAgent() {
+  const pidFile = join(env('SM_DIR'), 'agent.pid')
+  const pid = Number(readFileSync(pidFile, 'utf8').trim())
+  process.kill(pid, 'SIGTERM')
+  for (let i = 0; i < 100; i++) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      break
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  const agent = join(env('SM_BIN'), 'spaceman-agent')
+  const log = openSync(join(env('SM_DIR'), 'agent.log'), 'a')
+  const child = spawn(agent, ['-c', env('SM_AGENT_CONFIG'), 'run'], { env: agentEnv(), stdio: ['ignore', log, log], detached: true })
+  child.unref()
+  writeFileSync(pidFile, String(child.pid))
 }
 
 /** Waits for the next 30-second TOTP step (a code is accepted once per step). */
