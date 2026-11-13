@@ -105,7 +105,7 @@ jobs:
           restore-keys: go-race-${{ runner.os }}-
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
-        # 290 ms); the write-transaction guard is still enforced by the non-race coverage job (250 ms there, ADR-0062).
+        # 290 ms). The non-race coverage job uses the same 1 s (ADR-0062, update 2026-11-13).
         # internal/app runs as its own invocation next to the other packages (scripts/race.sh); on a 4-vCPU runner its
         # cap stays 4, as before. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
@@ -134,11 +134,12 @@ jobs:
           key: go-coverage-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
           restore-keys: go-coverage-${{ runner.os }}-
       - name: coverage floor
-        # The write-transaction guard (Hallpass HP-DB-004) is 100 ms locally; GitHub's hosted runners are about 1.7x
-        # slower and exceeded it by up to 78 ms on unchanged code, so hosted CI uses 250 ms (ADR-0062).
+        # The write-transaction guard (Hallpass HP-DB-004) is 100 ms locally and 500 ms in the full gate. GitHub's
+        # shared hosted runners showed 260-750 ms holds in packages a PR didn't touch, so the hosted coverage job uses
+        # 1 s, as the race job does (ADR-0062, update 2026-11-13).
         env:
-          SM_TEST_TX_MAX: 250ms
-          # One package at a time, as before ADR-0069: more at once on a 4-core runner trips the 250 ms guard.
+          SM_TEST_TX_MAX: 1s
+          # One package at a time, as before ADR-0069: more at once on a 4-core runner adds lock-hold noise.
           COVERAGE_PARALLEL: "1"
         run: make coverage
 

@@ -57,7 +57,7 @@ exits, even when it's killed.
 
 ### When a release gate fails
 
-- **`write transaction "…" held the write lock for … (> 250ms, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
+- **`write transaction "…" held the write lock for … (> 1s, Hallpass HP-DB-004)` in the coverage step:** rerun the failed job once
   (`gh run rerun <run-id> --failed`). Hosted runners have noisy neighbours. If it fails again, or the same transaction
   shows up in several runs, treat it as a regression: run `make coverage` locally, where the limit is 100 ms, and move
   the slow work out of the transaction. Don't raise `SM_TEST_TX_MAX` to get a release through.

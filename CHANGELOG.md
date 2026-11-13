@@ -68,8 +68,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `~/.local/bin/claude`) now **stays on its current version**. Nothing updates it any more until you do one of these:
   set `harness.claude.manage: true`, update it with your own tooling, or set `harness.claude.self_update: true`.
 
-- CI's and the release workflow's login-timing and fuzz jobs use the same 250 ms write-transaction guard on GitHub's
-  hosted runners as the coverage job, instead of the 100 ms default (ADR-0062). The login-timing job failed on it
+- CI's and the release workflow's coverage step uses a 1 s write-transaction guard on GitHub's hosted runners, the
+  same as the race tests, instead of 250 ms (ADR-0062 update). Shared runners held the lock 260–750 ms in packages a
+  pull request didn't touch. Local runs keep 100 ms and `SM_TEST_TX_MAX=500ms make check` keeps 500 ms.
+- CI's and the release workflow's login-timing and fuzz jobs use a 250 ms write-transaction guard on GitHub's hosted
+  runners, instead of the 100 ms default (ADR-0062). The login-timing job failed on it
   while its timing check passed. Local runs keep 100 ms.
 
 ### Fixed
