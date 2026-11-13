@@ -404,10 +404,10 @@ in the release-prep PR description.
 ## 17. v0.1.3 (2026-11-13)
 
 v0.1.2 was deployed on 2026-11-13 and rolled back to v0.1.1 the same day: nodes lost their connection about 15 s after
-every connect while central's memory grew to gigabytes. v0.1.3 fixes that. The operator's authorization of the release is
-pending; once given, it is cut from `main` after PR #47 and PR #49 (the release-prep PR follows them), tagged `v0.1.3`,
-and the release workflow builds the archives, images and SBOMs into a draft release that the operator publishes. It
-still makes **no production-readiness claim**: §1's verdict stands.
+every connect while central's memory grew to gigabytes. v0.1.3 fixes that. The operator authorized the release on
+2026-11-13 at 19:30Z (publish on tag). It is cut from `main` after PR #47 and PR #49 (the release-prep PR follows them)
+and tagged `v0.1.3`; the release workflow builds the archives, images and SBOMs, and the release is published once
+the workflow is green. It still makes **no production-readiness claim**: §1's verdict stands.
 
 **Contents since v0.1.2:**
 - the incident fix (ADR-0078, PR #49): a node reconnect could trigger a refetch storm in open browser tabs that
