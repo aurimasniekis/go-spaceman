@@ -256,7 +256,7 @@ func (a *Agent) ship(ctx context.Context, runID, spaceID string, recs []recordin
 
 // shipChunkBytes bounds the records of one recording message, well inside proto.MaxMessage. A burst of output
 // (megabytes within one flush interval) used to go as one message; central closed the connection for a message over
-// MaxMessage, and the records in it were lost from its copy (ADR-0081).
+// MaxMessage, and the records in it were lost from its copy.
 const shipChunkBytes = 1 << 20
 
 // shipParts splits encoded records into runs of at most limit bytes each, in order; a record larger than limit goes
