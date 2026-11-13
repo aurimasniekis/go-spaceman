@@ -163,6 +163,9 @@ type Manager struct {
 	// GC and removals there).
 	hashes    atomic.Int64
 	afterHold func(Resolution)
+
+	// changed signals Changes' receiver that the cache or a channel target changed (buffered 1, never blocks).
+	changed chan struct{}
 }
 
 // New validates the options, creates the cache directory and loads the memoised channel pointers.
@@ -217,6 +220,7 @@ func New(o Options) (*Manager, error) {
 		dir: o.Dir, base: base, platform: o.Platform, keep: o.Keep, refresh: o.Refresh, timeout: o.DownloadTimeout,
 		client: client, log: o.Log, now: o.Now, ctx: ctx, cancel: cancel,
 		memo: map[string]memoEntry{}, inflight: map[string]*call{}, hashed: map[string]fingerprint{}, held: map[string]int{},
+		changed: make(chan struct{}, 1),
 	}
 	m.loadMemo()
 	return m, nil
@@ -430,6 +434,19 @@ func (m *Manager) Resolved() map[string]string {
 	return out
 }
 
+// Changes signals after the cached versions or a memoised channel target changed: a version was installed or removed,
+// or a channel resolved to another version than before. Signals coalesce (one is pending at most), so the receiver
+// reads the current state (Installed, ResolvedTargets) after each; a re-resolution to the same version is no change.
+func (m *Manager) Changes() <-chan struct{} { return m.changed }
+
+// notify signals Changes without blocking.
+func (m *Manager) notify() {
+	select {
+	case m.changed <- struct{}{}:
+	default:
+	}
+}
+
 // ResolvedTarget is a memoised channel target and when it was resolved.
 type ResolvedTarget struct {
 	Version    string
@@ -470,6 +487,9 @@ func (m *Manager) refreshChannel(ctx context.Context, channel string) (string, e
 	m.mu.Unlock()
 	if err := writeFileAtomic(filepath.Join(m.dir, memoFile), snapshot); err != nil {
 		m.log.Warn("claude code: could not persist channel pointers", slog.String("error", err.Error()))
+	}
+	if old.Version != v {
+		m.notify()
 	}
 	return v, nil
 }

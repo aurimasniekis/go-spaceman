@@ -38,3 +38,14 @@ type HarnessResolved struct {
 	Version    string    `json:"version"`
 	ResolvedAt time.Time `json:"resolved_at,omitzero"`
 }
+
+// NodeCapabilities (node.capabilities, minor ≥ 11) re-reports the node's full capability inventory between hellos:
+// when a node-managed harness's cache or channel targets change, and at least every NodeCapabilitiesInterval (ADR-0077).
+// Central replaces the node's stored capabilities with it, from the node's current connection only.
+type NodeCapabilities struct {
+	Capabilities Capabilities `json:"capabilities"`
+}
+
+// NodeCapabilitiesInterval is the longest a connected node goes without re-reporting its capabilities: every harness
+// is detected again on this timer, so an unmanaged binary updated outside SpaceMan is reported too.
+const NodeCapabilitiesInterval = 30 * time.Minute

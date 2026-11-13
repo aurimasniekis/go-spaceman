@@ -800,23 +800,24 @@ type MfaTotpPending struct {
 }
 
 type Node struct {
-	ID               string
-	Name             string
-	Description      string
-	State            string
-	LabelsJson       string
-	AgentVersion     string
-	ProtocolMinor    int64
-	CapabilitiesJson string
-	Capacity         int64
-	LastSeenAt       sql.NullInt64
-	LastConnectAt    sql.NullInt64
-	LastDisconnectAt sql.NullInt64
-	LastIp           string
-	Version          int64
-	CreatedAt        int64
-	CreatedBy        string
-	UpdatedAt        int64
+	ID                    string
+	Name                  string
+	Description           string
+	State                 string
+	LabelsJson            string
+	AgentVersion          string
+	ProtocolMinor         int64
+	CapabilitiesJson      string
+	Capacity              int64
+	LastSeenAt            sql.NullInt64
+	LastConnectAt         sql.NullInt64
+	LastDisconnectAt      sql.NullInt64
+	LastIp                string
+	Version               int64
+	CreatedAt             int64
+	CreatedBy             string
+	UpdatedAt             int64
+	CapabilitiesUpdatedAt sql.NullInt64
 }
 
 type NodeCommand struct {

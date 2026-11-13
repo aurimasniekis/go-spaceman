@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Current harness versions on nodes (SM-HARN-008, ADR-0077, node protocol 1.11, migration 0049). A connected node
+  sends its capabilities again (`node.capabilities`) when its Claude Code cache changes or a channel resolves to
+  another version, and at least every 30 minutes, detecting every harness again each time, so an unmanaged `claude`
+  updated by hand is reported too. Central stores the report from the node's current connection only, and the node
+  API gains `capabilities_updated_at`. A harness entry's `version` and `path` mean what a new run would get now. The
+  Nodes page opens a node's detail: per harness, managed or detected, the channel, the resolved `latest` and
+  `stable` with when they were resolved, the cached versions and the cache size, and when the node last reported,
+  with a stale badge after an hour. Older node agents keep reporting only when they connect. Operator guide:
+  "Versions on nodes".
 - Per-profile Claude Code version pins and per-run versions (ADR-0077, node protocol 1.11, migration 0048). A
   claude-code harness profile can set **Claude Code version** (`harness_version`): empty follows the node's channel,
   and `latest`, `stable` or an exact `X.Y.Z` override it. On a managed node an exact pin is downloaded when missing and

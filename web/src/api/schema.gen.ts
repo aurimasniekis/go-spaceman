@@ -6114,6 +6114,8 @@ export interface components {
             readonly $schema?: string;
             agent_version?: string;
             capabilities: components["schemas"]["ProtoCapabilities"];
+            /** Format: date-time */
+            capabilities_updated_at?: string;
             /** Format: int64 */
             capacity: number;
             connected: boolean;

@@ -727,6 +727,8 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			_ = s.send(proto.TypeRelocationData, svc.now(), svc.relocationFetch(context.WithoutCancel(ctx), s.nodeID, f))
 		}()
 		return nil
+	case proto.TypeNodeCapabilities:
+		return h.nodeCapabilities(ctx, s, env)
 	case proto.TypeTakeoverEnded:
 		var m proto.TakeoverEnded
 		if err := env.Decode(&m); err != nil {

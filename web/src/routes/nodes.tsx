@@ -1,4 +1,4 @@
-import { Badge, Button, Code, Group, Menu, Modal, Stack, Text, TextInput, Tooltip } from '@mantine/core'
+import { Badge, Button, Code, Drawer, Group, Menu, Modal, Stack, Text, TextInput, Tooltip } from '@mantine/core'
 import { IconDots, IconPlus } from '@tabler/icons-react'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
@@ -11,6 +11,7 @@ import { ErrorAlert, errorMessage } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { SecretModal } from '@/components/SecretModal'
 import { NodeState } from '@/components/StatusBadge'
+import { capabilitiesStale, NodeHarnesses } from '@/features/nodes/NodeHarnesses'
 import { hasGlobal } from '@/lib/access'
 import { ago, datetime, isSet } from '@/lib/format'
 import { fieldError } from '@/lib/form'
@@ -27,6 +28,8 @@ function NodesPage() {
   const admin = hasGlobal(me, 'admin')
   const [creating, setCreating] = useState(false)
   const [enrollment, setEnrollment] = useState<{ token: string; node: string; expires: string } | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const detail = nodes.data?.find((n) => n.id === selected)
 
   const reissue = async (n: Node) => {
     try {
@@ -52,6 +55,7 @@ function NodesPage() {
         actions={admin && <Button leftSection={<IconPlus size={14} />} onClick={() => setCreating(true)}>Add node</Button>} />
       <ErrorAlert error={nodes.error} />
       <DataTable view="nodes" data={nodes.data ?? []} getRowId={(n) => n.id} filterLabel="Filter nodes" caption="Nodes"
+        onRowClick={(n) => setSelected(n.id)} rowLabel={(n) => `Node ${n.name}`}
         defaultSort={[{ id: 'name', desc: false }]} empty="No nodes yet. Add one, then enroll spaceman-agent on it." columns={[
           {
             id: 'name', header: 'Name', accessorFn: (n) => n.name,
@@ -75,11 +79,12 @@ function NodesPage() {
             cell: ({ row: { original: n } }) => (
               <Group gap={4}>
                 {n.capabilities.harnesses.map((h) => (
-                  <Tooltip key={h.kind} label={h.available ? `${h.version} · ${h.capabilities.join(', ')}` : h.error || 'not available'}>
+                  <Tooltip key={h.kind} label={h.available ? `${h.version}${h.managed ? ` (managed, ${h.channel})` : ''} · ${h.capabilities.join(', ')}` : h.error || 'not available'}>
                     <Badge color={h.available ? 'owlBlue' : 'gray'} variant={h.available ? 'light' : 'outline'}>{h.kind}</Badge>
                   </Tooltip>
                 ))}
                 {n.capabilities.harnesses.length === 0 && <Text size="xs" c="dimmed">—</Text>}
+                {capabilitiesStale(n) && <Tooltip label="The last capability report is over an hour old"><Badge color="owlYellow" variant="light">stale</Badge></Tooltip>}
               </Group>
             ),
           },
@@ -90,21 +95,27 @@ function NodesPage() {
           ...(admin ? [{
             id: 'actions', header: '', enableSorting: false, size: 40,
             cell: ({ row: { original: n } }: { row: { original: Node } }) => (
-              <Menu position="bottom-end">
-                <Menu.Target><Button variant="subtle" size="compact-xs" aria-label={`Actions for ${n.name}`}><IconDots size={14} /></Button></Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Item onClick={() => void reissue(n)} disabled={n.state === 'revoked'}>New enrollment token</Menu.Item>
-                  {n.state === 'disabled' ? (
-                    <Menu.Item onClick={() => void setState(n, 'active')}>Enable</Menu.Item>
-                  ) : (
-                    <Menu.Item onClick={() => void setState(n, 'disabled')} disabled={n.state === 'revoked'}>Disable</Menu.Item>
-                  )}
-                  <Menu.Item color="owlRed" onClick={() => void setState(n, 'revoked')} disabled={n.state === 'revoked'}>Revoke credential</Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
+              // The menu (and its portal) sits inside the clickable row: keep its clicks and keys from opening the detail.
+              <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                <Menu position="bottom-end">
+                  <Menu.Target><Button variant="subtle" size="compact-xs" aria-label={`Actions for ${n.name}`}><IconDots size={14} /></Button></Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item onClick={() => void reissue(n)} disabled={n.state === 'revoked'}>New enrollment token</Menu.Item>
+                    {n.state === 'disabled' ? (
+                      <Menu.Item onClick={() => void setState(n, 'active')}>Enable</Menu.Item>
+                    ) : (
+                      <Menu.Item onClick={() => void setState(n, 'disabled')} disabled={n.state === 'revoked'}>Disable</Menu.Item>
+                    )}
+                    <Menu.Item color="owlRed" onClick={() => void setState(n, 'revoked')} disabled={n.state === 'revoked'}>Revoke credential</Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
+              </div>
             ),
           } satisfies ColumnDef<Node, unknown>] : []),
         ] satisfies ColumnDef<Node, unknown>[]} />
+      <Drawer opened={!!detail} onClose={() => setSelected(null)} position="right" size="lg" title={detail ? `Node ${detail.name}` : 'Node'}>
+        {detail && <NodeHarnesses node={detail} />}
+      </Drawer>
       <CreateNodeModal opened={creating} onClose={() => setCreating(false)} onCreated={(token, node, expires) => setEnrollment({ token, node, expires })} />
       <SecretModal title={`Enrollment token for ${enrollment?.node ?? ''}`} secret={enrollment?.token ?? null} onClose={() => setEnrollment(null)}>
         <Text size="sm">On the node, with <Code>central.url</Code> set in its configuration, run:</Text>

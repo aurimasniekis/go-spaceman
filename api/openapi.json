@@ -4799,6 +4799,10 @@
           "capabilities": {
             "$ref": "#/components/schemas/ProtoCapabilities"
           },
+          "capabilities_updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
           "capacity": {
             "format": "int64",
             "type": "integer"
