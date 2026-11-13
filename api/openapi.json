@@ -4647,6 +4647,7 @@
             "type": "string"
           },
           "prompt": {
+            "description": "Omitted from run lists unless include=prompt",
             "type": "string"
           },
           "settings": {
@@ -4656,6 +4657,7 @@
             "type": "object"
           },
           "system": {
+            "description": "Omitted from run lists unless include=prompt",
             "type": "string"
           },
           "workspace": {
@@ -28911,16 +28913,20 @@
             }
           },
           {
-            "description": "manifest: include each run's manifest, which is omitted from lists by default (GET the run for it)",
+            "description": "What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text",
             "explode": false,
             "in": "query",
             "name": "include",
             "schema": {
-              "description": "manifest: include each run's manifest, which is omitted from lists by default (GET the run for it)",
-              "enum": [
-                "manifest"
-              ],
-              "type": "string"
+              "description": "What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text",
+              "items": {
+                "enum": [
+                  "manifest",
+                  "prompt"
+                ],
+                "type": "string"
+              },
+              "type": "array"
             }
           }
         ],

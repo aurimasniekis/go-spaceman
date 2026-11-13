@@ -6060,10 +6060,12 @@ export interface components {
             account_ref?: string;
             gateway?: components["schemas"]["FleetGatewaySpec"];
             model?: string;
+            /** @description Omitted from run lists unless include=prompt */
             prompt?: string;
             settings?: {
                 [key: string]: string;
             };
+            /** @description Omitted from run lists unless include=prompt */
             system?: string;
             workspace?: string;
             worktree?: components["schemas"]["ProtoWorktree"];
@@ -18397,8 +18399,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
-                /** @description manifest: include each run's manifest, which is omitted from lists by default (GET the run for it) */
-                include?: "manifest";
+                /** @description What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text */
+                include?: ("manifest" | "prompt")[];
             };
             header?: never;
             path: {

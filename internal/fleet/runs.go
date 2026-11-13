@@ -71,8 +71,8 @@ type Run struct {
 
 // LaunchSpec is the non-secret launch description stored with the run.
 type LaunchSpec struct {
-	Prompt     string            `json:"prompt,omitempty"`
-	SystemText string            `json:"system,omitempty"`
+	Prompt     string            `json:"prompt,omitempty" doc:"Omitted from run lists unless include=prompt"`
+	SystemText string            `json:"system,omitempty" doc:"Omitted from run lists unless include=prompt"`
 	Model      string            `json:"model,omitempty"`
 	Settings   map[string]string `json:"settings,omitempty"`
 	Workspace  string            `json:"workspace,omitempty"`

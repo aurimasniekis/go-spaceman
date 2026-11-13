@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -248,8 +249,8 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				Limit   int    `query:"limit" minimum:"1" maximum:"500" default:"100"`
-				Include string `query:"include" enum:"manifest" doc:"manifest: include each run's manifest, which is omitted from lists by default (GET the run for it)"`
+				Limit   int      `query:"limit" minimum:"1" maximum:"500" default:"100"`
+				Include []string `query:"include" enum:"manifest,prompt" doc:"What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text"`
 			}) (*struct {
 				Body struct {
 					Items []*fleet.Run `json:"items"`
@@ -262,11 +263,15 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "runs.list", err)
 				}
-				// A manifest holds the run's resolved prompts and settings: a list of hundreds of them is large, and the UI
-				// refetches lists on every run change.
-				if in.Include != "manifest" {
-					for _, r := range rs {
+				// A run's manifest and launch prompt and system text hold its resolved prompts: a list of hundreds of them is
+				// megabytes, and the UI refetches lists on every run change.
+				manifest, prompt := slices.Contains(in.Include, "manifest"), slices.Contains(in.Include, "prompt")
+				for _, r := range rs {
+					if !manifest {
 						r.Manifest = nil
+					}
+					if !prompt {
+						r.Launch.Prompt, r.Launch.SystemText = "", ""
 					}
 				}
 				out := &struct {

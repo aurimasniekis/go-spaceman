@@ -156,8 +156,8 @@ func n2id(t *testing.T, e *fleetEnv) string {
 	return nodes[0].ID
 }
 
-// Run lists leave out each run's manifest (its resolved prompts and settings: large, and the UI refetches lists on every
-// run change) unless include=manifest asks for it; a single run always has it.
+// Run lists leave out each run's manifest and launch prompt and system text (its resolved prompts and settings: large,
+// and the UI refetches lists on every run change) unless include asks for them; a single run always has them.
 func TestRunListOmitsManifest(t *testing.T) {
 	t.Parallel()
 	e := newFleetEnv(t)
@@ -175,18 +175,29 @@ func TestRunListOmitsManifest(t *testing.T) {
 	var list struct {
 		Items []map[string]json.RawMessage `json:"items"`
 	}
+	launch := func(item map[string]json.RawMessage) map[string]any {
+		var l map[string]any
+		_ = json.Unmarshal(item["launch"], &l)
+		return l
+	}
 	call.want(tok, "GET", base, nil, 200, &list)
-	if len(list.Items) != 1 || list.Items[0]["manifest"] != nil || list.Items[0]["id"] == nil {
+	if len(list.Items) != 1 || list.Items[0]["manifest"] != nil || list.Items[0]["id"] == nil || launch(list.Items[0])["prompt"] != nil {
 		t.Fatalf("list %v", list.Items)
 	}
+	list.Items = nil
 	call.want(tok, "GET", base+"?include=manifest", nil, 200, &list)
-	if len(list.Items) != 1 || len(list.Items[0]["manifest"]) < 10 {
+	if len(list.Items) != 1 || len(list.Items[0]["manifest"]) < 10 || launch(list.Items[0])["prompt"] != nil {
 		t.Fatalf("list with manifests %v", list.Items)
+	}
+	list.Items = nil
+	call.want(tok, "GET", base+"?include=manifest,prompt", nil, 200, &list)
+	if len(list.Items) != 1 || len(list.Items[0]["manifest"]) < 10 || launch(list.Items[0])["prompt"] != "go" {
+		t.Fatalf("list with everything %v", list.Items)
 	}
 	call.want(tok, "GET", base+"?include=everything", nil, 422, nil)
 	var one map[string]json.RawMessage
 	call.want(tok, "GET", base+"/"+r.ID, nil, 200, &one)
-	if len(one["manifest"]) < 10 {
+	if len(one["manifest"]) < 10 || launch(one)["prompt"] != "go" {
 		t.Fatalf("run %v", one)
 	}
 }
