@@ -32,8 +32,9 @@ const (
 	// takeover.ended; SM-UI-004, ADR-0046); 7: repository SSH keys (ssh_key and known_hosts on repository sources,
 	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059); 9: gateway runs (the launch's gateway
 	// address and its child token in the secrets, delivered to the harness; ADR-0060); 10: run terminal sizes
-	// (terminal.sizes, ADR-0075)
-	MaxMinor = 10
+	// (terminal.sizes, ADR-0075); 11: harness versions (the profile's pin on launches, the launched version on run
+	// reports and node-managed harness details in capabilities, ADR-0077)
+	MaxMinor = 11
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -150,6 +151,15 @@ type HarnessInfo struct {
 	Available    bool     `json:"available"`
 	Error        string   `json:"error,omitempty"`
 	Capabilities []string `json:"capabilities"`
+	// Minor ≥ 11 (ADR-0077), node-managed harnesses only: Managed is set, Channel is the node's default (latest,
+	// stable or X.Y.Z), Resolved the memoised channel targets (latest, stable) with when they were resolved, Cached
+	// the verified cached versions (newest first) and CacheBytes their size on disk. Version and Path are then what a
+	// new run of the node's channel would get now.
+	Managed    bool                       `json:"managed,omitempty"`
+	Channel    string                     `json:"channel,omitempty"`
+	Resolved   map[string]HarnessResolved `json:"resolved,omitempty"`
+	Cached     []string                   `json:"cached,omitempty"`
+	CacheBytes int64                      `json:"cache_bytes,omitempty"`
 }
 
 // ToolInfo describes a tool binary.
@@ -300,23 +310,29 @@ const (
 
 // RunReport is the node's observation of a run (SM-NODE-005). It carries the lease generation the run belongs to.
 type RunReport struct {
-	RunID      string    `json:"run_id"`
-	SpaceID    string    `json:"space_id"`
-	Generation int64     `json:"generation"`
-	State      string    `json:"state"`
-	TerminalID string    `json:"terminal_id,omitempty"`
-	CoreID     string    `json:"core_id,omitempty"`
-	Identity   string    `json:"identity,omitempty"`
-	PID        int       `json:"pid,omitempty"`
-	ExitCode   *int      `json:"exit_code,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	Status     string    `json:"status,omitempty"` // program-reported (OSC 7501): idle, working, done, blocked, error
-	StatusKind string    `json:"status_kind,omitempty"`
-	Turn       uint64    `json:"turn,omitempty"`
-	SessionID  string    `json:"session_id,omitempty"` // harness conversation id when known
-	Adopted    bool      `json:"adopted,omitempty"`    // an existing process was adopted instead of launching
-	ObservedAt time.Time `json:"observed_at"`
+	RunID      string `json:"run_id"`
+	SpaceID    string `json:"space_id"`
+	Generation int64  `json:"generation"`
+	State      string `json:"state"`
+	TerminalID string `json:"terminal_id,omitempty"`
+	CoreID     string `json:"core_id,omitempty"`
+	Identity   string `json:"identity,omitempty"`
+	PID        int    `json:"pid,omitempty"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Status     string `json:"status,omitempty"` // program-reported (OSC 7501): idle, working, done, blocked, error
+	StatusKind string `json:"status_kind,omitempty"`
+	Turn       uint64 `json:"turn,omitempty"`
+	SessionID  string `json:"session_id,omitempty"` // harness conversation id when known
+	Adopted    bool   `json:"adopted,omitempty"`    // an existing process was adopted instead of launching
+	// Minor ≥ 11 (ADR-0077), once the node knows them (the starting report after the version is resolved, and every
+	// report after it): the harness version the run launched, what was requested (the profile's pin, else the node's
+	// channel) and, when another version than the request's target ran, the fallback reason.
+	HarnessVersion   string    `json:"harness_version,omitempty"`
+	HarnessRequested string    `json:"harness_requested,omitempty"`
+	HarnessFallback  string    `json:"harness_fallback,omitempty"`
+	ObservedAt       time.Time `json:"observed_at"`
 }
 
 // Reconcile is central's desired state of the node's runs, sent after hello and on demand.
@@ -377,6 +393,10 @@ type LaunchPayload struct {
 	// ClaudeSettings are the profile's Claude Code settings.json keys (minor ≥ 8, ADR-0059), set in the run's own
 	// settings.json. Central dispatches a launch that has them only to a node that negotiated minor 8.
 	ClaudeSettings ClaudeSettings `json:"claude_settings,omitempty"`
+	// HarnessVersion is the profile's harness version pin (minor ≥ 11, ADR-0077): latest, stable or an exact X.Y.Z;
+	// empty follows the node's channel. It overrides the node's channel; an exact version is downloaded when missing
+	// and never falls back to another one. Central dispatches a pinned launch only to a node that negotiated minor 11.
+	HarnessVersion string `json:"harness_version,omitempty"`
 	// AccountRef names the account whose secrets are attached (non-secret; recorded in the run manifest).
 	AccountRef string `json:"account_ref,omitempty"`
 	// Gateway is set, at dispatch only, when the run's model traffic goes through an LLM gateway (minor ≥ 9, ADR-0060):

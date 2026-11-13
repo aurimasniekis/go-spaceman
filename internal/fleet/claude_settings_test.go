@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -35,5 +36,19 @@ func TestUndecodablePayloadIsUndispatchable(t *testing.T) {
 		if !errors.Is(err, errBadPayload) || undispatchable(err) != "invalid_command" {
 			t.Fatalf("%s: %v", kind, err)
 		}
+	}
+}
+
+// A pinned launch is never dispatched to a node older than minor 11, which would ignore the pin and run whatever version
+// it has; the run fails as node_too_old with a clear error (ADR-0077).
+func TestHarnessVersionPinNeedsMinor11(t *testing.T) {
+	pinned, _ := json.Marshal(proto.LaunchPayload{Harness: "claude-code", Role: "implementor", Kind: "worker", HarnessVersion: "2.1.317"})
+	c := db.NodeCommand{ID: "cmd_1", Kind: proto.CmdLaunch, SpaceID: "spc_a", PayloadJson: string(pinned)}
+	_, err := (&Hub{}).materialize(context.Background(), c, "nod_1", proto.MinorHarnessVersion-1)
+	if !errors.Is(err, ErrNodeTooOld) || undispatchable(err) != "node_too_old" {
+		t.Fatalf("old node: %v", err)
+	}
+	if !strings.Contains(err.Error(), "node nod_1 doesn't support pinned Claude Code versions; upgrade it") || !strings.Contains(err.Error(), "2.1.317") {
+		t.Fatalf("error text: %v", err)
 	}
 }

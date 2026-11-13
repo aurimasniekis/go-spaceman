@@ -124,6 +124,8 @@ type Agent struct {
 	// "recorded": the journal holds it and the hold is still taken; "released": the hold is released). Tests race GC
 	// and stops there.
 	claudeStage func(stage string, res dist.Resolution)
+	// claudePins are the exact Claude Code versions profiles pinned on the launches this process saw (claudePinned).
+	claudePins map[string]bool
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.

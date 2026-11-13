@@ -65,6 +65,8 @@ type Resolved struct {
 	Skills []ResolvedSkill
 	// ClaudeSettings are the profile's Claude Code settings.json keys after policy, nil when it has none (ADR-0059).
 	ClaudeSettings proto.ClaudeSettings
+	// HarnessVersion is the profile's harness version pin (ADR-0077): "" follows the node's channel.
+	HarnessVersion string
 	Manifest       map[string]any
 }
 
@@ -138,6 +140,10 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 				set("claude_settings", strings.Join(cs.Keys(), ", "), OriginProfile)
 				set("claude_settings.permissions.defaultMode", cs.DefaultMode(), OriginProfile)
 			}
+			if p.HarnessVersion != "" && p.Harness == "claude-code" {
+				r.HarnessVersion = p.HarnessVersion
+				set("harness_version", p.HarnessVersion, OriginProfile)
+			}
 		}
 		for k, v := range parseSettings(tpl.SettingsJson) {
 			r.Settings[k] = v
@@ -203,6 +209,14 @@ func (svc *Service) Resolve(ctx context.Context, q *db.Queries, sp db.Space, in 
 	}
 	if r.ClaudeSettings != nil {
 		manifest["claude_settings"] = r.ClaudeSettings
+	}
+	if r.HarnessVersion != "" && r.Harness != "claude-code" {
+		// A launch that chose another harness than the profile's is refused above; this keeps a pin off any other.
+		r.HarnessVersion = ""
+		delete(r.Effective, "harness_version")
+	}
+	if r.HarnessVersion != "" {
+		manifest["harness_version"] = r.HarnessVersion
 	}
 	if r.Kind == "" || r.Harness == "" {
 		return nil, apperr.New(apperr.CodeInvalid, "a launch needs a kind and a harness, or a configured space role")

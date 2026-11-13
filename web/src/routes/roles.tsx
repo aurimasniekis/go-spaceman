@@ -9,6 +9,8 @@ import { keys, useMe, useProfiles, usePrompt, usePrompts, useRoleTemplates, useS
 import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
 import { ClaudeSettingsEditor } from '@/features/catalog/ClaudeSettingsEditor'
+import { HarnessVersionInput } from '@/features/catalog/HarnessVersionInput'
+import { harnessVersionLabel, harnessVersionValue } from '@/features/catalog/harnessVersion'
 import { claudeSettingsForm, claudeSettingsKeys, claudeSettingsValue } from '@/features/catalog/claudeSettings'
 import { SettingsEditor } from '@/features/catalog/SettingsEditor'
 import { hasGlobal } from '@/lib/access'
@@ -62,7 +64,10 @@ function RolesPage() {
                   <Table.Tr key={p.id} style={{ cursor: canWrite ? 'pointer' : undefined }} onClick={() => canWrite && setEditP(p)}>
                     <Table.Td><Text size="sm" fw={500}>{p.name}</Text><Text size="xs" c="dimmed" className="mono">{p.slug}</Text></Table.Td>
                     <Table.Td><Badge variant="light">{p.harness === 'codex' ? 'Codex' : 'Claude Code'}</Badge></Table.Td>
-                    <Table.Td><Text size="sm" className="mono">{p.model || '—'}</Text></Table.Td>
+                    <Table.Td>
+                      <Text size="sm" className="mono">{p.model || '—'}</Text>
+                      {p.harness_version && <Text size="xs" c="dimmed" className="mono">{harnessVersionLabel(p.harness_version)}</Text>}
+                    </Table.Td>
                     <Table.Td>
                       <Text size="xs" className="mono">{Object.entries(p.settings).map(([k, v]) => `${k}=${v}`).join(' ') || '—'}</Text>
                       {claudeSettingsKeys(p.claude_settings).length > 0 && (
@@ -93,21 +98,28 @@ function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
   const qc = useQueryClient()
   const [error, setError] = useState('')
   const [claudeError, setClaudeError] = useState('')
+  const [versionError, setVersionError] = useState('')
   const form = useForm({
     defaultValues: { slug: p?.slug ?? '', name: p?.name ?? '', harness: (p?.harness ?? 'claude-code') as Profile['harness'], model: p?.model ?? '', description: p?.description ?? '',
-      settings: (p?.settings ?? {}) as Record<string, string>, claude: claudeSettingsForm(p?.claude_settings) },
+      settings: (p?.settings ?? {}) as Record<string, string>, claude: claudeSettingsForm(p?.claude_settings), harnessVersion: p?.harness_version ?? '' },
     onSubmit: async ({ value }) => {
       setError('')
-      const { claude, ...rest } = value
+      const { claude, harnessVersion, ...rest } = value
       setClaudeError('')
+      setVersionError('')
       const cs = rest.harness === 'claude-code' ? claudeSettingsValue(claude) : undefined
       if (cs && 'error' in cs) {
         setClaudeError(cs.error)
         return
       }
+      const hv = rest.harness === 'claude-code' ? harnessVersionValue(harnessVersion) : undefined
+      if (hv && 'error' in hv) {
+        setVersionError(hv.error)
+        return
+      }
       try {
         unwrap(await api.PUT('/harness-profiles/{profile_id}', { params: { path: { profile_id: p?.id ?? 'new' }, header: { 'If-Match': ifMatch(p?.version ?? 0) } },
-          body: { ...rest, claude_settings: cs?.value } }))
+          body: { ...rest, claude_settings: cs?.value, harness_version: hv?.value } }))
         void qc.invalidateQueries({ queryKey: keys.profiles })
         onClose()
       } catch (e) {
@@ -147,6 +159,9 @@ function ProfileModal({ p, onClose }: { p?: Profile; onClose: () => void }) {
             </form.Field>
           </Group>
           <form.Field name="settings">{(f) => <SettingsEditor value={f.state.value} onChange={(settings) => f.handleChange(settings)} />}</form.Field>
+          {harness === 'claude-code' && (
+            <form.Field name="harnessVersion">{(f) => <HarnessVersionInput value={f.state.value} onChange={(v) => f.handleChange(v)} error={versionError} />}</form.Field>
+          )}
           {harness === 'claude-code' && <form.Field name="claude">{(f) => <ClaudeSettingsEditor value={f.state.value} onChange={(c) => f.handleChange(c)} error={claudeError} />}</form.Field>}
           <form.Field name="description">{(f) => <Textarea label="Description" autosize minRows={2} value={f.state.value} onChange={(e) => f.handleChange(e.target.value)} />}</form.Field>
           {p && <Text size="xs" c="dimmed">Saving creates revision {p.revision + 1}; it applies to later launches.</Text>}

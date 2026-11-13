@@ -25,30 +25,34 @@ import (
 
 // Run is one execution attempt of an agent instance (SM-NODE-005: desired and observed state are separate).
 type Run struct {
-	ID         string     `json:"id"`
-	SpaceID    string     `json:"space_id"`
-	NodeID     string     `json:"node_id"`
-	Generation int64      `json:"generation" doc:"Lease generation the run belongs to"`
-	Kind       string     `json:"kind" enum:"control,worker,kb,dreamer,diagnostic"`
-	Role       string     `json:"role"`
-	Harness    string     `json:"harness" enum:"claude-code,codex"`
-	InstanceID string     `json:"instance_id"`
-	SessionID  string     `json:"session_id,omitempty"`
-	Desired    string     `json:"desired" enum:"running,stopped"`
-	Observed   string     `json:"observed" enum:"pending,starting,running,stopping,exited,failed,lost,unknown"`
-	TerminalID string     `json:"terminal_id,omitempty"`
-	PID        int64      `json:"pid,omitempty"`
-	ExitCode   *int64     `json:"exit_code,omitempty"`
-	EndReason  string     `json:"end_reason,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	Status     string     `json:"status,omitempty" doc:"Program-reported status (OSC 7501): idle, working, done, blocked, error"`
-	StatusKind string     `json:"status_kind,omitempty"`
-	Turn       int64      `json:"turn"`
-	Adopted    bool       `json:"adopted"`
-	Launch     LaunchSpec `json:"launch"`
-	Version    int64      `json:"version"`
-	CreatedAt  time.Time  `json:"created_at"`
-	CreatedBy  string     `json:"created_by" doc:"Who launched it: user:<id>, agent:<run id>, root or system:<component>"`
+	ID         string `json:"id"`
+	SpaceID    string `json:"space_id"`
+	NodeID     string `json:"node_id"`
+	Generation int64  `json:"generation" doc:"Lease generation the run belongs to"`
+	Kind       string `json:"kind" enum:"control,worker,kb,dreamer,diagnostic"`
+	Role       string `json:"role"`
+	Harness    string `json:"harness" enum:"claude-code,codex"`
+	InstanceID string `json:"instance_id"`
+	SessionID  string `json:"session_id,omitempty"`
+	Desired    string `json:"desired" enum:"running,stopped"`
+	Observed   string `json:"observed" enum:"pending,starting,running,stopping,exited,failed,lost,unknown"`
+	TerminalID string `json:"terminal_id,omitempty"`
+	PID        int64  `json:"pid,omitempty"`
+	ExitCode   *int64 `json:"exit_code,omitempty"`
+	EndReason  string `json:"end_reason,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Status     string `json:"status,omitempty" doc:"Program-reported status (OSC 7501): idle, working, done, blocked, error"`
+	StatusKind string `json:"status_kind,omitempty"`
+	Turn       int64  `json:"turn"`
+	Adopted    bool   `json:"adopted"`
+	// HarnessVersion, HarnessRequested and HarnessFallback are what the node reported launching (minor ≥ 11, ADR-0077).
+	HarnessVersion   string     `json:"harness_version,omitempty" doc:"The harness version the run launched, as its node reported it (node protocol 1.11 or later)"`
+	HarnessRequested string     `json:"harness_requested,omitempty" doc:"What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z)"`
+	HarnessFallback  string     `json:"harness_fallback,omitempty" doc:"Why another version than the request's target ran (a node-managed channel whose target was not cached yet or unavailable); absent when the target ran"`
+	Launch           LaunchSpec `json:"launch"`
+	Version          int64      `json:"version"`
+	CreatedAt        time.Time  `json:"created_at"`
+	CreatedBy        string     `json:"created_by" doc:"Who launched it: user:<id>, agent:<run id>, root or system:<component>"`
 	// Manifest is the non-secret resolved configuration the run started with (SM-PROMPT-004): prompt versions and
 	// content, profile, template and space-role revisions, effective values with their origins, account reference,
 	// dependency and policy versions.
@@ -81,6 +85,7 @@ func runFromRow(r db.Run) *Run {
 	out := &Run{ID: r.ID, SpaceID: r.SpaceID, NodeID: r.NodeID, Generation: r.Generation, Kind: r.Kind, Role: r.Role, Harness: r.Harness,
 		InstanceID: r.InstanceID, SessionID: r.SessionID, Desired: r.Desired, Observed: r.Observed, TerminalID: r.TerminalID, PID: r.Pid,
 		EndReason: r.EndReason, Error: r.Error, Status: r.Status, StatusKind: r.StatusKind, Turn: r.Turn, Adopted: r.Adopted == 1, Version: r.Version,
+		HarnessVersion: r.HarnessVersion, HarnessRequested: r.HarnessRequested, HarnessFallback: r.HarnessFallback,
 		CreatedAt: time.UnixMicro(r.CreatedAt).UTC(), CreatedBy: r.CreatedBy, Manifest: json.RawMessage(r.ManifestJson), StartedAt: microsPtr(r.StartedAt), EndedAt: microsPtr(r.EndedAt), ObservedAt: microsPtr(r.ObservedAt)}
 	if r.ExitCode.Valid {
 		v := r.ExitCode.Int64
@@ -114,6 +119,8 @@ type LaunchInput struct {
 	Skills []proto.Skill `json:"-"`
 	// ClaudeSettings are the role profile's Claude Code settings, filled by resolution (not part of the API, ADR-0059).
 	ClaudeSettings proto.ClaudeSettings `json:"-"`
+	// HarnessVersion is the role profile's harness version pin, filled by resolution (not part of the API, ADR-0077).
+	HarnessVersion string `json:"-"`
 	// Dream prepares a dream workspace (set by the dream scheduler, not part of the API).
 	Dream      *proto.DreamSpec `json:"-"`
 	AccountRef string           `json:"account_ref,omitempty"`
@@ -283,7 +290,7 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			AccountRef: in.AccountRef, Gateway: gw}
 		specJSON, _ := json.Marshal(spec)
 		m := map[string]any{"harness": in.Harness, "role": in.Role, "kind": in.Kind, "lease_generation": lease.Generation,
-			"account_ref": in.AccountRef, "model": in.Model, "settings": in.Settings, "dependencies": dependencyVersions(ctx, tx, sp.NodeID, in.Harness)}
+			"account_ref": in.AccountRef, "model": in.Model, "settings": in.Settings, "dependencies": dependencyVersions(ctx, tx, sp.NodeID, in.Harness, in.HarnessVersion)}
 		for k, v := range resolved {
 			m[k] = v
 		}
@@ -307,7 +314,8 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		}
 		payload := proto.LaunchPayload{Harness: in.Harness, Role: in.Role, Kind: in.Kind, InstanceID: in.InstanceID, SessionID: session,
 			Resume: resume, Prompt: in.Prompt, SystemText: in.SystemText, Model: in.Model, Settings: in.Settings, Workspace: in.Workspace,
-			Worktree: in.Worktree, Repository: source, Skills: in.Skills, ClaudeSettings: in.ClaudeSettings, AccountRef: in.AccountRef, Dream: in.Dream, RecordingMaxBytes: in.RecordingMaxBytes}
+			Worktree: in.Worktree, Repository: source, Skills: in.Skills, ClaudeSettings: in.ClaudeSettings, HarnessVersion: in.HarnessVersion, AccountRef: in.AccountRef, Dream: in.Dream,
+			RecordingMaxBytes: in.RecordingMaxBytes}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
 		}
@@ -411,8 +419,11 @@ func (svc *Service) KickRun(ctx context.Context, runID string) {
 	}
 }
 
-// dependencyVersions records what the run depends on, as the node last reported it (SM-PROMPT-004).
-func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness string) map[string]any {
+// dependencyVersions records what the run depends on, as the node last reported it (SM-PROMPT-004). From a node at minor
+// 11 on (ADR-0077), the harness entry is {requested, node_default}: the profile's pin (else the node's channel) and the
+// version the node last reported a new run would get. What the run actually launched is on the run row. Older nodes keep
+// the plain version string.
+func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness, pin string) map[string]any {
 	out := map[string]any{"central": buildinfo.Get().Version, "node_protocol": proto.Major}
 	n, err := tx.Q.GetNode(ctx, nodeID)
 	if err != nil {
@@ -423,9 +434,18 @@ func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness strin
 	if json.Unmarshal([]byte(n.CapabilitiesJson), &caps) == nil {
 		out["runner"] = caps.Runner.Kind + " " + caps.Runner.Version
 		for _, h := range caps.Harnesses {
-			if h.Kind == harness {
-				out[harness] = h.Version
+			if h.Kind != harness {
+				continue
 			}
+			if n.ProtocolMinor < proto.MinorHarnessVersion {
+				out[harness] = h.Version
+				continue
+			}
+			requested := pin
+			if requested == "" {
+				requested = h.Channel
+			}
+			out[harness] = map[string]any{"requested": requested, "node_default": h.Version}
 		}
 	}
 	return out
@@ -665,6 +685,16 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			return err
 		}
 		version := r.Version + 1
+		// The harness version the run launched (minor ≥ 11, ADR-0077): a report without one keeps what was recorded.
+		if proto.IsHarnessVersion(rep.HarnessVersion) {
+			n, err := tx.Q.SetRunHarness(ctx, db.SetRunHarnessParams{HarnessVersion: truncate(rep.HarnessVersion, 64),
+				HarnessRequested: truncate(rep.HarnessRequested, 64), HarnessFallback: truncate(rep.HarnessFallback, 64), Now: tx.NowMicros(), ID: r.ID,
+				Generation: r.Generation})
+			if err != nil {
+				return err
+			}
+			version += n
+		}
 		if sweep != nil {
 			// Nothing for the run may reach the node any more, and the node is no longer told to keep it (sendReconcile).
 			if _, err := tx.Q.CancelAllRunCommands(ctx, db.CancelAllRunCommandsParams{Reason: "run ended by the stale-run sweeper", RunID: sql.NullString{String: r.ID, Valid: true}}); err != nil {

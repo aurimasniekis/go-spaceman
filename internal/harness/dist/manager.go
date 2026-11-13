@@ -418,6 +418,23 @@ func (m *Manager) Resolved() map[string]string {
 	return out
 }
 
+// ResolvedTarget is a memoised channel target and when it was resolved.
+type ResolvedTarget struct {
+	Version    string
+	ResolvedAt time.Time
+}
+
+// ResolvedTargets returns the memoised channel targets with when each was resolved (channel → target), fresh or not.
+func (m *Manager) ResolvedTargets() map[string]ResolvedTarget {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]ResolvedTarget, len(m.memo))
+	for c, e := range m.memo {
+		out[c] = ResolvedTarget{Version: e.Version, ResolvedAt: e.ResolvedAt}
+	}
+	return out
+}
+
 func (m *Manager) refreshChannel(ctx context.Context, channel string) (string, error) {
 	body, err := m.get(ctx, m.base.JoinPath(channel), maxPointerBytes)
 	if err != nil {

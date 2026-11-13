@@ -140,6 +140,12 @@ UPDATE runs SET observed = sqlc.arg(observed), terminal_id = sqlc.arg(terminal_i
   observed_at = sqlc.arg(now), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation);
 
+-- name: SetRunHarness :execrows
+UPDATE runs SET harness_version = sqlc.arg(harness_version), harness_requested = sqlc.arg(harness_requested),
+  harness_fallback = sqlc.arg(harness_fallback), version = version + 1, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation)
+  AND (harness_version != sqlc.arg(harness_version) OR harness_requested != sqlc.arg(harness_requested) OR harness_fallback != sqlc.arg(harness_fallback));
+
 -- name: MarkNodeRunsUnknown :execrows
 UPDATE runs SET observed = 'unknown', version = version + 1, updated_at = sqlc.arg(now)
 WHERE node_id = sqlc.arg(node_id) AND observed IN ('pending', 'starting', 'running', 'stopping');

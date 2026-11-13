@@ -242,6 +242,12 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		waitLimit time.Duration
 	)
 	wctx := ctx // a managed launch bounds its waits for the version by download_timeout, together (claudeWait)
+	if p.HarnessVersion != "" && p.Harness != harness.KindClaude {
+		fail("pinned harness versions are supported for claude-code only", nil)
+		return
+	}
+	requested := a.claudeRequest(p) // the profile's pin overrides the node's channel (ADR-0077)
+	a.notePin(p.HarnessVersion)
 	if p.Harness == harness.KindClaude && (managed || !selfUpdate) {
 		warnClaudeUpdateSettings(log, p.ClaudeSettings)
 	}
@@ -257,7 +263,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		var cancel context.CancelFunc
 		wctx, cancel, waitLimit = a.claudeWait(ctx)
 		defer cancel()
-		if want, err = a.waitClaude(wctx, waitLimit); err != nil {
+		if want, err = a.waitClaude(wctx, waitLimit, requested); err != nil {
 			fail("resolve the Claude Code version", err)
 			return
 		}
@@ -269,6 +275,21 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	if bin == "" && !managed { // a managed launch takes the cached binary's path below
 		fail("harness not installed on this node", nil)
 		return
+	}
+	if !managed && p.HarnessVersion != "" {
+		// An unmanaged node runs a pinned launch only when the installed version is the pin, and then by the absolute
+		// path it checked, so the core's PATH can't substitute another binary (ADR-0077).
+		info, err := a.checkUnmanagedPin(ctx, bin, p.HarnessVersion)
+		if err != nil {
+			fail("pinned Claude Code version", err)
+			return
+		}
+		bin = info.Path
+		row.Bin = harnessRun{Version: info.Version, Path: info.Path, Requested: p.HarnessVersion}
+		if err := a.j.setRunHarness(ctx, c.RunID, row.Bin); err != nil {
+			fail("journal the Claude Code version", err)
+			return
+		}
 	}
 	// The space's guard lock is held until the run is started under the guard, so retiring an idle space's guard
 	// (retireGuard) never ends it under a starting run.
@@ -377,7 +398,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 			gl.Unlock()
 			locked = false
 			a.stage("unlocked", want)
-			if want, err = a.waitClaude(wctx, waitLimit); err != nil {
+			if want, err = a.waitClaude(wctx, waitLimit, requested); err != nil {
 				fail("resolve the Claude Code version", err)
 				return
 			}

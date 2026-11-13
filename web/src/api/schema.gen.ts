@@ -5120,6 +5120,8 @@ export interface components {
             description?: string;
             /** @enum {string} */
             harness: "claude-code" | "codex";
+            /** @description The Claude Code version the profile's runs get (claude-code profiles only): empty follows the node's channel; latest, stable or an exact X.Y.Z overrides it */
+            harness_version: string;
             id: string;
             model?: string;
             name: string;
@@ -6271,6 +6273,12 @@ export interface components {
             generation: number;
             /** @enum {string} */
             harness: "claude-code" | "codex";
+            /** @description Why another version than the request's target ran (a node-managed channel whose target was not cached yet or unavailable); absent when the target ran */
+            harness_fallback?: string;
+            /** @description What the run asked for: the profile's pin, else the node's channel (latest, stable or X.Y.Z) */
+            harness_requested?: string;
+            /** @description The harness version the run launched, as its node reported it (node protocol 1.11 or later) */
+            harness_version?: string;
             id: string;
             instance_id: string;
             /** @enum {string} */
@@ -8918,6 +8926,7 @@ export interface components {
                 [key: string]: components["schemas"]["CatalogField"];
             };
             harness: string;
+            harness_version?: string;
             kind: string;
             model?: string;
             prompt?: components["schemas"]["CatalogPromptRef"];
@@ -9001,6 +9010,8 @@ export interface components {
             description?: string;
             /** @enum {string} */
             harness?: "claude-code" | "codex";
+            /** @description Pin the Claude Code version the profile's runs get (claude-code profiles only): latest, stable or an exact X.Y.Z; empty follows the node's channel; omitted on an update keeps the current pin */
+            harness_version?: string;
             model?: string;
             name: string;
             settings?: {
@@ -9075,11 +9086,24 @@ export interface components {
         };
         ProtoHarnessInfo: {
             available: boolean;
+            /** Format: int64 */
+            cache_bytes?: number;
+            cached?: string[];
             capabilities: string[];
+            channel?: string;
             error?: string;
             kind: string;
+            managed?: boolean;
             path?: string;
+            resolved?: {
+                [key: string]: components["schemas"]["ProtoHarnessResolved"];
+            };
             version?: string;
+        };
+        ProtoHarnessResolved: {
+            /** Format: date-time */
+            resolved_at?: string;
+            version: string;
         };
         ProtoInstanceCheck: {
             /** Format: int64 */
