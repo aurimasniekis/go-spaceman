@@ -87,6 +87,19 @@
 - **Claude first-run keys are observed, not documented.** SpaceMan seeds `.claude.json` keys seen in Claude Code
   2.1.316 (ADR-0021); a Claude Code upgrade must be re-checked with the opt-in real suite.
 
+## Harness distribution
+- **Claude Code versions are not managed yet.** A run executes whatever `claude` its `PATH` resolves to, and the
+  version a node reports comes from its last connection. No profile can pin a version, and SpaceMan doesn't turn off
+  Claude Code's self-update, so interactive runs update themselves into the node agent's `HOME`. Node-managed versions
+  are designed (ADR-0077, Proposed; SM-HARN-005..008) but not implemented.
+- **Checksum-verified, not signature-verified.** Under ADR-0077 the node accepts a downloaded Claude Code binary when
+  its SHA-256 and size match the version's `manifest.json`, fetched over HTTPS from the release host or the operator's
+  mirror. The manifest's signature is not checked until the release key and procedure are documented (K-14), so
+  whoever controls that host or mirror controls the binary.
+- **Live runs keep their version.** Under ADR-0077 a new version reaches new runs only; a running conversation moves
+  only if it is stopped and resumed. Resuming across versions was checked once, 2.1.317 to 2.1.322 in print mode
+  against a fake API (`docs/contracts/harnesses.md`, Distribution).
+
 ## Harbor Pilot gateway
 - **Gateway runs need updated agents.** A node agent below protocol minor 9 can't hand the token to a harness, so
   central fails a routed launch to it as `agent_too_old` before minting, rather than let the harness start on the

@@ -6,9 +6,9 @@ import { api, unwrap, type RecordingRecord, type Run } from '@/api/client'
 import { API_PREFIX } from '@/api/session'
 import { endReason, sessionStillValid } from '@/api/streams'
 import { clock } from '@/lib/format'
-import { createTerminal, disposeTerminal, fitFont, followCursor, regularCell, rowHeight, scrollWithWheelAndTouch } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, followCursor, holdDrawing, regularCell, rowHeight, scrollWithWheelAndTouch } from './ghostty'
 import { jumpToLive, keepingPosition, scrolledAway } from './scroll'
-import { apply, emptySummary, indexAt, MAX_IDLE_MS, offsetMs, renderTo, type RecordingSummary } from './records'
+import { apply, emptySummary, feed, type Feed, indexAt, MAX_IDLE_MS, offsetMs, type RecordingSummary } from './records'
 import { fitDimensions, TerminalSizeControl } from './TerminalSize'
 
 interface Props {
@@ -113,6 +113,21 @@ function useScrolledAway(term: Terminal | null, box: React.RefObject<HTMLDivElem
   return { away, jump }
 }
 
+/**
+ * Returns a function to call with the backlog after each slice of a feed: the terminal stops drawing while a backlog
+ * is left and draws once when it is gone (holdDrawing). Call it with 0 when the feed stops.
+ */
+function catchingUp(term: Terminal): (backlog: number) => void {
+  let release: (() => void) | null = null
+  return (backlog) => {
+    if (backlog > 0) release ??= holdDrawing(term)
+    else if (release) {
+      release()
+      release = null
+    }
+  }
+}
+
 type LiveState = 'connecting' | 'live' | 'ended' | 'denied'
 
 /** How long a hidden tab keeps its live terminal stream before releasing the connection. */
@@ -141,9 +156,14 @@ function useTabVisible(): boolean {
   return visible
 }
 
-function StatusBadges({ sum, live, typing }: { sum: RecordingSummary; live?: LiveState; typing?: boolean }) {
+function StatusBadges({ sum, live, typing, loading }: { sum: RecordingSummary; live?: LiveState; typing?: boolean; loading?: boolean }) {
   return (
     <Group gap={6}>
+      {loading && (
+        <Badge color="gray" variant="light" leftSection={<Loader size={10} color="currentColor" />} data-testid="terminal-loading">
+          Loading output…
+        </Badge>
+      )}
       {live === 'live' && (
         <Badge color={typing ? 'owlYellow' : 'owlGreen'} leftSection={<Box w={6} h={6} style={{ borderRadius: 3, background: 'currentColor' }} />}>
           {typing ? 'Live · you are typing' : 'Live · watch-only'}
@@ -196,6 +216,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
   }, [term, onInput])
   const [sum, setSum] = useState<RecordingSummary>(emptySummary)
   const [state, setState] = useState<LiveState>('connecting')
+  const [loading, setLoading] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const visible = useTabVisible()
   // What this terminal has drawn, kept across reconnects so output is never applied twice.
@@ -205,16 +226,34 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     if (!term || !visible) return
     let closed = false
     const after = drawn.current.lastSeq
+    // The stored output arrives first, all at once: it is applied a slice at a time (feed), showing "Loading output…"
+    // meanwhile. A viewer reading earlier output stays where they are while new output arrives.
+    const catchUp = catchingUp(term)
+    let shown = 0
+    const fed = feed(term, drawn.current, (s, backlog) => {
+      drawn.current = s
+      catchUp(backlog)
+      // While catching up, the badges are updated twice a second rather than after every slice (each update renders).
+      if (backlog > 0 && performance.now() - shown < 500) return
+      shown = performance.now()
+      setSum(s)
+      setLoading(backlog > 0)
+    }, { wrap: (writes) => keepingPosition(term, writes) })
+    let queued = after
+    let first = true
     const es = new EventSource(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/terminal${after > 0 ? `?after=${after}` : ''}`)
     es.onopen = () => setState('live')
     es.onerror = () => setState(es.readyState === EventSource.CLOSED ? 'ended' : 'connecting')
     es.addEventListener('record', (ev) => {
       const r = JSON.parse((ev as MessageEvent<string>).data) as RecordingRecord
       // EventSource resumes after a reconnect with Last-Event-ID, so a record is never applied twice.
-      if (r.seq <= drawn.current.lastSeq) return
-      // A viewer reading earlier output stays where they are while new output arrives.
-      drawn.current = keepingPosition(term, () => apply(term, drawn.current, r))
-      setSum(drawn.current)
+      if (r.seq <= queued) return
+      queued = r.seq
+      // Drawing is held from the stream's first record (the stored output starts there; its first slice resizes the
+      // terminal, which would draw it at once). Later, only a backlog left after a slice holds it.
+      if (first) catchUp(1)
+      first = false
+      fed.push([r])
     })
     es.addEventListener('end', (ev) => {
       es.close()
@@ -233,12 +272,16 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     return () => {
       closed = true
       es.close()
+      // Records not applied yet are dropped; the next stream resumes after the last one applied.
+      fed.stop()
+      catchUp(0)
+      setLoading(false)
     }
   }, [term, spaceId, runId, attempt, visible])
   return (
     <Stack gap="xs" style={{ minWidth: 0 }}>
       <Group justify="space-between" gap="xs" wrap="wrap">
-        <StatusBadges sum={sum} live={state} typing={!!onInput} />
+        <StatusBadges sum={sum} live={state} typing={!!onInput} loading={loading || (!term && !error)} />
         {resize && <TerminalSizeControl spaceId={spaceId} run={resize.run} blocker={resize.blocker} measure={measure} />}
       </Group>
       {state === 'denied' && <Text c="owlRed" size="sm">Your access to this terminal was removed.</Text>}
@@ -283,9 +326,10 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
     ;(async () => {
       const all: RecordingRecord[] = []
       let after = 0
+      // Pages of 1000 records: the browser parses each response in one task (5000 took about a second at 4× throttling).
       for (;;) {
         const page = unwrap(
-          await api.GET('/spaces/{space_id}/runs/{run_id}/recording', { params: { path: { space_id: spaceId, run_id: runId }, query: { after, limit: 5000 } } }),
+          await api.GET('/spaces/{space_id}/runs/{run_id}/recording', { params: { path: { space_id: spaceId, run_id: runId }, query: { after, limit: 1000 } } }),
         )
         all.push(...page.records)
         if (!page.more || cancelled) break
@@ -298,17 +342,46 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
     }
   }, [spaceId, runId])
 
+  // Seeking renders from a clean screen (terminal state is not invertible), a slice at a time (feed): a long run's
+  // recording is too much output to apply in one go. Playback waits until the screen has caught up.
+  const [rendering, setRendering] = useState(false)
+  const feedRef = useRef<{ fed: Feed; catchUp: (backlog: number) => void } | null>(null)
+  const stopFeed = useCallback(() => {
+    feedRef.current?.fed.stop()
+    feedRef.current?.catchUp(0)
+    feedRef.current = null
+  }, [])
   const seek = useCallback(
     (index: number) => {
       if (!term || !records) return
-      const s = renderTo(term, records, index)
-      sumRef.current = s
-      posRef.current = index
-      setSum(s)
-      setPos(index)
+      stopFeed()
+      term.reset()
+      const end = Math.min(index, records.length)
+      posRef.current = end
+      setPos(end)
+      const done = (s: RecordingSummary) => {
+        feedRef.current = null
+        sumRef.current = s
+        setSum(s)
+        setRendering(false)
+      }
+      if (end === 0) {
+        done(emptySummary())
+        return
+      }
+      setRendering(true)
+      const catchUp = catchingUp(term)
+      catchUp(1)
+      const fed = feed(term, emptySummary(), (s, backlog) => {
+        catchUp(backlog)
+        if (backlog === 0) done(s)
+      })
+      feedRef.current = { fed, catchUp }
+      fed.push(records.slice(0, end))
     },
-    [term, records],
+    [term, records, stopFeed],
   )
+  useEffect(() => stopFeed, [term, records, stopFeed])
 
   // Show the whole recording first (the most useful state of a finished run); play restarts from the beginning.
   useEffect(() => {
@@ -316,9 +389,12 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   }, [term, records, seek])
 
   useEffect(() => {
-    if (!playing || !term || !records) return
+    if (!playing || rendering || !term || !records) return
     let timer: ReturnType<typeof setTimeout>
     const step = () => {
+      // A seek is rendering from a clean screen: a step scheduled before it (its timer can fire before this effect is
+      // cleaned up) would write a record into the middle of that. Playback restarts when the seek is done (rendering).
+      if (feedRef.current) return
       const i = posRef.current
       if (i >= records.length) {
         setPlaying(false)
@@ -334,7 +410,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
     }
     timer = setTimeout(step, 0)
     return () => clearTimeout(timer)
-  }, [playing, speed, term, records])
+  }, [playing, rendering, speed, term, records])
 
   const total = records ? offsetMs(records, records.length - 1) : 0
   const download = `${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/recording/download`
@@ -386,7 +462,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
           size="xs"
         />
       )}
-      <StatusBadges sum={sum} />
+      <StatusBadges sum={sum} loading={rendering || (!term && !error)} />
       {(error || loadError) && <Text c="owlRed" size="sm">{error || loadError}</Text>}
       {!records && !loadError && <Loader size="xs" />}
       {records?.length === 0 && <Text size="sm" c="dimmed">No recording is stored for this run yet.</Text>}

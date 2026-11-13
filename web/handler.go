@@ -11,9 +11,9 @@ import (
 )
 
 // CSP is the policy for UI pages (ADR-0020): Pulse's policy plus WebAssembly compilation for the ghostty-web terminal,
-// whose module is inlined as a data: URL. The API keeps its own `default-src 'none'` policy.
+// whose module is a hashed asset of the build (ADR-0076). The API keeps its own `default-src 'none'` policy.
 const CSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
-	"font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; " +
+	"font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; " +
 	"object-src 'none'"
 
 // securityHeaders sets the browser hardening headers on every UI response.
