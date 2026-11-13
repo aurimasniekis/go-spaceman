@@ -1,4 +1,12 @@
+/*
+ * Layout containment: the editor box contains the absolutely and fixed positioned nodes placed inside it (ProseMirror's
+ * drop cursor and clipboard capture, and the overlays browser extensions such as Grammarly insert next to a
+ * contenteditable). Their overflow is then ink overflow: it can't extend an ancestor's scroll area.
+ * Without it, a Mantine modal's content (which keeps `transform: translateY(0)` after its transition and so contains
+ * fixed descendants too) scrolled by however far such a node reached below it, although the dialog fit.
+ */
 .sm-composer {
+  contain: layout;
   border: 1px solid var(--mantine-color-default-border);
   border-radius: var(--mantine-radius-sm);
   background: var(--mantine-color-body);

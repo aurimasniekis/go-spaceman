@@ -248,6 +248,58 @@ for (const width of WIDTHS) {
   })
 }
 
+/**
+ * Operator report after #29 (Chrome on macOS, Retina): the "New inbox item" dialog showed a vertical scrollbar although
+ * its content fit, about 100 px of nothing below the footer. Cause: the Grammarly extension, which inserts absolutely
+ * positioned overlay nodes (`grammarly-extension`) next to a contenteditable. A Mantine modal's content keeps an identity
+ * transform after its transition, so it is their containing block, fixed ones included, and it scrolled by however far
+ * they reached. The editor now contains them (`contain: layout` on .sm-composer). Checked at the operator's size and at
+ * short windows, at DPR 2, with a node shaped like Grammarly's and with other overlays placed by page or viewport
+ * coordinates.
+ */
+test('the inbox item dialog does not scroll when its content fits, even with nodes injected next to the editor', async ({ browser }) => {
+  test.setTimeout(120_000)
+  for (const viewport of [{ width: 1600, height: 840 }, { width: 1440, height: 700 }, { width: 1280, height: 600 }, { width: 900, height: 500 }]) {
+    const ctx = await browser.newContext({ storageState: STATE, viewport, deviceScaleFactor: 2, colorScheme: 'dark' })
+    const page = await ctx.newPage()
+    const at = `${viewport.width}x${viewport.height}@2x`
+    await page.goto(`${space(world)}/inbox`)
+    await button('New item')(page)
+    const dialog = page.locator('.mantine-Modal-content').last()
+    await expect(dialog).toBeVisible()
+    await settle(page, 450)
+    expect(await overflowProblems(page), at).toEqual([])
+    expect(await dialog.evaluate((e) => e.scrollHeight - e.clientHeight), at).toBe(0)
+    const extra = await dialog.evaluate((c) => {
+      const editor = c.querySelector('.ProseMirror') as HTMLElement
+      const { top, bottom } = c.getBoundingClientRect()
+      const nodes: [string, string][] = [
+        // Grammarly's shape: a zero-size absolute host at its containing block's corner, holding an overlay placed in
+        // that box's coordinates (the modal content's, without containment), here about 100 px below the editor.
+        ['grammarly-extension', `position:absolute;top:0;left:0;pointer-events:none`],
+        // Overlays placed by page and by viewport coordinates, just below the dialog.
+        ['div', `position:absolute;left:300px;top:${bottom + 16}px;width:20px;height:40px`],
+        ['div', `position:fixed;left:300px;top:${bottom + 16}px;width:20px;height:40px`],
+      ]
+      return nodes.map(([tag, css]) => {
+        const node = document.createElement(tag)
+        node.style.cssText = css
+        if (tag === 'grammarly-extension') {
+          const overlay = document.createElement('div')
+          overlay.style.cssText = `position:absolute;left:0;top:${editor.getBoundingClientRect().bottom - top + 100}px;width:200px;height:24px`
+          node.appendChild(overlay)
+        }
+        editor.parentElement!.insertBefore(node, editor)
+        const over = c.scrollHeight - c.clientHeight
+        node.remove()
+        return over
+      })
+    })
+    expect(extra, `${at}: injected nodes extend the dialog's scroll area`).toEqual([0, 0, 0])
+    await ctx.close()
+  }
+})
+
 test('a dialog taller than the screen still scrolls', async ({ page }) => {
   test.setTimeout(120_000)
   // A long form on a phone.
