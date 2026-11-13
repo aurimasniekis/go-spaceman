@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // Options configure the service.
@@ -47,8 +48,16 @@ type Options struct {
 	// RecordingStore keeps finished recordings (ADR-0048). Nil: a local store rooted at RecordingsDir.
 	RecordingStore artifacts.Store
 	// ResolveAccount picks the account a launch uses inside the launch transaction (SM-ACCT-003); it returns the
-	// account ID stored with the run. Nil: launches carry no account.
-	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (string, error)
+	// account ID stored with the run. Nil: launches carry no account. avoid, when set, names accounts to pass over for
+	// another usable one (usage-limit failover, ADR-0079 decision 8); when every account is to be avoided, the usual
+	// choice stands.
+	ResolveAccount func(ctx context.Context, tx *store.Tx, spaceID, harness, ref string, avoid func(accountID string) (bool, error)) (string, error)
+	// UsageLimitSettings returns a space's usage-limit settings inside the launch transaction (failover and the probe
+	// backoff cap, ADR-0079). Nil: failover off, the default cap.
+	UsageLimitSettings func(ctx context.Context, q *db.Queries, spaceID string) UsageLimitSettings
+	// OnHoldsCleared is called after an operator's "clear now" committed, with every hold it cleared: each space's
+	// control is told once (ADR-0079 decision 7). Nil: nobody is told.
+	OnHoldsCleared func(holds []ClearedHold)
 	// ResolveLaunch fills a launch from the space's configured role and catalogs (kind, harness, model, settings, system
 	// text) before validation, and returns what the run manifest records about it (SM-PROMPT-003/004). Nil: launches are
 	// used as given.

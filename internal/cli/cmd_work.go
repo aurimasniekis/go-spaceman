@@ -197,6 +197,8 @@ func (a *App) limitsCmd() *cobra.Command {
 		set,
 		a.cmd(opts{use: "holds", short: "A space's usage-limit holds, and other spaces' open holds on its accounts (shared)", op: "list-space-usage-limits",
 			scoped: true, view: view{items: "items", cols: holdCols, empty: "No usage-limit holds."}}),
+		a.cmd(opts{use: "clear", short: "Clear one of the space's own usage-limit holds now (other spaces' holds on the account remain)", op: "clear-space-usage-limit",
+			scoped: true, args: pos("limit")}),
 		a.cmd(opts{use: "waits", short: "A space's runs parked at a usage limit, waiting to resume", op: "list-space-limit-waits",
 			scoped: true, view: view{items: "items", cols: waitCols, empty: "No runs waiting for a usage limit."}}),
 		a.cmd(opts{use: "definitions", short: "Every limit: unit, bounds, default and enforcement point", op: "list-limit-definitions",

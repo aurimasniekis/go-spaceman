@@ -433,7 +433,12 @@ func (svc *Service) SetBindings(ctx context.Context, actor audit.Actor, spaceID 
 // Resolve picks the account a launch uses, inside the launch transaction (SM-ACCT-003): the account the launch names
 // (by ID or name) when the space binds it, otherwise the space's default for the harness, otherwise its only bound
 // account for the harness. Disabled accounts are never chosen. It returns a clear error when nothing fits.
-func Resolve(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (string, error) {
+//
+// avoid, when set, is usage-limit failover (ADR-0079 decision 8, a space setting that is off by default): when it
+// avoids the account chosen above, the first other usable account of the harness it doesn't avoid is used instead (the
+// default first, then in binding order). When it avoids them all, the usual choice stands and the launch meets its
+// hold. Failover never turns a configuration error into a choice: an unknown name or no default is still refused.
+func Resolve(ctx context.Context, tx *store.Tx, spaceID, harness, ref string, avoid func(accountID string) (bool, error)) (string, error) {
 	bs, err := bindings(ctx, tx.Q, spaceID)
 	if err != nil {
 		return "", err
@@ -444,6 +449,31 @@ func Resolve(ctx context.Context, tx *store.Tx, spaceID, harness, ref string) (s
 			usable = append(usable, b)
 		}
 	}
+	chosen, err := pick(usable, harness, ref)
+	if err != nil || avoid == nil {
+		return chosen, err
+	}
+	if held, err := avoid(chosen); err != nil || !held {
+		return chosen, err
+	}
+	// The default first, then binding order.
+	slices.SortStableFunc(usable, func(a, b Binding) int { return int(b2i(b.Default) - b2i(a.Default)) })
+	for _, b := range usable {
+		if b.AccountID == chosen {
+			continue
+		}
+		held, err := avoid(b.AccountID)
+		if err != nil {
+			return "", err
+		}
+		if !held {
+			return b.AccountID, nil
+		}
+	}
+	return chosen, nil
+}
+
+func pick(usable []Binding, harness, ref string) (string, error) {
 	if ref != "" {
 		for _, b := range usable {
 			if b.AccountID == ref || b.Name == ref {

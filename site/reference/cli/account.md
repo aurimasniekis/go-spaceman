@@ -8,6 +8,7 @@ Aliases: `accounts`.
 
 | Subcommand | Description |
 |---|---|
+| [`spaceman account clear-holds`](#spaceman-account-clear-holds) | Clear an account's usage-limit holds in every space now |
 | [`spaceman account create`](#spaceman-account-create) | Add an account; the secret comes from a file or standard input |
 | [`spaceman account delete`](#spaceman-account-delete) | Delete an account no space uses |
 | [`spaceman account get`](#spaceman-account-get) | Show an account |
@@ -17,6 +18,21 @@ Aliases: `accounts`.
 | [`spaceman account set-space`](#spaceman-account-set-space) | Replace the accounts a space's runs may use (at most one default per harness) |
 | [`spaceman account space`](#spaceman-account-space) | Accounts a space's runs may use |
 | [`spaceman account update`](#spaceman-account-update) | Edit an account; give --secret-file or --secret-stdin to rotate the secret |
+
+## spaceman account clear-holds
+
+Clear an account's usage-limit holds in every space now.
+
+```sh
+spaceman account clear-holds <account> [flags]
+```
+
+API: `clear-account-usage-limits` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-f`, `--file` | string |  | request body as a JSON or YAML file (- reads standard input); flags override its fields |
+| `--kind` | string |  | only holds of this kind (five_hour, seven_day, …); every kind when absent |
 
 ## spaceman account create
 

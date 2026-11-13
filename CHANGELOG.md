@@ -18,6 +18,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `GET /spaces/{id}/limit-waits` and `GET /accounts/{id}/usage-limits`, also available as `spaceman limits holds`,
   `spaceman limits waits` and `spaceman account holds`. New events: `fleet.usage_limit.reached` and
   `fleet.usage_limit.cleared`. Holds don't block launches yet.
+- Usage-limit holds block launches (ADR-0079): a launch or resume on an account (or Harbor Pilot connection or project)
+  that any space holds at a usage limit is refused (429) with the reset time in UTC, or with the next re-check time when
+  the reset is unknown; a refusal writes nothing. When a hold with an unknown reset is due for its re-check, exactly one
+  launch goes through as the probe; the next re-check backs off from 1 h, doubling, up to the keep-alive maximum. A
+  control run that ends at a usage limit is no longer restarted, counted against the restart budget or reported to
+  people, and control auto-start waits for the reset. Two new space limits: `usage_limit_failover` (off by default)
+  lets a launch use another bound account of the same harness without a hold (never a direct account for a space routed
+  through Harbor Pilot), and `usage_limit_keep_alive_max_minutes` (default 360). "Clear now":
+  `POST /spaces/{id}/usage-limits/{limit_id}/clear` (`spaceman limits clear`, run:control) clears only that space's
+  hold and says when other spaces still hold the account; `POST /accounts/{id}/usage-limits/clear`
+  (`spaceman account clear-holds`, account:write) clears every space's holds on the account. Both are audited, and
+  each cleared space's control is told once.
 
 ## [0.1.3] - 2026-11-13
 
