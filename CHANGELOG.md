@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `GET /spaces/{id}/limit-waits` and `GET /accounts/{id}/usage-limits`, also available as `spaceman limits holds`,
   `spaceman limits waits` and `spaceman account holds`. New events: `fleet.usage_limit.reached` and
   `fleet.usage_limit.cleared`. Holds don't block launches yet.
+- Runs waiting for a usage limit to reset are kept alive and protected (ADR-0079 decision 3): a worker or diagnostic run
+  at its limit no longer counts against the space's concurrency limit (it still counts against the node's capacity),
+  gets no terminal notices until the limit clears (its messages wait, then are noticed), and control's idle stop is not
+  armed while control itself is at its limit. Control gets exactly one message when a run reaches its limit and one when
+  the limit clears, written with the change that causes it, never once per report.
 
 ## [0.1.3] - 2026-11-13
 

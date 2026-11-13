@@ -642,3 +642,42 @@ func (svc *Service) Resolve(ctx context.Context, actor audit.Actor, spaceID, id,
 	}
 	return svc.Get(ctx, spaceID, id)
 }
+
+// SystemFrom is the sender of SpaceMan's own notifications to control.
+var SystemFrom = From{Kind: "system", Label: "SpaceMan"}
+
+// NotifyControlTx sends control a system notification inside the caller's transaction, so it is written exactly when
+// the change it reports commits (ADR-0079 decision 11: on a state change, never per report). The dedup key makes it
+// at most one per key; it returns false when a message with the key already exists.
+func (svc *Service) NotifyControlTx(ctx context.Context, tx *store.Tx, spaceID, dedup, subject, body string) (bool, error) {
+	sent, err := svc.ControlNotifiedTx(ctx, tx, spaceID, dedup)
+	if err != nil || sent {
+		return false, err
+	}
+	id := ids.New(ids.Message)
+	if err := tx.Q.InsertMessage(ctx, db.InsertMessageParams{ID: id, SpaceID: spaceID, FromKind: SystemFrom.Kind, FromID: SystemFrom.ID,
+		FromLabel: SystemFrom.Label, ToKind: "control", Kind: "notification", Subject: subject, Body: body, DedupKey: dedup,
+		CreatedAt: tx.NowMicros()}); err != nil {
+		return false, err
+	}
+	if err := svc.changes.Record(ctx, tx, spaceID, "message", id, "created", 1); err != nil {
+		return false, err
+	}
+	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "message.sent", Target: audit.Target{Type: "message", ID: id},
+		Details: map[string]any{"space_id": spaceID, "to": "control", "kind": "notification"}}); err != nil {
+		return false, err
+	}
+	if svc.Kick != nil {
+		tx.AfterCommit(svc.Kick)
+	}
+	return true, nil
+}
+
+// ControlNotifiedTx reports whether SpaceMan already sent control the notification with this dedup key.
+func (svc *Service) ControlNotifiedTx(ctx context.Context, tx *store.Tx, spaceID, dedup string) (bool, error) {
+	_, err := tx.Q.GetMessageByDedup(ctx, db.GetMessageByDedupParams{SpaceID: spaceID, FromKind: SystemFrom.Kind, FromID: SystemFrom.ID, DedupKey: dedup})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}

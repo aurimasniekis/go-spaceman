@@ -273,7 +273,7 @@ func (q *Queries) ListActiveWorkRunsInSpace(ctx context.Context, spaceID string)
 
 const listLiveWorkRunsInSpace = `-- name: ListLiveWorkRunsInSpace :many
 SELECT id, kind, role, observed FROM runs WHERE space_id = ? AND kind IN ('worker', 'diagnostic')
-  AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+  AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown') AND limit_kind = ''
 ORDER BY created_at, id
 `
 
@@ -286,7 +286,8 @@ type ListLiveWorkRunsInSpaceRow struct {
 
 // Live runs are those whose observed state is not final (exited, failed, lost): exactly the runs spaceman_runs_list
 // shows (fleet.Live). desired is not consulted: a run that ended on its own keeps desired = 'running', and counting it
-// held its slot until an operator stopped it.
+// held its slot until an operator stopped it. A live run waiting for its usage limit to reset (limit_kind set,
+// keep-alive) frees its space slot but still uses the node's capacity: its process stays up (ADR-0079 decision 3, Q4).
 func (q *Queries) ListLiveWorkRunsInSpace(ctx context.Context, spaceID string) ([]ListLiveWorkRunsInSpaceRow, error) {
 	rows, err := q.db.QueryContext(ctx, listLiveWorkRunsInSpace, spaceID)
 	if err != nil {
