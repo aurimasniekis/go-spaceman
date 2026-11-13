@@ -3986,6 +3986,110 @@
   - **Side finding, not changed:** ghostty's `scrollbackLimit` is in bytes, but ghostty-web passes the `scrollback`
     option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns.
 
+### ADR-0077 — Node-managed Claude Code versions (security-relevant change)
+- **Status:** Proposed, 2026-11-13. The operator decided on 2026-11-12: always use the latest version, unless the
+  harness profile pins one; then use that version, downloading it if it is missing or reverting to it. Implementation
+  follows in separate PRs (PLAN.md, CC). This ADR is security-relevant because **the node downloads and executes
+  vendor binaries** that no operator installed by hand.
+- **Context (code, at v0.1.1):**
+  - SpaceMan doesn't manage Claude Code. The node runs whatever `claude` the run's `PATH` resolves to
+    (`harness.claude_binary`, default `"claude"`). `Detect` resolves it on the agent's `PATH` when the node connects,
+    but the launch shim resolves it again on the herdr-core core's `PATH`, so the reported version and the binary a run
+    executes can differ.
+  - The reported version is refreshed only on a reconnect more than 5 minutes after the last detection. The run
+    manifest's `dependencies.claude-code` copies that value when central creates the run, not what the node launched.
+  - SpaceMan never sets `DISABLE_AUTOUPDATER`, so every interactive Claude run updates itself into the node agent's
+    `HOME` (about 340 MB per version). The spike below shows this happens even when the binary was launched from
+    elsewhere.
+  - No profile or node setting can choose a version.
+  - Release metadata (contract: `docs/contracts/harnesses.md`, Distribution): channel pointers `latest` and `stable`,
+    a per-version `manifest.json` with each platform's SHA-256 `checksum` and `size`, and two signature sidecars.
+    Older versions stay downloadable.
+- **Decision:**
+  1. **Resolution precedence: the profile pin, then the node channel, then `latest`.**
+     - A new typed profile field `harness_version` (for `claude-code`; keyed by harness kind so Codex can follow)
+       takes `""` (follow the node), `latest`, `stable` or an exact `X.Y.Z` checked with a strict regexp. API, web
+       and Terraform validate it. Central passes the pin to the node as `LaunchPayload.harness_version`.
+     - The node's `harness.claude.channel` (default `latest`) accepts the same values.
+     - The node resolves, because it owns the network, the cache and the platform. An exact version is used as is
+       and downloaded first if it is missing (the run waits in `starting`), so a pin "reverts" by being launched
+       again. A channel is resolved with `GET {base_url}/{channel}`, validated as strict semver and memoised for
+       `refresh` (default 15 min). A background loop re-resolves and prefetches. If a channel's target isn't cached
+       yet or the pointer can't be fetched, the run uses the newest verified cached version and reports both the
+       requested and the actual version. With nothing cached, the launch waits up to `download_timeout`.
+  2. **A fixed HTTPS host; `base_url` is operator-only.** The default is
+     `https://downloads.claude.ai/claude-code-releases`, the same base compiled into Claude Code. `base_url` is node
+     configuration only (so an operator can mirror it), must be `https`, and is never settable from a profile, space,
+     API or MCP. Request paths are built only from a validated version and a platform from `runtime.GOOS/GOARCH`
+     (plus a musl check on Linux), never from response text.
+  3. **Integrity: SHA-256 and size against the manifest; no signature check yet.**
+     - Fetch `{base_url}/{version}/manifest.json` and require `manifest.version == version`.
+     - Stream the binary through SHA-256 with a hard cap at the manifest's `size`; it must equal both.
+     - This is the integrity Claude Code's own updater has whenever its server-side signature enforcement is off
+       (`manifestSignatureEnforcement: "flag"`). The manifest's signature is **not** verified: the raw-signature
+       format and key are not documented publicly, so checking it would copy constants out of a vendor binary, and
+       OpenPGP for the `.sig` sidecar is outside the Go standard library and `x/crypto` (AGENTS.md). Open item
+       **K-14**; LIMITATIONS says "checksum-verified, not signature-verified". Anyone who controls the release host
+       or `base_url` controls the binary, the same as for Claude Code's own updater.
+  4. **An immutable cache, with GC.**
+     - Layout `<data_dir>/harness/claude-code/<version>/claude` (0755 inside the 0700 data dir) plus `verified.json`
+       (`version`, `platform`, `sha256`, `size`, `manifest_sha256`, `fetched_at`).
+     - A download goes into a temporary directory, is verified, `fsync`ed and renamed into place. A version directory
+       never changes after the rename. A failed check deletes the temporary directory and raises a node event, so
+       nothing partial is ever executable. A per-version singleflight and a `flock` serialize downloads.
+     - At start the agent re-checks size and SHA-256 of the versions it will use against `verified.json`.
+     - GC keeps the newest `cache_keep` (default 3), every version a profile seen by the node pins, and every version
+       a live or adoptable run in the journal uses. Nothing goes under `~/.local`.
+  5. **Absolute-path launch with the updater off.**
+     - The node passes the cached binary's **absolute path** as the harness binary, so the core's `PATH` no longer
+       matters.
+     - `Claude.Build` sets **both `DISABLE_AUTOUPDATER=1` and `DISABLE_UPDATES=1`** in the run's (non-secret,
+       hc-persisted) environment. The spike showed that `DISABLE_AUTOUPDATER=1` stops the background updater, but an
+       explicit `claude update` (which an agent can run from its shell) still installs a native copy into `HOME` and
+       switches `installMethod` to `native`. `DISABLE_UPDATES=1` refuses that too ("Updates are disabled by your
+       administrator"). The launch shim's `inherited()` must keep not scrubbing these names.
+     - A profile's `claude_settings` `autoUpdatesChannel`, `minimumVersion` or `env.DISABLE_*` have no effect on the
+       version under managed mode; nothing launches a self-updated copy. The node warns when a profile sets them.
+  6. **The `manage: false` escape hatch.** `harness.claude.manage: false` keeps today's behaviour (`claude_binary`
+     through `PATH`) for operators who install Claude Code themselves. The node still sets both updater variables
+     unless `harness.claude.self_update: true`. A profile pin that differs from the detected version then **fails the
+     launch** ("this node does not manage Claude Code versions"); it never silently runs another version. Central
+     likewise never sends a pin to a node below protocol minor 11: such a launch fails with a clear error.
+  7. **Live runs keep their binary.** A version change affects new runs only. A run's version directory is protected
+     from GC while the run is live or adoptable (and on Linux a deleted file's inode lives on for its process anyway).
+     herdr-core has no method that re-executes a terminal with a new binary, so moving a conversation onto a new
+     version would mean stopping the run and launching it again with `--resume`. The spike shows that works from
+     2.1.317 to 2.1.322 in print mode; an automatic `on_update: resume_when_idle` policy for control runs is left out
+     of this decision.
+  8. **Reporting.**
+     - `RunReport.harness_version` and `harness_requested`, sent with the first `starting` report, stored on the run
+       (`runs.harness_version`) and shown in the run detail and API. Adopted runs take the version from the agent's
+       journal, which gains a column.
+     - The manifest stays the configuration resolved at creation: `dependencies["claude-code"]` becomes
+       `{requested, node_default}`; the run row holds what ran. Pre-11 nodes keep today's string.
+     - A new node→central `node.capabilities` message carries the full capabilities when the cache or a channel
+       resolution changes, and at least every 30 minutes. `HarnessInfo` gains `managed`, `channel`, `resolved`,
+       `cached` and `cache_bytes`; `version`/`path` then mean "what a new run would get now". Unmanaged nodes re-run
+       detection on the same timer.
+  9. **Protocol minor 11 and migration 0048.** Minor 11 adds `LaunchPayload.harness_version`, the two `RunReport`
+     fields, `node.capabilities` and the `HarnessInfo` fields, all additive. Migration 0048 adds
+     `profiles.harness_version` and `runs.harness_version` (`TEXT NOT NULL DEFAULT ''`).
+- **Alternatives:**
+  - **Leave installation to configuration management** (a node-wide pin plus `DISABLE_AUTOUPDATER`). It is the
+    interim, but it can't pin per profile and its version report stays stale.
+  - **Let Claude Code update itself** (`~/.local/bin` first in `PATH`). Every run downloads, concurrent runs race,
+    the version can change between two runs of one task without anyone deciding, and a profile's
+    `autoUpdatesChannel` would steer every run sharing the `HOME`.
+  - **Verify the manifest signature now.** Rejected until the key and procedure are documented (K-14).
+- **Consequences:**
+  - The node makes outbound HTTPS requests to one host and runs what it downloads. That is a new trust in the release
+    host (and, if set, the operator's mirror), bounded by the checksum, the size cap, the version check and the
+    fixed path shape; THREAT_MODEL gains a row when the downloader lands.
+  - About 340 MB per cached version (2.1.322 linux-x64), so about 1 GB by default; the cache size is reported.
+  - Runs stop writing self-updates into the agent's `HOME`.
+  - Evidence so far is the contract and the spike (`docs/contracts/harnesses.md`, Distribution); none of the
+    decision is implemented yet (SM-HARN-005..008 are `todo`).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -4003,3 +4107,4 @@
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
 | K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
+| K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
