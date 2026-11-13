@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-13
+
+Patch release on top of v0.1.1. It makes no production-readiness claim (docs/RELEASE_READINESS.md §16). It contains:
+- node-managed Claude Code versions (ADR-0077): a verified per-version cache, launches by absolute path, per-profile
+  version pins, per-run versions and the current versions on each node;
+- Claude Code's self-update turned off in every run;
+- web terminal fixes: no tab freeze on a fresh cache, and no stale glyphs from older output (ADR-0076);
+- the New inbox item dialog's scrollbar with writing-assistant extensions;
+- Go 1.27.4 (GO-2026-6859);
+- steadier CI on hosted runners (ADR-0062 updates).
+
+**Upgrade notes** (from v0.1.1):
+- **Take a backup first.** Migrations 0048 (a profile's Claude Code version pin and each run's version) and 0049
+  (when a node last reported its capabilities) are forward-only, and so are the node agent's journal migrations 0006
+  (each run's Claude Code version and path) and 0007 (an index for the cache's GC). Central also writes a
+  pre-migration snapshot; going back means restoring it.
+- **Node protocol 1.11.** Upgrade central first, then every node agent. Older agents keep working, but they never get
+  a pinned launch (such a run fails as `node_too_old`), and they report their harness versions only when they
+  connect.
+- **Claude Code's self-update is now off on every node.** Every Claude Code run gets `DISABLE_AUTOUPDATER=1` and
+  `DISABLE_UPDATES=1`, managed or not. A node whose `claude` stayed current only through Claude Code's own
+  self-update (the copy in `~/.local/bin/claude`) **stays on its current version** until you set
+  `harness.claude.manage: true`, or update it with your own tooling. (`harness.claude.self_update: true` restores the
+  old behaviour on an unmanaged node.)
+- **Managed mode** (`harness.claude.manage: true`, off by default) is configured with the node agent's
+  `harness.claude.*` settings: `channel` (`latest`, `stable` or an exact version), `base_url`, `cache_keep` (the newest
+  versions kept, default 3), `cache_keep_pinned` (pinned versions kept, default 5), `refresh` and `download_timeout`.
+  The cache lives under the agent's data directory and takes about 340 MB per version, so about 1 GB with the
+  defaults plus any pinned versions; size the disk for it. A harness profile's `harness_version` pin is honoured: a
+  managed node downloads an exact pin when it's missing and never falls back to another version, and an unmanaged
+  node runs a pin only when it equals its installed version.
+- **The web terminal's WebAssembly module comes from a pinned ghostty-web prerelease** (0.4.0-next.21), which fixes
+  stale cells upstream; the JavaScript stays on ghostty-web 0.4.0 until an upstream release has the fix (ADR-0076).
+- **Built with Go 1.27.4**, which fixes GO-2026-6859 in `net/http`. If you build from source, use Go 1.27.4 or later.
+
 ### Added
 
 - Current harness versions on nodes (SM-HARN-008, ADR-0077, node protocol 1.11, migration 0049). A connected node
@@ -1354,7 +1389,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...v0.1.0
 [0.1.0-rc.9]: https://github.com/aurimasniekis/go-spaceman/releases/tag/v0.1.0-rc.9
