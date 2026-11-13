@@ -28,7 +28,8 @@ test:
 GATE := $(CURDIR)/scripts/gate-slot.sh
 
 # The race detector slows SQLite transactions several-fold; as in CI, the 100 ms write-transaction guard is relaxed here
-# (SM_TEST_TX_MAX, default 500ms) and enforced by the non-race coverage run.
+# (SM_TEST_TX_MAX, default 500ms) and enforced by the non-race coverage run. scripts/race.sh turns off checkptr for
+# modernc.org's transpiled SQLite only (it doubled the CPU inside write transactions); the race detector stays on.
 # scripts/race.sh runs internal/app, the critical path (its end-to-end tests add up to about an hour of test time under
 # the race detector), as its own go test invocation started first, alongside one for every other package; with 16 or
 # more CPUs its serial tests run in a second process next to its parallel ones (RACE_APP_SPLIT).
