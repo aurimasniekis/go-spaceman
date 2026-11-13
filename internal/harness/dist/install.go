@@ -143,7 +143,8 @@ func (m *Manager) install(ctx context.Context, version string) (Installed, error
 		return Installed{}, err
 	}
 	defer func() { _ = removeTree(tmp) }() // a no-op once renamed into place
-	if err := m.download(ctx, tmp, inst); err != nil {
+	fp, fpOK, err := m.download(ctx, tmp, inst)
+	if err != nil {
 		return Installed{}, err
 	}
 	b, err := json.MarshalIndent(inst, "", "  ")
@@ -170,51 +171,64 @@ func (m *Manager) install(ctx context.Context, version string) (Installed, error
 	if err := syncDir(m.dir); err != nil {
 		return Installed{}, err
 	}
+	// The fingerprint is the one download took from the handle it hashed; neither the directory's chmod nor its rename
+	// changes the file's.
+	m.rememberHashed(version, fp, fpOK)
 	inst.Path = m.binaryPath(version)
 	return inst, nil
 }
 
 // download streams the binary into dir through SHA-256 with a hard cap of the manifest size. The file stays 0600 (not
-// executable) until size and checksum match, then becomes 0555 (read-only).
-func (m *Manager) download(ctx context.Context, dir string, inst Installed) error {
+// executable) until size and checksum match, then becomes 0555 (read-only). It returns the stat fingerprint of the file
+// it hashed, taken through the same handle once the mode is final (ok false when the platform has none).
+func (m *Manager) download(ctx context.Context, dir string, inst Installed) (fp fingerprint, ok bool, err error) {
 	resp, err := m.do(ctx, m.base.JoinPath(inst.Version, m.platform, BinaryName))
 	if err != nil {
-		return fmt.Errorf("claude code %s: download: %w", inst.Version, err)
+		return fingerprint{}, false, fmt.Errorf("claude code %s: download: %w", inst.Version, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.ContentLength > inst.Size {
-		return fmt.Errorf("%w: %s: the server announces %d bytes, the manifest %d", ErrVerify, inst.Version, resp.ContentLength, inst.Size)
+		return fingerprint{}, false, fmt.Errorf("%w: %s: the server announces %d bytes, the manifest %d", ErrVerify, inst.Version, resp.ContentLength, inst.Size)
 	}
 	path := filepath.Join(dir, BinaryName)
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // inside our temp dir
 	if err != nil {
-		return err
+		return fingerprint{}, false, err
 	}
 	h := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, inst.Size+1))
 	if err != nil {
 		_ = f.Close()
-		return fmt.Errorf("claude code %s: download: %w", inst.Version, err)
+		return fingerprint{}, false, fmt.Errorf("claude code %s: download: %w", inst.Version, err)
 	}
 	switch {
 	case n > inst.Size:
 		_ = f.Close()
-		return fmt.Errorf("%w: %s: the binary is larger than the manifest's %d bytes", ErrVerify, inst.Version, inst.Size)
+		return fingerprint{}, false, fmt.Errorf("%w: %s: the binary is larger than the manifest's %d bytes", ErrVerify, inst.Version, inst.Size)
 	case n < inst.Size:
 		_ = f.Close()
-		return fmt.Errorf("%w: %s: the binary is %d bytes, the manifest says %d", ErrVerify, inst.Version, n, inst.Size)
+		return fingerprint{}, false, fmt.Errorf("%w: %s: the binary is %d bytes, the manifest says %d", ErrVerify, inst.Version, n, inst.Size)
 	case hex.EncodeToString(h.Sum(nil)) != inst.SHA256:
 		_ = f.Close()
-		return fmt.Errorf("%w: %s: SHA-256 does not match the manifest", ErrVerify, inst.Version)
+		return fingerprint{}, false, fmt.Errorf("%w: %s: SHA-256 does not match the manifest", ErrVerify, inst.Version)
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return err
+		return fingerprint{}, false, err
+	}
+	// Through the handle: the mode change is the file's last one, and the fingerprint is the hashed file's.
+	if err := f.Chmod(0o555); err != nil {
+		_ = f.Close()
+		return fingerprint{}, false, err
+	}
+	fi, err := f.Stat()
+	if err == nil {
+		fp, ok = statFingerprint(fi)
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return fingerprint{}, false, err
 	}
-	return os.Chmod(path, 0o555) //nolint:gosec // G302: the harness binary must be executable
+	return fp, ok, nil
 }
 
 // lookup is the cheap check that version is installed (see check).
@@ -336,8 +350,9 @@ func readVerified(vd *os.Root, version, platform string) (Installed, error) {
 }
 
 // Verify re-checks the size and SHA-256 of each cached version against its verified.json (at startup, for the
-// versions the node will use). A damaged version is removed so the next Ensure downloads it again. Versions that are
-// not cached are skipped. It returns the problems found, keyed by version.
+// versions the node will use). A damaged version (ErrVerify) is removed so the next Ensure downloads it again; a check
+// that could not finish (ctx cancelled or expired, an I/O error) proves nothing and keeps the version. Versions that are
+// not cached are skipped. It returns the problems found, keyed by version: only those matching ErrVerify were removed.
 func (m *Manager) Verify(ctx context.Context, versions ...string) map[string]error {
 	out := map[string]error{}
 	for _, v := range versions {
@@ -348,7 +363,15 @@ func (m *Manager) Verify(ctx context.Context, versions ...string) map[string]err
 			continue // not cached (a link at the name is checked, and removed, like a damaged version)
 		}
 		if err := m.verifyOne(ctx, v); err != nil {
+			if cerr := ctx.Err(); cerr != nil && !errors.Is(err, cerr) {
+				err = fmt.Errorf("claude code %s: verification interrupted: %w (%w)", v, cerr, err)
+			}
 			out[v] = err
+			if ctx.Err() != nil || !errors.Is(err, ErrVerify) {
+				m.log.Warn("claude code cached version could not be verified; keeping it", slog.String("version", v),
+					slog.String("error", err.Error()))
+				continue
+			}
 			m.log.Warn("claude code cached version failed verification; removing it", slog.String("version", v),
 				slog.String("error", err.Error()))
 			if rerr := m.removeLocked(ctx, v); rerr != nil {
@@ -389,6 +412,7 @@ func (m *Manager) verifyOne(ctx context.Context, version string) error {
 	if fi.Size() != inst.Size {
 		return fmt.Errorf("%w: %s: the cached binary's size changed", ErrVerify, version)
 	}
+	m.hashes.Add(1)
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(&ctxReader{ctx: ctx, r: f}, inst.Size+1))
 	if err != nil {
@@ -396,6 +420,13 @@ func (m *Manager) verifyOne(ctx context.Context, version string) error {
 	}
 	if n != inst.Size || hex.EncodeToString(h.Sum(nil)) != inst.SHA256 {
 		return fmt.Errorf("%w: %s: the cached binary's size or SHA-256 changed", ErrVerify, version)
+	}
+	// Recorded from the handle that was hashed, and only when the file did not change while it was hashed, so a launch
+	// can skip the hash while the file stays as it is.
+	if after, err := f.Stat(); err == nil {
+		before, ok1 := statFingerprint(fi)
+		fp, ok2 := statFingerprint(after)
+		m.rememberHashed(version, fp, ok1 && ok2 && before == fp)
 	}
 	return nil
 }

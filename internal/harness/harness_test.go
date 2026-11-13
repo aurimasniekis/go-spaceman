@@ -485,3 +485,44 @@ func keysOf(m map[string]string) []string {
 	slices.Sort(out)
 	return out
 }
+
+// ADR-0077: a Claude Code run gets both updater variables in its (non-secret) environment unless the node lets it
+// update itself; a Codex run gets neither.
+func TestClaudeUpdaterOff(t *testing.T) {
+	c := ctxFor(proto.LaunchPayload{Kind: "worker"})
+	c.Binary = "/data/harness/claude-code/2.1.322/claude"
+	l, err := Claude{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Argv[0] != c.Binary {
+		t.Fatalf("argv[0] = %q, want the absolute binary", l.Argv[0])
+	}
+	for _, k := range []string{"DISABLE_AUTOUPDATER", "DISABLE_UPDATES"} {
+		if l.Env[k] != "1" {
+			t.Errorf("%s = %q, want 1", k, l.Env[k])
+		}
+		if _, secret := l.SecretEnv[k]; secret {
+			t.Errorf("%s is in the secret environment", k)
+		}
+	}
+	c.SelfUpdate = true
+	l, err = Claude{}.Build(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range ClaudeUpdaterOffEnv {
+		if _, set := l.Env[k]; set {
+			t.Errorf("self_update: %s is set", k)
+		}
+	}
+	l, err = Codex{}.Build(ctxFor(proto.LaunchPayload{Kind: "worker"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range ClaudeUpdaterOffEnv {
+		if _, set := l.Env[k]; set {
+			t.Errorf("codex: %s is set", k)
+		}
+	}
+}

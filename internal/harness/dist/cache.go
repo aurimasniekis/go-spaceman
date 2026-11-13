@@ -2,6 +2,7 @@ package dist
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -29,16 +30,30 @@ func (m *Manager) Installed() []Installed {
 	return out
 }
 
-// GC removes cached versions beyond the newest Keep, except protected ones: the versions pinned by profiles and the
-// versions used by live or adoptable runs (both supplied by the caller), and the memoised channel targets and their
-// previous targets (the fallbacks). A version
+// GC removes cached versions beyond the newest Keep, except protected ones: the versions pinned by profiles (supplied
+// by the caller), the versions inUse returns (the caller's live and adoptable runs), the versions held by an Acquire
+// that has not been released, and the memoised channel targets and their previous targets (the fallbacks). A version
 // another process is installing or removing is skipped. It returns the removed versions.
-func (m *Manager) GC(ctx context.Context, pinned, inUse []string) ([]string, error) {
+//
+// GC runs under the lock Acquire registers its hold under, and calls inUse under it too, so a version is never removed
+// between a launch resolving it and the launch being recorded where inUse reads it (nil: none in use).
+func (m *Manager) GC(ctx context.Context, pinned []string, inUse func(context.Context) ([]string, error)) ([]string, error) {
+	m.gcMu.Lock()
+	defer m.gcMu.Unlock()
 	keep := map[string]bool{}
 	for _, v := range pinned {
 		keep[v] = true
 	}
-	for _, v := range inUse {
+	if inUse != nil {
+		used, err := inUse(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("claude code: versions in use: %w", err)
+		}
+		for _, v := range used {
+			keep[v] = true
+		}
+	}
+	for v := range m.held {
 		keep[v] = true
 	}
 	for _, v := range m.Resolved() {
@@ -120,6 +135,7 @@ func (m *Manager) removeLocked(ctx context.Context, version string) error {
 // directory never looks like a version, then deletes it. The caller holds the version's lock. Running processes keep
 // the deleted binary's inode.
 func (m *Manager) remove(version string) error {
+	m.forgetHashed(version)
 	gone := filepath.Join(m.dir, version+".gc-"+randSuffix())
 	if err := os.Rename(m.versionDir(version), gone); err != nil {
 		if os.IsNotExist(err) {

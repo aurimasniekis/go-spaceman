@@ -28,6 +28,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -59,6 +60,8 @@ type Options struct {
 	Wrap func(runDir string, l harness.Launch) []string
 	// RecordingCreate creates recording segment files; nil uses the filesystem (fault tests inject a full disk).
 	RecordingCreate func(path string) (recording.File, error)
+	// Claude configures node-managed Claude Code (ADR-0077); the zero value keeps runs on HarnessBinaries.
+	Claude ClaudeOptions
 	// DefaultCols and DefaultRows are the size the runner starts programs at (runner.terminal_size); a takeover open
 	// when a run's held size is cleared is resized back to it (ADR-0075). 0: left as it is.
 	DefaultCols, DefaultRows int
@@ -115,6 +118,12 @@ type Agent struct {
 	sizeWant     map[string]proto.TerminalSize
 	holds        map[string]*sizeHold
 	holdsStopped bool
+	// runLocks serialize a run's launch (its last check and start) with its stop, by run ID (runLock).
+	runLocks map[string]*refMutex
+	// claudeStage, when set, runs at a managed Claude Code launch's stages ("acquired": the version is held;
+	// "recorded": the journal holds it and the hold is still taken; "released": the hold is released). Tests race GC
+	// and stops there.
+	claudeStage func(stage string, res dist.Resolution)
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
@@ -174,7 +183,7 @@ func New(j *Journal, o Options) *Agent {
 		o.HTTPClient = http.DefaultClient
 	}
 	a := &Agent{o: o, j: j, log: obs.Component(o.Log, "agent"), leases: map[string]leaseRow{}, heartbeat: 10 * time.Second,
-		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, takeovers: map[string]*takeover{}}
+		recorders: map[string]*recorder{}, wake: make(chan struct{}, 1), guardLocks: map[string]*sync.Mutex{}, runLocks: map[string]*refMutex{}, takeovers: map[string]*takeover{}}
 	a.mem = newMemManager(a)
 	return a
 }
@@ -213,6 +222,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.reconcileRunner(ctx); err != nil {
 		a.log.Warn("initial runner reconcile", obs.Err(err))
 	}
+	// Managed Claude Code: after the reconcile, so the journal's live and adoptable runs keep their versions.
+	var claudeWG sync.WaitGroup
+	defer claudeWG.Wait()
+	a.startClaude(ctx, &claudeWG)
 	go a.monitor(ctx)
 	go a.enforce(ctx)
 	go func() {
@@ -291,6 +304,10 @@ func wsURL(central string) (string, error) {
 func (a *Agent) capabilities(ctx context.Context) proto.Capabilities {
 	c := proto.Capabilities{OS: runtime.GOOS, Arch: runtime.GOARCH, Runner: a.o.RunnerInfo, Features: []string{"lease-guard", "launch-shim", "recording.zstd"}}
 	for _, kind := range []string{harness.KindClaude, harness.KindCodex} {
+		if kind == harness.KindClaude && a.managedClaude() {
+			c.Harnesses = append(c.Harnesses, a.claudeInfo(ctx))
+			continue
+		}
 		h, _ := harness.Get(kind)
 		bin := a.o.HarnessBinaries[kind]
 		if bin == "" {

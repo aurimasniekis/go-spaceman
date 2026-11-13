@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -139,6 +140,17 @@ type Manager struct {
 	mu       sync.Mutex
 	memo     map[string]memoEntry
 	inflight map[string]*call
+	// hashed are the stat fingerprints of binaries this manager hashed itself (install, Verify), by version.
+	hashed map[string]fingerprint
+
+	// gcMu serializes GC with the launch holds: Acquire registers a hold under it and GC reads the holds under it.
+	gcMu sync.Mutex
+	held map[string]int
+
+	// hashes counts full binary hashes (tests); afterHold, when set, runs right after Acquire took its hold (tests race
+	// GC and removals there).
+	hashes    atomic.Int64
+	afterHold func(Resolution)
 }
 
 // New validates the options, creates the cache directory and loads the memoised channel pointers.
@@ -192,7 +204,7 @@ func New(o Options) (*Manager, error) {
 	m := &Manager{
 		dir: o.Dir, base: base, platform: o.Platform, keep: o.Keep, refresh: o.Refresh, timeout: o.DownloadTimeout,
 		client: client, log: o.Log, now: o.Now, ctx: ctx, cancel: cancel,
-		memo: map[string]memoEntry{}, inflight: map[string]*call{},
+		memo: map[string]memoEntry{}, inflight: map[string]*call{}, hashed: map[string]fingerprint{}, held: map[string]int{},
 	}
 	m.loadMemo()
 	return m, nil
@@ -264,6 +276,9 @@ func (m *Manager) Platform() string { return m.platform }
 // Dir returns the cache directory.
 func (m *Manager) Dir() string { return m.dir }
 
+// RefreshInterval returns how long a channel pointer is memoised (and how often Run re-resolves).
+func (m *Manager) RefreshInterval() time.Duration { return m.refresh }
+
 // Resolve picks the version to run for requested: a channel or an exact version ("" means ChannelLatest).
 //
 //   - An exact version is installed if needed (bounded by the download timeout); a version the release server does not
@@ -276,41 +291,60 @@ func (m *Manager) Dir() string { return m.dir }
 //
 // Resolution.Fallback says which of these happened.
 func (m *Manager) Resolve(ctx context.Context, requested string) (Resolution, error) {
+	requested, target, perr, err := m.target(ctx, requested)
+	if err != nil {
+		return Resolution{}, err
+	}
+	res, want, err := m.pick(requested, target, perr) //nolint:contextcheck // pick only starts background installs on the manager's context
+	if err != nil || want == "" {
+		return res, err
+	}
+	inst, err := m.Ensure(ctx, want)
+	if err != nil {
+		return Resolution{}, err
+	}
+	return Resolution{Requested: requested, Target: want, Version: inst.Version, Path: inst.Path}, nil
+}
+
+// target validates requested ("" means ChannelLatest) and returns it with the version it targets: itself when exact,
+// else the channel's pointer. perr is set (and target empty) when the pointer could not be fetched.
+func (m *Manager) target(ctx context.Context, requested string) (req, target string, perr, err error) {
 	if requested == "" {
 		requested = ChannelLatest
 	}
 	if ValidVersion(requested) {
-		inst, err := m.Ensure(ctx, requested)
-		if err != nil {
-			return Resolution{}, err
-		}
-		return Resolution{Requested: requested, Target: requested, Version: inst.Version, Path: inst.Path}, nil
+		return requested, requested, nil, nil
 	}
 	if !ValidChannel(requested) {
-		return Resolution{}, fmt.Errorf("%w: %q (want latest, stable or X.Y.Z)", ErrInvalidVersion, requested)
+		return "", "", nil, fmt.Errorf("%w: %q (want latest, stable or X.Y.Z)", ErrInvalidVersion, requested)
 	}
-	target, perr := m.Channel(ctx, requested)
+	target, perr = m.Channel(ctx, requested)
+	return requested, target, perr, nil
+}
+
+// pick decides from the cache alone (no network, no waiting) what requested runs now, given its target (see target).
+// want is the version to install first when nothing requested may run is cached; the caller installs it and picks
+// again. Acquire calls it under GC's lock.
+func (m *Manager) pick(requested, target string, perr error) (res Resolution, want string, err error) {
 	if perr != nil {
 		inst, why, ok := m.fallback(requested, "")
 		if !ok {
-			return Resolution{}, fmt.Errorf("%w: %w", ErrNoVersion, perr)
+			return Resolution{}, "", fmt.Errorf("%w: %w", ErrNoVersion, perr)
 		}
 		m.log.Warn("claude code channel unavailable; using a cached version", slog.String("channel", requested),
 			slog.String("version", inst.Version), slog.String("fallback", why), slog.String("error", perr.Error()))
-		return Resolution{Requested: requested, Version: inst.Version, Path: inst.Path, Fallback: why}, nil
+		return Resolution{Requested: requested, Version: inst.Version, Path: inst.Path, Fallback: why}, "", nil
 	}
 	if inst, ok := m.lookup(target); ok {
-		return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path}, nil
+		return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path}, "", nil
 	}
-	if inst, why, ok := m.fallback(requested, target); ok {
-		m.Prefetch(target) //nolint:contextcheck // a background install outlives this call
-		return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path, Fallback: why}, nil
+	if ValidChannel(requested) {
+		if inst, why, ok := m.fallback(requested, target); ok {
+			m.Prefetch(target) //nolint:contextcheck // a background install outlives this call
+			return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path, Fallback: why}, "", nil
+		}
 	}
-	inst, err := m.Ensure(ctx, target)
-	if err != nil {
-		return Resolution{}, err
-	}
-	return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path}, nil
+	return Resolution{}, target, nil
 }
 
 // fallback picks a cached version for channel when target (empty: the pointer is unavailable) cannot run, and says

@@ -269,13 +269,13 @@ func TestClaudeCodeConfig(t *testing.T) {
 	bad.Central.URL = "https://c.example.com"
 	bad.Harness.Claude = ClaudeCodeConfig{
 		Channel: "rc", BaseURL: "http://mirror.example.com", CacheKeep: 0,
-		Refresh: Duration(time.Second), DownloadTimeout: Duration(3 * time.Hour),
+		Refresh: Duration(time.Second), DownloadTimeout: Duration(3 * time.Hour), Manage: true, SelfUpdate: true,
 	}
 	err = bad.Validate()
 	for _, want := range []string{
 		"harness.claude.channel must be latest, stable or an exact X.Y.Z", "harness.claude.base_url", "must use https",
 		"harness.claude.cache_keep must be within 1..50", "harness.claude.refresh must be within",
-		"harness.claude.download_timeout must be within",
+		"harness.claude.download_timeout must be within", "harness.claude.self_update can't be on with harness.claude.manage",
 	} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in %v", want, err)

@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Node-managed Claude Code launches (`harness.claude.manage: true`, ADR-0077): a Claude Code run launches the verified
+  cached binary by absolute path, so the herdr-core core's `PATH` no longer decides which `claude` runs. With nothing
+  usable cached the run waits in starting for the download, bounded by `download_timeout`. The agent's journal records
+  each run's version, path, requested channel and fallback reason (migration 0006), and the cache's GC keeps the
+  versions of live and adoptable runs. A launch holds its version against GC from the decision until the journal
+  records it. At start the agent cleans interrupted downloads, re-hashes the versions it will use and collects garbage.
+  The prefetch loop and periodic GC run in the background. A launch re-hashes a cached binary whose stat fingerprint
+  (device, inode, size, mode, ctime) changed since it was last hashed, and reinstalls it on a mismatch. Operator guide:
+  "Managed Claude Code".
 - Node-managed Claude Code, groundwork (not used by launches yet): the `internal/harness/dist` package resolves
   `latest`, `stable` or an exact version from the release server, downloads it into an immutable per-version cache
   under the agent's data directory after checking the manifest's version, size and SHA-256 (checksum only, no
@@ -15,15 +24,32 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   versions are read-only and looked up without following links; a damaged one is reinstalled; a channel never falls
   back to a version newer than its target; redirects stay on the release host; musl is detected from `/bin/sh`. New node
   settings `harness.claude.{manage, channel, base_url, cache_keep, refresh, download_timeout, self_update}`;
-  `manage` defaults to off, so nothing changes on upgrade.
+  `manage` defaults to off. The cache itself changes nothing on upgrade, but the updater change below does (see the
+  upgrade note under "Changed").
 
 ### Changed
+
+- Every Claude Code run now gets `DISABLE_AUTOUPDATER=1` and `DISABLE_UPDATES=1`, on unmanaged nodes too, so runs no
+  longer update themselves into the agent's `HOME`. `harness.claude.self_update: true` restores self-updates on an
+  unmanaged node; it is refused together with `manage: true`. The node warns about a profile's updater settings only
+  when it turns the updater off.
+
+  **Upgrade note:** a node whose `claude` stayed current only through Claude Code's own self-update (the copy in
+  `~/.local/bin/claude`) now **stays on its current version**. Nothing updates it any more until you do one of these:
+  set `harness.claude.manage: true`, update it with your own tooling, or set `harness.claude.self_update: true`.
 
 - CI's and the release workflow's login-timing and fuzz jobs use the same 250 ms write-transaction guard on GitHub's
   hosted runners as the coverage job, instead of the 100 ms default (ADR-0062). The login-timing job failed on it
   while its timing check passed. Local runs keep 100 ms.
 
 ### Fixed
+
+- Managed Claude Code launches: a stop (or a fenced lease) while a launch waits for the download is no longer undone
+  when the download completes; the run stays stopped and never starts. The version is held after the clone,
+  worktree and memory preparation, right before the launch is built. That hold takes it from the cache only and never
+  waits under the space's lock: when the version waited for is gone by then, the launch waits again (at most three
+  times, within `download_timeout`), so a download never blocks the space's other launches. A startup or launch check interrupted by a
+  cancelled or expired context no longer removes a good cached version.
 
 - Web UI: the New inbox item dialog (and any other dialog with the Markdown editor) no longer shows a vertical scrollbar
   when a writing-assistant browser extension such as Grammarly is active. The extension's overlays, absolutely

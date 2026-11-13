@@ -67,6 +67,9 @@ type Context struct {
 	// AutoMemoryDir is the folder for the instance's own Claude Code auto memory of this launch's project, outside the
 	// space folder so no other run's file tools may write it ("" keeps Claude Code's default, ADR-0068).
 	AutoMemoryDir string
+	// SelfUpdate lets the harness update itself (harness.claude.self_update). Off, a Claude Code run gets
+	// DISABLE_AUTOUPDATER=1 and DISABLE_UPDATES=1 (ADR-0077).
+	SelfUpdate bool
 }
 
 // Launch is a built launch.
