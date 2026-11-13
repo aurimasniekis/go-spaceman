@@ -4254,9 +4254,12 @@
        its record type, not its text.
   2. **The reported limit.** `RunReport.limit {kind, resets_at, since, cleared}` (protocol minor 12,
      `MinorUsageLimit`). `kind` is from an allowlist (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
-     `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path reports `unknown`).
-     `resets_at` is the epoch clamped to `(now, now + 8 days]`, otherwise null. **No transcript text crosses the
-     wire or reaches a log.** A node below minor 12 never reports limits and everything behaves as before.
+     `seven_day_overage_included`, `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path
+     reports `unknown`). `since` is bounded to `[now − 8 days, now]` (missing: now); `resets_at` is kept when it lies in
+     `(since, since + 8 days]`, even if it has already passed, otherwise null; a report with neither a kind nor
+     `cleared` is not a limit (`proto.RunLimit.Normalized`). **No transcript text crosses the wire or reaches a log.**
+     A node below minor 12 never reports limits, and central drops a limit on any report from a session negotiated
+     below 12 (`RunReport.ForMinor`), so everything behaves as before.
   3. **Keep-alive for short waits.** When the reset is known and within `keep_alive_max` (default 6 h), or unknown on
      a subscription run, the process stays up and Claude Code continues by itself. Meanwhile the run is
      *limit-waiting*: it is excluded from the **space** limit but still counts against the **node** limit (Q4);
@@ -4271,7 +4274,9 @@
      never reopened, so fencing, the sweeper and the single-control index are unchanged.
   5. **Resume job.** A deadline-timer job resumes due waits at `resets_at` + 2 min (unknown: retried with backoff from
      1 h, each attempt re-detected and re-parked without new notices). A paused space, a still-open account limit, a
-     node with no lease or a full space keeps the wait waiting; node hello kicks it. Resumes go through `Admit`; when
+     node with no lease or a full space keeps the wait waiting; node hello kicks it. An open hold with an **unknown
+     reset** does not block its own retry: it is **probed** at the hold's `usage_limits.check_at` (decision 7), and
+     the retry that the probe lets through is that attempt. Resumes go through `Admit`; when
      several are due, control first, then the oldest task, and a resume never pre-empts a launch already admitted
      (Q6). A space that relocated resumes without a session, and control is told.
   6. **Release.** A worker's wait is released after `max_wait` (default 7 days, Q2): the task returns to `ready`
@@ -4283,12 +4288,24 @@
      neither restarts nor counts a control run that ended `usage_limit`. The hold clears when `resets_at` passes, a
      node reports `cleared` on any run of the account, any other run on the account makes progress (an assistant
      message with usage), the quota board shows a gateway account available, or an operator clears it.
+     - **Unknown resets are probed, so a hold never deadlocks** (amended 2026-11-13, UL-2 review). A hold without
+       `resets_at` refuses everything except a **probe**: at the hold's `usage_limits.check_at`, exactly one resume
+       (or, with none waiting, one launch) on the account is let through. A probe that makes progress clears the
+       hold; one that hits the limit again moves `check_at` on with backoff (from 1 h, doubling, capped at
+       `keep_alive_max`). The gateway re-check of decision 9 uses the same column.
+     - **Clearing a hold across spaces** (control's decision, 2026-11-13). Accounts are global objects, so "clear
+       now" on an account hold clears **every open row for that account and kind in all spaces**, and needs
+       **account-level permission** (the same as managing accounts). An operator with only space-level permission
+       clears **their space's row only**: that does not lift the hold in other spaces (the hold is read across
+       spaces), and the UI says so. Every clear is audited; each other space whose row was cleared has its control
+       told once.
   8. **Failover is opt-in.** With the space setting `usage_limit.failover = true` (default **false**), `Resolve` picks
      the next bound account for the same harness without an open limit, for launches and resumes. SpaceMan never falls
      back from a gateway binding to a direct account (Q1).
   9. **Gateway waits.** The reset is an **estimate**: the earliest `until` among the quota board's unavailable
      accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
-     cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9).
+     cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9). The
+     re-check is scheduled by the hold's `usage_limits.check_at`, as is the probe of decision 7.
   10. **Operator answers (2026-11-13, all proposed defaults accepted).**
       - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.
       - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.
@@ -4304,9 +4321,11 @@
   11. **Telling control and people once.** Control gets one durable message per space and account window when a
       limit opens and one when it clears or resumes (dedup keys from the `usage_limits` id); worker `run-ended` notices
       for `usage_limit` ends are folded in. People get the single action of Q5.
-  12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind`,
-      `limit_resets_at`, `limit_since`; tables `usage_limits` and `limit_waits`, no runs-table rebuild); agent
-      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_offset`). Space setting
+  12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind` without a CHECK,
+      so a new kind never needs a runs-table rebuild, `limit_resets_at`, `limit_since`; tables `usage_limits`, with
+      `check_at` and the kind CHECK, and `limit_waits`); agent
+      migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_since`, `limit_offset`; `limit_since` added in UL-2
+      so a restarted agent re-reports the same `since`). Space setting
       `usage_limit {failover, keep_alive_max, max_wait, notify_humans_after}`.
 - **Alternatives:**
   - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and

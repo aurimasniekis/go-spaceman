@@ -33,8 +33,9 @@ const (
 	// ADR-0057); 8: Claude Code settings on launches (claude_settings, ADR-0059); 9: gateway runs (the launch's gateway
 	// address and its child token in the secrets, delivered to the harness; ADR-0060); 10: run terminal sizes
 	// (terminal.sizes, ADR-0075); 11: harness versions (the profile's pin on launches, the launched version on run
-	// reports and node-managed harness details in capabilities, ADR-0077)
-	MaxMinor = 11
+	// reports and node-managed harness details in capabilities, ADR-0077); 12: usage limits (the limit a node detected
+	// in a run's transcript on run reports, ADR-0079)
+	MaxMinor = 12
 	// ConnectPath is the WebSocket endpoint on central.
 	ConnectPath = "/agent/v1/connect"
 	// MaxMessage bounds one envelope (recording chunks travel in their own bounded messages).
@@ -334,10 +335,14 @@ type RunReport struct {
 	// Minor ≥ 11 (ADR-0077), once the node knows them (the starting report after the version is resolved, and every
 	// report after it): the harness version the run launched, what was requested (the profile's pin, else the node's
 	// channel) and, when another version than the request's target ran, the fallback reason.
-	HarnessVersion   string    `json:"harness_version,omitempty"`
-	HarnessRequested string    `json:"harness_requested,omitempty"`
-	HarnessFallback  string    `json:"harness_fallback,omitempty"`
-	ObservedAt       time.Time `json:"observed_at"`
+	HarnessVersion   string `json:"harness_version,omitempty"`
+	HarnessRequested string `json:"harness_requested,omitempty"`
+	HarnessFallback  string `json:"harness_fallback,omitempty"`
+	// Minor ≥ 12 (ADR-0079): the run's open usage limit on every report while the node knows of one, and Cleared once
+	// it is over. Nil carries no limit information, so the receiver keeps what it has; always nil below minor 12
+	// (ForMinor).
+	Limit      *RunLimit `json:"limit,omitempty"`
+	ObservedAt time.Time `json:"observed_at"`
 }
 
 // Reconcile is central's desired state of the node's runs, sent after hello and on demand.
