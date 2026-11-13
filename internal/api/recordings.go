@@ -31,6 +31,30 @@ type RecordingPage struct {
 	Gaps      int                `json:"gaps" doc:"Sequence discontinuities and explicit gap records"`
 	NextAfter uint64             `json:"next_after" doc:"Pass as after= to continue"`
 	More      bool               `json:"more"`
+	Tail      *RecordingTail     `json:"tail,omitempty" doc:"Set when the page is a tail (tail=): what comes before its records"`
+}
+
+// RecordingTail describes the output a tail leaves out (ADR-0081): a viewer draws the tail on a fresh terminal of
+// cols×rows after setting or resetting the modes, in order.
+type RecordingTail struct {
+	From         uint64           `json:"from" doc:"Sequence number of the tail's first record (0 when the recording is empty)"`
+	SkippedBytes int64            `json:"skipped_bytes" doc:"Bytes of output before the tail; 0 when the tail is the whole recording"`
+	Cols         int              `json:"cols" doc:"Terminal columns where the tail starts (0 when no size was recorded before it)"`
+	Rows         int              `json:"rows" doc:"Terminal rows where the tail starts"`
+	Modes        []recording.Mode `json:"modes" doc:"DEC private modes the output before the tail set (on) or reset, in the order they last changed"`
+	Gaps         int              `json:"gaps" doc:"Gap records before the tail"`
+	Truncated    bool             `json:"truncated" doc:"Whether a truncation record comes before the tail"`
+}
+
+func tailOf(res recording.TailResult) *RecordingTail {
+	t := &RecordingTail{SkippedBytes: res.Skipped, Cols: res.Cols, Rows: res.Rows, Modes: res.Modes, Gaps: res.SkippedGaps, Truncated: res.SkippedTrunc}
+	if t.Modes == nil {
+		t.Modes = []recording.Mode{}
+	}
+	if len(res.Records) > 0 {
+		t.From = res.Records[0].Seq
+	}
+	return t
 }
 
 // RegisterRecordings registers recording replay operations.
@@ -44,26 +68,37 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 				RunPath
 				After uint64 `query:"after" doc:"Return records with seq greater than this"`
 				Limit int    `query:"limit" minimum:"1" maximum:"5000" default:"1000"`
+				Tail  int64  `query:"tail" minimum:"0" maximum:"16777216" doc:"Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after."`
 			}) (*struct{ Body RecordingPage }, error) {
 				if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
 					return nil, err
 				}
+				if in.Tail > 0 {
+					res, err := f.Recordings().Tail(ctx, in.RunID, in.Tail)
+					if err != nil {
+						return nil, d.fail(ctx, "recordings.get", err)
+					}
+					return &struct{ Body RecordingPage }{Body: RecordingPage{Records: res.Records, Truncated: res.Truncated, Gaps: res.Gaps,
+						NextAfter: res.LastSeq, Tail: tailOf(res)}}, nil
+				}
 				if in.Limit == 0 {
 					in.Limit = 1000
 				}
-				res, err := f.Recordings().Read(ctx, in.RunID, in.After)
-				if err != nil {
-					return nil, d.fail(ctx, "recordings.get", err)
-				}
-				out := &struct{ Body RecordingPage }{Body: RecordingPage{Records: []recording.Record{}, Truncated: res.Truncated, Gaps: res.Gaps, NextAfter: in.After}}
-				for i, r := range res.Records {
-					if i == in.Limit {
+				// Only the page is held in memory; the rest of the recording is decoded for the gap count and dropped.
+				out := &struct{ Body RecordingPage }{Body: RecordingPage{Records: []recording.Record{}, NextAfter: in.After}}
+				res, err := f.Recordings().Scan(ctx, in.RunID, in.After, func(r recording.Record) error {
+					if len(out.Body.Records) == in.Limit {
 						out.Body.More = true
-						break
+						return nil
 					}
 					out.Body.Records = append(out.Body.Records, r)
 					out.Body.NextAfter = r.Seq
+					return nil
+				})
+				if err != nil {
+					return nil, d.fail(ctx, "recordings.get", err)
 				}
+				out.Body.Truncated, out.Body.Gaps = res.Truncated, res.Gaps
 				return out, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "delete-recording", Method: http.MethodDelete, Path: "/spaces/{space_id}/runs/{run_id}/recording",
@@ -95,8 +130,13 @@ func RecordingStreams(f *fleet.Service) []RawRoute {
 
 // terminalStream serves a live, watch-only terminal (SM-UI-004): stored records first (catch-up), then live records.
 // A viewer that falls behind is told about the gap and re-reads from storage; it never slows the node (SM-REC-004).
+// The catch-up is read one record at a time, so a long recording is never held in memory.
 //
-// Events: "record" (data: recording.Record JSON, id: seq), "gap", "heartbeat", and "end": data {} when the run ended, or
+// With tail=<bytes> (and no after or Last-Event-ID), the catch-up is only the end of the recording, the records whose
+// output adds up to at most that many bytes, preceded by a "tail" event (RecordingTail) that says what comes before it
+// (ADR-0081): the current screen shows without the whole history. A reconnect resumes after the last record as usual.
+//
+// Events: "tail", "record" (data: recording.Record JSON, id: seq), "gap", "heartbeat", and "end": data {} when the run ended, or
 // {"reason":"unauthenticated"|"forbidden"} when the viewer's credential stopped being valid or no longer grants
 // terminal:watch in the space. The stream guard re-authorizes at once after a committed revocation or grant change and
 // every StreamRevalidate otherwise (SM-AUTH-007, ADR-0033).
@@ -116,6 +156,11 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
 		after, _ = strconv.ParseUint(v, 10, 64)
+	}
+	var tail int64
+	if after == 0 {
+		tail, _ = strconv.ParseInt(r.URL.Query().Get("tail"), 10, 64)
+		tail = min(max(tail, 0), recording.MaxTailBytes)
 	}
 	// Guard from the start, so a revocation committed during catch-up is not missed.
 	guard := d.guardStream(r, PrincipalFrom(ctx), func(p *auth.Principal) bool {
@@ -137,20 +182,38 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 		return err
 	}
 	catchUp := func() bool {
-		res, err := f.Recordings().Read(ctx, runID, after)
+		_, err := f.Recordings().Scan(ctx, runID, after, func(rec recording.Record) error {
+			if err := send(rec); err != nil {
+				return err
+			}
+			after = rec.Seq
+			return nil
+		})
 		if err != nil {
+			return false
+		}
+		fl.Flush()
+		return true
+	}
+	catchUpTail := func() bool {
+		res, err := f.Recordings().Tail(ctx, runID, tail)
+		if err != nil {
+			return false
+		}
+		b, _ := json.Marshal(tailOf(res))
+		if _, err := fmt.Fprintf(w, "event: tail\ndata: %s\n\n", b); err != nil {
 			return false
 		}
 		for _, rec := range res.Records {
 			if send(rec) != nil {
 				return false
 			}
-			after = rec.Seq
 		}
+		after = res.LastSeq
 		fl.Flush()
 		return true
 	}
-	if !catchUp() {
+	if tail > 0 && !catchUpTail() || tail == 0 && !catchUp() {
 		return
 	}
 	if ended(run.Observed) {

@@ -13747,6 +13747,23 @@
         ],
         "type": "object"
       },
+      "RecordingMode": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "on"
+        ],
+        "type": "object"
+      },
       "RecordingPage": {
         "additionalProperties": false,
         "properties": {
@@ -13778,6 +13795,10 @@
               "$ref": "#/components/schemas/RecordingRecord"
             },
             "type": "array"
+          },
+          "tail": {
+            "$ref": "#/components/schemas/RecordingTail",
+            "description": "Set when the page is a tail (tail=): what comes before its records"
           },
           "truncated": {
             "description": "A segment ended in an incomplete frame (interrupted writer)",
@@ -13839,6 +13860,58 @@
           "seq",
           "t",
           "k"
+        ],
+        "type": "object"
+      },
+      "RecordingTail": {
+        "additionalProperties": false,
+        "properties": {
+          "cols": {
+            "description": "Terminal columns where the tail starts (0 when no size was recorded before it)",
+            "format": "int64",
+            "type": "integer"
+          },
+          "from": {
+            "description": "Sequence number of the tail's first record (0 when the recording is empty)",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "gaps": {
+            "description": "Gap records before the tail",
+            "format": "int64",
+            "type": "integer"
+          },
+          "modes": {
+            "description": "DEC private modes the output before the tail set (on) or reset, in the order they last changed",
+            "items": {
+              "$ref": "#/components/schemas/RecordingMode"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "description": "Terminal rows where the tail starts",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skipped_bytes": {
+            "description": "Bytes of output before the tail; 0 when the tail is the whole recording",
+            "format": "int64",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "Whether a truncation record comes before the tail",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "from",
+          "skipped_bytes",
+          "cols",
+          "rows",
+          "modes",
+          "gaps",
+          "truncated"
         ],
         "type": "object"
       },
@@ -29210,6 +29283,19 @@
               "format": "int64",
               "maximum": 5000,
               "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after.",
+            "explode": false,
+            "in": "query",
+            "name": "tail",
+            "schema": {
+              "description": "Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after.",
+              "format": "int64",
+              "maximum": 16777216,
+              "minimum": 0,
               "type": "integer"
             }
           }

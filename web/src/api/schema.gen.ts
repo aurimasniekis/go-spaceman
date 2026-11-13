@@ -9514,6 +9514,11 @@ export interface components {
             code?: string;
             password: string;
         };
+        RecordingMode: {
+            /** Format: int64 */
+            mode: number;
+            on: boolean;
+        };
         RecordingPage: {
             /**
              * Format: uri
@@ -9533,6 +9538,8 @@ export interface components {
              */
             next_after: number;
             records: components["schemas"]["RecordingRecord"][];
+            /** @description Set when the page is a tail (tail=): what comes before its records */
+            tail?: components["schemas"]["RecordingTail"];
             /** @description A segment ended in an incomplete frame (interrupted writer) */
             truncated: boolean;
         };
@@ -9555,6 +9562,37 @@ export interface components {
              */
             t: number;
             why?: string;
+        };
+        RecordingTail: {
+            /**
+             * Format: int64
+             * @description Terminal columns where the tail starts (0 when no size was recorded before it)
+             */
+            cols: number;
+            /**
+             * Format: int64
+             * @description Sequence number of the tail's first record (0 when the recording is empty)
+             */
+            from: number;
+            /**
+             * Format: int64
+             * @description Gap records before the tail
+             */
+            gaps: number;
+            /** @description DEC private modes the output before the tail set (on) or reset, in the order they last changed */
+            modes: components["schemas"]["RecordingMode"][];
+            /**
+             * Format: int64
+             * @description Terminal rows where the tail starts
+             */
+            rows: number;
+            /**
+             * Format: int64
+             * @description Bytes of output before the tail; 0 when the tail is the whole recording
+             */
+            skipped_bytes: number;
+            /** @description Whether a truncation record comes before the tail */
+            truncated: boolean;
         };
         "Recovery-loginRequest": {
             /**
@@ -18543,6 +18581,8 @@ export interface operations {
                 /** @description Return records with seq greater than this */
                 after?: number;
                 limit?: number;
+                /** @description Return only the end of the recording: the records whose output adds up to at most this many bytes, in one page (limit and after do not apply), with what comes before them in tail (ADR-0081). 0 returns pages from after. */
+                tail?: number;
             };
             header?: never;
             path: {

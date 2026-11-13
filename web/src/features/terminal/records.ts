@@ -1,4 +1,4 @@
-import type { RecordingRecord } from '@/api/client'
+import type { RecordingRecord, RecordingTail } from '@/api/client'
 
 /** The subset of the ghostty-web Terminal a recording is applied to (keeps this logic testable without WebAssembly). */
 export interface Screen {
@@ -194,4 +194,207 @@ function join(parts: Uint8Array[], bytes: number): Uint8Array {
     at += p.length
   }
   return out
+}
+
+/**
+ * How much output a terminal asks for first (ADR-0081): the end of the recording, not all of it. On real Claude Code
+ * recordings (classic renderer) 1 MiB was the smallest tail that drew the same screen as the whole recording at every
+ * point tried; 256 KiB was wrong after quiet stretches, when only the spinner had been redrawn.
+ */
+export const TAIL_BYTES = 1 << 20
+/** The largest tail the server returns; past it, earlier output comes from the whole recording. */
+export const MAX_TAIL_BYTES = 16 << 20
+
+/** The next, larger tail when the viewer asks for earlier output: 1, 4, 16 MiB, then 0 (the whole recording). */
+export function nextTail(bytes: number): number {
+  if (bytes <= 0 || bytes >= MAX_TAIL_BYTES) return 0
+  return Math.min(bytes * 4, MAX_TAIL_BYTES)
+}
+
+/** The escape sequences that put a fresh terminal into the DEC private modes a tail starts in. */
+export function modePrelude(modes: readonly { mode: number; on: boolean }[]): string {
+  return modes.map((m) => `\x1b[?${m.mode}${m.on ? 'h' : 'l'}`).join('')
+}
+
+const encoder = new TextEncoder()
+
+function b64(s: string): string {
+  let bin = ''
+  for (const b of encoder.encode(s)) bin += String.fromCharCode(b)
+  return btoa(bin)
+}
+
+/**
+ * What the output before a tail leaves behind, as records to apply before the tail's own: the terminal size, the
+ * DEC private modes, and the gaps and truncation it held (so the badges count them). Their seq is 0, so they never move
+ * a stream's position.
+ */
+export function tailRecords(tail: RecordingTail): RecordingRecord[] {
+  const out: RecordingRecord[] = []
+  if (tail.cols > 0 && tail.rows > 0) out.push({ seq: 0, t: 0, k: 'size', cols: tail.cols, rows: tail.rows })
+  const prelude = modePrelude(tail.modes ?? [])
+  if (prelude) out.push({ seq: 0, t: 0, k: 'o', d: b64(prelude) })
+  for (let i = 0; i < tail.gaps; i++) out.push({ seq: 0, t: 0, k: 'gap' })
+  if (tail.truncated) out.push({ seq: 0, t: 0, k: 'trunc' })
+  return out
+}
+
+/**
+ * The DEC private modes a tail's prelude restores (the server's list, internal/recording/tail.go): cursor keys, origin
+ * mode, autowrap, cursor visibility, the alternate screen, mouse reporting and bracketed paste.
+ */
+const TRACKED = new Set([1, 6, 7, 25, 47, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004])
+
+/** Follows the DEC private modes of output written to it (CSI ? Pm h/l and RIS), across writes that split a sequence. */
+export class ModeTracker {
+  private modes: { mode: number; on: boolean }[] = []
+  private state = 0 // 0 ground, 1 ESC, 2 CSI, 3 CSI ?
+  private param = 0
+  private params: number[] = []
+  private big = false
+
+  write(b: Uint8Array) {
+    for (const c of b) {
+      switch (this.state) {
+        case 0:
+          if (c === 0x1b) this.state = 1
+          break
+        case 1:
+          if (c === 0x5b) this.state = 2
+          else if (c === 0x63) {
+            this.modes = []
+            this.state = 0
+          } else if (c !== 0x1b) this.state = 0
+          break
+        case 2:
+          if (c === 0x3f) {
+            this.state = 3
+            this.param = 0
+            this.params = []
+            this.big = false
+          } else this.state = 0
+          break
+        default:
+          if (c >= 0x30 && c <= 0x39) {
+            if (this.param < 100000) this.param = this.param * 10 + (c - 0x30)
+            else this.big = true
+          } else if (c === 0x3b) {
+            this.params.push(this.param)
+            this.param = 0
+            if (this.params.length > 32) this.state = 0
+          } else if (c === 0x68 || c === 0x6c) {
+            if (!this.big) for (const p of [...this.params, this.param]) this.set(p, c === 0x68)
+            this.state = 0
+          } else this.state = c === 0x1b ? 1 : 0
+      }
+    }
+  }
+
+  private set(mode: number, on: boolean) {
+    if (!TRACKED.has(mode)) return
+    this.modes = this.modes.filter((m) => m.mode !== mode)
+    this.modes.push({ mode, on })
+  }
+
+  /** The modes the output set or reset, in the order they last changed. */
+  current(): { mode: number; on: boolean }[] {
+    return this.modes.map((m) => ({ ...m }))
+  }
+
+  clone(): ModeTracker {
+    const c = new ModeTracker()
+    c.modes = this.current()
+    c.state = this.state
+    c.param = this.param
+    c.params = [...this.params]
+    c.big = this.big
+    return c
+  }
+}
+
+/** An output record's size in bytes, from its base64 length (without decoding it). */
+function outputBytes(r: RecordingRecord): number {
+  if (r.k !== 'o' || !r.d) return 0
+  const pad = r.d.endsWith('==') ? 2 : r.d.endsWith('=') ? 1 : 0
+  return (r.d.length / 4) * 3 - pad
+}
+
+/**
+ * Where a replay renders from to show records[0, end): far enough back that the output in between is at most budget
+ * bytes (base64 lengths, so no decoding), and the tail that starts there (what a seek applies before records[start]).
+ * Modes come from a tracker checkpointed every CHECKPOINT records (ReplayIndex), so a seek decodes at most that many
+ * records it does not draw.
+ */
+export class ReplayIndex {
+  static readonly CHECKPOINT = 512
+  private checkpoints: ModeTracker[] = [new ModeTracker()]
+  private tracker = new ModeTracker()
+  private indexed = 0
+
+  constructor(private readonly records: readonly RecordingRecord[]) {}
+
+  /**
+   * Indexes records up to `until` (all by default) for at most sliceMs; returns whether they are indexed. A long
+   * recording is indexed a slice at a time, like feed, so the page keeps the main thread.
+   */
+  advance(until = this.records.length, sliceMs = Infinity, now: () => number = () => performance.now()): boolean {
+    const began = now()
+    const end = Math.min(until, this.records.length)
+    while (this.indexed < end) {
+      const r = this.records[this.indexed]
+      if (r.k === 'o') this.tracker.write(decode(r.d))
+      this.indexed++
+      if (this.indexed % ReplayIndex.CHECKPOINT === 0) {
+        this.checkpoints.push(this.tracker.clone())
+        if (now() - began >= sliceMs) break
+      }
+    }
+    return this.indexed >= end
+  }
+
+  /** The modes after records[0, start); records before start must be indexed (advance). */
+  modesAt(start: number): { mode: number; on: boolean }[] {
+    const cp = Math.min(Math.floor(start / ReplayIndex.CHECKPOINT), this.checkpoints.length - 1)
+    const t = this.checkpoints[cp].clone()
+    for (let i = cp * ReplayIndex.CHECKPOINT; i < start; i++) if (this.records[i].k === 'o') t.write(decode(this.records[i].d))
+    return t.current()
+  }
+
+  /** The first record of a window ending at end with at most budget bytes of output (at least one record). */
+  windowStart(end: number, budget: number): number {
+    let bytes = 0
+    let start = end
+    while (start > 0) {
+      const r = this.records[start - 1]
+      const n = outputBytes(r)
+      if (start < end && bytes + n > budget) break
+      bytes += n
+      start--
+    }
+    return start
+  }
+
+  /** The tail of records[0, end) that fits budget: its first record and what comes before it. */
+  tail(end: number, budget: number): { start: number; tail: RecordingTail } {
+    const start = this.windowStart(end, budget)
+    let sum = emptySummary()
+    let skipped = 0
+    for (let i = 0; i < start; i++) {
+      const r = this.records[i]
+      sum = apply(null, sum, r)
+      skipped += outputBytes(r)
+    }
+    return {
+      start,
+      tail: {
+        from: this.records[start]?.seq ?? 0,
+        skipped_bytes: skipped,
+        cols: start > 0 ? sum.cols : 0,
+        rows: start > 0 ? sum.rows : 0,
+        modes: start > 0 ? this.modesAt(start) : [],
+        gaps: sum.gaps,
+        truncated: sum.truncated,
+      },
+    }
+  }
 }
