@@ -318,8 +318,9 @@ func (a *App) waitRelocation(cmd *cobra.Command, spaceRef string, timeout time.D
 
 func (a *App) runCmd() *cobra.Command {
 	return group("run", "Runs: list, show, launch, stop, send input; usage, recordings and transcripts (--space)", []string{"runs"},
-		a.cmd(opts{use: "list", short: "A space's runs, newest first", op: "list-runs", alias: []string{"ls"}, scoped: true, query: []qflag{limitFlag()},
-			view: view{items: "items", cols: runCols, empty: "No runs."}}),
+		a.cmd(opts{use: "list", short: "A space's runs, newest first", op: "list-runs", alias: []string{"ls"}, scoped: true,
+			query: []qflag{limitFlag(), qs("include", "include", "manifest: also return each run's manifest")},
+			view:  view{items: "items", cols: runCols, empty: "No runs."}}),
 		a.cmd(opts{use: "get", short: "Show a run", op: "get-run", scoped: true, args: pos("run")}),
 		a.cmd(opts{use: "launch", short: "Launch a run on the space's node", op: "launch-run", scoped: true, idem: true,
 			example: "spaceman run launch --space payments --role worker --prompt-file task.md",

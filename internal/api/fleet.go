@@ -248,7 +248,8 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 			Tags: tags},
 			func(ctx context.Context, in *struct {
 				SpacePath
-				Limit int `query:"limit" minimum:"1" maximum:"500" default:"100"`
+				Limit   int    `query:"limit" minimum:"1" maximum:"500" default:"100"`
+				Include string `query:"include" enum:"manifest" doc:"manifest: include each run's manifest, which is omitted from lists by default (GET the run for it)"`
 			}) (*struct {
 				Body struct {
 					Items []*fleet.Run `json:"items"`
@@ -260,6 +261,13 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				rs, err := f.ListRuns(ctx, in.SpaceID, in.Limit)
 				if err != nil {
 					return nil, d.fail(ctx, "runs.list", err)
+				}
+				// A manifest holds the run's resolved prompts and settings: a list of hundreds of them is large, and the UI
+				// refetches lists on every run change.
+				if in.Include != "manifest" {
+					for _, r := range rs {
+						r.Manifest = nil
+					}
 				}
 				out := &struct {
 					Body struct {

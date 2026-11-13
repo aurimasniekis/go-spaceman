@@ -5238,7 +5238,9 @@
           "launch": {
             "$ref": "#/components/schemas/FleetLaunchSpec"
           },
-          "manifest": {},
+          "manifest": {
+            "description": "Omitted from run lists unless include=manifest"
+          },
           "node_id": {
             "type": "string"
           },
@@ -5323,8 +5325,7 @@
           "launch",
           "version",
           "created_at",
-          "created_by",
-          "manifest"
+          "created_by"
         ],
         "type": "object"
       },
@@ -28907,6 +28908,19 @@
               "maximum": 500,
               "minimum": 1,
               "type": "integer"
+            }
+          },
+          {
+            "description": "manifest: include each run's manifest, which is omitted from lists by default (GET the run for it)",
+            "explode": false,
+            "in": "query",
+            "name": "include",
+            "schema": {
+              "description": "manifest: include each run's manifest, which is omitted from lists by default (GET the run for it)",
+              "enum": [
+                "manifest"
+              ],
+              "type": "string"
             }
           }
         ],

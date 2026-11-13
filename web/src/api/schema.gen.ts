@@ -6286,7 +6286,8 @@ export interface components {
             /** @enum {string} */
             kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
             launch: components["schemas"]["FleetLaunchSpec"];
-            manifest: unknown;
+            /** @description Omitted from run lists unless include=manifest */
+            manifest?: unknown;
             node_id: string;
             /** @enum {string} */
             observed: "pending" | "starting" | "running" | "stopping" | "exited" | "failed" | "lost" | "unknown";
@@ -18396,6 +18397,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description manifest: include each run's manifest, which is omitted from lists by default (GET the run for it) */
+                include?: "manifest";
             };
             header?: never;
             path: {

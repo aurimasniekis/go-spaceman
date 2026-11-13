@@ -57,7 +57,7 @@ type Run struct {
 	// Manifest is the non-secret resolved configuration the run started with (SM-PROMPT-004): prompt versions and
 	// content, profile, template and space-role revisions, effective values with their origins, account reference,
 	// dependency and policy versions.
-	Manifest   json.RawMessage `json:"manifest"`
+	Manifest   json.RawMessage `json:"manifest,omitempty" doc:"Omitted from run lists unless include=manifest"`
 	StartedAt  *time.Time      `json:"started_at,omitempty"`
 	EndedAt    *time.Time      `json:"ended_at,omitempty"`
 	ObservedAt *time.Time      `json:"observed_at,omitempty"`

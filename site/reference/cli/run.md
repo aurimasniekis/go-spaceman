@@ -101,6 +101,7 @@ API: `list-runs` ([HTTP API](../api)).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--include` | string |  | manifest: also return each run's manifest |
 | `--limit` | integer |  | maximum number of items |
 | `--space` | string |  | space ID or slug (env SPACEMAN_SPACE) |
 
