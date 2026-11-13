@@ -699,3 +699,98 @@ func TestInvitationRevocation(t *testing.T) {
 		t.Fatal("malformed id accepted")
 	}
 }
+
+// A password hash stored with older parameters is replaced at the next successful login. The new hash is computed
+// before the login's write transaction, which only stores it (HP-DB-004).
+func TestLoginRehashesOldParams(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	op := f.bootstrap()
+	old, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+	must(t, err)
+	// A light hash labeled with another parameter version (the production set would only slow the test down).
+	phc, err := HashPassword([]byte(strongPW), CurrentParams)
+	must(t, err)
+	must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+		return tx.Q.UpsertLocalCredential(f.ctx, db.UpsertLocalCredentialParams{UserID: op.ID, PasswordPhc: phc,
+			ParamsVersion: int64(CurrentParams.Version) + 1, ChangedAt: old.ChangedAt, MustChange: old.MustChange})
+	}))
+
+	_, err = f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW})
+	must(t, err)
+	cred, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+	must(t, err)
+	if cred.ParamsVersion != int64(CurrentParams.Version) || cred.PasswordPhc == phc {
+		t.Fatalf("credential not rehashed: version %d, same hash %v", cred.ParamsVersion, cred.PasswordPhc == phc)
+	}
+	if ok, err := VerifyPassword([]byte(strongPW), cred.PasswordPhc); !ok || err != nil {
+		t.Fatalf("rehashed password does not verify: %v %v", ok, err)
+	}
+	if cred.ChangedAt != old.ChangedAt {
+		t.Fatal("a rehash changed the password's changed_at")
+	}
+}
+
+// A password change or reset that commits after a login verified the old password, but before the login's
+// transaction, wins: the login fails without opening a session, and its hash upgrade never writes the old password
+// back. The change is made from the verification hook, so it lands exactly in that window. Not parallel: it replaces
+// loginVerify.
+func TestLoginLosesToConcurrentPasswordChange(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rehash bool
+	}{{"current parameters", false}, {"old parameters (rehash)", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFx(t)
+			op := f.bootstrap()
+			old, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+			must(t, err)
+			if tc.rehash {
+				must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+					return tx.Q.UpsertLocalCredential(f.ctx, db.UpsertLocalCredentialParams{UserID: op.ID, PasswordPhc: old.PasswordPhc,
+						ParamsVersion: int64(CurrentParams.Version) + 1, ChangedAt: old.ChangedAt})
+				}))
+			}
+			const newPW = "a completely different passphrase"
+			newPHC, err := HashPassword([]byte(newPW), CurrentParams)
+			must(t, err)
+
+			var changed bool
+			loginVerify = func(pw []byte, phc string) (bool, error) {
+				ok, err := VerifyPassword(pw, phc)
+				if !changed {
+					changed = true
+					must(t, f.s.W().Tx(f.ctx, func(tx *store.Tx) error {
+						if err := tx.Q.UpsertLocalCredential(f.ctx, db.UpsertLocalCredentialParams{UserID: op.ID, PasswordPhc: newPHC,
+							ParamsVersion: int64(CurrentParams.Version), ChangedAt: tx.NowMicros()}); err != nil {
+							return err
+						}
+						return f.svc.revokeUserSessionsTx(f.ctx, tx, op.ID, "password_reset", nil)
+					}))
+				}
+				return ok, err
+			}
+			t.Cleanup(func() { loginVerify = VerifyPassword })
+
+			if _, err := f.svc.Login(f.ctx, LoginInput{Email: "admin@example.com", Password: strongPW}); !errors.Is(err, ErrInvalidCredentials) {
+				t.Fatalf("login with the replaced password: %v, want ErrInvalidCredentials", err)
+			}
+			if !changed {
+				t.Fatal("the password was never changed during the login")
+			}
+			cred, err := f.s.R().GetLocalCredential(f.ctx, op.ID)
+			must(t, err)
+			if ok, _ := VerifyPassword([]byte(newPW), cred.PasswordPhc); !ok {
+				t.Fatal("the new password no longer verifies: the login wrote the old one back")
+			}
+			if ok, _ := VerifyPassword([]byte(strongPW), cred.PasswordPhc); ok {
+				t.Fatal("the old password verifies after the change")
+			}
+			var sessions int
+			must(t, f.s.ReadDB().QueryRowContext(f.ctx, `SELECT COUNT(*) FROM web_sessions WHERE user_id = ?`, op.ID).Scan(&sessions))
+			if sessions != 0 {
+				t.Fatalf("%d sessions created by a login with the replaced password", sessions)
+			}
+		})
+	}
+}

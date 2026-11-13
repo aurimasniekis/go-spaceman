@@ -33,7 +33,7 @@ function LiveIndicator() {
  */
 function BreakGlassBanner() {
   const qc = useQueryClient()
-  const status = useQuery({ queryKey: ['break-glass'], queryFn: async () => unwrap(await api.GET('/admin/break-glass')), refetchInterval: 60_000 })
+  const status = useQuery({ queryKey: ['break-glass'], queryFn: async ({ signal }) => unwrap(await api.GET('/admin/break-glass', { signal })), refetchInterval: 60_000 })
   if (!status.data?.alert) return null
   const ack = async () => {
     try {

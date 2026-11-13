@@ -32,7 +32,7 @@ export function deletedSummary(d: Record<string, number> | undefined): string {
  */
 export function RetentionCard() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: retentionKey, queryFn: async () => unwrap(await api.GET('/retention')) })
+  const q = useQuery({ queryKey: retentionKey, queryFn: async ({ signal }) => unwrap(await api.GET('/retention', { signal })) })
   const [confirming, setConfirming] = useState(false)
   const [running, setRunning] = useState(false)
   const s = q.data

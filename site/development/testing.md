@@ -28,8 +28,16 @@ Go (the version in `go.mod`), Node.js 24, pnpm, and for the end-to-end and real 
 
 Store-backed tests fail when a write transaction holds the write lock for longer than 100 ms (Hallpass HP-DB-004), or
 the value of `SM_TEST_TX_MAX`. Time spent waiting for the writer and retrying a busy database doesn't count
-(ADR-0070). GitHub's hosted runners are slower, so the coverage steps in `ci` and `release` use 250 ms; the race steps
-use 1 s (ADR-0062).
+(ADR-0070). GitHub's hosted runners are slower, so the coverage and race steps in `ci` and `release` use 1 s, and
+the login-timing and fuzz jobs 250 ms (ADR-0062).
+
+A store opened by `storetest.Open` is set up so that setup work doesn't land inside a test's transactions (ADR-0062,
+update 2026-11-13, hold analysis). `storetest.Seed` flushes its copy of the database to disk before the store opens, because
+otherwise the first commit flushes it. The store has 2 reader connections (`storetest.Readers`; `WithReaders` sets
+another size) instead of the production `max(4, GOMAXPROCS)`, because each one parses the whole schema when it opens.
+`make race` builds modernc.org's SQLite without the race detector's `checkptr` instrumentation. A transaction that
+still trips the guard is usually not doing too much work: it is waiting for a CPU or for a commit's `fsync`. To check,
+run the package under `taskset -c 0` with `TMPDIR` on a real disk, not tmpfs.
 
 The wall-clock comparison of failed logins for known and unknown accounts (Hallpass HP-AUTH-005) needs a quiet
 machine without the race detector or coverage, so it runs only through `make test-login-timing`, which CI and the

@@ -240,6 +240,11 @@ type HTTPConfig struct {
 	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
 	// ReadHeaderTimeout bounds how long a client may take to send request headers.
 	ReadHeaderTimeout Duration `yaml:"read_header_timeout"`
+	// WriteIdleTimeout bounds how long one piece (32 KiB) of a response may wait for the client to read it (1s to
+	// 10m). It bounds progress, not the whole response: a slow download that keeps moving is never cut off, but a
+	// client that stops reading is disconnected instead of holding the response in central's memory. WebSocket
+	// connections (nodes, terminals) keep their own timeouts.
+	WriteIdleTimeout Duration `yaml:"write_idle_timeout"`
 }
 
 // AuthConfig configures operator authentication (SM-AUTH-001).

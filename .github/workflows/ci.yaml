@@ -105,7 +105,8 @@ jobs:
           restore-keys: go-race-${{ runner.os }}-
       - name: race tests
         # The race detector slows SQLite transactions several-fold on shared runners (500 ms was exceeded by up to
-        # 290 ms). The non-race coverage job uses the same 1 s (ADR-0062, update 2026-11-13).
+        # 290 ms). The non-race coverage job uses the same 1 s (ADR-0062, update 2026-11-13, coverage at 1 s).
+        # scripts/race.sh builds modernc's SQLite without checkptr (ADR-0062, update 2026-11-13, hold analysis).
         # internal/app runs as its own invocation next to the other packages (scripts/race.sh); on a 4-vCPU runner its
         # cap stays 4, as before. The heavy-gate slot (scripts/gate-slot.sh) is off here: CI=true.
         env:
@@ -136,7 +137,7 @@ jobs:
       - name: coverage floor
         # The write-transaction guard (Hallpass HP-DB-004) is 100 ms locally and 500 ms in the full gate. GitHub's
         # shared hosted runners showed 260-750 ms holds in packages a PR didn't touch, so the hosted coverage job uses
-        # 1 s, as the race job does (ADR-0062, update 2026-11-13).
+        # 1 s, as the race job does (ADR-0062, update 2026-11-13, coverage at 1 s).
         env:
           SM_TEST_TX_MAX: 1s
           # One package at a time, as before ADR-0069: more at once on a 4-core runner adds lock-hold noise.

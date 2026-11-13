@@ -6060,10 +6060,12 @@ export interface components {
             account_ref?: string;
             gateway?: components["schemas"]["FleetGatewaySpec"];
             model?: string;
+            /** @description Omitted from run lists unless include=prompt */
             prompt?: string;
             settings?: {
                 [key: string]: string;
             };
+            /** @description Omitted from run lists unless include=prompt */
             system?: string;
             workspace?: string;
             worktree?: components["schemas"]["ProtoWorktree"];
@@ -6286,11 +6288,15 @@ export interface components {
             /** @enum {string} */
             kind: "control" | "worker" | "kb" | "dreamer" | "diagnostic";
             launch: components["schemas"]["FleetLaunchSpec"];
-            manifest: unknown;
+            /** @description Omitted from run lists unless include=manifest */
+            manifest?: unknown;
             node_id: string;
             /** @enum {string} */
             observed: "pending" | "starting" | "running" | "stopping" | "exited" | "failed" | "lost" | "unknown";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the node last reported a change to the run (a report that changes nothing, such as a reconnect re-reporting it, doesn't move it)
+             */
             observed_at?: string;
             /** Format: int64 */
             pid?: number;
@@ -18396,6 +18402,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description What lists leave out by default (GET the run for it): manifest, each run's manifest; prompt, its launch prompt and system text */
+                include?: ("manifest" | "prompt")[];
             };
             header?: never;
             path: {

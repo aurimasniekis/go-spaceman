@@ -7,7 +7,9 @@ import { routeTree } from './routeTree.gen'
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5_000,
+      // The change feed (useWatch) invalidates what changes, so cached data is reused on mount and navigation instead
+      // of refetched; data the feed does not cover is refetched on a new mount after a minute.
+      staleTime: 60_000,
       // Authorization and validation failures are answers, not transient errors.
       retry: (n, e) => !(e instanceof ApiError && e.status >= 400 && e.status < 500) && n < 1,
       refetchOnWindowFocus: false,

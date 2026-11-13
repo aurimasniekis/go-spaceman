@@ -17,8 +17,8 @@ import (
 
 // MaxTxDuration is the longest a write transaction may hold the write lock in tests (Hallpass HP-DB-004). Time spent
 // waiting for the writer and SQLITE_BUSY retries does not count (ADR-0070).
-// SM_TEST_TX_MAX overrides it for slow runners; the default matches the requirement. CI on GitHub's hosted runners uses
-// 250ms (ADR-0062), the race steps more.
+// SM_TEST_TX_MAX overrides it for slow runners; the default matches the requirement. On GitHub's hosted runners CI's
+// coverage and race steps use 1s, its login-timing and fuzz jobs 250ms (ADR-0062).
 var MaxTxDuration = func() time.Duration {
 	if v, err := time.ParseDuration(os.Getenv("SM_TEST_TX_MAX")); err == nil && v > 0 {
 		return v
@@ -40,6 +40,16 @@ func WithReadObserver(observe func(query string)) Option {
 // WithDir uses dir as the data directory instead of a fresh temp dir.
 func WithDir(dir string) Option { return func(o *store.Options) { o.DataDir = dir } }
 
+// Readers is the reader pool size of a store opened by Open, unless WithReaders sets another. Every reader connection
+// parses the whole schema when it opens (VerifyPragmas opens them all), and under the race detector that is most of a
+// store-backed test's CPU: with the production default, max(4, GOMAXPROCS), it starved the write transactions of the
+// tests running alongside and tripped the guard on CPU-bound runners. Two readers still let a test read concurrently.
+// The production pool size is covered by internal/store's own tests, which open stores with store.Open directly.
+const Readers = 2
+
+// WithReaders sets the store's reader pool size (store.Options.Readers; 0 means the production default).
+func WithReaders(n int) Option { return func(o *store.Options) { o.Readers = n } }
+
 // Open opens a store in a new temporary data directory and closes it at test cleanup. Any write transaction that holds
 // the write lock for longer than MaxTxDuration fails the test, whether it committed or failed, unless its context was
 // canceled or timed out (a canceled callback may hold the lock until it notices).
@@ -48,6 +58,7 @@ func Open(t testing.TB, opts ...Option) *store.Store {
 	var mu sync.Mutex
 	o := store.Options{
 		DataDir: filepath.Join(t.TempDir(), "data"),
+		Readers: Readers,
 		TxObserver: func(name string, d time.Duration, err error) {
 			if d > MaxTxDuration && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				mu.Lock()
@@ -92,9 +103,33 @@ func Seed(t testing.TB, dir string) {
 	if err := store.PrepareDataDir(dir); err != nil {
 		t.Fatalf("seed store: %v", err)
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	if err := writeSynced(path, b); err != nil {
 		t.Fatalf("seed store: %v", err)
 	}
+}
+
+// writeSynced writes the copy and flushes it and its directory entry to disk. Left dirty in the page cache, the copy
+// was flushed by the store's first commit instead: that commit creates the WAL, SQLite fsyncs the new WAL and its
+// directory, and on ext4 that wrote out the whole fresh copy while the transaction held the write lock (keyring.load
+// held it for seconds on hosted runners). Flushing it here, before the store opens, keeps setup I/O out of the guard.
+func writeSynced(path string, b []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // a test's own temp dir
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	if _, err := f.Write(b); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, d.Close()) }()
+	return d.Sync()
 }
 
 var template struct {

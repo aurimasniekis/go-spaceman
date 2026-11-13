@@ -118,7 +118,7 @@ function TestLoginModal({ providerId }: { providerId: string }) {
   const spaces = useSpaces()
   const res = useQuery({
     queryKey: ['oidc-test-login', providerId],
-    queryFn: async () => unwrap(await api.GET('/oidc/providers/{provider_id}/test-login', { params: { path: { provider_id: providerId } } })),
+    queryFn: async ({ signal }) => unwrap(await api.GET('/oidc/providers/{provider_id}/test-login', { params: { path: { provider_id: providerId } }, signal })),
     retry: false,
   })
   const close = () => void navigate({ to: '/sign-in-providers', search: {} })

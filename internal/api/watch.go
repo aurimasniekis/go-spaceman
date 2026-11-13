@@ -33,6 +33,11 @@ const (
 // watchHandler streams the durable change feed as Server-Sent Events (SM-API-002, SM-UI-006).
 //
 //	GET /api/v1/watch?after=<seq>   (or the Last-Event-ID header on reconnect)
+//	GET /api/v1/watch?live=1        (no position yet: start at the newest change, replaying nothing)
+//
+// Without a position the stream replays every retained change; a client that has just loaded its data (a fresh web UI
+// tab) asks for live=1 instead, and the stream starts with a "position" event (id: the newest change's seq) so that
+// the client can resume from there.
 //
 // Events: "change" (data: Change JSON, id: seq), "gap" (retention pruned changes after the requested position: data
 // {"after":…, "oldest":…}; the client must re-list), "heartbeat", and "end" (data {"reason":"unauthenticated"}) when the
@@ -88,6 +93,14 @@ func (d *Deps) watchHandler() http.Handler {
 			}
 			after = latest
 		}
+		if live(r) {
+			if after, err = d.Store.R().LatestChangeSeq(ctx); err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "event: position\nid: %d\ndata: {\"seq\":%d}\n\n", after, after); err != nil {
+				return
+			}
+		}
 		if after, err = d.watchCatchUp(ctx, w, p, after); err != nil {
 			return
 		}
@@ -121,6 +134,11 @@ func (d *Deps) watchHandler() http.Handler {
 			}
 		}
 	})
+}
+
+// live reports whether the stream starts at the newest change: live=1 without a position (after or Last-Event-ID).
+func live(r *http.Request) bool {
+	return r.URL.Query().Get("live") == "1" && r.URL.Query().Get("after") == "" && r.Header.Get("Last-Event-ID") == ""
 }
 
 func parseAfter(r *http.Request) (int64, error) {
