@@ -12,12 +12,24 @@ import (
 // follows the agent's clock).
 var capsCheck = time.Minute
 
-// takeCapabilities detects the inventory again and caches it. It returns the inventory and its generation.
+// detectCapabilities is the detection takeCapabilities runs (tests replace it to order concurrent detections).
+var detectCapabilities = (*Agent).capabilities
+
+// takeCapabilities detects the inventory again and caches it. It returns the cached inventory and its generation:
+// detections may overlap (a session's hello and capsLoop), and one that finishes after a detection that started later
+// is discarded, returning that newer inventory instead.
 func (a *Agent) takeCapabilities(ctx context.Context) (proto.Capabilities, uint64) {
-	c := a.capabilities(ctx)
+	a.mu.Lock()
+	a.capsStarts++
+	start := a.capsStarts
+	a.mu.Unlock()
+	c := detectCapabilities(a, ctx)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.caps, a.capsAt = c, a.now()
+	if start < a.capsTaken {
+		return a.caps, a.capsGen
+	}
+	a.caps, a.capsAt, a.capsTaken = c, a.now(), start
 	a.capsGen++
 	return c, a.capsGen
 }

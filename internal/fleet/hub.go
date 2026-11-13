@@ -384,7 +384,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		return err
 	}
 	s.minor = minor
-	caps, _ := json.Marshal(hello.Capabilities)
+	caps := helloCapabilities(s.log, hello.Capabilities)
 	s.inHello = make(map[string]bool, len(hello.Runs))
 	for _, rep := range hello.Runs {
 		s.inHello[rep.RunID] = true
@@ -401,7 +401,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 		h.newest[s.nodeID] = s.seq
 		h.mu.Unlock()
 		if err := tx.Q.RecordNodeConnect(ctx, db.RecordNodeConnectParams{AgentVersion: truncate(hello.AgentVersion, 64), ProtocolMinor: int64(minor),
-			CapabilitiesJson: string(caps), Capacity: int64(hello.Capacity), Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, LastIp: ip, ID: s.nodeID}); err != nil {
+			CapabilitiesJson: caps, Capacity: int64(hello.Capacity), Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, LastIp: ip, ID: s.nodeID}); err != nil {
 			return err
 		}
 		// The stale-run sweeper only ever considers the runs that were live when the node connected (ADR-0074).

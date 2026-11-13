@@ -84,7 +84,7 @@ function NodesPage() {
                   </Tooltip>
                 ))}
                 {n.capabilities.harnesses.length === 0 && <Text size="xs" c="dimmed">—</Text>}
-                {capabilitiesStale(n) && <Tooltip label="The last capability report is over an hour old"><Badge color="owlYellow" variant="light">stale</Badge></Tooltip>}
+                {capabilitiesStale(n) && <Tooltip label="Connected, but the last capability report is over an hour old"><Badge color="owlYellow" variant="light">stale</Badge></Tooltip>}
               </Group>
             ),
           },

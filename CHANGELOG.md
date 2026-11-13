@@ -14,7 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   API gains `capabilities_updated_at`. A harness entry's `version` and `path` mean what a new run would get now. The
   Nodes page opens a node's detail: per harness, managed or detected, the channel, the resolved `latest` and
   `stable` with when they were resolved, the cached versions and the cache size, and when the node last reported,
-  with a stale badge after an hour. Older node agents keep reporting only when they connect. Operator guide:
+  with a stale badge when a connected node's report is over an hour old (an offline node is shown as offline).
+  Central cleans a bad harness entry in hello or the report (an invalid version is dropped from that entry, with a
+  warning) instead of refusing the whole report. Older node agents keep reporting only when they connect. Operator guide:
   "Versions on nodes".
 - Per-profile Claude Code version pins and per-run versions (ADR-0077, node protocol 1.11, migration 0048). A
   claude-code harness profile can set **Claude Code version** (`harness_version`): empty follows the node's channel,

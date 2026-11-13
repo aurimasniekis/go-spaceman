@@ -90,9 +90,13 @@ type Agent struct {
 	runTokens map[string][32]byte
 	// caps caches the capability inventory (harness detection runs binaries; never between dial and hello), capsAt is
 	// when it was taken and capsGen counts the takes (capsLoop re-reports what a connection's hello missed).
-	caps    proto.Capabilities
-	capsAt  time.Time
-	capsGen uint64
+	// capsStarts numbers the detections as they start and capsTaken is the number of the one cached, so a slower
+	// detection that started earlier never replaces a newer one.
+	caps       proto.Capabilities
+	capsAt     time.Time
+	capsGen    uint64
+	capsStarts uint64
+	capsTaken  uint64
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool

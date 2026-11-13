@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,11 +24,16 @@ import (
 type wsCentral struct {
 	srv  *httptest.Server
 	msgs chan proto.Envelope
+	// hold, when set, delays each welcome until it is closed.
+	hold chan struct{}
 }
 
-func newWSCentral(t *testing.T, minor int) *wsCentral {
+func newWSCentral(t *testing.T, minor int) *wsCentral { return newHeldWSCentral(t, minor, nil) }
+
+// newHeldWSCentral is newWSCentral with the welcome held until hold is closed (nil: welcomed at once).
+func newHeldWSCentral(t *testing.T, minor int, hold chan struct{}) *wsCentral {
 	t.Helper()
-	fc := &wsCentral{msgs: make(chan proto.Envelope, 256)}
+	fc := &wsCentral{msgs: make(chan proto.Envelope, 256), hold: hold}
 	fc.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{proto.Subprotocol}})
 		if err != nil {
@@ -51,6 +57,13 @@ func newWSCentral(t *testing.T, minor int) *wsCentral {
 			}
 			if env.Type == proto.TypeHello && !welcomed {
 				welcomed = true
+				if fc.hold != nil {
+					select {
+					case <-fc.hold:
+					case <-r.Context().Done():
+						return
+					}
+				}
 				out, _ := proto.Encode("msg_welcome", proto.TypeWelcome, time.Now(), proto.Welcome{NodeID: "nod_test", Minor: minor, HeartbeatInterval: time.Hour})
 				if conn.Write(r.Context(), websocket.MessageText, out) != nil {
 					return
@@ -174,6 +187,81 @@ func TestCapabilitiesReReported(t *testing.T) {
 	clk.Advance(proto.NodeCapabilitiesInterval)
 	if got := claudeEntry(t, fc.next(t, proto.TypeNodeCapabilities)); !slices.Equal(got.Cached, []string{"2.1.901", "2.1.900"}) {
 		t.Fatalf("periodic report %+v", got)
+	}
+}
+
+// SM-HARN-008: capabilities taken again after the connection's hello was built, before central's welcome, are
+// re-reported once the welcome arrives (capsAfterHello): exactly one node.capabilities, not lost until the interval.
+func TestCapabilitiesChangedBeforeWelcomeReReported(t *testing.T) {
+	srv := disttest.New(t)
+	for _, v := range []string{"2.1.900", "2.1.901"} {
+		srv.Add(v, disttest.StubBinary(v))
+	}
+	srv.SetPointer(dist.ChannelLatest, "2.1.900")
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "harness", "claude-code"), nil)
+	if _, err := m.Ensure(context.Background(), "2.1.900"); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := ccAgent(t, dir, m, func(o *Options) { delete(o.HarnessBinaries, harness.KindClaude) })
+	hold := make(chan struct{})
+	fc := newHeldWSCentral(t, proto.MinorHarnessVersion, hold)
+	runAgent(t, a, fc)
+	if h := claudeEntry(t, fc.next(t, proto.TypeHello)); slices.Contains(h.Cached, "2.1.901") {
+		t.Fatalf("hello %+v", h)
+	}
+	// The cache changes while the welcome is held: capsLoop takes the capabilities again but can't report them yet.
+	if _, err := m.Ensure(context.Background(), "2.1.901"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the change detected and no detection pending", func() bool {
+		a.mu.Lock()
+		caps, idle := a.caps, a.capsStarts == a.capsTaken
+		a.mu.Unlock()
+		return len(m.Changes()) == 0 && idle && slices.Contains(claudeEntry(t, caps).Cached, "2.1.901")
+	})
+	fc.none(t, proto.TypeNodeCapabilities, 100*time.Millisecond)
+	close(hold)
+	if got := claudeEntry(t, fc.next(t, proto.TypeNodeCapabilities)); !slices.Equal(got.Cached, []string{"2.1.901", "2.1.900"}) {
+		t.Fatalf("report after the welcome %+v", got)
+	}
+	fc.none(t, proto.TypeNodeCapabilities, 300*time.Millisecond)
+}
+
+// SM-HARN-008: a detection that started earlier but finished later never replaces a newer one (a session's hello and
+// capsLoop may detect at once).
+func TestCapabilitiesDetectionNewestWins(t *testing.T) {
+	a, _ := ccAgent(t, t.TempDir(), nil, nil)
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	old := detectCapabilities
+	detectCapabilities = func(*Agent, context.Context) proto.Capabilities {
+		if calls.Add(1) == 1 {
+			close(started)
+			<-release
+			return proto.Capabilities{OS: "older"}
+		}
+		return proto.Capabilities{OS: "newer"}
+	}
+	t.Cleanup(func() { detectCapabilities = old })
+	type take struct {
+		c   proto.Capabilities
+		gen uint64
+	}
+	slow := make(chan take, 1)
+	go func() { c, gen := a.takeCapabilities(context.Background()); slow <- take{c, gen} }()
+	<-started
+	if c, gen := a.takeCapabilities(context.Background()); c.OS != "newer" || gen != 1 {
+		t.Fatalf("newer detection %q gen %d", c.OS, gen)
+	}
+	close(release)
+	if got := <-slow; got.c.OS != "newer" || got.gen != 1 {
+		t.Fatalf("the older detection returned %q gen %d", got.c.OS, got.gen)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.caps.OS != "newer" || a.capsGen != 1 {
+		t.Fatalf("cached %q gen %d", a.caps.OS, a.capsGen)
 	}
 }
 

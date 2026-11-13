@@ -58,6 +58,13 @@ describe('node harnesses', () => {
     expect(within(screen.getByLabelText('Harness codex')).getByText('not installed')).toBeTruthy()
     expect(screen.getByText('3h ago')).toBeTruthy()
     expect(screen.getByText('stale')).toBeTruthy()
+    expect(screen.queryByText('offline')).toBeNull()
+  })
+
+  it('shows an offline node as offline, not stale, however old its last report', () => {
+    show(node({ connected: false, capabilities_updated_at: '2026-11-10T09:00:00Z' }, []))
+    expect(screen.getByText('offline')).toBeTruthy()
+    expect(screen.queryByText('stale')).toBeNull()
   })
 
   it('a managed node with nothing cached yet says so', () => {
@@ -68,10 +75,11 @@ describe('node harnesses', () => {
     expect(card.getByText('none')).toBeTruthy()
   })
 
-  it('is stale only after an hour, and never for a node that never reported', () => {
-    expect(capabilitiesStale({ capabilities_updated_at: '2026-11-13T11:00:01Z' }, NOW)).toBe(false)
-    expect(capabilitiesStale({ capabilities_updated_at: '2026-11-13T10:59:59Z' }, NOW)).toBe(true)
-    expect(capabilitiesStale({}, NOW)).toBe(false)
-    expect(capabilitiesStale({ capabilities_updated_at: '0001-01-01T00:00:00Z' }, NOW)).toBe(false)
+  it('is stale only after an hour on a connected node, never offline or for a node that never reported', () => {
+    expect(capabilitiesStale({ connected: true, capabilities_updated_at: '2026-11-13T11:00:01Z' }, NOW)).toBe(false)
+    expect(capabilitiesStale({ connected: true, capabilities_updated_at: '2026-11-13T10:59:59Z' }, NOW)).toBe(true)
+    expect(capabilitiesStale({ connected: false, capabilities_updated_at: '2026-11-13T10:59:59Z' }, NOW)).toBe(false)
+    expect(capabilitiesStale({ connected: true }, NOW)).toBe(false)
+    expect(capabilitiesStale({ connected: true, capabilities_updated_at: '0001-01-01T00:00:00Z' }, NOW)).toBe(false)
   })
 })

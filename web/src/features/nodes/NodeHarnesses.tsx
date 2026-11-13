@@ -6,12 +6,15 @@ import { ago, bytes, datetime, isSet } from '@/lib/format'
 type HarnessInfo = Node['capabilities']['harnesses'][number]
 
 // A connected node re-reports its capabilities at least every 30 minutes (protocol 1.11, ADR-0077); a report older than
-// this is stale.
+// this is stale. An offline node's report is simply its last one: it is shown as offline, not stale.
 export const STALE_AFTER_MS = 60 * 60 * 1000
 
-/** Whether the node's last capability report is older than STALE_AFTER_MS (a node that never reported is not "stale"). */
-export function capabilitiesStale(n: Pick<Node, 'capabilities_updated_at'>, now = Date.now()): boolean {
-  if (!isSet(n.capabilities_updated_at)) return false
+/**
+ * Whether a connected node's last capability report is older than STALE_AFTER_MS (an offline node, or one that never
+ * reported, is not "stale").
+ */
+export function capabilitiesStale(n: Pick<Node, 'capabilities_updated_at' | 'connected'>, now = Date.now()): boolean {
+  if (!n.connected || !isSet(n.capabilities_updated_at)) return false
   const t = Date.parse(n.capabilities_updated_at)
   return !Number.isNaN(t) && now - t > STALE_AFTER_MS
 }
@@ -27,10 +30,13 @@ export function NodeHarnesses({ node, now = Date.now() }: { node: Node; now?: nu
           <Text size="sm">{isSet(node.capabilities_updated_at) ? ago(node.capabilities_updated_at, now) : 'never'}</Text>
         </Tooltip>
         {stale && (
-          <Tooltip label={node.connected
-            ? 'A connected node reports at least every 30 minutes: this node may run an agent older than protocol 1.11.'
-            : 'The node is offline: these are the versions it reported last.'}>
+          <Tooltip label="A connected node reports at least every 30 minutes: this node may run an agent older than protocol 1.11.">
             <Badge color="owlYellow" variant="light">stale</Badge>
+          </Tooltip>
+        )}
+        {!node.connected && isSet(node.capabilities_updated_at) && (
+          <Tooltip label="The node is offline: these are the versions it reported last.">
+            <Badge color="gray" variant="light">offline</Badge>
           </Tooltip>
         )}
       </Group>
