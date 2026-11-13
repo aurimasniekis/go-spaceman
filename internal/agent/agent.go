@@ -133,6 +133,13 @@ type Agent struct {
 	// claudePins are the exact Claude Code versions profiles pinned on the launches this process started, with when it
 	// last started one (claudePinned).
 	claudePins map[string]time.Time
+	// limitMu serializes transcript limit scans, limitSend a limit's journal write and report with every other run
+	// report; limitTimers are the pending (debounced) scans and limitFiles the
+	// transcript each run was last scanned in (a replaced file is scanned from the start), by run ID.
+	limitMu     sync.Mutex
+	limitSend   sync.Mutex
+	limitTimers map[string]*time.Timer
+	limitFiles  map[string]os.FileInfo
 }
 
 // track runs f as background work Run waits for at shutdown. After shutdown began it does nothing.
@@ -364,7 +371,8 @@ func (a *Agent) session(ctx context.Context) error {
 	helloCaps := a.capsGen
 	a.mu.Unlock()
 	for _, r := range runs {
-		hello.Runs = append(hello.Runs, r.report())
+		// Central drops the limit when the session settles below MinorUsageLimit (RunReport.ForMinor).
+		hello.Runs = append(hello.Runs, r.report(a.now()))
 	}
 	a.mu.Lock()
 	a.conn = conn
@@ -544,8 +552,23 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 
 // report sends a run's journaled state when connected (state-based: the next hello re-sends everything, so a report
 // lost to a disconnect is not lost information).
+// report sends a run's report. Its usage limit is read from the journal under limitSend, so a report built from an
+// older row never undoes a limit change the scan has sent.
 func (a *Agent) report(ctx context.Context, r runRow) {
-	if err := a.send(ctx, proto.TypeRunReport, r.report()); err != nil {
+	a.limitSend.Lock()
+	defer a.limitSend.Unlock()
+	if cur, err := a.j.getRun(ctx, r.RunID); err == nil {
+		r.Limit = cur.Limit
+	}
+	a.sendReport(ctx, r)
+}
+
+// sendReport sends a run's report as it is (limitSend held).
+func (a *Agent) sendReport(ctx context.Context, r runRow) {
+	a.mu.Lock()
+	minor := a.minor
+	a.mu.Unlock()
+	if err := a.send(ctx, proto.TypeRunReport, r.report(a.now()).ForMinor(minor)); err != nil {
 		a.log.Debug("run report deferred until reconnect", slog.String(obs.FieldRunID, r.RunID))
 	}
 }
