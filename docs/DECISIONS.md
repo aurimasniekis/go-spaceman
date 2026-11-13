@@ -4164,6 +4164,40 @@
   - An API update that leaves `harness_version` out keeps the stored pin, so an older Terraform provider never
     clears it; `""` clears it.
 
+### ADR-0078 — A reconnect must not fan out: no-op run reports, lean run lists, coalesced UI refetches, progress-bounded responses
+- **Status:** Accepted, 2026-11-13 (incident: nodes lost their connection every 15 s after central restarted while a
+  web UI tab was open; the operator stayed on v0.1.1 until the fix).
+- **Context (code, at v0.1.2; v0.1.1 behaves the same):**
+  - A node's hello reports every run in its journal, ended ones included; the journal is never pruned. Central applied
+    each report in its own write transaction, always bumping the run's version and writing a change-feed entry, so a
+    node of 2500 runs emitted 2500 `run` changes per connect. The apply took about 9 s on a disk, with the session
+    reading nothing from the node meanwhile.
+  - The web UI invalidated a space's runs list on every `run` change. Invalidation cancels the fetch in flight and
+    starts another, but the runs query ignored the abort signal, so the cancelled request stayed open. A tab ended up
+    holding hundreds of `runs?limit=200` requests it never read.
+  - Each listed run carried its manifest and launch prompt and system text: a list of 200 runs with a realistic role
+    prompt was 2.2 MB. Central kept each response until the client read it; there was no write deadline.
+  - The memory and TCP-buffer pressure clamped every socket's receive window, including the nodes'. A node's write
+    that could not complete in 15 s closed its connection; the node reconnected and the cycle started again.
+- **Decision:**
+  1. A run report that would change nothing stored (only `observed_at` would move) writes nothing: no version bump and
+     no change entry. Fencing, real transitions, and a stop for a run central wants stopped are unchanged. The
+     stale-run sweeper relies on the hello's run IDs, not on version bumps. A hello stops applying once its
+     connection has ended; the next hello reports every run again.
+  2. Run lists leave out `manifest`, `launch.prompt` and `launch.system` unless `include=manifest` or `include=prompt`
+     asks for them. A single run's GET is unchanged. This is an API change, listed under **Changed**.
+  3. The web UI collects change-feed invalidations for 250 ms and applies each distinct key once with
+     `cancelRefetch: false`. Query functions that can be superseded pass the abort signal to `fetch`.
+  4. Every response write must make progress: each piece of at most 32 KiB gets `http.write_idle_timeout` (default
+     1m, 1s to 10m) to reach the client. A client that stops reading is disconnected. The bound is on progress, not
+     the whole response, so no route is exempted: downloads, exports, backups, attachments, recordings and event
+     streams that keep moving are unaffected. WebSocket upgrades (nodes, terminals) are passed through untouched; they
+     keep their own timeouts.
+- **Consequences:** an idle node's reconnect costs central one read per journaled run and no writes. A list of 200
+  runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
+  reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
+- **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
