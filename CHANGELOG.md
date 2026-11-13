@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+
+- CI's and the release workflow's login-timing and fuzz jobs use the same 250 ms write-transaction guard on GitHub's
+  hosted runners as the coverage job, instead of the 100 ms default (ADR-0062). The login-timing job failed on it
+  while its timing check passed. Local runs keep 100 ms.
+
 ### Security
 - Build with Go 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash caused by a `MaxBytesReader` header race
   in `net/http`). `go.mod`, `tools/go.mod` and the `golang` build image in `Dockerfile` and `Dockerfile.agent` now pin
