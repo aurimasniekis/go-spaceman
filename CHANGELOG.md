@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   hosted runners as the coverage job, instead of the 100 ms default (ADR-0062). The login-timing job failed on it
   while its timing check passed. Local runs keep 100 ms.
 
+### Security
+- Build with Go 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash caused by a `MaxBytesReader` header race
+  in `net/http`). `go.mod`, `tools/go.mod` and the `golang` build image in `Dockerfile` and `Dockerfile.agent` now pin
+  1.27.4.
+
 ## [0.1.1] - 2026-11-09
 
 Patch release on top of v0.1.0. It makes no production-readiness claim (docs/RELEASE_READINESS.md §15). It contains:
