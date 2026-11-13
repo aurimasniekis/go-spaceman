@@ -129,6 +129,7 @@ const (
 	RunLeaseExpired RunEndReason = "lease_expired"
 	RunLost         RunEndReason = "lost"
 	RunLaunchFailed RunEndReason = "launch_failed" // the launch could not be dispatched (node too old, account unusable)
+	RunUsageLimit   RunEndReason = "usage_limit"   // the run ended while at a usage limit (ADR-0079)
 )
 
 // StaleReason is why central's stale-run sweeper ended a run (ADR-0074); the values are the runs' end reasons.
@@ -180,7 +181,7 @@ var (
 	enumCommandResult = newEnum(CmdAccepted, CmdDuplicate, CmdRejected, CmdTimeout)
 	enumHarness       = newEnum(HarnessClaude, HarnessCodex)
 	enumRunStart      = newEnum(RunLaunched, RunAdopted, RunFailed)
-	enumRunEnd        = newEnum(RunExited, RunStopped, RunKilled, RunLeaseExpired, RunLost, RunLaunchFailed)
+	enumRunEnd        = newEnum(RunExited, RunStopped, RunKilled, RunLeaseExpired, RunLost, RunLaunchFailed, RunUsageLimit)
 	enumStaleReason   = newEnum(StaleNotOnNode, StaleLeaseLost)
 )
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 // Name identifies an event: subject evt.spaceman.<area>.<entity>.<action>, ce-type
@@ -54,6 +55,8 @@ var (
 	RunLaunchedName        = Name{"fleet", "run", "launched", 1}
 	RunStartedName         = Name{"fleet", "run", "started", 1}
 	RunEndedName           = Name{"fleet", "run", "ended", 1}
+	UsageLimitReachedName  = Name{"fleet", "usage_limit", "reached", 1}
+	UsageLimitClearedName  = Name{"fleet", "usage_limit", "cleared", 1}
 	TaskCreatedName        = Name{"queue", "task", "created", 1}
 	TaskStatusChangedName  = Name{"queue", "task", "status_changed", 1}
 	InboxItemCreatedName   = Name{"inbox", "item", "created", 1}
@@ -100,7 +103,34 @@ type RunEnded struct {
 	Run
 	State     string `json:"state"` // exited, failed, lost
 	EndReason string `json:"end_reason,omitempty"`
-	ExitCode  *int64 `json:"exit_code,omitempty"`
+	// NodeReason is the node's own end reason when central recorded another (usage_limit, ADR-0079).
+	NodeReason string `json:"node_reason,omitempty"`
+	ExitCode   *int64 `json:"exit_code,omitempty"`
+}
+
+// UsageLimit describes an account hold (ADR-0079): one exhausted account (or gateway) window as one space saw it.
+// It carries no transcript text.
+type UsageLimit struct {
+	SpaceID    string     `json:"space_id"`
+	LimitID    string     `json:"limit_id"`
+	Scope      string     `json:"scope"` // account, gateway
+	AccountID  string     `json:"account_id,omitempty"`
+	GatewayRef string     `json:"gateway_ref,omitempty"`
+	Kind       string     `json:"kind"`
+	ResetsAt   *time.Time `json:"resets_at,omitempty"` // absent: unknown
+	RunID      string     `json:"run_id,omitempty"`    // the run whose report opened it
+}
+
+// UsageLimitReached: a run's report opened a hold on its account (or gateway reference) in the run's space. Published
+// once per hold, not per report.
+type UsageLimitReached struct {
+	UsageLimit
+}
+
+// UsageLimitCleared: a hold was cleared (a run on the account reported the limit over).
+type UsageLimitCleared struct {
+	UsageLimit
+	ClearedBy string `json:"cleared_by"` // run:<id>, or who cleared it
 }
 
 // Task describes a queue task (never its title, objective, acceptance criteria, reason or result).
@@ -257,6 +287,8 @@ type XSpaceRequestStateChanged struct {
 func (RunLaunched) eventName() Name          { return RunLaunchedName }
 func (RunStarted) eventName() Name           { return RunStartedName }
 func (RunEnded) eventName() Name             { return RunEndedName }
+func (UsageLimitReached) eventName() Name    { return UsageLimitReachedName }
+func (UsageLimitCleared) eventName() Name    { return UsageLimitClearedName }
 func (TaskCreated) eventName() Name          { return TaskCreatedName }
 func (TaskStatusChanged) eventName() Name    { return TaskStatusChangedName }
 func (InboxItemCreated) eventName() Name     { return InboxItemCreatedName }
@@ -278,6 +310,7 @@ func (XSpaceRequestStateChanged) eventName() Name {
 
 func (r Run) spaceID() string                { return r.SpaceID }
 func (t Task) spaceID() string               { return t.SpaceID }
+func (u UsageLimit) spaceID() string         { return u.SpaceID }
 func (p InboxItemCreated) spaceID() string   { return p.SpaceID }
 func (h HumanAction) spaceID() string        { return h.SpaceID }
 func (p ApprovalDecided) spaceID() string    { return p.SpaceID }
@@ -319,6 +352,8 @@ func Catalog() []CatalogEntry {
 	res.Status, res.Outcome = "resolved", "answered"
 	can.Status, exp.Status = "cancelled", "expired"
 	code := int64(0)
+	reset := time.Date(2026, 11, 13, 18, 0, 0, 0, time.UTC)
+	ul := UsageLimit{SpaceID: "spc_…", LimitID: "ulm_…", Scope: "account", AccountID: "acc_…", Kind: "five_hour", ResetsAt: &reset, RunID: "run_…"}
 	xs := XSpaceRequest{SpaceID: "spc_…", Side: "destination", RequestID: "xrq_…", SourceSpaceID: "spc_…", DestSpaceID: "spc_…", Kind: "question",
 		State: "pending", Depth: 1, CorrelationID: "xrq_…"}
 	xsDone := xs
@@ -327,6 +362,8 @@ func Catalog() []CatalogEntry {
 		{RunLaunchedName, RunLaunched{run}, "A launch was accepted and queued for the space's node."},
 		{RunStartedName, RunStarted{Run: run}, "The node reported the run running for the first time."},
 		{RunEndedName, RunEnded{Run: run, State: "exited", EndReason: "exited", ExitCode: &code}, "The run exited, failed or was lost."},
+		{UsageLimitReachedName, UsageLimitReached{ul}, "A run's report opened a hold on its account in its space (once per hold)."},
+		{UsageLimitClearedName, UsageLimitCleared{UsageLimit: ul, ClearedBy: "run:run_…"}, "A hold on an account was cleared."},
 		{TaskCreatedName, TaskCreated{Task: task, Status: "ready"}, "A task was added to a queue."},
 		{TaskStatusChangedName, TaskStatusChanged{Task: task, From: "ready", To: "running"}, "A task changed state."},
 		{InboxItemCreatedName, InboxItemCreated{SpaceID: "spc_…", ItemID: "inb_…", SourceKind: "event", SourceID: "sub_…", SubscriptionID: "sub_…", Urgency: "normal"},
