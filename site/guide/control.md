@@ -53,6 +53,11 @@ attention:
 When control's program is idle it is told that messages are waiting. A control run started later is told about them
 too, including ones an earlier control was told about but never acknowledged.
 
+When a run reaches its Claude usage limit and SpaceMan keeps it alive until the reset, control gets **one** message
+saying which run, which limit and when it resets, and **one** more when the limit clears. Meanwhile that run gets no
+notices (messages to it wait until the clear) and doesn't count against the space's concurrency limit. Control isn't
+told about its own limit; it can't act on it before the reset.
+
 ## Starting and stopping on its own
 
 You do not have to keep control running. When work waits for control and no control run is live, SpaceMan **starts
@@ -73,8 +78,8 @@ not acknowledged yet.
 
 A control run that has been **idle** (its turn finished) for 30 minutes is **stopped**. SpaceMan does not count this as
 a failure and does not restart it. The next work starts control again, resuming its session. Control stays running
-while it works, while an operator has [taken over its terminal](/operators/terminals#taking-over-a-terminal), and while something waits for it that it has
-not been told about yet.
+while it works, while an operator has [taken over its terminal](/operators/terminals#taking-over-a-terminal), while something waits for it that it has
+not been told about yet, and while it waits for its usage limit to reset (its idle time starts once the limit clears).
 
 Both behaviours are [limits](./limits) of the space. Turn **Start control on new work** (`control_autostart`) off to
 start control only by hand. Set **Stop idle control** (`control_idle_stop_minutes`) to 0 to keep an idle control

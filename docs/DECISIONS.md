@@ -4355,6 +4355,12 @@
   11. **Telling control and people once.** Control gets one durable message per space and account window when a
       limit opens and one when it clears or resumes (dedup keys from the `usage_limits` id); worker `run-ended` notices
       for `usage_limit` ends are folded in. People get the single action of Q5.
+      - **Amended 2026-11-13 (UL-5, control's decision):** the keep-alive messages are per **run and limit window**:
+        one "at its usage limit" and one "usage limit cleared" per (run, `since`), written inside the report
+        transaction that changes the run's limit window, never per report. A "cleared" message goes out only for a
+        window control was told about. Control isn't told about its own limit, and a run that ends at its limit is
+        reported by its run-ended notice. The per-account-window message with the parked runs and the folding of
+        run-ended notices come with parking (UL-7).
   12. **Numbers.** Protocol minor 12 (`MinorUsageLimit`); central migration 0050 (`runs.limit_kind` without a CHECK,
       so a new kind never needs a runs-table rebuild, `limit_resets_at`, `limit_since`; tables `usage_limits`, with
       `check_at` and the kind CHECK, and `limit_waits`); agent
