@@ -4252,6 +4252,12 @@
        with non-zero usage.
      - No screen text and no display wording is ever parsed for status or time (SM-RUN-002); the arm record counts by
        its record type, not its text.
+     - **Amended 2026-11-13 (UL-3):** the arm and the reset informational records share their `type`, `subtype` and
+       `level` and differ only in wording, so neither is used. The wrap-up path is keyed on the typed meta record
+       `usageLimitNote: "wrap_up"`, which comes first in the same turn; the replies the turn finishes with on its grace
+       allowance don't clear it, and a later turn's reply with usage or an `auto-continuation` turn does. A typed turn
+       alone doesn't clear a limit (a nudge while armed is refused at once). While the limit stays open, `since` stays
+       that of the first record; kind and reset follow the newest.
   2. **The reported limit.** `RunReport.limit {kind, resets_at, since, cleared}` (protocol minor 12,
      `MinorUsageLimit`). `kind` is from an allowlist (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`,
      `seven_day_overage_included`, `overage`, `gateway_quota`, `gateway_budget`, otherwise `unknown`; the wrap-up path

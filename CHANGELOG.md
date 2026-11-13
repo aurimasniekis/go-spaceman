@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `limit_waits` tables), the agent's journal migration 0008, and node protocol 1.12, whose run reports may carry the
   limit a node detected. Nothing detects or acts on limits yet. Both migrations are forward-only in production: take a
   backup first. Upgrade central first, then the node agents; a node agent below 1.12 keeps working as before.
+- Usage-limit detection on the node (ADR-0079, Proposed): when a Claude Code run's turn ends, and when it ends, the
+  node agent reads the typed usage-limit fields of the run's transcript (from where it stopped last time) and reports
+  the limit (kind, reset time, since) or its clear with the run, once per change. No transcript text is logged or
+  sent. Central doesn't act on it yet.
 
 ## [0.1.3] - 2026-11-13
 
