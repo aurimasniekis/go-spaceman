@@ -18,7 +18,9 @@
 // "/styled <n>" line prints n numbered lines in as many 24-bit colours, the way Claude Code styles its output (a
 // terminal holding many styles needs much more memory than one of plain text). A "/size" line makes it draw a full-width
 // rule and its terminal size at the start and again whenever the terminal is resized (SIGWINCH), the way a full-screen
-// program redraws for a new size.
+// program redraws for a new size. A "/sparse <n>" line prints n long lines in 24-bit colours, each ending in a style
+// reset, then 60 short lines written the way Claude Code writes text: each word placed with a column move (CHA) over
+// cells it expects to be blank in a row that has just scrolled in.
 // Not part of any release.
 package main
 
@@ -108,7 +110,8 @@ func reportSize() {
 	}()
 }
 
-// longReply prints the numbered lines a "/lines <n>" (at most 5000) or "/styled <n>" (at most 20000) prompt line asks for.
+// longReply prints the numbered lines a "/lines <n>" (at most 5000), "/styled <n>" or "/sparse <n>" (at most 20000)
+// prompt line asks for.
 func longReply(prompt string) {
 	for _, line := range strings.Split(prompt, "\n") {
 		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/lines ")
@@ -134,6 +137,22 @@ func longReply(prompt string) {
 		}
 		for i := 1; i <= min(n, 20000); i++ {
 			fmt.Fprintf(os.Stdout, "\x1b[38;2;%d;%d;%dmstyled line %d of %d\x1b[0m\r\n", 40+i%200, 40+(i/200)%200, 120+i%97, i, n)
+		}
+	}
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/sparse ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		for i := 1; i <= min(n, 20000); i++ {
+			fmt.Fprintf(os.Stdout, "\x1b[38;2;%d;%d;%dmlong line %d %s\x1b[0m\r\n", 40+i%200, 40+(i/200)%200, 120+i%97, i, strings.Repeat("x", 140))
+		}
+		for i := 1; i <= 60; i++ {
+			fmt.Fprintf(os.Stdout, "\x1b[3Gsparse\x1b[10Gline\x1b[15G%d\r\n", i)
 		}
 	}
 }

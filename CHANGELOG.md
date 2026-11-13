@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+
 - Current harness versions on nodes (SM-HARN-008, ADR-0077, node protocol 1.11, migration 0049). A connected node
   sends its capabilities again (`node.capabilities`) when its Claude Code cache changes or a channel resolves to
   another version, and at least every 30 minutes, detecting every harness again each time, so an unmanaged `claude`
@@ -54,6 +55,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   upgrade note under "Changed").
 
 ### Changed
+
 - **Upgrade note (protocol 1.11, migration 0048):** upgrade central before the node agents. Central accepts older
   agents, but it sends a pinned launch only to a 1.11 agent. Migration 0048 is forward-only (restore the pre-upgrade
   backup to go back).
@@ -66,13 +68,49 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `~/.local/bin/claude`) now **stays on its current version**. Nothing updates it any more until you do one of these:
   set `harness.claude.manage: true`, update it with your own tooling, or set `harness.claude.self_update: true`.
 
+- CI's and the release workflow's login-timing and fuzz jobs use the same 250 ms write-transaction guard on GitHub's
+  hosted runners as the coverage job, instead of the 100 ms default (ADR-0062). The login-timing job failed on it
+  while its timing check passed. Local runs keep 100 ms.
+
 ### Fixed
+
 - Managed Claude Code launches: a stop (or a fenced lease) while a launch waits for the download is no longer undone
   when the download completes; the run stays stopped and never starts. The version is held after the clone,
   worktree and memory preparation, right before the launch is built. That hold takes it from the cache only and never
   waits under the space's lock: when the version waited for is gone by then, the launch waits again (at most three
   times, within `download_timeout`), so a download never blocks the space's other launches. A startup or launch check interrupted by a
   cancelled or expired context no longer removes a good cached version.
+
+- Web UI: the New inbox item dialog (and any other dialog with the Markdown editor) no longer shows a vertical scrollbar
+  when a writing-assistant browser extension such as Grammarly is active. The extension's overlays, absolutely
+  positioned next to the editor, made the dialog scroll by however far they reached below it. The editor now contains
+  them (`contain: layout`). Long dialogs still scroll.
+
+- Web terminals no longer show older output through new lines (in Claude Code runs, characters of earlier lines
+  appeared between the words of new ones; ADR-0076 update). ghostty-web 0.4.0's WebAssembly module left old
+  cells in rows that scrolled in after a style reset (upstream ghostty-web #180). The terminal now loads the module
+  of ghostty-web 0.4.0-next.21, which has the fix, and keeps 0.4.0's JavaScript until an upstream release with the
+  fix is adopted. `web/e2e/terminal-stale.spec.ts` covers it.
+- Opening Terminals or Spaces no longer freezes the tab, which took about a minute on a desktop and minutes on a
+  phone (ADR-0076). Tracing a fresh-cache load with CPU throttling showed where the time went:
+  - A terminal applied its run's stored output record by record, and a replay applied all of it in one go. Both now
+    apply it in short slices, showing "Loading output…" and drawing once the terminal has caught up.
+  - ghostty-web 0.4.0 parsed the whole screen once for every row it drew, and drew every blank cell. Both are now
+    worked around on our side.
+
+  With 5 MB of output at 4× throttling, the longest task while a terminal loads is now 0.13 s (was 0.9 s live and
+  1.5 s replayed). The terminal's WebAssembly module is a cacheable asset compiled once per page, so the CSP's
+  `connect-src` no longer allows `data:` (ADR-0020 update). Every terminal still runs in an instance and memory of its
+  own. `web/e2e/terminal-load.spec.ts` covers it. ghostty-web's unused inlined copy of the module is stripped from
+  the build, so the terminal's chunk drops from 687 kB to 122 kB. The workarounds apply only to ghostty-web 0.4.0,
+  the version they were checked against. Seeking a replay while it plays no longer lets a pending playback step write
+  into the freshly reset screen.
+
+### Security
+
+- Build with Go 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash caused by a `MaxBytesReader` header race
+  in `net/http`). `go.mod`, `tools/go.mod` and the `golang` build image in `Dockerfile` and `Dockerfile.agent` now pin
+  1.27.4.
 
 ## [0.1.1] - 2026-11-09
 
