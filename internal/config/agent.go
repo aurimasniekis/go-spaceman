@@ -57,7 +57,29 @@ type HarnessConfig struct {
 	// CodexBinary is the Codex executable (name on PATH or absolute path).
 	CodexBinary string `yaml:"codex_binary"`
 	// GitBinary is accepted but not read by this build: the agent runs "git" from PATH.
-	GitBinary string `yaml:"git_binary"`
+	GitBinary string           `yaml:"git_binary"`
+	Claude    ClaudeCodeConfig `yaml:"claude"`
+}
+
+// ClaudeCodeConfig configures node-managed Claude Code: the node resolves a version, downloads it into a verified
+// per-version cache under data_dir and keeps the newest few. This build validates these keys but doesn't act on them
+// yet: launches still use claude_binary.
+type ClaudeCodeConfig struct {
+	// Manage turns node-managed Claude Code on. Off (default): runs use claude_binary. Not acted on by this build.
+	Manage bool `yaml:"manage"`
+	// Channel is the node's default version: latest (default), stable or an exact X.Y.Z.
+	Channel string `yaml:"channel"`
+	// BaseURL is the release server (https only); change it only to use a mirror.
+	BaseURL string `yaml:"base_url"`
+	// CacheKeep is how many of the newest versions the cache keeps besides pinned and in-use ones (1-50).
+	CacheKeep int `yaml:"cache_keep"`
+	// Refresh is how long a channel is memoised and how often the node re-resolves and prefetches it (1m to 24h).
+	Refresh Duration `yaml:"refresh"`
+	// DownloadTimeout bounds one version download (30s to 2h).
+	DownloadTimeout Duration `yaml:"download_timeout"`
+	// SelfUpdate lets Claude Code update itself in runs. Off (default) is meant to give runs DISABLE_AUTOUPDATER=1;
+	// not acted on by this build.
+	SelfUpdate bool `yaml:"self_update"`
 }
 
 // IsProduction reports whether the agent runs in production mode.

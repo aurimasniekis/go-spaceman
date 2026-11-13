@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
+)
 
 // Default returns the central configuration defaults (site/reference/configuration.md).
 func Default() *Config {
@@ -64,6 +68,14 @@ func DefaultAgent() *AgentConfig {
 			ClaudeBinary: "claude",
 			CodexBinary:  "codex",
 			GitBinary:    "git",
+			Claude: ClaudeCodeConfig{
+				Manage:          false, // until launches use the cache (CC-3)
+				Channel:         dist.ChannelLatest,
+				BaseURL:         dist.DefaultBaseURL,
+				CacheKeep:       dist.DefaultKeep,
+				Refresh:         Duration(dist.DefaultRefresh),
+				DownloadTimeout: Duration(dist.DefaultDownloadTimeout),
+			},
 		},
 		Log:      defaultLog(),
 		Capacity: 4,

@@ -237,6 +237,13 @@ Locates harness binaries on the node.
 | `harness.claude_binary` | `claude` | `SPACEMAN_AGENT_HARNESS_CLAUDE_BINARY` | The Claude Code executable (name on PATH or absolute path). |
 | `harness.codex_binary` | `codex` | `SPACEMAN_AGENT_HARNESS_CODEX_BINARY` | The Codex executable (name on PATH or absolute path). |
 | `harness.git_binary` | `git` | `SPACEMAN_AGENT_HARNESS_GIT_BINARY` | Accepted but not read by this build: the agent runs "git" from PATH. |
+| `harness.claude.manage` | `false` | `SPACEMAN_AGENT_HARNESS_CLAUDE_MANAGE` | Turns node-managed Claude Code on. Off (default): runs use claude_binary. Not acted on by this build. |
+| `harness.claude.channel` | `latest` | `SPACEMAN_AGENT_HARNESS_CLAUDE_CHANNEL` | The node's default version: latest (default), stable or an exact X.Y.Z. |
+| `harness.claude.base_url` | `https://downloads.claude.ai/claude-code-releases` | `SPACEMAN_AGENT_HARNESS_CLAUDE_BASE_URL` | The release server (https only); change it only to use a mirror. |
+| `harness.claude.cache_keep` | `3` | `SPACEMAN_AGENT_HARNESS_CLAUDE_CACHE_KEEP` | How many of the newest versions the cache keeps besides pinned and in-use ones (1-50). |
+| `harness.claude.refresh` | `15m0s` | `SPACEMAN_AGENT_HARNESS_CLAUDE_REFRESH` | How long a channel is memoised and how often the node re-resolves and prefetches it (1m to 24h). |
+| `harness.claude.download_timeout` | `15m0s` | `SPACEMAN_AGENT_HARNESS_CLAUDE_DOWNLOAD_TIMEOUT` | Bounds one version download (30s to 2h). |
+| `harness.claude.self_update` | `false` | `SPACEMAN_AGENT_HARNESS_CLAUDE_SELF_UPDATE` | Lets Claude Code update itself in runs. Off (default) is meant to give runs DISABLE_AUTOUPDATER=1; not acted on by this build. |
 
 ### `log`
 

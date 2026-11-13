@@ -26,6 +26,7 @@ PACKAGES=(
   internal/catalog
   internal/messages
   internal/gateway
+  internal/harness/dist
   internal/spacemanmcp
   internal/memory
   internal/usage
