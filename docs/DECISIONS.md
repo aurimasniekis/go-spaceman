@@ -2836,6 +2836,11 @@
   can't tell, and `SM_SITE_A11Y=1` forces it (the release workflow sets it, so the release still always audits). The
   audit itself is sharded over `SM_A11Y_SHARDS` parallel tests and workers (two in CI) and waits for VitePress to
   hydrate instead of for network idle; it audits the same pages, schemes and rules.
+- **Update, 2026-11-09 (every hosted Go test job):** Q1 b covers every non-race job on a hosted runner that opens a
+  store, not only the coverage steps. The login-timing jobs (ADR-0071, `ci.yaml` and the release gate) and the fuzz
+  jobs (nightly and the release smoke; `internal/keyring`'s targets open a store) ran with the 100 ms default. The
+  login-timing job failed on it with `auth.login_failed` holding the lock 120–186 ms while its timing check passed.
+  They now set `SM_TEST_TX_MAX=250ms` too. The race steps keep 1 s. Not security-relevant, for the reasons above.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
