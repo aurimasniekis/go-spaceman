@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/recording"
 )
 
 func TestShipPartsStayInsideAMessage(t *testing.T) {
@@ -42,5 +45,69 @@ func TestShipPartsStayInsideAMessage(t *testing.T) {
 	}
 	if shipParts(nil, 20) != nil {
 		t.Fatal("parts of nothing")
+	}
+}
+
+// The reconnect catch-up re-ships a recording in batches of 256 records; with large records a batch is far over
+// proto.MaxMessage. A central that enforces the limit (as the real one does) receives every record, in order, in
+// messages inside it.
+func TestCatchUpShipsLargeRecordingInBoundedMessages(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	ctx := context.Background()
+	row := runRow{RunID: "run_big", SpaceID: ccSpace, Generation: 1, Kind: "worker", Role: "implementor", Harness: "claude-code", TerminalName: RunName("run_big")}
+	if err := a.j.insertRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	row.State, row.Desired = proto.RunExited, "stopped"
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	w, err := recording.Open(recording.Options{Dir: a.RecordingDir("run_big")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 400 // 48 KiB each: a 256-record batch is about 16 MiB of JSON
+	for i := range n {
+		if err := w.Add(recording.Record{Kind: recording.KindOut, Data: bytes.Repeat([]byte{byte('a' + i%26)}, 48<<10)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	fc := newWSCentral(t, proto.MaxMinor)
+	runAgent(t, a, fc)
+	var seqs []uint64
+	deadline := time.After(20 * time.Second)
+	for len(seqs) < n {
+		select {
+		case env := <-fc.msgs:
+			if env.Type == proto.TypeHello && len(seqs) > 0 {
+				t.Fatal("the node reconnected: central closed the connection")
+			}
+			if env.Type != proto.TypeRecording {
+				continue
+			}
+			var c proto.RecordingChunk
+			if err := env.Decode(&c); err != nil {
+				t.Fatal(err)
+			}
+			for _, raw := range c.Records {
+				var r recording.Record
+				if err := json.Unmarshal(raw, &r); err != nil {
+					t.Fatal(err)
+				}
+				seqs = append(seqs, r.Seq)
+			}
+		case <-deadline:
+			t.Fatalf("central received %d of %d records", len(seqs), n)
+		}
+	}
+	for i, s := range seqs {
+		if s != uint64(i+1) {
+			t.Fatalf("record %d has seq %d", i, s)
+		}
 	}
 }

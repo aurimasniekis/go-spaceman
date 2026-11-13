@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   clients and servers keep working (ADR-0081).
 
 ### Fixed
+- A burst of terminal output larger than the protocol message limit (4 MiB, e.g. megabytes printed within a second)
+  no longer goes missing from central's copy of a recording. The node sent it as one message, central closed the
+  connection, and the records in it were never sent again; the reconnect catch-up's batches could do the same. The node
+  now splits recording shipments into messages of at most 1 MiB.
 - The web terminal keeps at least 10,000 rows of scrollback at 160 columns (about 11,000-12,000). ghostty-web's
   `scrollback` option is a byte limit, not a line count, so the old setting of 10,000 kept only about 300 rows at 160
   columns. It is now 24 MiB: a terminal with a full scrollback of plain text holds about 30 MiB of WebAssembly memory
