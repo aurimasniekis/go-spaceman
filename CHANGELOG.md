@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `GET /api/v1/watch?live=1` starts the change feed at the newest change, without replaying the retained history, and
+  sends a first `position` event with that change's ID.
+
 ### Changed
 
 - **API:** run lists (`GET /api/v1/spaces/{space_id}/runs`, `spaceman run list`) no longer return each run's
@@ -33,6 +38,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   - Central disconnects a client that stops reading its response: each 32 KiB of a response must reach the client
     within `http.write_idle_timeout` (default 1m). Slow transfers that keep moving are unaffected.
   - Central stops applying a hello once that connection has ended.
+- Opening a web UI tab replayed the whole retained change feed and refetched the affected queries once per change:
+  with 60 space and 60 human-action changes in the history, opening the inbox made 318 API requests. It now makes 21.
+  - A new tab opens the change feed live (`GET /api/v1/watch?live=1`): from the newest change, with a first `position`
+    event, instead of replaying the history. It refreshes its open queries once.
+  - Cached data is fresh for 60 s instead of 5 s, since the change feed invalidates what changes. Every request the
+    UI makes for a query can be aborted.
 - Central no longer logs `superfluous response.WriteHeader call` when a handler writes an error after the client
   aborted the response.
 - Break-glass recovery with a new administrator, and a login that replaces a password hash made with older
