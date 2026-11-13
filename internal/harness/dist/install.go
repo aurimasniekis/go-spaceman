@@ -83,6 +83,7 @@ func (m *Manager) start(version string) *call {
 			m.log.Warn("claude code install failed", slog.String("version", version), slog.String("error", c.err.Error()))
 		} else {
 			m.log.Info("claude code installed", slog.String("version", version), slog.Int64("size", c.inst.Size))
+			m.notify()
 		}
 		m.mu.Lock()
 		delete(m.inflight, version)

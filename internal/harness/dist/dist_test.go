@@ -906,3 +906,72 @@ func TestValidVersionMatchesProto(t *testing.T) {
 		}
 	}
 }
+
+func TestChangesSignalsCacheAndChannelChanges(t *testing.T) {
+	fr := newFakeRelease(t)
+	for _, v := range []string{"2.1.30", "2.1.31"} {
+		fr.add(v, binary(v), nil)
+	}
+	fr.setPointer("latest", "2.1.30")
+	clk := &fakeClock{t: time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)}
+	m := newManager(t, fr, t.TempDir(), func(o *Options) { o.Keep = 1; o.Now = clk.Now })
+	signalled := func() bool {
+		select {
+		case <-m.Changes():
+			return true
+		case <-time.After(50 * time.Millisecond):
+			return false
+		}
+	}
+	if signalled() {
+		t.Fatal("signal before any change")
+	}
+	ctx := context.Background()
+	if _, err := m.Channel(ctx, "latest"); err != nil {
+		t.Fatal(err)
+	}
+	if !signalled() {
+		t.Fatal("no signal after the first channel resolution")
+	}
+	clk.Advance(2 * time.Hour) // past Refresh: re-resolved, to the same version
+	if _, err := m.Channel(ctx, "latest"); err != nil {
+		t.Fatal(err)
+	}
+	if signalled() {
+		t.Fatal("signal after a re-resolution to the same version")
+	}
+	if _, err := m.Ensure(ctx, "2.1.30"); err != nil {
+		t.Fatal(err)
+	}
+	if !signalled() {
+		t.Fatal("no signal after an install")
+	}
+	if _, err := m.Ensure(ctx, "2.1.30"); err != nil {
+		t.Fatal(err)
+	}
+	if signalled() {
+		t.Fatal("signal for a version that was already cached")
+	}
+	// Several changes before the receiver reads coalesce into one signal.
+	fr.setPointer("latest", "2.1.31")
+	clk.Advance(2 * time.Hour)
+	if _, err := m.Channel(ctx, "latest"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Ensure(ctx, "2.1.31"); err != nil {
+		t.Fatal(err)
+	}
+	if !signalled() || signalled() {
+		t.Fatal("want exactly one coalesced signal")
+	}
+	removed, err := m.GC(ctx, nil, nil)
+	if err != nil || len(removed) != 0 {
+		t.Fatalf("GC removed %v (%v); 2.1.30 is the previous target", removed, err)
+	}
+	if err := m.removeLocked(ctx, "2.1.30"); err != nil {
+		t.Fatal(err)
+	}
+	if !signalled() {
+		t.Fatal("no signal after a removal")
+	}
+}

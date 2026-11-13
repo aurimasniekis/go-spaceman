@@ -122,6 +122,34 @@ The run manifest stays the configuration resolved at creation. On a node that ma
 reported a new run would get. Runs on older nodes, on nodes that don't manage Claude Code, and of other harnesses keep
 the plain version string. An unmanaged node reports a version only for pinned runs.
 
+## Versions on nodes
+
+The node page (**Nodes**, then a node's row) shows what each harness on the node would run now:
+
+- **Managed** Claude Code: the node's channel, the version a new run would get, the resolved `latest` and `stable`
+  targets with when they were resolved, the cached versions and the cache's size on disk.
+- **Unmanaged** harnesses: the version and path detected at `claude_binary` (or `codex_binary`).
+- When the node last reported them, with a **stale** badge once a connected node's report is more than an hour old,
+  or **offline** while the node is offline.
+
+The API's node detail (`GET /nodes/{node_id}`) has the same data: `capabilities` and `capabilities_updated_at`. A
+harness entry's `version` and `path` mean "what a new run would get now", not what a running run uses; a run's own
+version is on the run (see [Versions on runs](#versions-on-runs)).
+
+A node reports its capabilities when it connects. From node protocol 1.11 on, a connected node also sends them again:
+
+- when its Claude Code cache changes (a version was downloaded or removed) or a channel resolves to another version;
+- and at least every 30 minutes. Each time it detects every harness again, so a `claude` you updated yourself on an
+  unmanaged node shows up within 30 minutes.
+
+Central keeps only the report of the node's current connection. A node agent older than 1.11 reports only when it
+connects, and its report turns stale after an hour of connection; an offline node keeps its last report, marked
+offline.
+
+Central checks the capabilities in hello and in each report against the same bounds. A bad part of a harness entry,
+such as a cached version that isn't an exact `X.Y.Z`, is dropped from that entry with a warning in central's log; the
+rest of the report is stored and the node stays connected.
+
 ### Tamper policy
 
 Runs execute as the node's user, the same user that owns the cache. The cache's read-only modes (binary 0555,
@@ -155,6 +183,8 @@ would not close that gap either, and it would cost a 340 MB read per run.
   - a profile pin downloaded and run exactly, never a fallback, and kept by GC;
   - an unmanaged node refusing a mismatching or channel pin;
   - central refusing a pin to a node below protocol 1.11, and storing and showing a run's reported version (`internal/app`, a scripted node).
+  - the node re-reporting its capabilities after a cache change and every 30 minutes (and an unmanaged `claude`
+    detected again), never to a central below 1.11, and central storing them from the current connection only.
 - **Real** (opt-in): `SPACEMAN_REAL=1 go test -tags real -run TestRealManagedClaude ./internal/agent/` downloads a
   real release (about 340 MB) into a temporary cache and runs it with the updater variables. It hasn't been run as
   part of this change.

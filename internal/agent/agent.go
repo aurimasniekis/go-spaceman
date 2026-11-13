@@ -88,9 +88,15 @@ type Agent struct {
 	wake   chan struct{}
 	// runTokens are the hashes of active runs' bridge tokens.
 	runTokens map[string][32]byte
-	// caps caches the capability inventory (harness detection runs binaries; never between dial and hello).
-	caps   proto.Capabilities
-	capsAt time.Time
+	// caps caches the capability inventory (harness detection runs binaries; never between dial and hello), capsAt is
+	// when it was taken and capsGen counts the takes (capsLoop re-reports what a connection's hello missed).
+	// capsStarts numbers the detections as they start and capsTaken is the number of the one cached, so a slower
+	// detection that started earlier never replaces a newer one.
+	caps       proto.Capabilities
+	capsAt     time.Time
+	capsGen    uint64
+	capsStarts uint64
+	capsTaken  uint64
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
@@ -231,6 +237,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.startClaude(ctx, &claudeWG)
 	go a.monitor(ctx)
 	go a.enforce(ctx)
+	go a.capsLoop(ctx)
 	go func() {
 		if err := a.ServeBridge(ctx); err != nil {
 			a.log.Warn("mcp bridge socket", obs.Err(err))
@@ -328,8 +335,11 @@ func (a *Agent) session(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if a.capsAt.IsZero() || a.now().Sub(a.capsAt) > 5*time.Minute {
-		a.caps, a.capsAt = a.capabilities(ctx), a.now()
+	a.mu.Lock()
+	stale := a.capsAt.IsZero() || a.now().Sub(a.capsAt) > 5*time.Minute
+	a.mu.Unlock()
+	if stale {
+		a.takeCapabilities(ctx)
 	}
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	conn, resp, err := websocket.Dial(dctx, u, &websocket.DialOptions{HTTPClient: a.o.HTTPClient, Subprotocols: []string{proto.Subprotocol},
@@ -349,7 +359,10 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 	hello := proto.Hello{AgentVersion: buildinfo.Get().Version, MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor,
 		Capacity: a.o.Capacity, Runs: []proto.RunReport{}, Leases: a.leaseStates()}
+	a.mu.Lock()
 	hello.Capabilities = a.caps
+	helloCaps := a.capsGen
+	a.mu.Unlock()
 	for _, r := range runs {
 		hello.Runs = append(hello.Runs, r.report())
 	}
@@ -397,6 +410,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resendKBResults(hbCtx)
 			go a.resumeTranscripts(hbCtx)
 			go a.resendRelocationReports(hbCtx)
+			go a.capsAfterHello(hbCtx, helloCaps)
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:
 			var g proto.LeaseGrant

@@ -20,7 +20,12 @@ UPDATE nodes SET state = ?, version = version + 1, updated_at = ? WHERE id = ?;
 -- name: RecordNodeConnect :exec
 UPDATE nodes SET state = CASE WHEN state = 'pending' THEN 'active' ELSE state END, agent_version = sqlc.arg(agent_version),
   protocol_minor = sqlc.arg(protocol_minor), capabilities_json = sqlc.arg(capabilities_json), capacity = sqlc.arg(capacity),
-  last_seen_at = sqlc.arg(now), last_connect_at = sqlc.arg(now), last_ip = sqlc.arg(last_ip), updated_at = sqlc.arg(now)
+  last_seen_at = sqlc.arg(now), last_connect_at = sqlc.arg(now), last_ip = sqlc.arg(last_ip), updated_at = sqlc.arg(now),
+  capabilities_updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id);
+
+-- name: RecordNodeCapabilities :execrows
+UPDATE nodes SET capabilities_json = sqlc.arg(capabilities_json), capabilities_updated_at = sqlc.arg(now), last_seen_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id);
 
 -- name: RecordNodeSeen :exec

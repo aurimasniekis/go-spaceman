@@ -143,6 +143,7 @@ func (m *Manager) remove(version string) error {
 		}
 		return err
 	}
+	m.notify() // renamed away: the version is no longer cached, whatever deleting its files does
 	return removeTree(gone)
 }
 

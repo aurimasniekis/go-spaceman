@@ -91,9 +91,10 @@
 - **Managed Claude Code is opt-in.** With `harness.claude.manage` off (the default) a run executes whatever `claude`
   its `PATH` resolves to, and an unpinned run records no version. A profile pin on such a node runs only when it equals
   the detected version, and a channel pin (`latest`, `stable`) fails there.
-- **A node's reported version can be stale.** A node reports its harness versions only when it connects, so the
-  manifest's `node_default` can lag. The run row holds what actually ran. The periodic re-report is planned
-  (SM-HARN-008).
+- **A node's reported version can lag by up to 30 minutes.** From protocol 1.11 a connected node re-reports its
+  harness versions when its Claude Code cache or a channel target changes and at least every 30 minutes (SM-HARN-008);
+  an unmanaged `claude` updated by hand shows up at the next periodic report. Older agents report only when they
+  connect. The manifest's `node_default` is the last report; the run row holds what actually ran.
 - **Pins need protocol 1.11.** Central refuses to send a pinned launch to an older node agent: the run fails as
   `node_too_old`. A node learns pins only from launches it has seen, so GC may remove a pinned version that no launch
   has used for 30 days. The next pinned launch downloads it again.

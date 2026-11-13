@@ -214,7 +214,7 @@ func (q *Queries) GetLease(ctx context.Context, spaceID string) (ExecutionLease,
 }
 
 const getNode = `-- name: GetNode :one
-SELECT id, name, description, state, labels_json, agent_version, protocol_minor, capabilities_json, capacity, last_seen_at, last_connect_at, last_disconnect_at, last_ip, version, created_at, created_by, updated_at FROM nodes WHERE id = ?
+SELECT id, name, description, state, labels_json, agent_version, protocol_minor, capabilities_json, capacity, last_seen_at, last_connect_at, last_disconnect_at, last_ip, version, created_at, created_by, updated_at, capabilities_updated_at FROM nodes WHERE id = ?
 `
 
 func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
@@ -238,12 +238,13 @@ func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
 		&i.CreatedAt,
 		&i.CreatedBy,
 		&i.UpdatedAt,
+		&i.CapabilitiesUpdatedAt,
 	)
 	return i, err
 }
 
 const getNodeByName = `-- name: GetNodeByName :one
-SELECT id, name, description, state, labels_json, agent_version, protocol_minor, capabilities_json, capacity, last_seen_at, last_connect_at, last_disconnect_at, last_ip, version, created_at, created_by, updated_at FROM nodes WHERE name = ?
+SELECT id, name, description, state, labels_json, agent_version, protocol_minor, capabilities_json, capacity, last_seen_at, last_connect_at, last_disconnect_at, last_ip, version, created_at, created_by, updated_at, capabilities_updated_at FROM nodes WHERE name = ?
 `
 
 func (q *Queries) GetNodeByName(ctx context.Context, name string) (Node, error) {
@@ -267,6 +268,7 @@ func (q *Queries) GetNodeByName(ctx context.Context, name string) (Node, error) 
 		&i.CreatedAt,
 		&i.CreatedBy,
 		&i.UpdatedAt,
+		&i.CapabilitiesUpdatedAt,
 	)
 	return i, err
 }
@@ -1007,7 +1009,7 @@ func (q *Queries) ListNodeCredentials(ctx context.Context, nodeID string) ([]Nod
 }
 
 const listNodes = `-- name: ListNodes :many
-SELECT id, name, description, state, labels_json, agent_version, protocol_minor, capabilities_json, capacity, last_seen_at, last_connect_at, last_disconnect_at, last_ip, version, created_at, created_by, updated_at FROM nodes ORDER BY name
+SELECT id, name, description, state, labels_json, agent_version, protocol_minor, capabilities_json, capacity, last_seen_at, last_connect_at, last_disconnect_at, last_ip, version, created_at, created_by, updated_at, capabilities_updated_at FROM nodes ORDER BY name
 `
 
 func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
@@ -1037,6 +1039,7 @@ func (q *Queries) ListNodes(ctx context.Context) ([]Node, error) {
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.UpdatedAt,
+			&i.CapabilitiesUpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1347,10 +1350,30 @@ func (q *Queries) MarkNodeRunsUnknown(ctx context.Context, arg MarkNodeRunsUnkno
 	return result.RowsAffected()
 }
 
+const recordNodeCapabilities = `-- name: RecordNodeCapabilities :execrows
+UPDATE nodes SET capabilities_json = ?1, capabilities_updated_at = ?2, last_seen_at = ?2
+WHERE id = ?3
+`
+
+type RecordNodeCapabilitiesParams struct {
+	CapabilitiesJson string
+	Now              sql.NullInt64
+	ID               string
+}
+
+func (q *Queries) RecordNodeCapabilities(ctx context.Context, arg RecordNodeCapabilitiesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordNodeCapabilities, arg.CapabilitiesJson, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const recordNodeConnect = `-- name: RecordNodeConnect :exec
 UPDATE nodes SET state = CASE WHEN state = 'pending' THEN 'active' ELSE state END, agent_version = ?1,
   protocol_minor = ?2, capabilities_json = ?3, capacity = ?4,
-  last_seen_at = ?5, last_connect_at = ?5, last_ip = ?6, updated_at = ?5
+  last_seen_at = ?5, last_connect_at = ?5, last_ip = ?6, updated_at = ?5,
+  capabilities_updated_at = ?5
 WHERE id = ?7
 `
 

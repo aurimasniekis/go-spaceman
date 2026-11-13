@@ -61,6 +61,7 @@ const (
 	TypeRepoStatus       = "repos.status"      // minor ≥ 4: the state of a space's configured repositories
 	TypeMemoryFlushed    = "memory.flushed"    // minor ≥ 5: the outcome of a memory.flush
 	TypeTakeoverEnded    = "takeover.ended"    // minor ≥ 6: the node could not hold a takeover (attach failed, terminal closed)
+	TypeNodeCapabilities = "node.capabilities" // minor ≥ 11: the node's current capabilities, re-reported between hellos
 
 	// central → node
 	TypeWelcome             = "welcome"
@@ -124,7 +125,9 @@ func (e Envelope) Decode(v any) error {
 	return json.Unmarshal(e.Body, v)
 }
 
-// Capabilities is the node's inventory, reported in hello (SM-NODE-002).
+// Capabilities is the node's inventory, reported in hello (SM-NODE-002) and, from minor 11 on, re-reported in
+// node.capabilities (NodeCapabilities) whenever a node-managed harness's cache or channel targets change and at least
+// every 30 minutes, so central's copy stays current between connections.
 type Capabilities struct {
 	OS        string          `json:"os"`
 	Arch      string          `json:"arch"`
@@ -143,7 +146,9 @@ type RunnerInfo struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// HarnessInfo describes one installed harness and its advertised capabilities (SM-HARN-003).
+// HarnessInfo describes one installed harness and its advertised capabilities (SM-HARN-003). Version and Path are what
+// a new run of the harness would get at the time of the report: the detected binary on an unmanaged node, the node's
+// channel target (else its newest cached version) on a managed one.
 type HarnessInfo struct {
 	Kind         string   `json:"kind"` // claude-code, codex
 	Version      string   `json:"version,omitempty"`

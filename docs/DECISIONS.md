@@ -4084,7 +4084,8 @@
      - A new node→central `node.capabilities` message carries the full capabilities when the cache or a channel
        resolution changes, and at least every 30 minutes. `HarnessInfo` gains `managed`, `channel`, `resolved`,
        `cached` and `cache_bytes`; `version`/`path` then mean "what a new run would get now". Unmanaged nodes re-run
-       detection on the same timer.
+       detection on the same timer. Central stores a report only from the node's current connection; migration
+       0049 adds `nodes.capabilities_updated_at`, shown with a stale hint after an hour (CC-5).
   9. **Protocol minor 11 and migration 0048.** Minor 11 adds `LaunchPayload.harness_version`, the two `RunReport`
      fields, `node.capabilities` and the `HarnessInfo` fields, all additive. Migration 0048 adds
      `harness_profiles.harness_version` and `runs.harness_version` (`TEXT NOT NULL DEFAULT ''`).

@@ -35,21 +35,24 @@ var reNodeName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // Node is a registered execution node (no secrets).
 type Node struct {
-	ID               string             `json:"id"`
-	Name             string             `json:"name"`
-	Description      string             `json:"description"`
-	State            string             `json:"state" enum:"pending,active,disabled,revoked"`
-	Labels           map[string]string  `json:"labels"`
-	AgentVersion     string             `json:"agent_version,omitempty"`
-	ProtocolMinor    int64              `json:"protocol_minor"`
-	Capabilities     proto.Capabilities `json:"capabilities"`
-	Capacity         int64              `json:"capacity"`
-	Connected        bool               `json:"connected"`
-	LastSeenAt       *time.Time         `json:"last_seen_at,omitempty"`
-	LastConnectAt    *time.Time         `json:"last_connect_at,omitempty"`
-	LastDisconnectAt *time.Time         `json:"last_disconnect_at,omitempty"`
-	Version          int64              `json:"version"`
-	CreatedAt        time.Time          `json:"created_at"`
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	Description   string             `json:"description"`
+	State         string             `json:"state" enum:"pending,active,disabled,revoked"`
+	Labels        map[string]string  `json:"labels"`
+	AgentVersion  string             `json:"agent_version,omitempty"`
+	ProtocolMinor int64              `json:"protocol_minor"`
+	Capabilities  proto.Capabilities `json:"capabilities"`
+	// CapabilitiesUpdatedAt is when the node last reported its capabilities: at connect, and from protocol minor 11 on
+	// also when a managed harness's cache or channel targets change and at least every 30 minutes (ADR-0077).
+	CapabilitiesUpdatedAt *time.Time `json:"capabilities_updated_at,omitempty"`
+	Capacity              int64      `json:"capacity"`
+	Connected             bool       `json:"connected"`
+	LastSeenAt            *time.Time `json:"last_seen_at,omitempty"`
+	LastConnectAt         *time.Time `json:"last_connect_at,omitempty"`
+	LastDisconnectAt      *time.Time `json:"last_disconnect_at,omitempty"`
+	Version               int64      `json:"version"`
+	CreatedAt             time.Time  `json:"created_at"`
 }
 
 func microsPtr(v sql.NullInt64) *time.Time {
@@ -63,7 +66,7 @@ func microsPtr(v sql.NullInt64) *time.Time {
 func (svc *Service) nodeFromRow(r db.Node) *Node {
 	n := &Node{ID: r.ID, Name: r.Name, Description: r.Description, State: r.State, Labels: map[string]string{}, AgentVersion: r.AgentVersion,
 		ProtocolMinor: r.ProtocolMinor, Capacity: r.Capacity, LastSeenAt: microsPtr(r.LastSeenAt), LastConnectAt: microsPtr(r.LastConnectAt),
-		LastDisconnectAt: microsPtr(r.LastDisconnectAt), Version: r.Version, CreatedAt: time.UnixMicro(r.CreatedAt).UTC()}
+		LastDisconnectAt: microsPtr(r.LastDisconnectAt), CapabilitiesUpdatedAt: microsPtr(r.CapabilitiesUpdatedAt), Version: r.Version, CreatedAt: time.UnixMicro(r.CreatedAt).UTC()}
 	_ = json.Unmarshal([]byte(r.LabelsJson), &n.Labels)
 	_ = json.Unmarshal([]byte(r.CapabilitiesJson), &n.Capabilities)
 	if n.Capabilities.Harnesses == nil {

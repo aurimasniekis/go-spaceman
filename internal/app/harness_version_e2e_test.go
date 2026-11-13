@@ -206,3 +206,24 @@ func TestHarnessDependencyPlainUnlessManaged(t *testing.T) {
 		}
 	}
 }
+
+// SM-HARN-008 (simulated: a scripted node connection): a hello whose managed Claude Code entry carries a version of
+// the wrong shape is still welcomed; central drops that version from the entry and stores the rest.
+func TestHelloWithBadHarnessEntryAccepted(t *testing.T) {
+	t.Parallel()
+	e := newFleetEnv(t)
+	e.enroll()
+	ctx := context.Background()
+	n := dialRawNodeHello(t, e, proto.Hello{AgentVersion: "test", MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor, Runs: []proto.RunReport{}, Leases: []proto.LeaseState{},
+		Capabilities: proto.Capabilities{OS: "linux", Harnesses: []proto.HarnessInfo{
+			{Kind: "claude-code", Version: "2.1.322-beta", Available: true, Capabilities: []string{}, Managed: true, Channel: "latest", Cached: []string{"2.1.321", "../x"}},
+			{Kind: "codex", Version: "0.50.0", Available: true, Capabilities: []string{}}}}})
+	n.next(t, proto.TypeWelcome)
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	var node *fleet.Node
+	eventually(t, "node connected", func() bool { node, _ = e.c.Fleet.GetNode(ctx, nodes[0].ID); return node.Connected })
+	hs := node.Capabilities.Harnesses
+	if len(hs) != 2 || hs[0].Version != "" || !hs[0].Managed || hs[0].Channel != "latest" || fmt.Sprint(hs[0].Cached) != "[2.1.321]" || hs[1].Version != "0.50.0" {
+		t.Fatalf("stored harnesses %+v", hs)
+	}
+}
