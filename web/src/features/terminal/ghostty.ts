@@ -1,5 +1,7 @@
 import { CanvasRenderer, CellFlags, Ghostty, GhosttyTerminal, Terminal } from 'ghostty-web'
-import wasmUrl from 'ghostty-web/ghostty-vt.wasm?url'
+// The WebAssembly module of a later ghostty-web release than the JavaScript above (ADR-0076): 0.4.0's module left old
+// cells in rows that scroll in at the bottom (upstream #180), which drew earlier output through Claude Code's lines.
+import wasmUrl from 'ghostty-web-vt/ghostty-vt.wasm?url'
 import { terminalTheme } from '@/theme/nightowl'
 import { boxCanScroll, createScroller, liveScrollTop, wheelPixels } from './scroll'
 
@@ -21,6 +23,27 @@ export interface TerminalProbe {
   screens(): string[]
 }
 
+/** A line of the terminal as text, column for column. */
+interface ProbeLine {
+  length: number
+  getCell(x: number): { getChars(): string; getWidth(): number } | undefined
+}
+
+/**
+ * A line's text with every column in place: an empty cell (one the program moved over and never wrote) reads as a
+ * space, as in xterm.js. ghostty-web 0.4.0's translateToString leaves it out, which shifted the rest of the line left.
+ */
+function rowText(line: ProbeLine | undefined): string {
+  if (!line) return ''
+  let s = ''
+  for (let x = 0; x < line.length; x++) {
+    const cell = line.getCell(x)
+    if (!cell || cell.getWidth() === 0) continue // the second half of a wide character
+    s += cell.getChars() || ' '
+  }
+  return s.trimEnd()
+}
+
 /**
  * Installs the probe when a test asked for it before the page loaded (Playwright's addInitScript sets
  * `window.__smTerminalProbe = true`). Pages never install it otherwise.
@@ -35,7 +58,7 @@ function installProbe() {
       [...live.keys()].map((t) => {
         const b = t.buffer.active
         const lines: string[] = []
-        for (let y = 0; y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? '')
+        for (let y = 0; y < b.length; y++) lines.push(rowText(b.getLine(y)))
         return lines.join('\n')
       }),
     wasmBytes: () => [...live.values()].reduce((n, m) => n + (m?.buffer.byteLength ?? 0), 0),
@@ -43,7 +66,7 @@ function installProbe() {
       [...live.keys()].map((t) => {
         const b = t.buffer.active
         const lines: string[] = []
-        for (let y = Math.max(0, b.length - t.rows); y < b.length; y++) lines.push(b.getLine(y)?.translateToString(true) ?? '')
+        for (let y = Math.max(0, b.length - t.rows); y < b.length; y++) lines.push(rowText(b.getLine(y)))
         return lines.join('\n')
       }),
   }
