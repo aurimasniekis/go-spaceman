@@ -209,3 +209,22 @@ func TestGuardChecksFailedTransactions(t *testing.T) {
 		t.Errorf("a canceled transaction tripped the guard: %v", g.errs)
 	}
 }
+
+// A store opened by Open has the small test reader pool unless the test asks for another size.
+func TestOpenReaderPool(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []storetest.Option
+		want int
+	}{
+		{"default", nil, storetest.Readers},
+		{"WithReaders", []storetest.Option{storetest.WithReaders(5)}, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := storetest.Open(t, tc.opts...)
+			if got := s.ReadDB().Stats().MaxOpenConnections; got != tc.want {
+				t.Fatalf("reader pool of %d connections, want %d", got, tc.want)
+			}
+		})
+	}
+}

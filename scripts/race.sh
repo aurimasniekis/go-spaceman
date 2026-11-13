@@ -47,7 +47,12 @@ done
 [[ -z "${RACE_COUNT:-}" || "$RACE_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "race: RACE_COUNT must be a positive integer" >&2; exit 2; }
 export SM_TEST_TX_MAX="${SM_TEST_TX_MAX:-500ms}"
 
-flags=(-race -timeout 30m)
+# -race also turns on the compiler's checkptr instrumentation (unsafe.Pointer rule checks) in every package. In
+# modernc.org's SQLite, C transpiled to Go with unsafe pointer arithmetic on almost every line, it was about a quarter
+# of all test CPU and half the CPU spent inside write transactions, so on a CPU-bound runner it doubled how long they
+# held the write lock (HP-DB-004 guard). It stays on for every other package, ours included; the race detector itself
+# stays on everywhere. The non-race runs (coverage) have no checkptr to begin with.
+flags=(-race -timeout 30m '-gcflags=modernc.org/...=-d=checkptr=0')
 [[ -n "${RACE_COUNT:-}" ]] && flags+=("-count=$RACE_COUNT")
 
 # The package list is captured first, so a failing go list fails the run instead of testing less.

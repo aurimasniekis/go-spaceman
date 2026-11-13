@@ -2844,13 +2844,54 @@
   jobs (nightly and the release smoke; `internal/keyring`'s targets open a store) ran with the 100 ms default. The
   login-timing job failed on it with `auth.login_failed` holding the lock 120–186 ms while its timing check passed.
   They now set `SM_TEST_TX_MAX=250ms` too. The race steps keep 1 s. Not security-relevant, for the reasons above.
-- **Update, 2026-11-13 (hosted coverage at 1 s, operator decision):** during the v0.1.2 merges the hosted coverage job
+- **Update, 2026-11-13, coverage at 1 s (operator decision):** during the v0.1.2 merges the hosted coverage job
   failed repeatedly on transactions holding the lock 260–750 ms in packages the pull requests didn't touch (auth,
   human, oidc, keyring, messages), and passed on rerun. Shared runners vary more than the 250 ms margin allows. The
   coverage step in `ci.yaml` and in the release gate now sets `SM_TEST_TX_MAX=1s`, the same as the race steps. Local
   runs keep the 100 ms default and the full gate (`SM_TEST_TX_MAX=500ms make check`) keeps 500 ms, so a slow
   transaction is still caught before a pull request; I/O in a transaction is still rejected by `txscope`. The
   login-timing and fuzz jobs keep 250 ms. Not security-relevant, for the reasons above.
+- **Update, 2026-11-13, hold analysis (why transactions held the lock so long; limits unchanged):** The v0.1.2 merges still tripped
+  the guard: `keyring.load` held the lock up to 3.7 s and `auth.touch_session` 1.33 s in the race job. Per-transaction
+  tracing measured three things: the hold (ADR-0070: from BEGIN IMMEDIATE returning to the end of the commit, so lock
+  waits never counted), the callback and commit split, and the transaction's own on-CPU time (thread CPU time). The
+  work inside the transactions was small: under `-race`, p50 8 ms and p99 32 ms of CPU. `keyring.load` used 12 ms
+  (its AES-GCM work is negligible); `touch_session`, a single primary-key UPDATE already debounced to once a minute,
+  used about 1 ms. About 60% of the in-transaction CPU was SQLite compiling statements. The holds came from three
+  causes.
+  - **The first commit flushed the seeded database.** `storetest.Seed` copied a 1.2 MB migrated database without
+    syncing it. The store's first commit (`keyring.load`, in every test) creates the WAL, and SQLite fsyncs the new
+    WAL and its directory. On ext4 that flushed the whole fresh copy while the lock was held. This node's `/tmp` is
+    tmpfs, which hid it; hosted runners use ext4. With `TMPDIR` on ext4, 4 CPUs, `-race`, `keyring.load` commit took
+    up to 320 ms, and 23 ms once `Seed` fsyncs its copy and directory.
+  - **CPU starvation.** On 1 CPU, holds were 10–25 times the transaction's CPU: the goroutine was runnable but not
+    running. More than half of the test processes' CPU went to `store.Open`, where every reader connection
+    (`max(4, GOMAXPROCS)`) parses the whole schema, and about a quarter to `checkptr` instrumentation of modernc's
+    transpiled SQLite. `checkptr` also accounted for half of the CPU inside transactions. Test stores now open
+    `storetest.Readers` (2) reader connections; internal/store still tests the production size. `scripts/race.sh`
+    passes `-gcflags=modernc.org/...=-d=checkptr=0`: the race detector stays on everywhere, and `checkptr` stays on
+    for our own packages. Non-race runs have no `checkptr`.
+  - **Argon2id inside two transactions.** `auth.breakglass` (new administrator) and the `auth.login` rehash of an old
+    parameter version derived the key while holding the lock. They now hash first.
+  - **Result:** `-race` over auth, oidc, human, messages, keyring and audit (`-p 4 -parallel 4`, pinned with
+    `taskset`), hold p50 / p99 / max in ms:
+
+    | disk, CPUs | before | after |
+    |---|---|---|
+    | ext4, 4 | 28 / 144 / 418 | 18 / 86 / 145 |
+    | ext4, 1 | 98 / 581 / 817 | 70 / 331 / 526 |
+    | tmpfs, 4 | 21 / 140 / 218 | 11 / 71 / 106 |
+    | tmpfs, 1 | 82 / 519 / 799 | 35 / 300 / 391 |
+
+    The remaining holds on one CPU are scheduling waits, not work. The heaviest transactions (`human.*`) use about
+    15 ms of CPU.
+  - `synchronous` stays `FULL`, and no limit changes. Committed transactions must survive a power loss (HP-DB-004
+    is about holding the lock briefly, not about durability), and a test that waits for an fsync measures what
+    production does.
+  - Not done, recorded as follow-ups: a prepared-statement cache on the writer (statement compilation is most of the
+    remaining in-transaction CPU), and batching `touch_session` (its cost is the commit, not work).
+  - Not security-relevant: tests and the race run's build flags only, plus two auth paths that now hash before
+    their transaction, with the same parameters and stored result.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
