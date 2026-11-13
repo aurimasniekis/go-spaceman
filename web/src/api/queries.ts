@@ -3,6 +3,12 @@ import { api, unwrap } from './client'
 import { setSession } from './session'
 
 /** Query keys, shared by the watch feed's invalidation. */
+/**
+ * How long data the change feed doesn't cover (sessions, audit, event connections, SSH keys, role options) stays fresh:
+ * the default (router.tsx) is long because the feed invalidates what changes, which it can't do for these.
+ */
+export const UNWATCHED = 5_000
+
 export const keys = {
   me: ['me'] as const,
   system: ['system'] as const,
@@ -189,7 +195,7 @@ export const useAllTokens = (enabled: boolean) =>
   useQuery({ queryKey: keys.allTokens, queryFn: async ({ signal }) => unwrap(await api.GET('/admin/tokens', { signal })).items, enabled })
 
 export const useSessions = () =>
-  useQuery({ queryKey: keys.sessions, queryFn: async ({ signal }) => unwrap(await api.GET('/auth/sessions', { signal })).items })
+  useQuery({ queryKey: keys.sessions, queryFn: async ({ signal }) => unwrap(await api.GET('/auth/sessions', { signal })).items, staleTime: UNWATCHED })
 
 export const useAudit = (f: AuditFilter) =>
   useQuery({
@@ -201,6 +207,7 @@ export const useAudit = (f: AuditFilter) =>
         }),
       ),
     placeholderData: keepPreviousData,
+    staleTime: UNWATCHED,
   })
 
 export type InboxStatus = 'new' | 'in_progress' | 'deferred' | 'rejected' | 'done'
@@ -209,8 +216,8 @@ export const useInbox = (space: string, status: InboxStatus | '') =>
   useInfiniteQuery({
     queryKey: [...keys.inbox(space), status],
     initialPageParam: '',
-    queryFn: async ({ pageParam }) =>
-      unwrap(await api.GET('/spaces/{space_id}/inbox', { params: { path: { space_id: space }, query: { status: status || undefined, cursor: pageParam || undefined, limit: 50 } } })),
+    queryFn: async ({ pageParam, signal }) =>
+      unwrap(await api.GET('/spaces/{space_id}/inbox', { params: { path: { space_id: space }, query: { status: status || undefined, cursor: pageParam || undefined, limit: 50 } }, signal })),
     getNextPageParam: (last) => last.next_cursor || undefined,
   })
 
@@ -221,7 +228,7 @@ export const useInboxItem = (space: string, id: string) =>
   })
 
 export const useConnections = () =>
-  useQuery({ queryKey: keys.connections, queryFn: async ({ signal }) => unwrap(await api.GET('/event-connections', { signal })).items })
+  useQuery({ queryKey: keys.connections, queryFn: async ({ signal }) => unwrap(await api.GET('/event-connections', { signal })).items, staleTime: UNWATCHED })
 
 /** Backups and the schedule (global admins only). The change feed refreshes it while a backup or verification runs. */
 export const useBackups = (enabled: boolean) =>
@@ -388,7 +395,8 @@ export const useRoleTemplates = () => useQuery({ queryKey: keys.roleTemplates, q
 export const useSpaceRoles = (space: string) =>
   useQuery({ queryKey: keys.spaceRoles(space), queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/roles', { params: { path: { space_id: space } }, signal })).items })
 export const useRoleOptions = (space: string, enabled = true) =>
-  useQuery({ queryKey: keys.roleOptions(space), enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/role-options', { params: { path: { space_id: space } }, signal })) })
+  useQuery({ queryKey: keys.roleOptions(space), enabled, staleTime: UNWATCHED,
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/role-options', { params: { path: { space_id: space } }, signal })) })
 
 export const useHumanTypes = (enabled = true) => useQuery({ queryKey: keys.humanTypes, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/human-types', { signal })).items })
 export const useSpaceHumanTypes = (space: string) =>
@@ -467,7 +475,7 @@ export const useAllXSpace = (enabled: boolean) =>
 
 /** Shared Git SSH keys (ADR-0058): administrators manage them. */
 export const useGitKeys = (enabled = true) =>
-  useQuery({ queryKey: keys.gitKeys, enabled, queryFn: async ({ signal }) => unwrap(await api.GET('/git-ssh-keys', { signal })).items })
+  useQuery({ queryKey: keys.gitKeys, enabled, staleTime: UNWATCHED, queryFn: async ({ signal }) => unwrap(await api.GET('/git-ssh-keys', { signal })).items })
 
 /** The Harbor Pilot connection (ADR-0060; administrators). null when none is configured. */
 export const useHarborPilot = (enabled = true) =>
