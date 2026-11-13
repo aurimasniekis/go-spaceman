@@ -15,7 +15,8 @@ import (
 
 // SM-API-002: the change feed is a durable watch. A client resumes from its last position (`after`, or the
 // Last-Event-ID header an EventSource sends on reconnect) and receives exactly the changes it missed, in order; a
-// position beyond the feed (for example after a restore) is reported as a gap and the stream continues from the end.
+// position beyond the feed (for example after a restore) is reported as a gap and the stream continues from the end. A
+// client without a position can start live, at the newest change, instead of replaying the retained history.
 func TestWatchResumesFromItsPosition(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -73,5 +74,27 @@ func TestWatchResumesFromItsPosition(t *testing.T) {
 	s5 := record("tsk_5")
 	if c := nextChange(t, gs); seqOf(c) != s5 {
 		t.Fatalf("change after the gap: %v", c)
+	}
+
+	// A client without a position that has just loaded its data (a fresh web UI tab) asks for live=1: it learns the
+	// newest position and gets only what changes from then on, never the retained history.
+	ls := openSSE(t, http.DefaultClient, h.srv.URL+api.Prefix+"/watch?live=1", auth...)
+	select {
+	case ev := <-ls:
+		var pos map[string]int64
+		if ev.typ != "position" || json.Unmarshal([]byte(ev.data), &pos) != nil || pos["seq"] != s5 {
+			t.Fatalf("first event of a live stream: %+v", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no position event")
+	}
+	s6 := record("tsk_6")
+	if c := nextChange(t, ls); seqOf(c) != s6 {
+		t.Fatalf("first change of a live stream: %v", c)
+	}
+	// live=1 with a position resumes from that position instead.
+	lr := openSSE(t, http.DefaultClient, h.srv.URL+api.Prefix+"/watch?live=1&after="+strconv.FormatInt(s5, 10), auth...)
+	if c := nextChange(t, lr); seqOf(c) != s6 {
+		t.Fatalf("live stream with a position: %v", c)
 	}
 }
