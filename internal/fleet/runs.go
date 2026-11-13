@@ -674,6 +674,11 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			fenced = true
 			return nil
 		}
+		// A report that changes nothing (every hello re-reports the node's whole journal, ended runs included) writes
+		// nothing: no version, no change-feed entry, so a reconnect doesn't make every open UI refetch its runs.
+		if sweep == nil && reportUnchanged(r, rep) {
+			return nil
+		}
 		var exit sql.NullInt64
 		if rep.ExitCode != nil {
 			exit = sql.NullInt64{Int64: int64(*rep.ExitCode), Valid: true}
@@ -691,13 +696,7 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		// What was requested and why another version ran are stored only when they are a valid request and a known
 		// fallback reason; anything else is dropped (review S2).
 		if proto.IsHarnessVersion(rep.HarnessVersion) {
-			requested, fallback := rep.HarnessRequested, rep.HarnessFallback
-			if proto.CheckHarnessVersion(requested) != nil {
-				requested = ""
-			}
-			if !dist.IsFallback(fallback) {
-				fallback = ""
-			}
+			requested, fallback := reportHarness(rep)
 			n, err := tx.Q.SetRunHarness(ctx, db.SetRunHarnessParams{HarnessVersion: rep.HarnessVersion,
 				HarnessRequested: requested, HarnessFallback: fallback, Now: tx.NowMicros(), ID: r.ID, Generation: r.Generation})
 			if err != nil {
@@ -781,6 +780,41 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		return true, err
 	}
 	return fenced, err
+}
+
+// reportHarness is what a report's harness request and fallback are stored as: a valid request and a known fallback
+// reason, anything else dropped (review S2).
+func reportHarness(rep proto.RunReport) (requested, fallback string) {
+	requested, fallback = rep.HarnessRequested, rep.HarnessFallback
+	if proto.CheckHarnessVersion(requested) != nil {
+		requested = ""
+	}
+	if !dist.IsFallback(fallback) {
+		fallback = ""
+	}
+	return requested, fallback
+}
+
+// reportUnchanged reports whether applying rep to r would change nothing applyRunReport stores (it would only move
+// observed_at): the same observed state and fields, no start or end to mark, the same harness version, and no stop to
+// queue again.
+func reportUnchanged(r db.Run, rep proto.RunReport) bool {
+	exitSame := (rep.ExitCode == nil && !r.ExitCode.Valid) || (rep.ExitCode != nil && r.ExitCode.Valid && int64(*rep.ExitCode) == r.ExitCode.Int64)
+	markStarted := rep.State == proto.RunRunning || rep.State == proto.RunExited || rep.State == proto.RunFailed
+	if r.Observed != rep.State || r.TerminalID != rep.TerminalID || r.CoreID != rep.CoreID || r.Identity != rep.Identity ||
+		r.Pid != int64(rep.PID) || !exitSame || r.EndReason != rep.Reason || r.Error != truncate(rep.Error, 2000) || r.Status != rep.Status ||
+		r.StatusKind != rep.StatusKind || r.Turn != int64(min(rep.Turn, math.MaxInt64)) || //nolint:gosec // saturated above
+		r.Adopted != b2i(rep.Adopted) || (rep.SessionID != "" && rep.SessionID != r.SessionID) ||
+		(markStarted && !r.StartedAt.Valid) || ended(rep.State) != r.EndedAt.Valid {
+		return false
+	}
+	if proto.IsHarnessVersion(rep.HarnessVersion) {
+		requested, fallback := reportHarness(rep)
+		if r.HarnessVersion != rep.HarnessVersion || r.HarnessRequested != requested || r.HarnessFallback != fallback {
+			return false
+		}
+	}
+	return r.Desired != "stopped" || ended(rep.State)
 }
 
 func outboxRun(r db.Run) outbox.Run {
