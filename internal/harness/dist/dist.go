@@ -57,6 +57,7 @@ var (
 	ErrNotFound       = errors.New("claude code: version not found on the release server")
 	ErrVerify         = errors.New("claude code: download failed verification")
 	ErrNoVersion      = errors.New("claude code: no version is available")
+	ErrNotCached      = errors.New("claude code: version is not cached")
 )
 
 // ValidVersion reports whether v is a strict X.Y.Z version.

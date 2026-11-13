@@ -42,21 +42,33 @@ func (a *Agent) claudePinned() []string {
 	return nil
 }
 
-// acquireClaude resolves the version a Claude Code run gets and holds it against GC until release is called, which the
-// caller does once the run's journal row records it. When nothing usable is cached the call waits for a download,
-// bounded by the download timeout.
-func (a *Agent) acquireClaude(ctx context.Context) (dist.Resolution, func(), error) {
+// claudeHoldAttempts bounds how often a managed launch waits for a version again because the one it waited for was no
+// longer cached when it took it under the space's guard lock (the channel moved on, or GC removed a fallback).
+const claudeHoldAttempts = 3
+
+// claudeWait bounds a launch's waits for a Claude Code version, together, by the download timeout.
+func (a *Agent) claudeWait(ctx context.Context) (context.Context, context.CancelFunc, time.Duration) {
 	limit := a.o.Claude.DownloadTimeout
 	if limit <= 0 {
 		limit = dist.DefaultDownloadTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, limit)
-	defer cancel()
-	res, release, err := a.o.Claude.Dist.Acquire(ctx, a.o.Claude.Channel)
+	return ctx, cancel, limit
+}
+
+// waitClaude resolves the version a Claude Code run gets, waiting for a download when nothing usable is cached (bounded
+// by wctx, see claudeWait). It holds nothing when it returns: the caller holds the version with holdClaude once it is
+// ready to build the launch.
+func (a *Agent) waitClaude(wctx context.Context, limit time.Duration) (dist.Resolution, error) {
+	res, release, err := a.o.Claude.Dist.Acquire(wctx, a.o.Claude.Channel)
 	if errors.Is(err, context.DeadlineExceeded) {
-		return res, nil, fmt.Errorf("no Claude Code version %s was available within the download timeout (%s): %w", channelName(a.o.Claude.Channel), limit, err)
+		return res, fmt.Errorf("no Claude Code version %s was available within the download timeout (%s): %w", channelName(a.o.Claude.Channel), limit, err)
 	}
-	return res, release, err
+	if err != nil {
+		return res, err
+	}
+	release()
+	return res, nil
 }
 
 func channelName(c string) string {

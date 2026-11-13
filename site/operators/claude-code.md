@@ -62,7 +62,9 @@ harness:
 - **Waiting.** When nothing usable is cached (the first launch on a new node, or a new exact version), the run waits
   in **starting** while the version downloads, up to `download_timeout`. Then it fails with "no Claude Code version …
   was available within the download timeout". A stop during the wait wins: the run ends as "stopped before start" and
-  never starts. So does a lease that central fenced meanwhile (the run fails with "no valid lease").
+  never starts. So does a lease that central fenced meanwhile (the run fails with "no valid lease"). Waiting blocks
+  no other launch of the space. When the version a run waited for is gone by the time the launch takes it (the
+  channel moved on, or GC removed a fallback), the run waits again, at most three times within `download_timeout`.
 - **Live runs keep their binary.** A new version affects new runs only. GC never removes the version of a run that is
   live or that a restarted agent can adopt. It also keeps the newest `cache_keep` versions, the channel's current and
   previous targets, and a pinned exact version. Plan for about 340 MB per cached version (2.1.322 linux-x64), so

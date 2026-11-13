@@ -327,3 +327,47 @@ func TestAcquireExpiredContextKeepsVersion(t *testing.T) {
 		t.Fatalf("binary downloaded %d times, want 1", n)
 	}
 }
+
+// HoldCached holds a cached version without any network request and never waits: an uncached version is ErrNotCached
+// at once (no download started), a cached one is held until released, and a damaged one fails its launch check.
+func TestHoldCached(t *testing.T) {
+	fr := newFakeRelease(t)
+	m := newManager(t, fr, t.TempDir(), nil)
+	installAll(t, fr, m, "2.1.1")
+	fr.add("2.1.2", binary("2.1.2"), nil)
+	hits := fr.binaryHits.Load()
+	if _, err := m.HoldCached(context.Background(), "2.1.2"); !errors.Is(err, ErrNotCached) {
+		t.Fatalf("HoldCached of an uncached version = %v, want ErrNotCached", err)
+	}
+	if _, err := m.HoldCached(context.Background(), "latest"); !errors.Is(err, ErrInvalidVersion) {
+		t.Fatalf("HoldCached of a channel = %v", err)
+	}
+	release, err := m.HoldCached(context.Background(), "2.1.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(m.Held(), []string{"2.1.1"}) {
+		t.Fatalf("held %v", m.Held())
+	}
+	release()
+	release()
+	if len(m.Held()) != 0 {
+		t.Fatalf("held %v after release", m.Held())
+	}
+	if fr.binaryHits.Load() != hits {
+		t.Fatal("HoldCached downloaded")
+	}
+	// Same size, other content, and a changed fingerprint: the launch check re-hashes and removes it.
+	p := filepath.Join(chmodW(t, m, "2.1.1"), BinaryName)
+	b, _ := os.ReadFile(p) //nolint:gosec // test cache
+	b[len(b)-1] ^= 1
+	if err := os.WriteFile(p, b, 0o755); err != nil { //nolint:gosec // test binary
+		t.Fatal(err)
+	}
+	if _, err := m.HoldCached(context.Background(), "2.1.1"); !errors.Is(err, ErrVerify) {
+		t.Fatalf("HoldCached of a damaged version = %v, want ErrVerify", err)
+	}
+	if _, ok := m.lookup("2.1.1"); ok || len(m.Held()) != 0 {
+		t.Fatalf("damaged version kept (held %v)", m.Held())
+	}
+}

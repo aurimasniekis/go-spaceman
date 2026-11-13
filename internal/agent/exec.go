@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
@@ -235,24 +237,31 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	bin := a.o.HarnessBinaries[p.Harness]
 	selfUpdate := a.o.Claude.SelfUpdate
 	managed := p.Harness == harness.KindClaude && a.managedClaude()
+	var (
+		want      dist.Resolution // the Claude Code version the managed launch waited for
+		waitLimit time.Duration
+	)
+	wctx := ctx // a managed launch bounds its waits for the version by download_timeout, together (claudeWait)
 	if p.Harness == harness.KindClaude && (managed || !selfUpdate) {
 		warnClaudeUpdateSettings(log, p.ClaudeSettings)
 	}
 	if managed {
 		// Node-managed Claude Code (ADR-0077): the run waits in starting while its version is resolved, and downloaded
-		// when nothing it may run is cached. This first wait holds nothing (no guard lock, no version), so a long
-		// download blocks no other launch of the space; the version the run gets is acquired again, from the cache,
-		// right before the launch is built (see below).
+		// when nothing it may run is cached. The wait holds nothing (no guard lock, no version), so a long download
+		// blocks no other launch of the space; the version is held, from the cache only, right before the launch is
+		// built (see below).
 		selfUpdate = false
 		row.State = proto.RunStarting
 		_ = a.j.updateRun(ctx, row)
 		a.report(ctx, row)
-		_, release, err := a.acquireClaude(ctx)
-		if err != nil {
+		var cancel context.CancelFunc
+		wctx, cancel, waitLimit = a.claudeWait(ctx)
+		defer cancel()
+		if want, err = a.waitClaude(wctx, waitLimit); err != nil {
 			fail("resolve the Claude Code version", err)
 			return
 		}
-		release()
+		a.stage("waited", want)
 		if !stillWanted() {
 			return
 		}
@@ -265,7 +274,12 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	// (retireGuard) never ends it under a starting run.
 	gl := a.guardLock(c.SpaceID)
 	gl.Lock()
-	defer gl.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			gl.Unlock()
+		}
+	}()
 	guard, err := a.ensureGuard(ctx, c.SpaceID)
 	if err != nil {
 		fail("lease guard unavailable", err)
@@ -341,15 +355,45 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		}
 	}
 	if managed {
-		// The version is acquired as late as practical (after clone, worktree and memory preparation), so the tamper
+		// The version is held as late as practical (after clone, worktree and memory preparation), so the tamper
 		// check's gap is only the build, the launch files and the start (ADR-0077). It runs the verified cached binary
 		// by absolute path, so the core's PATH no longer matters. The version is held against GC until the journal
 		// records it; from then on GC keeps it while the run is live or adoptable.
-		res, release, err := a.acquireClaude(ctx)
-		if err != nil {
-			fail("resolve the Claude Code version", err)
-			return
+		//
+		// Under the guard lock the hold is cache-only and never waits: when the version waited for is gone meanwhile
+		// (the channel moved on, GC removed a fallback, or it failed its launch check), the lock is released and the
+		// launch waits again, within the same download_timeout, at most claudeHoldAttempts times.
+		var release func()
+		for attempt := 1; ; attempt++ {
+			release, err = a.o.Claude.Dist.HoldCached(wctx, want.Version)
+			if err == nil {
+				break
+			}
+			if attempt >= claudeHoldAttempts || wctx.Err() != nil {
+				fail(fmt.Sprintf("hold Claude Code %s for the launch", want.Version), err)
+				return
+			}
+			log.Info("claude code: the version waited for is no longer usable; waiting again", slog.String("version", want.Version), obs.Err(err))
+			gl.Unlock()
+			locked = false
+			a.stage("unlocked", want)
+			if want, err = a.waitClaude(wctx, waitLimit); err != nil {
+				fail("resolve the Claude Code version", err)
+				return
+			}
+			a.stage("waited", want)
+			if !stillWanted() {
+				return
+			}
+			gl.Lock()
+			locked = true
+			// The guard may have been retired while the lock was released (no live run in the space).
+			if guard, err = a.ensureGuard(ctx, c.SpaceID); err != nil {
+				fail("lease guard unavailable", err)
+				return
+			}
 		}
+		res := want
 		a.stage("acquired", res)
 		row.Bin = harnessRun{Version: res.Version, Path: res.Path, Requested: res.Requested, Fallback: res.Fallback}
 		err = a.j.setRunHarness(ctx, c.RunID, row.Bin)

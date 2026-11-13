@@ -38,8 +38,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 - Managed Claude Code launches: a stop (or a fenced lease) while a launch waits for the download is no longer undone
-  when the download completes; the run stays stopped and never starts. The version is acquired after the clone,
-  worktree and memory preparation, right before the launch is built. A startup or launch check interrupted by a
+  when the download completes; the run stays stopped and never starts. The version is held after the clone,
+  worktree and memory preparation, right before the launch is built. That hold takes it from the cache only and never
+  waits under the space's lock: when the version waited for is gone by then, the launch waits again (at most three
+  times, within `download_timeout`), so a download never blocks the space's other launches. A startup or launch check interrupted by a
   cancelled or expired context no longer removes a good cached version.
 
 ## [0.1.1] - 2026-11-09

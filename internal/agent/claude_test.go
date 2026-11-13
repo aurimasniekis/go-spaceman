@@ -386,6 +386,9 @@ func TestClaudeGCRacesLaunch(t *testing.T) {
 	a, f := ccAgent(t, dir, m, nil)
 	var stages []string
 	a.claudeStage = func(stage string, res dist.Resolution) {
+		if stage == "waited" || stage == "unlocked" {
+			return // nothing is held yet (TestManagedClaudeVersionGoneBeforeHold covers a GC there)
+		}
 		// Review N2: the hold is released only once the journal records the version, so GC never sees the version
 		// neither held nor in use.
 		held := slices.Contains(m.Held(), res.Version)
@@ -430,6 +433,118 @@ func TestClaudeGCRacesLaunch(t *testing.T) {
 	a.claudeGC(context.Background())
 	if _, err := os.Stat(r.Bin.Path); !os.IsNotExist(err) {
 		t.Fatalf("GC kept an unused fallback: %v", err)
+	}
+}
+
+// The version a launch waited for is gone when it takes it under the space's guard lock (here GC removes the fallback
+// it waited for). The hold is cache-only: the launch releases the guard lock and waits again (other launches in the
+// space go on meanwhile), then runs the version it gets then.
+func TestManagedClaudeVersionGoneBeforeHold(t *testing.T) {
+	srv := disttest.New(t)
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), func(o *dist.Options) { o.Keep = 1 })
+	for _, v := range []string{"2.1.1", "2.1.5"} {
+		srv.Add(v, disttest.StubBinary(v))
+		if _, err := m.Ensure(context.Background(), v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.Add("2.1.3", disttest.StubBinary("2.1.3"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.3")
+	srv.Hold("2.1.3") // the target downloads slowly: the first wait falls back to 2.1.1
+	a, f := ccAgent(t, dir, m, nil)
+	var mu sync.Mutex
+	var stages []string
+	unlocked := make(chan struct{})
+	a.claudeStage = func(stage string, res dist.Resolution) {
+		mu.Lock()
+		stages = append(stages, stage+" "+res.Version)
+		n := len(stages)
+		mu.Unlock()
+		switch {
+		case n == 1 && stage == "waited":
+			a.claudeGC(context.Background()) // nothing holds or uses the fallback yet: GC removes it
+		case stage == "unlocked":
+			close(unlocked)
+		}
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); ccLaunch(a, "run_gone") }()
+	select {
+	case <-unlocked:
+	case <-time.After(10 * time.Second):
+		srv.Release() // let the launch end before the test does
+		<-done
+		t.Fatal("the launch never released the guard lock to wait again")
+	}
+	// The launch waits again for 2.1.3 without the space's guard lock: another launch of the space is not blocked.
+	waitFor(t, "the target's download", func() bool { return srv.BinaryHits.Load() >= 1 })
+	gl := a.guardLock(ccSpace)
+	if !gl.TryLock() {
+		t.Fatal("the space's guard lock is held while the launch waits for a download")
+	}
+	gl.Unlock()
+	a.launch(context.Background(), proto.Command{CommandID: "cmd_other", Kind: proto.CmdLaunch, SpaceID: ccSpace, RunID: "run_other", Generation: 1},
+		proto.LaunchPayload{Harness: harness.KindCodex, Kind: "worker", Role: "implementor", InstanceID: "ins_other", Prompt: "hello"})
+	if r := getRun(t, a, "run_other"); r.State != proto.RunRunning {
+		t.Fatalf("another launch of the space while the first waited: state %s (%s)", r.State, r.Error)
+	}
+	select {
+	case <-done:
+		t.Fatal("the launch did not wait for the target")
+	default:
+	}
+	srv.Release()
+	<-done
+	r := getRun(t, a, "run_gone")
+	if r.State != proto.RunRunning || r.Bin.Version != "2.1.3" || r.Bin.Fallback != "" {
+		t.Fatalf("state %s (%s), harness %+v", r.State, r.Error, r.Bin)
+	}
+	if _, argv := runSpec(t, f, "run_gone"); argv[0] != filepath.Join(m.Dir(), "2.1.3", "claude") {
+		t.Fatalf("argv[0] %q", argv[0])
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"waited 2.1.1", "unlocked 2.1.1", "waited 2.1.3", "acquired 2.1.3", "recorded 2.1.3", "released 2.1.3"}; !slices.Equal(stages, want) {
+		t.Fatalf("stages %v, want %v", stages, want)
+	}
+}
+
+// The hold under the guard lock gives up after claudeHoldAttempts waits whose version is gone each time, and the launch
+// fails naming the version.
+func TestManagedClaudeHoldGivesUp(t *testing.T) {
+	srv := disttest.New(t)
+	srv.Add("2.1.7", disttest.StubBinary("2.1.7"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.7")
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), nil)
+	a, f := ccAgent(t, dir, m, nil)
+	waits := 0
+	a.claudeStage = func(stage string, res dist.Resolution) {
+		if stage == "waited" {
+			waits++
+			chmodWritable(t, filepath.Join(m.Dir(), res.Version))
+			if err := os.RemoveAll(filepath.Join(m.Dir(), res.Version)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	ccLaunch(a, "run_giveup")
+	r := getRun(t, a, "run_giveup")
+	if r.State != proto.RunFailed || !strings.Contains(r.Error, "hold Claude Code 2.1.7") || waits != claudeHoldAttempts {
+		t.Fatalf("state %s, error %q, %d waits", r.State, r.Error, waits)
+	}
+	notStarted(t, f, "run_giveup")
+	if len(m.Held()) != 0 {
+		t.Fatalf("held %v", m.Held())
+	}
+}
+
+// chmodWritable makes a verified (read-only) version directory removable.
+func chmodWritable(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // test: undo the cache's read-only mode
+		t.Fatal(err)
 	}
 }
 

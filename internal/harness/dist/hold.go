@@ -30,7 +30,7 @@ type fingerprint struct {
 // otherwise it is hashed again (about 0.35 s for 340 MB) and, when that fails, removed and resolved again. This finds a
 // binary changed before the check, not one replaced between the check (Acquire) and the exec by something running as
 // the node's user; that gap includes whatever launch preparation the caller does after Acquire (the agent acquires
-// right before it builds the launch, then writes the launch files and starts it). Runs share that uid, so the cache is
+// right before it builds the launch with HoldCached, then writes the launch files and starts it). Runs share that uid, so the cache is
 // no boundary against them. A check cut short by ctx keeps the version (Verify).
 func (m *Manager) Acquire(ctx context.Context, requested string) (Resolution, func(), error) {
 	requested, target, perr, err := m.target(ctx, requested)
@@ -81,6 +81,35 @@ func (m *Manager) Acquire(ctx context.Context, requested string) (Resolution, fu
 		last = ErrNoVersion
 	}
 	return Resolution{}, nil, fmt.Errorf("claude code %s: no usable version after %d attempts: %w", requested, acquireAttempts, last)
+}
+
+// HoldCached holds an exact version for a launch only if it is cached now: no network request, no download, no wait.
+// The cache check and the hold are taken together under GC's lock, as in Acquire, then the version gets Acquire's launch
+// check (a re-hash only when its fingerprint changed; a damaged version is removed). A version that is not cached, or
+// that fails the check, is an error matching ErrNotCached or the check's error; the caller resolves again (Acquire).
+// release may be called more than once.
+func (m *Manager) HoldCached(ctx context.Context, version string) (func(), error) {
+	if !ValidVersion(version) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidVersion, version)
+	}
+	m.gcMu.Lock()
+	inst, ok := m.lookup(version)
+	if ok {
+		m.held[version]++
+	}
+	m.gcMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: claude code %s", ErrNotCached, version)
+	}
+	release := m.releaser(version)
+	if m.afterHold != nil {
+		m.afterHold(Resolution{Requested: version, Target: version, Version: version, Path: inst.Path})
+	}
+	if err := m.launchCheck(ctx, version); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 // releaser returns the idempotent release of one hold on version.
