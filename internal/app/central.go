@@ -45,6 +45,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/inbox"
 	"github.com/aurimasniekis/go-spaceman/internal/kb"
+	"github.com/aurimasniekis/go-spaceman/internal/httpguard"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/limits"
 	"github.com/aurimasniekis/go-spaceman/internal/memory"
@@ -685,7 +686,9 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 		})
 	}
 	mux.Handle("/", ui)
-	return mux
+	// A client that stops reading must not pin a response in memory (a browser tab holding hundreds of requests it never
+	// reads, with central keeping every response): writes must make progress.
+	return httpguard.WriteProgress(mux, c.Cfg.HTTP.WriteIdleTimeout.D())
 }
 
 // ManagementHandler serves /healthz, /readyz and /metrics (SM-OBS-002). Bind it to a private address.
