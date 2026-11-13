@@ -139,6 +139,11 @@ func (fr *fakeRelease) setBinaryHook(h func(http.ResponseWriter, *http.Request, 
 	fr.binaryHook = h
 }
 
+// inUse is a GC inUse callback returning versions.
+func inUse(versions ...string) func(context.Context) ([]string, error) {
+	return func(context.Context) ([]string, error) { return versions, nil }
+}
+
 func binary(version string) []byte {
 	return []byte("#!/bin/sh\necho " + version + "\n" + strings.Repeat("x", 4096))
 }
@@ -715,7 +720,7 @@ func TestGCKeepsNewestPinnedInUseAndChannelTargets(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	removed, err := m.GC(context.Background(), []string{"2.1.1"}, []string{"2.1.2"})
+	removed, err := m.GC(context.Background(), []string{"2.1.1"}, inUse("2.1.2"))
 	unlock()
 	if err != nil {
 		t.Fatal(err)

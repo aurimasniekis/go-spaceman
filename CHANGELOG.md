@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Node-managed Claude Code launches (`harness.claude.manage: true`, ADR-0077): a Claude Code run launches the verified
+  cached binary by absolute path, so the herdr-core core's `PATH` no longer decides which `claude` runs. With nothing
+  usable cached the run waits in starting for the download, bounded by `download_timeout`. The agent's journal records
+  each run's version, path, requested channel and fallback reason (migration 0006), and the cache's GC keeps the
+  versions of live and adoptable runs. A launch holds its version against GC from the decision until the journal
+  records it. At start the agent cleans interrupted downloads, re-hashes the versions it will use and collects garbage.
+  The prefetch loop and periodic GC run in the background. A launch re-hashes a cached binary whose stat fingerprint
+  (device, inode, size, mode, ctime) changed since it was last hashed, and reinstalls it on a mismatch. Operator guide:
+  "Managed Claude Code".
 - Node-managed Claude Code, groundwork (not used by launches yet): the `internal/harness/dist` package resolves
   `latest`, `stable` or an exact version from the release server, downloads it into an immutable per-version cache
   under the agent's data directory after checking the manifest's version, size and SHA-256 (checksum only, no
@@ -15,6 +24,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   back to a version newer than its target; redirects stay on the release host; musl is detected from `/bin/sh`. New node
   settings `harness.claude.{manage, channel, base_url, cache_keep, refresh, download_timeout, self_update}`;
   `manage` defaults to off, so nothing changes on upgrade.
+
+### Changed
+- Every Claude Code run now gets `DISABLE_AUTOUPDATER=1` and `DISABLE_UPDATES=1`, on unmanaged nodes too, so runs no
+  longer update themselves into the agent's `HOME`. `harness.claude.self_update: true` restores self-updates on an
+  unmanaged node; it is refused together with `manage: true`.
 
 ## [0.1.1] - 2026-11-09
 

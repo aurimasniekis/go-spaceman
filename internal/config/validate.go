@@ -331,6 +331,9 @@ func (v *validator) claudeCode(c ClaudeCodeConfig) {
 	}
 	v.durationRange("harness.claude.refresh", c.Refresh, time.Minute, 24*time.Hour)
 	v.durationRange("harness.claude.download_timeout", c.DownloadTimeout, 30*time.Second, 2*time.Hour)
+	if c.Manage && c.SelfUpdate {
+		v.add("harness.claude.self_update can't be on with harness.claude.manage: managed runs never update themselves")
+	}
 }
 
 func defaultLog() obs.LogConfig { return obs.LogConfig{Level: "info", Format: "json"} }

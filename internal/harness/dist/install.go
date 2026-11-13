@@ -170,6 +170,8 @@ func (m *Manager) install(ctx context.Context, version string) (Installed, error
 	if err := syncDir(m.dir); err != nil {
 		return Installed{}, err
 	}
+	fp, ok := m.binaryFingerprint(version)
+	m.rememberHashed(version, fp, ok)
 	inst.Path = m.binaryPath(version)
 	return inst, nil
 }
@@ -389,6 +391,7 @@ func (m *Manager) verifyOne(ctx context.Context, version string) error {
 	if fi.Size() != inst.Size {
 		return fmt.Errorf("%w: %s: the cached binary's size changed", ErrVerify, version)
 	}
+	m.hashes.Add(1)
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(&ctxReader{ctx: ctx, r: f}, inst.Size+1))
 	if err != nil {
@@ -396,6 +399,13 @@ func (m *Manager) verifyOne(ctx context.Context, version string) error {
 	}
 	if n != inst.Size || hex.EncodeToString(h.Sum(nil)) != inst.SHA256 {
 		return fmt.Errorf("%w: %s: the cached binary's size or SHA-256 changed", ErrVerify, version)
+	}
+	// Recorded from the handle that was hashed, and only when the file did not change while it was hashed, so a launch
+	// can skip the hash while the file stays as it is.
+	if after, err := f.Stat(); err == nil {
+		before, ok1 := statFingerprint(fi)
+		fp, ok2 := statFingerprint(after)
+		m.rememberHashed(version, fp, ok1 && ok2 && before == fp)
 	}
 	return nil
 }

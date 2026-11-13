@@ -61,11 +61,11 @@ type HarnessConfig struct {
 	Claude    ClaudeCodeConfig `yaml:"claude"`
 }
 
-// ClaudeCodeConfig configures node-managed Claude Code: the node resolves a version, downloads it into a verified
-// per-version cache under data_dir and keeps the newest few. This build validates these keys but doesn't act on them
-// yet: launches still use claude_binary.
+// ClaudeCodeConfig configures node-managed Claude Code (ADR-0077): the node resolves a version, downloads it into a
+// verified per-version cache under data_dir, keeps the newest few, and launches runs from it by absolute path.
 type ClaudeCodeConfig struct {
-	// Manage turns node-managed Claude Code on. Off (default): runs use claude_binary. Not acted on by this build.
+	// Manage turns node-managed Claude Code on: runs launch the verified cached binary by absolute path. Off (default):
+	// runs use claude_binary through the herdr-core core's PATH.
 	Manage bool `yaml:"manage"`
 	// Channel is the node's default version: latest (default), stable or an exact X.Y.Z.
 	Channel string `yaml:"channel"`
@@ -73,12 +73,14 @@ type ClaudeCodeConfig struct {
 	BaseURL string `yaml:"base_url"`
 	// CacheKeep is how many of the newest versions the cache keeps besides pinned and in-use ones (1-50).
 	CacheKeep int `yaml:"cache_keep"`
-	// Refresh is how long a channel is memoised and how often the node re-resolves and prefetches it (1m to 24h).
+	// Refresh is how long a channel is memoised and how often the node re-resolves, prefetches it and collects the
+	// cache's garbage (1m to 24h).
 	Refresh Duration `yaml:"refresh"`
-	// DownloadTimeout bounds one version download (30s to 2h).
+	// DownloadTimeout bounds one version download, and how long a launch waits in starting when no version it may run
+	// is cached (30s to 2h).
 	DownloadTimeout Duration `yaml:"download_timeout"`
-	// SelfUpdate lets Claude Code update itself in runs. Off (default) is meant to give runs DISABLE_AUTOUPDATER=1;
-	// not acted on by this build.
+	// SelfUpdate lets Claude Code update itself in runs when manage is off. Off (default): every Claude Code run gets
+	// DISABLE_AUTOUPDATER=1 and DISABLE_UPDATES=1. It can't be on with manage, whose runs never update themselves.
 	SelfUpdate bool `yaml:"self_update"`
 }
 

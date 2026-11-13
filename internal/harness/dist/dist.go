@@ -14,9 +14,12 @@
 // checksum-only: the release manifest's signature is not checked yet (design §2).
 //
 // The read-only modes only stop accidental changes. Runs share the node's uid, so a run could still chmod and replace a
-// cached binary; whether launches re-hash it is decided with the launch wiring (CC-3).
+// cached binary. A launch takes its version through Acquire, which holds it against GC until the caller has recorded it
+// and re-hashes the binary only when its stat fingerprint (device, inode, size, mode, ctime) changed since this manager
+// last hashed it (ADR-0077, tamper policy): a change made before the launch is found, a replacement racing the exec by
+// something running as the node's user is not.
 //
-// The package is self-contained: launch wiring (absolute binary path, DISABLE_AUTOUPDATER) is not part of it.
+// The launch wiring itself (absolute binary path, the updater variables, the journal) is the node agent's.
 package dist
 
 import (

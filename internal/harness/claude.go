@@ -299,6 +299,9 @@ func stringsOf(v any) []string {
 	return out
 }
 
+// ClaudeUpdaterOffEnv are the variables set to "1" in a Claude Code run unless the node lets it update itself.
+var ClaudeUpdaterOffEnv = []string{"DISABLE_AUTOUPDATER", "DISABLE_UPDATES"}
+
 // Build implements Harness.
 func (Claude) Build(c Context) (Launch, error) {
 	if err := checkCommon(c); err != nil {
@@ -388,6 +391,14 @@ func (Claude) Build(c Context) (Launch, error) {
 	}
 	env := commonEnv(c)
 	env["CLAUDE_CONFIG_DIR"] = cfg
+	if !c.SelfUpdate {
+		// The node decides the version (ADR-0077): DISABLE_AUTOUPDATER stops the background updater, DISABLE_UPDATES also
+		// refuses an explicit `claude update` from the agent's shell (spike, docs/contracts/harnesses.md). Both are
+		// non-secret, so herdr-core may persist them, and the launch shim does not scrub them.
+		for _, k := range ClaudeUpdaterOffEnv {
+			env[k] = "1"
+		}
+	}
 	secrets := secretEnv(p.Secrets, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 	var remove []string
 	if gw != nil {

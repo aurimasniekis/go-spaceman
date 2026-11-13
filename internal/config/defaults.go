@@ -69,7 +69,7 @@ func DefaultAgent() *AgentConfig {
 			CodexBinary:  "codex",
 			GitBinary:    "git",
 			Claude: ClaudeCodeConfig{
-				Manage:          false, // until launches use the cache (CC-3)
+				Manage:          false, // operators opt in (ADR-0077)
 				Channel:         dist.ChannelLatest,
 				BaseURL:         dist.DefaultBaseURL,
 				CacheKeep:       dist.DefaultKeep,

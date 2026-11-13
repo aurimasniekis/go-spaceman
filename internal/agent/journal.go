@@ -47,17 +47,27 @@ type runRow struct {
 	Turn                                                                                        uint64
 	Adopted                                                                                     bool
 	UpdatedAt                                                                                   int64
+	// Bin is the harness binary the run launched (ADR-0077); written once by setRunHarness, never by updateRun.
+	Bin harnessRun
+}
+
+// harnessRun is the harness binary a run launched: for managed Claude Code the cached version and its absolute path, the
+// requested channel or version, and the dist fallback reason when another version than the target ran.
+type harnessRun struct {
+	Version, Path, Requested, Fallback string
 }
 
 const runCols = `run_id, space_id, generation, kind, role, harness, instance_id, terminal_name, terminal_id, core_id, identity, pid, desired, state,
-  exit_code, reason, error, session_id, status, status_kind, turn, adopted, updated_at`
+  exit_code, reason, error, session_id, status, status_kind, turn, adopted, updated_at, harness_version, harness_path, harness_requested,
+  harness_fallback`
 
 func scanRun(sc interface{ Scan(...any) error }) (runRow, error) {
 	var r runRow
 	var exit sql.NullInt64
 	var adopted int64
 	err := sc.Scan(&r.RunID, &r.SpaceID, &r.Generation, &r.Kind, &r.Role, &r.Harness, &r.InstanceID, &r.TerminalName, &r.TerminalID, &r.CoreID,
-		&r.Identity, &r.PID, &r.Desired, &r.State, &exit, &r.Reason, &r.Error, &r.SessionID, &r.Status, &r.StatusKind, &r.Turn, &adopted, &r.UpdatedAt)
+		&r.Identity, &r.PID, &r.Desired, &r.State, &exit, &r.Reason, &r.Error, &r.SessionID, &r.Status, &r.StatusKind, &r.Turn, &adopted, &r.UpdatedAt,
+		&r.Bin.Version, &r.Bin.Path, &r.Bin.Requested, &r.Bin.Fallback)
 	if exit.Valid {
 		v := int(exit.Int64)
 		r.ExitCode = &v
@@ -153,6 +163,34 @@ func (j *Journal) updateRun(ctx context.Context, r runRow) error {
 			b2i(r.Adopted), tx.NowMicros(), r.RunID)
 		return err
 	})
+}
+
+// setRunHarness records the harness binary a run launches, before it is started.
+func (j *Journal) setRunHarness(ctx context.Context, runID string, h harnessRun) error {
+	return j.s.W().TxNamed(ctx, "journal.run_harness", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE runs SET harness_version = ?, harness_path = ?, harness_requested = ?, harness_fallback = ?,
+			updated_at = ? WHERE run_id = ?`, h.Version, h.Path, h.Requested, h.Fallback, tx.NowMicros(), runID)
+		return err
+	})
+}
+
+// harnessVersionsInUse returns the harness versions of the journal's live and adoptable runs (not ended) of kind.
+func (j *Journal) harnessVersionsInUse(ctx context.Context, kind string) ([]string, error) {
+	rows, err := j.s.ReadDB().QueryContext(ctx, `SELECT DISTINCT harness_version FROM runs
+		WHERE harness = ? AND harness_version != '' AND state NOT IN ('exited', 'failed', 'lost') ORDER BY harness_version`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 type leaseRow struct {

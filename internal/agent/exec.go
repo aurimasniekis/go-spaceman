@@ -204,6 +204,44 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	bin := a.o.HarnessBinaries[p.Harness]
+	selfUpdate := a.o.Claude.SelfUpdate
+	if p.Harness == harness.KindClaude {
+		warnClaudeUpdateSettings(log, p.ClaudeSettings)
+	}
+	if p.Harness == harness.KindClaude && a.managedClaude() {
+		// Node-managed Claude Code (ADR-0077): the run waits in starting while its version is resolved, and downloaded
+		// when nothing it may run is cached, then runs the verified cached binary by absolute path, so the core's PATH
+		// no longer matters. The version is held against GC until the journal records it; from then on GC keeps it
+		// while the run is live or adoptable.
+		selfUpdate = false
+		row.State = proto.RunStarting
+		_ = a.j.updateRun(ctx, row)
+		a.report(ctx, row)
+		res, release, err := a.acquireClaude(ctx)
+		if err != nil {
+			fail("resolve the Claude Code version", err)
+			return
+		}
+		if a.claudeStage != nil {
+			a.claudeStage("acquired", res)
+		}
+		row.Bin = harnessRun{Version: res.Version, Path: res.Path, Requested: res.Requested, Fallback: res.Fallback}
+		err = a.j.setRunHarness(ctx, c.RunID, row.Bin)
+		release()
+		if a.claudeStage != nil {
+			a.claudeStage("recorded", res)
+		}
+		if err != nil {
+			fail("journal the Claude Code version", err)
+			return
+		}
+		if res.Fallback != "" {
+			log.Warn("claude code: the run gets another version than its channel's target", slog.String("requested", res.Requested),
+				slog.String("target", res.Target), slog.String("version", res.Version), slog.String("fallback", res.Fallback))
+		}
+		log.Info("claude code version resolved", slog.String("requested", res.Requested), slog.String("version", res.Version))
+		bin = res.Path
+	}
 	if bin == "" {
 		fail("harness not installed on this node", nil)
 		return
@@ -289,7 +327,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	}
 	built, err := h.Build(harness.Context{AgentBinary: a.o.AgentBinary, BridgeSocket: a.o.BridgeSocket, ConfigDir: filepath.Join(space, "instances", p.InstanceID),
 		SpaceDir: spaceReal, SpaceInstances: spaceInstances(space), WorkDir: work, RunID: c.RunID, SpaceID: c.SpaceID, RunDir: rd, Binary: bin, Payload: p, MemoryDir: memDir,
-		AutoMemoryDir: autoMem})
+		AutoMemoryDir: autoMem, SelfUpdate: selfUpdate})
 	if err != nil {
 		fail("build launch", err)
 		return
