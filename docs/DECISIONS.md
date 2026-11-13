@@ -267,6 +267,8 @@
   - `connect-src data:` lets the page fetch its own inlined module. A `data:` URL carries no credentials and reaches no server, so it cannot be
     used to exfiltrate data to another origin.
   - `style-src 'unsafe-inline'` is inherited from Pulse and Hallpass (Mantine sets inline styles).
+  - *Update 2026-11-12 (ADR-0076), tightening:* the page compiles the package's `ghostty-vt.wasm`, served as a hashed
+    asset from its own origin, and no longer uses the inlined `data:` module. `connect-src` is back to `'self'` alone.
 - **Consequences:**
   - Terminal output is untrusted program output. It is rendered by the VT parser onto a canvas, never as HTML.
   - The terminal is watch-only (`disableStdin`): keystrokes in the page are never sent to the run. Operator input goes through the separate,
@@ -2066,7 +2068,8 @@
     clear a freed terminal's memory, so the next terminal started out with its cells (another run's lines showed
     through, reset or not), and memory of a terminal with many styles was never reused (the page grew until the tab
     crashed). Each terminal now runs in a WebAssembly instance of its own, released with it
-    (`web/src/features/terminal/ghostty.ts`, `wasm.test.ts`, `e2e/terminal-switch.spec.ts`). The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
+    (`web/src/features/terminal/ghostty.ts`, `wasm.test.ts`, `e2e/terminal-switch.spec.ts`; since ADR-0076 the instances
+    share one compiled module, never memory). The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
     the box before it reaches ghostty-web's scrollback.
   - **Connections.** One change-feed stream serves all tabs of a browser: the tab holding the Web Lock
     `spaceman-watch` opens it and relays it over a BroadcastChannel; another tab takes over when it closes. Without
@@ -3882,6 +3885,70 @@
     set these two yet. Its data source shows them in `values`. Adding the attributes is a follow-up in the provider
     (PLAN.md).
 
+### ADR-0076 — The web terminal loads stored output in slices and works around ghostty-web 0.4.0's per-row viewport parse
+- **Status:** Accepted, 2026-11-12 (operator report on v0.1.1: opening Terminals or Spaces on a fresh cache froze the
+  whole tab for about a minute, and for minutes on a phone).
+- **Context:**
+  - A cold-cache Chromium trace with CPU throttling (2026-11-12) found the cause. It was neither the WebAssembly loading
+    nor the chunk-reload logic: it was the stored output a terminal applies when it opens.
+  - A live terminal's stream starts with the run's whole recording (catch-up), which is tens of megabytes for a long
+    Claude Code session. Each record was applied in the task that delivered it, with a React render per record. A
+    replay applied the whole recording in one task (the former `renderTo`).
+  - ghostty-web 0.4.0's `GhosttyTerminal.getLine(y)` copies and parses the whole viewport to return one row, and its
+    renderer calls it for every row it draws. A full redraw therefore costs rows × rows × columns cell parses (2.9
+    million at 200×120). Output that scrolls changes every row, so each frame during catch-up redrew the whole
+    screen. The renderer also calls `fillText` for every blank cell.
+  - For a 22 MB recording at 4× throttling, the main thread was saturated for 33 s: 123 long tasks, the longest
+    933 ms. With 5 MB (`e2e/terminal-load.spec.ts`), the longest task was 917 ms live and 1.5 s in a replay (5.0 s at
+    6×), and a key press waited up to 2.8 s.
+  - #27 (ADR-0052's 2026-11-09 amendment) gave every terminal its own WebAssembly instance through `Ghostty.load()`. That
+    fetched and compiled the module again from a 560 kB `data:` URL for every terminal. Compiling is asynchronous, so
+    this was not the freeze, but the work was repeated for nothing.
+- **Decision** (`web/src/features/terminal/`):
+  - **Stored output is applied in slices** (`records.ts` `feed`). Records are queued and applied in slices of about
+    12 ms, then the page gets the main thread back. Consecutive output records go to the terminal in one write of at
+    most 32 kB. The badges update twice a second, and "Loading output…" shows until the terminal has caught up. A
+    replay seek works the same way, and playback waits for it to finish. A replay reads its recording in pages of
+    1000 records, so each response parses in a short task.
+  - **No drawing while catching up** (`ghostty.ts` `holdDrawing`). The terminal's renderer is paused from the
+    stream's first record, or while a backlog remains, and draws once in full when the backlog is gone. `fitFont`
+    holds drawing the same way while it steps through font sizes.
+  - **Two patches to ghostty-web 0.4.0's prototypes**, applied once:
+    - `cacheViewport` keeps the parsed viewport until the terminal changes (`write`, `resize`, `free`) or the current
+      task ends, so a redraw parses the viewport once.
+    - `skipBlankCells` skips the text call for a blank cell unless it is underlined, struck through or part of a
+      hovered link. A blank cell has no ink, and its background is drawn separately.
+
+    Both patches are checked against the real module (`viewport.test.ts`) or the 0.4.0 renderer's contract
+    (`ghostty.test.ts`). They must be re-checked when ghostty-web is upgraded. Upstream ghostty-web has the defects;
+    these are our side's smallest fixes (upstream report pending: drafted, not filed; the operator decides).
+
+    The patches are applied only when the installed ghostty-web is exactly 0.4.0 (`patchGhostty`, against the
+    version Vite reads from the package at build time). On any other version they are skipped with a console warning:
+    drawing is slower again, never wrong. `version.test.ts` fails while the package is not 0.4.0, so an upgrade
+    re-verifies them first.
+  - **The module is compiled once per page** from the package's `ghostty-vt.wasm`, served as a hashed, immutable asset.
+    Each terminal still instantiates it. The module defines its own memory and imports nothing but a log function, so
+    every terminal keeps a fresh, zeroed memory of its own and no shared state, as #27 requires.
+    `check-dist` fails a build without the asset.
+  - **ghostty-web's inlined copy of the module is stripped from the build.** Its `Ghostty.load()` carries the module
+    as a base64 `data:application/wasm` URL (564 kB of the terminal's chunk), which the page never uses. A Vite
+    transform (`vite.config.ts` `stripGhosttyInlineWasm`) replaces it with a URL that fails to load, so a stray
+    `Ghostty.load()` falls back to the package's `./ghostty-vt.wasm`. The `RunWorkbench` chunk goes from 687 kB
+    (204 kB gzipped) to 122 kB (37 kB). The transform fails the build when it finds nothing to strip, and `check-dist`
+    fails it when any `data:application/wasm` is left in `dist`.
+- **Consequences:**
+  - At 4× CPU throttling on a cold cache, with 5 MB of stored output, the longest task is now 96–129 ms while a live
+    terminal loads and 111–131 ms in a replay. At 6× they are 174 ms and 228 ms. A key press is handled within
+    0.6 s at 4× (2.8 s before). With 22 MB, the 33 s of blocked main thread became tasks of at most about 0.26 s
+    (the longest is the page's own first render), and the page answers input while the output loads.
+  - A terminal shows its previous picture and "Loading output…" until it has caught up, instead of drawing each
+    intermediate screen.
+  - Opening a page still costs React's render: Spaces takes 140–250 ms at 4× (the same before and after), and the
+    Terminals page's first render about 420 ms. The change feed's refetch burst on load is one task. Neither is
+    terminal work. They are the next things to measure if pages still feel slow on a phone.
+  - ADR-0020's `connect-src data:` is no longer needed and is removed (see its update).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -3890,7 +3957,7 @@
 | K-2 | ~~Whether hc persists `env`.~~ **Resolved 2026-11-02:** yes, plaintext `restart_env` → ADR-0009 shim required. | — | done |
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
-| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). 2026-11-03 (ADR-0046): `term.options.disableStdin` is read on every key, `onData` delivers typed input and `focus()` exists (checked in the 0.4.0 dist). | — | done |
+| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020; since ADR-0076 the page compiles the package's `ghostty-vt.wasm` asset instead). 2026-11-03 (ADR-0046): `term.options.disableStdin` is read on every key, `onData` delivers typed input and `focus()` exists (checked in the 0.4.0 dist). | — | done |
 | K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | ~~llm-knowledge-base-template layout and licence; Piebald dream prompts licence.~~ **Resolved 2026-11-02:** KB template in `docs/contracts/kb-template.md`. Piebald-AI/claude-code-system-prompts is MIT, but its files are extracted Claude Code prompts whose text the repository licence may not cover; SpaceMan's dream prompt is written from the brief's principles and copies none of it (ADR-0027). | — | done |

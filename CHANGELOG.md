@@ -19,6 +19,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   positioned next to the editor, made the dialog scroll by however far they reached below it. The editor now contains
   them (`contain: layout`). Long dialogs still scroll.
 
+
+- Opening Terminals or Spaces no longer freezes the tab, which took about a minute on a desktop and minutes on a
+  phone (ADR-0076). Tracing a fresh-cache load with CPU throttling showed where the time went:
+  - A terminal applied its run's stored output record by record, and a replay applied all of it in one go. Both now
+    apply it in short slices, showing "Loading output…" and drawing once the terminal has caught up.
+  - ghostty-web 0.4.0 parsed the whole screen once for every row it drew, and drew every blank cell. Both are now
+    worked around on our side.
+
+  With 5 MB of output at 4× throttling, the longest task while a terminal loads is now 0.13 s (was 0.9 s live and
+  1.5 s replayed). The terminal's WebAssembly module is a cacheable asset compiled once per page, so the CSP's
+  `connect-src` no longer allows `data:` (ADR-0020 update). Every terminal still runs in an instance and memory of its
+  own. `web/e2e/terminal-load.spec.ts` covers it. ghostty-web's unused inlined copy of the module is stripped from
+  the build, so the terminal's chunk drops from 687 kB to 122 kB. The workarounds apply only to ghostty-web 0.4.0,
+  the version they were checked against. Seeking a replay while it plays no longer lets a pending playback step write
+  into the freshly reset screen.
+
 ### Security
 
 - Build with Go 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash caused by a `MaxBytesReader` header race
