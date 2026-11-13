@@ -2,8 +2,7 @@ import { Card, Group, SimpleGrid, Stack, Table, Text } from '@mantine/core'
 import { useQueries } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
-import { api, unwrap } from '@/api/client'
-import { keys, useAttention, useMe, useNodes, useSpaces } from '@/api/queries'
+import { runsQuery, useAttention, useMe, useNodes, useSpaces } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { ErrorAlert } from '@/components/ErrorAlert'
 import { PageHeader } from '@/components/PageHeader'
@@ -31,12 +30,8 @@ function Overview() {
   const nodes = useNodes()
   const showNodes = hasGlobal(me)
   const list = (spaces.data ?? []).filter((s) => s.state !== 'archived').slice(0, 50)
-  const runs = useQueries({
-    queries: list.map((s) => ({
-      queryKey: keys.runs(s.id),
-      queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/runs', { params: { path: { space_id: s.id }, query: { limit: 200 } } })).items,
-    })),
-  })
+  // The same query as the space and Terminals pages (one cached list per space, one request for all of them).
+  const runs = useQueries({ queries: list.map((s) => runsQuery(s.id)) })
   const active = runs.flatMap((q) => q.data ?? []).filter((r) => !ENDED.includes(r.observed))
   const name = (id: string) => list.find((s) => s.id === id)?.name ?? id
   const connected = (nodes.data ?? []).filter((n) => n.connected).length

@@ -153,7 +153,9 @@ export const useSpace = (id: string) =>
 export const runsQuery = (space: string) =>
   queryOptions({
     queryKey: keys.runs(space),
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/runs', { params: { path: { space_id: space }, query: { limit: 200 } } })).items,
+    // The signal aborts a fetch nobody waits for any more (the view unmounted), instead of leaving it open.
+    queryFn: async ({ signal }) =>
+      unwrap(await api.GET('/spaces/{space_id}/runs', { params: { path: { space_id: space }, query: { limit: 200 } }, signal })).items,
   })
 
 export const useRuns = (space: string) => useQuery(runsQuery(space))
