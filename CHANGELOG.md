@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Security
+
+- A password change or reset could be undone by a concurrent login that upgraded the old password's hash. The upgrade
+  now applies only while the password is unchanged, and a login whose password changed after it was checked fails
+  without opening a session.
+
+### Fixed
+
+- Break-glass recovery with a new administrator, and a login that replaces a password hash made with older
+  parameters, no longer run Argon2id while holding the database write lock. They hash first and only store the
+  result in the transaction.
+- Store-backed tests hold the write lock for much less time on slow or busy machines, so the write-transaction guard
+  (ADR-0062 update 2026-11-13, hold analysis) trips less. The guard's limits are unchanged. A seeded test database is flushed to disk before the
+  store opens, so its first commit (`keyring.load`) no longer flushes it. Test stores open 2 reader connections
+  instead of `max(4, GOMAXPROCS)`. `make race` builds modernc.org's SQLite without `checkptr` instrumentation.
+
 ## [0.1.2] - 2026-11-13
 
 Patch release on top of v0.1.1. It makes no production-readiness claim (docs/RELEASE_READINESS.md §16). It contains:

@@ -1003,6 +1003,32 @@ func (q *Queries) PurgeWebSessions(ctx context.Context, absoluteExpiresAt int64)
 	return result.RowsAffected()
 }
 
+const rehashLocalCredential = `-- name: RehashLocalCredential :execrows
+UPDATE user_local_credentials SET password_phc = ?1, params_version = ?2
+WHERE user_id = ?3 AND password_phc = ?4
+`
+
+type RehashLocalCredentialParams struct {
+	NewPhc        string
+	ParamsVersion int64
+	UserID        string
+	OldPhc        string
+}
+
+// Replaces a password hash made with older parameters, only while the stored hash is still the one that was verified.
+func (q *Queries) RehashLocalCredential(ctx context.Context, arg RehashLocalCredentialParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rehashLocalCredential,
+		arg.NewPhc,
+		arg.ParamsVersion,
+		arg.UserID,
+		arg.OldPhc,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const revokeAPIToken = `-- name: RevokeAPIToken :execrows
 UPDATE api_tokens SET revoked_at = ?1, revoked_by = ?2 WHERE id = ?3 AND revoked_at IS NULL
 `

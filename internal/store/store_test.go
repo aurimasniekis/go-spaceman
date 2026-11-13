@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,6 +94,24 @@ func TestPragmasEveryConnection(t *testing.T) {
 	}
 	if _, err := s.ReadDB().ExecContext(ctx, "INSERT INTO settings (key, value, updated_at) VALUES ('x','y',0)"); err == nil {
 		t.Fatal("reader pool accepted a write")
+	}
+}
+
+// Without Options.Readers a store opens the production reader pool, max(4, GOMAXPROCS) connections, and checks the
+// pragmas on every one of them. Store-backed tests elsewhere use a smaller pool (storetest.Readers), so this is where
+// the default size stays covered.
+func TestDefaultReaderPool(t *testing.T) {
+	t.Parallel()
+	s := openTest(t, Options{})
+	want := max(4, runtime.GOMAXPROCS(0))
+	if got := s.rdb.Stats().MaxOpenConnections; got != want {
+		t.Fatalf("reader pool of %d connections, want max(4, GOMAXPROCS) = %d", got, want)
+	}
+	if got := s.rdb.Stats().OpenConnections; got != want {
+		t.Fatalf("%d reader connections open after Open, want all %d (VerifyPragmas opens every one)", got, want)
+	}
+	if err := VerifyPragmas(context.Background(), s.rdb, want, true, DefaultBusyTimeout); err != nil {
+		t.Fatal(err)
 	}
 }
 
