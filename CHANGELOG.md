@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-13
+
+Patch release on top of v0.1.2. It makes no production-readiness claim (docs/RELEASE_READINESS.md §17). It contains:
+- an incident fix: a node reconnect could trigger a refetch storm in open browser tabs that exhausted server memory,
+  which made nodes lose their connection over and over (ADR-0078);
+- lean run lists, a live start for the change feed, and a bound on how long a response may wait for its client;
+- a security fix: a concurrent login could undo a password change or reset;
+- steadier write-transaction-guard tests on slow or busy machines.
+
+**Upgrade notes:**
+- **From v0.1.1** (v0.1.2 was withdrawn): everything in the v0.1.2 upgrade notes below applies. In short:
+  - Take a backup first. Central migrations 0048/0049 and the agent's journal migrations 0006/0007 are
+    forward-only.
+  - Node protocol 1.11: upgrade central first, then every node agent.
+  - Claude Code's self-update is off on every node: a node whose `claude` stayed current only through it stays on its
+    version until `harness.claude.manage: true` is set, or you update it yourself.
+- **From v0.1.2:** no new migration and no protocol change; upgrade central and the agents in any order.
+- **API changes:**
+  - Run lists (`GET /api/v1/spaces/{space_id}/runs`, `spaceman run list`) no longer return `manifest`,
+    `launch.prompt` or `launch.system`; pass `include=manifest`, `include=prompt` or both (`--include` in the CLI).
+    A single run's GET is unchanged.
+  - `GET /api/v1/watch?live=1` starts the change feed at the newest change. Without it the feed still replays from
+    the start.
+  - A run's `observed_at` is when its node last reported a change to it; a report that changes nothing no longer
+    moves it.
+- **New setting `http.write_idle_timeout`** (central, default `1m`, from 1s to 10m): each 32 KiB of a response must
+  reach the client within it, or the connection is closed. It bounds progress, not the whole response, so slow
+  downloads, exports and streams that keep moving are unaffected. WebSocket connections keep their own timeouts.
+- **Security:** a password change or reset could be undone by a concurrent login that upgraded the old password's
+  hash; that upgrade now applies only while the password is unchanged.
+
 ### Added
 
 - `GET /api/v1/watch?live=1` starts the change feed at the newest change, without replaying the retained history, and
@@ -1439,7 +1470,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0-rc.9...v0.1.0

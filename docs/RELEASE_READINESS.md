@@ -13,6 +13,9 @@
 >
 > **v0.1.2 (2026-11-13):** §16 records the patch release: what it contains since v0.1.1, its migrations, node
 > protocol, upgrade notes and the known issues it ships with.
+>
+> **v0.1.3 (2026-11-13):** §17 records the patch release: what it contains since v0.1.2, its upgrade notes (also from
+> v0.1.1, since v0.1.2 was rolled back) and the known issues it ships with.
 
 ## 1. Verdict
 
@@ -397,3 +400,48 @@ distribution). In addition:
 **Gates** (Linux, umask 022, at `main` after the last merge, PR #44): `SM_TEST_TX_MAX=500ms make check`,
 `make web-check`, `make e2e` and `SM_SITE_A11Y=1 make site-check`, plus CI on every merged PR head. The results are
 in the release-prep PR description.
+
+## 17. v0.1.3 (2026-11-13)
+
+v0.1.2 was deployed on 2026-11-13 and rolled back to v0.1.1 the same day: nodes lost their connection about 15 s after
+every connect while central's memory grew to gigabytes. v0.1.3 fixes that. The operator's authorization of the release is
+pending; once given, it is cut from `main` after PR #47 and PR #49 (the release-prep PR follows them), tagged `v0.1.3`,
+and the release workflow builds the archives, images and SBOMs into a draft release that the operator publishes. It
+still makes **no production-readiness claim**: §1's verdict stands.
+
+**Contents since v0.1.2:**
+- the incident fix (ADR-0078, PR #49): a node reconnect could trigger a refetch storm in open browser tabs that
+  exhausted server memory. Unchanged run reports write nothing. Run lists leave out manifests and launch prompts
+  (`include=` opt-in). Every response must make progress (`http.write_idle_timeout`). A fresh tab starts the change
+  feed live (`watch?live=1`). The web UI batches, caches and aborts its queries;
+- the login rehash race (PR #47): a concurrent login could undo a password change or reset;
+- no Argon2id hashing inside the write lock (break-glass recovery, login rehash), and steadier tests under the
+  write-transaction guard (PR #47).
+
+The full list is in `CHANGELOG.md` `[0.1.3]`.
+
+| Item | v0.1.3 |
+|---|---|
+| Migrations since v0.1.2 | None. From v0.1.1: central 0048 and 0049, agent journal 0006 and 0007 (§16), all forward-only. |
+| Node protocol | 1.11, unchanged from v0.1.2. |
+| Configuration | New central setting `http.write_idle_timeout` (default `1m`, 1s to 10m). |
+| API | Run lists omit `manifest`, `launch.prompt` and `launch.system` unless `include=manifest,prompt`; `GET /watch?live=1`; a run's `observed_at` moves only on a change. |
+| Go | 1.27.4, unchanged. |
+
+**Upgrade notes** (also in the CHANGELOG):
+- From v0.1.1, the production version after the rollback: §16's notes apply in full (backup, central first, Claude
+  Code's self-update off on every node, managed-mode settings and disk).
+- From v0.1.2: no migration or protocol change.
+- API clients that read `manifest` or `launch.prompt` from run lists must pass `include=`.
+
+**Known issues it ships with:** §16's list still applies. In addition:
+- A node's journal is never pruned, so its hello still lists every run it has ever had. A reconnect now writes
+  nothing for unchanged runs, but reading them still grows with the node's history (follow-up).
+- The incident fix was verified on a local dev stack (simulated: a node with up to 2500 runs, non-reading clients,
+  Playwright request budgets), not against the production deployment.
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, at `main` after the last merge): `SM_TEST_TX_MAX=500ms make check`, `make web-check`,
+`make e2e` and `SM_SITE_A11Y=1 make site-check`, plus CI on every merged PR head. The results are in the release-prep
+PR description.
