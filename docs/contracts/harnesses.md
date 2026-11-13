@@ -342,7 +342,7 @@ the adapter, unit-tested only); a Claude Code project `.claude/settings.json` in
 
 ## Claude Code distribution (ADR-0077, 2026-11-12/13)
 
-Evidence for node-managed Claude Code versions (ADR-0077, Proposed). **Labels:** **live** = observed over HTTP or by
+Evidence for node-managed Claude Code versions (ADR-0077). **Labels:** **live** = observed over HTTP or by
 running the binary on the date given; **binary** = read from Claude Code 2.1.317's strings, not exercised.
 
 ### Release metadata

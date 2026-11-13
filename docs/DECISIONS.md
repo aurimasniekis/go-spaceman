@@ -3994,9 +3994,10 @@
     option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns.
 
 ### ADR-0077 — Node-managed Claude Code versions (security-relevant change)
-- **Status:** Proposed, 2026-11-13. The operator decided on 2026-11-12: always use the latest version, unless the
-  harness profile pins one; then use that version, downloading it if it is missing or reverting to it. Implementation
-  follows in separate PRs (PLAN.md, CC). This ADR is security-relevant because **the node downloads and executes
+- **Status:** Accepted, 2026-11-13 (the operator chose the managed design and authorized shipping it in v0.1.2;
+  proposed 2026-11-13). The operator decided on 2026-11-12: always use the latest version, unless the harness profile
+  pins one; then use that version, downloading it if it is missing or reverting to it. Implemented in PRs #41–#44
+  (PLAN.md, CC). This ADR is security-relevant because **the node downloads and executes
   vendor binaries** that no operator installed by hand.
 - **Context (code, at v0.1.1):**
   - SpaceMan doesn't manage Claude Code. The node runs whatever `claude` the run's `PATH` resolves to

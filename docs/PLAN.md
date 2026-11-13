@@ -122,7 +122,7 @@ Branch `feat/system-page`, merged into `feat/spaceman-mcp` (PR #18) for v0.1.0. 
 |---|---|---|---|
 | SYS-1 | `get-system` (`GET /api/v1/system`, `system:read`), `spaceman system status`, admin MCP classification (read), web **System** page under Access, version in the account menu, screenshots, docs | SM-OBS-006 | implemented, tested (simulated: in-process central over HTTP, CLI e2e, vitest, Playwright against the dev stack at 390 and 1280 px) |
 
-### CC — Node-managed Claude Code versions (operator decision 2026-11-12; ADR-0077, Proposed)
+### CC — Node-managed Claude Code versions (operator decision 2026-11-12; ADR-0077, Accepted)
 The node resolves, downloads, verifies and launches Claude Code itself: the profile pin, then the node channel, then
 `latest`. One PR per WP; protocol minor 11, migration 0048.
 

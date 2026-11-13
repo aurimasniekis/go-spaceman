@@ -388,7 +388,6 @@ The full list is in `CHANGELOG.md` `[0.1.2]`.
 
 **Known issues it ships with:** the §15 list still applies (see [LIMITATIONS.md](LIMITATIONS.md), including Harness
 distribution). In addition:
-- ADR-0077 is recorded as Proposed; its implementation ships in this release.
 - Downloaded Claude Code binaries are checked against the manifest's SHA-256 and size only, not a signature (K-14).
 - Hosted CI runners intermittently held SQLite's write lock for 260–750 ms in untouched packages; several merges
   needed one rerun of the coverage or race job, and the hosted coverage step now uses 1 s (ADR-0062 update).
