@@ -60,7 +60,7 @@ type Run struct {
 	Manifest   json.RawMessage `json:"manifest,omitempty" doc:"Omitted from run lists unless include=manifest"`
 	StartedAt  *time.Time      `json:"started_at,omitempty"`
 	EndedAt    *time.Time      `json:"ended_at,omitempty"`
-	ObservedAt *time.Time      `json:"observed_at,omitempty"`
+	ObservedAt *time.Time      `json:"observed_at,omitempty" doc:"When the node last reported a change to the run (a report that changes nothing, such as a reconnect re-reporting it, doesn't move it)"`
 	// Takeover is the terminal takeover in force (SM-UI-004); set by GetRun.
 	Takeover *Takeover `json:"takeover,omitempty" doc:"The terminal takeover in force: an operator types into the terminal and automated input is paused"`
 	// TerminalSize is the size the run's terminal is held at (ADR-0075); nil is the node's default size.

@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `manifest`, `launch.prompt` or `launch.system`. Those hold the run's resolved prompts, which made a list of 200 runs
   megabytes, and the web UI refetches lists whenever a run changes. Ask for them with `include=manifest`,
   `include=prompt` or both (`--include` in the CLI). Getting a single run still returns everything.
+- **API:** a run's `observed_at` is now when its node last reported a *change* to it. A report that changes nothing,
+  such as every hello re-reporting the node's runs, no longer moves it.
 
 ### Security
 

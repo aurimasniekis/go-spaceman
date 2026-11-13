@@ -5260,6 +5260,7 @@
             "type": "string"
           },
           "observed_at": {
+            "description": "When the node last reported a change to the run (a report that changes nothing, such as a reconnect re-reporting it, doesn't move it)",
             "format": "date-time",
             "type": "string"
           },

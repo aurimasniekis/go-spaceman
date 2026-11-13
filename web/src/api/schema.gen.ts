@@ -6293,7 +6293,10 @@ export interface components {
             node_id: string;
             /** @enum {string} */
             observed: "pending" | "starting" | "running" | "stopping" | "exited" | "failed" | "lost" | "unknown";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the node last reported a change to the run (a report that changes nothing, such as a reconnect re-reporting it, doesn't move it)
+             */
             observed_at?: string;
             /** Format: int64 */
             pid?: number;
