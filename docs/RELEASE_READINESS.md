@@ -10,6 +10,9 @@
 >
 > **v0.1.1 (2026-11-09):** §15 records the patch release: what it contains since v0.1.0, its migrations, node
 > protocol, upgrade notes and the known issues it ships with.
+>
+> **v0.1.2 (2026-11-13):** §16 records the patch release: what it contains since v0.1.1, its migrations, node
+> protocol, upgrade notes and the known issues it ships with.
 
 ## 1. Verdict
 
@@ -345,3 +348,53 @@ The full list is in `CHANGELOG.md` `[0.1.1]`.
 **Gates** (Linux, umask 022, at `main` after the last merge, PR #32): `SM_TEST_TX_MAX=500ms make check`,
 `make web-check`, `make e2e` and `make site-check`, plus CI on every merged PR head. The results are in the
 release-prep PR description.
+
+## 16. v0.1.2 (2026-11-13)
+
+The operator authorized the v0.1.2 release on 2026-11-13. It is cut from `main` after PRs #35–#45 were merged in
+order (#38 first, #45 before #44; the release-prep PR follows them). It is tagged `v0.1.2`, and the release workflow
+builds the archives, images and SBOMs into a draft release that the operator publishes. It still makes **no
+production-readiness claim**: §1's verdict stands.
+
+**Contents since v0.1.1:**
+- node-managed Claude Code versions (ADR-0077, SM-HARN-005…008): a verified per-version cache, launches by absolute
+  path, per-profile version pins, per-run versions and the current versions on each node (migrations 0048 and 0049,
+  agent journal migrations 0006 and 0007, protocol minor 11);
+- Claude Code's self-update turned off in every run, managed or not;
+- the web terminal's fresh-cache freeze and stale-glyph fixes (ADR-0076);
+- the New inbox item dialog's scrollbar with writing-assistant extensions;
+- Go 1.27.4 (GO-2026-6859);
+- CI: the write-transaction guard at 250 ms for the hosted login-timing and fuzz jobs and 1 s for the hosted coverage
+  step (ADR-0062 updates).
+
+The full list is in `CHANGELOG.md` `[0.1.2]`.
+
+| Item | v0.1.2 |
+|---|---|
+| Migrations since v0.1.1 | Central: 0048 (a profile's Claude Code version pin and each run's version) and 0049 (when a node last reported its capabilities). Node agent journal: 0006 (each run's Claude Code version and path) and 0007 (an index for the cache's GC). All are forward-only. Take a backup before upgrading; central also writes a pre-migration snapshot. |
+| Node protocol | 1.11 (`proto.MaxMinor = 11`; minor 11 is pinned launches, per-run versions and capability re-reports). Older agents still connect; a pinned launch to one fails as `node_too_old`, and they report harness versions only when they connect. |
+| Configuration | New node agent settings `harness.claude.{manage, channel, base_url, cache_keep, cache_keep_pinned, refresh, download_timeout, self_update}`. `manage` is off by default. Claude Code's self-update is off in every run unless `self_update: true` on an unmanaged node. |
+| Disk | A managed node's cache takes about 340 MB per Claude Code version: about 1 GB with the default `cache_keep` (3), plus up to `cache_keep_pinned` (5) pinned versions. |
+| Web terminal | The terminal's WebAssembly module comes from the pinned ghostty-web prerelease 0.4.0-next.21; its JavaScript stays on 0.4.0 (ADR-0076). |
+| Go | 1.27.4 (GO-2026-6859), in `go.mod`, `tools/go.mod` and both Dockerfiles' build image. |
+| Claude Code tested | The real Claude Code suites last ran against 2.1.317 (v0.1.0) and the live attachment test against 2.1.319 (v0.1.1). The ADR-0077 spike checked 2.1.322's updater and resuming a 2.1.317 session on 2.1.322 in print mode against a fake API. |
+
+**Upgrade notes from v0.1.1** (also in the CHANGELOG):
+- Take a backup, then upgrade central first, then every node agent.
+- Nodes whose `claude` stayed current only through Claude Code's self-update stay on their current version until
+  `harness.claude.manage: true` is set or they are updated with your own tooling.
+- On managed nodes, size the agent's data directory for the cache, and check `harness.claude.*`. A profile's
+  `harness_version` pin is honoured: an exact pin is downloaded and never falls back to another version.
+
+**Known issues it ships with:** the §15 list still applies (see [LIMITATIONS.md](LIMITATIONS.md), including Harness
+distribution). In addition:
+- ADR-0077 is recorded as Proposed; its implementation ships in this release.
+- Downloaded Claude Code binaries are checked against the manifest's SHA-256 and size only, not a signature (K-14).
+- Hosted CI runners intermittently held SQLite's write lock for 260–750 ms in untouched packages; several merges
+  needed one rerun of the coverage or race job, and the hosted coverage step now uses 1 s (ADR-0062 update).
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, at `main` after the last merge, PR #44): `SM_TEST_TX_MAX=500ms make check`,
+`make web-check`, `make e2e` and `SM_SITE_A11Y=1 make site-check`, plus CI on every merged PR head. The results are
+in the release-prep PR description.
