@@ -5,11 +5,11 @@ import { Ghostty, GhosttyTerminal } from 'ghostty-web'
 import { cacheViewport } from './ghostty'
 
 /**
- * The viewport cache that makes a redraw parse the screen once (cacheViewport), against the real ghostty-web 0.4.0
- * module: every row reads the same as without it, a write or a resize is seen at once, and a full redraw parses the
- * viewport once instead of once per row.
+ * The viewport cache that makes a redraw parse the screen once (cacheViewport), on ghostty-web 0.4.0 with the real
+ * module the terminal loads: every row reads the same as without it, a write or a resize is seen at once, and a full
+ * redraw parses the viewport once instead of once per row.
  */
-const wasm = readFileSync(createRequire(import.meta.url).resolve('ghostty-web/ghostty-vt.wasm'))
+const wasm = readFileSync(createRequire(import.meta.url).resolve('ghostty-web-vt/ghostty-vt.wasm'))
 const instance = async () => new Ghostty((await WebAssembly.instantiate(wasm, { env: { log: () => {} } })).instance)
 const proto = GhosttyTerminal.prototype as unknown as { parseCellsIntoPool(...a: unknown[]): void }
 

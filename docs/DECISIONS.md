@@ -3948,6 +3948,43 @@
     Terminals page's first render about 420 ms. The change feed's refetch burst on load is one task. Neither is
     terminal work. They are the next things to measure if pages still feel slow on a phone.
   - ADR-0020's `connect-src data:` is no longer needed and is removed (see its update).
+- *Update 2026-11-13, stale glyphs (operator report on v0.1.1: a watched 160×48 control run showed older lines of the
+  same session through its new lines, character by character):*
+  - **Root cause: ghostty-web 0.4.0's WebAssembly module, not the renderer.** The run's recording was complete
+    (11,407 records, no sequence gaps, no size changes). Fed to the 0.4.0 module alone, with no canvas, it produced
+    the screenshot's rows in the terminal's own cells. Replayed record by record against xterm.js, it first diverged
+    when rows scrolled in at the bottom: they still held cells of output from hundreds of lines earlier. Upstream
+    ghostty-web #180 (`bec9e16`, first released in 0.4.0-next.18): `Screen.cursorDownScroll()` cleared a newly grown
+    row only when the cursor's style had a background colour. After `ESC[0m`, the row kept whatever its reused page
+    memory held.
+  - Claude Code shows this because of how it writes a line: it places each word with a column move (`CSI n G`) and
+    skips the cells between words, which it expects a fresh row to have blank. Those cells showed the stale text, as
+    in `losparseeline 14xxxx…`. Truecolour output that ends each line in a reset triggers it after a few hundred
+    lines (`scrolled.test.ts`). Not the cause: glyph overhang between rows, the dirty-row redraw set, the scaled
+    fixed size, the device pixel ratio, or catch-up slicing. A simulated renderer drew exactly the module's cells.
+  - **Decision:** the terminal keeps ghostty-web 0.4.0's JavaScript and loads the WebAssembly module of
+    `ghostty-web@0.4.0-next.21.g640db46` (2026-10-28), which contains the fix. It comes in as the pinned package
+    alias `ghostty-web-vt` (`web/package.json`; the lockfile holds its integrity hash), and no binary is committed.
+    The module exports everything 0.4.0's does, plus two hyperlink functions, imports only the same log function,
+    and takes the same configuration layout. Replayed under 0.4.0's JavaScript, the whole control recording matches
+    xterm.js after every record.
+
+    The JavaScript is not upgraded. Its about 2,000 changed lines include a new input handler (beforeinput, mouse
+    tracking), which would need a fresh review of watch-only (SM-UI-004), and the prototype patches above are
+    verified only on 0.4.0. `version.test.ts` pins both versions, so changing either fails until the pairing is
+    re-verified. `vtmodule.test.ts` checks the pairing automatically: the module exports every function 0.4.0's
+    JavaScript calls, imports only the log function, and reads the configuration in 0.4.0's layout (colours,
+    palette, scrollback limit). The pairing is temporary. It goes away when the terminal upgrades to an upstream
+    ghostty-web release that contains the fix: a follow-up task, with a fresh SM-UI-004 review of the new input
+    handler and the prototype patches re-verified.
+  - **Tests:** `scrolled.test.ts` runs the stub's pattern against the shipped module (blank rows) and against 0.4.0's
+    module (the defect). `e2e/terminal-stale.spec.ts` drives the stub harness's new `/sparse 1000` line live and in
+    replay, at DPR 1 and 2, and at the node's 160×48 both unscaled and scaled down to fit. It checks that every row's
+    cells read what the program wrote, and that the canvas has only background after each row's text. Both checks
+    fail on 0.4.0's module. The browser test probe now reads an empty cell as a space: ghostty-web's
+    `translateToString` drops it, which shifted the rest of the row.
+  - **Side finding, not changed:** ghostty's `scrollbackLimit` is in bytes, but ghostty-web passes the `scrollback`
+    option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns.
 
 ## 2. Open items and unresolved contracts
 

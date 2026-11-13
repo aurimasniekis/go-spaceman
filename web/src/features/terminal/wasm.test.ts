@@ -4,12 +4,12 @@ import { createRequire } from 'node:module'
 import { Ghostty, type GhosttyTerminal } from 'ghostty-web'
 
 /**
- * The ghostty-web 0.4.0 behaviour createTerminal works around (ghostty.ts), against the real WebAssembly module: in one
+ * The ghostty-web behaviour createTerminal works around (ghostty.ts), against the WebAssembly module it loads: in one
  * shared instance, a terminal created after another was freed starts out with the freed terminal's cells, and freed
  * memory of a terminal with many styles is never reused, so the memory only grows. A terminal in an instance of its
  * own starts empty.
  */
-const wasm = readFileSync(createRequire(import.meta.url).resolve('ghostty-web/ghostty-vt.wasm'))
+const wasm = readFileSync(createRequire(import.meta.url).resolve('ghostty-web-vt/ghostty-vt.wasm'))
 const instance = async () => new Ghostty((await WebAssembly.instantiate(wasm, { env: { log: () => {} } })).instance)
 
 const screen = (t: GhosttyTerminal) => {

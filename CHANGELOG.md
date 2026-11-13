@@ -19,7 +19,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   positioned next to the editor, made the dialog scroll by however far they reached below it. The editor now contains
   them (`contain: layout`). Long dialogs still scroll.
 
-
+- Web terminals no longer show older output through new lines (in Claude Code runs, characters of earlier lines
+  appeared between the words of new ones; ADR-0076 update). ghostty-web 0.4.0's WebAssembly module left old
+  cells in rows that scrolled in after a style reset (upstream ghostty-web #180). The terminal now loads the module
+  of ghostty-web 0.4.0-next.21, which has the fix, and keeps 0.4.0's JavaScript until an upstream release with the
+  fix is adopted. `web/e2e/terminal-stale.spec.ts` covers it.
 - Opening Terminals or Spaces no longer freezes the tab, which took about a minute on a desktop and minutes on a
   phone (ADR-0076). Tracing a fresh-cache load with CPU throttling showed where the time went:
   - A terminal applied its run's stored output record by record, and a replay applied all of it in one go. Both now
