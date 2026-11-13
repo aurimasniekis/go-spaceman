@@ -436,9 +436,9 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
     feedRef.current?.catchUp(0)
     feedRef.current = null
   }, [])
-  /** Draws a tail on a clean screen: what comes before it, then its records. */
+  /** Draws a tail on a clean screen: what comes before it, then its records; done runs once all of it is drawn. */
   const render = useCallback(
-    (tail: RecordingTail, recs: readonly RecordingRecord[]) => {
+    (tail: RecordingTail, recs: readonly RecordingRecord[], done?: () => void) => {
       if (!term) return
       stopFeed()
       term.reset()
@@ -452,6 +452,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
         sumRef.current = s
         setSum(s)
         setRendering(false)
+        done?.()
       })
       feedRef.current = { fed, catchUp }
       fed.push([...tailRecords(tail), ...recs])
@@ -475,8 +476,8 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
       setRendering(true)
       // Index the modes up to the window's start a slice at a time, then draw the window.
       const start = index.windowStart(end, TAIL_BYTES)
-      const token = {}
-      const pending = { fed: { push() {}, backlog: () => 0, stop() {} } as Feed, catchUp: () => {}, token }
+      // Holds the seek's place until the window is drawn: a later seek or stopFeed replaces it, which cancels this one.
+      const pending = { fed: { push() {}, backlog: () => 0, stop() {} } as Feed, catchUp: () => {} }
       feedRef.current = pending
       const step = () => {
         if (feedRef.current !== pending) return
@@ -493,12 +494,13 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   )
   useEffect(() => stopFeed, [term, records, stopFeed])
 
-  // The tail's last screen while the rest of the recording loads.
+  // The tail's last screen while the rest of the recording loads. tailShown is the last record it drew, set only once
+  // all of it is drawn: the whole recording can arrive first (a slow device), and then stops the tail's feed.
   const tailShown = useRef<number | null>(null)
   useEffect(() => {
     if (!term || !tailPage?.tail || records) return
-    render(tailPage.tail, tailPage.records)
-    tailShown.current = tailPage.next_after
+    tailShown.current = null
+    render(tailPage.tail, tailPage.records, () => (tailShown.current = tailPage.next_after))
   }, [term, tailPage, records, render])
 
   // Show the whole recording first (the most useful state of a finished run); play restarts from the beginning. When
@@ -506,7 +508,7 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   useEffect(() => {
     if (!term || !records) return
     const last = records.length > 0 ? records[records.length - 1].seq : 0
-    if (tailShown.current !== null && tailShown.current === last && feedRef.current === null) {
+    if (tailShown.current !== null && tailShown.current === last) {
       posRef.current = records.length
       setPos(records.length)
       let s = emptySummary()

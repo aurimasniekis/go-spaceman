@@ -6,8 +6,8 @@ import { Api, env, startAgent } from './stack'
 /** Test hooks a page installs before it loads (addInitScript): the terminal probe and a count of the bytes it streams. */
 export interface TailProbe {
   __smTerminals?: { count(): number; texts(): string[]; screens(): string[] }
-  /** Characters of event data received on terminal streams, and over the recording API. */
-  __smStreamed: { terminal: number; recording: number }
+  /** Characters of event data received on terminal streams (central does not compress responses). */
+  __smStreamed: { terminal: number }
   /** When (page time) the screen first matched __smWant, and when the "Loading output…" badge last went away. */
   __smShown?: number
   __smWant?: string
@@ -17,7 +17,7 @@ export interface TailProbe {
 export function instrument(want: string) {
   const w = window as unknown as TailProbe & { __smTerminalProbe: boolean }
   w.__smTerminalProbe = true
-  w.__smStreamed = { terminal: 0, recording: 0 }
+  w.__smStreamed = { terminal: 0 }
   w.__smWant = want
   const Native = window.EventSource
   window.EventSource = class extends Native {
@@ -27,18 +27,6 @@ export function instrument(want: string) {
       for (const kind of ['record', 'tail']) this.addEventListener(kind, (ev) => (w.__smStreamed.terminal += (ev as MessageEvent<string>).data.length))
     }
   } as typeof EventSource
-  const fetch0 = window.fetch.bind(window)
-  window.fetch = async (input, init) => {
-    const res = await fetch0(input, init)
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    if (url.includes('/recording')) {
-      void res
-        .clone()
-        .text()
-        .then((t) => (w.__smStreamed.recording += t.length))
-    }
-    return res
-  }
   const re = new RegExp(want, 's')
   const check = () => {
     if (w.__smShown !== undefined) return
@@ -105,4 +93,14 @@ export async function replied(api: Api, spaceId: string, runId: string) {
       { timeout: 300_000, intervals: [3_000] },
     )
     .toBe(true)
+}
+
+/** Bytes received so far: terminal stream events, and the bodies of recording API responses (resource timing). */
+export function received(): number {
+  const w = window as unknown as TailProbe
+  const recording = performance
+    .getEntriesByType('resource')
+    .filter((e) => e.name.includes('/recording'))
+    .reduce((n, e) => n + (e as PerformanceResourceTiming).encodedBodySize, 0)
+  return w.__smStreamed.terminal + recording
 }

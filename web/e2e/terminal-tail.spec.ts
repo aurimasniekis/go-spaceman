@@ -1,6 +1,6 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
 
-import { instrument, redrawPrompt, replied, tailSpace, type TailProbe } from './tail'
+import { instrument, received, redrawPrompt, replied, tailSpace, type TailProbe } from './tail'
 
 /**
  * A terminal shows the end of a long recording first (ADR-0081): a live terminal's catch-up is the last 1 MiB of output
@@ -127,19 +127,19 @@ test('measure: time and bytes to the latest screen', async ({ page, browser }) =
       ]) {
         for (const mode of ['live', 'replay'] as const) {
           const path = mode === 'live' ? `/spaces/${spaceId}/runs/${ids[s.name].live}` : `/terminals?space=${spaceId}&run=${ids[s.name].done}`
-          const r = await measure(browser, state, path, cfg)
-          rows.push(`| ${s.name} | ${mode} | ${cfg.name} | ${(r.shown / 1000).toFixed(1)} s | ${(r.bytes / 1e6).toFixed(2)} MB | ${(r.total / 1e6).toFixed(2)} MB |`)
+          const r = await measure(browser, state, path, cfg, mode === 'replay')
+          rows.push(`| ${s.name} | ${mode} | ${cfg.name} | ${(r.shown / 1000).toFixed(1)} s | ${(r.bytes / 1e6).toFixed(2)} MB | ${(r.total / 1e6).toFixed(2)} MB${mode === 'replay' ? ` (all loaded at ${(r.done / 1000).toFixed(1)} s)` : ''} |`)
           console.log(rows.at(-1))
         }
       }
     }
-    console.log(['| Recording | View | Device | Latest screen after | Received by then | Received in all (10 s later) |', '|---|---|---|---|---|---|', ...rows].join('\n'))
+    console.log(['| Recording | View | Device | Latest screen after | Received by then | Received in all (live: 10 s later; replay: whole recording) |', '|---|---|---|---|---|---|', ...rows].join('\n'))
   } finally {
     for (const id of runs) await api.call('POST', `/spaces/${spaceId}/runs/${id}/stop`, {}).catch(() => {})
   }
 })
 
-async function measure(browser: Browser, storageState: Awaited<ReturnType<ReturnType<Page['context']>['storageState']>>, path: string, cfg: { rate: number; width: number; height: number }) {
+async function measure(browser: Browser, storageState: Awaited<ReturnType<ReturnType<Page['context']>['storageState']>>, path: string, cfg: { rate: number; width: number; height: number }, replay: boolean) {
   const ctx = await browser.newContext({ storageState, viewport: { width: cfg.width, height: cfg.height } })
   try {
     const p = await ctx.newPage()
@@ -148,13 +148,13 @@ async function measure(browser: Browser, storageState: Awaited<ReturnType<Return
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: cfg.rate })
     await p.goto(path)
     await expect.poll(() => p.evaluate(() => (window as unknown as TailProbe).__smShown ?? 0), { timeout: 600_000, intervals: [500] }).toBeGreaterThan(0)
-    const at = await p.evaluate(() => {
-      const w = window as unknown as TailProbe
-      return { shown: w.__smShown!, ...w.__smStreamed }
-    })
-    await p.waitForTimeout(10_000)
-    const later = await probe(p)
-    return { shown: at.shown, bytes: at.terminal + at.recording, total: later.terminal + later.recording }
+    const shown = await p.evaluate(() => (window as unknown as TailProbe).__smShown!)
+    const bytes = await p.evaluate(received)
+    // A replay goes on loading the whole recording for play and seeking (its slider appears then); a live view has
+    // what it needs and only gets new output.
+    if (replay) await expect(p.locator('.mantine-Slider-root')).toBeVisible({ timeout: 600_000 })
+    else await p.waitForTimeout(10_000)
+    return { shown, bytes, total: await p.evaluate(received), done: await p.evaluate(() => performance.now()) }
   } finally {
     await ctx.close()
   }
