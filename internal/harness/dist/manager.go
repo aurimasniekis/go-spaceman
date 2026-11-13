@@ -19,7 +19,10 @@ import (
 
 // Defaults.
 const (
-	DefaultKeep            = 3
+	DefaultKeep = 3
+	// DefaultKeepPinned is how many profile-pinned versions the node agent keeps from GC by default, the most recently
+	// used ones (harness.claude.cache_keep_pinned); versions in use are kept besides.
+	DefaultKeepPinned      = 5
 	DefaultRefresh         = 15 * time.Minute
 	DefaultDownloadTimeout = 15 * time.Minute
 
@@ -104,6 +107,15 @@ const (
 	// FallbackNewestCached: the pointer is unavailable and no target was ever known; the newest cached version runs.
 	FallbackNewestCached = "newest_cached"
 )
+
+// IsFallback reports whether reason is one of the Fallback* reasons.
+func IsFallback(reason string) bool {
+	switch reason {
+	case FallbackLastTarget, FallbackPreviousTarget, FallbackOlderCached, FallbackNewestCached:
+		return true
+	}
+	return false
+}
 
 // Pending reports whether the run gets another version than the requested target.
 func (r Resolution) Pending() bool { return r.Version != r.Target }

@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist/disttest"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
 // ccLaunchPin launches a Claude Code run whose profile pins pin (protocol minor 11).
@@ -65,7 +66,7 @@ func TestManagedClaudePinDownloadsExactVersion(t *testing.T) {
 	if used, _ := a.claudeVersionsInUse(context.Background()); len(used) != 0 {
 		t.Fatalf("in use %v", used)
 	}
-	if p := a.claudePinned(context.Background()); !slices.Equal(p, []string{"2.1.1"}) {
+	if p := a.claudePinned(context.Background(), nil); !slices.Equal(p, []string{"2.1.1"}) {
 		t.Fatalf("pinned %v", p)
 	}
 	a.claudeGC(context.Background())
@@ -76,7 +77,7 @@ func TestManagedClaudePinDownloadsExactVersion(t *testing.T) {
 	a.mu.Lock()
 	a.claudePins = nil
 	a.mu.Unlock()
-	if p := a.claudePinned(context.Background()); !slices.Equal(p, []string{"2.1.1"}) {
+	if p := a.claudePinned(context.Background(), nil); !slices.Equal(p, []string{"2.1.1"}) {
 		t.Fatalf("pinned from the journal %v", p)
 	}
 }
@@ -203,5 +204,141 @@ func TestManagedClaudeInfo(t *testing.T) {
 	}
 	if want := int64(len(disttest.StubBinary("2.1.5")) + len(disttest.StubBinary("2.1.6"))); info.CacheBytes != want {
 		t.Fatalf("cache bytes %d, want %d", info.CacheBytes, want)
+	}
+}
+
+// backdateRun sets when the journal last updated runID (the pin window counts from it).
+func backdateRun(t *testing.T, a *Agent, runID string, at time.Time) {
+	t.Helper()
+	if err := a.j.s.W().TxNamed(context.Background(), "test.backdate", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(context.Background(), `UPDATE runs SET updated_at = ? WHERE run_id = ?`, at.UnixMicro(), runID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Review S1: the pins GC protects are bounded. A pin last launched more than 30 days ago expires (in memory and in the
+// journal), at most harness.claude.cache_keep_pinned of the rest are kept (the most recently launched), and a version
+// a live run uses is kept whatever the cap.
+func TestClaudePinsExpireAndAreCapped(t *testing.T) {
+	srv := disttest.New(t)
+	for _, v := range []string{"2.1.1", "2.1.2", "2.1.3", "2.1.4", "2.1.5", "2.1.6"} {
+		srv.Add(v, disttest.StubBinary(v))
+	}
+	srv.SetPointer(dist.ChannelLatest, "2.1.6")
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), func(o *dist.Options) { o.Keep = 1 })
+	if _, err := m.Ensure(context.Background(), "2.1.6"); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := ccAgent(t, dir, m, func(o *Options) { o.Claude.KeepPinned = 2 })
+
+	now := time.Now()
+	ages := map[string]time.Duration{
+		"2.1.1": claudePinWindow + time.Hour, // expired
+		"2.1.2": 5 * time.Hour,               // beyond the cap of 2
+		"2.1.3": 2 * time.Hour,
+		"2.1.4": time.Hour,
+		"2.1.5": 10 * time.Hour, // the oldest, but its run is live
+	}
+	for v, age := range ages {
+		id := "run_" + strings.ReplaceAll(v, ".", "_")
+		ccLaunchPin(a, id, v)
+		r := getRun(t, a, id)
+		if r.State != proto.RunRunning || r.Bin.Version != v {
+			t.Fatalf("%s: %s (%s) %+v", v, r.State, r.Error, r.Bin)
+		}
+		if v != "2.1.5" {
+			r.State = proto.RunExited
+			if err := a.j.updateRun(context.Background(), r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		backdateRun(t, a, id, now.Add(-age))
+		a.mu.Lock()
+		_, noted := a.claudePins[v]
+		if noted {
+			a.claudePins[v] = now.Add(-age)
+		}
+		a.mu.Unlock()
+		if !noted {
+			t.Fatalf("the started run's pin %s was not noted", v)
+		}
+	}
+	used, err := a.claudeVersionsInUse(context.Background())
+	if err != nil || !slices.Equal(used, []string{"2.1.5"}) {
+		t.Fatalf("in use %v %v", used, err)
+	}
+	want := []string{"2.1.3", "2.1.4", "2.1.5"}
+	if p := a.claudePinned(context.Background(), used); !slices.Equal(p, want) {
+		t.Fatalf("pinned %v, want %v", p, want)
+	}
+	a.mu.Lock()
+	_, kept := a.claudePins["2.1.1"]
+	a.mu.Unlock()
+	if kept {
+		t.Fatal("an expired pin stayed in memory")
+	}
+	// The journal alone (a restarted agent) gives the same answer.
+	a.mu.Lock()
+	a.claudePins = nil
+	a.mu.Unlock()
+	if p := a.claudePinned(context.Background(), used); !slices.Equal(p, want) {
+		t.Fatalf("pinned from the journal %v, want %v", p, want)
+	}
+	// A cap of 1 still keeps the live run's version.
+	a.o.Claude.KeepPinned = 1
+	if p := a.claudePinned(context.Background(), used); !slices.Equal(p, []string{"2.1.4", "2.1.5"}) {
+		t.Fatalf("cap 1: pinned %v", p)
+	}
+	a.o.Claude.KeepPinned = 2
+	a.claudeGC(context.Background())
+	if got := versions(m); !slices.Equal(got, []string{"2.1.6", "2.1.5", "2.1.4", "2.1.3"}) {
+		t.Fatalf("after GC %v", got)
+	}
+}
+
+// Review S1: only a started run protects its pin. A launch that fails after the journal recorded its version (here
+// the lease ends right before the start) leaves the pin out of memory and out of the journal's pins.
+func TestClaudePinNotedOnlyWhenStarted(t *testing.T) {
+	srv := disttest.New(t)
+	srv.Add("2.1.1", disttest.StubBinary("2.1.1"))
+	srv.Add("2.1.2", disttest.StubBinary("2.1.2"))
+	srv.SetPointer(dist.ChannelLatest, "2.1.2")
+	dir := t.TempDir()
+	m := srv.Manager(t, filepath.Join(dir, "cc"), nil)
+	a, f := ccAgent(t, dir, m, nil)
+	a.claudeStage = func(stage string, _ dist.Resolution) {
+		if stage == "released" {
+			a.mu.Lock()
+			delete(a.leases, ccSpace)
+			a.mu.Unlock()
+		}
+	}
+	ccLaunchPin(a, "run_fail", "2.1.1")
+	r := getRun(t, a, "run_fail")
+	if r.State != proto.RunFailed || r.Bin.Requested != "2.1.1" {
+		t.Fatalf("%s (%s) %+v", r.State, r.Error, r.Bin)
+	}
+	notStarted(t, f, "run_fail")
+	if p := a.claudePinned(context.Background(), nil); len(p) != 0 {
+		t.Fatalf("a failed launch's pin is protected: %v", p)
+	}
+}
+
+// Review S3: an unmanaged pinned launch whose claude_binary is a bare name runs the absolute path it detected on PATH,
+// so the core's PATH can't substitute another binary.
+func TestUnmanagedClaudePinRunsDetectedPath(t *testing.T) {
+	bin := stubClaude(t, "2.1.317")
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	a, f := ccAgent(t, t.TempDir(), nil, func(o *Options) { o.Claude = ClaudeOptions{}; o.HarnessBinaries[harness.KindClaude] = "claude" })
+	ccLaunchPin(a, "run_path", "2.1.317")
+	r := getRun(t, a, "run_path")
+	if r.State != proto.RunRunning || r.Bin != (harnessRun{Version: "2.1.317", Path: bin, Requested: "2.1.317"}) {
+		t.Fatalf("%s (%s) %+v", r.State, r.Error, r.Bin)
+	}
+	if _, argv := runSpec(t, f, "run_path"); argv[0] != bin {
+		t.Fatalf("argv[0] %q, want the detected absolute path %q", argv[0], bin)
 	}
 }

@@ -247,7 +247,6 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		return
 	}
 	requested := a.claudeRequest(p) // the profile's pin overrides the node's channel (ADR-0077)
-	a.notePin(p.HarnessVersion)
 	if p.Harness == harness.KindClaude && (managed || !selfUpdate) {
 		warnClaudeUpdateSettings(log, p.ClaudeSettings)
 	}
@@ -501,6 +500,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 	proc, err := a.o.Runner.Start(ctx, runner.Spec{Name: row.TerminalName, Argv: argv, Cwd: work, Env: built.Env, Labels: labels, Parent: guard})
 	if errors.Is(err, runner.ErrNameTaken) {
 		if found, lerr := a.o.Runner.List(ctx, map[string]string{"spaceman.run": c.RunID}, true); lerr == nil && len(found) > 0 {
+			a.notePin(p.HarnessVersion)
 			a.observe(ctx, row, found[0], true)
 			return
 		}
@@ -510,6 +510,7 @@ func (a *Agent) launch(ctx context.Context, c proto.Command, p proto.LaunchPaylo
 		fail("start", err)
 		return
 	}
+	a.notePin(p.HarnessVersion) // only a started run protects its pin from GC (claudePinned)
 	a.observe(ctx, row, *proc, false)
 }
 

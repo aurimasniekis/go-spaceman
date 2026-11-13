@@ -14,6 +14,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/harness"
+	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
@@ -419,11 +420,12 @@ func (svc *Service) KickRun(ctx context.Context, runID string) {
 	}
 }
 
-// dependencyVersions records what the run depends on, as the node last reported it (SM-PROMPT-004). From a node at minor
-// 11 on (ADR-0077), the harness entry is {requested, node_default}: the profile's pin (else the node's channel) and the
-// version the node last reported a new run would get. What the run actually launched is on the run row. Older nodes keep
-// the plain version string.
-func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness, pin string) map[string]any {
+// dependencyVersions records what the run depends on, as the node last reported it (SM-PROMPT-004). For Claude Code on a
+// node at minor 11 on that manages it (ADR-0077), the harness entry is {requested, node_default}: the profile's pin
+// (else the node's channel) and the version the node last reported a new run would get. What the run actually launched
+// is on the run row. Every other harness entry (older nodes, unmanaged Claude Code, other harnesses) is the plain
+// version string.
+func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, kind, pin string) map[string]any {
 	out := map[string]any{"central": buildinfo.Get().Version, "node_protocol": proto.Major}
 	n, err := tx.Q.GetNode(ctx, nodeID)
 	if err != nil {
@@ -434,18 +436,18 @@ func dependencyVersions(ctx context.Context, tx *store.Tx, nodeID, harness, pin 
 	if json.Unmarshal([]byte(n.CapabilitiesJson), &caps) == nil {
 		out["runner"] = caps.Runner.Kind + " " + caps.Runner.Version
 		for _, h := range caps.Harnesses {
-			if h.Kind != harness {
+			if h.Kind != kind {
 				continue
 			}
-			if n.ProtocolMinor < proto.MinorHarnessVersion {
-				out[harness] = h.Version
+			if n.ProtocolMinor < proto.MinorHarnessVersion || kind != harness.KindClaude || !h.Managed {
+				out[kind] = h.Version
 				continue
 			}
 			requested := pin
 			if requested == "" {
 				requested = h.Channel
 			}
-			out[harness] = map[string]any{"requested": requested, "node_default": h.Version}
+			out[kind] = map[string]any{"requested": requested, "node_default": h.Version}
 		}
 	}
 	return out
@@ -686,10 +688,18 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		}
 		version := r.Version + 1
 		// The harness version the run launched (minor ≥ 11, ADR-0077): a report without one keeps what was recorded.
+		// What was requested and why another version ran are stored only when they are a valid request and a known
+		// fallback reason; anything else is dropped (review S2).
 		if proto.IsHarnessVersion(rep.HarnessVersion) {
-			n, err := tx.Q.SetRunHarness(ctx, db.SetRunHarnessParams{HarnessVersion: truncate(rep.HarnessVersion, 64),
-				HarnessRequested: truncate(rep.HarnessRequested, 64), HarnessFallback: truncate(rep.HarnessFallback, 64), Now: tx.NowMicros(), ID: r.ID,
-				Generation: r.Generation})
+			requested, fallback := rep.HarnessRequested, rep.HarnessFallback
+			if proto.CheckHarnessVersion(requested) != nil {
+				requested = ""
+			}
+			if !dist.IsFallback(fallback) {
+				fallback = ""
+			}
+			n, err := tx.Q.SetRunHarness(ctx, db.SetRunHarnessParams{HarnessVersion: rep.HarnessVersion,
+				HarnessRequested: requested, HarnessFallback: fallback, Now: tx.NowMicros(), ID: r.ID, Generation: r.Generation})
 			if err != nil {
 				return err
 			}

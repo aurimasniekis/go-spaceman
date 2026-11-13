@@ -3995,8 +3995,13 @@
   - On an unmanaged node a channel pin (`latest`, `stable`) also fails, because such a node can't resolve a channel.
     An exact pin that matches runs by the absolute path that was checked, so the core's `PATH` can't substitute
     another binary.
-  - The node learns pins only from launches. GC keeps the pins seen in this process and the exact versions the
-    journal's runs requested in the last 30 days.
+  - The node learns pins only from launches. GC keeps the exact versions that profiles pinned on runs the node
+    started (in this process, or in the journal) in the last 30 days, at most `harness.claude.cache_keep_pinned`
+    (default 5) of them, the most recently launched. A launch that failed before its run started doesn't count.
+    Versions in use by live or adoptable runs are always kept and don't count against the cap (PR #43 review S1).
+  - The `{requested, node_default}` manifest dependency is for managed Claude Code only; unmanaged Claude Code and
+    other harnesses keep the plain string. Central stores a reported `harness_requested` only when it is a valid
+    request and `harness_fallback` only when it is a known reason, and drops anything else (PR #43 review S2, N2).
   - An API update that leaves `harness_version` out keeps the stored pin, so an older Terraform provider never
     clears it; `""` clears it.
 

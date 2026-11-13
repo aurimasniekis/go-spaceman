@@ -18,8 +18,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
   Run reports carry the version a run launched, what it requested and the fallback reason. Central stores them on
   the run (`harness_version`, `harness_requested`, `harness_fallback`), and the API and the run page show them. The
-  manifest's `dependencies["claude-code"]` becomes `{requested, node_default}` for protocol 1.11 nodes; older nodes
-  keep the version string. A managed node's capabilities add `managed`, `channel`, `resolved`, `cached` and
+  manifest's `dependencies["claude-code"]` becomes `{requested, node_default}` for protocol 1.11 nodes that manage
+  Claude Code; other nodes and other harnesses keep the version string. Report values that aren't a valid request or a
+  known fallback reason are dropped. GC keeps at most `harness.claude.cache_keep_pinned` (default 5) pinned versions
+  launched in the last 30 days, besides versions in use. A managed node's capabilities add `managed`, `channel`, `resolved`, `cached` and
   `cache_bytes`. Operator guide: "Pinning a version per profile".
 - Node-managed Claude Code launches (`harness.claude.manage: true`, ADR-0077): a Claude Code run launches the verified
   cached binary by absolute path, so the herdr-core core's `PATH` no longer decides which `claude` runs. With nothing

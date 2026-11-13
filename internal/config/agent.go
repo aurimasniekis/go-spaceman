@@ -73,6 +73,9 @@ type ClaudeCodeConfig struct {
 	BaseURL string `yaml:"base_url"`
 	// CacheKeep is how many of the newest versions the cache keeps besides pinned and in-use ones (1-50).
 	CacheKeep int `yaml:"cache_keep"`
+	// CacheKeepPinned is how many versions profiles pinned the cache keeps at most, the most recently launched ones
+	// within 30 days (1-50). A version a live or adoptable run uses is always kept, whatever the cap.
+	CacheKeepPinned int `yaml:"cache_keep_pinned"`
 	// Refresh is how long a channel is memoised and how often the node re-resolves, prefetches it and collects the
 	// cache's garbage (1m to 24h).
 	Refresh Duration `yaml:"refresh"`

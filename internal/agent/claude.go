@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -25,6 +26,10 @@ type ClaudeOptions struct {
 	// DownloadTimeout bounds how long a launch waits in starting for a version when none it may run is cached.
 	// Default dist.DefaultDownloadTimeout.
 	DownloadTimeout time.Duration
+	// KeepPinned is how many profile-pinned versions GC keeps at most, the most recently used ones
+	// (harness.claude.cache_keep_pinned). Default dist.DefaultKeepPinned. A version a live or adoptable run uses is always
+	// kept, whatever the cap.
+	KeepPinned int
 	// SelfUpdate lets unmanaged runs update themselves: without it every Claude Code run gets the updater-off
 	// variables. Managed runs always get them (nothing would launch a self-updated copy).
 	SelfUpdate bool
@@ -38,36 +43,66 @@ func (a *Agent) managedClaude() bool { return a.o.Claude.Dist != nil }
 const claudePinWindow = 30 * 24 * time.Hour
 
 // claudePinned returns the exact versions GC must keep as pinned: the node's channel when that is an exact version, and
-// every exact version a profile pinned on a launch this node saw (in this process, or in the journal within
-// claudePinWindow).
-func (a *Agent) claudePinned(ctx context.Context) []string {
-	set := map[string]bool{}
-	if dist.ValidVersion(a.o.Claude.Channel) {
-		set[a.o.Claude.Channel] = true
+// the exact versions profiles pinned on runs this node started within claudePinWindow (in this process, or in the
+// journal), at most KeepPinned of them besides the ones inUse lists (a version a live or adoptable run uses is kept by
+// GC anyway): the most recently used ones.
+func (a *Agent) claudePinned(ctx context.Context, inUse []string) []string {
+	since := a.now().Add(-claudePinWindow)
+	last := map[string]time.Time{}
+	seen := func(v string, at time.Time) {
+		if dist.ValidVersion(v) && at.After(last[v]) {
+			last[v] = at
+		}
 	}
 	a.mu.Lock()
-	for v := range a.claudePins {
-		set[v] = true
+	for v, at := range a.claudePins {
+		if at.Before(since) {
+			delete(a.claudePins, v) // expired: the set stays bounded by what was launched within the window
+			continue
+		}
+		seen(v, at)
 	}
 	a.mu.Unlock()
-	seen, err := a.j.harnessRequestsSince(ctx, harness.KindClaude, a.now().Add(-claudePinWindow))
+	fromJournal, err := a.j.harnessRequestsSince(ctx, harness.KindClaude, since)
 	if err != nil && ctx.Err() == nil {
 		a.log.Warn("claude code cache: pinned versions from the journal", obs.Err(err))
 	}
-	for _, v := range seen {
-		if dist.ValidVersion(v) {
-			set[v] = true
+	for v, at := range fromJournal {
+		seen(v, at)
+	}
+	var pins, used []string
+	for v := range last {
+		if slices.Contains(inUse, v) {
+			// Not counted against the cap; still listed, so a run ending between this and GC's own check of the
+			// versions in use doesn't leave a recent pin unprotected.
+			used = append(used, v)
+			continue
 		}
+		pins = append(pins, v)
 	}
-	out := make([]string, 0, len(set))
-	for v := range set {
-		out = append(out, v)
+	// Most recently used first; equal times by version, so the cut is deterministic.
+	sort.Slice(pins, func(i, j int) bool {
+		if !last[pins[i]].Equal(last[pins[j]]) {
+			return last[pins[i]].After(last[pins[j]])
+		}
+		return pins[i] < pins[j]
+	})
+	limit := a.o.Claude.KeepPinned
+	if limit <= 0 {
+		limit = dist.DefaultKeepPinned
 	}
-	sort.Strings(out)
-	return out
+	if len(pins) > limit {
+		pins = pins[:limit]
+	}
+	pins = append(pins, used...)
+	if dist.ValidVersion(a.o.Claude.Channel) && !slices.Contains(pins, a.o.Claude.Channel) {
+		pins = append(pins, a.o.Claude.Channel) // the node's own exact channel is not a profile pin: never capped
+	}
+	sort.Strings(pins)
+	return pins
 }
 
-// notePin remembers a profile's exact pin for GC (claudePinned).
+// notePin remembers a profile's exact pin for GC (claudePinned), once a run launched with it has started.
 func (a *Agent) notePin(v string) {
 	if !dist.ValidVersion(v) {
 		return
@@ -75,9 +110,9 @@ func (a *Agent) notePin(v string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.claudePins == nil {
-		a.claudePins = map[string]bool{}
+		a.claudePins = map[string]time.Time{}
 	}
-	a.claudePins[v] = true
+	a.claudePins[v] = a.now()
 }
 
 // claudeRequest is what a Claude Code launch asks for: the profile's pin (minor ≥ 11, ADR-0077), which overrides the
@@ -155,7 +190,7 @@ func (a *Agent) startClaude(ctx context.Context, wg *sync.WaitGroup) {
 		log.Warn("claude code cache: versions in use", obs.Err(err))
 	}
 	verify := map[string]bool{}
-	for _, v := range append(used, a.claudePinned(ctx)...) {
+	for _, v := range append(used, a.claudePinned(ctx, used)...) {
 		verify[v] = true
 	}
 	for _, v := range m.Resolved() {
@@ -195,7 +230,14 @@ func (a *Agent) startClaude(ctx context.Context, wg *sync.WaitGroup) {
 
 // claudeGC removes cached versions nothing needs any more.
 func (a *Agent) claudeGC(ctx context.Context) {
-	removed, err := a.o.Claude.Dist.GC(ctx, a.claudePinned(ctx), a.claudeVersionsInUse)
+	used, err := a.claudeVersionsInUse(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.log.Warn("claude code cache: garbage collection: versions in use", obs.Err(err))
+		}
+		return // without the versions in use nothing is removed
+	}
+	removed, err := a.o.Claude.Dist.GC(ctx, a.claudePinned(ctx, used), a.claudeVersionsInUse)
 	if err != nil && ctx.Err() == nil {
 		a.log.Warn("claude code cache: garbage collection", obs.Err(err))
 	}

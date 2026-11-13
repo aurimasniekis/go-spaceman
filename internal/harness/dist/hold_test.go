@@ -371,3 +371,33 @@ func TestHoldCached(t *testing.T) {
 		t.Fatalf("damaged version kept (held %v)", m.Held())
 	}
 }
+
+// Review N1: an exact version never falls back, even when another version is cached and the channel's memo would allow
+// one. A missing exact version is downloaded and runs exactly; one the release host doesn't have is an error.
+func TestExactRequestNeverFallsBack(t *testing.T) {
+	fr := newFakeRelease(t)
+	m := newManager(t, fr, t.TempDir(), nil)
+	installAll(t, fr, m, "2.1.1")
+	fr.add("2.1.5", binary("2.1.5"), nil)
+	fr.setPointer(ChannelLatest, "2.1.1")
+	if _, err := m.Channel(context.Background(), ChannelLatest); err != nil { // memoised: latest → 2.1.1
+		t.Fatal(err)
+	}
+
+	res, release, err := m.Acquire(context.Background(), "2.1.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if res.Version != "2.1.5" || res.Fallback != "" {
+		t.Fatalf("Acquire(2.1.5) = %+v, want 2.1.5 exactly", res)
+	}
+	if res, err := m.Resolve(context.Background(), "2.1.4"); err == nil {
+		t.Fatalf("Resolve(2.1.4) = %+v, want an error (the release host doesn't have it)", res)
+	} else if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Resolve(2.1.4): %v, want ErrNotFound", err)
+	}
+	if _, _, err := m.Acquire(context.Background(), "2.1.4"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Acquire(2.1.4): %v, want ErrNotFound", err)
+	}
+}

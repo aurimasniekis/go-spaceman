@@ -194,22 +194,24 @@ func (j *Journal) harnessVersionsInUse(ctx context.Context, kind string) ([]stri
 	return out, rows.Err()
 }
 
-// harnessRequestsSince returns what the journal's runs of kind updated since t requested (a channel or an exact
-// version, the run's profile pin or the node's channel).
-func (j *Journal) harnessRequestsSince(ctx context.Context, kind string, t time.Time) ([]string, error) {
-	rows, err := j.s.ReadDB().QueryContext(ctx, `SELECT DISTINCT harness_requested FROM runs
-		WHERE harness = ? AND harness_requested != '' AND updated_at >= ? ORDER BY harness_requested`, kind, t.UnixMicro())
+// harnessRequestsSince returns what the journal's started runs of kind updated since t requested (a channel or an exact
+// version, the run's profile pin or the node's channel), each with when a run requesting it was last updated. A launch
+// that failed before its program started (no terminal) doesn't count.
+func (j *Journal) harnessRequestsSince(ctx context.Context, kind string, t time.Time) (map[string]time.Time, error) {
+	rows, err := j.s.ReadDB().QueryContext(ctx, `SELECT harness_requested, MAX(updated_at) FROM runs
+		WHERE harness = ? AND harness_requested != '' AND terminal_id != '' AND updated_at >= ? GROUP BY harness_requested`, kind, t.UnixMicro())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := map[string]time.Time{}
 	for rows.Next() {
 		var v string
-		if err := rows.Scan(&v); err != nil {
+		var at int64
+		if err := rows.Scan(&v, &at); err != nil {
 			return nil, err
 		}
-		out = append(out, v)
+		out[v] = time.UnixMicro(at).UTC()
 	}
 	return out, rows.Err()
 }

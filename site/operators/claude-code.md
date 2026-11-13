@@ -44,6 +44,7 @@ harness:
     manage: true
     channel: latest            # latest, stable or an exact X.Y.Z
     cache_keep: 3
+    cache_keep_pinned: 5
     refresh: 15m
     download_timeout: 15m
 ```
@@ -68,8 +69,9 @@ harness:
   channel moved on, or GC removed a fallback), the run waits again, at most three times within `download_timeout`.
 - **Live runs keep their binary.** A new version affects new runs only. GC never removes the version of a run that is
   live or that a restarted agent can adopt. It also keeps the newest `cache_keep` versions, the channel's current and
-  previous targets, and a pinned exact version. Plan for about 340 MB per cached version (2.1.322 linux-x64), so
-  about 1 GB with the defaults.
+  previous targets, the node's exact `channel`, and up to `cache_keep_pinned` versions that profiles pinned (see
+  [Pinning a version per profile](#pinning-a-version-per-profile)). Plan for about 340 MB per cached version (2.1.322
+  linux-x64), so about 1 GB with the defaults, plus up to `cache_keep_pinned` pinned versions.
 - **At agent start** the node removes interrupted downloads, re-hashes the versions it will use (those of live runs,
   the pinned version and the channel targets), removes any that fail, and collects garbage. GC runs again every
   `refresh`. A check that can't finish (the agent is stopping, or the launch's wait expired) keeps the version; only a
@@ -97,7 +99,10 @@ profile pin  →  node channel  →  latest
 
 Pinning back to an older version is just launching the pin again: older releases stay downloadable, and a version a
 profile pinned is kept in the cache. The node learns pins only from launches it has seen. GC keeps the exact versions
-launched in the last 30 days, besides the usual `cache_keep`, channel targets and live runs.
+that profiles pinned on runs the node started in the last 30 days, at most `cache_keep_pinned` of them (default 5, the
+most recently launched), besides the usual `cache_keep`, channel targets and live runs. A launch that failed before
+its run started doesn't count. A version that a live run, or a run a restarted agent can adopt, uses is always kept,
+whatever the cap.
 
 An API update that leaves `harness_version` out keeps the stored pin, so an older Terraform provider doesn't clear it.
 Send `""` to clear it. A pin is accepted on claude-code profiles only.
@@ -112,9 +117,10 @@ workbench) shows what the node launched:
 - `harness_fallback`: why another version than the request's target ran (`previous_target`, `older_cached`,
   `last_target`, `newest_cached`). It is absent when the target ran.
 
-The run manifest stays the configuration resolved at creation. Its `dependencies["claude-code"]` is then
-`{requested, node_default}`: the pin or channel, and the version the node last reported a new run would get. Runs on
-older nodes keep the plain version string. An unmanaged node reports a version only for pinned runs.
+The run manifest stays the configuration resolved at creation. On a node that manages Claude Code, its
+`dependencies["claude-code"]` is then `{requested, node_default}`: the pin or channel, and the version the node last
+reported a new run would get. Runs on older nodes, on nodes that don't manage Claude Code, and of other harnesses keep
+the plain version string. An unmanaged node reports a version only for pinned runs.
 
 ### Tamper policy
 

@@ -30,9 +30,9 @@ func pinnedRole(t *testing.T, e *fleetEnv, spaceID, slug, pin string) {
 	}
 }
 
-// hvNode connects a scripted node at maxMinor that reports a Claude Code version and channel, and waits for its lease
-// on a new space.
-func hvNode(t *testing.T, e *fleetEnv, slug string, maxMinor int) (*rawNode, *fleet.Space) {
+// hvNode connects a scripted node at maxMinor that reports a Claude Code version and channel (managed) or only its
+// detected version, and a Codex version, and waits for its lease on a new space.
+func hvNode(t *testing.T, e *fleetEnv, slug string, maxMinor int, managed bool) (*rawNode, *fleet.Space) {
 	t.Helper()
 	ctx := context.Background()
 	nodes, _ := e.c.Fleet.ListNodes(ctx)
@@ -43,7 +43,7 @@ func hvNode(t *testing.T, e *fleetEnv, slug string, maxMinor int) (*rawNode, *fl
 	bindStubAccounts(t, e.c, sp.ID)
 	n := dialRawNodeHello(t, e, proto.Hello{AgentVersion: "test", MinMinor: proto.MinMinor, MaxMinor: maxMinor, Runs: []proto.RunReport{}, Leases: []proto.LeaseState{},
 		Capabilities: proto.Capabilities{Harnesses: []proto.HarnessInfo{{Kind: "claude-code", Version: "2.1.322", Available: true, Capabilities: []string{},
-			Managed: true, Channel: "latest"}}}})
+			Managed: managed, Channel: map[bool]string{true: "latest"}[managed]}, {Kind: "codex", Version: "0.50.0", Available: true, Capabilities: []string{}}}}})
 	var w proto.Welcome
 	if err := n.next(t, proto.TypeWelcome).Decode(&w); err != nil || w.Minor != maxMinor {
 		t.Fatalf("welcome %+v %v", w, err)
@@ -61,7 +61,7 @@ func TestHarnessPinFailsOnOldNode(t *testing.T) {
 	e := newFleetEnv(t)
 	e.enroll()
 	ctx := context.Background()
-	n, sp := hvNode(t, e, "oldpin", proto.MinorHarnessVersion-1)
+	n, sp := hvNode(t, e, "oldpin", proto.MinorHarnessVersion-1, true)
 	pinnedRole(t, e, sp.ID, "pinned", "2.1.317")
 	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Role: "pinned", Prompt: "go"})
 	if err != nil {
@@ -107,7 +107,7 @@ func TestHarnessPinReachesNodeAndRunShowsVersion(t *testing.T) {
 	e := newFleetEnv(t)
 	e.enroll()
 	ctx := context.Background()
-	n, sp := hvNode(t, e, "newpin", proto.MinorHarnessVersion)
+	n, sp := hvNode(t, e, "newpin", proto.MinorHarnessVersion, true)
 	pinnedRole(t, e, sp.ID, "pinned", "2.1.317")
 	r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Role: "pinned", Prompt: "go"})
 	if err != nil {
@@ -170,5 +170,39 @@ func TestHarnessPinReachesNodeAndRunShowsVersion(t *testing.T) {
 	eventually(t, "the channel run's version", func() bool { return e.run1(r2.ID).HarnessVersion == "2.1.320" })
 	if x := e.run1(r2.ID); x.HarnessRequested != "latest" || x.HarnessFallback != "previous_target" {
 		t.Fatalf("channel run %+v", x)
+	}
+	// Review S2: a request that isn't a valid one and a fallback that isn't a known reason are dropped, not truncated;
+	// the version itself is still stored.
+	r3, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Role: "free", Kind: "worker", Harness: "claude-code", Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: r3.ID, SpaceID: sp.ID, Generation: c.Generation, State: proto.RunRunning, ObservedAt: time.Now(),
+		HarnessVersion: "2.1.321", HarnessRequested: strings.Repeat("nightly", 20), HarnessFallback: "because\nI said so"})
+	eventually(t, "the third run's version", func() bool { return e.run1(r3.ID).HarnessVersion == "2.1.321" })
+	if x := e.run1(r3.ID); x.HarnessRequested != "" || x.HarnessFallback != "" {
+		t.Fatalf("bad report fields stored: requested %q, fallback %q", x.HarnessRequested, x.HarnessFallback)
+	}
+}
+
+// Review N2: only managed Claude Code gets the {requested, node_default} dependency. Unmanaged Claude Code and other
+// harnesses keep the plain version string, also on a minor-11 node.
+func TestHarnessDependencyPlainUnlessManaged(t *testing.T) {
+	t.Parallel()
+	e := newFleetEnv(t)
+	e.enroll()
+	ctx := context.Background()
+	_, sp := hvNode(t, e, "unmanaged", proto.MinorHarnessVersion, false)
+	for harness, want := range map[string]string{"claude-code": "2.1.322", "codex": "0.50.0"} {
+		r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Role: "free-" + harness, Kind: "worker", Harness: harness, Prompt: "go"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m struct {
+			Dependencies map[string]any `json:"dependencies"`
+		}
+		if err := json.Unmarshal(e.run1(r.ID).Manifest, &m); err != nil || m.Dependencies[harness] != want {
+			t.Fatalf("%s dependency %#v %v, want the plain %q", harness, m.Dependencies[harness], err, want)
+		}
 	}
 }
