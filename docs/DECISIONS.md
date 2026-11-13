@@ -4201,7 +4201,7 @@
      reuse the cache. Every query function passes TanStack Query's abort signal to its requests.
   - Measured: with 60 space and 60 human-action changes in the history, a fresh tab visiting the inbox, overview,
     terminals and spaces pages made 318 API requests (122 `human-actions`, 64 `spaces`, 62 `system/restore`) before
-    and 21 after (`web/e2e/request-budget.spec.ts`).
+    and 21 after (`web/e2e/ui-request-budget.spec.ts`).
 - **Consequences:** an idle node's reconnect costs central one read per journaled run and no writes. A list of 200
   runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
   reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.

@@ -15,7 +15,7 @@ import { Api, env, restartAgent, startAgent } from './stack'
  */
 
 interface Counter {
-  __smRunChanges?: number
+  __smRunChanges?: Record<string, number>
 }
 
 /** Counts the runs list requests the page makes and the most in flight at once. */
@@ -36,7 +36,8 @@ function watchRuns(page: Page, spaceId: string) {
   return s
 }
 
-const runChanges = (page: Page) => page.evaluate(() => (window as unknown as Counter).__smRunChanges ?? 0)
+/** The run changes of a space the page received (other specs' runs on the same node change on a reconnect too). */
+const runChanges = (page: Page, spaceId: string) => page.evaluate((id) => (window as unknown as Counter).__smRunChanges?.[id] ?? 0, spaceId)
 
 test('a burst of run changes or a node reconnect does not flood the runs list', async ({ page }) => {
   test.setTimeout(240_000)
@@ -48,9 +49,11 @@ test('a burst of run changes or a node reconnect does not flood the runs list', 
         super(url, init)
         this.addEventListener('change', (ev) => {
           try {
-            if (JSON.parse((ev as MessageEvent<string>).data).resource_type === 'run') {
-              const w = window as unknown as { __smRunChanges?: number }
-              w.__smRunChanges = (w.__smRunChanges ?? 0) + 1
+            const c = JSON.parse((ev as MessageEvent<string>).data) as { resource_type: string; space_id?: string }
+            if (c.resource_type === 'run' && c.space_id) {
+              const w = window as unknown as { __smRunChanges?: Record<string, number> }
+              w.__smRunChanges ??= {}
+              w.__smRunChanges[c.space_id] = (w.__smRunChanges[c.space_id] ?? 0) + 1
             }
           } catch {
             // not a change
@@ -100,7 +103,7 @@ test('a burst of run changes or a node reconnect does not flood the runs list', 
   }
   for (const r of runs) await expect.poll(async () => (await api.call<{ observed: string }>('GET', `/spaces/${sp.id}/runs/${r}`)).observed, { timeout: 30_000 }).toMatch(/exited|failed/)
   await page.waitForTimeout(1500)
-  const changes = await runChanges(page)
+  const changes = await runChanges(page, sp.id)
   test.info().annotations.push({ type: 'burst', description: `${changes} run changes, ${s.total} runs list requests, at most ${s.maxInFlight} in flight` })
   expect(changes, 'the burst produced run changes').toBeGreaterThan(runs.length * 2)
   expect(s.total, 'run changes are coalesced into fewer list refetches').toBeLessThan(changes)
@@ -111,7 +114,7 @@ test('a burst of run changes or a node reconnect does not flood the runs list', 
   await restartAgent()
   await connected()
   await page.waitForTimeout(3000)
-  const reconnectChanges = (await runChanges(page)) - before.changes
+  const reconnectChanges = (await runChanges(page, sp.id)) - before.changes
   test.info().annotations.push({ type: 'reconnect', description: `${reconnectChanges} run changes, ${s.total - before.requests} runs list requests` })
   expect(reconnectChanges, 'a reconnect whose runs are unchanged changes no run').toBe(0)
   expect(s.total - before.requests, 'and refetches no runs list').toBe(0)
