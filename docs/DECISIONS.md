@@ -267,6 +267,8 @@
   - `connect-src data:` lets the page fetch its own inlined module. A `data:` URL carries no credentials and reaches no server, so it cannot be
     used to exfiltrate data to another origin.
   - `style-src 'unsafe-inline'` is inherited from Pulse and Hallpass (Mantine sets inline styles).
+  - *Update 2026-11-12 (ADR-0076), tightening:* the page compiles the package's `ghostty-vt.wasm`, served as a hashed
+    asset from its own origin, and no longer uses the inlined `data:` module. `connect-src` is back to `'self'` alone.
 - **Consequences:**
   - Terminal output is untrusted program output. It is rendered by the VT parser onto a canvas, never as HTML.
   - The terminal is watch-only (`disableStdin`): keystrokes in the page are never sent to the run. Operator input goes through the separate,
@@ -2066,7 +2068,8 @@
     clear a freed terminal's memory, so the next terminal started out with its cells (another run's lines showed
     through, reset or not), and memory of a terminal with many styles was never reused (the page grew until the tab
     crashed). Each terminal now runs in a WebAssembly instance of its own, released with it
-    (`web/src/features/terminal/ghostty.ts`, `wasm.test.ts`, `e2e/terminal-switch.spec.ts`). The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
+    (`web/src/features/terminal/ghostty.ts`, `wasm.test.ts`, `e2e/terminal-switch.spec.ts`; since ADR-0076 the instances
+    share one compiled module, never memory). The view follows the cursor's row as output arrives (until the viewer scrolls away), and the wheel scrolls
     the box before it reaches ghostty-web's scrollback.
   - **Connections.** One change-feed stream serves all tabs of a browser: the tab holding the Web Lock
     `spaceman-watch` opens it and relays it over a BroadcastChannel; another tab takes over when it closes. Without
@@ -2836,6 +2839,11 @@
   can't tell, and `SM_SITE_A11Y=1` forces it (the release workflow sets it, so the release still always audits). The
   audit itself is sharded over `SM_A11Y_SHARDS` parallel tests and workers (two in CI) and waits for VitePress to
   hydrate instead of for network idle; it audits the same pages, schemes and rules.
+- **Update, 2026-11-09 (every hosted Go test job):** Q1 b covers every non-race job on a hosted runner that opens a
+  store, not only the coverage steps. The login-timing jobs (ADR-0071, `ci.yaml` and the release gate) and the fuzz
+  jobs (nightly and the release smoke; `internal/keyring`'s targets open a store) ran with the 100 ms default. The
+  login-timing job failed on it with `auth.login_failed` holding the lock 120–186 ms while its timing check passed.
+  They now set `SM_TEST_TX_MAX=250ms` too. The race steps keep 1 s. Not security-relevant, for the reasons above.
 
 ### ADR-0063 — SpaceMan admin MCP: SpaceMan's own API as an MCP server for a space's runs, through a secretless internal token (security-relevant change)
 - **Status:** **Accepted**, 2026-11-08 (proposed 2026-11-07). The operator's decisions are recorded with the design;
@@ -3877,6 +3885,211 @@
     set these two yet. Its data source shows them in `values`. Adding the attributes is a follow-up in the provider
     (PLAN.md).
 
+### ADR-0076 — The web terminal loads stored output in slices and works around ghostty-web 0.4.0's per-row viewport parse
+- **Status:** Accepted, 2026-11-12 (operator report on v0.1.1: opening Terminals or Spaces on a fresh cache froze the
+  whole tab for about a minute, and for minutes on a phone).
+- **Context:**
+  - A cold-cache Chromium trace with CPU throttling (2026-11-12) found the cause. It was neither the WebAssembly loading
+    nor the chunk-reload logic: it was the stored output a terminal applies when it opens.
+  - A live terminal's stream starts with the run's whole recording (catch-up), which is tens of megabytes for a long
+    Claude Code session. Each record was applied in the task that delivered it, with a React render per record. A
+    replay applied the whole recording in one task (the former `renderTo`).
+  - ghostty-web 0.4.0's `GhosttyTerminal.getLine(y)` copies and parses the whole viewport to return one row, and its
+    renderer calls it for every row it draws. A full redraw therefore costs rows × rows × columns cell parses (2.9
+    million at 200×120). Output that scrolls changes every row, so each frame during catch-up redrew the whole
+    screen. The renderer also calls `fillText` for every blank cell.
+  - For a 22 MB recording at 4× throttling, the main thread was saturated for 33 s: 123 long tasks, the longest
+    933 ms. With 5 MB (`e2e/terminal-load.spec.ts`), the longest task was 917 ms live and 1.5 s in a replay (5.0 s at
+    6×), and a key press waited up to 2.8 s.
+  - #27 (ADR-0052's 2026-11-09 amendment) gave every terminal its own WebAssembly instance through `Ghostty.load()`. That
+    fetched and compiled the module again from a 560 kB `data:` URL for every terminal. Compiling is asynchronous, so
+    this was not the freeze, but the work was repeated for nothing.
+- **Decision** (`web/src/features/terminal/`):
+  - **Stored output is applied in slices** (`records.ts` `feed`). Records are queued and applied in slices of about
+    12 ms, then the page gets the main thread back. Consecutive output records go to the terminal in one write of at
+    most 32 kB. The badges update twice a second, and "Loading output…" shows until the terminal has caught up. A
+    replay seek works the same way, and playback waits for it to finish. A replay reads its recording in pages of
+    1000 records, so each response parses in a short task.
+  - **No drawing while catching up** (`ghostty.ts` `holdDrawing`). The terminal's renderer is paused from the
+    stream's first record, or while a backlog remains, and draws once in full when the backlog is gone. `fitFont`
+    holds drawing the same way while it steps through font sizes.
+  - **Two patches to ghostty-web 0.4.0's prototypes**, applied once:
+    - `cacheViewport` keeps the parsed viewport until the terminal changes (`write`, `resize`, `free`) or the current
+      task ends, so a redraw parses the viewport once.
+    - `skipBlankCells` skips the text call for a blank cell unless it is underlined, struck through or part of a
+      hovered link. A blank cell has no ink, and its background is drawn separately.
+
+    Both patches are checked against the real module (`viewport.test.ts`) or the 0.4.0 renderer's contract
+    (`ghostty.test.ts`). They must be re-checked when ghostty-web is upgraded. Upstream ghostty-web has the defects;
+    these are our side's smallest fixes (upstream report pending: drafted, not filed; the operator decides).
+
+    The patches are applied only when the installed ghostty-web is exactly 0.4.0 (`patchGhostty`, against the
+    version Vite reads from the package at build time). On any other version they are skipped with a console warning:
+    drawing is slower again, never wrong. `version.test.ts` fails while the package is not 0.4.0, so an upgrade
+    re-verifies them first.
+  - **The module is compiled once per page** from the package's `ghostty-vt.wasm`, served as a hashed, immutable asset.
+    Each terminal still instantiates it. The module defines its own memory and imports nothing but a log function, so
+    every terminal keeps a fresh, zeroed memory of its own and no shared state, as #27 requires.
+    `check-dist` fails a build without the asset.
+  - **ghostty-web's inlined copy of the module is stripped from the build.** Its `Ghostty.load()` carries the module
+    as a base64 `data:application/wasm` URL (564 kB of the terminal's chunk), which the page never uses. A Vite
+    transform (`vite.config.ts` `stripGhosttyInlineWasm`) replaces it with a URL that fails to load, so a stray
+    `Ghostty.load()` falls back to the package's `./ghostty-vt.wasm`. The `RunWorkbench` chunk goes from 687 kB
+    (204 kB gzipped) to 122 kB (37 kB). The transform fails the build when it finds nothing to strip, and `check-dist`
+    fails it when any `data:application/wasm` is left in `dist`.
+- **Consequences:**
+  - At 4× CPU throttling on a cold cache, with 5 MB of stored output, the longest task is now 96–129 ms while a live
+    terminal loads and 111–131 ms in a replay. At 6× they are 174 ms and 228 ms. A key press is handled within
+    0.6 s at 4× (2.8 s before). With 22 MB, the 33 s of blocked main thread became tasks of at most about 0.26 s
+    (the longest is the page's own first render), and the page answers input while the output loads.
+  - A terminal shows its previous picture and "Loading output…" until it has caught up, instead of drawing each
+    intermediate screen.
+  - Opening a page still costs React's render: Spaces takes 140–250 ms at 4× (the same before and after), and the
+    Terminals page's first render about 420 ms. The change feed's refetch burst on load is one task. Neither is
+    terminal work. They are the next things to measure if pages still feel slow on a phone.
+  - ADR-0020's `connect-src data:` is no longer needed and is removed (see its update).
+- *Update 2026-11-13, stale glyphs (operator report on v0.1.1: a watched 160×48 control run showed older lines of the
+  same session through its new lines, character by character):*
+  - **Root cause: ghostty-web 0.4.0's WebAssembly module, not the renderer.** The run's recording was complete
+    (11,407 records, no sequence gaps, no size changes). Fed to the 0.4.0 module alone, with no canvas, it produced
+    the screenshot's rows in the terminal's own cells. Replayed record by record against xterm.js, it first diverged
+    when rows scrolled in at the bottom: they still held cells of output from hundreds of lines earlier. Upstream
+    ghostty-web #180 (`bec9e16`, first released in 0.4.0-next.18): `Screen.cursorDownScroll()` cleared a newly grown
+    row only when the cursor's style had a background colour. After `ESC[0m`, the row kept whatever its reused page
+    memory held.
+  - Claude Code shows this because of how it writes a line: it places each word with a column move (`CSI n G`) and
+    skips the cells between words, which it expects a fresh row to have blank. Those cells showed the stale text, as
+    in `losparseeline 14xxxx…`. Truecolour output that ends each line in a reset triggers it after a few hundred
+    lines (`scrolled.test.ts`). Not the cause: glyph overhang between rows, the dirty-row redraw set, the scaled
+    fixed size, the device pixel ratio, or catch-up slicing. A simulated renderer drew exactly the module's cells.
+  - **Decision:** the terminal keeps ghostty-web 0.4.0's JavaScript and loads the WebAssembly module of
+    `ghostty-web@0.4.0-next.21.g640db46` (2026-10-28), which contains the fix. It comes in as the pinned package
+    alias `ghostty-web-vt` (`web/package.json`; the lockfile holds its integrity hash), and no binary is committed.
+    The module exports everything 0.4.0's does, plus two hyperlink functions, imports only the same log function,
+    and takes the same configuration layout. Replayed under 0.4.0's JavaScript, the whole control recording matches
+    xterm.js after every record.
+
+    The JavaScript is not upgraded. Its about 2,000 changed lines include a new input handler (beforeinput, mouse
+    tracking), which would need a fresh review of watch-only (SM-UI-004), and the prototype patches above are
+    verified only on 0.4.0. `version.test.ts` pins both versions, so changing either fails until the pairing is
+    re-verified. `vtmodule.test.ts` checks the pairing automatically: the module exports every function 0.4.0's
+    JavaScript calls, imports only the log function, and reads the configuration in 0.4.0's layout (colours,
+    palette, scrollback limit). The pairing is temporary. It goes away when the terminal upgrades to an upstream
+    ghostty-web release that contains the fix: a follow-up task, with a fresh SM-UI-004 review of the new input
+    handler and the prototype patches re-verified.
+  - **Tests:** `scrolled.test.ts` runs the stub's pattern against the shipped module (blank rows) and against 0.4.0's
+    module (the defect). `e2e/terminal-stale.spec.ts` drives the stub harness's new `/sparse 1000` line live and in
+    replay, at DPR 1 and 2, and at the node's 160×48 both unscaled and scaled down to fit. It checks that every row's
+    cells read what the program wrote, and that the canvas has only background after each row's text. Both checks
+    fail on 0.4.0's module. The browser test probe now reads an empty cell as a space: ghostty-web's
+    `translateToString` drops it, which shifted the rest of the row.
+  - **Side finding, not changed:** ghostty's `scrollbackLimit` is in bytes, but ghostty-web passes the `scrollback`
+    option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns.
+
+### ADR-0077 — Node-managed Claude Code versions (security-relevant change)
+- **Status:** Proposed, 2026-11-13. The operator decided on 2026-11-12: always use the latest version, unless the
+  harness profile pins one; then use that version, downloading it if it is missing or reverting to it. Implementation
+  follows in separate PRs (PLAN.md, CC). This ADR is security-relevant because **the node downloads and executes
+  vendor binaries** that no operator installed by hand.
+- **Context (code, at v0.1.1):**
+  - SpaceMan doesn't manage Claude Code. The node runs whatever `claude` the run's `PATH` resolves to
+    (`harness.claude_binary`, default `"claude"`). `Detect` resolves it on the agent's `PATH` when the node connects,
+    but the launch shim resolves it again on the herdr-core core's `PATH`, so the reported version and the binary a run
+    executes can differ.
+  - The reported version is refreshed only on a reconnect more than 5 minutes after the last detection. The run
+    manifest's `dependencies.claude-code` copies that value when central creates the run, not what the node launched.
+  - SpaceMan never sets `DISABLE_AUTOUPDATER`, so every interactive Claude run updates itself into the node agent's
+    `HOME` (about 340 MB per version). The spike below shows this happens even when the binary was launched from
+    elsewhere.
+  - No profile or node setting can choose a version.
+  - Release metadata (contract: `docs/contracts/harnesses.md`, Distribution): channel pointers `latest` and `stable`,
+    a per-version `manifest.json` with each platform's SHA-256 `checksum` and `size`, and two signature sidecars.
+    Older versions stay downloadable.
+- **Decision:**
+  1. **Resolution precedence: the profile pin, then the node channel, then `latest`.**
+     - A new typed profile field `harness_version` (for `claude-code`; keyed by harness kind so Codex can follow)
+       takes `""` (follow the node), `latest`, `stable` or an exact `X.Y.Z` checked with a strict regexp. API, web
+       and Terraform validate it. Central passes the pin to the node as `LaunchPayload.harness_version`.
+     - The node's `harness.claude.channel` (default `latest`) accepts the same values.
+     - The node resolves, because it owns the network, the cache and the platform. An exact version is used as is
+       and downloaded first if it is missing (the run waits in `starting`), so a pin "reverts" by being launched
+       again. A channel is resolved with `GET {base_url}/{channel}`, validated as strict semver and memoised for
+       `refresh` (default 15 min). A background loop re-resolves and prefetches. If a channel's target isn't cached
+       yet or the pointer can't be fetched, the run uses the newest verified cached version and reports both the
+       requested and the actual version. With nothing cached, the launch waits up to `download_timeout`.
+  2. **A fixed HTTPS host; `base_url` is operator-only.** The default is
+     `https://downloads.claude.ai/claude-code-releases`, the same base compiled into Claude Code. `base_url` is node
+     configuration only (so an operator can mirror it), must be `https`, and is never settable from a profile, space,
+     API or MCP. Request paths are built only from a validated version and a platform from `runtime.GOOS/GOARCH`
+     (plus a musl check on Linux), never from response text.
+  3. **Integrity: SHA-256 and size against the manifest; no signature check yet.**
+     - Fetch `{base_url}/{version}/manifest.json` and require `manifest.version == version`.
+     - Stream the binary through SHA-256 with a hard cap at the manifest's `size`; it must equal both.
+     - This is the integrity Claude Code's own updater has whenever its server-side signature enforcement is off
+       (`manifestSignatureEnforcement: "flag"`). The manifest's signature is **not** verified: the raw-signature
+       format and key are not documented publicly, so checking it would copy constants out of a vendor binary, and
+       OpenPGP for the `.sig` sidecar is outside the Go standard library and `x/crypto` (AGENTS.md). Open item
+       **K-14**; LIMITATIONS says "checksum-verified, not signature-verified". Anyone who controls the release host
+       or `base_url` controls the binary, the same as for Claude Code's own updater.
+  4. **An immutable cache, with GC.**
+     - Layout `<data_dir>/harness/claude-code/<version>/claude` (0755 inside the 0700 data dir) plus `verified.json`
+       (`version`, `platform`, `sha256`, `size`, `manifest_sha256`, `fetched_at`).
+     - A download goes into a temporary directory, is verified, `fsync`ed and renamed into place. A version directory
+       never changes after the rename. A failed check deletes the temporary directory and raises a node event, so
+       nothing partial is ever executable. A per-version singleflight and a `flock` serialize downloads.
+     - At start the agent re-checks size and SHA-256 of the versions it will use against `verified.json`.
+     - GC keeps the newest `cache_keep` (default 3), every version a profile seen by the node pins, and every version
+       a live or adoptable run in the journal uses. Nothing goes under `~/.local`.
+  5. **Absolute-path launch with the updater off.**
+     - The node passes the cached binary's **absolute path** as the harness binary, so the core's `PATH` no longer
+       matters.
+     - `Claude.Build` sets **both `DISABLE_AUTOUPDATER=1` and `DISABLE_UPDATES=1`** in the run's (non-secret,
+       hc-persisted) environment. The spike showed that `DISABLE_AUTOUPDATER=1` stops the background updater, but an
+       explicit `claude update` (which an agent can run from its shell) still installs a native copy into `HOME` and
+       switches `installMethod` to `native`. `DISABLE_UPDATES=1` refuses that too ("Updates are disabled by your
+       administrator"). The launch shim's `inherited()` must keep not scrubbing these names.
+     - A profile's `claude_settings` `autoUpdatesChannel`, `minimumVersion` or `env.DISABLE_*` have no effect on the
+       version under managed mode; nothing launches a self-updated copy. The node warns when a profile sets them.
+  6. **The `manage: false` escape hatch.** `harness.claude.manage: false` keeps today's behaviour (`claude_binary`
+     through `PATH`) for operators who install Claude Code themselves. The node still sets both updater variables
+     unless `harness.claude.self_update: true`. A profile pin that differs from the detected version then **fails the
+     launch** ("this node does not manage Claude Code versions"); it never silently runs another version. Central
+     likewise never sends a pin to a node below protocol minor 11: such a launch fails with a clear error.
+  7. **Live runs keep their binary.** A version change affects new runs only. A run's version directory is protected
+     from GC while the run is live or adoptable (and on Linux a deleted file's inode lives on for its process anyway).
+     herdr-core has no method that re-executes a terminal with a new binary, so moving a conversation onto a new
+     version would mean stopping the run and launching it again with `--resume`. The spike shows that works from
+     2.1.317 to 2.1.322 in print mode; an automatic `on_update: resume_when_idle` policy for control runs is left out
+     of this decision.
+  8. **Reporting.**
+     - `RunReport.harness_version` and `harness_requested`, sent with the first `starting` report, stored on the run
+       (`runs.harness_version`) and shown in the run detail and API. Adopted runs take the version from the agent's
+       journal, which gains a column.
+     - The manifest stays the configuration resolved at creation: `dependencies["claude-code"]` becomes
+       `{requested, node_default}`; the run row holds what ran. Pre-11 nodes keep today's string.
+     - A new node→central `node.capabilities` message carries the full capabilities when the cache or a channel
+       resolution changes, and at least every 30 minutes. `HarnessInfo` gains `managed`, `channel`, `resolved`,
+       `cached` and `cache_bytes`; `version`/`path` then mean "what a new run would get now". Unmanaged nodes re-run
+       detection on the same timer.
+  9. **Protocol minor 11 and migration 0048.** Minor 11 adds `LaunchPayload.harness_version`, the two `RunReport`
+     fields, `node.capabilities` and the `HarnessInfo` fields, all additive. Migration 0048 adds
+     `profiles.harness_version` and `runs.harness_version` (`TEXT NOT NULL DEFAULT ''`).
+- **Alternatives:**
+  - **Leave installation to configuration management** (a node-wide pin plus `DISABLE_AUTOUPDATER`). It is the
+    interim, but it can't pin per profile and its version report stays stale.
+  - **Let Claude Code update itself** (`~/.local/bin` first in `PATH`). Every run downloads, concurrent runs race,
+    the version can change between two runs of one task without anyone deciding, and a profile's
+    `autoUpdatesChannel` would steer every run sharing the `HOME`.
+  - **Verify the manifest signature now.** Rejected until the key and procedure are documented (K-14).
+- **Consequences:**
+  - The node makes outbound HTTPS requests to one host and runs what it downloads. That is a new trust in the release
+    host (and, if set, the operator's mirror), bounded by the checksum, the size cap, the version check and the
+    fixed path shape; THREAT_MODEL gains a row when the downloader lands.
+  - About 340 MB per cached version (2.1.322 linux-x64), so about 1 GB by default; the cache size is reported.
+  - Runs stop writing self-updates into the agent's `HOME`.
+  - Evidence so far is the contract and the spike (`docs/contracts/harnesses.md`, Distribution); none of the
+    decision is implemented yet (SM-HARN-005..008 are `todo`).
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |
@@ -3885,7 +4098,7 @@
 | K-2 | ~~Whether hc persists `env`.~~ **Resolved 2026-11-02:** yes, plaintext `restart_env` → ADR-0009 shim required. | — | done |
 | K-3 | ~~hc parent semantics.~~ **Resolved 2026-11-02:** children killed when the parent program exits or is killed, unless `outlive_parent` → ADR-0017 lease guard. | — | done |
 | K-4 | ~~Whether Pulse `durable` grants accept name patterns.~~ **Resolved 2026-11-02:** exact names only; DELETE permitted → fixed name + delete/recreate (ADR-0011). | — | done |
-| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020). 2026-11-03 (ADR-0046): `term.options.disableStdin` is read on every key, `onData` delivers typed input and `focus()` exists (checked in the 0.4.0 dist). | — | done |
+| K-5 | ~~ghostty-web package and API.~~ **Resolved 2026-11-02:** `ghostty-web` 0.4.0 (MIT): `init()`, `new Terminal({cols, rows, theme, fontSize, fontFamily, disableStdin, scrollback})`, `open`, `write(string \| Uint8Array)`, `resize`, `reset`, `dispose`; WebAssembly is inlined (ADR-0020; since ADR-0076 the page compiles the package's `ghostty-vt.wasm` asset instead). 2026-11-03 (ADR-0046): `term.options.disableStdin` is read on every key, `onData` delivers typed input and `focus()` exists (checked in the 0.4.0 dist). | — | done |
 | K-6 | ~~Official Go MCP SDK version and streamable/stdio APIs.~~ **Resolved 2026-11-02:** `github.com/modelcontextprotocol/go-sdk` v1.8.0: `mcp.NewServer`, typed `mcp.AddTool`, raw `Server.AddTool` (input schema must be an object, or it panics), `IOTransport` for stdio. Upstream client (M3-03): `mcp.NewClient` + `Client.Connect` with `StreamableClientTransport{Endpoint, HTTPClient, MaxRetries, DisableStandaloneSSE, MaxEventSize}`; the connection context is detached from the `Connect` context; `ClientSession.Tools` (paginated), `CallTool`, `Close`. Transport failures surface as JSON-RPC code -32005. | — | done |
 | K-7 | ~~TipTap extension set.~~ **Resolved 2026-11-02:** `@tiptap/react`, `starter-kit`, `markdown` (official Markdown parse/serialize), `extension-image`, `extension-list` (task lists), `extension-table`, `extension-file-handler` are MIT (npm registry). Pinned to 3.32.0 (released 2026-10-13); renderer `marked` 18.1.1 (MIT) + `dompurify` 3.4.17 (MPL-2.0 OR Apache-2.0). | — | done |
 | K-8 | ~~llm-knowledge-base-template layout and licence; Piebald dream prompts licence.~~ **Resolved 2026-11-02:** KB template in `docs/contracts/kb-template.md`. Piebald-AI/claude-code-system-prompts is MIT, but its files are extracted Claude Code prompts whose text the repository licence may not cover; SpaceMan's dream prompt is written from the brief's principles and copies none of it (ADR-0027). | — | done |
@@ -3894,3 +4107,4 @@
 | K-10 | ~~Claude `setup-token` OAuth via `CLAUDE_CODE_OAUTH_TOKEN` in interactive mode.~~ **Resolved 2026-11-02:** works interactively with an empty config dir once first-run state and folder trust are seeded (spike S-5, ADR-0021). | — | done |
 | K-12 | Harbor Pilot integration design questions Q1–Q7. Answered by the operator on 2026-11-06 (ADR-0060), except **Q4**: routing of unscoped HP events (quota, access-blocked, binding/workspace/global budgets) is undecided; the interim default (control's proposal) is no automatic routing, delivery only to spaces that explicitly subscribe. Q7: a real upstream is "coming soon". | SM-GW-007, SM-GW-010 | ADR-0060 accepted 2026-11-08 with Q4 recorded as open; live-run placeholder in TRACEABILITY and RELEASE_READINESS §13 |
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
+| K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |

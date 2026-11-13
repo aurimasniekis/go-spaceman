@@ -163,7 +163,10 @@ jobs:
           restore-keys: go-login-timing-${{ runner.os }}-
       - name: login timing
         # The wall-clock comparison of Hallpass HP-AUTH-005 runs alone on its runner, without the race detector or
-        # coverage, where Argon2id's CPU time is not shared with other tests (ADR-0071).
+        # coverage, where Argon2id's CPU time is not shared with other tests (ADR-0071). Its store writes (auth.login_failed)
+        # meet the same write-transaction guard as the coverage job: 250 ms on hosted runners (ADR-0062).
+        env:
+          SM_TEST_TX_MAX: 250ms
         run: make test-login-timing
 
   # Fuzzing runs nightly (10 minutes per target) and in the release workflow (10 s smoke), not on pull requests or
@@ -189,6 +192,10 @@ jobs:
           key: go-fuzz-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'tools/go.sum') }}
           restore-keys: go-fuzz-${{ runner.os }}-
       - name: fuzz
+        # Fuzz targets that open a store (internal/keyring) meet the write-transaction guard: 250 ms on hosted runners,
+        # as in the coverage job (ADR-0062).
+        env:
+          SM_TEST_TX_MAX: 250ms
         run: make fuzz-smoke FUZZTIME=10m
 
   web:
