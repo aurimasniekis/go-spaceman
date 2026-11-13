@@ -3,7 +3,7 @@ package httpguard
 import (
 	"bufio"
 	"bytes"
-	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -145,23 +145,42 @@ func TestStreamsAndKeepAlive(t *testing.T) {
 	}
 }
 
-// WebSocket upgrades are left alone: the handler gets the original writer, which can hijack.
-func TestUpgradePassesThrough(t *testing.T) {
+// Only a WebSocket upgrade (Connection: upgrade and Upgrade: websocket) is left alone: the handler gets the original
+// writer, which can hijack. Any other Upgrade header gets the guarded writer (review S1: "Upgrade: x" must not let a
+// client pin a response).
+func TestOnlyWebSocketUpgradesPassThrough(t *testing.T) {
 	srv, done := server(t, func(w http.ResponseWriter, _ *http.Request) error {
 		if _, ok := w.(http.Hijacker); !ok {
-			return fmt.Errorf("%T can't hijack", w)
+			return errGuarded
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	})
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
-	req.Header.Set("Upgrade", "websocket")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = res.Body.Close()
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name    string
+		headers string
+		guarded bool
+	}{
+		{"websocket", "Connection: Upgrade\r\nUpgrade: websocket\r\n", false},
+		{"websocket, other case and lists", "Connection: keep-alive, UPGRADE\r\nUpgrade: foo/1, WebSocket\r\n", false},
+		{"another protocol", "Connection: Upgrade\r\nUpgrade: x\r\n", true},
+		{"upgrade without connection", "Upgrade: websocket\r\n", true},
+		{"none", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := net.Dial("tcp", srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			if _, err := fmt.Fprintf(c, "GET / HTTP/1.1\r\nHost: x\r\n%s\r\n", tc.headers); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; errors.Is(err, errGuarded) != tc.guarded {
+				t.Fatalf("guarded=%v, want %v", errors.Is(err, errGuarded), tc.guarded)
+			}
+		})
 	}
 }
+
+var errGuarded = errors.New("the handler got the guarded writer")

@@ -3,6 +3,7 @@ package httpguard
 
 import (
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -13,13 +14,13 @@ const chunk = 32 << 10
 // reach the client's connection, and a write that can't (the client stopped reading) fails, so the handler ends and the
 // connection is closed instead of holding the response in memory. It bounds progress, not the total time, so slow
 // transfers that keep moving are unaffected. WebSocket upgrades are passed through untouched: they hijack the
-// connection and keep their own timeouts.
+// connection and keep their own timeouts. Any other Upgrade header gets no bypass.
 func WriteProgress(next http.Handler, idle time.Duration) http.Handler {
 	if idle <= 0 {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Upgrade") != "" {
+		if websocketUpgrade(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -31,6 +32,24 @@ func WriteProgress(next http.Handler, idle time.Duration) http.Handler {
 		// net/http flushes the rest of the response after the handler returns: that, too, must make progress.
 		_ = rc.SetWriteDeadline(time.Now().Add(idle))
 	})
+}
+
+// websocketUpgrade reports whether r asks for a WebSocket: Connection has the upgrade token and Upgrade the websocket
+// one (both case-insensitive, RFC 6455 §4.2.1).
+func websocketUpgrade(r *http.Request) bool {
+	return hasToken(r.Header.Values("Connection"), "upgrade") && hasToken(r.Header.Values("Upgrade"), "websocket")
+}
+
+// hasToken reports whether a comma-separated header (every value of it) lists token, ignoring case.
+func hasToken(values []string, token string) bool {
+	for _, v := range values {
+		for t := range strings.SplitSeq(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(t), token) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type progressWriter struct {
