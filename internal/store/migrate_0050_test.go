@@ -62,13 +62,12 @@ func TestUsageLimitsMigration(t *testing.T) {
 	if n, err := q.SetRunLimit(ctx, db.SetRunLimitParams{Now: 2_000, ID: "run_old", Generation: 1}); err != nil || n != 1 {
 		t.Fatalf("clear: %d %v", n, err)
 	}
-	for _, bad := range []string{
-		`UPDATE runs SET limit_kind = 'daily' WHERE id = 'run_old'`,
-		`UPDATE runs SET limit_kind = NULL WHERE id = 'run_old'`,
-	} {
-		if exec(s, bad) == nil {
-			t.Errorf("accepted: %s", bad)
-		}
+	if exec(s, `UPDATE runs SET limit_kind = NULL WHERE id = 'run_old'`) == nil {
+		t.Error("NULL limit_kind accepted")
+	}
+	// runs.limit_kind has no CHECK, so a kind added later needs no runs-table rebuild (usage_limits.kind has one).
+	if err := exec(s, `UPDATE runs SET limit_kind = 'some_new_kind' WHERE id = 'run_old'`); err != nil {
+		t.Errorf("runs.limit_kind refuses a new kind: %v", err)
 	}
 
 	ul := db.InsertUsageLimitParams{ID: "ulm_1", SpaceID: "spc_a", Scope: "account", AccountID: "acc_1", Kind: "five_hour", Source: "transcript",
@@ -98,10 +97,29 @@ func TestUsageLimitsMigration(t *testing.T) {
 	}
 	gw := ul
 	gw.ID, gw.Scope, gw.AccountID, gw.GatewayRef, gw.Kind = "ulm_g", "gateway", "", "hpc_1/proj", "gateway_quota"
+	gw.CheckAt = sql.NullInt64{Int64: 1_900, Valid: true}
 	if err := q.InsertUsageLimit(ctx, gw); err != nil {
 		t.Fatal(err)
 	}
-	if rows, err := q.ListOpenUsageLimitsByAccount(ctx, "acc_1"); err != nil || len(rows) != 1 || rows[0].ID != "ulm_1" {
+	// Every kind on the Go allowlist passes the CHECK (here seven_day_overage_included, with a known reset).
+	ov := ul
+	ov.ID, ov.Kind, ov.ResetsAt = "ulm_ov", "seven_day_overage_included", sql.NullInt64{Int64: 9_000, Valid: true}
+	if err := q.InsertUsageLimit(ctx, ov); err != nil {
+		t.Fatal(err)
+	}
+	if at, err := q.NextUsageLimitDue(ctx); err != nil || at != 9_000 {
+		t.Fatalf("next due: %d %v", at, err)
+	}
+	if at, err := q.NextUsageLimitCheck(ctx); err != nil || at != 1_900 {
+		t.Fatalf("next check: %d %v", at, err)
+	}
+	if rows, err := q.ListUsageLimitsToCheck(ctx, sql.NullInt64{Int64: 2_000, Valid: true}); err != nil || len(rows) != 1 || rows[0].ID != "ulm_g" {
+		t.Fatalf("to check: %+v %v", rows, err)
+	}
+	if n, err := q.SetUsageLimitCheck(ctx, db.SetUsageLimitCheckParams{CheckAt: sql.NullInt64{Int64: 2_900, Valid: true}, Now: 2_000, ID: "ulm_g", Version: 1}); err != nil || n != 1 {
+		t.Fatalf("set check: %d %v", n, err)
+	}
+	if rows, err := q.ListOpenUsageLimitsByAccount(ctx, "acc_1"); err != nil || len(rows) != 2 || rows[0].ID != "ulm_1" || rows[1].ID != "ulm_ov" {
 		t.Fatalf("open by account: %+v %v", rows, err)
 	}
 	if n, err := q.ClearUsageLimit(ctx, db.ClearUsageLimitParams{Now: 3_000, ClearedBy: "reset", ID: "ulm_1"}); err != nil || n != 1 {
@@ -109,6 +127,22 @@ func TestUsageLimitsMigration(t *testing.T) {
 	}
 	if err := q.InsertUsageLimit(ctx, dup); err != nil {
 		t.Fatalf("a new window after the first cleared: %v", err)
+	}
+
+	// An account-level clear lifts the hold for that account and kind in every space, nothing else.
+	if err := exec(s, `INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_b', 'bbb', 'B', 'nod_1', 'active', 'b', 0, 't', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	other := ul
+	other.ID, other.SpaceID = "ulm_b", "spc_b"
+	if err := q.InsertUsageLimit(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := q.ClearUsageLimitsByAccount(ctx, db.ClearUsageLimitsByAccountParams{Now: 4_000, ClearedBy: "operator", AccountID: "acc_1", Kind: "five_hour"}); err != nil || n != 2 {
+		t.Fatalf("clear by account: %d %v", n, err)
+	}
+	if rows, err := q.ListOpenUsageLimitsByAccount(ctx, "acc_1"); err != nil || len(rows) != 1 || rows[0].ID != "ulm_ov" {
+		t.Fatalf("open after clear by account: %+v %v", rows, err)
 	}
 
 	w := db.InsertLimitWaitParams{ID: "lwt_1", SpaceID: "spc_a", RunID: "run_old", RunKind: "worker", Role: "w", NodeID: "nod_1", InstanceID: "ins_1",
@@ -154,7 +188,7 @@ func TestUsageLimitsMigration(t *testing.T) {
 	}
 	for _, tbl := range []string{"usage_limits", "limit_waits"} {
 		var n int
-		if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM `+tbl).Scan(&n); err != nil || n != 0 {
+		if err := s.rdb.QueryRowContext(ctx, `SELECT count(*) FROM `+tbl+` WHERE space_id = 'spc_a'`).Scan(&n); err != nil || n != 0 {
 			t.Errorf("%s after purge: %d %v", tbl, n, err)
 		}
 	}

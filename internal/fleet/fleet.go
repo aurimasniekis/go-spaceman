@@ -24,6 +24,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -123,6 +124,8 @@ type Service struct {
 	// Grants removes a purged space's role grants and reloads the authorization engine after commit (the auth
 	// service). Nil only in fleet-only tests: purge then deletes the rows but cannot reload an engine it does not know.
 	Grants GrantRemover
+	// onReport, when set (tests only), sees every run report as it is applied, after the session's minor filtered it.
+	onReport func(proto.RunReport)
 }
 
 // GrantRemover deletes every role grant of one domain inside a write transaction and refreshes authorization after

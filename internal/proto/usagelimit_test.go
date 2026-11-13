@@ -105,27 +105,47 @@ func TestLimitKind(t *testing.T) {
 
 func TestRunLimitNormalized(t *testing.T) {
 	now := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
-	at := func(d time.Duration) *time.Time { v := now.Add(d).In(time.FixedZone("x", 3600)); return &v }
+	zone := time.FixedZone("x", 3600)
+	at := func(d time.Duration) time.Time { return now.Add(d).In(zone) }
+	ptr := func(d time.Duration) *time.Time { v := at(d); return &v }
+	h := time.Hour
 	for _, c := range []struct {
-		name      string
-		in        RunLimit
-		kind      string
-		wantReset bool
+		name  string
+		in    RunLimit
+		kind  string
+		since time.Time
+		reset *time.Time // nil: unknown
 	}{
-		{"in range", RunLimit{Kind: LimitFiveHour, ResetsAt: at(3 * time.Hour)}, LimitFiveHour, true},
-		{"upper bound", RunLimit{Kind: LimitSevenDay, ResetsAt: at(MaxLimitReset)}, LimitSevenDay, true},
-		{"too far", RunLimit{Kind: LimitSevenDay, ResetsAt: at(MaxLimitReset + time.Second)}, LimitSevenDay, false},
-		{"now", RunLimit{Kind: LimitFiveHour, ResetsAt: at(0)}, LimitFiveHour, false},
-		{"past", RunLimit{Kind: LimitFiveHour, ResetsAt: at(-time.Minute)}, LimitFiveHour, false},
-		{"bad kind", RunLimit{Kind: "weekly", ResetsAt: at(time.Hour)}, LimitUnknown, true},
-		{"cleared", RunLimit{Kind: LimitFiveHour, ResetsAt: at(time.Hour), Cleared: true}, "", false},
+		{"in range", RunLimit{Kind: LimitFiveHour, Since: at(-h), ResetsAt: ptr(3 * h)}, LimitFiveHour, now.Add(-h), ptr(3 * h)},
+		{"upper bound", RunLimit{Kind: LimitSevenDay, Since: at(0), ResetsAt: ptr(MaxLimitReset)}, LimitSevenDay, now, ptr(MaxLimitReset)},
+		{"too far", RunLimit{Kind: LimitSevenDay, Since: at(0), ResetsAt: ptr(MaxLimitReset + time.Second)}, LimitSevenDay, now, nil},
+		// A reset that just passed stays known: the limit is over, not open with an unknown reset.
+		{"just passed", RunLimit{Kind: LimitFiveHour, Since: at(-5 * h), ResetsAt: ptr(-time.Minute)}, LimitFiveHour, now.Add(-5 * h), ptr(-time.Minute)},
+		{"at since", RunLimit{Kind: LimitFiveHour, Since: at(-h), ResetsAt: ptr(-h)}, LimitFiveHour, now.Add(-h), nil},
+		{"before since", RunLimit{Kind: LimitFiveHour, Since: at(-h), ResetsAt: ptr(-2 * h)}, LimitFiveHour, now.Add(-h), nil},
+		{"zero since", RunLimit{Kind: LimitFiveHour, ResetsAt: ptr(h)}, LimitFiveHour, now, ptr(h)},
+		{"future since", RunLimit{Kind: LimitFiveHour, Since: at(h), ResetsAt: ptr(2 * h)}, LimitFiveHour, now, ptr(2 * h)},
+		// A since older than the bound is moved up, and the reset is checked against the bounded since.
+		{"old since", RunLimit{Kind: LimitSevenDay, Since: at(-30 * 24 * h), ResetsAt: ptr(-25 * 24 * h)}, LimitSevenDay, now.Add(-MaxLimitReset), nil},
+		{"bad kind", RunLimit{Kind: "weekly", Since: at(0), ResetsAt: ptr(h)}, LimitUnknown, now, ptr(h)},
+		{"cleared", RunLimit{Kind: LimitFiveHour, Since: at(-h), ResetsAt: ptr(h), Cleared: true}, "", now.Add(-h), nil},
+		{"cleared zero since", RunLimit{Cleared: true}, "", now, nil},
 	} {
-		got := c.in.Normalized(now)
-		if got.Kind != c.kind || (got.ResetsAt != nil) != c.wantReset {
-			t.Errorf("%s: %+v", c.name, got)
+		got, ok := c.in.Normalized(now)
+		if !ok || got.Kind != c.kind || !got.Since.Equal(c.since) || got.Since.Location() != time.UTC || got.Cleared != c.in.Cleared {
+			t.Errorf("%s: %+v %v", c.name, got, ok)
 		}
-		if got.ResetsAt != nil && (got.ResetsAt.Location() != time.UTC || !got.ResetsAt.Equal(*c.in.ResetsAt)) {
-			t.Errorf("%s: reset %v, want %v in UTC", c.name, got.ResetsAt, c.in.ResetsAt)
+		switch {
+		case (got.ResetsAt == nil) != (c.reset == nil):
+			t.Errorf("%s: reset %v, want %v", c.name, got.ResetsAt, c.reset)
+		case got.ResetsAt != nil && (got.ResetsAt.Location() != time.UTC || !got.ResetsAt.Equal(*c.reset)):
+			t.Errorf("%s: reset %v, want %v in UTC", c.name, got.ResetsAt, c.reset)
+		}
+	}
+	// Neither cleared nor of any kind: not a limit, never an open unknown one.
+	for _, l := range []RunLimit{{}, {Since: now}, {ResetsAt: ptr(h)}} {
+		if got, ok := l.Normalized(now); ok {
+			t.Errorf("%+v accepted as %+v", l, got)
 		}
 	}
 }

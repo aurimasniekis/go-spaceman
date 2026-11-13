@@ -631,6 +631,9 @@ func (svc *Service) applyReport(ctx context.Context, nodeID string, rep proto.Ru
 // and sets its desired state to stopped, and the run's end is audited and counted as a sweep. A sweep that no longer
 // applies is skipped, not fenced.
 func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto.RunReport, sweep *staleRun) (fenced bool, err error) {
+	if svc.onReport != nil {
+		svc.onReport(rep)
+	}
 	becameIdle, justEnded, skipped := false, false, false
 	switch rep.State {
 	case proto.RunPending, proto.RunStarting, proto.RunRunning, proto.RunStopping, proto.RunExited, proto.RunFailed, proto.RunLost:

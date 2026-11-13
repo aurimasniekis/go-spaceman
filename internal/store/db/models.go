@@ -1525,6 +1525,7 @@ type UsageLimit struct {
 	GatewayRef        string
 	Kind              string
 	ResetsAt          sql.NullInt64
+	CheckAt           sql.NullInt64
 	Source            string
 	FirstRunID        string
 	SeenAt            int64

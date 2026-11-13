@@ -29,6 +29,33 @@ func (q *Queries) ClearUsageLimit(ctx context.Context, arg ClearUsageLimitParams
 	return result.RowsAffected()
 }
 
+const clearUsageLimitsByAccount = `-- name: ClearUsageLimitsByAccount :execrows
+UPDATE usage_limits SET updated_at = ?1, cleared_at = ?1, cleared_by = ?2, version = version + 1
+WHERE scope = 'account' AND account_id = ?3 AND kind = ?4 AND cleared_at IS NULL
+`
+
+type ClearUsageLimitsByAccountParams struct {
+	Now       int64
+	ClearedBy string
+	AccountID string
+	Kind      string
+}
+
+// An account-level "clear now": every space's open row for the account and kind (ADR-0079 decision 7). Needs account-level
+// permission; a space operator clears only their own space's row (ClearUsageLimit).
+func (q *Queries) ClearUsageLimitsByAccount(ctx context.Context, arg ClearUsageLimitsByAccountParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearUsageLimitsByAccount,
+		arg.Now,
+		arg.ClearedBy,
+		arg.AccountID,
+		arg.Kind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getActiveLimitWait = `-- name: GetActiveLimitWait :one
 SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE space_id = ? AND instance_id = ? AND state IN ('waiting', 'resuming')
 `
@@ -134,7 +161,7 @@ func (q *Queries) GetLimitWaitByRun(ctx context.Context, runID string) (LimitWai
 }
 
 const getOpenUsageLimit = `-- name: GetOpenUsageLimit :one
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE space_id = ? AND scope = ? AND account_id = ? AND gateway_ref = ? AND kind = ? AND cleared_at IS NULL
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE space_id = ? AND scope = ? AND account_id = ? AND gateway_ref = ? AND kind = ? AND cleared_at IS NULL
 `
 
 type GetOpenUsageLimitParams struct {
@@ -162,6 +189,7 @@ func (q *Queries) GetOpenUsageLimit(ctx context.Context, arg GetOpenUsageLimitPa
 		&i.GatewayRef,
 		&i.Kind,
 		&i.ResetsAt,
+		&i.CheckAt,
 		&i.Source,
 		&i.FirstRunID,
 		&i.SeenAt,
@@ -177,7 +205,7 @@ func (q *Queries) GetOpenUsageLimit(ctx context.Context, arg GetOpenUsageLimitPa
 }
 
 const getUsageLimit = `-- name: GetUsageLimit :one
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE id = ?
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE id = ?
 `
 
 func (q *Queries) GetUsageLimit(ctx context.Context, id string) (UsageLimit, error) {
@@ -191,6 +219,7 @@ func (q *Queries) GetUsageLimit(ctx context.Context, id string) (UsageLimit, err
 		&i.GatewayRef,
 		&i.Kind,
 		&i.ResetsAt,
+		&i.CheckAt,
 		&i.Source,
 		&i.FirstRunID,
 		&i.SeenAt,
@@ -253,8 +282,8 @@ func (q *Queries) InsertLimitWait(ctx context.Context, arg InsertLimitWaitParams
 }
 
 const insertUsageLimit = `-- name: InsertUsageLimit :exec
-INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertUsageLimitParams struct {
@@ -265,6 +294,7 @@ type InsertUsageLimitParams struct {
 	GatewayRef string
 	Kind       string
 	ResetsAt   sql.NullInt64
+	CheckAt    sql.NullInt64
 	Source     string
 	FirstRunID string
 	SeenAt     int64
@@ -281,6 +311,7 @@ func (q *Queries) InsertUsageLimit(ctx context.Context, arg InsertUsageLimitPara
 		arg.GatewayRef,
 		arg.Kind,
 		arg.ResetsAt,
+		arg.CheckAt,
 		arg.Source,
 		arg.FirstRunID,
 		arg.SeenAt,
@@ -347,7 +378,7 @@ func (q *Queries) ListDueLimitWaits(ctx context.Context, arg ListDueLimitWaitsPa
 }
 
 const listDueUsageLimits = `-- name: ListDueUsageLimits :many
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE cleared_at IS NULL AND resets_at IS NOT NULL AND resets_at <= ? ORDER BY resets_at, id
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE cleared_at IS NULL AND resets_at IS NOT NULL AND resets_at <= ? ORDER BY resets_at, id
 `
 
 // Open limits whose known reset has passed.
@@ -368,6 +399,7 @@ func (q *Queries) ListDueUsageLimits(ctx context.Context, resetsAt sql.NullInt64
 			&i.GatewayRef,
 			&i.Kind,
 			&i.ResetsAt,
+			&i.CheckAt,
 			&i.Source,
 			&i.FirstRunID,
 			&i.SeenAt,
@@ -496,7 +528,7 @@ func (q *Queries) ListLimitWaitsToRelease(ctx context.Context, releaseAt sql.Nul
 }
 
 const listOpenUsageLimitsByAccount = `-- name: ListOpenUsageLimitsByAccount :many
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `
 
 // The hold on an account applies in every space bound to it.
@@ -517,6 +549,7 @@ func (q *Queries) ListOpenUsageLimitsByAccount(ctx context.Context, accountID st
 			&i.GatewayRef,
 			&i.Kind,
 			&i.ResetsAt,
+			&i.CheckAt,
 			&i.Source,
 			&i.FirstRunID,
 			&i.SeenAt,
@@ -542,7 +575,7 @@ func (q *Queries) ListOpenUsageLimitsByAccount(ctx context.Context, accountID st
 }
 
 const listOpenUsageLimitsByGateway = `-- name: ListOpenUsageLimitsByGateway :many
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'gateway' AND gateway_ref = ? AND cleared_at IS NULL ORDER BY seen_at, id
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'gateway' AND gateway_ref = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `
 
 func (q *Queries) ListOpenUsageLimitsByGateway(ctx context.Context, gatewayRef string) ([]UsageLimit, error) {
@@ -562,6 +595,7 @@ func (q *Queries) ListOpenUsageLimitsByGateway(ctx context.Context, gatewayRef s
 			&i.GatewayRef,
 			&i.Kind,
 			&i.ResetsAt,
+			&i.CheckAt,
 			&i.Source,
 			&i.FirstRunID,
 			&i.SeenAt,
@@ -587,7 +621,7 @@ func (q *Queries) ListOpenUsageLimitsByGateway(ctx context.Context, gatewayRef s
 }
 
 const listOpenUsageLimitsBySpace = `-- name: ListOpenUsageLimitsBySpace :many
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE space_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE space_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `
 
 func (q *Queries) ListOpenUsageLimitsBySpace(ctx context.Context, spaceID string) ([]UsageLimit, error) {
@@ -607,6 +641,7 @@ func (q *Queries) ListOpenUsageLimitsBySpace(ctx context.Context, spaceID string
 			&i.GatewayRef,
 			&i.Kind,
 			&i.ResetsAt,
+			&i.CheckAt,
 			&i.Source,
 			&i.FirstRunID,
 			&i.SeenAt,
@@ -632,7 +667,7 @@ func (q *Queries) ListOpenUsageLimitsBySpace(ctx context.Context, spaceID string
 }
 
 const listUsageLimitsBySpace = `-- name: ListUsageLimitsBySpace :many
-SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE space_id = ? ORDER BY seen_at DESC, id DESC LIMIT ?
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE space_id = ? ORDER BY seen_at DESC, id DESC LIMIT ?
 `
 
 type ListUsageLimitsBySpaceParams struct {
@@ -657,6 +692,54 @@ func (q *Queries) ListUsageLimitsBySpace(ctx context.Context, arg ListUsageLimit
 			&i.GatewayRef,
 			&i.Kind,
 			&i.ResetsAt,
+			&i.CheckAt,
+			&i.Source,
+			&i.FirstRunID,
+			&i.SeenAt,
+			&i.ClearedAt,
+			&i.ClearedBy,
+			&i.NotifiedControlAt,
+			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsageLimitsToCheck = `-- name: ListUsageLimitsToCheck :many
+SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE cleared_at IS NULL AND check_at IS NOT NULL AND check_at <= ? ORDER BY check_at, id
+`
+
+// Open holds due for a check: an unknown reset's probe, a gateway hold's quota-board re-read (ADR-0079 decisions 5, 7, 9).
+func (q *Queries) ListUsageLimitsToCheck(ctx context.Context, checkAt sql.NullInt64) ([]UsageLimit, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageLimitsToCheck, checkAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageLimit{}
+	for rows.Next() {
+		var i UsageLimit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.AccountID,
+			&i.GatewayRef,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.CheckAt,
 			&i.Source,
 			&i.FirstRunID,
 			&i.SeenAt,
@@ -728,6 +811,28 @@ func (q *Queries) NextLimitWaitDue(ctx context.Context) (int64, error) {
 	return at, err
 }
 
+const nextUsageLimitCheck = `-- name: NextUsageLimitCheck :one
+SELECT CAST(coalesce(min(check_at), 0) AS INTEGER) AS at FROM usage_limits WHERE cleared_at IS NULL AND check_at IS NOT NULL
+`
+
+func (q *Queries) NextUsageLimitCheck(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextUsageLimitCheck)
+	var at int64
+	err := row.Scan(&at)
+	return at, err
+}
+
+const nextUsageLimitDue = `-- name: NextUsageLimitDue :one
+SELECT CAST(coalesce(min(resets_at), 0) AS INTEGER) AS at FROM usage_limits WHERE cleared_at IS NULL AND resets_at IS NOT NULL
+`
+
+func (q *Queries) NextUsageLimitDue(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextUsageLimitDue)
+	var at int64
+	err := row.Scan(&at)
+	return at, err
+}
+
 const setRunLimit = `-- name: SetRunLimit :execrows
 
 UPDATE runs SET limit_kind = ?1, limit_resets_at = ?2, limit_since = ?3,
@@ -755,6 +860,31 @@ func (q *Queries) SetRunLimit(ctx context.Context, arg SetRunLimitParams) (int64
 		arg.Now,
 		arg.ID,
 		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setUsageLimitCheck = `-- name: SetUsageLimitCheck :execrows
+UPDATE usage_limits SET check_at = ?1, version = version + 1, updated_at = ?2
+WHERE id = ?3 AND version = ?4 AND cleared_at IS NULL
+`
+
+type SetUsageLimitCheckParams struct {
+	CheckAt sql.NullInt64
+	Now     int64
+	ID      string
+	Version int64
+}
+
+func (q *Queries) SetUsageLimitCheck(ctx context.Context, arg SetUsageLimitCheckParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setUsageLimitCheck,
+		arg.CheckAt,
+		arg.Now,
+		arg.ID,
+		arg.Version,
 	)
 	if err != nil {
 		return 0, err

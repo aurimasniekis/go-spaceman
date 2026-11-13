@@ -8,8 +8,8 @@ WHERE id = sqlc.arg(id) AND generation = sqlc.arg(generation)
   AND (limit_kind != sqlc.arg(limit_kind) OR limit_resets_at IS NOT sqlc.narg(limit_resets_at) OR limit_since IS NOT sqlc.narg(limit_since));
 
 -- name: InsertUsageLimit :exec
-INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, first_run_id, seen_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetUsageLimit :one
 SELECT * FROM usage_limits WHERE id = ?;
@@ -34,6 +34,20 @@ SELECT * FROM usage_limits WHERE space_id = ? ORDER BY seen_at DESC, id DESC LIM
 -- name: ListDueUsageLimits :many
 SELECT * FROM usage_limits WHERE cleared_at IS NULL AND resets_at IS NOT NULL AND resets_at <= ? ORDER BY resets_at, id;
 
+-- name: NextUsageLimitDue :one
+SELECT CAST(coalesce(min(resets_at), 0) AS INTEGER) AS at FROM usage_limits WHERE cleared_at IS NULL AND resets_at IS NOT NULL;
+
+-- Open holds due for a check: an unknown reset's probe, a gateway hold's quota-board re-read (ADR-0079 decisions 5, 7, 9).
+-- name: ListUsageLimitsToCheck :many
+SELECT * FROM usage_limits WHERE cleared_at IS NULL AND check_at IS NOT NULL AND check_at <= ? ORDER BY check_at, id;
+
+-- name: NextUsageLimitCheck :one
+SELECT CAST(coalesce(min(check_at), 0) AS INTEGER) AS at FROM usage_limits WHERE cleared_at IS NULL AND check_at IS NOT NULL;
+
+-- name: SetUsageLimitCheck :execrows
+UPDATE usage_limits SET check_at = sqlc.narg(check_at), version = version + 1, updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND cleared_at IS NULL;
+
 -- name: SetUsageLimitReset :execrows
 UPDATE usage_limits SET resets_at = sqlc.narg(resets_at), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND cleared_at IS NULL;
@@ -41,6 +55,12 @@ WHERE id = sqlc.arg(id) AND version = sqlc.arg(version) AND cleared_at IS NULL;
 -- name: ClearUsageLimit :execrows
 UPDATE usage_limits SET updated_at = sqlc.arg(now), cleared_at = sqlc.arg(now), cleared_by = sqlc.arg(cleared_by), version = version + 1
 WHERE id = sqlc.arg(id) AND cleared_at IS NULL;
+
+-- An account-level "clear now": every space's open row for the account and kind (ADR-0079 decision 7). Needs account-level
+-- permission; a space operator clears only their own space's row (ClearUsageLimit).
+-- name: ClearUsageLimitsByAccount :execrows
+UPDATE usage_limits SET updated_at = sqlc.arg(now), cleared_at = sqlc.arg(now), cleared_by = sqlc.arg(cleared_by), version = version + 1
+WHERE scope = 'account' AND account_id = sqlc.arg(account_id) AND kind = sqlc.arg(kind) AND cleared_at IS NULL;
 
 -- name: MarkUsageLimitControlNotified :execrows
 UPDATE usage_limits SET updated_at = sqlc.arg(now), notified_control_at = sqlc.arg(now), version = version + 1

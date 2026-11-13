@@ -14,18 +14,22 @@ const (
 	LimitSevenDay       = "seven_day"
 	LimitSevenDayOpus   = "seven_day_opus"
 	LimitSevenDaySonnet = "seven_day_sonnet"
-	LimitOverage        = "overage"
-	LimitGatewayQuota   = "gateway_quota"
-	LimitGatewayBudget  = "gateway_budget"
-	LimitUnknown        = "unknown"
+	// LimitSevenDayOverage is Claude Code's seven_day_overage_included (in the binary, not yet seen in a transcript).
+	LimitSevenDayOverage = "seven_day_overage_included"
+	LimitOverage         = "overage"
+	LimitGatewayQuota    = "gateway_quota"
+	LimitGatewayBudget   = "gateway_budget"
+	LimitUnknown         = "unknown"
 )
 
-// LimitKinds is the allowlist of usage-limit kinds, the same as the CHECK on runs.limit_kind and usage_limits.kind.
-var LimitKinds = []string{LimitFiveHour, LimitSevenDay, LimitSevenDayOpus, LimitSevenDaySonnet, LimitOverage, LimitGatewayQuota,
-	LimitGatewayBudget, LimitUnknown}
+// LimitKinds is the allowlist of usage-limit kinds, the same as the CHECK on usage_limits.kind (runs.limit_kind has
+// none, so a kind added later needs no runs-table rebuild).
+var LimitKinds = []string{LimitFiveHour, LimitSevenDay, LimitSevenDayOpus, LimitSevenDaySonnet, LimitSevenDayOverage, LimitOverage,
+	LimitGatewayQuota, LimitGatewayBudget, LimitUnknown}
 
-// MaxLimitReset bounds how far ahead a reported reset may be: a later or past reset is reported as unknown, so a
-// forged transcript record holds an account for at most this long (ADR-0079).
+// MaxLimitReset bounds how far a reported reset may be from when the limit was seen, and how long ago that may be: a
+// reset outside it is reported as unknown, so a forged transcript record holds an account for at most this long
+// (ADR-0079).
 const MaxLimitReset = 8 * 24 * time.Hour
 
 // LimitKind maps a reported kind onto the allowlist: an unlisted value becomes LimitUnknown.
@@ -43,29 +47,38 @@ func LimitKind(k string) string {
 // RunReport.Limit can't express clearing.
 type RunLimit struct {
 	Kind string `json:"kind,omitempty"`
-	// ResetsAt is when the limit resets, in (Since, Since+MaxLimitReset]; nil when unknown.
+	// ResetsAt is when the limit resets, in (Since, Since+MaxLimitReset], possibly already past; nil when unknown.
 	ResetsAt *time.Time `json:"resets_at,omitempty"`
-	// Since is when the node first saw the limit.
+	// Since is when the node first saw the limit, within [now-MaxLimitReset, now].
 	Since   time.Time `json:"since,omitzero"`
 	Cleared bool      `json:"cleared,omitempty"`
 }
 
-// Normalized returns l with its kind on the allowlist and a reset outside (now, now+MaxLimitReset] dropped to
-// unknown. A cleared limit carries neither.
-func (l RunLimit) Normalized(now time.Time) RunLimit {
+// Normalized returns l as it may be stored or sent, and false when it is not a limit at all (not cleared and no kind).
+// Since is bounded to [now-MaxLimitReset, now] (zero: now). The kind is mapped onto the allowlist. A reset outside
+// (Since, Since+MaxLimitReset] becomes unknown; one that already passed but is inside it is kept, so a limit seen
+// before a reset is not turned into an open unknown one. A cleared limit carries no kind and no reset.
+func (l RunLimit) Normalized(now time.Time) (RunLimit, bool) {
+	if !l.Cleared && l.Kind == "" {
+		return RunLimit{}, false
+	}
+	since := l.Since
+	switch earliest := now.Add(-MaxLimitReset); {
+	case since.IsZero(), since.After(now):
+		since = now
+	case since.Before(earliest):
+		since = earliest
+	}
+	since = since.UTC()
 	if l.Cleared {
-		return RunLimit{Since: l.Since, Cleared: true}
+		return RunLimit{Since: since, Cleared: true}, true
 	}
-	l.Kind = LimitKind(l.Kind)
-	if l.ResetsAt != nil {
-		if r := *l.ResetsAt; !r.After(now) || r.After(now.Add(MaxLimitReset)) {
-			l.ResetsAt = nil
-		} else {
-			r = r.UTC()
-			l.ResetsAt = &r
-		}
+	out := RunLimit{Kind: LimitKind(l.Kind), Since: since}
+	if r := l.ResetsAt; r != nil && r.After(since) && !r.After(since.Add(MaxLimitReset)) {
+		v := r.UTC()
+		out.ResetsAt = &v
 	}
-	return l
+	return out, true
 }
 
 // ForMinor returns the report as a session negotiated at minor may carry it: below MinorUsageLimit it has no limit.
