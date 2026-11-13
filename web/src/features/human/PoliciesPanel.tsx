@@ -56,9 +56,9 @@ const responseInboxOptions = [
 export function PoliciesPanel({ spaceId, canWrite }: { spaceId?: string; canWrite: boolean }) {
   const qc = useQueryClient()
   const queryKey = keys.humanPolicies(spaceId ?? '')
-  const list = useQuery({ queryKey, queryFn: async () => unwrap(spaceId
-    ? await api.GET('/spaces/{space_id}/human-policies', { params: { path: { space_id: spaceId } } })
-    : await api.GET('/human-policies')) })
+  const list = useQuery({ queryKey, queryFn: async ({ signal }) => unwrap(spaceId
+    ? await api.GET('/spaces/{space_id}/human-policies', { params: { path: { space_id: spaceId } }, signal })
+    : await api.GET('/human-policies', { signal })) })
   const [editing, setEditing] = useState<PolicyType | null>(null)
   const stored = (t: PolicyType) => list.data?.items.find((p) => p.action_type === t)
   const effective = (t: PolicyType) => list.data?.effective.find((p) => p.action_type === t)

@@ -14,8 +14,8 @@ const bytes = (b: number) => (b >= 1 << 20 ? `${(b / (1 << 20)).toFixed(1)} MiB`
  */
 export function RunUsageCard({ spaceId, runId }: { spaceId: string; runId: string }) {
   const canRead = atLeast(roleIn(useMe().data, spaceId), 'operator')
-  const u = useQuery({ queryKey: ['usage', spaceId, runId], queryFn: async () =>
-    unwrap(await api.GET('/spaces/{space_id}/runs/{run_id}/usage', { params: { path: { space_id: spaceId, run_id: runId } } })) })
+  const u = useQuery({ queryKey: ['usage', spaceId, runId], queryFn: async ({ signal }) =>
+    unwrap(await api.GET('/spaces/{space_id}/runs/{run_id}/usage', { params: { path: { space_id: spaceId, run_id: runId } }, signal })) })
   if (!u.data) return null
   const d = u.data
   return (
@@ -86,7 +86,7 @@ export function GatewayUsage({ g }: { g: { state: string; requests: number; unkn
 
 /** A space's usage over its recent runs: totals of known usage, and how many runs' usage is unknown. */
 export function SpaceUsageCard({ spaceId }: { spaceId: string }) {
-  const s = useQuery({ queryKey: ['usage', spaceId], queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/usage', { params: { path: { space_id: spaceId } } })) })
+  const s = useQuery({ queryKey: ['usage', spaceId], queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/usage', { params: { path: { space_id: spaceId } }, signal })) })
   if (!s.data) return null
   const d = s.data
   return (

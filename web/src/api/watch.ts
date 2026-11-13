@@ -215,8 +215,10 @@ export function retryDelay(attempt: number, rand: number = Math.random()): numbe
 }
 
 /**
- * Subscribes to the durable change feed (GET /api/v1/watch, Server-Sent Events). EventSource reconnects by itself and
- * resumes with Last-Event-ID; a "gap" (the position was pruned) refetches everything. When the server ends the stream
+ * Subscribes to the durable change feed (GET /api/v1/watch, Server-Sent Events). A tab without a position starts live
+ * (?live=1: no replay of the retained history), learns its position from the stream's first event and refreshes its
+ * active queries once. EventSource reconnects by itself and resumes with Last-Event-ID; a "gap" (the position was
+ * pruned) refetches everything. Changes invalidate the queries they affect through invalidate (batched). When the server ends the stream
  * because its session is no longer valid (SM-AUTH-007), the session is re-checked: a session that is gone goes to
  * sign-in, a rotated one reconnects (at once the first time; repeated quick ends back off like a closed stream).
  *
@@ -294,7 +296,9 @@ export function useWatch(enabled: boolean): WatchState {
         })
       }
       const connect = () => {
-        const src = new EventSource(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : ''}`)
+        // Without a position yet (this tab has just loaded its data) the stream starts at the newest change instead of
+        // replaying the retained history, which can be thousands of changes, each an invalidation.
+        const src = new EventSource(`${API_PREFIX}/watch${last.current > 0 ? `?after=${last.current}` : '?live=1'}`)
         es = src
         src.onopen = () => {
           attempt = 0
@@ -315,6 +319,13 @@ export function useWatch(enabled: boolean): WatchState {
           } catch {
             // A malformed event is ignored; the next list refetch is authoritative.
           }
+        })
+        // A live stream's first event: where the feed is now. Whatever changed between this tab loading its data and
+        // that position is caught by refreshing the active queries once.
+        src.addEventListener('position', (ev) => {
+          const seq = Number((ev as MessageEvent<string>).lastEventId) || 0
+          if (seq > 0) last.current = Math.max(last.current, seq)
+          void qc.invalidateQueries(undefined, { cancelRefetch: false })
         })
         src.addEventListener('gap', () => {
           void qc.invalidateQueries(undefined, { cancelRefetch: false })

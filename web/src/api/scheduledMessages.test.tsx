@@ -15,7 +15,7 @@ describe('useScheduledMessages', () => {
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     const { result } = renderHook(() => useScheduledMessages('spc_a'), { wrapper })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(get).toHaveBeenCalledWith('/spaces/{space_id}/messages', { params: { path: { space_id: 'spc_a' }, query: { scheduled: true } } })
+    expect(get).toHaveBeenCalledWith('/spaces/{space_id}/messages', { params: { path: { space_id: 'spc_a' }, query: { scheduled: true } }, signal: expect.any(AbortSignal) })
     expect(result.current.data).toEqual(items)
     // Invalidating a space's messages (watch, send, cancel) refreshes the scheduled list too.
     await qc.invalidateQueries({ queryKey: keys.messages('spc_a') })

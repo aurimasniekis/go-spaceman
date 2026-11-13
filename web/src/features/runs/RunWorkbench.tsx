@@ -198,8 +198,8 @@ function Inspector({ spaceId, run: r, now }: { spaceId: string; run: Run; now: n
   const nodes = useNodes()
   const accounts = useSpaceAccounts(spaceId)
   const human = useHumanActions(spaceId)
-  const usage = useQuery({ queryKey: ['usage', spaceId, r.id], queryFn: async () =>
-    unwrap(await api.GET('/spaces/{space_id}/runs/{run_id}/usage', { params: { path: { space_id: spaceId, run_id: r.id } } })) })
+  const usage = useQuery({ queryKey: ['usage', spaceId, r.id], queryFn: async ({ signal }) =>
+    unwrap(await api.GET('/spaces/{space_id}/runs/{run_id}/usage', { params: { path: { space_id: spaceId, run_id: r.id } }, signal })) })
   const task = (queue.data?.tasks ?? []).find((t) => t.assignee_run === r.id)
   const node = nodes.data?.find((x) => x.id === r.node_id)
   const account = (accounts.data ?? []).find((a) => a.account_id === r.launch.account_ref)

@@ -68,8 +68,8 @@ export function DreamsCard({ spaceId }: { spaceId: string }) {
 }
 
 function DreamRuns({ spaceId, d, canWrite, onEdit }: { spaceId: string; d: DreamConfig; canWrite: boolean; onEdit: () => void }) {
-  const runs = useQuery({ queryKey: ['dreams', spaceId, d.id, d.last_run?.state], queryFn: async () =>
-    unwrap(await api.GET('/spaces/{space_id}/dreams/{dream_id}/runs', { params: { path: { space_id: spaceId, dream_id: d.id } } })).items })
+  const runs = useQuery({ queryKey: ['dreams', spaceId, d.id, d.last_run?.state], queryFn: async ({ signal }) =>
+    unwrap(await api.GET('/spaces/{space_id}/dreams/{dream_id}/runs', { params: { path: { space_id: spaceId, dream_id: d.id } }, signal })).items })
   return (
     <Stack gap="sm">
       <Text size="sm" c="dimmed">

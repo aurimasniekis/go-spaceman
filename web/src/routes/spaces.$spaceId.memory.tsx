@@ -78,15 +78,15 @@ function NodeState({ c }: { c: MemoryCollection }) {
 function Collection({ spaceId, c }: { spaceId: string; c: MemoryCollection }) {
   const path = { space_id: spaceId, role: c.role }
   const files = useQuery({ queryKey: ['memory', spaceId, c.role, 'files', c.head], enabled: !!c.head,
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/files', { params: { path } })).items })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/files', { params: { path }, signal })).items })
   const history = useQuery({ queryKey: ['memory', spaceId, c.role, 'history', c.head], enabled: !!c.head,
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/history', { params: { path } })).items })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/history', { params: { path }, signal })).items })
   const conflicts = useQuery({ queryKey: ['memory', spaceId, c.role, 'conflicts', c.open_conflicts],
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/conflicts', { params: { path } })).items })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/conflicts', { params: { path }, signal })).items })
   const [file, setFile] = useState<string | null>(null)
   const shown = file ?? files.data?.find((f) => f.toLowerCase() === 'readme.md') ?? files.data?.[0] ?? null
   const content = useQuery({ queryKey: ['memory', spaceId, c.role, 'file', c.head, shown], enabled: !!shown,
-    queryFn: async () => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/file', { params: { path, query: { path: shown! } } })).content })
+    queryFn: async ({ signal }) => unwrap(await api.GET('/spaces/{space_id}/memory/{role}/file', { params: { path, query: { path: shown! } }, signal })).content })
   const n = c.node
   return (
     <Stack gap="sm">
