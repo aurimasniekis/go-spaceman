@@ -2,7 +2,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './client'
 import { keys, runsQuery } from './queries'
-import { applyChange, INVALIDATE_WINDOW_MS } from './watch'
+import { applyChange, INVALIDATE_WINDOW_MS, refresh } from './watch'
 
 const runChange = (space: string, i: number) => ({ seq: i, at: 0, space_id: space, resource_type: 'run', resource_id: `run_${i}`, action: 'updated' })
 
@@ -42,6 +42,58 @@ describe('change-feed invalidation', () => {
     expect(maxInFlight).toBe(1)
     await vi.advanceTimersByTimeAsync(2000)
     expect(fetches).toBeLessThanOrEqual(3)
+    unsub()
+  })
+
+  // Review B1: a change while the list's refetch is in flight must not be lost. That fetch may have read the server
+  // before the change, and its success would mark the old data fresh; the query is refetched once more after it.
+  it('never caches data read before a change that arrived while it was being fetched', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000 } } })
+    let server = 0 // the runs list as the server has it
+    let fetches = 0
+    let inFlight = 0
+    let maxInFlight = 0
+    const queryFn = () => {
+      const read = server // what this request reads, when it starts
+      fetches++
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      return new Promise<number>((resolve) => setTimeout(() => {
+        inFlight--
+        resolve(read)
+      }, 400))
+    }
+    const obs = new QueryObserver(qc, { queryKey: keys.runs('spc_a'), queryFn })
+    const unsub = obs.subscribe(() => {})
+    await vi.advanceTimersByTimeAsync(500)
+    expect(obs.getCurrentResult().data).toBe(0)
+
+    server = 1 // the run goes idle
+    applyChange(qc, runChange('spc_a', 1))
+    await vi.advanceTimersByTimeAsync(INVALIDATE_WINDOW_MS + 50) // that refetch is in flight, it read 1
+    server = 2 // the run exits
+    applyChange(qc, runChange('spc_a', 2))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(obs.getCurrentResult().data).toBe(2)
+    expect(maxInFlight).toBe(1)
+    expect(fetches).toBeLessThanOrEqual(4)
+    unsub()
+  })
+
+  it('the position refresh also refetches a query that was in flight when it arrived', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000 } } })
+    let server = 0
+    const queryFn = () => {
+      const read = server
+      return new Promise<number>((resolve) => setTimeout(() => resolve(read), 400))
+    }
+    const obs = new QueryObserver(qc, { queryKey: keys.spaces, queryFn })
+    const unsub = obs.subscribe(() => {})
+    await vi.advanceTimersByTimeAsync(100) // the first load is in flight, it read 0
+    server = 1 // changed before the feed's position
+    refresh(qc) // the position event
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(obs.getCurrentResult().data).toBe(1)
     unsub()
   })
 

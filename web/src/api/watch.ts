@@ -1,4 +1,4 @@
-import type { QueryClient, QueryKey } from '@tanstack/react-query'
+import type { Query, QueryClient, QueryKey } from '@tanstack/react-query'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { keys } from './queries'
@@ -30,10 +30,34 @@ export const INVALIDATE_WINDOW_MS = 250
 
 const pending = new WeakMap<QueryClient, { keys: Map<string, QueryKey>; timer: ReturnType<typeof setTimeout> }>()
 
+/** Queries with a fetch in flight that are invalidated again once it settles (refresh). */
+const recheck = new WeakSet<Query>()
+
 /**
- * Queues the invalidation of queryKey and applies the queued ones together at the end of the window (one per distinct
- * key). An in-flight fetch of an invalidated query is kept (cancelRefetch: false), not cancelled and started again:
- * a stream of changes must never turn into a stream of requests.
+ * Invalidates the queries matching queryKey (every query without one) without restarting a fetch in flight
+ * (cancelRefetch: false): a stream of changes must never turn into a stream of requests. A fetch in flight may have
+ * read its data before the change, though, and its success would mark that data fresh; so such a query is invalidated
+ * once more when that fetch settles. That keeps at most one request per query in flight and loses no change.
+ */
+export function refresh(qc: QueryClient, queryKey?: QueryKey) {
+  const inFlight = qc.getQueryCache().findAll({ ...(queryKey ? { queryKey } : {}), fetchStatus: 'fetching' })
+  void qc.invalidateQueries(queryKey ? { queryKey } : undefined, { cancelRefetch: false })
+  for (const q of inFlight) {
+    const running = q.promise
+    if (!running || recheck.has(q)) continue
+    recheck.add(q)
+    void running
+      .catch(() => undefined)
+      .then(() => {
+        recheck.delete(q)
+        return qc.invalidateQueries({ queryKey: q.queryKey, exact: true }, { cancelRefetch: false })
+      })
+  }
+}
+
+/**
+ * Queues the invalidation of queryKey and applies the queued ones together at the end of the window, once per distinct
+ * key (refresh).
  */
 export function invalidate(qc: QueryClient, queryKey: QueryKey) {
   let p = pending.get(qc)
@@ -43,7 +67,7 @@ export function invalidate(qc: QueryClient, queryKey: QueryKey) {
       keys,
       timer: setTimeout(() => {
         pending.delete(qc)
-        for (const k of keys.values()) void qc.invalidateQueries({ queryKey: k }, { cancelRefetch: false })
+        for (const k of keys.values()) refresh(qc, k)
       }, INVALIDATE_WINDOW_MS),
     }
     pending.set(qc, p)
@@ -325,10 +349,10 @@ export function useWatch(enabled: boolean): WatchState {
         src.addEventListener('position', (ev) => {
           const seq = Number((ev as MessageEvent<string>).lastEventId) || 0
           if (seq > 0) last.current = Math.max(last.current, seq)
-          void qc.invalidateQueries(undefined, { cancelRefetch: false })
+          refresh(qc)
         })
         src.addEventListener('gap', () => {
-          void qc.invalidateQueries(undefined, { cancelRefetch: false })
+          refresh(qc)
           bc?.postMessage({ t: 'gap' } satisfies Relay)
         })
         src.addEventListener('end', (ev) => {
@@ -384,7 +408,7 @@ export function useWatch(enabled: boolean): WatchState {
       }
       if (leading) return
       if (m.t === 'change') deliver(m.c, m.seq)
-      else if (m.t === 'gap') void qc.invalidateQueries(undefined, { cancelRefetch: false })
+      else if (m.t === 'gap') refresh(qc)
       else show(m.s)
     }
     const stop = new AbortController()
