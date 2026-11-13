@@ -172,26 +172,35 @@ func (svc *Service) login(ctx context.Context, in LoginInput) (*LoginResult, err
 		}
 		return nil, ErrInvalidCredentials
 	}
-	// A hash with old parameters is replaced. It is computed before the transaction: Argon2id takes far longer than
-	// the write lock may be held (HP-DB-004).
+	// A hash with old parameters is replaced. It is computed before the transaction, under the hashing limit: Argon2id
+	// takes far longer than the write lock may be held (HP-DB-004).
 	var fresh string
-	if cred.ParamsVersion != int64(CurrentParams.Version) {
+	if cred.ParamsVersion != int64(CurrentParams.Version) && svc.acquire(ctx) == nil {
 		if h, err := HashPassword(pw, CurrentParams); err == nil {
 			fresh = h
 		}
+		svc.release()
 	}
 	var token string
 	err := svc.s.W().TxNamed(ctx, "auth.login", func(tx *store.Tx) error {
+		// The password was verified against cred before this transaction. A password change or reset committed since
+		// then wins: this login fails instead of opening a session with the old password.
+		cur, err := tx.Q.GetLocalCredential(ctx, opRow.ID)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && cur.PasswordPhc != cred.PasswordPhc) {
+			return ErrInvalidCredentials
+		} else if err != nil {
+			return err
+		}
 		if err := tx.Q.DeleteThrottle(ctx, acctKey); err != nil {
 			return err
 		}
 		if fresh != "" {
-			if err := tx.Q.UpsertLocalCredential(ctx, db.UpsertLocalCredentialParams{UserID: opRow.ID, PasswordPhc: fresh,
-				ParamsVersion: int64(CurrentParams.Version), ChangedAt: cred.ChangedAt, MustChange: cred.MustChange}); err != nil {
+			// Only while the stored hash is still the verified one, so a rehash never writes an old password back.
+			if _, err := tx.Q.RehashLocalCredential(ctx, db.RehashLocalCredentialParams{NewPhc: fresh,
+				ParamsVersion: int64(CurrentParams.Version), UserID: opRow.ID, OldPhc: cred.PasswordPhc}); err != nil {
 				return err
 			}
 		}
-		var err error
 		if token, err = svc.createSession(ctx, tx, opRow.ID, MethodPassword, nil, in.Meta); err != nil {
 			return err
 		}
