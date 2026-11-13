@@ -18,8 +18,8 @@ func (m *Manager) Installed() []Installed {
 	}
 	var out []Installed
 	for _, e := range entries {
-		if !e.IsDir() || !ValidVersion(e.Name()) {
-			continue
+		if !ValidVersion(e.Name()) {
+			continue // lookup alone decides what is installed, so Installed and Ensure agree
 		}
 		if inst, ok := m.lookup(e.Name()); ok {
 			out = append(out, inst)
@@ -30,7 +30,8 @@ func (m *Manager) Installed() []Installed {
 }
 
 // GC removes cached versions beyond the newest Keep, except protected ones: the versions pinned by profiles and the
-// versions used by live or adoptable runs (both supplied by the caller), and the memoised channel targets. A version
+// versions used by live or adoptable runs (both supplied by the caller), and the memoised channel targets and their
+// previous targets (the fallbacks). A version
 // another process is installing or removing is skipped. It returns the removed versions.
 func (m *Manager) GC(ctx context.Context, pinned, inUse []string) ([]string, error) {
 	keep := map[string]bool{}
@@ -41,6 +42,9 @@ func (m *Manager) GC(ctx context.Context, pinned, inUse []string) ([]string, err
 		keep[v] = true
 	}
 	for _, v := range m.Resolved() {
+		keep[v] = true
+	}
+	for _, v := range m.previousTargets() {
 		keep[v] = true
 	}
 	var removed []string
@@ -73,7 +77,7 @@ func (m *Manager) Clean() error {
 	for _, e := range entries {
 		name := e.Name()
 		if v, _, ok := strings.Cut(name, ".gc-"); ok && ValidVersion(v) {
-			_ = os.RemoveAll(filepath.Join(m.dir, name))
+			_ = removeTree(filepath.Join(m.dir, name))
 			continue
 		}
 		v, _, ok := strings.Cut(name, ".tmp-")
@@ -84,7 +88,7 @@ func (m *Manager) Clean() error {
 		if err != nil || !locked {
 			continue
 		}
-		_ = os.RemoveAll(filepath.Join(m.dir, name))
+		_ = removeTree(filepath.Join(m.dir, name))
 		unlock()
 	}
 	return nil
@@ -112,8 +116,9 @@ func (m *Manager) removeLocked(ctx context.Context, version string) error {
 	return m.remove(version)
 }
 
-// remove renames the version directory out of the way first, so a half-deleted directory never looks like a version.
-// Running processes keep the deleted binary's inode.
+// remove renames the version directory (or whatever sits at its name) out of the way first, so a half-deleted
+// directory never looks like a version, then deletes it. The caller holds the version's lock. Running processes keep
+// the deleted binary's inode.
 func (m *Manager) remove(version string) error {
 	gone := filepath.Join(m.dir, version+".gc-"+randSuffix())
 	if err := os.Rename(m.versionDir(version), gone); err != nil {
@@ -122,5 +127,16 @@ func (m *Manager) remove(version string) error {
 		}
 		return err
 	}
-	return os.RemoveAll(gone)
+	return removeTree(gone)
+}
+
+// removeTree deletes path. A real directory is made writable first: verified version directories are read-only
+// (0500). A link is removed itself, never followed.
+func removeTree(path string) error {
+	if fi, err := os.Lstat(path); err == nil && fi.IsDir() {
+		if err := os.Chmod(path, 0o700); err != nil { //nolint:gosec // G302: our own directory, to delete it
+			return err
+		}
+	}
+	return os.RemoveAll(path)
 }

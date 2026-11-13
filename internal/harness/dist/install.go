@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -100,6 +101,14 @@ func (m *Manager) install(ctx context.Context, version string) (Installed, error
 	if inst, ok := m.lookup(version); ok {
 		return inst, nil // another agent on this directory installed it meanwhile
 	}
+	// Whatever sits at <v> now failed lookup (damaged, tampered with, not a real directory): remove it, or the rename
+	// below would fail on every attempt and a channel target would download again and again.
+	if _, err := os.Lstat(m.versionDir(version)); err == nil {
+		if err := m.remove(version); err != nil {
+			return Installed{}, fmt.Errorf("claude code %s: remove the unusable cached copy: %w", version, err)
+		}
+		m.log.Warn("claude code: removed an unusable cached version before reinstalling it", slog.String("version", version))
+	}
 
 	raw, err := m.get(ctx, m.base.JoinPath(version, "manifest.json"), maxManifestBytes)
 	if err != nil {
@@ -133,14 +142,26 @@ func (m *Manager) install(ctx context.Context, version string) (Installed, error
 	if err != nil {
 		return Installed{}, err
 	}
-	defer func() { _ = os.RemoveAll(tmp) }() // a no-op once renamed into place
+	defer func() { _ = removeTree(tmp) }() // a no-op once renamed into place
 	if err := m.download(ctx, tmp, inst); err != nil {
 		return Installed{}, err
 	}
-	if err := writeFileAtomic(filepath.Join(tmp, verifiedFile), inst); err != nil {
+	b, err := json.MarshalIndent(inst, "", "  ")
+	if err != nil {
+		return Installed{}, err
+	}
+	if err := writeReadOnly(filepath.Join(tmp, manifestFile), raw); err != nil {
+		return Installed{}, err
+	}
+	if err := writeReadOnly(filepath.Join(tmp, verifiedFile), append(b, '\n')); err != nil {
 		return Installed{}, err
 	}
 	if err := syncDir(tmp); err != nil {
+		return Installed{}, err
+	}
+	// Read-only from here on: this guards against accidental changes only, since runs share the node's uid (whoever
+	// can write as that user can chmod it back).
+	if err := os.Chmod(tmp, 0o500); err != nil { //nolint:gosec // G302: a directory needs x to be read
 		return Installed{}, err
 	}
 	if err := os.Rename(tmp, m.versionDir(version)); err != nil {
@@ -154,7 +175,7 @@ func (m *Manager) install(ctx context.Context, version string) (Installed, error
 }
 
 // download streams the binary into dir through SHA-256 with a hard cap of the manifest size. The file stays 0600 (not
-// executable) until size and checksum match.
+// executable) until size and checksum match, then becomes 0555 (read-only).
 func (m *Manager) download(ctx context.Context, dir string, inst Installed) error {
 	resp, err := m.do(ctx, m.base.JoinPath(inst.Version, m.platform, BinaryName))
 	if err != nil {
@@ -193,30 +214,125 @@ func (m *Manager) download(ctx context.Context, dir string, inst Installed) erro
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o755) //nolint:gosec // G302: the harness binary must be executable
+	return os.Chmod(path, 0o555) //nolint:gosec // G302: the harness binary must be executable
 }
 
-// lookup is the cheap check that version is installed: its verified.json matches this version and platform and the
-// binary is an executable regular file of the recorded size. Verify also re-hashes.
+// lookup is the cheap check that version is installed (see check).
 func (m *Manager) lookup(version string) (Installed, bool) {
+	inst, err := m.check(version)
+	return inst, err == nil
+}
+
+// check opens <dir>/<version> and checks it cheaply: a real directory (no link followed), a regular verified.json
+// for this version and platform, and an executable regular binary of the recorded size. Verify also re-hashes.
+func (m *Manager) check(version string) (Installed, error) {
 	if !ValidVersion(version) {
-		return Installed{}, false
+		return Installed{}, fmt.Errorf("%w: %q", ErrInvalidVersion, version)
 	}
-	b, err := os.ReadFile(filepath.Join(m.versionDir(version), verifiedFile))
+	vd, err := m.openVersion(version)
 	if err != nil {
-		return Installed{}, false
+		return Installed{}, err
 	}
-	var inst Installed
-	if json.Unmarshal(b, &inst) != nil || inst.Version != version || inst.Platform != m.platform ||
-		!sha256Re.MatchString(inst.SHA256) {
-		return Installed{}, false
+	defer func() { _ = vd.Close() }()
+	inst, err := readVerified(vd, version, m.platform)
+	if err != nil {
+		return Installed{}, err
 	}
-	fi, err := os.Lstat(m.binaryPath(version))
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() != inst.Size || fi.Mode().Perm()&0o111 == 0 {
-		return Installed{}, false
+	fi, err := vd.Lstat(BinaryName)
+	switch {
+	case err != nil:
+		return Installed{}, err
+	case !fi.Mode().IsRegular():
+		return Installed{}, fmt.Errorf("%w: %s: the binary is not a regular file", ErrVerify, version)
+	case fi.Size() != inst.Size:
+		return Installed{}, fmt.Errorf("%w: %s: the binary is %d bytes, verified.json says %d", ErrVerify, version, fi.Size(), inst.Size)
+	case fi.Mode().Perm()&0o111 == 0:
+		return Installed{}, fmt.Errorf("%w: %s: the binary is not executable", ErrVerify, version)
 	}
 	inst.Path = m.binaryPath(version)
-	return inst, true
+	return inst, nil
+}
+
+// openVersion opens <dir>/<version> as a handle, refusing a link or a swap (as the agent's openDir does): the name is
+// opened first, then must be a real directory and the very one that was opened. Files are then read relative to the
+// handle, so a link planted inside or a directory swapped afterwards is never followed by path.
+func (m *Manager) openVersion(version string) (*os.Root, error) {
+	parent, err := os.OpenRoot(m.dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = parent.Close() }()
+	child, err := parent.OpenRoot(version)
+	if err != nil {
+		return nil, err
+	}
+	li, err := parent.Lstat(version)
+	if err == nil && !li.IsDir() {
+		err = fmt.Errorf("%w: %s is not a directory", ErrVerify, version)
+	}
+	if err == nil {
+		var ci fs.FileInfo
+		if ci, err = child.Stat("."); err == nil && !os.SameFile(li, ci) {
+			err = fmt.Errorf("%w: %s changed while it was opened", ErrVerify, version)
+		}
+	}
+	if err != nil {
+		_ = child.Close()
+		return nil, err
+	}
+	return child, nil
+}
+
+// openRegular opens name inside root only if it is a regular file (not a link) and the very file that was checked.
+func openRegular(root *os.Root, name string) (*os.File, fs.FileInfo, error) {
+	li, err := root.Lstat(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !li.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("%w: %s is not a regular file", ErrVerify, name)
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	fi, err := f.Stat()
+	if err == nil && !os.SameFile(li, fi) {
+		err = fmt.Errorf("%w: %s changed while it was opened", ErrVerify, name)
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	return f, fi, nil
+}
+
+// readRegular reads a small regular file inside root (at most limit bytes).
+func readRegular(root *os.Root, name string, limit int64) ([]byte, error) {
+	f, _, err := openRegular(root, name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err == nil && int64(len(b)) > limit {
+		err = fmt.Errorf("%w: %s is larger than %d bytes", ErrVerify, name, limit)
+	}
+	return b, err
+}
+
+// readVerified reads and checks a version directory's verified.json.
+func readVerified(vd *os.Root, version, platform string) (Installed, error) {
+	b, err := readRegular(vd, verifiedFile, maxManifestBytes)
+	if err != nil {
+		return Installed{}, err
+	}
+	var inst Installed
+	if json.Unmarshal(b, &inst) != nil || inst.Version != version || inst.Platform != platform ||
+		!sha256Re.MatchString(inst.SHA256) || !sha256Re.MatchString(inst.ManifestSHA256) {
+		return Installed{}, fmt.Errorf("%w: %s: verified.json does not match", ErrVerify, version)
+	}
+	return inst, nil
 }
 
 // Verify re-checks the size and SHA-256 of each cached version against its verified.json (at startup, for the
@@ -228,8 +344,8 @@ func (m *Manager) Verify(ctx context.Context, versions ...string) map[string]err
 		if !ValidVersion(v) {
 			continue
 		}
-		if _, err := os.Stat(m.versionDir(v)); err != nil {
-			continue
+		if _, err := os.Lstat(m.versionDir(v)); err != nil {
+			continue // not cached (a link at the name is checked, and removed, like a damaged version)
 		}
 		if err := m.verifyOne(ctx, v); err != nil {
 			out[v] = err
@@ -245,15 +361,34 @@ func (m *Manager) Verify(ctx context.Context, versions ...string) map[string]err
 }
 
 func (m *Manager) verifyOne(ctx context.Context, version string) error {
-	inst, ok := m.lookup(version)
-	if !ok {
-		return fmt.Errorf("%w: %s: verified.json or the binary is missing or does not match", ErrVerify, version)
+	inst, err := m.check(version)
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrVerify, version, err)
 	}
-	f, err := os.Open(inst.Path)
+	vd, err := m.openVersion(version)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = vd.Close() }()
+	// The release manifest kept beside the binary must still be the one verified.json was derived from.
+	raw, err := readRegular(vd, manifestFile, maxManifestBytes)
+	if err != nil {
+		return fmt.Errorf("%w: %s: manifest.json: %w", ErrVerify, version, err)
+	}
+	msum := sha256.Sum256(raw)
+	var mf manifest
+	if hex.EncodeToString(msum[:]) != inst.ManifestSHA256 || json.Unmarshal(raw, &mf) != nil || mf.Version != version ||
+		mf.Platforms[m.platform].Checksum != inst.SHA256 || mf.Platforms[m.platform].Size != inst.Size {
+		return fmt.Errorf("%w: %s: manifest.json does not match verified.json", ErrVerify, version)
+	}
+	f, fi, err := openRegular(vd, BinaryName)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	if fi.Size() != inst.Size {
+		return fmt.Errorf("%w: %s: the cached binary's size changed", ErrVerify, version)
+	}
 	h := sha256.New()
 	n, err := io.Copy(h, io.LimitReader(&ctxReader{ctx: ctx, r: f}, inst.Size+1))
 	if err != nil {
@@ -280,6 +415,22 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 func (m *Manager) versionDir(v string) string { return filepath.Join(m.dir, v) }
 func (m *Manager) binaryPath(v string) string { return filepath.Join(m.dir, v, BinaryName) }
 func (m *Manager) lockPath(v string) string   { return filepath.Join(m.dir, "."+v+".lock") }
+
+// writeReadOnly creates path (0400) with b and syncs it.
+func writeReadOnly(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400) //nolint:gosec // inside our temp dir
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
 
 // writeFileAtomic writes v as JSON (0600) through a synced temporary file and a rename.
 func writeFileAtomic(path string, v any) error {

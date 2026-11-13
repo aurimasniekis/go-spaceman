@@ -33,6 +33,7 @@ const (
 
 	memoFile     = "channels.json"
 	verifiedFile = "verified.json"
+	manifestFile = "manifest.json"
 )
 
 // platforms are the release platform keys this package downloads for.
@@ -43,7 +44,8 @@ var platforms = map[string]bool{
 
 // Options configure a Manager.
 type Options struct {
-	// Dir is the cache directory, normally <data_dir>/harness/claude-code (absolute; created 0700).
+	// Dir is the cache directory, normally <data_dir>/harness/claude-code (absolute; created 0700). An existing one
+	// must be a real directory owned by this user and writable by nobody else.
 	Dir string
 	// BaseURL is the release base (https only). Default DefaultBaseURL.
 	BaseURL string
@@ -55,7 +57,8 @@ type Options struct {
 	Refresh time.Duration
 	// DownloadTimeout bounds one version install (manifest and binary). Default DefaultDownloadTimeout.
 	DownloadTimeout time.Duration
-	// Client is the HTTP client (tests pass an httptest TLS client). Redirects are always restricted to https.
+	// Client is the HTTP client (tests pass an httptest TLS client). Redirects are always restricted to https on the
+	// base URL's host.
 	Client *http.Client
 	Log    *slog.Logger
 	// Now is the clock (tests). Default time.Now.
@@ -84,13 +87,30 @@ type Resolution struct {
 	// downloaded in the background) or the pointer was unavailable: the newest verified cached version runs instead.
 	Version string
 	Path    string
+	// Fallback says why Version is not Target (one of the Fallback* reasons); empty when the target runs.
+	Fallback string
 }
+
+// Fallback reasons: why a channel launch runs another version than the channel's target. A fallback is never newer
+// than the target (or, with the pointer unavailable, than the last known target).
+const (
+	// FallbackLastTarget: the pointer is unavailable; the channel's last known target runs.
+	FallbackLastTarget = "last_target"
+	// FallbackPreviousTarget: the target is not cached yet; the channel's previous target runs while it downloads.
+	FallbackPreviousTarget = "previous_target"
+	// FallbackOlderCached: neither is cached; the newest cached version not newer than the (last known) target runs.
+	FallbackOlderCached = "older_cached"
+	// FallbackNewestCached: the pointer is unavailable and no target was ever known; the newest cached version runs.
+	FallbackNewestCached = "newest_cached"
+)
 
 // Pending reports whether the run gets another version than the requested target.
 func (r Resolution) Pending() bool { return r.Version != r.Target }
 
 type memoEntry struct {
-	Version    string    `json:"version"`
+	Version string `json:"version"`
+	// Previous is the channel's target before Version, the first fallback while Version downloads.
+	Previous   string    `json:"previous,omitempty"`
 	ResolvedAt time.Time `json:"resolved_at"`
 }
 
@@ -155,7 +175,7 @@ func New(o Options) (*Manager, error) {
 		c := *o.Client
 		client = &c
 	}
-	client.CheckRedirect = httpsRedirectsOnly
+	client.CheckRedirect = sameHostRedirects(base)
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
@@ -164,6 +184,9 @@ func New(o Options) (*Manager, error) {
 	}
 	if err := os.MkdirAll(o.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("claude code: create cache directory: %w", err)
+	}
+	if err := checkCacheDir(o.Dir); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
@@ -192,14 +215,39 @@ func ParseBaseURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-func httpsRedirectsOnly(req *http.Request, via []*http.Request) error {
-	if req.URL.Scheme != "https" {
-		return fmt.Errorf("claude code: refusing a redirect to %s", req.URL.Scheme)
-	}
-	if len(via) >= 5 {
-		return errors.New("claude code: too many redirects")
+// checkCacheDir refuses a cache directory that is a link, not a directory, writable by group or others, or owned by
+// another user: whoever can write there can plant the binaries the node runs.
+func checkCacheDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	switch {
+	case err != nil:
+		return fmt.Errorf("claude code: cache directory: %w", err)
+	case fi.Mode()&os.ModeSymlink != 0:
+		return fmt.Errorf("claude code: cache directory %s is a symbolic link", dir)
+	case !fi.IsDir():
+		return fmt.Errorf("claude code: cache directory %s is not a directory", dir)
+	case fi.Mode().Perm()&0o022 != 0:
+		return fmt.Errorf("claude code: cache directory %s is writable by group or others (mode %v)", dir, fi.Mode().Perm())
+	case !ownedByMe(fi):
+		return fmt.Errorf("claude code: cache directory %s is owned by another user", dir)
 	}
 	return nil
+}
+
+// sameHostRedirects allows a redirect only to https on the base URL's host (and port).
+func sameHostRedirects(base *url.URL) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("claude code: refusing a redirect to %s", req.URL.Scheme)
+		}
+		if !strings.EqualFold(req.URL.Host, base.Host) {
+			return errors.New("claude code: refusing a redirect to another host")
+		}
+		if len(via) >= 5 {
+			return errors.New("claude code: too many redirects")
+		}
+		return nil
+	}
 }
 
 // Close stops background downloads and prefetches and waits for them.
@@ -220,10 +268,13 @@ func (m *Manager) Dir() string { return m.dir }
 //
 //   - An exact version is installed if needed (bounded by the download timeout); a version the release server does not
 //     have fails with ErrNotFound.
-//   - A channel resolves through its memoised pointer. When the target is cached it runs; when it is not and another
-//     verified version is cached, the newest cached version runs and the target downloads in the background; when
-//     nothing is cached the call waits for the target's install. When the pointer cannot be fetched, the last known
-//     target (if cached) or the newest cached version runs.
+//   - A channel resolves through its memoised pointer. When the target is cached it runs. When it is not, the channel's
+//     previous target runs if cached, else the newest cached version not newer than the target, while the target
+//     downloads in the background; when no such version is cached the call waits for the target's install. When the
+//     pointer cannot be fetched, the last known target runs if cached, then its previous target, then the newest
+//     cached version not newer than it (any cached version when no target was ever known).
+//
+// Resolution.Fallback says which of these happened.
 func (m *Manager) Resolve(ctx context.Context, requested string) (Resolution, error) {
 	if requested == "" {
 		requested = ChannelLatest
@@ -240,20 +291,20 @@ func (m *Manager) Resolve(ctx context.Context, requested string) (Resolution, er
 	}
 	target, perr := m.Channel(ctx, requested)
 	if perr != nil {
-		inst, ok := m.fallback(requested)
+		inst, why, ok := m.fallback(requested, "")
 		if !ok {
 			return Resolution{}, fmt.Errorf("%w: %w", ErrNoVersion, perr)
 		}
 		m.log.Warn("claude code channel unavailable; using a cached version", slog.String("channel", requested),
-			slog.String("version", inst.Version), slog.String("error", perr.Error()))
-		return Resolution{Requested: requested, Version: inst.Version, Path: inst.Path}, nil
+			slog.String("version", inst.Version), slog.String("fallback", why), slog.String("error", perr.Error()))
+		return Resolution{Requested: requested, Version: inst.Version, Path: inst.Path, Fallback: why}, nil
 	}
 	if inst, ok := m.lookup(target); ok {
 		return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path}, nil
 	}
-	if cached := m.Installed(); len(cached) > 0 {
+	if inst, why, ok := m.fallback(requested, target); ok {
 		m.Prefetch(target) //nolint:contextcheck // a background install outlives this call
-		return Resolution{Requested: requested, Target: target, Version: cached[0].Version, Path: cached[0].Path}, nil
+		return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path, Fallback: why}, nil
 	}
 	inst, err := m.Ensure(ctx, target)
 	if err != nil {
@@ -262,21 +313,36 @@ func (m *Manager) Resolve(ctx context.Context, requested string) (Resolution, er
 	return Resolution{Requested: requested, Target: target, Version: inst.Version, Path: inst.Path}, nil
 }
 
-// fallback is the last known target of channel when it is cached, else the newest cached version.
-func (m *Manager) fallback(channel string) (Installed, bool) {
+// fallback picks a cached version for channel when target (empty: the pointer is unavailable) cannot run, and says
+// why (a Fallback* reason). It never picks a version newer than the target, or than the last known target when the
+// pointer is unavailable; only with no target ever known does any cached version qualify.
+func (m *Manager) fallback(channel, target string) (Installed, string, bool) {
 	m.mu.Lock()
-	e, ok := m.memo[channel]
+	e, known := m.memo[channel]
 	m.mu.Unlock()
-	if ok {
+	bound := target
+	if target == "" && known {
+		bound = e.Version
 		if inst, ok := m.lookup(e.Version); ok {
-			return inst, true
+			return inst, FallbackLastTarget, true
 		}
 	}
-	cached := m.Installed()
-	if len(cached) == 0 {
-		return Installed{}, false
+	notNewer := func(v string) bool { return bound == "" || CompareVersions(v, bound) <= 0 }
+	if known && e.Previous != "" && notNewer(e.Previous) {
+		if inst, ok := m.lookup(e.Previous); ok {
+			return inst, FallbackPreviousTarget, true
+		}
 	}
-	return cached[0], true
+	why := FallbackOlderCached
+	if bound == "" {
+		why = FallbackNewestCached
+	}
+	for _, inst := range m.Installed() { // newest first
+		if notNewer(inst.Version) {
+			return inst, why, true
+		}
+	}
+	return Installed{}, "", false
 }
 
 // Channel returns the version channel points to, memoised for the refresh interval.
@@ -293,7 +359,21 @@ func (m *Manager) Channel(ctx context.Context, channel string) (string, error) {
 	return m.refreshChannel(ctx, channel)
 }
 
-// Resolved returns the memoised channel targets (channel → version), fresh or not.
+// previousTargets returns the channels' previous targets, protected from GC as fallbacks.
+func (m *Manager) previousTargets() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for _, e := range m.memo {
+		if e.Previous != "" {
+			out = append(out, e.Previous)
+		}
+	}
+	return out
+}
+
+// Resolved returns the memoised channel targets (channel → version), fresh or not. The channels' previous targets
+// (fallbacks, also kept by GC) are not included.
 func (m *Manager) Resolved() map[string]string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -314,7 +394,12 @@ func (m *Manager) refreshChannel(ctx context.Context, channel string) (string, e
 		return "", fmt.Errorf("%w: the %s pointer is not a version", ErrInvalidVersion, channel)
 	}
 	m.mu.Lock()
-	m.memo[channel] = memoEntry{Version: v, ResolvedAt: m.now().UTC()}
+	old := m.memo[channel]
+	e := memoEntry{Version: v, Previous: old.Previous, ResolvedAt: m.now().UTC()}
+	if old.Version != "" && old.Version != v {
+		e.Previous = old.Version
+	}
+	m.memo[channel] = e
 	snapshot := make(map[string]memoEntry, len(m.memo))
 	for k, e := range m.memo {
 		snapshot[k] = e
@@ -336,9 +421,13 @@ func (m *Manager) loadMemo() {
 		return
 	}
 	for c, e := range saved {
-		if ValidChannel(c) && ValidVersion(e.Version) {
-			m.memo[c] = e
+		if !ValidChannel(c) || !ValidVersion(e.Version) {
+			continue
 		}
+		if !ValidVersion(e.Previous) || e.Previous == e.Version {
+			e.Previous = ""
+		}
+		m.memo[c] = e
 	}
 }
 

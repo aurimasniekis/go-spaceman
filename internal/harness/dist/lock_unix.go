@@ -32,7 +32,8 @@ func lockFile(ctx context.Context, path string) (func(), error) {
 
 // tryLockFile takes an exclusive flock on path without waiting; ok is false when another process holds it.
 func tryLockFile(path string) (unlock func(), ok bool, err error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // inside the cache directory
+	// O_NOFOLLOW: a link planted at the lock's name is refused, never followed to create or lock another file.
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600) //nolint:gosec // inside the cache directory
 	if err != nil {
 		return nil, false, fmt.Errorf("claude code: open lock: %w", err)
 	}
@@ -47,4 +48,10 @@ func tryLockFile(path string) (unlock func(), ok bool, err error) {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:gosec // fd fits int
 		_ = f.Close()
 	}, true, nil
+}
+
+// ownedByMe reports whether fi belongs to the effective user.
+func ownedByMe(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int64(st.Uid) == int64(os.Geteuid())
 }

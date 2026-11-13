@@ -69,7 +69,7 @@ type ClaudeCodeConfig struct {
 	Manage bool `yaml:"manage"`
 	// Channel is the node's default version: latest (default), stable or an exact X.Y.Z.
 	Channel string `yaml:"channel"`
-	// BaseURL is the release server (https only); change it only to use a mirror.
+	// BaseURL is the release server (https only; redirects must stay on its host); change it only to use a mirror.
 	BaseURL string `yaml:"base_url"`
 	// CacheKeep is how many of the newest versions the cache keeps besides pinned and in-use ones (1-50).
 	CacheKeep int `yaml:"cache_keep"`

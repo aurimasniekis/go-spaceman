@@ -169,12 +169,24 @@ func newManager(t *testing.T, fr *fakeRelease, dir string, edit func(*Options)) 
 	if edit != nil {
 		edit(&o)
 	}
+	t.Cleanup(func() { makeWritable(dir) }) // runs after m.Close, before the temp dir is removed
 	m, err := New(o)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(m.Close)
 	return m
+}
+
+// makeWritable makes every directory under dir writable again, so the test's temp dir can be removed: verified
+// version directories are read-only (0500).
+func makeWritable(dir string) {
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(p, 0o700) //nolint:gosec // test cleanup
+		}
+		return nil
+	})
 }
 
 // assertNothingExecutable fails when dir holds an executable regular file outside a verified version directory.
@@ -237,9 +249,17 @@ func TestEnsureInstallsVerifiedImmutableVersion(t *testing.T) {
 	if err != nil || string(got) != string(body) {
 		t.Fatalf("binary content: %v", err)
 	}
-	fi, _ := os.Stat(inst.Path)
-	if fi.Mode().Perm() != 0o755 {
-		t.Fatalf("binary mode %v, want 0755", fi.Mode().Perm())
+	// Read-only once verified: binary 0555, metadata 0400, version directory 0500.
+	for name, want := range map[string]fs.FileMode{
+		"": 0o500, BinaryName: 0o555, verifiedFile: 0o400, manifestFile: 0o400,
+	} {
+		fi, err := os.Lstat(filepath.Join(m.Dir(), "2.1.322", name))
+		if err != nil || fi.Mode().Perm() != want {
+			t.Fatalf("%q mode %v (%v), want %v", name, fi.Mode().Perm(), err, want)
+		}
+	}
+	if kept, _ := os.ReadFile(filepath.Join(m.Dir(), "2.1.322", manifestFile)); string(kept) != string(fr.manifests["2.1.322"]) {
+		t.Fatal("manifest.json is not the release manifest")
 	}
 	di, _ := os.Stat(m.Dir())
 	if di.Mode().Perm() != 0o700 {
@@ -621,6 +641,8 @@ func TestVerifyRemovesDamagedVersion(t *testing.T) {
 	// Same size, different content: only the hash catches it.
 	b, _ := os.ReadFile(inst.Path)
 	b[len(b)-1] ^= 1
+	// Undo the read-only mode to damage it.
+	_ = os.Chmod(inst.Path, 0o755)                            //nolint:gosec // test binary
 	if err := os.WriteFile(inst.Path, b, 0o755); err != nil { //nolint:gosec // test binary
 		t.Fatal(err)
 	}
@@ -639,11 +661,36 @@ func TestVerifyRemovesDamagedVersion(t *testing.T) {
 	}
 	// A truncated binary fails even the cheap lookup.
 	inst, _ = m.Ensure(context.Background(), "2.1.3")
+	_ = os.Chmod(inst.Path, 0o755) //nolint:gosec // test binary
 	if err := os.Truncate(inst.Path, 5); err != nil {
 		t.Fatal(err)
 	}
 	if errs := m.Verify(context.Background(), "2.1.3"); errs["2.1.3"] == nil {
 		t.Fatal("truncated binary verified")
+	}
+	// The kept manifest no longer matching verified.json is damage too (the binary itself is intact): one that lacks
+	// the platform, and one whose content is equivalent but whose bytes (hash) differ.
+	for _, tamper := range []func([]byte) []byte{
+		func([]byte) []byte { return []byte(`{"version":"2.1.3"}`) },
+		func(b []byte) []byte { return append(b, ' ') },
+	} {
+		inst, err = m.Ensure(context.Background(), "2.1.3")
+		if err != nil {
+			t.Fatal(err)
+		}
+		vdir := filepath.Dir(inst.Path)
+		_ = os.Chmod(vdir, 0o700) //nolint:gosec // test: undo the read-only mode to tamper with it
+		kept, _ := os.ReadFile(filepath.Join(vdir, manifestFile))
+		_ = os.Remove(filepath.Join(vdir, manifestFile))
+		if err := os.WriteFile(filepath.Join(vdir, manifestFile), tamper(kept), 0o400); err != nil {
+			t.Fatal(err)
+		}
+		if errs := m.Verify(context.Background(), "2.1.3"); !errors.Is(errs["2.1.3"], ErrVerify) {
+			t.Fatalf("tampered manifest.json: %v", errs)
+		}
+		if _, err := os.Lstat(vdir); !os.IsNotExist(err) {
+			t.Fatal("version with a tampered manifest.json kept")
+		}
 	}
 }
 
@@ -792,10 +839,13 @@ func TestVersionsAndPlatform(t *testing.T) {
 	}
 
 	glibc, musl, alpine := t.TempDir(), t.TempDir(), t.TempDir()
-	_ = os.MkdirAll(filepath.Join(musl, "lib"), 0o700)
-	_ = os.WriteFile(filepath.Join(musl, "lib", "ld-musl-x86_64.so.1"), nil, 0o600)
-	_ = os.MkdirAll(filepath.Join(alpine, "etc"), 0o700)
-	_ = os.WriteFile(filepath.Join(alpine, "etc", "alpine-release"), nil, 0o600)
+	writeELF(t, filepath.Join(glibc, "bin", "sh"), "/lib64/ld-linux-x86-64.so.2")
+	writeELF(t, filepath.Join(musl, "bin", "sh"), "/lib/ld-musl-x86_64.so.1")
+	// Alpine: /bin/sh is a link to busybox, linked against musl.
+	writeELF(t, filepath.Join(alpine, "bin", "busybox"), "/lib/ld-musl-aarch64.so.1")
+	if err := os.Symlink("busybox", filepath.Join(alpine, "bin", "sh")); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct{ goos, goarch, root, want string }{
 		{"linux", "amd64", glibc, "linux-x64"},
 		{"linux", "arm64", glibc, "linux-arm64"},
@@ -810,6 +860,25 @@ func TestVersionsAndPlatform(t *testing.T) {
 		got, err := platformFor(c.goos, c.goarch, c.root)
 		if got != c.want || (c.want == "") != (err != nil) {
 			t.Errorf("platformFor(%s,%s) = %q, %v; want %q", c.goos, c.goarch, got, err, c.want)
+		}
+	}
+	// A Debian host with the musl package: musl's loader and even an alpine-release file exist, but /bin/sh is glibc's.
+	debian := t.TempDir()
+	writeELF(t, filepath.Join(debian, "bin", "sh"), "/lib/ld-linux-aarch64.so.1")
+	for _, f := range []string{"lib/ld-musl-x86_64.so.1", "usr/lib/x86_64-linux-musl/libc.so", "etc/alpine-release"} {
+		_ = os.MkdirAll(filepath.Join(debian, filepath.Dir(f)), 0o700)
+		_ = os.WriteFile(filepath.Join(debian, f), nil, 0o600)
+	}
+	// Not a dynamic ELF: a script, a static binary (no PT_INTERP), nothing at all.
+	script, static, none := t.TempDir(), t.TempDir(), t.TempDir()
+	_ = os.MkdirAll(filepath.Join(script, "bin"), 0o700)
+	_ = os.WriteFile(filepath.Join(script, "bin", "sh"), []byte("#!/lib/ld-musl-x86_64.so.1\n"), 0o600)
+	writeELF(t, filepath.Join(static, "bin", "sh"), "")
+	for root, want := range map[string]bool{
+		glibc: false, musl: true, alpine: true, debian: false, script: false, static: false, none: false,
+	} {
+		if got := isMusl(root); got != want {
+			t.Errorf("isMusl(%s) = %v, want %v", root, got, want)
 		}
 	}
 	if p, err := Platform(); err == nil && !platforms[p] {

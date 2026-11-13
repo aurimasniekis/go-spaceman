@@ -3,21 +3,28 @@
 //
 // A version is an exact X.Y.Z, or a channel ("latest", "stable") whose pointer is fetched from {base}/{channel} and
 // memoised for the refresh interval, in memory and on disk. Every URL and path is built only from a validated version
-// and the node's platform (GOOS/GOARCH, plus a musl check on Linux), never from response text.
+// and the node's platform (GOOS/GOARCH, plus a musl check of /bin/sh's ELF interpreter on Linux), never from response text.
 //
 // An install fetches {base}/{v}/manifest.json, requires its version to equal v, then streams
 // {base}/{v}/{platform}/claude through SHA-256 with a hard size cap (the manifest size) into a private temporary
-// directory. Only after the size and checksum match is the binary synced, made executable and the directory renamed to
-// <dir>/<v>. A version directory is never modified after that rename, so nothing partial is ever executable. The
-// verification is checksum-only: the release manifest's signature is not checked yet (design §2).
+// directory. Only after the size and checksum match is the binary synced and made executable (0555), the manifest and
+// verified.json written beside it (0400), and the directory made read-only (0500) and renamed to <dir>/<v>. A version
+// directory is never modified after that rename, so nothing partial is ever executable; a <v> that fails the cheap
+// check (opened as a handle, never through a link) is removed and installed again. The verification is
+// checksum-only: the release manifest's signature is not checked yet (design §2).
+//
+// The read-only modes only stop accidental changes. Runs share the node's uid, so a run could still chmod and replace a
+// cached binary; whether launches re-hash it is decided with the launch wiring (CC-3).
 //
 // The package is self-contained: launch wiring (absolute binary path, DISABLE_AUTOUPDATER) is not part of it.
 package dist
 
 import (
+	"debug/elf"
 	"errors"
 	"fmt"
-	"os"
+	"io"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -82,7 +89,7 @@ func parts(v string) [3]int {
 // Platform returns the release platform key of this node ("linux-x64", "linux-arm64-musl", "darwin-arm64", …).
 func Platform() (string, error) { return platformFor(runtime.GOOS, runtime.GOARCH, "/") }
 
-// platformFor maps GOOS/GOARCH to a release platform. root is where the musl loader is looked for (tests use a
+// platformFor maps GOOS/GOARCH to a release platform. root is where bin/sh is inspected for musl (tests use a
 // temporary directory).
 func platformFor(goos, goarch, root string) (string, error) {
 	var arch string
@@ -106,13 +113,24 @@ func platformFor(goos, goarch, root string) (string, error) {
 	return "", fmt.Errorf("claude code: unsupported operating system %s", goos)
 }
 
-// isMusl reports whether the system's C library is musl: musl installs its dynamic loader as
-// /lib/ld-musl-<arch>.so.1, glibc never does.
+// isMusl reports whether the system's C library is musl: the ELF interpreter (PT_INTERP) of root/bin/sh is musl's
+// loader (ld-musl-<arch>.so.1). A loader file alone proves nothing: Debian's musl package installs one beside glibc.
+// A /bin/sh that is not a dynamic ELF (a script, a static build, missing) counts as glibc.
 func isMusl(root string) bool {
-	m, _ := filepath.Glob(filepath.Join(root, "lib", "ld-musl-*.so.1"))
-	if len(m) > 0 {
-		return true
+	f, err := elf.Open(filepath.Join(root, "bin", "sh"))
+	if err != nil {
+		return false
 	}
-	_, err := os.Stat(filepath.Join(root, "etc", "alpine-release"))
-	return err == nil
+	defer func() { _ = f.Close() }()
+	for _, p := range f.Progs {
+		if p.Type != elf.PT_INTERP {
+			continue
+		}
+		b, err := io.ReadAll(io.LimitReader(p.Open(), 4096))
+		if err != nil {
+			return false
+		}
+		return strings.HasPrefix(path.Base(strings.TrimRight(string(b), "\x00")), "ld-musl-")
+	}
+	return false
 }
