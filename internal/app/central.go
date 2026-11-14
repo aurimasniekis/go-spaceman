@@ -63,6 +63,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/spacemanmcp"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
 	"github.com/aurimasniekis/go-spaceman/internal/xspace"
@@ -154,6 +155,10 @@ type Central struct {
 	// TelegramUpdates is the Telegram bot's inbound side (ADR-0083): the webhook route, the shared queue and the
 	// dispatcher. Its webhook answers 404 until a bot is configured (TG-3b sets it).
 	TelegramUpdates *updates.Service
+	// TelegramSSOGrants reports the link_sso_grants setting (ADR-0083 Q8; TG-3c wires it): whether a link confirmed
+	// from an SSO session acts with the user's SSO grants until that session's absolute expiry. Nil: off, so every
+	// Telegram principal acts with the user's local grants only.
+	TelegramSSOGrants func() bool
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -596,7 +601,8 @@ func (c *Central) APIDeps() *api.Deps {
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
 			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources())},
-		Raw: append(api.RecordingStreams(c.Fleet), api.AttachmentContent(c.Attachments), api.TranscriptDownload(c.Usage), api.SpaceExportDownload(c.Exports))}
+		Raw:      rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
+		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch}}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
 	if c.mcpEndpoint != nil {
 		d.MCP = c.mcpEndpoint
@@ -843,7 +849,14 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil)}}
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil)},
+		Raw: rawRoutes(nil, nil, nil, nil)}
+}
+
+// rawRoutes are the API's plain HTTP routes (Deps.Raw): streams and downloads. SpecDeps lists them too, so the
+// Telegram classification test sees exactly the routes central serves.
+func rawRoutes(f *fleet.Service, att *attachments.Service, us *usage.Service, exp *spaceexport.Service) []api.RawRoute {
+	return append(api.RecordingStreams(f), api.AttachmentContent(att), api.TranscriptDownload(us), api.SpaceExportDownload(exp))
 }
 
 // rules merges the authorization rules of every feature's operations.
@@ -877,6 +890,15 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 			// An agent acting through a SpaceMan MCP server is never an approver (ADR-0063).
 			return false
 		}
+		if linkID, ok := strings.CutPrefix(by.Via, audit.ViaTelegram); ok {
+			// Decided through a Telegram link (ADR-0083 §3.2 change 5): the link must still be active, for the same
+			// user, who is enabled, and its capped subject must still allow it, intersected with the user's grants.
+			p, err := c.Auth.TelegramPrincipal(ctx, linkID, auth.TelegramOptions{SSOGrants: c.telegramSSOGrants()})
+			if err != nil || p.User.ID != by.ID || p.Limited {
+				return false
+			}
+			return c.Authz.AllowedAll(p.Subjects(), spaceID, authz.ApprovalDecide)
+		}
 		u, err := c.Store.R().GetUser(ctx, by.ID)
 		if err != nil || u.DisabledAt.Valid {
 			return false
@@ -897,6 +919,11 @@ func (c *Central) approverStillAuthorized(ctx context.Context, by audit.Actor, s
 		return false
 	}
 	return c.Authz.AllowedAll(subjects, spaceID, authz.ApprovalDecide)
+}
+
+// telegramSSOGrants is the link_sso_grants setting (off when unwired).
+func (c *Central) telegramSSOGrants() bool {
+	return c.TelegramSSOGrants != nil && c.TelegramSSOGrants()
 }
 
 // usageWithBudgets stores usage, then checks the run's budgets: a warning is sent once when a budget passes its

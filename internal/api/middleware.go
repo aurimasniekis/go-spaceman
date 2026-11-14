@@ -127,13 +127,36 @@ func (d *Deps) limitBody(next http.Handler) http.Handler {
 
 // authenticate resolves a bearer token (API token or root token) or the session cookie into a principal, and refuses
 // cross-site state-changing requests: a mutation carrying a session cookie, or an unauthenticated mutation (sign-in),
-// must come from the configured public origin. Bearer requests never fall back to the cookie.
+// must come from the configured public origin. Bearer requests never fall back to the cookie. The Telegram scheme is
+// refused with 401 before the cookie is looked at, so it can never combine with a cookie session (ADR-0083 §3.4.1).
+// In Telegram mode (TelegramHandler) only the Telegram scheme authenticates and mutations must come from the Mini App
+// origin (authenticateTelegram, miniAppSameOrigin).
 func (d *Deps) authenticate(next http.Handler) http.Handler {
 	authLimit := newIPLimiter(rate.Limit(20.0/60), 20) // sign-in attempts per address: 20 per minute (burst 20)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		ip := ClientIP(ctx)
 		var p *auth.Principal
+		if telegramChannelFrom(ctx) == channelMiniApp {
+			tok, ok := "", false
+			if p, tok, ok = d.authenticateTelegram(w, r, authLimit); !ok {
+				return
+			}
+			if mutating(r.Method) && !d.miniAppSameOrigin(r) {
+				writeProblem(w, errCrossSite())
+				return
+			}
+			if p != nil {
+				ctx = context.WithValue(obs.WithIDs(ctx, obs.UserID(p.User.ID)), principalKey{}, p)
+				ctx = context.WithValue(ctx, telegramTokenKey{}, tok)
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		if hasTelegramScheme(r) {
+			writeProblem(w, errUnauthenticated())
+			return
+		}
 		authz := r.Header.Get("Authorization")
 		bearer := strings.HasPrefix(authz, bearerPrefix)
 		if bearer && d.Auth != nil {

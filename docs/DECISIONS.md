@@ -4626,6 +4626,34 @@
     it without any read; in a private chat it goes to the linked user's handler (TG-2/TG-4b mark a link `blocked`), and
     for an unlinked user it is dropped without a reply. Unlinked users' `/start <code>` is not handled yet: linking
     (TG-4b) adds that path with its own rate limits.
+- **Implementation notes (TG-4a, 2026-11-14):** the security core as built; nothing here weakens a decision.
+  - **Telegram principal.** `auth.Service.TelegramPrincipal(link, {SSOGrants})` is built per update or request: the
+    link must be `active` and its user enabled. Subjects `[telegram:<link>, user:<id>]`; `user:<id>#sso` replaces the
+    second only when the `link_sso_grants` policy is on (central's `TelegramSSOGrants`, wired by TG-3c; off until
+    then), the link was confirmed from SSO and `sso_until` hasn't passed. A Telegram principal never carries a token or
+    root token ID; if one ever did (or had no user), `Subjects()` returns none, so every check denies. AuthAt and MFAAt
+    stay zero, so `RequireRecentAuth` always refuses it. **Addition:** a user who must still enroll MFA gets a Limited
+    Telegram principal, as their web session would be, so Telegram can't bypass the enrollment mandate.
+  - **Classification.** `internal/telegram/ops.go` lists every operation not already excluded by its rule
+    (`telegram.AutoExcluded`: public, step-up, personal Session/UserOnly without `TelegramSelf`), as the MCP table does.
+    Raw routes carry `RawRoute.Telegram` (and `TelegramFeature`, the space setting the terminal stream needs), the feed
+    `telegram.Watch`. The API gets them through `Deps.Telegram` (`api.TelegramPolicy`); a nil policy or any nil field
+    refuses. **Addition:** a class `exchange` marks the Mini App's session exchange (TG-9a): the only public operation
+    served in Telegram mode, and the only one an anonymous request reaches there; it is refused to the bot.
+  - **Channels.** The bot's calls are channel `chat` (set by `InProcessHandler` for a Telegram principal), the Mini
+    App's `miniapp` (set by `Deps.TelegramHandler`). A Telegram principal off both channels reaches nothing.
+  - **Main host.** Only the Telegram scheme is refused with 401 before the cookie (any case, any of several
+    Authorization headers). Other non-Bearer schemes keep today's behaviour (ignored, cookie used); refusing them all
+    would break deployments whose proxy adds Basic auth.
+  - **Telegram mode.** Exactly one Authorization header, scheme `Telegram`, resolved by `TelegramPolicy.Sessions`
+    (TG-9a) to a Telegram principal without a token; anything else 401 (rate-limited like bearer failures). Mutations
+    are checked against `TelegramPolicy.MiniAppOrigin` (no origin configured: every mutation refused). The MCP endpoint
+    isn't mounted. `Set-Cookie` is dropped and logged as a warning; the metric the plan mentions is left to TG-9a, which
+    owns the Mini App host's metrics.
+  - **Schema.** Link grants are `role_grants` rows with source `telegram`; 0051 (unreleased) rebuilds `role_grants` to
+    allow that source, rows copied as they are.
+  - **Approver recheck.** A decision with `Via telegram:<link>` is rechecked through `TelegramPrincipal` (same user,
+    not Limited) and `AllowedAll(subjects, approval:decide)`.
 
 ## 2. Open items and unresolved contracts
 

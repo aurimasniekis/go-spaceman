@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   once an hour. The route answers 404 until bot configuration ships. New metrics `spaceman_telegram_webhook_requests_total`,
   `spaceman_telegram_updates_total`, `spaceman_telegram_updates_queued` and `spaceman_telegram_poll_errors_total`.
   **Migration 0051 must follow 0050** (the usage-limit work): it is released only after it.
+- Telegram security core (ADR-0083, not usable yet): the Telegram principal acts as its link's capped subject
+  intersected with the user's current grants, never with step-up, own-account operations or a token. Every API
+  operation, raw route and the change feed has a reviewed Telegram class (a new one is unreachable from Telegram until
+  classified). The main host answers `Authorization: Telegram …` with 401 before any cookie is read; the Mini App's
+  Telegram mode of the API accepts only that scheme, drops cookies and never sets one. Migration 0051 also rebuilds
+  `role_grants` (rows kept) to allow link grants.
 
 ### Fixed
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header

@@ -141,5 +141,26 @@ CREATE TABLE space_telegram_settings (
   version            INTEGER NOT NULL DEFAULT 1
 ) STRICT, WITHOUT ROWID;
 
+-- A Telegram link's capped grants are role_grants rows of the subject "telegram:<link id>" with source 'telegram'
+-- (ADR-0083 3.1). SQLite cannot alter a CHECK constraint, so role_grants is rebuilt to allow that source: same columns,
+-- key and index, rows copied as they are. Nothing refers to role_grants, so foreign keys need no change.
+CREATE TABLE role_grants_new (
+  subject    TEXT NOT NULL,
+  role       TEXT NOT NULL CHECK (role IN ('viewer', 'operator', 'admin')),
+  domain     TEXT NOT NULL,
+  source     TEXT NOT NULL CHECK (source IN ('manual', 'sso', 'token', 'bootstrap', 'telegram')),
+  source_ref TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  created_by TEXT NOT NULL,
+  PRIMARY KEY (subject, role, domain, source, source_ref)
+) STRICT, WITHOUT ROWID;
+
+INSERT INTO role_grants_new (subject, role, domain, source, source_ref, created_at, created_by)
+SELECT subject, role, domain, source, source_ref, created_at, created_by FROM role_grants;
+
+DROP TABLE role_grants;
+ALTER TABLE role_grants_new RENAME TO role_grants;
+CREATE INDEX ix_role_grants_domain ON role_grants (domain);
+
 -- +goose Down
 SELECT 'forward-only migrations: restore the pre-migration snapshot instead';
