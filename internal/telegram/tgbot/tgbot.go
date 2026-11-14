@@ -107,6 +107,9 @@ type Service struct {
 	kr    *keyring.Keyring
 	o     Options
 
+	// retryMin and retryMax bound the startup backoff (tests shorten them).
+	retryMin, retryMax time.Duration
+
 	// mu serializes Put, Delete and the live reconfiguration, so the live bot follows the database's order of writes.
 	mu  sync.Mutex
 	run runtime
@@ -127,7 +130,7 @@ func New(s *store.Store, aw *audit.Writer, kr *keyring.Keyring, o Options) *Serv
 		o.Bus = eventbus.New()
 	}
 	o.PublicURL = strings.TrimRight(o.PublicURL, "/")
-	svc := &Service{s: s, audit: aw, kr: kr, o: o}
+	svc := &Service{s: s, audit: aw, kr: kr, o: o, retryMin: retryMin, retryMax: retryMax}
 	empty := ""
 	svc.miniAppHost.Store(&empty)
 	svc.run.state = StateOff
@@ -178,6 +181,10 @@ func (svc *Service) out(ctx context.Context, r db.TelegramBot) *Bot {
 	return b
 }
 
+// reNumericLabel is a last label a browser's URL parser takes for a number (decimal, octal or 0x hex), which makes
+// the whole host an IPv4 address or invalid.
+var reNumericLabel = regexp.MustCompile(`^([0-9]+|0x[0-9a-f]*)$`)
+
 // reHostLabel is one DNS label in lower case.
 var reHostLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
@@ -211,7 +218,11 @@ func checkMiniAppHost(v *apperr.Validation, host, publicURL string) {
 			return
 		}
 	}
-	if u, err := url.Parse(publicURL); err == nil && strings.EqualFold(u.Hostname(), host) {
+	if reNumericLabel.MatchString(labels[len(labels)-1]) {
+		v.Add("miniapp_host", "must not end in a number: browsers read 127.1, 0x7f.1 or 0177.0.0.1 as an IPv4 address and refuse tg.123")
+		return
+	}
+	if u, err := url.Parse(publicURL); err == nil && strings.EqualFold(strings.TrimSuffix(u.Hostname(), "."), host) {
 		v.Add("miniapp_host", "must differ from the host of central's public URL: the Mini App needs its own origin")
 	}
 }
@@ -230,6 +241,9 @@ func parseAllowlist(v *apperr.Validation, in []string) ([]netip.Prefix, []string
 		switch {
 		case err != nil:
 			v.Add("webhook_ip_allowlist", "%q is not a CIDR (e.g. 149.154.160.0/20)", s)
+			return nil, nil
+		case p.Addr().Is4In6():
+			v.Add("webhook_ip_allowlist", "%q is an IPv4-mapped IPv6 prefix, which never matches: list the IPv4 range (e.g. 149.154.160.0/20)", s)
 			return nil, nil
 		case p.Masked() != p || p.String() != s:
 			v.Add("webhook_ip_allowlist", "%q is not in canonical form: use %q", s, p.Masked().String())
@@ -419,7 +433,7 @@ func (svc *Service) Put(ctx context.Context, actor audit.Actor, version int64, i
 	}
 	// The live bot follows outside the transaction (network calls). A new token drops updates Telegram still holds
 	// for the old configuration.
-	svc.applyLocked(context.WithoutCancel(ctx), &out, in.BotToken != "")
+	svc.retryAfterWrite(svc.applyLocked(context.WithoutCancel(ctx), &out, in.BotToken != ""))
 	b := svc.out(ctx, out)
 	if revoked > 0 {
 		b.Warnings = append(b.Warnings, "A different bot was configured: "+itoa(revoked)+" Telegram links of the previous bot were revoked; their users link again with the new bot.")
@@ -468,7 +482,7 @@ func (svc *Service) Delete(ctx context.Context, actor audit.Actor, version int64
 	if err != nil {
 		return err
 	}
-	svc.applyLocked(context.WithoutCancel(ctx), nil, false)
+	svc.retryAfterWrite(svc.applyLocked(context.WithoutCancel(ctx), nil, false))
 	return nil
 }
 

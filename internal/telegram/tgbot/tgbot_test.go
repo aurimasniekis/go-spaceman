@@ -217,6 +217,12 @@ func TestPutValidation(t *testing.T) {
 		"tg..example.com":                        "not a valid DNS name",
 		"-tg.example.com":                        "not a valid DNS name",
 		"tg_app.example.com":                     "not a valid DNS name",
+		"127.1":                                  "must not end in a number",
+		"tg.123":                                 "must not end in a number",
+		"tg.example.0x7f":                        "must not end in a number",
+		"tg.example.0x":                          "must not end in a number",
+		"0x7f.1":                                 "must not end in a number",
+		"0177.0.0.1.07":                          "must not end in a number",
 		strings.Repeat("a", 64) + ".example.com": "not a valid DNS name",
 	} {
 		fieldMsg(t, put(Input{BotToken: token, MiniAppHost: host}), "miniapp_host", want)
@@ -229,6 +235,8 @@ func TestPutValidation(t *testing.T) {
 		{[]string{"149.154.160.1/20"}, `use "149.154.160.0/20"`},
 		{[]string{"149.154.160.0/20", "149.154.160.0/20"}, "listed twice"},
 		{make([]string, MaxAllowlist+1), "more than 32"},
+		{[]string{"::ffff:149.154.160.0/116"}, "IPv4-mapped"},
+		{[]string{"149.154.160.0/20", "::ffff:0:0/96"}, "IPv4-mapped"},
 	} {
 		fieldMsg(t, put(Input{BotToken: token, WebhookIPAllowlist: c.list}), "webhook_ip_allowlist", c.want)
 	}
@@ -525,5 +533,86 @@ func TestStartupFromStoredBot(t *testing.T) {
 	e.tg.FailNext("getMe", http.StatusUnauthorized, "Unauthorized", 0)
 	if retry, _ := restarted.startOnce(ctx, 0); retry {
 		t.Fatal("a refused token is retried")
+	}
+}
+
+// The public URL's host with a trailing dot (an absolute DNS name) is still the public host.
+func TestMiniAppHostDiffersFromPublicHostWithTrailingDot(t *testing.T) {
+	t.Parallel()
+	for _, public := range []string{"https://central.example.com.", "https://CENTRAL.example.com.:8443/x"} {
+		v := &apperr.Validation{}
+		checkMiniAppHost(v, "central.example.com", public)
+		fieldMsg(t, v.Err(), "miniapp_host", "must differ from the host of central's public URL")
+	}
+}
+
+// A transient failure right after a write (Telegram 5xx or 429) is retried with the startup backoff: the bot ends in
+// ok without another write.
+func TestRetryAfterWrite(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	e.svc.retryMin, e.svc.retryMax = 5*time.Millisecond, 20*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.svc.Start(ctx) // no bot yet: nothing to retry, but the writes run on this context
+	b := e.put(0, Input{BotToken: e.tg.Token(), Enabled: true})
+	if b.WebhookStatus != StateOK {
+		t.Fatalf("first put: %+v", b.Health)
+	}
+
+	for _, step := range []struct {
+		method string
+		code   int
+	}{{"getMe", http.StatusBadGateway}, {"setMyCommands", http.StatusTooManyRequests}, {"setChatMenuButton", http.StatusBadGateway}, {"setWebhook", http.StatusBadGateway}} {
+		e.tg.FailNext(step.method, step.code, "transient", 0)
+		before := len(e.tg.Calls("setWebhook"))
+		b = e.put(b.Version, Input{Enabled: true})
+		if b.WebhookStatus != StateError || !strings.Contains(b.Health.Error, step.method) {
+			t.Fatalf("%s: a failed apply shows %+v", step.method, b.Health)
+		}
+		waitFor(t, step.method+" retried to ok", func() bool { return e.svc.Status(ctx).WebhookStatus == StateOK })
+		if len(e.tg.Calls("setWebhook")) <= before {
+			t.Fatalf("%s: no setWebhook after the retry", step.method)
+		}
+	}
+
+	// A refused token is not retried.
+	e.tg.FailNext("getMe", http.StatusUnauthorized, "Unauthorized", 0)
+	b = e.put(b.Version, Input{Enabled: true})
+	n := len(e.tg.Calls("getMe"))
+	time.Sleep(100 * time.Millisecond)
+	if got := len(e.tg.Calls("getMe")); got != n || e.svc.Status(ctx).WebhookStatus != StateError {
+		t.Fatalf("a refused token was retried (%d -> %d getMe calls)", n, got)
+	}
+}
+
+// A Telegram error that echoes the token, or only its secret part, reaches neither the health, the warnings, the
+// Put error nor the logs (botapi redacts both).
+func TestTokenEchoedByTelegramStaysOut(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, publicURL)
+	token := e.tg.Token()
+	secretPart := token[strings.IndexByte(token, ':')+1:]
+	echoes := []string{"bad request near " + token, "bad request near " + secretPart, "x" + secretPart + "y"}
+
+	for _, echo := range echoes {
+		e.tg.FailNext("getMe", http.StatusBadGateway, echo, 0)
+		_, err := e.svc.Put(context.Background(), admin, 0, Input{BotToken: token})
+		if err == nil {
+			t.Fatal("put succeeded")
+		}
+		noToken(t, token, err.Error(), e.logs.String())
+	}
+
+	b := e.put(0, Input{BotToken: token, Enabled: true})
+	for _, echo := range echoes {
+		for _, method := range []string{"getMe", "setMyCommands", "setChatMenuButton", "setWebhook"} {
+			e.tg.FailNext(method, http.StatusBadGateway, echo, 0)
+			b = e.put(b.Version, Input{Enabled: true})
+			if b.WebhookStatus != StateError || !strings.Contains(b.Health.Error, method) {
+				t.Fatalf("%s: %+v", method, b.Health)
+			}
+			noToken(t, token, b.Health.Error, strings.Join(b.Warnings, "\n"), e.svc.Status(context.Background()).Error, e.logs.String())
+		}
 	}
 }

@@ -108,23 +108,40 @@ func (svc *Service) Start(ctx context.Context) {
 	svc.run.baseCtx = ctx
 	svc.mu.Unlock()
 	retry, gen := svc.startOnce(ctx, 0)
-	if !retry {
+	if retry {
+		go svc.retryLoop(ctx, gen)
+	}
+}
+
+// retryLoop repeats the startup with a backoff (retryMin doubling to retryMax) until it works, the bot is
+// reconfigured since the attempt gen (a write applied the newest state, and starts its own loop if that failed), or
+// ctx ends.
+func (svc *Service) retryLoop(ctx context.Context, gen uint64) {
+	wait := svc.retryMin
+	for retry := true; retry; {
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		retry, gen = svc.startOnce(ctx, gen)
+		wait = min(wait*2, svc.retryMax)
+	}
+}
+
+// retryAfterWrite starts the backoff loop for the generation a write just applied, when that failed in a way worth
+// retrying. Must hold svc.mu (the loop's first attempt waits for it).
+func (svc *Service) retryAfterWrite(retry bool) {
+	base := svc.run.baseCtx
+	if !retry || base == nil || base.Err() != nil {
 		return
 	}
-	go func() {
-		wait := retryMin
-		for retry {
-			t := time.NewTimer(wait)
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				return
-			case <-t.C:
-			}
-			retry, gen = svc.startOnce(ctx, gen)
-			wait = min(wait*2, retryMax)
-		}
-	}()
+	svc.run.mu.Lock()
+	gen := svc.run.gen
+	svc.run.mu.Unlock()
+	go svc.retryLoop(base, gen)
 }
 
 // startOnce applies the stored configuration and reports whether it should be retried. With after set, it does
