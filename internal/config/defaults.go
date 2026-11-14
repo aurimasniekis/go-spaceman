@@ -81,7 +81,8 @@ func DefaultAgent() *AgentConfig {
 				DownloadTimeout: Duration(dist.DefaultDownloadTimeout),
 			},
 		},
-		Log:      defaultLog(),
-		Capacity: 4,
+		Log:              defaultLog(),
+		Capacity:         4,
+		JournalRetention: Duration(30 * 24 * time.Hour),
 	}
 }

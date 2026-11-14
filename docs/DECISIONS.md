@@ -4207,6 +4207,28 @@
   runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
   reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
 - **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
+- **Follow-up (journal prune and hello slicing, 2026-11-14):**
+  - No protocol minor bump and no journal migration. Central already answers a hello with a reconcile that lists the
+    node's runs it still considers active, after it applied the hello's reports. The agent treats an ended run it sent
+    and that central no longer lists as acknowledged (memory only; after a restart nothing is acknowledged until the
+    next connection went through the exchange).
+  - The hello carries live and adoptable runs, plus ended runs not yet acknowledged that ended within 24 hours. Older
+    unacknowledged ended runs follow the welcome as `run.report` in slices of 100 every 250 ms, outside the connect
+    deadline. Acknowledged ended runs are not sent at all, so the hello is bounded by live and recent runs.
+  - The journal deletes an ended run after `journal_retention` (default 30 days, never below the 30-day pin window of
+    ADR-0077, at most 1 year) only when central acknowledged its final state, its recording is fully acknowledged and no
+    recorder or kept-back records remain, no transcript upload is unfinished and no dream's evidence positions refer to
+    it. Live and adoptable runs are never deleted. A run's recording files stay on disk.
+  - Not covered: central's apply of a hello still costs one read per reported run, so the hello of a node that was offline
+    with many unacknowledged runs is as large as before once, then small.
+  - An ended run that central's reconcile lists as active is unacknowledged again (the agent forgets that it sent it) and
+    its final state is reported at once, whatever the agent counted before: a central restored from a backup, a
+    follow-up report lost with the connection or one central failed to apply would otherwise never be resent, and the
+    stale sweeper (ADR-0074) would end the run `lost` two minutes after the reconcile and fence its real final state.
+  - Consequences: restoring central from a backup older than the retention loses the runs pruned since: they are swept
+    `lost` if central still lists them, and their recordings are not shipped again. Every agent restart resends all
+    ended runs once as follow-up (acknowledgements are memory only). Pruning runs only on the reconcile, once per
+    connection, not on a timer. Recording directories of pruned runs are not garbage-collected yet (backlog).
 
 ### ADR-0080 — The web terminal's scrollback is a byte limit: 24 MiB, at least 10,000 rows at 160 columns
 - **Status:** Accepted, 2026-11-13 (follow-up to ADR-0076's side finding).
@@ -4243,6 +4265,22 @@
   `e2e/terminal-scrollback.spec.ts` checks at least 10,000 rows in a live terminal at 160×48 in Chromium (it fails
   with the old value: 485 rows).
 - **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
+
+### ADR-0084 — "Message the agent" is typed into the running session at once
+- **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
+- **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while
+  the program works (`ErrBusy`) and acknowledges it as rejected; central does not retry a rejected `run.input`. A message
+  sent while control was busy was therefore lost. The durable message path (Messages page, agent tools) is not affected:
+  its terminal notice is refused while busy but the item stays stored and is announced at the next idle report.
+- **Decision:** The box sends `force: true`: the text is typed into the session immediately and the harness decides when to
+  act on it (the fake runner queues typed input; real Claude Code and Codex are unverified). Safe input stays the rule for automated input (notices). Takeover
+  still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
+- **Consequences:** The text may sit in the harness's own queue while it works. A harness that reports `blocked` refuses
+  the text (hc refuses a blocked program without its own force) and the text is dropped, and the operator is not told yet;
+  central answers 202 when it queues the command, so the box says "Queued for the agent". The risk that a modal takes
+  the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
+  `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
+- **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.
 
 ### ADR-0085 — Central bounds request bodies by progress and by a total (security-relevant change)
 - **Status:** Accepted, 2026-11-14. **Security-relevant change:** it adds limits to central's public listener, and the

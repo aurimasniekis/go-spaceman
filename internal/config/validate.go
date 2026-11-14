@@ -314,6 +314,7 @@ func (c *AgentConfig) Validate() error {
 	if c.ManagementListen != "" {
 		v.listen("management_listen", c.ManagementListen)
 	}
+	v.durationRange("journal_retention", c.JournalRetention, 30*24*time.Hour, 365*24*time.Hour)
 	if c.Capacity < 1 || c.Capacity > 256 {
 		v.add("capacity must be within 1..256")
 	}
