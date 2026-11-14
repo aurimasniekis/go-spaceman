@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - **A message typed into "Message the agent" (for example to control) while the agent was busy was lost.** The box sent
   safe, idle-gated input; the node refused it while the program worked, and nothing tried again. The text is now typed
-  into the running session at once (Claude Code and Codex queue typed input until they can act on it). The placeholder
+  into the running session at once (the fake runner queues typed input; real Claude Code and Codex are not yet verified to). The placeholder
   and the guides say so (ADR-0084). Messages from the Messages page and agents are unchanged: stored, then announced
   by the terminal notice when the program is idle.
 - Resuming a paused space now starts control when work was waiting. The resume did not wake the control notifier, so

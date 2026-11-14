@@ -39,7 +39,7 @@ SpaceMan: 1 new message and 1 human response waiting for you. Call the spaceman_
 The line never contains the message itself. The agent reads the content through its tools, as data from the sender
 rather than as an instruction typed into its session. The line is only typed while the program is idle; a busy
 program is never interrupted. (The **Message** box on a run's page is different: it types your text into the session at
-once, even while the program works, and Claude Code and Codex queue it until they can act on it. Use the Messages page
+once, even while the program works, and the program decides when to act on it; a program that is blocked at a prompt can refuse it. Use the Messages page
 for a stored message the agent reads through its tools.) A run is told at most once a minute, and an item it has not read is mentioned again
 after five minutes.
 

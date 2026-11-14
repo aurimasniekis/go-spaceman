@@ -85,7 +85,7 @@ export function RunWorkbench({ spaceId, run: r, mode, onMode, crumbs, inspectorD
       try {
         check(await api.POST('/spaces/{space_id}/runs/{run_id}/input', { params: { path: { space_id: spaceId, run_id: r.id } }, body: agentMessageBody(value.text) }))
         inputForm.reset()
-        notifyOk('Sent to the agent')
+        notifyOk('Queued for the agent')
       } catch (e) {
         notifyError(e, 'Could not send input')
       }

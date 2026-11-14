@@ -143,6 +143,9 @@ func TestTerminalTakeover(t *testing.T) {
 	if code, b := call(opTok, "/input", map[string]any{"text": "hello"}); code != http.StatusConflict {
 		t.Fatalf("send-input during takeover: %d %s", code, b)
 	}
+	if code, b := call(opTok, "/input", map[string]any{"text": "hello", "force": true}); code != http.StatusConflict {
+		t.Fatalf("forced send-input during takeover: %d %s", code, b)
+	}
 	if _, _, err := e.c.Messages.Send(ctx, admin, sp.ID, messages.From{Kind: "operator", ID: "usr_test", Label: "Test"},
 		messages.SendInput{To: "run:" + r.ID, Kind: "message", Subject: "s", Body: "b"}); err != nil {
 		t.Fatal(err)
