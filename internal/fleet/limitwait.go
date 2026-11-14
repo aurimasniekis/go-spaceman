@@ -288,12 +288,9 @@ func (svc *Service) settleWaitTx(ctx context.Context, tx *store.Tx, w db.LimitWa
 	return err
 }
 
-// deferWaitTx puts a wait off until at with a fixed reason. It writes only when something changes, so repeated rounds
-// with the same reason don't write.
+// deferWaitTx puts a wait off until at with a fixed reason. Every caller changes something (a due wait moves to a later
+// time, a woken one to now, a resuming one back to waiting), so a wait that isn't due is never written.
 func (svc *Service) deferWaitTx(ctx context.Context, tx *store.Tx, w db.LimitWait, at time.Time, reason string) error {
-	if w.State == WaitWaiting && w.ResumeAt == at.UnixMicro() && w.LastError == reason {
-		return nil
-	}
 	n, err := tx.Q.UpdateLimitWait(ctx, db.UpdateLimitWaitParams{State: WaitWaiting, ResumeAt: at.UnixMicro(), NewRunID: w.NewRunID, Attempts: w.Attempts,
 		LastError: reason, Now: tx.NowMicros(), ID: w.ID, Version: w.Version})
 	if err != nil || n == 0 {
@@ -559,18 +556,20 @@ func (svc *Service) resumeDueWaits(ctx context.Context, now time.Time) (int, err
 	}
 	svc.lw.mu.Unlock()
 	n := 0
+	var errs []error
 	for _, w := range rows {
+		// A refusal moves the wait on with its reason; an error here is a failure to record anything, which the deadline
+		// loop retries with backoff rather than at once.
 		r, err := svc.resume(ctx, LimitWaitActor, w.ID, false)
 		if err != nil {
-			// A refusal moved the wait on with its reason; only a failure to record that is the job's error.
-			svc.opts.Log.Info("limit wait not resumed", slog.String("limit_wait.id", w.ID), obs.Err(err))
+			errs = append(errs, err)
 			continue
 		}
 		if r != nil {
 			n++
 		}
 	}
-	return n, nil
+	return n, errors.Join(errs...)
 }
 
 // wakeWaits brings forward the waits of a space that were put off for reason (the cause is gone), so the job looks at
@@ -786,7 +785,12 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 	}); rerr != nil {
 		return nil, errors.Join(err, rerr)
 	}
-	return nil, err
+	if manual {
+		return nil, err
+	}
+	// The refusal is recorded on the wait (its reason and next time): it is not the job's failure.
+	svc.opts.Log.Info("limit wait not resumed", slog.String("limit_wait.id", w.ID), slog.String("reason", reason), obs.Err(err))
+	return nil, nil
 }
 
 // waitReasonText words a wait's fixed reason for a refusal.

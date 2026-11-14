@@ -322,6 +322,10 @@ func TestLimitWaitKeepAliveMax(t *testing.T) {
 	if e.count(`SELECT count(*) FROM limit_waits WHERE run_id = 'run_k'`) != 0 || e.observed("run_k").Desired != "running" {
 		t.Fatal("a kb run was parked")
 	}
+	e.end("run_k", proto.RunExited, "exited")
+	if e.count(`SELECT count(*) FROM limit_waits WHERE run_id = 'run_k'`) != 0 {
+		t.Fatal("a kb run that ended at its limit was parked")
+	}
 	before := e.writeCount()
 	if n := e.due(); n != 0 || e.writeCount() != before {
 		t.Fatal("a parked run was parked again")
@@ -421,6 +425,19 @@ func TestLimitWaitDeferrals(t *testing.T) {
 		t.Fatalf("task moved: %+v", w)
 	}
 
+	// The task moves while the resume is launching (the queue no longer re-points it): no run, the wait is given up.
+	w = park("run_race")
+	e.task("tsk_race", "run_race", "running")
+	e.exec(`UPDATE limit_waits SET task_id = 'tsk_race' WHERE id = ?`, w.ID)
+	e.repointOK = false
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	runs := e.count(`SELECT count(*) FROM runs`)
+	e.due()
+	if w = e.wait(w.ID); w.State != WaitCancelled || w.LastError != WaitTaskMoved || e.count(`SELECT count(*) FROM runs`) != runs {
+		t.Fatalf("task moved mid-resume: %+v", w)
+	}
+	e.repointOK = true
+
 	// The space was archived.
 	w = park("run_a")
 	e.exec(`UPDATE spaces SET state = 'archived' WHERE id = 'spc_a'`)
@@ -456,11 +473,13 @@ func TestLimitWaitStuckResumingRecovered(t *testing.T) {
 	q := e.waitOf("run_q")
 	e.exec(`UPDATE limit_waits SET state = 'resuming', updated_at = ? WHERE id = ?`, e.clk.Now().UnixMicro(), q.ID)
 	e.clk.Advance(limitResumingStale - time.Second)
+	e.svc.lw.recoverAt = e.clk.Now() // the periodic look for stuck resumes is due
 	e.due()
 	if q = e.wait(q.ID); q.State != WaitResuming {
 		t.Fatalf("an in-flight resume was recovered: %+v", q)
 	}
 	e.clk.Advance(2 * time.Second)
+	e.svc.lw.recoverAt = e.clk.Now()
 	e.due()
 	if q = e.wait(q.ID); q.State != WaitResumed {
 		t.Fatalf("a stale resume was not recovered: %+v", q)
@@ -549,6 +568,19 @@ func TestLimitWaitRelease(t *testing.T) {
 		t.Fatalf("a refused resume-now moved the wait: %+v", got)
 	}
 	e.exec(`UPDATE execution_leases SET expires_at = ?`, e.us(1000*24*time.Hour))
+	// Refused by a hold: the wait keeps its resume time and records the reason.
+	heldTill := e.clk.Now().Add(time.Hour).Sub(e.t0)
+	e.hold("ulm_now", "spc_b", "acc_1", "", proto.LimitFiveHour, &heldTill, nil)
+	for range 2 {
+		if _, err := e.svc.ResumeLimitWait(e.ctx, holdActor, "spc_a", m.ID); apperr.CodeOf(err) != apperr.CodeRateLimited {
+			t.Fatalf("resume now on a held account: %v", err)
+		}
+		got := e.wait(m.ID)
+		if got.State != WaitWaiting || got.ResumeAt != m.ResumeAt || got.LastError != WaitAccountHeld {
+			t.Fatalf("held resume-now: %+v", got)
+		}
+	}
+	e.exec(`UPDATE usage_limits SET cleared_at = 1 WHERE id = 'ulm_now'`)
 	got, err := e.svc.ResumeLimitWait(e.ctx, holdActor, "spc_a", m.ID)
 	if err != nil || got.State != WaitResumed || got.NewRunID == "" {
 		t.Fatalf("resume now: %+v %v", got, err)

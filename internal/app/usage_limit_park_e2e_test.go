@@ -188,6 +188,17 @@ func TestUsageLimitParkAndResume(t *testing.T) {
 		t.Fatalf("wait after resume %+v", w)
 	}
 	eventually(t, "control told it resumed", func() bool { return systemToControl(t, e, sp.ID, "resumed after its usage limit") == 1 })
+	// The resumed run hits a limit again (the wrap-up path: no reset) and is lost: re-parked, with the release time carried
+	// forward and no new message to control.
+	again := &proto.RunLimit{Kind: proto.LimitUnknown, Since: clk.Now()}
+	n2.send(t, proto.TypeRunReport, proto.RunReport{RunID: resumed.ID, SpaceID: sp.ID, Generation: cmd.Generation, State: proto.RunRunning,
+		Status: "idle", Turn: 1, SessionID: "ses-park", Limit: again, ObservedAt: time.Now().UTC()})
+	n2.send(t, proto.TypeRunReport, proto.RunReport{RunID: resumed.ID, SpaceID: sp.ID, Generation: cmd.Generation, State: proto.RunLost,
+		Reason: "lost", Turn: 1, SessionID: "ses-park", Limit: again, ObservedAt: time.Now().UTC()})
+	eventually(t, "re-parked", func() bool { w, _ := e.c.Fleet.LimitWaitForRun(ctx, resumed.ID); return w != nil })
+	if w, _ := e.c.Fleet.LimitWaitForRun(ctx, resumed.ID); w.ReleaseAt == nil || !w.ReleaseAt.Equal(*wait.ReleaseAt) || w.Attempts != 1 {
+		t.Fatalf("re-park %+v, first %+v", w, wait)
+	}
 	time.Sleep(300 * time.Millisecond)
 	if c := systemToControl(t, e, sp.ID, "run ended"); c != 0 {
 		t.Fatalf("control got %d run-ended notices for a parked run", c)
