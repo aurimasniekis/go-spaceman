@@ -159,8 +159,25 @@ describe('tails (ADR-0081)', () => {
     expect(shown()).toBe('abcd')
   })
 
+  it('a replay asks again for a page central refused while busy', async () => {
+    let refusals = 1
+    const get = vi.spyOn(api, 'GET').mockImplementation((async (_path: string, opts: { params: { query: { tail?: number } } }) => {
+      if (opts.params.query.tail && refusals-- > 0) {
+        return { error: { status: 503 }, response: new Response(null, { status: 503, headers: { 'Retry-After': '1' } }) }
+      }
+      return { data: { records, more: false, next_after: 4 }, response: new Response() }
+    }) as never)
+    render(<MantineProvider><TerminalView spaceId="spc_1" runId="run_1" mode="replay" /></MantineProvider>)
+    await flush()
+    expect(get).toHaveBeenCalledTimes(1)
+    await flush(1_000)
+    await flush()
+    expect(get.mock.calls.length).toBeGreaterThanOrEqual(3) // the tail again, then the pages
+    expect(screen.queryByText(/503|unavailable/i)).toBeNull()
+  })
+
   it('a live terminal asks for a tail and applies what comes before it first', async () => {
-    const streams: { url: string; on: Record<string, (ev: MessageEvent) => void> }[] = []
+    const streams: { url: string; readyState: number; onerror: (() => void) | null; on: Record<string, (ev: MessageEvent) => void> }[] = []
     class FakeEventSource {
       static CLOSED = 2
       readyState = 1
@@ -185,9 +202,21 @@ describe('tails (ADR-0081)', () => {
       send('tail', { from: 7, skipped_bytes: 5000, cols: 0, rows: 0, modes: [{ mode: 25, on: false }], gaps: 1, truncated: false })
       send('record', out(7, 'x'))
       send('record', out(8, 'y'))
+      // A second tail event on the same stream is ignored (its gaps would count twice).
+      send('tail', { from: 9, skipped_bytes: 1, cols: 0, rows: 0, modes: [{ mode: 1049, on: true }], gaps: 3, truncated: false })
       await act(async () => fake.feeds[0].finish())
       expect(shown()).toBe('\x1b[?25lxy')
       expect(container.querySelector('[data-earlier]')?.getAttribute('data-earlier')).toBe('5000')
+      expect(screen.getByText('1 gap')).toBeTruthy()
+
+      // A stream the server refused (central busy: 503) closes for good in the browser: it is opened again after a
+      // back-off, resuming after the last record drawn.
+      streams[0].readyState = FakeEventSource.CLOSED
+      act(() => streams[0].onerror?.())
+      expect(streams).toHaveLength(1)
+      await flush(1_000)
+      expect(streams).toHaveLength(2)
+      expect(streams[1].url).toMatch(/\/terminal\?after=8$/)
     } finally {
       vi.unstubAllGlobals()
     }

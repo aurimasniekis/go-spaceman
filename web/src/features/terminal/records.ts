@@ -219,8 +219,12 @@ export function modePrelude(modes: readonly { mode: number; on: boolean }[]): st
 const encoder = new TextEncoder()
 
 function b64(s: string): string {
+  return b64bytes(encoder.encode(s))
+}
+
+function b64bytes(bytes: Uint8Array): string {
   let bin = ''
-  for (const b of encoder.encode(s)) bin += String.fromCharCode(b)
+  for (const b of bytes) bin += String.fromCharCode(b)
   return btoa(bin)
 }
 
@@ -245,48 +249,84 @@ export function tailRecords(tail: RecordingTail): RecordingRecord[] {
  */
 const TRACKED = new Set([1, 6, 7, 25, 47, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004])
 
-/** Follows the DEC private modes of output written to it (CSI ? Pm h/l and RIS), across writes that split a sequence. */
+/**
+ * Follows the DEC private modes of output written to it (CSI ? Pm h/l and RIS), across writes that split a sequence. It
+ * knows where every CSI and string sequence (OSC, DCS, APC, PM, SOS) ends, so inSequence() tells whether output stopped
+ * inside one (internal/recording/tail.go's ModeTracker, state for state).
+ */
 export class ModeTracker {
   private modes: { mode: number; on: boolean }[] = []
-  private state = 0 // 0 ground, 1 ESC, 2 CSI, 3 CSI ?
+  // 0 ground, 1 ESC, 2 CSI, 3 CSI ?, 4 another CSI (to its final byte), 5 a string (to BEL or ST), 6 ESC in a string
+  private state = 0
   private param = 0
   private params: number[] = []
   private big = false
 
   write(b: Uint8Array) {
-    for (const c of b) {
-      switch (this.state) {
-        case 0:
-          if (c === 0x1b) this.state = 1
-          break
-        case 1:
-          if (c === 0x5b) this.state = 2
-          else if (c === 0x63) {
-            this.modes = []
-            this.state = 0
-          } else if (c !== 0x1b) this.state = 0
-          break
-        case 2:
-          if (c === 0x3f) {
-            this.state = 3
-            this.param = 0
+    for (const c of b) this.step(c)
+  }
+
+  /** Whether the output written so far ends inside an escape sequence. */
+  inSequence(): boolean {
+    return this.state !== 0
+  }
+
+  /** Feeds the start of b until the open escape sequence ends; returns how many bytes that took (0 when none is open). */
+  finish(b: Uint8Array): number {
+    let n = 0
+    while (n < b.length && this.state !== 0) this.step(b[n++])
+    return n
+  }
+
+  private step(c: number) {
+    switch (this.state) {
+      case 0:
+        if (c === 0x1b) this.state = 1
+        break
+      case 1:
+        if (c === 0x5b) this.state = 2
+        else if (c === 0x63) {
+          this.modes = []
+          this.state = 0
+        } else if (c === 0x5d || c === 0x50 || c === 0x5f || c === 0x5e || c === 0x58) this.state = 5
+        else if (c !== 0x1b) this.state = 0
+        break
+      case 2:
+        if (c === 0x3f) {
+          this.state = 3
+          this.param = 0
+          this.params = []
+          this.big = false
+        } else if (c >= 0x20 && c <= 0x3f) this.state = 4
+        else this.state = c === 0x1b ? 1 : 0
+        break
+      case 4:
+        if (c >= 0x20 && c <= 0x3f) break
+        this.state = c === 0x1b ? 1 : 0
+        break
+      case 3:
+        if (c >= 0x30 && c <= 0x39) {
+          if (this.param < 100000) this.param = this.param * 10 + (c - 0x30)
+          else this.big = true
+        } else if (c === 0x3b) {
+          this.params.push(this.param)
+          this.param = 0
+          if (this.params.length > 32) {
+            this.big = true
             this.params = []
-            this.big = false
-          } else this.state = 0
-          break
-        default:
-          if (c >= 0x30 && c <= 0x39) {
-            if (this.param < 100000) this.param = this.param * 10 + (c - 0x30)
-            else this.big = true
-          } else if (c === 0x3b) {
-            this.params.push(this.param)
-            this.param = 0
-            if (this.params.length > 32) this.state = 0
-          } else if (c === 0x68 || c === 0x6c) {
-            if (!this.big) for (const p of [...this.params, this.param]) this.set(p, c === 0x68)
-            this.state = 0
-          } else this.state = c === 0x1b ? 1 : 0
-      }
+          }
+        } else if (c === 0x68 || c === 0x6c) {
+          if (!this.big) for (const p of [...this.params, this.param]) this.set(p, c === 0x68)
+          this.state = 0
+        } else if (c >= 0x20 && c <= 0x3f) this.big = true
+        else this.state = c === 0x1b ? 1 : 0
+        break
+      case 5:
+        if (c === 0x07) this.state = 0
+        else if (c === 0x1b) this.state = 6
+        break
+      default:
+        this.state = c === 0x5c ? 0 : 5
     }
   }
 
@@ -352,12 +392,17 @@ export class ReplayIndex {
     return this.indexed >= end
   }
 
-  /** The modes after records[0, start); records before start must be indexed (advance). */
+  /** The modes after records[0, start). */
   modesAt(start: number): { mode: number; on: boolean }[] {
+    return this.trackerAt(start).current()
+  }
+
+  /** A tracker that has seen records[0, start), from the nearest checkpoint (records before it indexed: advance). */
+  private trackerAt(start: number): ModeTracker {
     const cp = Math.min(Math.floor(start / ReplayIndex.CHECKPOINT), this.checkpoints.length - 1)
     const t = this.checkpoints[cp].clone()
     for (let i = cp * ReplayIndex.CHECKPOINT; i < start; i++) if (this.records[i].k === 'o') t.write(decode(this.records[i].d))
-    return t.current()
+    return t
   }
 
   /** The first record of a window ending at end with at most budget bytes of output (at least one record). */
@@ -374,8 +419,12 @@ export class ReplayIndex {
     return start
   }
 
-  /** The tail of records[0, end) that fits budget: its first record and what comes before it. */
-  tail(end: number, budget: number): { start: number; tail: RecordingTail } {
+  /**
+   * The tail of records[0, end) that fits budget: its records, and what comes before them. Like the server's tail, it
+   * starts at a character: the end of an escape sequence the earlier output left open counts for the modes and is cut,
+   * and so are UTF-8 continuation bytes of a character that began before it.
+   */
+  tail(end: number, budget: number): { records: RecordingRecord[]; tail: RecordingTail } {
     const start = this.windowStart(end, budget)
     let sum = emptySummary()
     let skipped = 0
@@ -384,14 +433,32 @@ export class ReplayIndex {
       sum = apply(null, sum, r)
       skipped += outputBytes(r)
     }
+    const records = this.records.slice(start, end)
+    let modes: { mode: number; on: boolean }[] = []
+    if (start > 0) {
+      const t = this.trackerAt(start)
+      for (let i = 0; i < records.length; i++) {
+        const r = records[i]
+        if (r.k !== 'o') continue
+        const d = decode(r.d)
+        let n = t.finish(d)
+        if (!t.inSequence()) while (n < d.length && (d[n] & 0xc0) === 0x80) n++
+        if (n > 0) {
+          skipped += n
+          records[i] = { ...r, d: b64bytes(d.subarray(n)) }
+        }
+        if (n < d.length) break
+      }
+      modes = t.current()
+    }
     return {
-      start,
+      records,
       tail: {
-        from: this.records[start]?.seq ?? 0,
+        from: records[0]?.seq ?? 0,
         skipped_bytes: skipped,
         cols: start > 0 ? sum.cols : 0,
         rows: start > 0 ? sum.rows : 0,
-        modes: start > 0 ? this.modesAt(start) : [],
+        modes,
         gaps: sum.gaps,
         truncated: sum.truncated,
       },

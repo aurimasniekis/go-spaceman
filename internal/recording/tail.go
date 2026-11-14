@@ -21,7 +21,8 @@ var trackedModes = map[int]bool{1: true, 6: true, 7: true, 25: true, 47: true, 1
 	1003: true, 1004: true, 1005: true, 1006: true, 1015: true, 2004: true}
 
 // ModeTracker follows the DEC private modes of terminal output written to it, across writes that split an escape
-// sequence. It understands only CSI ? Pm h / l and RIS (ESC c); everything else is skipped.
+// sequence. It acts on CSI ? Pm h / l and RIS (ESC c) only, but knows where every CSI sequence and every string
+// sequence (OSC, DCS, APC, PM, SOS) ends, so InSequence tells whether output stopped in the middle of one.
 type ModeTracker struct {
 	modes  []Mode // in the order they last changed
 	state  int
@@ -33,61 +34,113 @@ type ModeTracker struct {
 const (
 	mtGround = iota
 	mtEsc
-	mtCSI
-	mtPrivate
+	mtCSI     // after ESC [
+	mtPrivate // after ESC [ ?
+	mtOther   // a CSI sequence that sets no private mode: skipped to its final byte
+	mtString  // OSC, DCS, APC, PM or SOS: skipped to BEL or ST
+	mtStringEsc
 )
 
 // Write feeds output to the tracker.
 func (m *ModeTracker) Write(b []byte) {
 	for _, c := range b {
-		switch m.state {
-		case mtGround:
-			if c == 0x1b {
-				m.state = mtEsc
-			}
-		case mtEsc:
-			switch c {
-			case '[':
-				m.state = mtCSI
-			case 'c':
-				m.modes = m.modes[:0]
-				m.state = mtGround
-			case 0x1b:
-			default:
-				m.state = mtGround
-			}
-		case mtCSI:
-			if c == '?' {
-				m.state, m.param, m.params, m.big = mtPrivate, 0, m.params[:0], false
+		m.step(c)
+	}
+}
+
+// InSequence reports whether the output written so far ends inside an escape sequence.
+func (m *ModeTracker) InSequence() bool { return m.state != mtGround }
+
+// Finish feeds the start of b until the escape sequence the tracker is in ends, and returns how many bytes that took
+// (0 when it is in none): the bytes a tail drops so that it starts at the next character.
+func (m *ModeTracker) Finish(b []byte) int {
+	n := 0
+	for n < len(b) && m.state != mtGround {
+		m.step(b[n])
+		n++
+	}
+	return n
+}
+
+func (m *ModeTracker) step(c byte) {
+	switch m.state {
+	case mtGround:
+		if c == 0x1b {
+			m.state = mtEsc
+		}
+	case mtEsc:
+		switch c {
+		case '[':
+			m.state = mtCSI
+		case 'c':
+			m.modes = m.modes[:0]
+			m.state = mtGround
+		case ']', 'P', '_', '^', 'X':
+			m.state = mtString
+		case 0x1b:
+		default:
+			m.state = mtGround
+		}
+	case mtCSI:
+		switch {
+		case c == '?':
+			m.state, m.param, m.params, m.big = mtPrivate, 0, m.params[:0], false
+		case c >= 0x20 && c <= 0x3f:
+			m.state = mtOther
+		case c == 0x1b:
+			m.state = mtEsc
+		default:
+			m.state = mtGround // a final byte, or a control that cancels the sequence
+		}
+	case mtOther:
+		switch {
+		case c >= 0x20 && c <= 0x3f:
+		case c == 0x1b:
+			m.state = mtEsc
+		default:
+			m.state = mtGround
+		}
+	case mtPrivate:
+		switch {
+		case c >= '0' && c <= '9':
+			if m.param < 100000 {
+				m.param = m.param*10 + int(c-'0')
 			} else {
-				m.state = mtGround
+				m.big = true
 			}
-		case mtPrivate:
-			switch {
-			case c >= '0' && c <= '9':
-				if m.param < 100000 {
-					m.param = m.param*10 + int(c-'0')
-				} else {
-					m.big = true
-				}
-			case c == ';':
-				m.params = append(m.params, m.param)
-				m.param = 0
-				if len(m.params) > 32 {
-					m.state = mtGround
-				}
-			case c == 'h' || c == 'l':
-				if !m.big {
-					for _, p := range append(m.params, m.param) {
-						m.set(p, c == 'h')
-					}
-				}
-				m.state = mtGround
-			case c == 0x1b:
-				m.state = mtEsc
-			default:
-				m.state = mtGround
+		case c == ';':
+			m.params = append(m.params, m.param)
+			m.param = 0
+			if len(m.params) > 32 {
+				m.big = true
+				m.params = m.params[:0]
 			}
+		case c == 'h' || c == 'l':
+			if !m.big {
+				for _, p := range append(m.params, m.param) {
+					m.set(p, c == 'h')
+				}
+			}
+			m.state = mtGround
+		case c >= 0x20 && c <= 0x3f:
+			m.big = true // a parameter form this tracker doesn't follow: the sequence is ignored
+		case c == 0x1b:
+			m.state = mtEsc
+		default:
+			m.state = mtGround
+		}
+	case mtString:
+		switch c {
+		case 0x07:
+			m.state = mtGround
+		case 0x1b:
+			m.state = mtStringEsc
+		}
+	case mtStringEsc:
+		if c == '\\' {
+			m.state = mtGround
+		} else {
+			m.state = mtString
 		}
 	}
 }
@@ -177,7 +230,36 @@ func TailSegments(names []string, open func(name string) (io.ReadCloser, error),
 		return TailResult{}, err
 	}
 	out.Records = append([]Record{}, window[head:]...)
+	if out.Skipped > 0 {
+		out.Skipped += trimStart(out.Records, &modes)
+	}
 	out.Modes = modes.Modes()
 	out.Truncated, out.Gaps = res.Truncated, res.Gaps
 	return out, nil
+}
+
+// trimStart makes a tail start at a character: the rest of an escape sequence the dropped output left open is fed to
+// modes (so a mode it completes counts) and cut from the tail, and so are UTF-8 continuation bytes of a character
+// that began before it. It returns how many bytes it cut; a record left with no data stays in the tail.
+func trimStart(recs []Record, modes *ModeTracker) int64 {
+	var cut int64
+	for i := range recs {
+		r := &recs[i]
+		if r.Kind != KindOut {
+			continue
+		}
+		n := modes.Finish(r.Data)
+		if !modes.InSequence() {
+			for n < len(r.Data) && r.Data[n]&0xc0 == 0x80 {
+				n++
+			}
+		}
+		cut += int64(n)
+		r.Data = r.Data[n:]
+		if len(r.Data) > 0 {
+			break
+		}
+		// The record held only the end of the sequence or of a character: the next one may hold the rest.
+	}
+	return cut
 }

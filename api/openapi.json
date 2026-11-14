@@ -13777,7 +13777,7 @@
             "type": "string"
           },
           "gaps": {
-            "description": "Sequence discontinuities and explicit gap records",
+            "description": "Sequence discontinuities and explicit gap records up to the end of this page (the read stops after it)",
             "format": "int64",
             "type": "integer"
           },
@@ -13801,7 +13801,7 @@
             "description": "Set when the page is a tail (tail=): what comes before its records"
           },
           "truncated": {
-            "description": "A segment ended in an incomplete frame (interrupted writer)",
+            "description": "A segment read for this page ended in an incomplete frame (interrupted writer)",
             "type": "boolean"
           }
         },

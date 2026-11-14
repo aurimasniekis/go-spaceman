@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,12 +28,15 @@ var RecordingRules = map[string]Rule{
 // RecordingPage is a page of recording records.
 type RecordingPage struct {
 	Records   []recording.Record `json:"records"`
-	Truncated bool               `json:"truncated" doc:"A segment ended in an incomplete frame (interrupted writer)"`
-	Gaps      int                `json:"gaps" doc:"Sequence discontinuities and explicit gap records"`
+	Truncated bool               `json:"truncated" doc:"A segment read for this page ended in an incomplete frame (interrupted writer)"`
+	Gaps      int                `json:"gaps" doc:"Sequence discontinuities and explicit gap records up to the end of this page (the read stops after it)"`
 	NextAfter uint64             `json:"next_after" doc:"Pass as after= to continue"`
 	More      bool               `json:"more"`
 	Tail      *RecordingTail     `json:"tail,omitempty" doc:"Set when the page is a tail (tail=): what comes before its records"`
 }
+
+// errPageFull stops a page's read at the first record past the page.
+var errPageFull = errors.New("page full")
 
 // RecordingTail describes the output a tail leaves out (ADR-0081): a viewer draws the tail on a fresh terminal of
 // cols×rows after setting or resetting the modes, in order.
@@ -73,6 +77,11 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 				if _, err := d.spaceRun(ctx, f, in.SpaceID, in.RunID); err != nil {
 					return nil, err
 				}
+				release, ok := d.acquireCatchUp(ctx)
+				if !ok {
+					return nil, catchUpBusy()
+				}
+				defer release()
 				if in.Tail > 0 {
 					res, err := f.Recordings().Tail(ctx, in.RunID, in.Tail)
 					if err != nil {
@@ -84,18 +93,18 @@ func RegisterRecordings(f *fleet.Service) func(api huma.API, d *Deps) {
 				if in.Limit == 0 {
 					in.Limit = 1000
 				}
-				// Only the page is held in memory; the rest of the recording is decoded for the gap count and dropped.
+				// Only the page is held in memory, and the read stops at the first record past it.
 				out := &struct{ Body RecordingPage }{Body: RecordingPage{Records: []recording.Record{}, NextAfter: in.After}}
 				res, err := f.Recordings().Scan(ctx, in.RunID, in.After, func(r recording.Record) error {
 					if len(out.Body.Records) == in.Limit {
 						out.Body.More = true
-						return nil
+						return errPageFull
 					}
 					out.Body.Records = append(out.Body.Records, r)
 					out.Body.NextAfter = r.Seq
 					return nil
 				})
-				if err != nil {
+				if err != nil && !errors.Is(err, errPageFull) {
 					return nil, d.fail(ctx, "recordings.get", err)
 				}
 				out.Body.Truncated, out.Body.Gaps = res.Truncated, res.Gaps
@@ -167,6 +176,13 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 		return d.Authz != nil && d.Authz.AllowedAll(p.Subjects(), spaceID, authz.TerminalWatch)
 	})
 	defer guard.close()
+	// The stored output is read under one of central's catch-up slots, taken before the stream starts so a refusal is
+	// a plain 503 the browser retries.
+	release, ok := d.acquireCatchUp(ctx)
+	if !ok {
+		writeProblem(w, catchUpBusy())
+		return
+	}
 	v := f.Recordings().Subscribe(runID)
 	defer f.Recordings().Unsubscribe(v)
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -213,7 +229,9 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 		fl.Flush()
 		return true
 	}
-	if tail > 0 && !catchUpTail() || tail == 0 && !catchUp() {
+	caughtUp := tail > 0 && catchUpTail() || tail == 0 && catchUp()
+	release()
+	if !caughtUp {
 		return
 	}
 	if ended(run.Observed) {
@@ -233,7 +251,14 @@ func (d *Deps) terminalStream(w http.ResponseWriter, r *http.Request, f *fleet.S
 			}
 			if v.TakeLagged() || rec.Seq != after+1 {
 				_, _ = fmt.Fprintf(w, "event: gap\ndata: {\"after\":%d}\n\n", after)
-				if !catchUp() {
+				// No slot: the stream ends, and the browser reconnects after the last record it got.
+				release, ok := d.acquireCatchUp(ctx)
+				if !ok {
+					return
+				}
+				caughtUp := catchUp()
+				release()
+				if !caughtUp {
 					return
 				}
 				continue

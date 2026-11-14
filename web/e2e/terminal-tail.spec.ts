@@ -159,3 +159,50 @@ async function measure(browser: Browser, storageState: Awaited<ReturnType<Return
     await ctx.close()
   }
 }
+
+test('loading earlier output keeps the viewer on the lines they were reading', async ({ page }) => {
+  test.setTimeout(240_000)
+  const { api, spaceId } = await tailSpace(page, 'tailpos')
+  // About 1.05 MB of long lines: the first tail leaves the oldest out, and the scrollback has room for them.
+  const run = await api.call<{ id: string }>('POST', `/spaces/${spaceId}/runs`, { kind: 'worker', role: 'tailpos', harness: 'claude-code', prompt: '/sparse 6000' })
+  const runPath = `/spaces/${spaceId}/runs/${run.id}`
+  try {
+    await replied(api, spaceId, run.id)
+    await page.addInitScript(instrument, 'tick \\d+')
+    await page.setViewportSize({ width: 1800, height: 1000 })
+    await page.goto(runPath)
+    await expect.poll(() => screen(page), { timeout: 60_000 }).toMatch(/^tick \d+$/m)
+    await expect(page.getByTestId('terminal-loading')).toBeHidden({ timeout: 60_000 })
+    const box = page.locator('[data-earlier]')
+    expect(Number(await box.getAttribute('data-earlier')), 'output before the first tail').toBeGreaterThan(0)
+
+    /** The number of the first whole "long line" in the visible rows (the tail may start inside one). */
+    const topLine = async () => {
+      const lines = (await text(page)).split('\n')
+      const up = Number(await box.getAttribute('data-scrollback'))
+      const rows = (await page.getByTestId('terminal-badge-size').first().textContent())?.split('×').map(Number)[1] ?? 48
+      const first = lines.length - rows - up
+      for (const l of lines.slice(Math.max(0, first), first + rows)) {
+        const m = /^long line (\d+) x{140} *$/.exec(l)
+        if (m) return Number(m[1])
+      }
+      return NaN
+    }
+    await page.getByTestId('terminal').hover()
+    await page.mouse.wheel(0, -10_000_000)
+    await page.mouse.wheel(0, -10_000_000)
+    await expect(page.getByTestId('load-earlier')).toBeVisible({ timeout: 10_000 })
+    const before = await topLine()
+    expect(before, 'a long line at the top of the scrollback').toBeGreaterThan(1)
+    await page.getByTestId('load-earlier').click()
+    await expect(box).toHaveAttribute('data-reloading', 'false', { timeout: 60_000 })
+    expect(Number(await box.getAttribute('data-earlier'))).toBe(0)
+    // The same line (ticks may have added a few rows meanwhile), with the earlier lines now above it.
+    const after = await topLine()
+    console.log(`top line before ${before}, after ${after}`)
+    expect(Math.abs(after - before), 'lines the view moved').toBeLessThanOrEqual(3)
+    expect(await text(page)).toMatch(/^long line 1 x{140} *$/m)
+  } finally {
+    await api.call('POST', `${runPath}/stop`, {}).catch(() => {})
+  }
+})

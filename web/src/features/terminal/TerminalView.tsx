@@ -238,6 +238,8 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
   const [state, setState] = useState<LiveState>('connecting')
   const [loading, setLoading] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  // Streams in a row that the server refused (reset by one that opens).
+  const failures = useRef(0)
   const visible = useTabVisible()
   // What this terminal has drawn, kept across reconnects so output is never applied twice.
   const drawn = useRef<RecordingSummary>(emptySummary())
@@ -293,11 +295,33 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     let first = true
     const query = after > 0 ? `?after=${after}` : tailBytes.current > 0 ? `?tail=${tailBytes.current}` : ''
     const es = new EventSource(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/runs/${encodeURIComponent(runId)}/terminal${query}`)
-    es.onopen = () => setState('live')
-    es.onerror = () => setState(es.readyState === EventSource.CLOSED ? 'ended' : 'connecting')
+    let retry: ReturnType<typeof setTimeout> | undefined
+    es.onopen = () => {
+      failures.current = 0
+      setState('live')
+    }
+    es.onerror = () => {
+      if (es.readyState !== EventSource.CLOSED) {
+        setState('connecting')
+        return
+      }
+      // The server answered with an error (central busy reading recordings answers 503, ADR-0081), which the browser
+      // never retries: try again, backing off, a few times.
+      if (failures.current >= 8) {
+        setState('ended')
+        return
+      }
+      setState('connecting')
+      const delay = Math.min(30_000, 1_000 * 2 ** failures.current++)
+      retry = setTimeout(() => !closed && setAttempt((n) => n + 1), delay)
+    }
     // A tail catch-up starts with what the output before it left: the size, modes, gaps (records with seq 0). A server
     // without tails sends none and the whole recording follows, as before.
+    let sawTail = false
     es.addEventListener('tail', (ev) => {
+      // One per stream; another would count its gaps twice.
+      if (sawTail) return
+      sawTail = true
       const tail = JSON.parse((ev as MessageEvent<string>).data) as RecordingTail
       setEarlier(tail.skipped_bytes)
       if (first) catchUp(1)
@@ -333,6 +357,7 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
     })
     return () => {
       closed = true
+      clearTimeout(retry)
       es.close()
       // Records not applied yet are dropped; the next stream resumes after the last one applied.
       fed.stop()
@@ -384,6 +409,24 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
 
 const SPEEDS = ['1', '2', '4', '8']
 
+/**
+ * One page of a run's recording. Central reads a bounded number of recordings at once (ADR-0081) and answers 503 with
+ * Retry-After when it is busy: the page is asked for again after that, a few times, while the view is open.
+ */
+async function recordingPage(
+  spaceId: string,
+  runId: string,
+  query: { after?: number; limit?: number; tail?: number },
+  cancelled: () => boolean,
+): Promise<RecordingPage> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await api.GET('/spaces/{space_id}/runs/{run_id}/recording', { params: { path: { space_id: spaceId, run_id: runId }, query } })
+    if (res.response.status !== 503 || attempt >= 10 || cancelled()) return unwrap(res)
+    const wait = Number(res.response.headers.get('Retry-After')) || 2
+    await new Promise((r) => setTimeout(r, Math.min(wait, 30) * 1000))
+  }
+}
+
 /** Replays the stored recording with play/pause, speed and seeking (SM-REC-003). */
 function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   const { ref, box, term, error } = useTerminal()
@@ -401,18 +444,14 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const first = unwrap(
-        await api.GET('/spaces/{space_id}/runs/{run_id}/recording', { params: { path: { space_id: spaceId, run_id: runId }, query: { tail: TAIL_BYTES } } }),
-      )
+      const first = await recordingPage(spaceId, runId, { tail: TAIL_BYTES }, () => cancelled)
       // A server without tails answers with the first page: then the whole recording loads first, as before.
       if (!cancelled && first.tail) setTailPage(first)
       const all: RecordingRecord[] = []
       let after = 0
       // Pages of 1000 records: the browser parses each response in one task (5000 took about a second at 4× throttling).
       for (;;) {
-        const page = unwrap(
-          await api.GET('/spaces/{space_id}/runs/{run_id}/recording', { params: { path: { space_id: spaceId, run_id: runId }, query: { after, limit: 1000 } } }),
-        )
+        const page = await recordingPage(spaceId, runId, { after, limit: 1000 }, () => cancelled)
         all.push(...page.records)
         if (!page.more || cancelled) break
         after = page.next_after
@@ -485,8 +524,8 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
           setTimeout(step, 0)
           return
         }
-        const { start: from, tail } = index.tail(end, TAIL_BYTES)
-        render(tail, records.slice(from, end))
+        const { records: window, tail } = index.tail(end, TAIL_BYTES)
+        render(tail, window)
       }
       step()
     },

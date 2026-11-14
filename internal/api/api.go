@@ -60,6 +60,10 @@ type Deps struct {
 	MaxUploadBytes int64
 	// StreamRevalidate bounds how long an open watch stream outlives a revoked session or token (SM-AUTH-007).
 	StreamRevalidate time.Duration
+	// CatchUps are central's slots for reading stored recordings (terminal catch-ups, replay pages), and CatchUpWait
+	// how long a reader waits for one (http.catch_up_concurrency, http.catch_up_wait; ADR-0081). nil: no bound.
+	CatchUps    chan struct{}
+	CatchUpWait time.Duration
 	// Extra registers additional operation groups (nodes, spaces, runs…) supplied by other packages.
 	Extra []func(api huma.API, d *Deps)
 	// ExtraRules are the authorization rules of the Extra operations.

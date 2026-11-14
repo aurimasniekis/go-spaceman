@@ -209,4 +209,31 @@ func TestTerminalTailCatchUp(t *testing.T) {
 			break
 		}
 	}
+	var liveRec struct {
+		Seq uint64 `json:"seq"`
+	}
+	_ = json.Unmarshal([]byte(data), &liveRec)
+
+	// A reconnect (Last-Event-ID) resumes after that record even with tail= in the URL: no tail event, nothing again.
+	req, _ := http.NewRequest(http.MethodGet, e.srv.URL+"/api/v1/spaces/"+sp.ID+"/runs/"+r.ID+"/terminal?tail=100", nil)
+	req.Header.Set("Authorization", "Bearer "+rootSecret)
+	req.Header.Set("Last-Event-ID", fmt.Sprint(liveRec.Seq-1))
+	res2, err := http.DefaultClient.Do(req)
+	if err != nil || res2.StatusCode != http.StatusOK {
+		t.Fatalf("resume: %v %v", res2, err)
+	}
+	defer res2.Body.Close()
+	buf := make([]byte, 64<<10)
+	var got strings.Builder
+	for !strings.Contains(got.String(), "\n\n") {
+		n, err := res2.Body.Read(buf)
+		got.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	first := got.String()
+	if !strings.HasPrefix(first, "event: record\nid: "+fmt.Sprint(liveRec.Seq)+"\n") {
+		t.Fatalf("resumed stream starts with %q, want the record after Last-Event-ID", first[:min(len(first), 80)])
+	}
 }

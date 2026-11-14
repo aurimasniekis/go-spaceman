@@ -220,3 +220,35 @@ func TestTailMemoryBounded(t *testing.T) {
 		t.Fatalf("heap grew by %d bytes scanning a %d byte recording with a 1 MiB tail", grew, total)
 	}
 }
+
+func TestTailStartsAtACharacter(t *testing.T) {
+	out := func(s string) Record { return Record{Kind: KindOut, Data: []byte(s)} }
+	// The cut falls inside a DECSET: the mode it completes counts, and its end is not drawn as text.
+	res := tailOf(t, writeRecording(t, []Record{out("earlier output\x1b[?10"), out("49hfull screen app")}), 20)
+	if len(res.Records) != 1 || string(res.Records[0].Data) != "full screen app" || !reflect.DeepEqual(res.Modes, []Mode{{1049, true}}) {
+		t.Fatalf("records %q modes %v", res.Records[0].Data, res.Modes)
+	}
+	if res.Skipped != int64(len("earlier output\x1b[?10")+3) {
+		t.Fatalf("skipped %d", res.Skipped)
+	}
+	// Inside a colour (a CSI that sets no mode), a title (OSC, across two records) and a UTF-8 character.
+	for _, c := range []struct {
+		recs []Record
+		want string
+	}{
+		{[]Record{out("aaaa\x1b[38;2;1"), out("0;20;30mgreen")}, "green"},
+		{[]Record{out("aaaa\x1b]0;a long ti"), out("tle"), out(" still\x07after")}, "after"},
+		{[]Record{out("aaaa\x1b]0;t\x1b"), out("\\after")}, "after"},
+		{[]Record{out("aaaa\xe2\x94"), out("\x80─ rule")}, "─ rule"},
+		{[]Record{out("aaaa"), out("plain")}, "plain"},
+	} {
+		res := tailOf(t, writeRecording(t, c.recs), int64(len(c.recs[len(c.recs)-1].Data)+len(c.recs[len(c.recs)-2].Data)-1))
+		var got strings.Builder
+		for _, r := range res.Records {
+			got.Write(r.Data)
+		}
+		if got.String() != c.want {
+			t.Fatalf("%v: tail %q, want %q", c.recs, got.String(), c.want)
+		}
+	}
+}

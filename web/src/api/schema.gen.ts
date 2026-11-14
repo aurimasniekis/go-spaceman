@@ -9528,7 +9528,7 @@ export interface components {
             readonly $schema?: string;
             /**
              * Format: int64
-             * @description Sequence discontinuities and explicit gap records
+             * @description Sequence discontinuities and explicit gap records up to the end of this page (the read stops after it)
              */
             gaps: number;
             more: boolean;
@@ -9540,7 +9540,7 @@ export interface components {
             records: components["schemas"]["RecordingRecord"][];
             /** @description Set when the page is a tail (tail=): what comes before its records */
             tail?: components["schemas"]["RecordingTail"];
-            /** @description A segment ended in an incomplete frame (interrupted writer) */
+            /** @description A segment read for this page ended in an incomplete frame (interrupted writer) */
             truncated: boolean;
         };
         RecordingRecord: {

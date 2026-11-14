@@ -64,8 +64,9 @@ describe('ReplayIndex', () => {
     expect(slices).toBeGreaterThan(0) // indexed in slices
     const end = 1400
     // Each record is 27 bytes of output: ten fit in 270.
-    const { start, tail } = idx.tail(end, 27 * 10)
-    expect(end - start).toBe(10)
+    const { records: window, tail } = idx.tail(end, 27 * 10)
+    const start = end - window.length
+    expect(window).toHaveLength(10)
     expect(tail.from).toBe(records[start].seq)
     expect(tail).toMatchObject({ cols: 120, rows: 40, gaps: 1, truncated: false })
     // The last record before start decides the modes.
@@ -83,8 +84,39 @@ describe('ReplayIndex', () => {
   it('keeps at least one record and needs no prelude from the start', () => {
     const idx = new ReplayIndex(records)
     expect(idx.windowStart(5, 1)).toBe(4)
-    const { start, tail } = idx.tail(5, 1 << 20)
-    expect(start).toBe(0)
+    const { records: window, tail } = idx.tail(5, 1 << 20)
+    expect(window).toHaveLength(5)
     expect(tail).toMatchObject({ skipped_bytes: 0, cols: 0, modes: [] })
+  })
+})
+
+describe('a tail starts at a character', () => {
+  // The same cases as internal/recording TestTailStartsAtACharacter.
+  const bytes = (s: string) => btoa(s)
+  const raw = (seq: number, s: string): RecordingRecord => ({ seq, t: seq, k: 'o', d: bytes(s) })
+  const tailOf = (parts: string[], budget: number) => {
+    const records = parts.map((p, i) => raw(i + 1, p))
+    const idx = new ReplayIndex(records)
+    idx.advance()
+    return idx.tail(records.length, budget)
+  }
+  const joined = (rs: RecordingRecord[]) => rs.map((r) => atob(r.d ?? '')).join('')
+
+  it('counts a DECSET the cut falls inside and does not draw its end', () => {
+    const { records, tail } = tailOf(['earlier output\x1b[?10', '49hfull screen app'], 20)
+    expect(joined(records)).toBe('full screen app')
+    expect(tail.modes).toEqual([{ mode: 1049, on: true }])
+    expect(tail.skipped_bytes).toBe('earlier output\x1b[?10'.length + 3)
+  })
+
+  it.each([
+    [['aaaa\x1b[38;2;1', '0;20;30mgreen'], 'green'],
+    [['aaaa\x1b]0;a long ti', 'tle', ' still\x07after'], 'after'],
+    [['aaaa\x1b]0;t\x1b', '\\after'], 'after'],
+    [['aaaa\xe2\x94', '\x80\xe2\x94\x80 rule'], '\xe2\x94\x80 rule'],
+    [['aaaa', 'plain'], 'plain'],
+  ])('%j starts at %j', (parts, want) => {
+    const budget = parts[parts.length - 1].length + parts[parts.length - 2].length - 1
+    expect(joined(tailOf(parts, budget).records)).toBe(want)
   })
 })
