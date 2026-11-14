@@ -35,6 +35,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
@@ -120,6 +121,8 @@ type Service struct {
 
 	// miniAppHost is the Mini App host of a running bot ("" when off): central's host routing reads it per request.
 	miniAppHost atomic.Pointer[string]
+	// miniAppBot is the running bot's Mini App initData key (nil when off).
+	miniAppBot atomic.Pointer[miniapp.Bot]
 
 	// The outbound sender of the live bot (nil when the bot is off). snd, limits and sndDone are guarded by sndMu:
 	// SetLimits (the settings' change listener) must not wait for a reconfiguration that holds mu.

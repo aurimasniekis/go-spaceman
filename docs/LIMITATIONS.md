@@ -710,6 +710,36 @@
   NATS) and MCP upstream transports (`gateway.Transport`). Adapters are compiled in. The gateway speaks only streamable
   HTTP to upstream servers (no stdio or SSE-only transport), and Pulse is the only inbound event system.
 
+## Telegram Mini App
+
+- **Download links live in memory.** A signed download link (ADR-0083 §3.4.3) is held by central for 60 seconds and 3
+  requests, at most 16 per Telegram link (a new one replaces that link's oldest) and 10,000 in all (past that a mint is refused with 429, never by evicting another link's grant); a restart drops them all and the Mini App mints a new one. A
+  refused request (revoked link, removed grant) still counts as a use, and every refusal is the same 404.
+- **No `tg.html` until the client shell ships.** Central serves the Mini App page from the build when `tg.html` is in
+  it (TG-9b adds the entry); without it the Mini App host answers 404 for pages.
+- **Sessions live in memory.** Mini App sessions (ADR-0083 §3.4.2) are held by central only: a restart, a bot change
+  or turning the Mini App off ends them all, and the user reopens the app. Unsaved form input is lost.
+- **Session capacity can run out.** Central holds at most 20,000 Mini App sessions (5 per link, the oldest of a link
+  dropped). When every slot holds a live session, new exchanges are refused with 429 until sessions expire (idle 15
+  min, absolute 1 h by default). Only valid initData of linked users opens a session, so only linked Telegram accounts
+  can use the capacity up, at 10 exchanges a minute each (SM-TG-005).
+- **Replay memory is bounded.** Used initData is remembered for an hour (the largest allowed max age), at most 10,000
+  entries; under a flood of distinct valid initData the oldest are forgotten first (SM-TG-005). Forgetting one that has
+  not expired raises an auth_date watermark: initData issued at or before it is refused, so a flush can't revive a used
+  one, and a user whose initData is that old reopens the app for fresh data.
+- **Refused-exchange audit is aggregated.** Refusals are counted per address (an IPv6 /64 is one address), at most one
+  audit row per address a minute and 60 rows a minute in all. Refusals the cap withholds, and those an evicted counter
+  still held, are added to one global count that is reported as a single overflow row a minute (source address `*`, outside
+  the 60-row cap), so the rows add up to every refusal; the overflow row appears with the next refusal after its minute,
+  so the latest count can wait for it. At most 10,000 addresses are tracked, the oldest dropped first, so a flood from very
+  many addresses costs per-address detail (an address's refusals then show only in the overflow row), not counts.
+  An address's held-back count waits for its next refusal or its eviction before it is recorded.
+- **Unlinked Telegram users can fill the replay cache.** Valid initData from any Telegram user is remembered before the
+  link check, so users without a link can push entries through the 10,000-entry cache like linked ones (the watermark above
+  still keeps a flushed initData from being reused).
+- **A token rotation ends Mini App sessions.** Each session is bound to a hash of the bot's signing key; a new bot token
+  (same bot ID) refuses the sessions opened under the old one.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned

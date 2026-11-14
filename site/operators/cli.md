@@ -164,6 +164,7 @@ flows or to linking a Telegram account from the browser. A test fails when a new
 | `start-oidc`, `oidc-callback` | browser redirects to and from the identity provider (sign-in, step-up, link, test login) |
 | `create-telegram-link-code`, `get-telegram-link-code`, `cancel-telegram-link-code`, `confirm-telegram-link` | linking a Telegram account (ADR-0083) happens on the Account page: only the browser session that created the code may use it, and API tokens are refused |
 | `reset-password` | anonymous: central accepts it only from its own web origin, so the user redeems the token from `spaceman user reset-token` on the sign-in page |
+| `create-telegram-session` | the Telegram Mini App's session exchange: served only on the Mini App host, from its origin, with initData Telegram signs for the app (ADR-0083) |
 
 The live terminal stream (`…/runs/{run_id}/terminal`) has no command either: it replays a program's terminal output
 with its escape sequences, which belongs in the web UI's terminal viewer. `spaceman run recording download` saves the

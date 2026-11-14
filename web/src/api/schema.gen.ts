@@ -4253,6 +4253,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/telegram/download-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a signed download link for an attachment
+         * @description Mini App host only (404 elsewhere). Returns a link on the Mini App host that serves one attachment of the space to the caller's Telegram link, for 60 seconds and at most 3 requests. The caller needs attachment:read in the space. The link is re-authorized when it is used: an unlinked or disabled caller gets nothing.
+         */
+        post: operations["create-telegram-download-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/telegram/links": {
         parameters: {
             query?: never;
@@ -4288,6 +4308,26 @@ export interface paths {
          * @description An administrator ends a link at once (a lost phone, a departed colleague). Needs user:write and a recent re-authentication with a second factor.
          */
         delete: operations["delete-telegram-link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/telegram/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange Telegram Mini App initData for a session
+         * @description Served only on the Mini App host (miniapp_host; 404 elsewhere). The initData must carry a valid signature of the configured bot, be at most init_data_max_age_seconds old and not used before (each initData opens one session); its Telegram user needs an active link. Refused initData is 401 whatever the reason. Rate limited per address and per Telegram user. The session lives in memory only and ends on idle, absolute expiry, unlink, user disable, a bot change or a restart; the Mini App then asks to be reopened.
+         */
+        post: operations["create-telegram-session"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -11387,6 +11427,36 @@ export interface components {
             title: string;
             workspace?: string;
         };
+        TelegramDownloadInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramDownloadInBody.json
+             */
+            readonly $schema?: string;
+            attachment_id: string;
+            space_id: string;
+        };
+        TelegramDownloadOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramDownloadOut.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description The link stops working at this time
+             */
+            expires_at: string;
+            /**
+             * Format: int64
+             * @description How many requests the link serves
+             */
+            max_uses: number;
+            /** @description The download link on the Mini App host. It is the capability: do not log or share it */
+            url: string;
+        };
         TelegramLinkConfirmIn: {
             /**
              * Format: uri
@@ -11401,6 +11471,36 @@ export interface components {
             max_role?: "viewer" | "operator" | "admin" | "";
             /** @description The browser's IANA time zone, such as Europe/Vilnius. It is saved as your time zone only if you have none (it never overwrites one you chose); an invalid zone is ignored */
             timezone?: string;
+        };
+        TelegramSessionInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSessionInBody.json
+             */
+            readonly $schema?: string;
+            /** @description The raw Telegram.WebApp.initData string, as the Mini App received it */
+            init_data: string;
+        };
+        TelegramSessionOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramSessionOut.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description When the session ends whatever its use
+             */
+            expires_at: string;
+            /**
+             * Format: int64
+             * @description The session ends after this long without a request
+             */
+            idle_timeout_seconds: number;
+            /** @description The session token, sent as "Authorization: Telegram <token>" on the Mini App host only; never in a URL or a cookie */
+            token: string;
         };
         TemplateDefinition: {
             body: string;
@@ -21897,6 +21997,39 @@ export interface operations {
             };
         };
     };
+    "create-telegram-download-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramDownloadInBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramDownloadOut"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     "list-telegram-links": {
         parameters: {
             query?: never;
@@ -21944,6 +22077,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-telegram-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramSessionInBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramSessionOut"];
+                };
             };
             /** @description Error */
             default: {

@@ -54,6 +54,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`link_default_max_role` as a ceiling, admin only with `link_allow_admin_cap`, SSO grants only from an SSO session
   with `link_sso_grants`). Migration 0052 adds `tg_confirmed_at` and `created_session_id` to link codes. New outcome
   `link` on `spaceman_telegram_updates_total`.
+- Telegram Mini App page and downloads (ADR-0083, not usable yet): the Mini App host serves `tg.html` and the build's
+  assets with their own headers (`script-src` pinned to Telegram's loader by its exact URL, `frame-ancestors
+  https://web.telegram.org`, no `X-Frame-Options`); the main host never serves `tg.html` and its headers are
+  unchanged. `create-telegram-download-link` (`POST /api/v1/telegram/download-links`) mints a link to one attachment for
+  the caller's Telegram link, and `GET /tg-dl/<id>` on the Mini App host serves it: random ID kept by hash, valid 60
+  seconds and 3 requests, the link's permissions checked on every use, `Cache-Control: no-store`, `Referrer-Policy:
+  no-referrer`, the one CORS header (`https://web.telegram.org`) of the host, and `/tg-dl/<redacted>` in logs.
 
 ### Fixed
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header
