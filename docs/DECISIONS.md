@@ -4290,8 +4290,9 @@
          transaction. The run's later end is recorded as `usage_limit`, because the run has a wait.
        - **Ended, lost or swept runs.** A run that ends, is lost or is swept while at its limit, and that nobody asked to
          stop, gets its wait in the report (or sweep) transaction. A swept run keeps the sweeper's end reason.
-       - **Kinds.** Only control, worker and diagnostic runs are parked. KB support and dreamer runs are started on
-         demand by their schedulers, so they are neither stopped at the keep-alive nor resumed.
+       - **Kinds.** Only control, worker and diagnostic runs are parked (control's decision, 2026-11-14). KB support and
+         dreamer runs are short-lived and started on demand by their schedulers, which start them again when needed,
+         so they are neither stopped at the keep-alive nor resumed.
        - **What the wait records.** The session (only when the run finished a turn), the task (only while it is assigned
          to the run and running, blocked or in review), the space's open hold, and the run's launch.
        - **Re-park.** When a resumed run parks again, the new wait carries its predecessor's `release_at`, `attempts`
@@ -4462,6 +4463,9 @@
       migration 0008 (`runs.limit_kind`, `limit_resets_at`, `limit_since`, `limit_offset`; `limit_since` added in UL-2
       so a restarted agent re-reports the same `since`). Space setting
       `usage_limit {failover, keep_alive_max, max_wait, notify_humans_after}`.
+      **Amended 2026-11-14 (UL-6, UL-7):** these are space limits, not a settings object: `usage_limit_failover`
+      (switch, default off), `usage_limit_keep_alive_max_minutes` (1–1,440, default 360) and
+      `usage_limit_max_wait_hours` (1–720, default 168: Q2's 7 days). `notify_humans_after` comes with UL-9.
 - **Alternatives:**
   - **Parse the TUI's "You've hit your … limit · resets …" text.** Rejected: forbidden by SM-RUN-002, local-zone and
     dateless under 24 h, and server-overridable wording.

@@ -148,7 +148,6 @@ func (e *parkEnv) writeCount() int {
 }
 
 func TestParkAtAndResumeAt(t *testing.T) {
-	t.Parallel()
 	t0 := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
 	us := func(d time.Duration) int64 { return t0.Add(d).UnixMicro() }
 	run := func(kind string, resets *time.Duration) db.Run {
@@ -206,7 +205,6 @@ func TestParkAtAndResumeAt(t *testing.T) {
 // follows it, and control hears once each way. When the resumed run ends at a limit again, the new wait carries the
 // release time and attempts forward and control isn't told again.
 func TestLimitWaitParkAndResume(t *testing.T) {
-	t.Parallel()
 	e := newParkEnv(t)
 	e.hold("ulm_a", "spc_a", "acc_1", "", proto.LimitFiveHour, dur(3*time.Hour), nil)
 	e.limited("run_w", "worker", proto.LimitFiveHour, dur(3*time.Hour), 0, 2)
@@ -289,7 +287,6 @@ func TestLimitWaitParkAndResume(t *testing.T) {
 // away is parked at once. Its end, which central asked for, still ends usage_limit. A run somebody stopped is not
 // parked, and kb runs are left alone.
 func TestLimitWaitKeepAliveMax(t *testing.T) {
-	t.Parallel()
 	e := newParkEnv(t)
 	e.limited("run_u", "worker", proto.LimitUnknown, nil, 0, 1)
 	e.limited("run_k", "kb", proto.LimitUnknown, nil, 0, 1)
@@ -349,7 +346,6 @@ func TestLimitWaitKeepAliveMax(t *testing.T) {
 // changes; the node's hello and the space's resume bring it forward. A held account puts it off to the reset, a task
 // that moved or a space that was archived gives it up, and a parked run that hasn't ended yet holds it back.
 func TestLimitWaitDeferrals(t *testing.T) {
-	t.Parallel()
 	e := newParkEnv(t)
 	park := func(id string) db.LimitWait {
 		e.t.Helper()
@@ -451,7 +447,6 @@ func TestLimitWaitDeferrals(t *testing.T) {
 // The UL-2 review follow-up: a wait left resuming by a central that stopped mid-resume (no run was started: a resume
 // commits its run and its wait together) goes back to waiting on the first round and resumes.
 func TestLimitWaitStuckResumingRecovered(t *testing.T) {
-	t.Parallel()
 	e := newParkEnv(t)
 	e.limited("run_r", "worker", proto.LimitFiveHour, dur(-time.Hour), -2*time.Hour, 1)
 	e.end("run_r", proto.RunExited, "exited")
@@ -489,7 +484,6 @@ func TestLimitWaitStuckResumingRecovered(t *testing.T) {
 // The 2026-11-13 lesson: a mass reset doesn't stampede. Control resumes first, then the oldest, at most
 // limitResumeBatch per round, and the next round waits limitResumeSpacing.
 func TestLimitWaitResumeBatched(t *testing.T) {
-	t.Parallel()
 	e := newParkEnv(t)
 	for i := range 7 {
 		e.limited(fmt.Sprintf("run_%d", i), "worker", proto.LimitFiveHour, dur(time.Hour), 0, 1)
@@ -520,7 +514,6 @@ func TestLimitWaitResumeBatched(t *testing.T) {
 // Decision 6 (Q2): a worker's wait is released at its maximum wait, its task goes back to the queue and control is
 // told; control's wait never is, even after a month. An operator can release or resume one now.
 func TestLimitWaitRelease(t *testing.T) {
-	t.Parallel()
 	e := newParkEnv(t)
 	e.limited("run_w", "worker", proto.LimitSevenDay, dur(8*24*time.Hour), 0, 1)
 	e.task("tsk_w", "run_w", "running")
@@ -597,7 +590,6 @@ func nullUs(v int64) sql.NullInt64 { return sql.NullInt64{Int64: v, Valid: true}
 // Decision 5: when the space moved to another node since the run was parked, its session (node-local) can't be
 // resumed: the run starts a fresh session there with its original prompt and a note, and control hears of it.
 func TestLimitWaitRelocatedFreshSession(t *testing.T) {
-	t.Parallel()
 	e := newParkEnv(t)
 	e.limited("run_r", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 3)
 	e.end("run_r", proto.RunExited, "exited")
