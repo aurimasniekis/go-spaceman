@@ -4244,6 +4244,78 @@
   with the old value: 485 rows).
 - **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
 
+### ADR-0082 — Rich Markdown rendering: GFM, lazily loaded code highlighting and Mermaid in strict mode (security-relevant change)
+- **Status:** Accepted, 2026-11-14 (operator request 2026-11-13: render Mermaid, highlighted code and all Markdown
+  features in the inbox, queue and needs-you views).
+- **Context:** `web/src/lib/markdown.ts` (marked + DOMPurify) renders every untrusted body: inbox items, task objectives,
+  acceptance criteria and results, human-action bodies, details, answers and comments, messages, cross-space requests,
+  knowledge answers, dreams, memory files, prompts and the event preview. It already did GFM tables and task lists. It
+  forbade `<svg>`, showed fenced code as plain text and had no bound on nesting: a body of 2,000 nested list levels kept
+  marked busy for minutes, 8,000 unmatched `*a ` for 15 s.
+- **Decision:**
+  - The shared renderer adds footnotes (`marked-footnote` 1.4.0), heading anchors (GitHub-style slugs, unique per body)
+    and per-view ID prefixes (`user-content-<hash>-`, from an FNV-1a hash of the body so a link to a heading still works
+    after a reload or in a new tab; a second view of the same body on the page gets `user-content-<hash>-1-` once
+    mounted), so two bodies on a page never share an ID and no ID can clobber a DOM property. A body scrolls to the
+    heading or footnote the address names once it renders. In-page links stay in the tab; every other link keeps
+    `target="_blank"` and `rel="noopener noreferrer nofollow"`.
+  - Sanitizing uses a DOMPurify instance of its own, so its hooks never touch mermaid's sanitizing (the shared
+    instance). Images render only when they are attachment content URLs (`/api/v1/spaces/<space>/attachments/att_…/content`,
+    exact pattern) or URLs the renderer's attachment resolver produced; any other image becomes a link (http/https) or
+    its alt text. Forbidden in addition to before: `frame`, `button`, `textarea`, `select`, `link`, `meta`, `base`, the
+    `srcset` and `sizes` attributes, and every `input` except task-list checkboxes. Attachment references are resolved
+    in the sanitizer hook (one function, `AttachmentResolver`, so another transport such as the Telegram Mini App can
+    supply blob: URLs), no longer by rewriting the source text. DOMPurify's URI allow-list has no `blob:`; a `blob:`
+    URL is kept only when it is exactly one the resolver produced for this body, so a `blob:` URL written in a body is
+    still removed.
+  - Bounds before parsing, outside fenced code: indentation at most 64 columns, at most 16 stacked block markers per
+    line, and a paragraph with more than 256 emphasis delimiters has them escaped (shown literally). A parser failure
+    renders the body as escaped text.
+  - Code: fences with a language are highlighted after mount with **@tanstack/highlight 1.2.12** (MIT; class-based,
+    synchronous, about 15 kB for core plus the module, each of its 78 grammars a separate lazy chunk). Tokens are built
+    as text nodes, never parsed as HTML. At most 50 blocks of at most 20,000 characters each, one at a time, yielding
+    between blocks. Colors are app tokens (`--sm-code-*`, Night Owl / Light Owl like the docs site, each checked at
+    4.5:1 in `contrast.test.ts`). Every block gets a copy button (Clipboard API; on an insecure origin the text is
+    selected instead), and its `<pre>` is focusable for keyboard scrolling. Compared with Shiki (TextMate grammars plus a
+    regex engine, much larger, colors inlined per theme) and highlight.js or Prism (class-based too, but not
+    the package the operator asked for), TanStack Highlight is small, emits classes that follow both themes through
+    CSS, and is synchronous and SSR-safe.
+  - Mermaid: `mermaid` 11.17.2, the version the docs site uses (its configuration there is mermaid's defaults, so only
+    the version is shared), loaded only when a body has a diagram and only once the diagram is near the viewport.
+    `securityLevel: 'strict'`, `maxTextSize` 10,000 and `maxEdges` 500, at most 20 diagrams per body, renders serialized,
+    temporary render elements removed on failure, and a queued render whose view went away (unmounted, or its source or
+    theme changed) is skipped before mermaid starts. The returned SVG is sanitized again (DOMPurify SVG and HTML
+    profiles with mermaid's own `foreignobject` addition; scripts, `<a>`, `<image>`, `<img>`, `<animate>`, `<set>`,
+    `srcset` and handlers removed) before it reaches the DOM: an `<img>` in an HTML label would otherwise load any URL,
+    with the session cookie on the same origin, or a tracking pixel where no CSP applies. Theme: mermaid's `base`
+    theme with Night Owl or Light Owl colors, following the app's color scheme; `theme`, `themeVariables`, `themeCSS`,
+    `darkMode` and the font are added to mermaid's `secure` keys, so a diagram's `%%{init}%%` or front matter can't
+    change them.
+  - Main-thread work: the size limits alone don't bound it. 4,000 bare node IDs fit in 10,000 characters and took
+    7 seconds in one task; 21 such diagrams in one body, 66 seconds. Measured in Chromium (mermaid 11.17.2, node of
+    2026-11-14), a render costs about 2.5-5 ms per node for flowcharts, class, state, ER and block diagrams and more for
+    mind maps (50 nodes about 0.7 s, 100 about 1.4 s). So: a diagram has at most 500 statements (lines, `;` and `&`
+    separated parts) and a body's diagrams at most 25,000 characters of source in all; a diagram over either renders
+    as its source with the reason. A diagram of at most 50 statements and 2,500 characters renders on its own when
+    near the viewport; a larger one shows a "Render diagram" button and renders only when clicked.
+    `e2e/ui-markdown-diagrams.spec.ts` renders the slowest kinds at the automatic limit and checks that no long task
+    runs 1 s or more. A failed render shows a one-line message and the source; the source is always available under the
+    diagram as its text alternative. `MermaidDiagram` renders one diagram from source on its own (for a future "view
+    diagram" page).
+  - Bundle: the eager JS stays where it was (+2.0 kB raw, +1.1 kB gzip, from chunk reshuffling and the theme's token
+    variables); the MarkdownView chunks grow by 10.9 kB raw (4.7 kB gzip); the lazy highlighter is 14.8 kB (4.9 kB gzip) plus one small chunk per grammar, lazy mermaid 614 kB (148 kB gzip) plus its per-diagram-type chunks. `scripts/check-dist.mjs` fails the build when
+    mermaid or the highlighter appears in an eagerly loaded chunk, and prints the sizes.
+- **Security-relevant change:** SVG generated by mermaid from untrusted source now reaches the DOM (bodies still cannot
+  contain `<svg>`). It is bounded by mermaid's strict mode, a second sanitizing pass and the UI's CSP (`script-src 'self'`,
+  `img-src 'self' data: blob:`), which also stops a diagram's style from loading remote content. Everything else in
+  this decision tightens the sanitizer. Hostile inputs are tested in `markdown.test.ts` (XSS vectors, pathological
+  nesting and delimiters, huge bodies and diagrams, `blob:` URLs), `mermaid.test.ts` (configuration and secure keys,
+  SVG sanitizing including label images, statement limit, skipped renders) and `highlight.test.ts` (tokens as text).
+- **Consequences:** a body over the bounds still renders, just with less structure; pathological bodies take at most a
+  few seconds to render rather than minutes (raw HTML nesting has no separate depth limit). A diagram renders on the
+  main thread (mermaid needs the DOM): automatically up to about 1 s each, larger ones only on a click, and none over
+  the statement limit or the body's budget.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

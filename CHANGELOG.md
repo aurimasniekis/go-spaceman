@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Rich Markdown in every rendered body (inbox items, tasks, human actions, messages and the rest): footnotes, heading
+  anchors, highlighted code blocks with a copy button, and Mermaid diagrams in the app's light and dark theme. The
+  highlighter and mermaid load only when a body needs them (ADR-0082).
+
+### Security
+- The Markdown sanitizer is stricter: images render only from attachments, and buttons, form fields other than task
+  checkboxes, `<link>`, `<meta>`, `<base>`, frames and `srcset` are removed. Rendering a deeply nested or
+  delimiter-heavy body is bounded to a few seconds. Mermaid renders in strict mode, its SVG is sanitized again (images
+  in labels removed) and a diagram can't change its theme. Diagrams are bounded too: a large one renders only after a
+  "Render diagram" click, and one over 500 statements, or past 25,000 characters of diagrams in one body, shows its
+  source (ADR-0082).
+
 ## [0.1.4] - 2026-11-14
 
 Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:

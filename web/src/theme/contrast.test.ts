@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { lightOwl, nightOwl } from './nightowl'
-import { ACCENTS, DARK_DIMMED, LIGHT_DIMMED, owlBlue, owlGreen, owlPurple, owlRed, owlYellow, theme } from './theme'
+import { ACCENTS, CODE_TOKENS, DARK_DIMMED, LIGHT_DIMMED, owlBlue, owlGreen, owlPurple, owlRed, owlYellow, theme } from './theme'
 
 function luminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
@@ -59,4 +59,10 @@ describe('dark light-variant contrast', () => {
     expect(contrast(c[4], mix(c[4], nightOwl.bgRaised, 0.12))).toBeGreaterThanOrEqual(4.5)
     expect(contrast(c[4], mix(c[4], nightOwl.bg, 0.12))).toBeGreaterThanOrEqual(4.5)
   })
+})
+
+// Highlighted code: every token color on its scheme's code block surface (--sm-surface).
+describe('code token contrast', () => {
+  it.each(Object.entries(CODE_TOKENS.light))('light %s', (_, c) => expect(contrast(c, '#ffffff')).toBeGreaterThanOrEqual(4.5))
+  it.each(Object.entries(CODE_TOKENS.dark))('dark %s', (_, c) => expect(contrast(c, nightOwl.bgRaised)).toBeGreaterThanOrEqual(4.5))
 })
