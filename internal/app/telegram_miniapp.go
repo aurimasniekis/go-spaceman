@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/miniapp"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
 // The Telegram Mini App's host and sessions (ADR-0083 §3.4.1–§3.4.2).
@@ -48,6 +49,7 @@ func (c *Central) newTelegramMiniApp() {
 		Clock:     c.Clock,
 		Log:       obs.Component(c.Log, "telegram"),
 	})
+	c.TelegramDownloads = miniapp.NewDownloads(c.Clock)
 	var last *bool
 	c.TelegramSettings.OnChange(func(s tgsettings.Settings) {
 		if last != nil && *last != s.LinkSSOGrants {
@@ -96,16 +98,27 @@ func (c *Central) miniAppOrigin() string {
 }
 
 // miniAppHandler serves the Mini App host. It is an allowlist (plan §3.4.1): the API in Telegram mode (only the
-// Telegram scheme authenticates; anonymous requests reach only the session exchange), and nothing else. Sign-in and
-// everything under /api/v1/auth/, the external MCP endpoint, the node protocol, the Telegram webhook and the main web
-// UI are never served here: anything not listed is a plain 404, without a redirect to the main host.
+// Telegram scheme authenticates; anonymous requests reach only the session exchange), the signed downloads, tg.html
+// with its assets, and nothing else. Sign-in and everything under /api/v1/auth/, the external MCP endpoint, the node
+// protocol, the Telegram webhook and the main web UI are never served here: they are a plain 404, without a redirect to
+// the main host.
 func (c *Central) miniAppHandler(d *api.Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(api.Prefix+"/", d.TelegramHandler())
 	mux.Handle(api.Prefix+"/auth/", http.HandlerFunc(miniAppNotFound))
 	mux.Handle(api.MCPPath, http.HandlerFunc(miniAppNotFound))
 	mux.Handle(api.MCPPath+"/", http.HandlerFunc(miniAppNotFound))
-	mux.Handle("/", http.HandlerFunc(miniAppNotFound))
+	mux.Handle("/agent/", http.HandlerFunc(miniAppNotFound))
+	mux.Handle(updates.WebhookPath, http.HandlerFunc(miniAppNotFound))
+	// The one route that carries a CORS header, and the only one without a session: its ID is the capability.
+	mux.Handle("GET "+api.TelegramDownloadPath+"{id}", d.TelegramDownloadHandler(c.TelegramDownloads, c.TelegramMiniApp, c.Attachments))
+	// Everything else is the shell and its assets; a build without them is a 404.
+	shell := http.HandlerFunc(miniAppNotFound)
+	if c.MiniAppUI != nil {
+		mux.Handle("/", c.MiniAppUI)
+	} else {
+		mux.Handle("/", shell)
+	}
 	return mux
 }
 

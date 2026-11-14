@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
+	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -42,8 +44,14 @@ type miniAppEnv struct {
 
 func newMiniAppEnv(t *testing.T) *miniAppEnv {
 	t.Helper()
+	return newMiniAppEnvWith(t, discard(), nil)
+}
+
+// newMiniAppEnvWith is newMiniAppEnv with central logging to log and pre run on central before its handler is built.
+func newMiniAppEnvWith(t *testing.T, log *slog.Logger, pre func(*app.Central)) *miniAppEnv {
+	t.Helper()
 	tg := tgtest.New(t, tgtest.Options{Limits: tgtest.Limits{Disabled: true}})
-	h := newHarnessWith(t, func(c *config.Config) { c.Telegram.APIBaseURL = tg.URL() })
+	h := newHarnessFull(t, log, func(c *config.Config) { c.Telegram.APIBaseURL = tg.URL() }, pre)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go h.c.TelegramUpdates.Run(ctx)

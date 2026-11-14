@@ -4116,6 +4116,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/telegram/download-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a signed download link for an attachment
+         * @description Mini App host only (404 elsewhere). Returns a link on the Mini App host that serves one attachment of the space to the caller's Telegram link, for 60 seconds and at most 3 requests. The caller needs attachment:read in the space. The link is re-authorized when it is used: an unlinked or disabled caller gets nothing.
+         */
+        post: operations["create-telegram-download-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/telegram/session": {
         parameters: {
             query?: never;
@@ -11158,6 +11178,36 @@ export interface components {
             status?: "backlog" | "ready";
             title: string;
             workspace?: string;
+        };
+        TelegramDownloadInBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramDownloadInBody.json
+             */
+            readonly $schema?: string;
+            attachment_id: string;
+            space_id: string;
+        };
+        TelegramDownloadOut: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramDownloadOut.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description The link stops working at this time
+             */
+            expires_at: string;
+            /**
+             * Format: int64
+             * @description How many requests the link serves
+             */
+            max_uses: number;
+            /** @description The download link on the Mini App host. It is the capability: do not log or share it */
+            url: string;
         };
         TelegramSessionInBody: {
             /**
@@ -21452,6 +21502,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-telegram-download-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramDownloadInBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramDownloadOut"];
+                };
             };
             /** @description Error */
             default: {

@@ -17360,6 +17360,69 @@
         ],
         "type": "object"
       },
+      "TelegramDownloadInBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TelegramDownloadInBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "attachment_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "space_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "space_id",
+          "attachment_id"
+        ],
+        "type": "object"
+      },
+      "TelegramDownloadOut": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TelegramDownloadOut.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "The link stops working at this time",
+            "format": "date-time",
+            "type": "string"
+          },
+          "max_uses": {
+            "description": "How many requests the link serves",
+            "format": "int64",
+            "type": "integer"
+          },
+          "url": {
+            "description": "The download link on the Mini App host. It is the capability: do not log or share it",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at",
+          "max_uses"
+        ],
+        "type": "object"
+      },
       "TelegramSessionInBody": {
         "additionalProperties": false,
         "properties": {
@@ -33825,6 +33888,48 @@
           }
         },
         "summary": "Configure the Telegram bot, or replace its configuration",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/telegram/download-links": {
+      "post": {
+        "description": "Mini App host only (404 elsewhere). Returns a link on the Mini App host that serves one attachment of the space to the caller's Telegram link, for 60 seconds and at most 3 requests. The caller needs attachment:read in the space. The link is re-authorized when it is used: an unlinked or disabled caller gets nothing.",
+        "operationId": "create-telegram-download-link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramDownloadInBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramDownloadOut"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Mint a signed download link for an attachment",
         "tags": [
           "telegram"
         ]

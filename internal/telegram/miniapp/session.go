@@ -417,3 +417,17 @@ func (l *keyedLimiter) allow(key string) bool {
 	b.seen = now
 	return b.l.AllowN(now, 1)
 }
+
+// LinkPrincipal builds a link's principal with the current grants and policy, for a request that is authorized by
+// something other than a session token (a signed download link). A revoked link, a disabled user and the like are
+// auth.ErrUnauthorized.
+func (svc *Service) LinkPrincipal(ctx context.Context, linkID string) (*auth.Principal, error) {
+	p, err := svc.o.Principal(ctx, linkID)
+	if err != nil {
+		return nil, err
+	}
+	if !p.ViaTelegram() || p.TelegramLinkID != linkID {
+		return nil, auth.ErrUnauthorized
+	}
+	return p, nil
+}

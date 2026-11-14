@@ -712,6 +712,11 @@
 
 ## Telegram Mini App
 
+- **Download links live in memory.** A signed download link (ADR-0083 §3.4.3) is held by central for 60 seconds and 3
+  requests, at most 10,000 at a time (the oldest go first); a restart drops them all and the Mini App mints a new one. A
+  refused request (revoked link, removed grant) still counts as a use, and every refusal is the same 404.
+- **No `tg.html` until the client shell ships.** Central serves the Mini App page from the build when `tg.html` is in
+  it (TG-9b adds the entry); without it the Mini App host answers 404 for pages.
 - **Sessions live in memory.** Mini App sessions (ADR-0083 §3.4.2) are held by central only: a restart, a bot change
   or turning the Mini App off ends them all, and the user reopens the app. Unsaved form input is lost.
 - **Session capacity can run out.** Central holds at most 20,000 Mini App sessions (5 per link, the oldest of a link

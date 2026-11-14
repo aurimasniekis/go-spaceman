@@ -43,6 +43,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Telegram mode of the API accepts only that scheme, drops cookies and never sets one. Approvals can't be decided
   from Telegram. Migration 0051 also rebuilds
   `role_grants` (rows kept) to allow link grants.
+- Telegram Mini App page and downloads (ADR-0083, not usable yet): the Mini App host serves `tg.html` and the build's
+  assets with their own headers (`script-src` pinned to Telegram's loader by its exact URL, `frame-ancestors
+  https://web.telegram.org`, no `X-Frame-Options`); the main host never serves `tg.html` and its headers are
+  unchanged. `create-telegram-download-link` (`POST /api/v1/telegram/download-links`) mints a link to one attachment for
+  the caller's Telegram link, and `GET /tg-dl/<id>` on the Mini App host serves it: random ID kept by hash, valid 60
+  seconds and 3 requests, the link's permissions checked on every use, `Cache-Control: no-store`, `Referrer-Policy:
+  no-referrer`, the one CORS header (`https://web.telegram.org`) of the host, and `/tg-dl/<redacted>` in logs.
 
 ### Fixed
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header
