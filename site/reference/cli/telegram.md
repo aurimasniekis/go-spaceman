@@ -7,12 +7,14 @@ The Telegram bot: connection, policy and defaults, and a space's Telegram settin
 | Subcommand | Description |
 |---|---|
 | [`spaceman telegram bot`](#spaceman-telegram-bot) | The bot's connection: token, mode, Mini App host and health (ADR-0083) |
+| [`spaceman telegram links`](#spaceman-telegram-links) | Every linked Telegram account |
 | [`spaceman telegram reset`](#spaceman-telegram-reset) | Reset the bot's policy and defaults to the built-in defaults |
 | [`spaceman telegram set`](#spaceman-telegram-set) | Replace the bot's policy and defaults (what isn't given takes its default) |
 | [`spaceman telegram set-space`](#spaceman-telegram-set-space) | Set a space's Telegram settings (only the flags given change) |
 | [`spaceman telegram settings`](#spaceman-telegram-settings) | The bot's policy and defaults (effective values) |
 | [`spaceman telegram space`](#spaceman-telegram-space) | A space's Telegram settings |
 | [`spaceman telegram spaces`](#spaceman-telegram-spaces) | Spaces with Telegram settings |
+| [`spaceman telegram unlink`](#spaceman-telegram-unlink) | Unlink a Telegram account at once |
 | [`spaceman telegram unset-space`](#spaceman-telegram-unset-space) | Remove a space's Telegram settings (Telegram is off for it again) |
 
 ## spaceman telegram bot
@@ -78,6 +80,16 @@ spaceman telegram bot set --bot-token-file ~/.tg/token --enabled --mode polling
 | `--miniapp-host` | string |  | the Mini App's own host, e.g. tg.central.example.com (empty: Mini App off) |
 | `--mode` | string |  | webhook (default; needs an https public_url) or polling |
 | `--webhook-ip-allowlist` | string, repeatable |  | CIDR the webhook accepts requests from, e.g. 149.154.160.0/20 (empty: no check) (repeatable or comma-separated) |
+
+## spaceman telegram links
+
+Every linked Telegram account.
+
+```sh
+spaceman telegram links [flags]
+```
+
+API: `list-telegram-links` ([HTTP API](../api)).
 
 ## spaceman telegram reset
 
@@ -189,6 +201,22 @@ spaceman telegram spaces [flags]
 ```
 
 API: `list-space-telegram` ([HTTP API](../api)).
+
+## spaceman telegram unlink
+
+Unlink a Telegram account at once.
+
+Ends the link: the account's next message is refused and its grants are removed. Needs user:write and a step-up.
+
+```sh
+spaceman telegram unlink <link> [flags]
+```
+
+API: `delete-telegram-link` ([HTTP API](../api)).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--yes` | bool |  | confirm: unlink this Telegram account |
 
 ## spaceman telegram unset-space
 

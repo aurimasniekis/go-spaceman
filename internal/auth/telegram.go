@@ -6,7 +6,11 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // TelegramSubject is the authorization subject of a Telegram link ("telegram:<link id>", ADR-0083 §3.1). It holds the
@@ -46,6 +50,10 @@ func (svc *Service) TelegramPrincipal(ctx context.Context, linkID string, o Tele
 	if l.State != TelegramLinkActive {
 		return nil, ErrUnauthorized
 	}
+	// A link that was not re-confirmed from the web within its interval acts for nobody until it is (TG-4b).
+	if l.ReconfirmDueAt.Valid && !svc.opts.Clock.Now().Before(time.UnixMicro(l.ReconfirmDueAt.Int64)) {
+		return nil, ErrUnauthorized
+	}
 	u, err := svc.Get(ctx, l.UserID)
 	if err != nil || !u.Enabled {
 		return nil, ErrUnauthorized
@@ -60,4 +68,62 @@ func (svc *Service) TelegramPrincipal(ctx context.Context, linkID string, o Tele
 // Every change that revokes, suspends or narrows a link calls it (TG-4b).
 func (svc *Service) TelegramLinkChangedAfterCommit(tx *store.Tx, linkID string) {
 	svc.revokedAfterCommit(tx, revocation{telegramLinkID: linkID})
+}
+
+// GrantTelegramLinkTx writes a newly confirmed link's capped grants (ADR-0083 decision 3) inside the caller's
+// transaction: the grants userID holds now, read in tx (the local subject's, plus the SSO subject's when sso is set),
+// each lowered to maxRole (authz.Cap), checked with authz.Covers against those grants and stored as grants of the
+// subject telegram:<linkID> with source "telegram", the path API tokens use. The engine reloads after commit. It
+// returns the grants written; a user without grants gets none, so the link can do nothing.
+func (svc *Service) GrantTelegramLinkTx(ctx context.Context, tx *store.Tx, linkID, userID string, sso bool, maxRole authz.Role, actor audit.Actor) ([]authz.Grant, error) {
+	if linkID == "" || userID == "" || !maxRole.Valid() {
+		return nil, apperr.New(apperr.CodeInvalid, "invalid Telegram link cap")
+	}
+	subjects := []string{UserSubject(userID)}
+	if sso {
+		subjects = append(subjects, SSOSubject(userID))
+	}
+	var holder []authz.Grant
+	for _, sub := range subjects {
+		rows, err := tx.Q.ListRoleGrantsBySubject(ctx, sub)
+		if err != nil {
+			return nil, err
+		}
+		holder = append(holder, grantsFromRows(rows)...)
+	}
+	capped := authz.Cap(holder, maxRole)
+	in := make([]GrantInput, 0, len(capped))
+	for _, g := range capped {
+		if !authz.Covers(holder, g) {
+			return nil, apperr.New(apperr.CodeForbidden, "a Telegram link cannot hold more than its user")
+		}
+		in = append(in, GrantInput{Role: g.Role, Domain: g.Domain})
+	}
+	subject := TelegramSubject(linkID)
+	if err := tx.Q.DeleteRoleGrantsBySubject(ctx, subject); err != nil {
+		return nil, err
+	}
+	if err := svc.insertGrants(ctx, tx, subject, in, "telegram", actor); err != nil {
+		return nil, err
+	}
+	for i := range capped {
+		capped[i].Subject, capped[i].Source = subject, "telegram"
+	}
+	return capped, nil
+}
+
+// RevokeTelegramLinkTx ends a Telegram link inside the caller's transaction: the link is revoked, its capped grants
+// are deleted, and after commit the authorization engine reloads and the link's open streams re-check (Mini App
+// sessions end at once). It reports whether the link was live; revoking a revoked or unknown link changes nothing.
+func (svc *Service) RevokeTelegramLinkTx(ctx context.Context, tx *store.Tx, linkID, revokedBy string) (bool, error) {
+	n, err := tx.Q.RevokeTelegramLink(ctx, db.RevokeTelegramLinkParams{Now: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, RevokedBy: revokedBy, ID: linkID})
+	if err != nil || n == 0 {
+		return false, err
+	}
+	if err := tx.Q.DeleteRoleGrantsBySubject(ctx, TelegramSubject(linkID)); err != nil {
+		return false, err
+	}
+	svc.TelegramLinkChangedAfterCommit(tx, linkID)
+	svc.reloadAfterCommit(ctx, tx)
+	return true, nil
 }

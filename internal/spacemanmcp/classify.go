@@ -195,6 +195,8 @@ var Table = map[string]Entry{
 	"get-telegram-settings":    {Read, rRead},
 	"list-space-telegram":      {Read, rRead},
 	"get-space-telegram":       {Read, rRead},
+	"list-telegram-links":      {Excluded, rTelegram},
+	"delete-telegram-link":     {Excluded, rTelegram},
 
 	// Human-action policies.
 	"delete-human-policy":       {Dangerous, rPolicy},

@@ -262,3 +262,37 @@ func TestRoleHas(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0083 decision 3: a Telegram link's cap lowers every role to the cap, keeps one grant per domain, and never
+// returns a grant the holder does not cover.
+func TestCap(t *testing.T) {
+	t.Parallel()
+	holder := []Grant{{Role: RoleAdmin, Domain: spaceA}, {Role: RoleViewer, Domain: Global}, {Role: RoleOperator, Domain: spaceB},
+		{Role: RoleViewer, Domain: spaceA}, {Role: "bogus", Domain: spaceB}, {Role: RoleAdmin, Domain: "spc_x"}}
+	cases := []struct {
+		max  Role
+		want []Grant
+	}{
+		{RoleViewer, []Grant{{Role: RoleViewer, Domain: Global}, {Role: RoleViewer, Domain: spaceA}, {Role: RoleViewer, Domain: spaceB}}},
+		{RoleOperator, []Grant{{Role: RoleViewer, Domain: Global}, {Role: RoleOperator, Domain: spaceA}, {Role: RoleOperator, Domain: spaceB}}},
+		{RoleAdmin, []Grant{{Role: RoleViewer, Domain: Global}, {Role: RoleAdmin, Domain: spaceA}, {Role: RoleOperator, Domain: spaceB}}},
+		{"bogus", nil},
+	}
+	for _, c := range cases {
+		got := Cap(holder, c.max)
+		if len(got) != len(c.want) {
+			t.Fatalf("Cap(%s) = %v, want %v", c.max, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("Cap(%s) = %v, want %v", c.max, got, c.want)
+			}
+			if !Covers(holder, got[i]) {
+				t.Fatalf("Cap(%s) returned %v, which the holder does not cover", c.max, got[i])
+			}
+		}
+	}
+	if got := Cap([]Grant{{Role: RoleAdmin, Domain: Global}}, RoleOperator); len(got) != 1 || got[0] != (Grant{Role: RoleOperator, Domain: Global}) {
+		t.Fatalf("a global admin capped to operator: %v", got)
+	}
+}

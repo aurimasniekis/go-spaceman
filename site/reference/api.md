@@ -530,12 +530,21 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 
 | Method | Path | Operation | Summary |
 |---|---|---|---|
+| `POST` | `/me/telegram/link-codes` | `create-telegram-link-code` | Start linking your Telegram account |
+| `GET` | `/me/telegram/link-codes/{code_id}` | `get-telegram-link-code` | One of your Telegram link codes |
+| `POST` | `/me/telegram/link-codes/{code_id}/cancel` | `cancel-telegram-link-code` | Cancel one of your Telegram link codes |
+| `POST` | `/me/telegram/link-codes/{code_id}/confirm` | `confirm-telegram-link` | Link the Telegram account that confirmed your code |
+| `GET` | `/me/telegram/links` | `list-my-telegram-links` | Your linked Telegram accounts |
+| `DELETE` | `/me/telegram/links/{link_id}` | `delete-my-telegram-link` | Unlink your Telegram account |
+| `POST` | `/me/telegram/links/{link_id}/reconfirm` | `reconfirm-telegram-link` | Re-confirm your Telegram link |
 | `DELETE` | `/spaces/{space_id}/telegram` | `delete-space-telegram` | Remove a space's Telegram settings (Telegram is off for it again) |
 | `GET` | `/spaces/{space_id}/telegram` | `get-space-telegram` | A space's Telegram settings |
 | `PUT` | `/spaces/{space_id}/telegram` | `put-space-telegram` | Set a space's Telegram settings |
 | `DELETE` | `/telegram/bot` | `delete-telegram-bot` | Remove the Telegram bot's configuration |
 | `GET` | `/telegram/bot` | `get-telegram-bot` | The Telegram bot's connection and health (never its token) |
 | `PUT` | `/telegram/bot` | `put-telegram-bot` | Configure the Telegram bot, or replace its configuration |
+| `GET` | `/telegram/links` | `list-telegram-links` | Every linked Telegram account |
+| `DELETE` | `/telegram/links/{link_id}` | `delete-telegram-link` | Unlink anyone's Telegram account |
 | `DELETE` | `/telegram/settings` | `delete-telegram-settings` | Reset the Telegram bot's policy and defaults |
 | `GET` | `/telegram/settings` | `get-telegram-settings` | The Telegram bot's policy and defaults |
 | `PUT` | `/telegram/settings` | `put-telegram-settings` | Set the Telegram bot's policy and defaults |

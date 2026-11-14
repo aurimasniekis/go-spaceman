@@ -9619,6 +9619,92 @@
         ],
         "type": "object"
       },
+      "Link": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/Link.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "confirmed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grants": {
+            "description": "The link's capped grants; each request is also checked against the user's current grants",
+            "items": {
+              "$ref": "#/components/schemas/AuthzGrant"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "max_role": {
+            "description": "The link's cap: it never has a stronger role than this in any space",
+            "enum": [
+              "viewer",
+              "operator",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "needs_reconfirm": {
+            "description": "The re-confirmation is overdue: the link does nothing until it is re-confirmed",
+            "type": "boolean"
+          },
+          "reconfirm_due_at": {
+            "description": "The link stops working at this time until it is re-confirmed from the web",
+            "format": "date-time",
+            "type": "string"
+          },
+          "sso_until": {
+            "description": "Until when the user's SSO grants count for the link",
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "suspended",
+              "blocked",
+              "revoked"
+            ],
+            "type": "string"
+          },
+          "telegram": {
+            "$ref": "#/components/schemas/LinkTelegramUser"
+          },
+          "timezone_saved": {
+            "description": "The time zone sent with the confirmation was saved because you had none",
+            "type": "boolean"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "via_sso": {
+            "description": "Confirmed from an SSO session with SSO grants allowed through Telegram",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "telegram",
+          "state",
+          "max_role",
+          "grants",
+          "via_sso",
+          "confirmed_at",
+          "needs_reconfirm"
+        ],
+        "type": "object"
+      },
       "Link-user-identityRequest": {
         "additionalProperties": false,
         "properties": {
@@ -9644,6 +9730,61 @@
         "required": [
           "provider_id",
           "subject"
+        ],
+        "type": "object"
+      },
+      "LinkCode": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/LinkCode.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "code": {
+            "description": "The single-use code, returned only when it is created",
+            "type": "string"
+          },
+          "deep_link": {
+            "description": "t.me link that sends /start \u003ccode\u003e to the bot, returned only when the code is created",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The code's ID (not the code): use it to read, cancel or confirm",
+            "type": "string"
+          },
+          "reuse_attempted": {
+            "description": "Another Telegram account presented this code after one had redeemed it: it leaked and was cancelled. Create a new code, and treat the old one as seen by someone else",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "new",
+              "redeemed",
+              "telegram_confirmed",
+              "confirmed",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
+          },
+          "telegram": {
+            "$ref": "#/components/schemas/LinkTelegramUser",
+            "description": "The Telegram account that wants to link, once it confirmed in the bot"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "expires_at"
         ],
         "type": "object"
       },
@@ -9676,6 +9817,30 @@
           "token",
           "url",
           "expires_at"
+        ],
+        "type": "object"
+      },
+      "LinkTelegramUser": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Telegram user ID",
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "description": "The account's name as Telegram shows it",
+            "type": "string"
+          },
+          "username": {
+            "description": "Telegram username without @ (empty when the account has none)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "name"
         ],
         "type": "object"
       },
@@ -17360,6 +17525,36 @@
         ],
         "type": "object"
       },
+      "TelegramLinkConfirmIn": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TelegramLinkConfirmIn.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "max_role": {
+            "description": "The link's cap; empty takes the policy default. viewer and operator are allowed up to the default; admin (same as your grants) only when the policy allows the admin cap",
+            "enum": [
+              "viewer",
+              "operator",
+              "admin",
+              ""
+            ],
+            "type": "string"
+          },
+          "timezone": {
+            "description": "The browser's IANA time zone, such as Europe/Vilnius. It is saved as your time zone only if you have none (it never overwrites one you chose); an invalid zone is ignored",
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "TemplateDefinition": {
         "additionalProperties": false,
         "properties": {
@@ -22773,6 +22968,299 @@
         "summary": "Edit a SpaceMan MCP server",
         "tags": [
           "mcp"
+        ]
+      }
+    },
+    "/me/telegram/link-codes": {
+      "post": {
+        "description": "Returns a single-use code and a t.me deep link that sends /start \u003ccode\u003e to the bot. The code is returned only here and expires after link_code_ttl_seconds; creating one cancels your unfinished codes. The bot then asks the Telegram account to confirm, naming this server and your account; after that, confirm-telegram-link from this same browser session finishes the link. Needs a browser session with a recent re-authentication; API tokens can't link.",
+        "operationId": "create-telegram-link-code",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkCode"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Start linking your Telegram account",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/me/telegram/link-codes/{code_id}": {
+      "get": {
+        "description": "The page polls this while it is open. Once the Telegram account confirmed in the bot, the state is telegram_confirmed and the answer names that account.",
+        "operationId": "get-telegram-link-code",
+        "parameters": [
+          {
+            "description": "The code's ID (not the code)",
+            "in": "path",
+            "name": "code_id",
+            "required": true,
+            "schema": {
+              "description": "The code's ID (not the code)",
+              "maxLength": 43,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkCode"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "One of your Telegram link codes",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/me/telegram/link-codes/{code_id}/cancel": {
+      "post": {
+        "description": "Cancelling a used or cancelled code changes nothing.",
+        "operationId": "cancel-telegram-link-code",
+        "parameters": [
+          {
+            "description": "The code's ID (not the code)",
+            "in": "path",
+            "name": "code_id",
+            "required": true,
+            "schema": {
+              "description": "The code's ID (not the code)",
+              "maxLength": 43,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkCode"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Cancel one of your Telegram link codes",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/me/telegram/link-codes/{code_id}/confirm": {
+      "post": {
+        "description": "Only after the Telegram account confirmed in the bot, before the code expires, from the browser session that created the code and with a recent re-authentication. The link's grants are your grants capped at max_role; every request through it is also checked against your current grants.",
+        "operationId": "confirm-telegram-link",
+        "parameters": [
+          {
+            "description": "The code's ID (not the code)",
+            "in": "path",
+            "name": "code_id",
+            "required": true,
+            "schema": {
+              "description": "The code's ID (not the code)",
+              "maxLength": 43,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramLinkConfirmIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Link the Telegram account that confirmed your code",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/me/telegram/links": {
+      "get": {
+        "operationId": "list-my-telegram-links",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Link"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Your linked Telegram accounts",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/me/telegram/links/{link_id}": {
+      "delete": {
+        "description": "Ends the link at once: the account's next message is refused and its grants are removed. Unlinking an already unlinked link changes nothing. To link again, start from the Account page.",
+        "operationId": "delete-my-telegram-link",
+        "parameters": [
+          {
+            "description": "The link's ID",
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "description": "The link's ID",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Unlink your Telegram account",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/me/telegram/links/{link_id}/reconfirm": {
+      "post": {
+        "description": "A link must be re-confirmed from the web every link_reconfirm_days (default 90) or it does nothing. Needs a browser session with a recent re-authentication.",
+        "operationId": "reconfirm-telegram-link",
+        "parameters": [
+          {
+            "description": "The link's ID",
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "description": "The link's ID",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Link"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Re-confirm your Telegram link",
+        "tags": [
+          "telegram"
         ]
       }
     },
@@ -33767,6 +34255,79 @@
           }
         },
         "summary": "Configure the Telegram bot, or replace its configuration",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/telegram/links": {
+      "get": {
+        "description": "Needs user:read. Revoked links are not listed.",
+        "operationId": "list-telegram-links",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Link"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Every linked Telegram account",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
+    "/telegram/links/{link_id}": {
+      "delete": {
+        "description": "An administrator ends a link at once (a lost phone, a departed colleague). Needs user:write and a recent re-authentication with a second factor.",
+        "operationId": "delete-telegram-link",
+        "parameters": [
+          {
+            "description": "The link's ID",
+            "in": "path",
+            "name": "link_id",
+            "required": true,
+            "schema": {
+              "description": "The link's ID",
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Unlink anyone's Telegram account",
         "tags": [
           "telegram"
         ]
