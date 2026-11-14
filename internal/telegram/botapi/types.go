@@ -108,6 +108,33 @@ type Update struct {
 	Message       *Message       `json:"message,omitempty"`
 	EditedMessage *Message       `json:"edited_message,omitempty"`
 	CallbackQuery *CallbackQuery `json:"callback_query,omitempty"`
+	// MyChatMember reports a change of the bot's own membership in a chat (added to a group, blocked in a private chat).
+	MyChatMember *ChatMemberUpdated `json:"my_chat_member,omitempty"`
+}
+
+// Chat member statuses (API#chatmember).
+const (
+	MemberCreator       = "creator"
+	MemberAdministrator = "administrator"
+	MemberMember        = "member"
+	MemberRestricted    = "restricted"
+	MemberLeft          = "left"
+	MemberKicked        = "kicked"
+)
+
+// ChatMember is a member's status in a chat (API#chatmember); only the fields SpaceMan reads.
+type ChatMember struct {
+	Status string `json:"status"`
+	User   User   `json:"user"`
+}
+
+// ChatMemberUpdated is a change of a chat member's status (API#chatmemberupdated).
+type ChatMemberUpdated struct {
+	Chat          Chat       `json:"chat"`
+	From          User       `json:"from"`
+	Date          int64      `json:"date"`
+	OldChatMember ChatMember `json:"old_chat_member"`
+	NewChatMember ChatMember `json:"new_chat_member"`
 }
 
 // ReplyMarkup is an inline keyboard or a force-reply request.

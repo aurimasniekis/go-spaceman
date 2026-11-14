@@ -4604,6 +4604,28 @@
   - **New requirement:** every Telegram setting configurable through terraform-provider-spaceman, the token write-only
     (decision 11; the base URL exception follows from it).
   - **Infra:** no deployment requests for Telegram until the operator says so; development and tests don't need any.
+- **Implementation notes (TG-3a, 2026-11-14):**
+  - **Migration 0051** creates every Telegram table (plan §5.2). It needs 0050 (the usage-limit
+    work) to be released first; central refuses a database with a gap below its version. Departures from the plan's
+    table list, none weakening anything: `telegram_bot` and `telegram_settings` are keyed by a `singleton = 1` column
+    (no ID); `telegram_links` also stores `bot_id` (a link belongs to one bot) and `updated_at`; `telegram_messages`
+    has a nullable `space_id` so a space purge removes its rows; link codes store `created_at` and `redeemed_at`. **One
+    live link per Telegram user** is a partial unique index (`state <> 'revoked'`); links per SpaceMan user are not a
+    unique index, because the `links_per_user` setting allows 1–3, so TG-4b checks it when a link is confirmed.
+  - **Webhook order as built:** a configuration and the hook id (404, compared in constant time), POST (405),
+    `application/json` (415), then the secret token, hashed with SHA-256 and compared in constant time (so the length
+    of a wrong token doesn't show either) **before the body is read**, then the allowlist (403), then the 256 KiB
+    limit (413, on `Content-Length` and on the stream). The body limit therefore applies after the secret check rather
+    than before it; nothing is read before either. A body read gets a 10 s deadline. Refused secrets are audited as
+    `telegram.webhook.refused` (actor `system`, outcome `denied`, the client address and the count since the last row),
+    at most once a minute.
+  - **Queue:** 4 shards of 256 (1024 in total), sharded by chat. A full **shard** answers 503 even if others have room,
+    which keeps one busy chat from taking the whole queue. A refused update isn't remembered, so the retry is accepted.
+    The global 20 updates/s bound is applied by the workers; the per-link limits come with TG-3c.
+  - **Dispatcher:** private chats only in v1. `my_chat_member` in a group, supergroup or channel makes the bot leave
+    it without any read; in a private chat it goes to the linked user's handler (TG-2/TG-4b mark a link `blocked`), and
+    for an unlinked user it is dropped without a reply. Unlinked users' `/start <code>` is not handled yet: linking
+    (TG-4b) adds that path with its own rate limits.
 
 ## 2. Open items and unresolved contracts
 

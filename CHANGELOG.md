@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Added
 - Configuration: `telegram.api_base_url` (default `https://api.telegram.org`), the Bot API endpoint for the planned
   Telegram bot (ADR-0083). It is settable only in central's configuration, never through the API. Nothing uses it yet.
+- Telegram groundwork (ADR-0083, not usable yet): migration 0051 with every Telegram table, and the inbound side of the
+  bot: a hardened webhook route `POST /telegram/webhook/<hook id>` outside the API (secret token checked in constant
+  time before the body is read, 256 KiB limit, `update_id` dedupe, a bounded queue that answers 503 when full), a
+  long-polling mode, and a dispatcher that serves private chats only and tells unlinked users how to link, at most
+  once an hour. The route answers 404 until bot configuration ships. New metrics `spaceman_telegram_webhook_requests_total`,
+  `spaceman_telegram_updates_total`, `spaceman_telegram_updates_queued` and `spaceman_telegram_poll_errors_total`.
+  **Migration 0051 must follow 0050** (the usage-limit work): it is released only after it.
 
 ## [0.1.4] - 2026-11-14
 

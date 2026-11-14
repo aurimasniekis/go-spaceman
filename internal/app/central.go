@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +63,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/spacemanmcp"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 	"github.com/aurimasniekis/go-spaceman/internal/usage"
 	"github.com/aurimasniekis/go-spaceman/internal/xspace"
 )
@@ -151,6 +151,9 @@ type Central struct {
 	Retention *retention.Service
 	// Exports writes space export archives (ADR-0045).
 	Exports *spaceexport.Service
+	// TelegramUpdates is the Telegram bot's inbound side (ADR-0083): the webhook route, the shared queue and the
+	// dispatcher. Its webhook answers 404 until a bot is configured (TG-3b sets it).
+	TelegramUpdates *updates.Service
 
 	// UI serves the embedded web UI (set by cmd/spaceman; a notice handler when the UI is not embedded).
 	UI http.Handler
@@ -376,6 +379,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Notifier = messages.NewNotifier(c.Messages, c.Fleet, log, o.Clock)
 	c.Human.OnNotify = c.Notifier.Kick
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
+	c.TelegramUpdates = c.newTelegramUpdates()
 	c.Queue.Workers = c.Fleet
 	c.Queue.Notify = c.Supervisor.Notify
 	c.Supervisor.Inbox = c.Inbox
@@ -584,12 +588,7 @@ func (c *Central) Close() error {
 
 // APIDeps returns the API dependencies.
 func (c *Central) APIDeps() *api.Deps {
-	var trusted []netip.Prefix
-	for _, p := range c.Cfg.HTTP.TrustedProxies {
-		if pf, err := netip.ParsePrefix(p); err == nil {
-			trusted = append(trusted, pf)
-		}
-	}
+	trusted := c.trustedProxies()
 	d := &api.Deps{Log: obs.Component(c.Log, "api"), Store: c.Store, Auth: c.Auth, Authz: c.Authz, Audit: c.Audit, Bus: c.Bus,
 		Metrics: c.Metrics, Clock: c.Clock, PublicURL: c.Cfg.PublicURL, SecureCookies: strings.HasPrefix(c.Cfg.PublicURL, "https://"),
 		TrustedProxies: trusted, MaxBodyBytes: c.Cfg.HTTP.MaxBodyBytes, MaxUploadBytes: c.Cfg.HTTP.MaxUploadBytes,
@@ -678,6 +677,10 @@ func (c *Central) Handler(d *api.Deps) http.Handler {
 	apiH := d.Handler()
 	mux.Handle("/api/", apiH)
 	mux.Handle("/agent/", c.Fleet.AgentHandler())
+	// The Telegram webhook (ADR-0083, SM-TG-004): its own route group outside the API handler and its middleware, with
+	// the webhook's own checks (secret token before the body, body limit, dedupe, bounded queue). Main host only: the
+	// Mini App host, once it exists, must not route here.
+	mux.Handle(updates.WebhookPath, c.TelegramUpdates.Webhook)
 	ui := c.UI
 	if ui == nil {
 		ui = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -760,6 +763,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
 		human.Deadline{Name: "retention", Next: c.Retention.Next, Due: c.Retention.Due})
 	go c.Notifier.Run(ctx)
+	// Telegram updates: the dispatcher's workers (the webhook answers 503 until they run).
+	go c.TelegramUpdates.Run(ctx)
 	// Relocations in progress resume where they stopped; retained source folders are deleted when their retention ends.
 	go c.Fleet.RunRelocations(ctx)
 	// Terminal takeovers end when their holder stops renewing them (one timer; SM-UI-004).

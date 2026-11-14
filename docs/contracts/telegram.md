@@ -47,6 +47,9 @@ A citation such as `API#sendmessage` means the anchor `#sendmessage` on the API 
 | `getUpdates`: long poll with `offset`, `limit` 1–100 and `timeout`; outbound HTTPS only. | https://core.telegram.org/bots/api#getupdates |
 | `getWebhookInfo` reports `pending_update_count` and `last_error_date` / `last_error_message`. | https://core.telegram.org/bots/api#getwebhookinfo |
 | `getMe` returns the bot's `id` and `username`, and `has_topics_enabled` (since 9.3). | https://core.telegram.org/bots/api#getme, https://core.telegram.org/bots/api-changelog#december-31-2025 |
+| `allowed_updates` names the update kinds to receive; SpaceMan asks for `message`, `callback_query` and `my_chat_member` (TG-3a, `updates.AllowedUpdates`). | https://core.telegram.org/bots/api#update |
+| `my_chat_member` (`ChatMemberUpdated`: `chat`, `from`, `date`, `old_chat_member`, `new_chat_member`) reports a change of the bot's own status in a chat; in a private chat only when the user blocks or unblocks the bot. A `ChatMember`'s `status` is `creator`, `administrator`, `member`, `restricted`, `left` or `kicked`. | https://core.telegram.org/bots/api#update, https://core.telegram.org/bots/api#chatmemberupdated, https://core.telegram.org/bots/api#chatmember |
+| `leaveChat(chat_id)` makes the bot leave a group, supergroup or channel; it returns `True`. | https://core.telegram.org/bots/api#leavechat |
 
 ## Identity
 
@@ -127,6 +130,8 @@ checks it):
   `Unauthorized` and `Not Found` are the fake's own wording, all with the usual `Bad Request: ` prefix. Callers branch on
   the status code (`botapi.RetryAfter`, `botapi.IsForbidden`, `botapi.IsUnauthorized`), never on the text.
 - `getUpdates` while a webhook is set answers 409; a wrong token answers 401; an unknown method answers 404.
+- `leaveChat` on a private chat answers 400 (the documentation only says the method is for groups, supergroups and
+  channels); SpaceMan never calls it for a private chat.
 - Rate limits: 1 message/s per private chat with a burst of 3, 20/min per group, 30/s overall, as token buckets;
   sends, edits and deletes count; a media group counts as one send; `answerCallbackQuery` and reads don't count.
 - `setWebhook` accepts only `https` URLs on ports 443, 80, 88 and 8443, as documented; tests deliver to their own

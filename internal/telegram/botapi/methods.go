@@ -120,6 +120,11 @@ func (c *Client) DeleteMessage(ctx context.Context, chatID int64, messageID int)
 	return c.Call(ctx, "deleteMessage", map[string]int64{"chat_id": chatID, "message_id": int64(messageID)}, nil)
 }
 
+// LeaveChat makes the bot leave a group, supergroup or channel (API#leavechat).
+func (c *Client) LeaveChat(ctx context.Context, chatID int64) error {
+	return c.Call(ctx, "leaveChat", map[string]int64{"chat_id": chatID}, nil)
+}
+
 // AnswerCallbackQueryParams are answerCallbackQuery's parameters (API#answercallbackquery). Text is 0–200 characters.
 type AnswerCallbackQueryParams struct {
 	CallbackQueryID string `json:"callback_query_id"`

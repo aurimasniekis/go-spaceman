@@ -45,6 +45,10 @@ func exercise(m *Metrics) {
 	m.IngestProcessed(IngestCore, IngestLive, IngestCreated, time.Millisecond)
 	m.SetIngestPending(map[IngestDelivery]int64{IngestDurable: 3}, 1)
 	m.IngestCoreDropped(2)
+	m.TelegramWebhook(TelegramWebhookAccepted)
+	m.TelegramUpdate(TelegramUpdateLinked)
+	m.TelegramQueued(1)
+	m.TelegramPollError()
 	m.SetIngestSubscriptions(map[IngestDelivery]map[IngestSubState]int{IngestDurable: {IngestSubRunning: 2}})
 	m.SetIngestConnections(map[ConnectionKind]map[IngestConnState]int{ConnectionPulse: {IngestConnConnected: 1}})
 	m.SetIngestQuarantine(4)
@@ -127,6 +131,10 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_ingest_connections":                    "gauge:connection_kind,state",
 		"spaceman_ingest_quarantine_open":                "gauge:",
 		"spaceman_ingest_replays_total":                  "counter:",
+		"spaceman_telegram_webhook_requests_total":       "counter:result",
+		"spaceman_telegram_updates_total":                "counter:outcome",
+		"spaceman_telegram_updates_queued":               "gauge:",
+		"spaceman_telegram_poll_errors_total":            "counter:",
 	}
 	fams := gather(t, m)
 	got := map[string]string{}
