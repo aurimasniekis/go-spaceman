@@ -1,8 +1,9 @@
 import type { Terminal } from 'ghostty-web'
+import { SCROLLBACK_BYTES } from './scrollback'
 import { createTerminal, disposeTerminal, fitFont, holdDrawing, patchGhostty, PATCHED_GHOSTTY_WEB, scrollWithWheelAndTouch, skipBlankCells } from './ghostty'
 
 const ghostty = vi.hoisted(() => {
-  const created: { options: { ghostty?: unknown }; disposed: boolean }[] = []
+  const created: { options: { ghostty?: unknown; scrollback?: number }; disposed: boolean }[] = []
   return {
     created,
     Ghostty: class {
@@ -47,6 +48,8 @@ describe('createTerminal', () => {
       const [ta, tb] = ghostty.created
       expect((ta.options.ghostty as { instance: unknown }).instance).toEqual({ exports: { memory: { n: 1 } } })
       expect((tb.options.ghostty as { instance: unknown }).instance).toEqual({ exports: { memory: { n: 2 } } })
+      // The scrollback is a byte limit (scrollback.ts), set from the one constant.
+      expect(ta.options.scrollback).toBe(SCROLLBACK_BYTES)
       disposeTerminal(a)
       expect(ta.disposed).toBe(true)
       expect(tb.disposed).toBe(false)
