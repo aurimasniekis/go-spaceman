@@ -29,7 +29,12 @@ type hpRunEnv struct {
 
 func newHPRunEnv(t *testing.T, base, parent, service, project string) *hpRunEnv {
 	t.Helper()
-	e := newFleetEnv(t)
+	return newHPRunEnvOn(t, newFleetEnv(t), base, parent, service, project)
+}
+
+// newHPRunEnvOn is newHPRunEnv on a given central (one on a fake clock, for example).
+func newHPRunEnvOn(t *testing.T, e *fleetEnv, base, parent, service, project string) *hpRunEnv {
+	t.Helper()
 	e.enroll()
 	ctx := context.Background()
 	nodes, _ := e.c.Fleet.ListNodes(ctx)
