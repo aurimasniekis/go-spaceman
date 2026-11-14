@@ -22,6 +22,8 @@ export interface BlobOptions {
   maxBytes?: number
   /** Blob URLs kept (oldest revoked first). */
   maxCached?: number
+  /** Total bytes of the blobs kept (oldest revoked first); the newest is always kept. */
+  maxTotalBytes?: number
   /** Failed fetches are retried no sooner than this (ms). */
   retryAfterMs?: number
 }
@@ -30,6 +32,7 @@ type Entry = {
   ref: AttachmentRef
   placeholder: string
   blob?: string
+  size?: number
   state: 'idle' | 'queued' | 'loading' | 'done' | 'failed'
   failedAt?: number
   waiters: Set<(url: string | null) => void>
@@ -48,7 +51,7 @@ export class AttachmentBlobs {
     private readonly doFetch: typeof fetch = (...a) => fetch(...a),
     o: BlobOptions = {},
   ) {
-    this.o = { concurrency: 3, maxBytes: 16 << 20, maxCached: 64, retryAfterMs: 15_000, ...o }
+    this.o = { concurrency: 3, maxBytes: 16 << 20, maxCached: 64, maxTotalBytes: 96 << 20, retryAfterMs: 15_000, ...o }
   }
 
   private entry(ref: AttachmentRef): Entry {
@@ -124,6 +127,7 @@ export class AttachmentBlobs {
 
   private async fetchOne(e: Entry) {
     let url: string | null = null
+    let size = 0
     try {
       const { spaceId, id } = e.ref
       const res = await this.doFetch(`${API_PREFIX}/spaces/${encodeURIComponent(spaceId)}/attachments/${encodeURIComponent(id)}/content`, {
@@ -137,7 +141,10 @@ export class AttachmentBlobs {
         const len = Number(res.headers.get('Content-Length') ?? '0')
         if (/^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(type) && !(len > this.o.maxBytes)) {
           const body = await res.blob()
-          if (body.size <= this.o.maxBytes) url = URL.createObjectURL(new Blob([body], { type }))
+          if (body.size <= this.o.maxBytes) {
+            url = URL.createObjectURL(new Blob([body], { type }))
+            size = body.size
+          }
         } else {
           await res.body?.cancel()
         }
@@ -149,6 +156,7 @@ export class AttachmentBlobs {
     }
     if (url) {
       e.blob = url
+      e.size = size
       e.state = 'done'
       const key = `${e.ref.spaceId}/${e.ref.id}`
       this.entries.delete(key)
@@ -168,12 +176,21 @@ export class AttachmentBlobs {
     return () => this.evictListeners.delete(cb)
   }
 
-  /** Revokes the least recently loaded blobs beyond the cap (never the one that just loaded: it is the last). */
+  /**
+   * Revokes the least recently loaded blobs while there are more than `maxCached` or they hold more than
+   * `maxTotalBytes` (never the one that just loaded: it is the last).
+   */
   private evict() {
     const loaded = [...this.entries.values()].filter((x) => x.blob)
-    for (const x of loaded.slice(0, Math.max(0, loaded.length - this.o.maxCached))) {
+    let count = loaded.length
+    let bytes = loaded.reduce((n, x) => n + (x.size ?? 0), 0)
+    for (const x of loaded.slice(0, -1)) {
+      if (count <= this.o.maxCached && bytes <= this.o.maxTotalBytes) break
       URL.revokeObjectURL(x.blob!)
+      count--
+      bytes -= x.size ?? 0
       x.blob = undefined
+      x.size = undefined
       x.state = 'idle'
       // Re-insert so a later load counts as the newest.
       const key = `${x.ref.spaceId}/${x.ref.id}`

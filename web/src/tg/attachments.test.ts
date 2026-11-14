@@ -187,4 +187,24 @@ describe('eviction', () => {
     expect(b.resolver('spc_1')('att_a')).not.toBe(urls[0])
     expect(await b.load(A('att_a'))).toMatch(/^blob:/)
   })
+
+  it('also caps the bytes kept: the least recently loaded are revoked until the total fits, the newest always stays', async () => {
+    const sized = (n: number) => new Response('x'.repeat(n), { status: 200, headers: { 'Content-Type': 'image/png' } })
+    const sizes: Record<string, number> = { att_a: 40, att_b: 40, att_c: 40, att_d: 500 }
+    const f = vi.fn(async (u: string) => sized(sizes[u.split('/').at(-2)!]))
+    const b = new AttachmentBlobs(f as unknown as typeof fetch, { maxTotalBytes: 100, maxBytes: 1000 })
+    const evicted: string[] = []
+    b.onEvict((r) => evicted.push(r.id))
+    const urls: Record<string, string | null> = {}
+    for (const id of ['att_a', 'att_b']) urls[id] = await b.load(A(id))
+    expect(evicted).toEqual([])
+    urls.att_c = await b.load(A('att_c')) // 120 > 100: the oldest goes
+    expect(evicted).toEqual(['att_a'])
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(urls.att_a)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(urls.att_b)
+    urls.att_d = await b.load(A('att_d')) // alone over the cap: everything older goes, the newest stays
+    expect(evicted).toEqual(['att_a', 'att_b', 'att_c'])
+    expect(b.resolver('spc_1')('att_d')).toBe(urls.att_d)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(urls.att_d)
+  })
 })
