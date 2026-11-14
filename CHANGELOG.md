@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Central and the node agent's journal now refuse to open a database that is missing a migration lower than its
+  schema version, with `database is missing migrations lower than its schema version` naming each one. Before, a
+  migration that arrived after a higher one had already run (branches merged out of number order) was skipped
+  silently and the next upgrade failed with goose's "missing (out-of-order) migration". Migrations still run in
+  number order only. A database restored from an older backup has no such gap and migrates forward as before.
+
 ## [0.1.3] - 2026-11-13
 
 Patch release on top of v0.1.2. It makes no production-readiness claim (docs/RELEASE_READINESS.md §17). It contains:
