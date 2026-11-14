@@ -1,21 +1,23 @@
 import { Button, Group, Menu, Skeleton, Stack, Text, Title, Tooltip } from '@mantine/core'
 import {
-  IconArchive, IconArrowsExchange, IconChevronDown, IconDots, IconFileExport, IconPencil, IconPlayerPause, IconPlayerPlay, IconRestore, IconRocket,
-  IconTrash,
+  IconArchive, IconArrowsExchange, IconChevronDown, IconDots, IconFileExport, IconInbox, IconPencil, IconPlayerPause, IconPlayerPlay, IconRestore,
+  IconRocket, IconTrash,
 } from '@tabler/icons-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
+import { useMatch, useNavigate } from '@tanstack/react-router'
 import { useState, type ReactNode } from 'react'
 import { api, ifMatch, unwrap, type Space } from '@/api/client'
 import { keys, useMe, useNodes, useSpace } from '@/api/queries'
 import { AnchorLink } from '@/components/AnchorLink'
 import { SpaceState } from '@/components/StatusBadge'
+import { useCanCreateInboxItem, useNewInboxItem } from '@/features/inbox/useNewInboxItem'
 import { ExportModal } from '@/features/spaces/ExportModal'
 import { LaunchRunModal } from '@/features/spaces/LaunchRunModal'
 import { RelocateModal } from '@/features/spaces/RelocateModal'
 import { SpaceFormModal } from '@/features/spaces/SpaceFormModal'
 import { SpaceLifecycleDialog, useSpaceLifecycleAccess, type Dialog } from '@/features/spaces/SpaceLifecycle'
 import { atLeast, hasGlobal, roleIn } from '@/lib/access'
+import { useNarrow } from '@/lib/media'
 import { notifyError, notifyOk } from '@/lib/notify'
 
 const PAUSE_MODES: { mode: 'hold' | 'interrupt' | 'emergency'; label: string; detail: string }[] = [
@@ -40,6 +42,11 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
   const canMove = hasGlobal(me, 'admin') // relocation is global administration (space:relocate)
   const [open, setOpen] = useState<'launch' | 'edit' | 'relocate' | 'export' | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
+  // "New inbox item" sits next to Launch run on the overview only: the Inbox page has its own "New item".
+  const onOverview = useMatch({ from: '/spaces/$spaceId/', shouldThrow: false }) !== undefined
+  const canAddItem = useCanCreateInboxItem(spaceId)
+  const newItem = useNewInboxItem(spaceId)
+  const narrow = useNarrow()
   if (!space.data) {
     return <Group mb="sm"><Skeleton h={28} w={240} /></Group>
   }
@@ -100,6 +107,16 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
             </Menu>
           )}
           {atLeast(role, 'operator') && s.state === 'paused' && <Button variant="default" leftSection={<IconPlayerPlay size={14} />} onClick={() => void setState('active')}>Resume</Button>}
+          {onOverview && canAddItem && (
+            // On a phone, the icon alone keeps the actions on one line next to Launch run.
+            <Tooltip label="Add an item to this space's inbox for control to triage">
+              {narrow ? (
+                <Button variant="default" px="xs" aria-label="New inbox item" onClick={() => newItem.open()}><IconInbox size={16} /></Button>
+              ) : (
+                <Button variant="default" leftSection={<IconInbox size={14} />} onClick={() => newItem.open()}>New inbox item</Button>
+              )}
+            </Tooltip>
+          )}
           {atLeast(role, 'operator') && (
             <Tooltip label={s.state !== 'active' ? 'The space is not active' : 'Start an agent in this space'}>
               <Button leftSection={<IconRocket size={14} />} disabled={s.state !== 'active'} onClick={() => setOpen('launch')}>Launch run</Button>
@@ -119,6 +136,7 @@ export function SpaceHeader({ spaceId }: { spaceId: string }) {
           )}
         </Group>
       </Group>
+      {onOverview && canAddItem && newItem.modal}
       <LaunchRunModal space={s} node={node} opened={open === 'launch'} onClose={() => setOpen(null)} />
       {open === 'edit' && <SpaceFormModal space={s} opened onClose={() => setOpen(null)} />}
       {open === 'relocate' && <RelocateModal space={s} opened onClose={() => setOpen(null)} />}

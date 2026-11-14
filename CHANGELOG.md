@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Web: a space's overview has a **New inbox item** action next to **Launch run**, for users who may add inbox items
+  (operators and admins of the space). It opens the Inbox page's dialog, and a toast confirms the new item with a link
+  to it. On a phone the action is an icon. An unsent draft now survives closing and reopening the dialog.
+
 ## [0.1.3] - 2026-11-13
 
 Patch release on top of v0.1.2. It makes no production-readiness claim (docs/RELEASE_READINESS.md §17). It contains:
