@@ -184,7 +184,17 @@ func (svc *Service) Process(ctx context.Context, subID string, e template.Event,
 	case o.Kind == OriginReplay:
 		outcome = OutcomeReplayed
 	}
-	return svc.deliver(ctx, r, e, seq, o, outcome, it.ID, "")
+	if err := svc.deliver(ctx, r, e, seq, o, outcome, it.ID, ""); err != nil {
+		return err
+	}
+	if outcome == OutcomeAccepted && svc.o.OnAccepted != nil {
+		slug := ""
+		if ref != nil {
+			slug = ref.TemplateSlug
+		}
+		svc.o.OnAccepted(slug, e)
+	}
+	return nil
 }
 
 // OwnOriginDetail is the delivery detail of an event this installation published itself (loop guard, SM-EVT-016).
