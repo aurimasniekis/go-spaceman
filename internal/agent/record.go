@@ -435,6 +435,9 @@ func (a *Agent) catchUpRecordings() {
 			return
 		}
 		a.mu.Unlock()
+		if err == nil {
+			retry = time.Second
+		}
 		if err != nil && !again {
 			select {
 			case <-ctx.Done():
@@ -488,6 +491,8 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 			delete(a.unshipped, id)
 		}
 	}
+	// The journal keeps ended runs (it never deletes them), so this drops only records of IDs that were never
+	// journaled: none in practice; it keeps a stray entry from making the pass sweep forever.
 	for id := range a.held {
 		if !journaled[id] {
 			delete(a.held, id)
@@ -550,6 +555,7 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 		if h.lost {
 			// Some output was not kept back: the local recording has it.
 			if err := readDisk(); err != nil {
+				a.putBack(r.RunID, h.recs, from, true)
 				return err
 			}
 		}
@@ -560,8 +566,36 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64
 			}
 		}
 		if err := send(later); err != nil {
+			// What did not go out is kept back again for the next pass: a record with no local copy exists only here.
+			a.putBack(r.RunID, later, from, false)
 			return err
 		}
+	}
+}
+
+// putBack keeps a run's records above from back again, in front of any kept back since (they are older), after a
+// catch-up could not send them; lost carries over that some output was not kept back.
+func (a *Agent) putBack(runID string, recs []recording.Record, from uint64, lost bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	back := &heldRecords{lost: lost}
+	for _, r := range recs {
+		if r.Seq > from {
+			back.recs = append(back.recs, r)
+			back.bytes += len(r.Data) + heldRecordOverhead
+		}
+	}
+	if since := a.held[runID]; since != nil {
+		back.recs = append(back.recs, since.recs...)
+		back.bytes += since.bytes
+		back.lost = back.lost || since.lost
+	}
+	if len(back.recs) > 0 || back.lost {
+		if a.held == nil {
+			a.held = map[string]*heldRecords{}
+		}
+		a.held[runID] = back
+		a.markUnshippedLocked(runID)
 	}
 }
 
