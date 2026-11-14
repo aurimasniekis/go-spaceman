@@ -198,6 +198,14 @@ Bounds graceful shutdown.
 |---|---|---|---|
 | `shutdown.timeout` | `30s` | `SPACEMAN_SHUTDOWN_TIMEOUT` | How long central waits for requests and background work to finish on stop (1s to 10m). Keep it below the service manager's stop timeout. |
 
+### `telegram`
+
+Holds the Telegram settings that belong to the deployment rather than the API (ADR-0083). The bot itself (token, mode, Mini App host) is configured through the API and Terraform.
+
+| Key | Default | Environment | Description |
+|---|---|---|---|
+| `telegram.api_base_url` | `https://api.telegram.org` | `SPACEMAN_TELEGRAM_API_BASE_URL` | The Bot API endpoint the bot token is sent to: https, or http on a loopback host (a fake server in tests, a local Bot API server). It is deliberately settable only in central's own configuration (this file or its environment override), never through the API or Terraform: whoever sets it receives the token. |
+
 ## Node agent (`spaceman-agent`)
 
 | Key | Default | Environment | Description |

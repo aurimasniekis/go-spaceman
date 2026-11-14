@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Configuration: `telegram.api_base_url` (default `https://api.telegram.org`), the Bot API endpoint for the planned
+  Telegram bot (ADR-0083). It is settable only in central's configuration, never through the API. Nothing uses it yet.
+
 ## [0.1.4] - 2026-11-14
 
 Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:

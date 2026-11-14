@@ -282,3 +282,25 @@ func TestClaudeCodeConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramAPIBaseURL(t *testing.T) {
+	if d := Default().Telegram.APIBaseURL; d != "https://api.telegram.org" {
+		t.Fatalf("default telegram.api_base_url = %q", d)
+	}
+	p := writeFile(t, "public_url: https://spaceman.example.com\ntelegram:\n  api_base_url: http://127.0.0.1:8081\n")
+	cfg, err := Load(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Telegram.APIBaseURL != "http://127.0.0.1:8081" {
+		t.Fatalf("telegram.api_base_url = %q", cfg.Telegram.APIBaseURL)
+	}
+	for _, bad := range []string{"", "api.telegram.org", "http://bot.example.com", "https://u:p@api.example.com", "https://api.example.com/?x=1", "ftp://api.example.com"} {
+		c := Default()
+		c.PublicURL = "https://spaceman.example.com"
+		c.Telegram.APIBaseURL = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "telegram.api_base_url") {
+			t.Errorf("api_base_url %q: err = %v", bad, err)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 )
 
 // Default returns the central configuration defaults (site/reference/configuration.md).
@@ -45,6 +46,7 @@ func Default() *Config {
 			MaxHumanPendingPerRun: 25, MaxToolCallsPerRun: 5000, IngestPerMinute: 600, EventDepth: 8, BudgetWarnPercent: 80, RecordingQuotaBytes: 512 << 20,
 			ExportMaxBytes: 2 << 30, ControlAutostart: 1, ControlIdleStopMinutes: 30},
 		Shutdown: ShutdownConfig{Timeout: Duration(30 * time.Second)},
+		Telegram: TelegramConfig{APIBaseURL: botapi.DefaultBaseURL},
 	}
 }
 
