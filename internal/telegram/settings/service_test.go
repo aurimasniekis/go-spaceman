@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -213,6 +214,40 @@ func TestSpaceSettingsLifecycle(t *testing.T) {
 	if n := count(t, s, `SELECT count(*) FROM space_telegram_settings WHERE space_id = 'spc_a'`); n != 0 {
 		t.Fatal("space purge left its Telegram settings")
 	}
+	// The purge publishes (fleet does), the cache reloads, and the purged space is gone from it.
+	if err := svc.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if svc.Space("spc_a").Visible() || slices.Contains(svc.VisibleSpaces(), "spc_a") {
+		t.Fatal("a purged space stayed visible")
+	}
+	// An archived space with Telegram enabled is not visible either; restoring it shows it again.
+	if _, err := svc.PutSpace(ctx, admin, "spc_b", 1, SpaceInput{Enabled: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if !svc.Space("spc_b").Visible() {
+		t.Fatal("an enabled, active space is not visible")
+	}
+	setState := func(state string) {
+		t.Helper()
+		if err := s.W().TxNamed(ctx, "state", func(tx *store.Tx) error {
+			_, err := tx.SQL.ExecContext(ctx, `UPDATE spaces SET state = ? WHERE id = 'spc_b'`, state)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.Load(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setState("archived")
+	if svc.Space("spc_b").Visible() || len(svc.VisibleSpaces()) != 0 {
+		t.Fatal("an archived space stayed visible")
+	}
+	setState("active")
+	if !svc.Space("spc_b").Visible() {
+		t.Fatal("a restored space stayed hidden")
+	}
 	// No change-feed rows: Telegram state never reaches watch streams.
 	if n := count(t, s, `SELECT count(*) FROM changes WHERE resource_type LIKE '%telegram%'`); n != 0 {
 		t.Fatalf("%d change-feed rows", n)
@@ -322,4 +357,87 @@ func testClient(t *testing.T) *botapi.Client {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// A purge or archive publishes on the bus; the running service reloads and drops the space without any other write.
+func TestArchiveAndPurgeEventsDropTheSpace(t *testing.T) {
+	t.Parallel()
+	bus := eventbus.New()
+	svc, s := newSvc(t, bus)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); svc.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	if _, err := svc.PutSpace(ctx, admin, "spc_a", 0, SpaceInput{Enabled: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(q string) {
+		t.Helper()
+		if err := s.W().TxNamed(ctx, "x", func(tx *store.Tx) error { _, err := tx.SQL.ExecContext(ctx, q); return err }); err != nil {
+			t.Fatal(err)
+		}
+		bus.Publish(eventbus.Event{Topic: eventbus.TopicTelegramSettings, Key: "spc_a"})
+	}
+	exec(`UPDATE spaces SET state = 'archived' WHERE id = 'spc_a'`)
+	waitFor(t, func() bool { return !svc.Space("spc_a").Visible() })
+	exec(`UPDATE spaces SET state = 'active' WHERE id = 'spc_a'`)
+	waitFor(t, func() bool { return svc.Space("spc_a").Visible() })
+	exec(`DELETE FROM spaces WHERE id = 'spc_a'`)
+	waitFor(t, func() bool { return !svc.Space("spc_a").Visible() })
+}
+
+// A failed Load is retried with a backoff until it succeeds, then the cache is reloaded periodically.
+func TestRunRetriesAFailedLoad(t *testing.T) {
+	t.Parallel()
+	svc, _ := newSvc(t, nil)
+	svc.retryMin, svc.retryMax, svc.reloadEvery = time.Millisecond, 5*time.Millisecond, 10*time.Millisecond
+	var mu sync.Mutex
+	calls := 0
+	svc.loader = func(ctx context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls <= 3 {
+			return errors.New("database busy")
+		}
+		return svc.Load(ctx)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); svc.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls >= 6 // 3 failures, the successful load, then periodic reloads
+	})
+	svc.mu.RLock()
+	loaded := svc.loaded
+	svc.mu.RUnlock()
+	if !loaded {
+		t.Fatal("the cache was never loaded")
+	}
+}
+
+// A stored row with one out-of-bounds field keeps its valid fields: a stricter link cap is never widened.
+func TestOutOfBoundsFieldKeepsTheStricterCap(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t, nil)
+	ctx := context.Background()
+	if err := s.W().TxNamed(ctx, "seed", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO telegram_settings (singleton, settings_json, updated_at, updated_by) VALUES (1, ?, 0, 't')`,
+			`{"link_default_max_role":"viewer","links_per_user":9,"inbound_limits":{"updates_per_second":5}}`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := svc.Current()
+	if got.LinkDefaultMaxRole != RoleViewer || got.InboundLimits.UpdatesPerSecond != 5 || got.LinksPerUser != Defaults().LinksPerUser {
+		t.Fatalf("effective %+v: want viewer cap and the valid limit kept, the invalid field at its default", got)
+	}
 }

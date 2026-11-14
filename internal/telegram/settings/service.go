@@ -44,6 +44,12 @@ type Service struct {
 	loaded    bool
 	spaces    map[string]Space
 	listeners []func(Settings)
+
+	// Reload pacing, fields so tests can shorten them: while the last Load failed it is retried with a backoff from
+	// retryMin up to retryMax; otherwise the cache is reloaded every reloadEvery, which also picks up space archives and
+	// purges, which publish nothing.
+	retryMin, retryMax, reloadEvery time.Duration
+	loader                          func(context.Context) error
 }
 
 // New returns the service with the built-in defaults cached; Load (or Run) reads the stored state.
@@ -51,7 +57,9 @@ func New(s *store.Store, aw *audit.Writer, bus *eventbus.Bus, log *slog.Logger) 
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	svc := &Service{s: s, audit: aw, bus: bus, log: log, cur: Defaults(), spaces: map[string]Space{}}
+	svc := &Service{s: s, audit: aw, bus: bus, log: log, cur: Defaults(), spaces: map[string]Space{},
+		retryMin: time.Second, retryMax: 30 * time.Second, reloadEvery: time.Minute}
+	svc.loader = svc.Load
 	if bus != nil {
 		// Subscribed at construction, so a change committed before Run starts is still seen. Events only say "reload";
 		// a full queue drops events but a reload is pending anyway.
@@ -60,27 +68,52 @@ func New(s *store.Store, aw *audit.Writer, bus *eventbus.Bus, log *slog.Logger) 
 	return svc
 }
 
-// Run reloads the cache whenever a settings change is published, until ctx ends.
+// Run reloads the cache whenever a settings or space change is published, until ctx ends. A failed load is retried
+// with a backoff until one succeeds; after that the cache is reloaded periodically, because an archived or purged
+// space publishes nothing.
 func (svc *Service) Run(ctx context.Context) {
-	if err := svc.Load(ctx); err != nil && ctx.Err() == nil {
-		svc.log.Warn("telegram: loading the settings failed; using the last known values", slog.String("error", err.Error()))
+	var events <-chan eventbus.Event
+	if svc.sub != nil {
+		defer svc.sub.Close()
+		events = svc.sub.C
 	}
-	if svc.sub == nil {
-		<-ctx.Done()
-		return
+	failures := 0
+	reload := func(what string) time.Duration {
+		err := svc.loader(ctx)
+		if err == nil {
+			failures = 0
+			return svc.reloadEvery
+		}
+		if ctx.Err() == nil {
+			svc.log.Warn("telegram: "+what+" the settings failed; using the last known values", slog.String("error", err.Error()))
+		}
+		d := svc.retryMin
+		for i := 0; i < failures && d < svc.retryMax; i++ {
+			d *= 2
+		}
+		failures++
+		return min(d, svc.retryMax)
 	}
-	defer svc.sub.Close()
+	timer := time.NewTimer(reload("loading"))
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case _, ok := <-svc.sub.C:
+		case _, ok := <-events:
 			if !ok {
 				return
 			}
-			if err := svc.Load(ctx); err != nil && ctx.Err() == nil {
-				svc.log.Warn("telegram: reloading the settings failed; using the last known values", slog.String("error", err.Error()))
+			d := reload("reloading")
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
+			timer.Reset(d)
+		case <-timer.C:
+			timer.Reset(reload("reloading"))
 		}
 	}
 }
@@ -145,9 +178,15 @@ func (svc *Service) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	live, err := svc.liveSpaces(ctx)
+	if err != nil {
+		return err
+	}
 	spaces := make(map[string]Space, len(rows))
 	for _, row := range rows {
-		spaces[row.SpaceID] = spaceFromRow(row)
+		if live[row.SpaceID] { // a purged or archived space is never visible
+			spaces[row.SpaceID] = spaceFromRow(row)
+		}
 	}
 	svc.mu.Lock()
 	changed := !svc.loaded || ver != svc.curVer || cur != svc.cur
@@ -162,18 +201,58 @@ func (svc *Service) Load(ctx context.Context) error {
 	return nil
 }
 
+// liveSpaces returns the IDs of the spaces that exist and are not archived.
+func (svc *Service) liveSpaces(ctx context.Context) (map[string]bool, error) {
+	rows, err := svc.s.ReadDB().QueryContext(ctx, `SELECT id FROM spaces WHERE state <> 'archived'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // effective applies a stored row to the defaults. A row that no longer validates (bounds tightened in a later release)
-// falls back to the defaults, logged, rather than stopping Telegram.
+// is applied field by field: the fields that still validate keep their stored values (so a stricter link cap stays),
+// the others take their defaults, logged, rather than stopping Telegram.
 func (svc *Service) effective(r db.TelegramSetting) Settings {
 	var in Input
-	if err := json.Unmarshal([]byte(r.SettingsJson), &in); err != nil {
+	if err := json.Unmarshal([]byte(r.SettingsJson), &in); err == nil {
+		s := Resolve(in)
+		if s.Validate() == nil {
+			return s
+		}
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(r.SettingsJson), &fields); err != nil {
 		svc.log.Warn("telegram: the stored settings are unreadable; using the defaults", slog.String("error", err.Error()))
 		return Defaults()
 	}
-	s := Resolve(in)
-	if err := s.Validate(); err != nil {
-		svc.log.Warn("telegram: the stored settings are out of bounds; using the defaults", slog.String("error", err.Error()))
-		return Defaults()
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	s := Defaults()
+	for _, k := range keys {
+		var one Input
+		raw, _ := json.Marshal(map[string]json.RawMessage{k: fields[k]})
+		cand := s
+		if err := json.Unmarshal(raw, &one); err == nil {
+			cand.Apply(one)
+			if err = cand.Validate(); err == nil {
+				s = cand
+				continue
+			}
+		}
+		svc.log.Warn("telegram: a stored setting is out of bounds; using its default", slog.String("field", k))
 	}
 	return s
 }

@@ -155,3 +155,25 @@ func TestIntakeSetRate(t *testing.T) {
 	}
 	NewIntake(IntakeOptions{Rate: -1}).SetRate(5) // unlimited: nothing to change, no panic
 }
+
+// The slow-down warning is per kind: a refusal of one kind doesn't hush another kind's warning, and an allowed action
+// of one kind doesn't re-arm another kind's.
+func TestLimiterWarnsOncePerKind(t *testing.T) {
+	t.Parallel()
+	clk := clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
+	lm := NewLimiter(InboundLimits{ActionsBurst: 1, DownloadsPerHour: 1}, clk)
+	lm.allow("l", KindAction)
+	lm.allow("l", KindDownload)
+	if ok, warn := lm.allow("l", KindAction); ok || !warn {
+		t.Fatalf("first action refusal: ok=%v warn=%v", ok, warn)
+	}
+	if ok, warn := lm.allow("l", KindDownload); ok || !warn {
+		t.Fatalf("first download refusal after an action warning: ok=%v warn=%v, want its own warning", ok, warn)
+	}
+	if _, warn := lm.allow("l", KindAction); warn {
+		t.Fatal("a second action refusal warned again")
+	}
+	if _, warn := lm.allow("l", KindDownload); warn {
+		t.Fatal("a second download refusal warned again")
+	}
+}

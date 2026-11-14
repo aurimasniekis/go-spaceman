@@ -51,8 +51,9 @@ type Limiter struct {
 type linkBuckets struct {
 	b    [kinds]*rate.Limiter
 	used time.Time
-	// warned: the link was told to slow down and hasn't had an allowed action since, so it isn't told again.
-	warned bool
+	// warned: per kind, the link was told to slow down and hasn't had an allowed action of that kind since, so it isn't
+	// told again.
+	warned [kinds]bool
 }
 
 // NewLimiter returns a limiter with limits (zero fields take the defaults).
@@ -139,11 +140,11 @@ func (lm *Limiter) allow(linkID string, k Kind) (ok, warn bool) {
 	}
 	lb.used = now
 	if lb.b[k].AllowN(now, 1) {
-		lb.warned = false
+		lb.warned[k] = false
 		return true, false
 	}
-	warn = !lb.warned
-	lb.warned = true
+	warn = !lb.warned[k]
+	lb.warned[k] = true
 	return false, warn
 }
 
