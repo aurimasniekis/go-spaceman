@@ -195,6 +195,13 @@ export function applyChange(qc: QueryClient, c: Change) {
     case 'space_limits':
       invalidate(qc, keys.limits(c.resource_id))
       break
+    case 'usage_limit':
+      // Every space's holds: a hold on a shared account also shows, redacted, in the other spaces bound to it.
+      invalidate(qc, ['usage-limits'])
+      break
+    case 'limit_wait':
+      if (c.space_id) invalidate(qc, keys.limitWaits(c.space_id))
+      break
     case 'schedule':
       if (c.space_id) invalidate(qc, keys.schedules(c.space_id))
       break

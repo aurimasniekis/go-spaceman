@@ -11,6 +11,7 @@ import { errorMessage, ErrorAlert } from '@/components/ErrorAlert'
 import { SectionHeader } from '@/features/spaces/SpaceHeader'
 import { HarborPilotLimitsCard } from '@/features/harborpilot/HarborPilotLimitsCard'
 import { limitValue, usd } from '@/features/limits/format'
+import { UsageLimitsCard } from '@/features/limits/UsageLimitsCard'
 import { atLeast, roleIn } from '@/lib/access'
 import { ago } from '@/lib/format'
 import { notifyOk } from '@/lib/notify'
@@ -45,6 +46,7 @@ function LimitsPage() {
       <ErrorAlert error={limits.error} />
       {l && (
         <Stack gap="md">
+          <UsageLimitsCard spaceId={spaceId} />
           <HarborPilotLimitsCard spaceId={spaceId} />
           <BudgetCard l={l} />
           <Card p={0}>
