@@ -75,6 +75,16 @@ type Config struct {
 	Limits    LimitsConfig    `yaml:"limits"`
 	Retention RetentionConfig `yaml:"retention"`
 	Shutdown  ShutdownConfig  `yaml:"shutdown"`
+	Telegram  TelegramConfig  `yaml:"telegram"`
+}
+
+// TelegramConfig holds the Telegram settings that belong to the deployment rather than the API (ADR-0083). The bot
+// itself (token, mode, Mini App host) is configured through the API and Terraform.
+type TelegramConfig struct {
+	// APIBaseURL is the Bot API endpoint the bot token is sent to: https, or http on a loopback host (a fake server in
+	// tests, a local Bot API server). It is deliberately settable only in central's own configuration (this file or
+	// its environment override), never through the API or Terraform: whoever sets it receives the token.
+	APIBaseURL string `yaml:"api_base_url"`
 }
 
 // RetentionConfig holds the installation-wide retention that cannot be set per space (ADR-0045). Per-space retention

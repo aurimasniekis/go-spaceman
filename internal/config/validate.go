@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 )
 
 // ValidationError aggregates every configuration problem found.
@@ -124,6 +125,9 @@ func (c *Config) Validate() error {
 		v.add("retention.audit_days must be 0 (keep forever) or within 30..36500, got %d", a)
 	}
 	v.durationRange("shutdown.timeout", c.Shutdown.Timeout, time.Second, 10*time.Minute)
+	if _, err := botapi.ParseBaseURL(c.Telegram.APIBaseURL); err != nil {
+		v.add("telegram.api_base_url %v", err)
+	}
 	return v.err()
 }
 

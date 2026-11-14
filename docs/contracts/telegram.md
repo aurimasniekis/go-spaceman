@@ -106,6 +106,32 @@ count toward rate limits (SpaceMan counts them as sends).
 | `getFile` downloads are limited to **20 MB**; the link is valid for at least 1 hour; the original name and MIME type may not be kept. The file URL `https://api.telegram.org/file/bot<token>/<path>` contains the token. | https://core.telegram.org/bots/api#getfile, https://core.telegram.org/bots/faq#how-do-i-download-files |
 | A local Bot API server lifts the limits (uploads to 2000 MB) but needs `api_id`/`api_hash` and a separate process. Not used. | https://core.telegram.org/bots/api#using-a-local-bot-api-server |
 
+## Requests and answers
+
+Used by the client `internal/telegram/botapi` and the fake `internal/telegram/tgtest` (TG-1). Read on 2026-11-14.
+
+| Fact | Source |
+|---|---|
+| The token looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`: a numeric bot ID, a colon, then letters, digits, `-` and `_`. The client refuses any other shape, so a token can't add path segments, a query or a fragment to a URL. | https://core.telegram.org/bots/api#authorizing-your-bot |
+| Requests go to `https://api.telegram.org/bot<token>/METHOD_NAME`, by GET or POST, with parameters as a query string, `application/x-www-form-urlencoded`, `application/json` (not for uploads) or `multipart/form-data` (for uploads); UTF-8 only. | https://core.telegram.org/bots/api#making-requests |
+| The answer is a JSON object with a Boolean `ok`; on success `result`, otherwise `description` and an `error_code` that is "subject to change"; some errors carry `parameters` (`ResponseParameters`: `retry_after`, `migrate_to_chat_id`). | https://core.telegram.org/bots/api#making-requests, https://core.telegram.org/bots/api#responseparameters |
+| Uploads are multipart parts; a JSON field such as a media group's `media` refers to a part as `attach://<file_attach_name>`. | https://core.telegram.org/bots/api#sending-files, https://core.telegram.org/bots/api#inputmedia |
+| `File` has `file_id`, `file_unique_id`, `file_size` and `file_path`; the download link is `https://api.telegram.org/file/bot<token>/<file_path>`, valid for at least 1 hour. | https://core.telegram.org/bots/api#file |
+| `WebhookInfo` fields: `url`, `has_custom_certificate`, `pending_update_count`, `ip_address`, `last_error_date`, `last_error_message`, `last_synchronization_error_date`, `max_connections`, `allowed_updates`. | https://core.telegram.org/bots/api#webhookinfo |
+| `getUpdates`: `offset`, `limit` (1–100, default 100), `timeout`, `allowed_updates`. An update is confirmed once `getUpdates` is called with an offset higher than its `update_id`; a negative offset counts from the end of the queue. | https://core.telegram.org/bots/api#getupdates |
+
+**What the fake decides for itself** (not documented, so SpaceMan must not depend on it; real verification in TG-14
+checks it):
+- Lengths ("characters") are counted in UTF-16 code units, the stricter reading; an emoji counts as two.
+- Error descriptions other than `Too Many Requests: retry after N`, `Forbidden: bot was blocked by the user`,
+  `Unauthorized` and `Not Found` are the fake's own wording, all with the usual `Bad Request: ` prefix. Callers branch on
+  the status code (`botapi.RetryAfter`, `botapi.IsForbidden`, `botapi.IsUnauthorized`), never on the text.
+- `getUpdates` while a webhook is set answers 409; a wrong token answers 401; an unknown method answers 404.
+- Rate limits: 1 message/s per private chat with a burst of 3, 20/min per group, 30/s overall, as token buckets;
+  sends, edits and deletes count; a media group counts as one send; `answerCallbackQuery` and reads don't count.
+- `setWebhook` accepts only `https` URLs on ports 443, 80, 88 and 8443, as documented; tests deliver to their own
+  `http://127.0.0.1` server through `tgtest.Options.WebhookTarget`.
+
 ## Rate limits
 
 | Fact | Source |
