@@ -76,6 +76,7 @@ type Metrics struct {
 	gwRevokeFailed  prometheus.Gauge
 	ingest          ingestMetrics
 	tgUpdates       telegramUpdateMetrics
+	telegram        telegramMetrics
 	fs              *fsCollector
 	handlerTimeout  time.Duration
 	handlerInFlight int
@@ -138,6 +139,7 @@ func New() *Metrics {
 	m.gwRevokeFailed = f.gauge("gateway_revocations_failed", "LLM gateway (Harbor Pilot) credential revocations that failed: each credential stays valid until it expires unless a person revokes it, or its parent, in the gateway.")
 	m.ingest = newIngestMetrics(f)
 	m.tgUpdates = newTelegramUpdateMetrics(f)
+	m.telegram = newTelegramMetrics(f)
 
 	reg.MustRegister(
 		collectors.NewGoCollector(),

@@ -53,6 +53,12 @@ func exercise(m *Metrics) {
 	m.SetIngestConnections(map[ConnectionKind]map[IngestConnState]int{ConnectionPulse: {IngestConnConnected: 1}})
 	m.SetIngestQuarantine(4)
 	m.IngestReplay()
+	m.TelegramSend(TelegramInteractive, TelegramSent)
+	m.TelegramDropped(TelegramDigest, TelegramDropQueueFull, 2)
+	m.TelegramRateLimited(TelegramScopeChat)
+	m.TelegramOverflowNotice()
+	m.SetTelegramQueueDepth(map[TelegramClass]int{TelegramEdit: 3})
+	m.TelegramQueueWait(TelegramNeedsYou, time.Second)
 }
 
 func gather(t *testing.T, m *Metrics) map[string]*dto.MetricFamily {
@@ -135,6 +141,12 @@ func TestCatalogGolden(t *testing.T) {
 		"spaceman_telegram_updates_total":                "counter:outcome",
 		"spaceman_telegram_updates_queued":               "gauge:",
 		"spaceman_telegram_poll_errors_total":            "counter:",
+		"spaceman_telegram_sends_total":                  "counter:class,result",
+		"spaceman_telegram_dropped_total":                "counter:class,reason",
+		"spaceman_telegram_rate_limited_total":           "counter:scope",
+		"spaceman_telegram_overflow_notices_total":       "counter:",
+		"spaceman_telegram_queue_depth":                  "gauge:class",
+		"spaceman_telegram_queue_wait_seconds":           "histogram:class",
 	}
 	fams := gather(t, m)
 	got := map[string]string{}

@@ -21,6 +21,9 @@ const (
 	sendTimeout            = 15 * time.Second
 )
 
+// SlowDownText answers a linked user over the inbound action limit, once until an action is allowed again.
+const SlowDownText = "Slow down: too many requests. Try again in a minute."
+
 // UnlinkedText is the only thing an unlinked Telegram user is ever sent. It names no host, user or space.
 const UnlinkedText = "This is a private SpaceMan bot. To use it, link your Telegram account in SpaceMan's web UI: " +
 	"Account → Telegram → Link Telegram."
@@ -56,6 +59,8 @@ type DispatcherOptions struct {
 	Links Links
 	// Handler is nil until the chat surfaces exist: then linked users' updates are dropped.
 	Handler Handler
+	// Limiter enforces the per-link inbound limits (nil: none). Every linked user's update costs one KindAction.
+	Limiter *Limiter
 	// Bot sends the dispatcher's own replies; SetBot replaces it when the bot is (re)configured. Without one, nothing
 	// is sent.
 	Bot Bot
@@ -78,6 +83,7 @@ type DispatcherOptions struct {
 type Dispatcher struct {
 	links   Links
 	handler Handler
+	limiter *Limiter
 	bot     atomic.Pointer[botRef]
 	clock   clock.Clock
 	metrics *metrics.Metrics
@@ -107,7 +113,7 @@ func NewDispatcher(o DispatcherOptions) *Dispatcher {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	d := &Dispatcher{links: o.Links, handler: o.Handler, clock: o.Clock, metrics: o.Metrics, log: o.Log,
+	d := &Dispatcher{links: o.Links, handler: o.Handler, limiter: o.Limiter, clock: o.Clock, metrics: o.Metrics, log: o.Log,
 		perUser: o.UnlinkedPerUser, global: o.UnlinkedGlobal, replied: newLRU(o.UnlinkedUsers)}
 	d.SetBot(o.Bot)
 	return d
@@ -172,6 +178,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 	}
 	if d.links != nil {
 		if l, ok := d.links.Lookup(from.ID); ok {
+			if d.limiter != nil {
+				if ok, warn := d.limiter.allow(l.ID, KindAction); !ok {
+					d.throttled(ctx, &u, l, warn)
+					return
+				}
+			}
 			d.metrics.TelegramUpdate(metrics.TelegramUpdateLinked)
 			if d.handler != nil {
 				d.handler.Handle(ctx, u, l)
@@ -180,6 +192,32 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 		}
 	}
 	d.unlinked(ctx, &u, from.ID)
+}
+
+// throttled answers an update over the link's action limit: a button tap always gets its (required) answer, with the
+// slow-down text the first time; a message gets the text as a reply only the first time. Nothing else happens.
+func (d *Dispatcher) throttled(ctx context.Context, u *botapi.Update, l Link, warn bool) {
+	d.metrics.TelegramUpdate(metrics.TelegramUpdateThrottled)
+	bot := d.client()
+	if bot == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	switch {
+	case u.CallbackQuery != nil:
+		p := botapi.AnswerCallbackQueryParams{CallbackQueryID: u.CallbackQuery.ID}
+		if warn {
+			p.Text = SlowDownText
+		}
+		if err := bot.AnswerCallbackQuery(ctx, p); err != nil {
+			d.log.Debug("telegram: a throttled button tap was not answered", slog.String("error", err.Error()))
+		}
+	case u.Message != nil && warn:
+		if _, err := bot.SendMessage(ctx, botapi.SendMessageParams{ChatID: l.ChatID, Text: SlowDownText}); err != nil {
+			d.log.Debug("telegram: the slow-down notice was not sent", slog.String("error", err.Error()))
+		}
+	}
 }
 
 // leaveGroup leaves a group, supergroup or channel the bot was added to (v1 is private chats only; group binding is a

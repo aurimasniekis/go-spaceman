@@ -101,7 +101,7 @@ long-polling mode, which share one bounded queue and dispatcher. No label carrie
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `spaceman_telegram_webhook_requests_total` | counter | `result` | Webhook requests. `result` is `accepted` (queued), `duplicate` (an `update_id` already seen), `queue_full` (503, Telegram retries later), `unauthorized` (401, wrong or missing secret token), `not_found` (no webhook configured or a wrong hook id), `bad_method`, `bad_type` (not JSON), `forbidden_ip` (outside the source-IP allowlist), `too_large` (413, over 256 KiB), `bad_request` or `unavailable` (the dispatcher isn't running). A rising `unauthorized` count means someone is probing the route. |
-| `spaceman_telegram_updates_total` | counter | `outcome` | Updates the dispatcher handled: `linked` (handed on for a linked user), `unlinked_replied` (the linking instructions, at most once an hour per user and once a second overall), `unlinked_dropped`, `left_chat` (the bot left a group it was added to), `ignored` or `failed`. |
+| `spaceman_telegram_updates_total` | counter | `outcome` | Updates the dispatcher handled: `linked` (handed on for a linked user), `unlinked_replied` (the linking instructions, at most once an hour per user and once a second overall), `unlinked_dropped`, `left_chat` (the bot left a group it was added to), `ignored`, `failed` or `throttled` (a linked user over the inbound action limit, who gets one "slow down" answer). |
 | `spaceman_telegram_updates_queued` | gauge | | Accepted updates waiting for a dispatcher worker (at most 1024). |
 | `spaceman_telegram_poll_errors_total` | counter | | Failed `getUpdates` calls in polling mode. |
 
@@ -113,6 +113,21 @@ long-polling mode, which share one bounded queue and dispatcher. No label carrie
 | `spaceman_events_pending`, `spaceman_events_dead` | gauge | | Events waiting to be published, and dead-lettered ones. |
 | `spaceman_events_lag_seconds` | gauge | | Age of the oldest event waiting to be published. |
 | `spaceman_outbox_pending`, `spaceman_outbox_dead` | gauge | | Outbox messages queued or awaiting retry, and dead-lettered ones. |
+
+### Telegram sender
+
+These cover the outbound queue of the planned Telegram bot (ADR-0083, Proposed). Nothing sends through it yet, so the
+counters stay at 0. `class` is the priority class: `interactive`, `needs_you`, `notification` (overflow notices
+too), `edit` or `digest`. Chat, link and user identifiers are never labels.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `spaceman_telegram_sends_total` | counter | `class`, `result` (`sent`, `failed`, `blocked`) | Messages the sender finished. `failed`: an error retrying won't fix, or the 3 retries ran out. `blocked`: 403, the user blocked the bot or it can't write to the chat. |
+| `spaceman_telegram_dropped_total` | counter | `class`, `reason` (`queue_full`, `coalesced`, `blocked`, `shutdown`) | Messages dropped without sending: a queue bound was reached and this was the lowest class, a newer message with the same key replaced it, its chat blocked the bot, or central stopped. |
+| `spaceman_telegram_rate_limited_total` | counter | `scope` (`chat`, `global`) | 429 answers, by what the sender paused: the chat, or every chat when the answer looked global. |
+| `spaceman_telegram_overflow_notices_total` | counter | | Overflow notices queued: a chat's dropped messages collapsed into one "N updates — open the app" message. |
+| `spaceman_telegram_queue_depth` | gauge | `class` | Messages waiting in the queue, overflow notices included. |
+| `spaceman_telegram_queue_wait_seconds` | histogram | `class` | Time from enqueue to the first send attempt. |
 
 ### Jobs, backups, HTTP and sign-in
 
@@ -155,6 +170,8 @@ long-polling mode, which share one bounded queue and dispatcher. No label carrie
 | Subscription or connection down | `spaceman_ingest_subscriptions{state="error"} > 0` or `spaceman_ingest_connections{state=~"error|reconnecting"} > 0` for 5 minutes |
 | Retries hot | `sum(rate(spaceman_ingest_deliveries_total{origin="redelivery"}[10m])) > 1` |
 | Publication stuck | `spaceman_events_lag_seconds > 300` or `spaceman_events_dead > 0` |
+| Telegram rate-limited | `increase(spaceman_telegram_rate_limited_total[15m]) > 0` (the sender's buckets should prevent every 429) |
+| Telegram dropping | `increase(spaceman_telegram_dropped_total{reason="queue_full"}[15m]) > 0` |
 | Backups stale | `time() - spaceman_backup_last_success_timestamp_seconds > 2 * 86400` |
 
 ## Logs
