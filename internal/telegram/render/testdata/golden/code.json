@@ -1,0 +1,108 @@
+{
+  "parts": [
+    {
+      "text": "Some code:\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n\nindented code\n\ngraph TD\n  A-->B\n\nno language\n\nsequenceDiagram\n  A->>B: hi",
+      "entities": [
+        {
+          "type": "pre",
+          "offset": 12,
+          "length": 34,
+          "language": "go",
+          "covers": "func main() {\n\tfmt.Println(\"hi\")\n}"
+        },
+        {
+          "type": "pre",
+          "offset": 48,
+          "length": 13,
+          "covers": "indented code"
+        },
+        {
+          "type": "pre",
+          "offset": 63,
+          "length": 16,
+          "language": "mermaid",
+          "covers": "graph TD\n  A-->B"
+        },
+        {
+          "type": "pre",
+          "offset": 81,
+          "length": 11,
+          "language": "bad",
+          "covers": "no language"
+        },
+        {
+          "type": "pre",
+          "offset": 94,
+          "length": 27,
+          "language": "mermaid",
+          "covers": "sequenceDiagram\n  A->>B: hi"
+        }
+      ],
+      "buttons": [
+        {
+          "Text": "View diagram 1",
+          "WebAppURL": "https://tg.example.com/#/diagram/0"
+        },
+        {
+          "Text": "View diagram 2",
+          "WebAppURL": "https://tg.example.com/#/diagram/1"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "paragraph",
+        "text": "Some code:"
+      },
+      {
+        "type": "pre",
+        "text": "func main() {\n\tfmt.Println(\"hi\")\n}",
+        "language": "go"
+      },
+      {
+        "type": "pre",
+        "text": "indented code"
+      },
+      {
+        "type": "pre",
+        "text": "graph TD\n  A--\u003eB",
+        "language": "mermaid"
+      },
+      {
+        "type": "buttons",
+        "buttons": [
+          {
+            "text": "View diagram",
+            "web_app": {
+              "url": "https://tg.example.com/#/diagram/0"
+            }
+          }
+        ]
+      },
+      {
+        "type": "pre",
+        "text": "no language",
+        "language": "bad"
+      },
+      {
+        "type": "pre",
+        "text": "sequenceDiagram\n  A-\u003e\u003eB: hi",
+        "language": "mermaid"
+      },
+      {
+        "type": "buttons",
+        "buttons": [
+          {
+            "text": "View diagram",
+            "web_app": {
+              "url": "https://tg.example.com/#/diagram/1"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "markdown": "Some code:\n\n```go\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```\n\n```\nindented code\n```\n\n```mermaid\ngraph TD\n  A-->B\n```\n\n```bad\nno language\n```\n\n```mermaid\nsequenceDiagram\n  A->>B: hi\n```"
+}

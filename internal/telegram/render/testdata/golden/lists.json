@@ -1,0 +1,133 @@
+{
+  "parts": [
+    {
+      "text": "• one\n• two\n  • nested bold\n    1. deep\n☑ done task\n☐ open task\n\n3. three\n4. four\n5. item with two paragraphs\n  second paragraph",
+      "entities": [
+        {
+          "type": "bold",
+          "offset": 23,
+          "length": 4,
+          "covers": "bold"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "list",
+        "items": [
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "one"
+              }
+            ]
+          },
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "two"
+              },
+              {
+                "type": "list",
+                "items": [
+                  {
+                    "blocks": [
+                      {
+                        "type": "paragraph",
+                        "text": [
+                          "nested ",
+                          {
+                            "type": "bold",
+                            "text": "bold"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "list",
+                        "items": [
+                          {
+                            "blocks": [
+                              {
+                                "type": "paragraph",
+                                "text": "deep"
+                              }
+                            ],
+                            "value": 1,
+                            "type": "1"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "done task"
+              }
+            ],
+            "has_checkbox": true,
+            "is_checked": true
+          },
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "open task"
+              }
+            ],
+            "has_checkbox": true
+          }
+        ]
+      },
+      {
+        "type": "list",
+        "items": [
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "three"
+              }
+            ],
+            "value": 3,
+            "type": "1"
+          },
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "four"
+              }
+            ],
+            "value": 4,
+            "type": "1"
+          },
+          {
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "item with two paragraphs"
+              },
+              {
+                "type": "paragraph",
+                "text": "second paragraph"
+              }
+            ],
+            "value": 5,
+            "type": "1"
+          }
+        ]
+      }
+    ]
+  },
+  "markdown": "• one\\\n• two\\\n&#32;&#32;• nested **bold**\\\n&#32;&#32;&#32;&#32;1\\. deep\\\n☑ done task\\\n☐ open task\n\n3\\. three\\\n4\\. four\\\n5\\. item with two paragraphs\\\n&#32;&#32;second paragraph"
+}

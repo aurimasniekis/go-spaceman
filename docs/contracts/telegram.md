@@ -146,6 +146,25 @@ Recorded so a later change knows what was considered (ADR-0083 decision 15):
 
 ## Third-party library
 
-The Markdown parser for the renderer (TG-5) is **goldmark** (MIT, CommonMark plus GFM extensions,
-https://github.com/yuin/goldmark). TG-5 records its pinned version and licence here and in `docs/THIRD_PARTY.md` when it
-adds the dependency; Go has no Markdown library in `go.mod` at v0.1.4.
+The Markdown parser for the renderer (TG-5, `internal/telegram/render`) is **goldmark v1.8.7** (released 2026-10-30;
+MIT licence, copyright Yusuke Inuzuka; CommonMark plus the GFM and footnote extensions; no dependencies of its own;
+https://github.com/yuin/goldmark). It is pinned in `go.mod` and listed in `docs/THIRD_PARTY.md`.
+
+Measured on goldmark v1.8.7 (2026-11-14, the renderer's hostile-input tests): 30,000 unclosed `[a](` in one paragraph
+took 10 s to parse. The renderer escapes the brackets of a paragraph with more than 256 `[` before parsing (the same
+treatment the web renderer gives emphasis delimiters, ADR-0082), which brings that input to about 50 ms. No other input
+in `hostile_test.go` takes more than a few hundred milliseconds.
+
+## Rendering facts used by TG-5
+
+Read from the raw Bot API page (https://core.telegram.org/bots/api, fetched 2026-11-14) on top of the formatting rows
+above.
+
+| Fact | Source |
+|---|---|
+| Nesting: if two entities share characters, one contains the other; bold, italic, underline, strikethrough and spoiler can contain and be part of any other entity **except pre and code**; blockquote and expandable_blockquote can't nest; all other entities can't contain each other. The renderer therefore closes styles around inline code, drops the code entity inside a link, and closes a quote around a code block. Whether a blockquote may contain a `code` or `text_link` entity is not stated explicitly; the renderer allows it (real verification pending). | https://core.telegram.org/bots/api#formatting-options |
+| `InputRichMessage` holds exactly one of `blocks`, `html` or `markdown`, plus `media`, `is_rtl` and `skip_entity_detection`. | https://core.telegram.org/bots/api#inputrichmessage |
+| Rich message limits: 32768 UTF-8 characters (including custom emoji alt text and formula source), 500 blocks (including nested blocks, list items, table rows, quotation and details blocks), 16 levels of nested formatting and blocks, 50 media, 20 table columns. | https://core.telegram.org/bots/api#rich-message-formatting-options |
+| Block types and fields used: `paragraph` (`text`), `heading` (`text`, `size` 1–6), `pre` (`text`, optional `language`), `divider`, `list` (`items`: `InputRichBlockListItem` with `blocks`, optional `has_checkbox`, `is_checked`, `value`, `type` "1"/"a"/"A"/"i"/"I"), `blockquote` (`blocks`, optional `credit`), `table` (`cells`: rows of `RichBlockTableCell` with optional `text` (omitted means an invisible cell), `is_header`, `colspan`, `rowspan`, and `align` (left/center/right) and `valign` (top/middle/bottom), which are not marked optional; optional `is_bordered`, `is_striped`, `is_compact`, `caption`), `details` (`summary`, `blocks`, optional `is_open`), `buttons` (`buttons`: 1–8 `RichMessageButton`, optional `align`). | https://core.telegram.org/bots/api#inputrichblock |
+| `RichText` is a string, an array of `RichText`, or a typed object; the renderer uses `bold`, `italic`, `strikethrough`, `code` (each with `text`) and `url` (`text`, `url`). | https://core.telegram.org/bots/api#richtext |
+| `RichMessageButton`: `text` (plain text, custom emoji and date-time only), optional `style`, and exactly one action such as `url` (HTTP or tg://), `callback_data` (1–64 bytes) or `web_app` (private chats only; not for business-account messages). | https://core.telegram.org/bots/api#richmessagebutton |
