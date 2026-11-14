@@ -206,6 +206,7 @@ Bounds graceful shutdown.
 | `data_dir` | `/var/lib/spaceman-agent` | `SPACEMAN_AGENT_DATA_DIR` | Holds the node journal, the agent's herdr-core home, space folders and memory (absolute). |
 | `management_listen` | (empty) | `SPACEMAN_AGENT_MANAGEMENT_LISTEN` | Validated (host:port) but not served by this build: the node agent has no management listener yet (docs/LIMITATIONS.md). |
 | `capacity` | `4` | `SPACEMAN_AGENT_CAPACITY` | The maximum number of concurrent runs this node accepts (SM-LIMIT-001; 1-256). |
+| `journal_retention` | `720h0m0s` | `SPACEMAN_AGENT_JOURNAL_RETENTION` | How long the journal keeps an ended run after its final state: older ended runs are deleted once central acknowledged their final state, their recording is fully shipped and their transcript upload is finished (30 days to 1 year; default 30 days, the harness pin window of ADR-0077). |
 
 ### `central`
 
