@@ -4338,6 +4338,19 @@
        - **Auto-start** leaves a space whose control has an active wait alone; the wait brings control back.
        - **Not done.** The probe isn't reserved for a resume over a plain launch: the first launch at `check_at` takes
          it, as in UL-6. The deadline job doesn't clear holds whose reset passed: such holds no longer refuse anything.
+       - **PR #59 review.**
+         - **A hold that clears wakes its waits.** Clear-now, an account clear, evidence, or a probe that made progress
+           sets `resume_at = now`, in the clear's transaction, for two kinds of waiting wait: those parked under the hold
+           (`usage_limit_id`), and those put off as `account_held` whose launch uses the hold's account (or gateway). The
+           job resumes them on its next round; the clear launches nothing.
+         - **The launch transaction re-checks** that the instance has no other live run. One started between the claim and
+           the launch supersedes the wait (`superseded`).
+         - **A failed `--resume`.** A resumed run that ends `failed`, or `exited`, before its first turn (the resume
+           didn't work) gets a new wait due at once. It carries no session and the original prompt (the fresh-session
+           path), and control is told once (`limit-wait-resume-failed:<wait id>`). Only a resume that used a session gets
+           this, so a wait has at most one fresh retry.
+         - **The supervisor** neither restarts nor counts a control that has a limit wait (swept at its limit, or a failed
+           resume).
   6. **Release.** A worker's wait is released after `max_wait` (default 7 days, Q2): the task returns to `ready`
      with its assignee cleared and control is told. A control wait is never released.
      - **Amended 2026-11-14 (UL-7).**
@@ -4347,9 +4360,12 @@
        - **The release.** One transaction marks the wait `released` (`max_wait`). The queue sets the task `ready` and
          clears `assignee_run`, only while it is still the parked run's, with its outbox event and audit. Control is
          told once (dedup `limit-wait-released:<wait id>`); the queue's own "task ready" notice isn't sent.
+       - **A task in review** (PR #59 review) stays in review on a release, with only its assignee cleared; control's
+         message says it still waits for acceptance. The message says "back in the queue" only when the task really
+         went back to ready.
        - **Task changes** (UL-2 review follow-up). A task that becomes done, failed, cancelled, ready or backlog, or
          is assigned to another run, cancels its waiting waits (`task_moved`) in the same queue transaction, through
-         the `limit_waits(task_id)` index.
+         the `limit_waits(task_id)` index. An incident's preemption, which returns running tasks to ready, does the same.
        - **Operator actions.** `POST /spaces/{id}/limit-waits/{wait_id}/resume` resumes a wait now, whatever its resume
          time. The usual checks apply; a refusal returns the reason and leaves the wait as it was.
          `POST /spaces/{id}/limit-waits/{wait_id}/release` gives a wait up now; control's too, after which only
@@ -4509,4 +4525,4 @@
 | K-13 | ~~Harbor Pilot 0.1.1 refuses Claude Code 2.1.317's `system`-role entries in `messages[]` (seen with the default Claude 5 model; `claude-sonnet-4-5` works).~~ **Resolved 2026-11-07:** Harbor Pilot 0.1.2 accepts them (0.1.3 downgrades them only for models known not to support them, its D-042). Re-run with Claude Code 2.1.317 on its default `claude-opus-5-5` through `serve --demo` v0.1.3 with a minted child token: `["user","system"]` got 200 and the turn completed, passed through unchanged on the demo's Anthropic-shaped upstream (`docs/contracts/harnesses.md`, Harbor Pilot 0.1.3 re-run). A real Anthropic upstream is not verified (demo upstreams only). | — | done; SpaceMan requires Harbor Pilot ≥ 0.1.3 (ADR-0060) |
 | K-14 | Signature verification of Claude Code release manifests. Each version has `manifest.json.raw-sig.json` (`RSASSA-PKCS1-v1_5-SHA512` over a fixed prefix plus the manifest, key compiled into Claude Code) and a detached PGP `manifest.json.sig`; neither the key nor the procedure is documented publicly, and OpenPGP is outside the Go standard library and `x/crypto`. Until then the node verifies SHA-256 and size against the manifest only (ADR-0077; LIMITATIONS, Harness distribution). | SM-HARN-006 | Verify the PGP (or raw) signature once Anthropic documents the release key and procedure; re-check on each contract update |
 | K-15 | ~~Usage-limit handling questions Q1–Q9 (failover, maximum wait, keep-alive versus park, node capacity, people, priority at reset, early stop, cross-space holds, gateway estimate).~~ **Resolved 2026-11-13:** the operator accepted every proposed default; recorded in ADR-0079 decision 10. | — | done |
-| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run (T12). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |
+| K-16 | Usage-limit behaviour not verified live (`docs/contracts/harnesses.md`, "Claude Code usage limits"): `--resume` with a **different real claude.ai account** (only different tokens against a fake API were tried; the binary has an `account_switch` auto-continue cancel); whether SpaceMan's interrupt counts as `ctrl_c` and cancels the auto-continue timer; auto-continue across a node agent restart that adopts the process; the `seven_day_opus` and `seven_day_sonnet` kinds; whether Claude Code reports OSC 7501 `error` (rather than `idle` or `done`) when a turn ends at a limit (the node scans on all three, so detection doesn't depend on it). A real limit can't be forced. Also unverified: how a real `--resume` of a parked session fails (a missing or unreadable session file), which UL-7 treats as a run that ends `failed` or `exited` before its first turn and restarts once in a fresh session (simulated only). | SM-RUN-004, SM-RUN-005 (real evidence) | Failover (ADR-0079 decision 8, off by default) is checked with two real accounts before it is relied on (T6/T7); the rest is recorded when a live limit is observed on a SpaceMan run (T12). ADR-0079 never interrupts a keep-alive run and parks by ending the process, so neither design path depends on the timer questions |

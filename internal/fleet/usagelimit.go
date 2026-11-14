@@ -327,6 +327,10 @@ func (svc *Service) clearHoldTx(ctx context.Context, tx *store.Tx, u db.UsageLim
 		Correlation: correlation}); err != nil {
 		return err
 	}
+	// Runs parked under it, or put off by it, may resume now (on the job's next round).
+	if err := svc.wakeHoldWaitsTx(ctx, tx, u); err != nil {
+		return err
+	}
 	return svc.record(ctx, tx, u.SpaceID, "usage_limit", u.ID, "updated", u.Version+1)
 }
 

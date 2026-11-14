@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,8 +44,9 @@ func (n *rawNode) command(t *testing.T, runID, kind string) proto.Command {
 	}
 }
 
-// launchFor reads the node's commands until a launch of the instance arrives.
-func (n *rawNode) launchFor(t *testing.T, instanceID string) (proto.Command, proto.LaunchPayload) {
+// launchFor reads the node's commands until a launch of the instance arrives, skipping (redelivered) launches of the
+// runs in skip.
+func (n *rawNode) launchFor(t *testing.T, instanceID string, skip ...string) (proto.Command, proto.LaunchPayload) {
 	t.Helper()
 	for {
 		var c proto.Command
@@ -52,7 +54,7 @@ func (n *rawNode) launchFor(t *testing.T, instanceID string) (proto.Command, pro
 			t.Fatal(err)
 		}
 		n.send(t, proto.TypeAck, proto.Ack{CommandID: c.CommandID, Result: proto.AckAccepted})
-		if c.Kind != proto.CmdLaunch {
+		if c.Kind != proto.CmdLaunch || slices.Contains(skip, c.RunID) {
 			continue
 		}
 		var p proto.LaunchPayload
@@ -293,5 +295,52 @@ func TestUsageLimitParkRelocatedAndReleased(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if c := systemToControl(t, e, sp.ID, "given up at its usage limit"); c != 1 {
 		t.Fatalf("control told %d times about the release", c)
+	}
+}
+
+// Review S4 and N5 (simulated: scripted node, fake clock): a control parked at its limit is resumed with --resume; the
+// resume fails before its first turn. SpaceMan starts it once more in a fresh session (no --resume, its original
+// prompt) through its wait; the supervisor doesn't restart it on its own (no restart budget used), and only the wait's
+// launches happen.
+func TestUsageLimitControlResumeFailsRestartsFresh(t *testing.T) {
+	t.Parallel()
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	e := newFleetEnvClock(t, clk)
+	e.enroll()
+	ctx := context.Background()
+	n, sp := hvNode(t, e, "ulctlfail", proto.MinorUsageLimit, false)
+	runLimitWaits(t, e)
+	ctrl, gen := launchGen(t, e, n, sp.ID, fleet.LaunchInput{Role: "ctl", Kind: "control", Harness: "claude-code", Prompt: "be control"})
+	reset := clk.Now().Add(time.Hour)
+	limited := &proto.RunLimit{Kind: proto.LimitFiveHour, ResetsAt: &reset, Since: clk.Now()}
+	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: ctrl.ID, SpaceID: sp.ID, Generation: gen, State: proto.RunRunning, Status: "idle", Turn: 3,
+		SessionID: "ses-ctl", Limit: limited, ObservedAt: time.Now().UTC()})
+	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: ctrl.ID, SpaceID: sp.ID, Generation: gen, State: proto.RunExited, Reason: "exited", Turn: 3,
+		SessionID: "ses-ctl", Limit: limited, ObservedAt: time.Now().UTC()})
+	eventually(t, "control parked", func() bool { w, _ := e.c.Fleet.LimitWaitForRun(ctx, ctrl.ID); return w != nil })
+
+	clk.Set(reset.Add(2 * time.Minute))
+	n.send(t, proto.TypeHeartbeat, proto.Heartbeat{Leases: []proto.LeaseState{}}) // renews the lease at the new time
+	eventually(t, "lease renewed", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	e.c.Human.Kick()
+	cmd, p := n.launchFor(t, ctrl.InstanceID, ctrl.ID)
+	if !p.Resume || p.SessionID != "ses-ctl" {
+		t.Fatalf("resume %+v", p)
+	}
+	// --resume fails: the run ends before its first turn.
+	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: cmd.RunID, SpaceID: sp.ID, Generation: cmd.Generation, State: proto.RunFailed, Reason: "error",
+		Error: "no conversation found", ObservedAt: time.Now().UTC()})
+	cmd2, p2 := n.launchFor(t, ctrl.InstanceID, ctrl.ID, cmd.RunID)
+	if p2.Resume || p2.SessionID != "" || !strings.HasPrefix(p2.Prompt, "be control") || !strings.Contains(p2.Prompt, "fresh session") {
+		t.Fatalf("fresh retry %+v", p2)
+	}
+	time.Sleep(500 * time.Millisecond)
+	var controls, bySupervisor int
+	if err := e.c.Store.ReadDB().QueryRowContext(ctx, `SELECT count(*), coalesce(sum(created_by = 'system:control-supervisor'), 0) FROM runs
+		WHERE space_id = ? AND kind = 'control'`, sp.ID).Scan(&controls, &bySupervisor); err != nil {
+		t.Fatal(err)
+	}
+	if controls != 3 || bySupervisor != 0 {
+		t.Fatalf("%d control runs, %d by the supervisor; want the original, the resume and one fresh retry (%s)", controls, bySupervisor, cmd2.RunID)
 	}
 }

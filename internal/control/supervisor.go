@@ -244,6 +244,11 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 		sv.log.Info("control ended at a usage limit; not restarted", slog.String(obs.FieldRunID, r.ID))
 		return
 	}
+	// A control with a limit wait (swept while at its limit, or a failed resume) comes back through the wait.
+	if w, err := sv.fl.LimitWaitForRun(ctx, r.ID); err != nil || w != nil {
+		sv.log.Info("control parked at a usage limit; not restarted", slog.String(obs.FieldRunID, r.ID))
+		return
+	}
 	sp, err := sv.fl.GetSpace(ctx, r.SpaceID)
 	if err != nil || sp.State != "active" {
 		return // paused or archived: no new work starts

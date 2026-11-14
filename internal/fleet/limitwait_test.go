@@ -44,10 +44,10 @@ func newParkEnv(t *testing.T) *parkEnv {
 		_, err := tx.SQL.ExecContext(ctx, `UPDATE tasks SET assignee_run = ? WHERE id = ? AND assignee_run = ?`, to, task, from)
 		return true, err
 	}
-	e.svc.opts.ReleaseTaskTx = func(ctx context.Context, tx *store.Tx, _ audit.Actor, task, run, _ string) (bool, error) {
+	e.svc.opts.ReleaseTaskTx = func(ctx context.Context, tx *store.Tx, _ audit.Actor, task, run, _ string) (string, error) {
 		e.releases = append(e.releases, task+":"+run)
 		_, err := tx.SQL.ExecContext(ctx, `UPDATE tasks SET status = 'ready', assignee_run = '' WHERE id = ? AND assignee_run = ?`, task, run)
-		return true, err
+		return "ready", err
 	}
 	// The first round of a process looks for resumes a stopped central left behind; it's done here, so tests count only
 	// their own rounds (TestLimitWaitStuckResumingRecovered simulates a restart).
@@ -612,5 +612,136 @@ func TestLimitWaitRelocatedFreshSession(t *testing.T) {
 	}
 	if ev := e.events[len(e.events)-1]; ev.Change != LimitWaitResumed || !ev.Fresh {
 		t.Fatalf("event %+v", ev)
+	}
+}
+
+// Review S1: a hold that clears (here an operator's clear-now) lets the waits it kept back resume on the job's next
+// round: the worker and the control parked under it, and a wait put off by a hold on the same account. A wait put off
+// by another account's hold stays put. The clear itself launches nothing.
+func TestLimitWaitHoldClearWakes(t *testing.T) {
+	e := newParkEnv(t)
+	reset := 5 * 24 * time.Hour
+	e.hold("ulm_w", "spc_a", "acc_1", "", proto.LimitSevenDay, &reset, nil)
+	e.limited("run_w", "worker", proto.LimitSevenDay, &reset, 0, 1)
+	e.end("run_w", proto.RunExited, "exited")
+	e.limited("run_c", "control", proto.LimitSevenDay, &reset, 0, 1)
+	e.end("run_c", proto.RunExited, "exited")
+	if w := e.waitOf("run_w"); w.UsageLimitID != "ulm_w" {
+		t.Fatalf("wait not under the hold: %+v", w)
+	}
+	// Two waits put off by a held account: one on acc_1, one on acc_2.
+	e.limited("run_h1", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 1)
+	e.end("run_h1", proto.RunExited, "exited")
+	e.limited("run_h2", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 1)
+	e.end("run_h2", proto.RunExited, "exited")
+	h2 := e.waitOf("run_h2")
+	e.exec(`UPDATE limit_waits SET last_error = 'account_held', resume_at = ? WHERE run_id IN ('run_h1', 'run_h2')`, e.us(3*time.Hour))
+	e.exec(`UPDATE limit_waits SET launch_json = '{"account_ref":"acc_2","prompt":"do the task"}' WHERE id = ?`, h2.ID)
+	e.clk.Advance(time.Hour)
+	runs := e.count(`SELECT count(*) FROM runs`)
+	if _, err := e.svc.ClearSpaceUsageLimit(e.ctx, holdActor, "spc_a", "ulm_w"); err != nil {
+		t.Fatal(err)
+	}
+	if e.count(`SELECT count(*) FROM runs`) != runs {
+		t.Fatal("the clear launched a run")
+	}
+	for _, id := range []string{"run_w", "run_c", "run_h1"} {
+		if w := e.waitOf(id); w.ResumeAt != e.clk.Now().UnixMicro() {
+			t.Fatalf("%s not woken: resume at %v", id, time.UnixMicro(w.ResumeAt).Sub(e.clk.Now()))
+		}
+	}
+	if w := e.wait(h2.ID); w.ResumeAt != e.us(3*time.Hour) {
+		t.Fatal("a wait held by another account was woken")
+	}
+	if at := e.nextAt(); !at.Equal(e.clk.Now()) {
+		t.Fatalf("next %v", at)
+	}
+	if n := e.due(); n != 3 {
+		t.Fatalf("resumed %d after the clear, want 3", n)
+	}
+	if e.waitOf("run_c").State != WaitResumed || e.waitOf("run_w").State != WaitResumed {
+		t.Fatal("the parked worker and control didn't resume")
+	}
+}
+
+// Review S2 and N1: the launch transaction checks again what the claim checked. Another live run of the instance started
+// between the claim and the launch supersedes the wait; a wait that changed meanwhile (an operator released it) aborts
+// the launch. Neither starts a run.
+func TestLimitWaitLaunchRechecks(t *testing.T) {
+	e := newParkEnv(t)
+	e.limited("run_i", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 1)
+	e.end("run_i", proto.RunExited, "exited")
+	e.limited("run_r", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 1)
+	e.end("run_r", proto.RunExited, "exited")
+	wi, wr := e.waitOf("run_i"), e.waitOf("run_r")
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	e.svc.opts.Admit = func(ctx context.Context, tx *store.Tx, _ Admission) error {
+		// Admit runs inside the launch transaction, after the claim committed.
+		if _, err := tx.SQL.ExecContext(ctx, `INSERT INTO runs (id, space_id, node_id, generation, kind, role, harness, instance_id, desired, observed,
+			launch_json, created_at, created_by, updated_at) VALUES ('run_other', 'spc_a', 'nod_1', 1, 'worker', 'w', 'claude-code', ?, 'running', 'starting',
+			'{}', 0, 't', 0) ON CONFLICT DO NOTHING`, e.instance("run_i")); err != nil {
+			return err
+		}
+		_, err := tx.SQL.ExecContext(ctx, `UPDATE limit_waits SET state = 'released', version = version + 1 WHERE id = ?`, wr.ID)
+		return err
+	}
+	before := e.count(`SELECT count(*) FROM runs`)
+	e.due()
+	if e.count(`SELECT count(*) FROM runs`) != before {
+		t.Fatal("a run was launched")
+	}
+	if w := e.wait(wi.ID); w.State != WaitCancelled || w.LastError != WaitSuperseded {
+		t.Fatalf("instance relaunched meanwhile: %+v", w)
+	}
+	// The hook's change rolls back with the aborted launch (in production it committed first, and the retry leaves the
+	// wait as that change left it); what matters is that the changed wait started no run.
+	if w := e.wait(wr.ID); w.State == WaitResumed || w.NewRunID != "" {
+		t.Fatalf("a wait that changed meanwhile resumed: %+v", w)
+	}
+}
+
+// Review S4: a resumed run that fails before its first turn (its --resume didn't work) starts again once in a fresh
+// session with its original prompt, and control hears of it once; a fresh start that fails too is not retried.
+func TestLimitWaitResumeFailedRestartsFresh(t *testing.T) {
+	e := newParkEnv(t)
+	e.limited("run_f", "worker", proto.LimitFiveHour, dur(time.Hour), 0, 2)
+	e.task("tsk_f", "run_f", "running")
+	e.end("run_f", proto.RunExited, "exited")
+	e.clk.Advance(time.Hour + 2*time.Minute)
+	e.due()
+	resumed, p := e.launchOf(e.instance("run_f"))
+	if !p.Resume {
+		t.Fatalf("not a resume: %+v", p)
+	}
+	e.exec(`UPDATE runs SET observed = 'starting' WHERE id = ?`, resumed)
+	e.end(resumed, proto.RunFailed, "error")
+	w := e.waitOf(resumed)
+	if w.SessionID != "" || w.ResumeAt != e.clk.Now().UnixMicro() || w.TaskID != "tsk_f" || !strings.Contains(w.LaunchJson, `"prompt":"do the task"`) {
+		t.Fatalf("fresh retry wait %+v", w)
+	}
+	if ev := e.events[len(e.events)-1]; ev.Change != LimitWaitResumeFailed {
+		t.Fatalf("event %+v", ev)
+	}
+	e.due()
+	fresh, p := e.launchOf(e.instance("run_f"))
+	if fresh == resumed || p.Resume || p.SessionID != "" || !strings.HasPrefix(p.Prompt, "do the task\n\n") || !strings.HasSuffix(p.Prompt, freshPrompt) {
+		t.Fatalf("fresh retry %s %+v", fresh, p)
+	}
+	if e.count(`SELECT count(*) FROM tasks WHERE id = 'tsk_f' AND assignee_run = ?`, fresh) != 1 {
+		t.Fatal("task not re-pointed to the fresh run")
+	}
+	// The fresh start fails too: an ordinary failure, no second retry.
+	events := len(e.events)
+	e.exec(`UPDATE runs SET observed = 'starting' WHERE id = ?`, fresh)
+	e.end(fresh, proto.RunFailed, "error")
+	if e.count(`SELECT count(*) FROM limit_waits WHERE run_id = ?`, fresh) != 0 || len(e.events) != events {
+		t.Fatal("a failed fresh start was retried")
+	}
+	// A run that wasn't resumed from a wait and ends before a turn is just a failure.
+	e.limited("run_plain", "worker", "", nil, 0, 0)
+	e.exec(`UPDATE runs SET limit_kind = '', limit_since = NULL WHERE id = 'run_plain'`)
+	e.end("run_plain", proto.RunFailed, "error")
+	if e.count(`SELECT count(*) FROM limit_waits WHERE run_id = 'run_plain'`) != 0 {
+		t.Fatal("an ordinary failure was parked")
 	}
 }

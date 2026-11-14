@@ -94,6 +94,9 @@ type LimitWaitEvent struct {
 	Fresh    bool
 	// FirstResume is the first resume of the wait's chain (attempts was 0), the one control hears about.
 	FirstResume bool
+	// TaskStatus is, on a release, the task's status after it was given back (ready, or review: only unassigned); ""
+	// when the task was not the run's any more and was left alone.
+	TaskStatus string
 }
 
 // Limit-wait changes.
@@ -101,6 +104,9 @@ const (
 	LimitWaitParked   = "parked"
 	LimitWaitResumed  = "resumed"
 	LimitWaitReleased = "released"
+	// LimitWaitResumeFailed is a wait written for a resumed run whose --resume failed before its first turn: it starts
+	// again in a fresh session.
+	LimitWaitResumeFailed = "resume_failed"
 )
 
 // limitWaitJob is the job's in-memory state.
@@ -209,7 +215,8 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 	repark := err == nil
 	switch {
 	case repark:
-		w.Attempts, w.ReleaseAt, w.TaskID = prev.Attempts, prev.ReleaseAt, prev.TaskID
+		// The task isn't carried: the lookup below finds it only while it is still this run's.
+		w.Attempts, w.ReleaseAt = prev.Attempts, prev.ReleaseAt
 		// The resumed run was launched with the resume note: a later fresh session needs the original prompt.
 		var spec, first LaunchSpec
 		if json.Unmarshal([]byte(r.LaunchJson), &spec) == nil && json.Unmarshal([]byte(prev.LaunchJson), &first) == nil {
@@ -225,13 +232,7 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 		if !w.ReleaseAt.Valid {
 			w.ReleaseAt = sql.NullInt64{Int64: now.Add(ul.MaxWait).UnixMicro(), Valid: true}
 		}
-		if id, err := tx.Q.GetTaskIDForRun(ctx, r.ID); err == nil {
-			if t, err := tx.Q.GetTask(ctx, id); err == nil && t.AssigneeRun == r.ID && (t.Status == "running" || t.Status == "blocked" || t.Status == "review") {
-				w.TaskID = t.ID
-			} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
+		if w.TaskID, err = activeTaskOf(ctx, tx, r.ID); err != nil {
 			return nil, err
 		}
 	}
@@ -267,6 +268,103 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 	}
 	tx.AfterCommit(svc.wakeDeadlines)
 	return &w, nil
+}
+
+// activeTaskOf returns the task assigned to a run that is still being worked on (running, blocked or in review), or "".
+func activeTaskOf(ctx context.Context, tx *store.Tx, runID string) (string, error) {
+	id, err := tx.Q.GetTaskIDForRun(ctx, runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	t, err := tx.Q.GetTask(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	if t.AssigneeRun == runID && (t.Status == "running" || t.Status == "blocked" || t.Status == "review") {
+		return t.ID, nil
+	}
+	return "", nil
+}
+
+// resumeFailedTx handles a resumed run that ended (failed, or exited) before its first turn: its --resume didn't work
+// (a session file gone or unreadable). It writes a new wait for the run that starts it again at once in a fresh
+// session with its original prompt, and control is told once. Only a resume that used a session gets this: a fresh
+// start that fails is an ordinary failure, so a wait gets at most one fresh retry.
+func (svc *Service) resumeFailedTx(ctx context.Context, tx *store.Tx, r db.Run) error {
+	prev, err := tx.Q.GetLimitWaitResumedInto(ctx, db.GetLimitWaitResumedIntoParams{SpaceID: r.SpaceID, NewRunID: r.ID})
+	if errors.Is(err, sql.ErrNoRows) || err == nil && prev.SessionID == "" {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if _, err := tx.Q.GetActiveLimitWait(ctx, db.GetActiveLimitWaitParams{SpaceID: r.SpaceID, InstanceID: r.InstanceID}); err == nil {
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	now := tx.Now.UnixMicro()
+	w := db.LimitWait{ID: ids.New(ids.LimitWait), SpaceID: r.SpaceID, RunID: r.ID, RunKind: r.Kind, Role: r.Role, NodeID: r.NodeID,
+		InstanceID: r.InstanceID, Harness: r.Harness, LaunchJson: prev.LaunchJson, UsageLimitID: prev.UsageLimitID, ResumeAt: now,
+		ReleaseAt: prev.ReleaseAt, State: WaitWaiting, Attempts: prev.Attempts, Version: 1, CreatedAt: now, UpdatedAt: now}
+	if r.Kind != "control" {
+		if w.TaskID, err = activeTaskOf(ctx, tx, r.ID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Q.InsertLimitWait(ctx, db.InsertLimitWaitParams{ID: w.ID, SpaceID: w.SpaceID, RunID: w.RunID, TaskID: w.TaskID, RunKind: w.RunKind,
+		Role: w.Role, NodeID: w.NodeID, InstanceID: w.InstanceID, Harness: w.Harness, LaunchJson: w.LaunchJson, UsageLimitID: w.UsageLimitID,
+		ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
+		return err
+	}
+	if err := svc.record(ctx, tx, w.SpaceID, "limit_wait", w.ID, "created", 1); err != nil {
+		return err
+	}
+	if _, err := svc.audit.Append(ctx, tx, audit.Event{Actor: LimitWaitActor, Action: "limit_wait.parked", Target: audit.Target{Type: "limit_wait", ID: w.ID},
+		Details: map[string]any{"space_id": w.SpaceID, "run_id": r.ID, "why": "resume_failed", "task_id": w.TaskID, "previous_wait": prev.ID}}); err != nil {
+		return err
+	}
+	if svc.opts.OnLimitWaitTx != nil {
+		if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitResumeFailed}); err != nil {
+			return err
+		}
+	}
+	tx.AfterCommit(svc.wakeDeadlines)
+	return nil
+}
+
+// wakeHoldWaitsTx makes the waits a cleared hold may have kept waiting due now, in the clear's transaction: those parked
+// under it, and those put off because an account was held whose launch would use the hold's account (or gateway). The
+// job resumes them on its next round, bounded as usual; nothing is launched here (review S1).
+func (svc *Service) wakeHoldWaitsTx(ctx context.Context, tx *store.Tx, u db.UsageLimit) error {
+	rows, err := tx.Q.ListHoldWaitsToWake(ctx, db.ListHoldWaitsToWakeParams{Now: tx.NowMicros(), UsageLimitID: u.ID, Lim: limitWaitBatch})
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	woke := false
+	for _, w := range rows {
+		if w.UsageLimitID != u.ID {
+			var spec LaunchSpec
+			if json.Unmarshal([]byte(w.LaunchJson), &spec) != nil {
+				continue
+			}
+			gw := spec.Gateway != nil && spec.Gateway.Kind != ""
+			if u.Scope == LimitScopeAccount && (gw || spec.AccountRef != u.AccountID) || u.Scope == LimitScopeGateway && !gw {
+				continue
+			}
+		}
+		if err := svc.deferWaitTx(ctx, tx, w, tx.Now, w.LastError); err != nil {
+			return err
+		}
+		woke = true
+	}
+	if woke {
+		tx.AfterCommit(svc.wakeDeadlines)
+	}
+	return nil
 }
 
 // settleWaitTx ends a waiting (or resuming) wait as released or cancelled, with a fixed reason, audited.
@@ -467,14 +565,15 @@ func (svc *Service) release(ctx context.Context, actor audit.Actor, waitID, reas
 		if err := svc.settleWaitTx(ctx, tx, w, WaitReleased, reason, actor); err != nil {
 			return err
 		}
+		taskStatus := ""
 		if w.TaskID != "" && svc.opts.ReleaseTaskTx != nil {
-			if _, err := svc.opts.ReleaseTaskTx(ctx, tx, actor, w.TaskID, w.RunID, "its run waited for a usage limit to reset for too long"); err != nil {
+			if taskStatus, err = svc.opts.ReleaseTaskTx(ctx, tx, actor, w.TaskID, w.RunID, "its run waited for a usage limit to reset for too long"); err != nil {
 				return err
 			}
 		}
 		w.State, w.LastError, w.Version = WaitReleased, reason, w.Version+1
 		if svc.opts.OnLimitWaitTx != nil {
-			if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitReleased}); err != nil {
+			if err := svc.opts.OnLimitWaitTx(ctx, tx, LimitWaitEvent{Wait: limitWaitFromRow(w), Change: LimitWaitReleased, TaskStatus: taskStatus}); err != nil {
 				return err
 			}
 		}
@@ -812,8 +911,9 @@ func waitReasonText(reason string) string {
 // original prompt again first.
 const (
 	resumePrompt = "SpaceMan paused you at your usage limit; it has reset. Continue the task you were working on; check spaceman_messages first."
-	freshPrompt  = "SpaceMan paused your previous session at a usage limit. The space has moved to another node since, so that session could " +
-		"not be resumed: this is a fresh session. Continue the task from the state of the workspace; check spaceman_messages first."
+	freshPrompt  = "SpaceMan paused your previous session at a usage limit, and the limit has reset. That session could not be resumed (the " +
+		"space moved to another node, or resuming it failed), so this is a fresh session. Continue the task from the state of the workspace; " +
+		"check spaceman_messages first."
 )
 
 // waitLaunch is the launch that resumes a wait: the parked run's instance, role, model, settings, account and
@@ -826,11 +926,9 @@ func waitLaunch(w db.LimitWait, fresh bool) (LaunchInput, error) {
 	in := LaunchInput{Kind: w.RunKind, Role: w.Role, Harness: w.Harness, InstanceID: w.InstanceID, Model: spec.Model, Settings: spec.Settings,
 		Workspace: spec.Workspace, Worktree: spec.Worktree, AccountRef: spec.AccountRef, Prompt: resumePrompt}
 	switch {
-	case fresh:
+	case fresh || w.SessionID == "":
+		// Relocated, a resume that failed, or a run that never finished a turn: it starts over with its prompt.
 		in.Prompt = spec.Prompt + "\n\n" + freshPrompt
-	case w.SessionID == "":
-		// The parked run never finished a turn: nothing to resume, so it starts over with its prompt.
-		in.Prompt = spec.Prompt + "\n\n" + resumePrompt
 	default:
 		in.SessionID = w.SessionID
 	}
@@ -846,6 +944,12 @@ func (svc *Service) resumedTx(ctx context.Context, tx *store.Tx, actor audit.Act
 	}
 	if cur.State != WaitResuming || cur.Version != w.Version {
 		return apperr.New(apperr.CodeConflict, "the wait changed while it was resuming")
+	}
+	// The instance must not have another live run: one started between the claim and this launch carries on instead.
+	if n, err := tx.Q.CountOtherLiveRunsOfInstance(ctx, db.CountOtherLiveRunsOfInstanceParams{SpaceID: w.SpaceID, InstanceID: w.InstanceID, ID: runID}); err != nil {
+		return err
+	} else if n > 0 {
+		return apperr.New(apperr.CodeConflict, "the instance has another live run")
 	}
 	if w.TaskID != "" && svc.opts.RepointTaskTx != nil {
 		ok, err := svc.opts.RepointTaskTx(ctx, tx, actor, w.TaskID, w.RunID, runID)

@@ -44,38 +44,57 @@ func (svc *Service) RepointRunTaskTx(ctx context.Context, tx *store.Tx, actor au
 	return err == nil, err
 }
 
-// ReleaseRunTaskTx gives a parked run's task back to the queue, inside the caller's transaction: it becomes ready with
-// its assignee run cleared (ADR-0079 decision 6). It changes nothing, and returns false, unless the task is still
-// assigned to the run and not finished. The caller tells control; OnStatus is not called.
-func (svc *Service) ReleaseRunTaskTx(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (bool, error) {
+// ReleaseRunTaskTx gives a parked run's task back, inside the caller's transaction (ADR-0079 decision 6): a running or
+// blocked task becomes ready with its assignee run cleared; a task in review stays in review (its work is done and
+// waits for acceptance) with only its assignee cleared. It returns the task's status after the change, or "" when it
+// changed nothing: the task is no longer the run's, or is finished. The caller tells control; OnStatus is not called.
+func (svc *Service) ReleaseRunTaskTx(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (string, error) {
 	r, err := tx.Q.GetTask(ctx, taskID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return "", nil
 	} else if err != nil {
-		return false, err
+		return "", err
 	}
 	if !waitKeeps(r.Status, r.AssigneeRun, runID) {
-		return false, nil
+		return "", nil
+	}
+	if r.Status == Review {
+		if _, err := tx.Q.UpdateTaskFields(ctx, db.UpdateTaskFieldsParams{Title: r.Title, Objective: r.Objective, Acceptance: r.Acceptance, Priority: r.Priority,
+			ExclusionsJson: r.ExclusionsJson, AssigneeRole: r.AssigneeRole, Workspace: r.Workspace, Now: tx.NowMicros(), ID: r.ID, Version: r.Version}); err != nil {
+			return "", err
+		}
+		if err := svc.changes.Record(ctx, tx, r.SpaceID, "task", r.ID, "updated", r.Version+1); err != nil {
+			return "", err
+		}
+		_, err := svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.updated", Target: audit.Target{Type: "task", ID: r.ID},
+			Details: map[string]any{"space_id": r.SpaceID, "assignee_run": "", "previous_assignee_run": runID, "reason": reason}})
+		if err != nil {
+			return "", err
+		}
+		return Review, nil
 	}
 	if _, err := tx.Q.SetTaskStatus(ctx, db.SetTaskStatusParams{Status: Ready, StatusReason: reason, Result: r.Result, Now: tx.NowMicros(), ID: r.ID,
 		Version: r.Version}); err != nil {
-		return false, err
+		return "", err
 	}
 	if _, err := tx.Q.UpdateTaskFields(ctx, db.UpdateTaskFieldsParams{Title: r.Title, Objective: r.Objective, Acceptance: r.Acceptance, Priority: r.Priority,
 		ExclusionsJson: r.ExclusionsJson, AssigneeRole: r.AssigneeRole, Workspace: r.Workspace, Now: tx.NowMicros(), ID: r.ID, Version: r.Version + 1}); err != nil {
-		return false, err
+		return "", err
 	}
 	if err := svc.changes.Record(ctx, tx, r.SpaceID, "task", r.ID, "updated", r.Version+2); err != nil {
-		return false, err
+		return "", err
 	}
 	t := fromRow(r)
 	if _, err := svc.Outbox.Enqueue(ctx, tx, outbox.Event{Depth: t.AutomationDepth, Payload: outbox.TaskStatusChanged{Task: eventTask(t), From: r.Status, To: Ready},
 		Correlation: r.ID}); err != nil {
-		return false, err
+		return "", err
 	}
 	_, err = svc.audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "task.status", Target: audit.Target{Type: "task", ID: r.ID},
 		Details: map[string]any{"space_id": r.SpaceID, "from": r.Status, "to": Ready, "reason": reason, "previous_assignee_run": runID}})
-	return err == nil, err
+	if err != nil {
+		return "", err
+	}
+	return Ready, nil
 }
 
 // waitKeeps reports whether a task still belongs to a parked run: assigned to it and still being worked on (running,

@@ -340,7 +340,7 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		RepointTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, fromRun, toRun string) (bool, error) {
 			return c.Queue.RepointRunTaskTx(ctx, tx, actor, taskID, fromRun, toRun)
 		},
-		ReleaseTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (bool, error) {
+		ReleaseTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (string, error) {
 			return c.Queue.ReleaseRunTaskTx(ctx, tx, actor, taskID, runID, reason)
 		},
 		OnCommandAck: func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error {

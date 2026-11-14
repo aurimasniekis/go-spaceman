@@ -50,7 +50,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   on. Control gets one message per park, resume and release, in place of the run-ended notice, and a parked control
   isn't auto-started. A task that is finished, cancelled or reassigned ends its run's wait. New endpoints
   `POST /spaces/{id}/limit-waits/{wait_id}/resume` and `.../release` (`spaceman limits resume|release`, run:control),
-  audited.
+  audited. A hold that clears lets the runs parked under it resume on the next round. A resume whose `--resume` fails
+  before the first turn starts once more in a fresh session. A released task in review stays in review, with only its
+  assignee cleared.
 
 ## [0.1.3] - 2026-11-13
 

@@ -87,9 +87,9 @@ type Options struct {
 	// RepointTaskTx points a parked run's task at the run that resumed it, inside the launch transaction; false when the
 	// task is no longer the parked run's (the resume is then given up). Nil: tasks are not touched.
 	RepointTaskTx func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, fromRun, toRun string) (bool, error)
-	// ReleaseTaskTx gives a parked run's task back to the queue (ready, unassigned) when its wait is released. Nil:
-	// tasks are not touched.
-	ReleaseTaskTx func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (bool, error)
+	// ReleaseTaskTx gives a parked run's task back when its wait is released: ready and unassigned, or, in review, only
+	// unassigned. It returns the task's status after the change ("" when it changed nothing). Nil: tasks are not touched.
+	ReleaseTaskTx func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (string, error)
 	// OnSpaceState is called after an operator paused, resumed, archived or restored a space (SetSpaceState), with
 	// the new state: deferred work can go out on resume, and subscriptions that stop while paused stop or start.
 	OnSpaceState func(spaceID, state string)

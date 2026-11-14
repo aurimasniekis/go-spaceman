@@ -56,6 +56,24 @@ func (q *Queries) ClearUsageLimitsByAccount(ctx context.Context, arg ClearUsageL
 	return result.RowsAffected()
 }
 
+const countOtherLiveRunsOfInstance = `-- name: CountOtherLiveRunsOfInstance :one
+SELECT count(*) FROM runs WHERE space_id = ? AND instance_id = ? AND id <> ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown')
+`
+
+type CountOtherLiveRunsOfInstanceParams struct {
+	SpaceID    string
+	InstanceID string
+	ID         string
+}
+
+// Another live run of an instance than the one being launched (a resume re-checks it in its launch transaction).
+func (q *Queries) CountOtherLiveRunsOfInstance(ctx context.Context, arg CountOtherLiveRunsOfInstanceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOtherLiveRunsOfInstance, arg.SpaceID, arg.InstanceID, arg.ID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getActiveControlLimitWait = `-- name: GetActiveControlLimitWait :one
 SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE space_id = ? AND run_kind = 'control' AND state IN ('waiting', 'resuming') LIMIT 1
 `
@@ -544,6 +562,65 @@ func (q *Queries) ListDueUsageLimits(ctx context.Context, resetsAt sql.NullInt64
 			&i.ClearedBy,
 			&i.NotifiedControlAt,
 			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHoldWaitsToWake = `-- name: ListHoldWaitsToWake :many
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE state = 'waiting' AND resume_at > ?1
+  AND (usage_limit_id = ?2 OR last_error = 'account_held')
+ORDER BY resume_at, id LIMIT ?3
+`
+
+type ListHoldWaitsToWakeParams struct {
+	Now          int64
+	UsageLimitID string
+	Lim          int64
+}
+
+// Waiting waits a cleared hold may let resume: parked under it, or put off because an account was held. Uses the
+// waiting-waits index (ix_limit_waits_due): only waits not yet due.
+func (q *Queries) ListHoldWaitsToWake(ctx context.Context, arg ListHoldWaitsToWakeParams) ([]LimitWait, error) {
+	rows, err := q.db.QueryContext(ctx, listHoldWaitsToWake, arg.Now, arg.UsageLimitID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LimitWait{}
+	for rows.Next() {
+		var i LimitWait
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.RunID,
+			&i.TaskID,
+			&i.RunKind,
+			&i.Role,
+			&i.NodeID,
+			&i.InstanceID,
+			&i.Harness,
+			&i.SessionID,
+			&i.LaunchJson,
+			&i.UsageLimitID,
+			&i.ResumeAt,
+			&i.ReleaseAt,
+			&i.State,
+			&i.NewRunID,
+			&i.Attempts,
+			&i.LastError,
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,

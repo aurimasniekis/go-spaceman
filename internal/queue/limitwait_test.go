@@ -105,29 +105,39 @@ func TestRepointAndReleaseRunTask(t *testing.T) {
 	if got := f.get(a.ID); !ok || got.AssigneeRun != "run_new" || got.Status != Running {
 		t.Fatalf("re-point: %v %+v", ok, got)
 	}
-	tx(func(tx *store.Tx) (err error) {
-		ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, a.ID, "run_old", "too long")
-		return
-	})
-	if ok || f.get(a.ID).Status != Running {
+	var st string
+	release := func(task, run string) string {
+		t.Helper()
+		tx(func(tx *store.Tx) (err error) {
+			st, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, task, run, "too long")
+			return
+		})
+		return st
+	}
+	if st := release(a.ID, "run_old"); st != "" || f.get(a.ID).Status != Running {
 		t.Fatal("released a task another run holds")
 	}
-	tx(func(tx *store.Tx) (err error) {
-		ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, a.ID, "run_new", "too long")
-		return
-	})
-	if got := f.get(a.ID); !ok || got.Status != Ready || got.AssigneeRun != "" || got.StatusReason != "too long" {
-		t.Fatalf("release: %v %+v", ok, got)
+	if st := release(a.ID, "run_new"); st != Ready {
+		t.Fatalf("release: %q", st)
+	}
+	if got := f.get(a.ID); got.Status != Ready || got.AssigneeRun != "" || got.StatusReason != "too long" {
+		t.Fatalf("release: %+v", got)
 	}
 	// A finished task is left alone.
 	b := f.assigned("B", "run_b")
 	b, err := f.svc.SetStatus(f.ctx, op, "spc_a", b.ID, b.Version, StatusInput{Status: Done})
 	must(t, err)
-	tx(func(tx *store.Tx) (err error) {
-		ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, b.ID, "run_b", "too long")
-		return
-	})
-	if ok || f.get(b.ID).Status != Done {
+	if st := release(b.ID, "run_b"); st != "" || f.get(b.ID).Status != Done {
 		t.Fatal("released a finished task")
+	}
+	// A task in review stays in review (its work waits for acceptance); only its assignee is cleared (review S3).
+	c := f.assigned("C", "run_c")
+	_, err = f.svc.SetStatus(f.ctx, op, "spc_a", c.ID, c.Version, StatusInput{Status: Review, Result: "done, see the PR"})
+	must(t, err)
+	if st := release(c.ID, "run_c"); st != Review {
+		t.Fatalf("release of a review task: %q", st)
+	}
+	if got := f.get(c.ID); got.Status != Review || got.AssigneeRun != "" || got.Result != "done, see the PR" {
+		t.Fatalf("review task after release: %+v", got)
 	}
 }

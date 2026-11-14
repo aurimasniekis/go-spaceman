@@ -115,9 +115,17 @@ func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.
 		key, subject = "limit-wait-released:"+w.ID, fmt.Sprintf("%s run given up at its usage limit", w.Role)
 		body = fmt.Sprintf("Run %s (%s, %s) waited at its usage limit since %s and was not resumed; SpaceMan gave up on it (%s).%s",
 			w.RunID, w.RunKind, w.Role, w.CreatedAt.UTC().Format(time.RFC3339), w.LastError, task)
-		if w.TaskID != "" {
+		switch ev.TaskStatus {
+		case "ready":
 			body += " The task is back in the queue, ready and unassigned: launch a worker for it when an account is free."
+		case "review":
+			body += " The task stays in review, waiting for acceptance; only its assignee was cleared."
 		}
+	case fleet.LimitWaitResumeFailed:
+		key, subject = "limit-wait-resume-failed:"+w.ID, fmt.Sprintf("%s run's resume failed; restarted fresh", w.Role)
+		body = fmt.Sprintf("Run %s (%s, %s), resumed after its usage limit, ended before its first turn: resuming its session failed. SpaceMan "+
+			"starts it again now in a fresh session with its original prompt, on the same instance (only once; a fresh start that fails is "+
+			"reported as usual).%s", w.RunID, w.RunKind, w.Role, task)
 	default:
 		return nil
 	}

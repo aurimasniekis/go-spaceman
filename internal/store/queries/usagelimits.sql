@@ -132,3 +132,14 @@ SELECT * FROM limit_waits WHERE space_id = ? AND state = 'waiting' AND last_erro
 -- A task's waiting waits (limit_waits(task_id) index): cancelled when the task is done with or given to another run.
 -- name: ListTaskLimitWaits :many
 SELECT * FROM limit_waits WHERE task_id = ? AND state = 'waiting' ORDER BY created_at, id;
+
+-- Another live run of an instance than the one being launched (a resume re-checks it in its launch transaction).
+-- name: CountOtherLiveRunsOfInstance :one
+SELECT count(*) FROM runs WHERE space_id = ? AND instance_id = ? AND id <> ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown');
+
+-- Waiting waits a cleared hold may let resume: parked under it, or put off because an account was held. Uses the
+-- waiting-waits index (ix_limit_waits_due): only waits not yet due.
+-- name: ListHoldWaitsToWake :many
+SELECT * FROM limit_waits WHERE state = 'waiting' AND resume_at > sqlc.arg(now)
+  AND (usage_limit_id = sqlc.arg(usage_limit_id) OR last_error = 'account_held')
+ORDER BY resume_at, id LIMIT sqlc.arg(lim);

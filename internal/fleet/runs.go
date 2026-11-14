@@ -856,6 +856,11 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				if _, err := svc.parkTx(ctx, tx, pr, nextLimit, why); err != nil {
 					return err
 				}
+			} else if sweep == nil && r.Desired != "stopped" && r.Turn == 0 && rep.Turn == 0 && (rep.State == proto.RunFailed || rep.State == proto.RunExited) {
+				// A resumed run that ended before its first turn: its --resume may have failed (review S4).
+				if err := svc.resumeFailedTx(ctx, tx, r); err != nil {
+					return err
+				}
 			}
 			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
 			if nodeReason != rep.Reason {
