@@ -70,13 +70,16 @@ func longHoldText(h fleet.LongHold, now time.Time) (title, body string) {
 		fmt.Fprintf(&b, " %s waiting on it (%s): SpaceMan keeps them, or parks them and resumes them at the reset with their sessions.",
 			plural(h.Runs, "run is", "runs are"), withTasks(h.Tasks))
 	}
+	clearHow := fmt.Sprintf("`spaceman limits clear %s --space %s` clears this hold (%s) in this space only (`spaceman limits holds --space %s` lists the space's holds)",
+		h.Hold.ID, h.SpaceSlug, h.Hold.ID, h.SpaceSlug)
 	if h.Hold.Scope == fleet.LimitScopeAccount {
-		b.WriteString(" Launches on the account are refused until then.\n\nNothing is needed if the work can wait. To keep it going sooner, bind " +
-			"another account of the same harness to the space and turn on usage-limit failover (the space limit usage_limit_failover); if the " +
-			"account works again before then, an operator can clear the hold (spaceman limits clear).")
+		fmt.Fprintf(&b, " Launches on the account are refused until then.\n\nNothing is needed if the work can wait. To keep it going sooner, bind "+
+			"another account of the same harness to the space and turn on usage-limit failover (the space limit usage_limit_failover). If the "+
+			"account works again before then, %s; launches on the account stay refused while any other space holds it. To clear its holds in "+
+			"every space, someone with account:write runs `spaceman account clear-holds %s`.", clearHow, h.Hold.AccountID)
 	} else {
-		b.WriteString(" Launches through the gateway are refused until then.\n\nNothing is needed if the work can wait. To keep it going sooner, " +
-			"add an account or budget in Harbor Pilot; if it works again before then, an operator can clear the hold (spaceman limits clear).")
+		fmt.Fprintf(&b, " Launches through the gateway are refused until then.\n\nNothing is needed if the work can wait. To keep it going sooner, "+
+			"add an account or budget in Harbor Pilot. If it works again before then, %s.", clearHow)
 	}
 	fmt.Fprintf(&b, "\n\nYou get one such notice per account and limit window, only for waits longer than %s (the space limit usage_limit_notify_after_hours; 0 turns it off).",
 		approxDuration(h.NotifyAfter))

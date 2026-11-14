@@ -86,7 +86,11 @@ When an account (or the Harbor Pilot gateway) is held until a reset more than **
 (`usage_limit_notify_after_hours`), typically a weekly limit, the space gets one **human action**: an informational
 message from SpaceMan ("Usage limits") with normal priority, in the space's Needs-you list. It names the account, the
 reset time, and how many runs (and tasks) are waiting on it, and says what you can do: nothing, if the work can wait;
-bind another account of the same harness and turn on usage-limit failover; or clear the hold if the account works again.
+bind another account of the same harness and turn on usage-limit failover; or, if the account works again, clear the
+hold. The action gives the hold's ID: `spaceman limits clear <hold id> --space <space>` clears it in this space only
+(`spaceman limits holds --space <space>` lists the space's holds), and launches on the account stay refused while
+another space still holds it; `spaceman account clear-holds <account>` (needs `account:write`) clears the account's
+holds in every space.
 
 There is one such action per space and limit window, however many runs hit the limit and however often they report it.
 A 5-hour wait raises none. A hold whose reset time is unknown raises none either, since nobody knows the wait is long.

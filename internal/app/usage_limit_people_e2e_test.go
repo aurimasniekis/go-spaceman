@@ -86,9 +86,15 @@ func TestUsageLimitPeopleNotice(t *testing.T) {
 	}
 	if !strings.Contains(a.Title, "weekly usage limit until "+long.UTC().Format("2006-01-02 15:04 UTC")) ||
 		!strings.Contains(a.Body, "In ulpeople, account ") || !strings.Contains(a.Body, "1 run is waiting on it (1 with a task)") ||
-		!strings.Contains(a.Body, "usage_limit_failover") || !strings.Contains(a.Body, "longer than 12 hours") {
+		!strings.Contains(a.Body, "usage_limit_failover") || !strings.Contains(a.Body, "longer than 12 hours") ||
+		!strings.Contains(a.Body, "spaceman limits clear "+hold.ID+" --space ulpeople") || !strings.Contains(a.Body, "spaceman account clear-holds "+hold.AccountID) {
 		t.Fatalf("notice text %q / %q", a.Title, a.Body)
 	}
+	// The hold is marked told (usage_limits.notified_humans_at).
+	eventually(t, "hold marked told", func() bool {
+		u, err := e.c.Store.R().GetUsageLimit(ctx, hold.ID)
+		return err == nil && u.NotifiedHumansAt.Valid
+	})
 
 	// Parked (central stops it), reported again, later rounds: still one.
 	n.command(t, w1.ID, proto.CmdStop)
@@ -103,6 +109,49 @@ func TestUsageLimitPeopleNotice(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if l := notices(); len(l) != 1 {
 		t.Fatalf("%d notices for one account window", len(l))
+	}
+}
+
+// ADR-0079 Q5 (UL-9, PR #63 review): a space that sets usage_limit_notify_after_hours to 0 through the limits API is
+// never told, even of a weekly limit; the hold stays untold.
+func TestUsageLimitPeopleNoticeOff(t *testing.T) {
+	t.Parallel()
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	e := newFleetEnvClock(t, clk)
+	e.enroll()
+	ctx := context.Background()
+	n, sp := hvNode(t, e, "ulpeopleoff", proto.MinorUsageLimit, false)
+	if _, err := e.c.Limits.Set(ctx, admin, sp.ID, 0, limits.Input{Values: map[string]int64{limits.UsageLimitNotifyAfter: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	w1, gen, _ := assignedWorker(t, e, n, sp.ID, "Wait for me", "")
+	since := clk.Now()
+	long := since.Add(3 * 24 * time.Hour)
+	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: w1.ID, SpaceID: sp.ID, Generation: gen, State: proto.RunRunning, Status: "idle", Turn: 2,
+		SessionID: "ses-people-off", Limit: &proto.RunLimit{Kind: proto.LimitSevenDay, ResetsAt: &long, Since: since}, ObservedAt: time.Now().UTC()})
+	var hold fleet.UsageLimit
+	eventually(t, "weekly hold", func() bool {
+		hs, _ := e.c.Fleet.UsageLimits(ctx, sp.ID)
+		if len(hs) == 1 && hs[0].Kind == proto.LimitSevenDay {
+			hold = hs[0]
+			return true
+		}
+		return false
+	})
+	if n, err := e.c.Supervisor.TellLongHolds(ctx); err != nil || n != 0 {
+		t.Fatalf("raised %d notices with the notice off (%v)", n, err)
+	}
+	l, err := e.c.Human.List(ctx, sp.ID, human.ListFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range l {
+		if strings.HasPrefix(a.DedupKey, "usage-limit-human:") {
+			t.Fatalf("notice %+v with the notice off", a)
+		}
+	}
+	if u, err := e.c.Store.R().GetUsageLimit(ctx, hold.ID); err != nil || u.NotifiedHumansAt.Valid {
+		t.Fatalf("hold %+v (%v) marked told with the notice off", u, err)
 	}
 }
 
