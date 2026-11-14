@@ -192,6 +192,10 @@ func TestStreamAfterBodyIsNotCut(t *testing.T) {
 		if _, err := io.ReadAll(r.Body); err != nil {
 			return err
 		}
+		// A read past the end (a JSON decoder checking for more) must not set a deadline again.
+		if _, err := r.Body.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+			return fmt.Errorf("read past the end: %w", err)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for i := range 3 {
 			if _, err := fmt.Fprintf(w, "data: %d\n\n", i); err != nil {
@@ -294,5 +298,62 @@ func TestReadGuardLeavesUpgradesAlone(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Over HTTP/2 (central serving TLS itself) a refusal with an unread body still delivers its whole response (the
+// HTTP/1 close-and-drain handling must not reset the stream first), and a stalled body is cut off.
+func TestReadGuardOverHTTP2(t *testing.T) {
+	done := make(chan error, 4)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			done <- fmt.Errorf("protocol %s", r.Proto)
+			return
+		}
+		if r.URL.Path == "/refuse" {
+			http.Error(w, strings.Repeat("no ", 1000), http.StatusUnauthorized)
+			done <- nil
+			return
+		}
+		_, err := io.ReadAll(r.Body)
+		done <- err
+	})
+	srv := httptest.NewUnstartedServer(WriteProgress(ReadProgress(inner, idle), time.Minute))
+	srv.EnableHTTP2 = true
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	cl := srv.Client()
+
+	pr, pw := io.Pipe() // a body the client never sends
+	t.Cleanup(func() { _ = pw.Close() })
+	res, err := cl.Post(srv.URL+"/refuse", "application/json", pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if err != nil || res.StatusCode != http.StatusUnauthorized || len(b) != 3001 {
+		t.Fatalf("refusal: %d, %d bytes, %v", res.StatusCode, len(b), err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	pr2, pw2 := io.Pipe()
+	t.Cleanup(func() { _ = pw2.Close() })
+	go func() { _, _ = pw2.Write([]byte(`{"a":`)) }()
+	go func() {
+		if res, err := cl.Post(srv.URL+"/read", "application/json", pr2); err == nil {
+			_ = res.Body.Close()
+		}
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("reading a stalled body succeeded")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler is still reading a body the client stopped sending")
 	}
 }
