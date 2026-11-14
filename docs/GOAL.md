@@ -503,6 +503,71 @@ Each requirement is a single obligation. Its status lives in `docs/TRACEABILITY.
 - SM-ATT-006 Attachments are included in backup, retention, export and purge.
 - SM-ATT-007 Forms in the UI use TanStack Form, including schema-driven human-action forms.
 
+### SM-TG — Telegram bot and Mini App (operator addition, §9; design in ADR-0083, Proposed, security-relevant change)
+- SM-TG-001 **Link and revocation.** A Telegram account is linked to a SpaceMan user only by a single-use, short-lived code
+  created in the web after a fresh login (step-up for SSO users), redeemed in a private chat, confirmed in Telegram (which
+  names the central host and the account) and then confirmed again in the same web session (which names the Telegram
+  account). One active link per Telegram user, and by default one per SpaceMan user. The user (bot or web) and an
+  administrator can revoke a link; a disabled user's link is suspended; configuring a different bot revokes every link.
+  Revocation applies to the next update and ends Mini App sessions at once. Links are reconfirmed from the web
+  periodically.
+- SM-TG-002 **Never wider than the user.** A linked Telegram user acts as their own SpaceMan user through the existing
+  API handler chain (rules, Casbin, human-action permissions, validation, idempotency, audit). Each link has its own
+  capped grant subject, intersected with the user's current grants at request time (default cap `operator`; SSO-mapped
+  grants only if enabled and only until the confirming SSO session expires). An allowlist classifies every API
+  operation, raw route and the change feed for Telegram; an unclassified one fails a test, and anything not allowed is
+  refused.
+- SM-TG-003 **Never step-up.** No operation that needs re-authentication, MFA, a user-only session or a personal session
+  is reachable from Telegram (only the declared Telegram self-service operations), and the Telegram principal never
+  carries a token ID. Enforced approvals are decided in the web unless a space opts in to a two-step confirmation in
+  chat; authorization is rechecked at execution for Telegram approvers. HallPass approvals are never confirmed from
+  Telegram.
+- SM-TG-004 **Webhook hardening.** The webhook is its own route group outside the API handler, on the main host only:
+  content-type and body limit, the secret token header compared in constant time before parsing, an optional source-IP
+  allowlist, `update_id` dedupe, a bounded queue that answers 503 when full, and no handling inside the request.
+  Unlinked users get at most one linking reply per hour and cause no reads. Inbound actions are rate-limited per link and
+  globally.
+- SM-TG-005 **Mini App session from validated initData.** The Mini App gets a session only by exchanging Telegram
+  `initData` validated per Telegram's documented HMAC scheme (constant-time comparison, bounded age, single use) for an
+  active link. The session is in memory, short-lived (idle and absolute limits), sent only in an `Authorization:
+  Telegram` header, never a cookie, a bearer token or part of a URL, and revoked with the link, the user or their grants.
+- SM-TG-006 **Native human-action forms for every type.** Questions (options, free text, both), approvals (advisory;
+  enforced per SM-TG-003), todos, messages (acknowledge, informational) and chat-eligible custom types are answered in
+  chat with server-side validation and `If-Match` versions; other custom types open the schema-driven form in the Mini
+  App. Comments, clarifications, assignment and cancellation are available where permitted, and final states edit the
+  card.
+- SM-TG-007 **Inbox capture.** Text, photos, documents, voice, video, forwards and albums sent to the bot become inbox
+  items in a visible space after a draft confirmation, with attachments uploaded through the normal path within
+  Telegram's and SpaceMan's size limits. Forwarded content is untrusted and its origin goes in the body. Every capture is
+  acknowledged.
+- SM-TG-008 **Queue and space operations.** Users can list and switch spaces, read space overviews, view the queue,
+  change task states and move tasks within their permissions (with `If-Match`), view runs, stop runs with a confirmation
+  (`run:control`), handle messages to operators and talk to control. Runs are never launched or typed into from
+  Telegram.
+- SM-TG-009 **Notifications without fan-out.** One central consumer reads the change feed from an in-memory cursor in
+  coalesced windows, reads each distinct resource once, computes recipients in memory, writes nothing on idle windows and
+  writes no change-feed entries for Telegram's own state (ADR-0078). One rate-limited, coalescing, bounded sender stays
+  within Telegram's limits. Preferences, quiet hours and a daily digest are per user, in the user's own timezone; with no
+  timezone set there is no digest and no quiet hours.
+- SM-TG-010 **Content levels and the never-in-chat list.** Spaces are invisible to Telegram until enabled. Per space,
+  bodies go to chat (`full`), stay in the Mini App (`summary`) or the space is hidden (`off`). Terminal output, hidden
+  responses, non-allowlisted attachment contents and secrets never go to chat. Messages with bodies are protected
+  content. Logs and metrics never hold message text, callback arguments or initData.
+- SM-TG-011 **Mini App reuse and theme.** The Mini App is a second entry of the web build that reuses the existing pages
+  in a slim shell with Telegram's theme, back and main buttons, and header-carried transports (fetch-based SSE, blob
+  images, signed single-purpose downloads). The main web UI keeps its behaviour and never loads Telegram's script.
+- SM-TG-012 **Audit channel.** Every mutation from Telegram is audited as the user with `Via telegram:<link_id>` and
+  channel `telegram`; linking, cancelled codes, unlinking and refused webhook or session attempts (in aggregate) are
+  audited too.
+- SM-TG-013 **Mini App host isolation.** The Mini App is served only on its own host, routed by the request's `Host`
+  (never a forwarded header), where no cookie is set or read, only the Telegram scheme authenticates, the API sends no
+  CORS headers and only the listed routes exist. The main host rejects the Telegram scheme and serves none of the Mini
+  App routes. The relaxed frame and script policy applies to the Mini App host only.
+- SM-TG-014 **Configurable through the API and Terraform.** Every Telegram setting (bot, global policy and defaults, per
+  space) has a step-up, audited API operation with versions and a terraform-provider-spaceman attribute; the bot token is
+  write-only and sealed. The Bot API base URL is the one exception: a central configuration-file setting only, so the
+  write-only token can't be redirected through the API.
+
 ## 6. Verification obligations (SM-VER)
 
 - SM-VER-001 Automated tests cover every topic in the brief §40. Simulated and real evidence are recorded separately.
@@ -536,3 +601,4 @@ procedure, requirement traceability. No unsupported production-readiness claims.
 | 2026-11-06 | Claude Code runs get their settings.json from their harness profile, with full control (permissions, auto mode, hooks, any key), a proper UI rather than raw JSON for the common parts, and a Terraform provider attribute. | SM-PROMPT-006 (ADR-0059) |
 | 2026-11-06 | Route run model traffic through a Harbor Pilot gateway: one connection per central, spaces opt in, a child token per run revoked at its end, Harbor Pilot budgets on the Limits page and as an early launch refusal, Harbor Pilot events as inbox items, Terraform support. Design in ADR-0060 (Proposed; operator answers 2026-11-06, unscoped-event routing still open). | SM-GW-001…010 |
 | 2026-11-08 | A System page like Hallpass's, plus a version API, for v0.1.0. | SM-OBS-006 (ADR-0067) |
+| 2026-11-13 | A native Telegram bot and Mini App: a linked person handles spaces, inbox, queue and "needs you" from Telegram as their own SpaceMan user, never wider and never step-up; notifications without fan-out; the Mini App on its own cookieless host; every setting through the API and Terraform, the token write-only; digests in each user's own timezone. Design in ADR-0083 (Proposed, security-relevant change; operator answers 2026-11-14). | SM-TG-001…014 |

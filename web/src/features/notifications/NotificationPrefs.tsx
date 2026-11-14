@@ -15,7 +15,7 @@ const desktopSupported = () => typeof window !== 'undefined' && 'Notification' i
 /**
  * Your notification preferences (SM-HUI-006): which human-action changes this web UI announces to you while it is open,
  * and whether it also shows desktop notifications. They are stored per user on the server; SpaceMan sends no e-mail
- * or chat notifications.
+ * or chat notifications (a Telegram bot is proposed in ADR-0083, not implemented).
  */
 export function NotificationPrefsCard() {
   const prefs = useNotificationPrefs()

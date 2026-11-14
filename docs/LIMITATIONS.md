@@ -415,7 +415,7 @@
 - **Notifications are in the web UI only.** Notification preferences decide what the open web UI announces to a user
   (in-app, and desktop notifications where the browser allows them). Nothing is announced while no SpaceMan page is
   open, and SpaceMan sends no e-mail or chat messages; external systems can follow the outbound `human.action.*` events
-  (SM-HUI-006).
+  (SM-HUI-006). A Telegram bot that notifies linked users is proposed (ADR-0083, SM-TG-001…014) and not implemented.
 - **Retention deletes whole actions, daily.** A finished action is deleted with its comments and notifications once
   its space's `retention_human_actions_days` has passed, by one daily pass; there is no archive tier and no per-type
   period. Open actions and finished ones that open work still refers to are kept (ADR-0045, SM-HUI-007).
