@@ -37,6 +37,10 @@ const (
 	sessionsPerLink = 5
 	// refusedWindow is the most often refused exchanges from one address are reported (OnRefused).
 	refusedWindow = time.Minute
+	// refusedLimit caps the per-address refusal counters (the oldest is dropped); refusedRowsPerMinute caps the audit
+	// rows OnRefused is called for across all addresses (the rest roll into the next aggregate).
+	refusedLimit         = 10000
+	refusedRowsPerMinute = 60
 )
 
 // Bot is the running bot as the Mini App needs it: its ID (links belong to one bot) and the key its initData is
@@ -89,6 +93,7 @@ type Session struct {
 type session struct {
 	linkID  string
 	botID   int64
+	keyGen  [sha256.Size]byte // hash of the bot's signing key when the session opened: a rotated token ends it
 	created time.Time
 	last    time.Time
 }
@@ -109,6 +114,11 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[[sha256.Size]byte]*session
 	refused  map[string]*refusedCount
+	// refusedOrder is refused's insertion order (for dropping the oldest); rowsStart/rows count the audit rows reported
+	// in the current minute.
+	refusedOrder []string
+	rowsStart    time.Time
+	rows         int
 }
 
 // New returns the service.
@@ -167,7 +177,7 @@ func (svc *Service) Exchange(ctx context.Context, initData, clientIP string) (*S
 	if !svc.userLim.allow(strconv.FormatInt(d.UserID, 10)) {
 		return nil, apperr.ErrRateLimited
 	}
-	if !svc.replay.add(d.Hash, d.AuthDate.Add(replayWindow), now) {
+	if !svc.replay.add(d.Hash, d.AuthDate, d.AuthDate.Add(replayWindow), now) {
 		svc.o.Log.Debug("telegram: Mini App initData replayed")
 		svc.refuse(ctx, clientIP, now)
 		return nil, errInvalid
@@ -195,7 +205,7 @@ func (svc *Service) Exchange(ctx context.Context, initData, clientIP string) (*S
 	if !svc.makeRoomLocked(linkID, lim, now) {
 		return nil, errFull
 	}
-	svc.sessions[sha256.Sum256([]byte(tok))] = &session{linkID: linkID, botID: b.ID, created: now, last: now}
+	svc.sessions[sha256.Sum256([]byte(tok))] = &session{linkID: linkID, botID: b.ID, keyGen: keyGen(b), created: now, last: now}
 	return &Session{Token: tok, ExpiresAt: now.Add(lim.Absolute), Idle: lim.Idle}, nil
 }
 
@@ -235,29 +245,41 @@ func (svc *Service) makeRoomLocked(linkID string, lim Limits, now time.Time) boo
 	return len(svc.sessions) < sessionLimit
 }
 
-// refuse counts a refused exchange from ip and reports the count at most once per refusedWindow per address.
+// keyGen identifies the bot's signing key: sessions opened under another key (a token rotation keeps the bot ID) end.
+func keyGen(b Bot) [sha256.Size]byte { return sha256.Sum256(b.Secret) }
+
+// refuse counts a refused exchange from ip's rate-limit key (an IPv6 /64 is one client) and reports the count at most
+// once per refusedWindow per key and refusedRowsPerMinute in all; what isn't reported rolls into the next aggregate.
 func (svc *Service) refuse(ctx context.Context, ip string, now time.Time) {
+	key := addrKey(ip)
 	svc.mu.Lock()
-	if len(svc.refused) > 10000 {
-		for k, r := range svc.refused {
-			if now.Sub(r.reported) > 10*refusedWindow {
-				delete(svc.refused, k)
-			}
-		}
-	}
-	r := svc.refused[ip]
+	r := svc.refused[key]
 	if r == nil {
+		for len(svc.refused) >= refusedLimit && len(svc.refusedOrder) > 0 {
+			delete(svc.refused, svc.refusedOrder[0])
+			svc.refusedOrder = svc.refusedOrder[1:]
+		}
+		if len(svc.refusedOrder) > 2*refusedLimit {
+			svc.refusedOrder = append([]string(nil), svc.refusedOrder...)
+		}
 		r = &refusedCount{}
-		svc.refused[ip] = r
+		svc.refused[key] = r
+		svc.refusedOrder = append(svc.refusedOrder, key)
 	}
 	r.pending++
 	var report int64
 	if r.reported.IsZero() || now.Sub(r.reported) >= refusedWindow {
-		report, r.pending, r.reported = r.pending, 0, now
+		if svc.rowsStart.IsZero() || now.Sub(svc.rowsStart) >= refusedWindow {
+			svc.rowsStart, svc.rows = now, 0
+		}
+		if svc.rows < refusedRowsPerMinute {
+			svc.rows++
+			report, r.pending, r.reported = r.pending, 0, now
+		}
 	}
 	svc.mu.Unlock()
 	if report > 0 && svc.o.OnRefused != nil {
-		svc.o.OnRefused(ctx, ip, report)
+		svc.o.OnRefused(ctx, key, report)
 	}
 }
 
@@ -284,8 +306,8 @@ func (svc *Service) resolve(ctx context.Context, token string, touch bool) (*aut
 	case s == nil:
 		svc.mu.Unlock()
 		return nil, auth.ErrUnauthorized
-	case !botOK || b.ID != s.botID || expired(s, lim, now):
-		// The bot is off or another one, or the session timed out.
+	case !botOK || b.ID != s.botID || keyGen(b) != s.keyGen || expired(s, lim, now):
+		// The bot is off, another one or has a new key, or the session timed out.
 		delete(svc.sessions, key)
 		svc.mu.Unlock()
 		return nil, auth.ErrUnauthorized

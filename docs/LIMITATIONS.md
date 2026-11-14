@@ -719,7 +719,14 @@
   min, absolute 1 h by default). Only valid initData of linked users opens a session, so only linked Telegram accounts
   can use the capacity up, at 10 exchanges a minute each (SM-TG-005).
 - **Replay memory is bounded.** Used initData is remembered for an hour (the largest allowed max age), at most 10,000
-  entries; under a flood of distinct valid initData the oldest are forgotten first (SM-TG-005).
+  entries; under a flood of distinct valid initData the oldest are forgotten first (SM-TG-005). Forgetting one that has
+  not expired raises an auth_date watermark: initData issued at or before it is refused, so a flush can't revive a used
+  one, and a user whose initData is that old reopens the app for fresh data.
+- **Refused-exchange audit is aggregated.** Refusals are counted per address (an IPv6 /64 is one address), at most one
+  audit row per address a minute and 60 rows a minute in all; the rest roll into the next row. At most 10,000 addresses
+  are tracked, the oldest dropped first, so a flood from very many addresses can lose counts.
+- **A token rotation ends Mini App sessions.** Each session is bound to a hash of the bot's signing key; a new bot token
+  (same bot ID) refuses the sessions opened under the old one.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The

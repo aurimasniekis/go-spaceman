@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -358,30 +359,100 @@ func TestSessionBoundsAndRateLimits(t *testing.T) {
 	}
 }
 
-// The replay cache drops the oldest entries when full and forgets expired ones.
+// The replay cache drops the oldest entries when full and forgets expired ones; a dropped unexpired entry stays refused
+// through the watermark.
 func TestReplayCacheBounds(t *testing.T) {
 	t.Parallel()
 	c := newReplayCache(3)
 	key := func(b byte) (k [sha256.Size]byte) { k[0] = b; return k }
+	auth := func(b byte) time.Time { return now0.Add(time.Duration(b) * time.Second) }
+	add := func(b byte, a time.Time, now time.Time) bool { return c.add(key(b), a, a.Add(time.Hour), now) }
 	for i := range byte(3) {
-		if !c.add(key(i), now0.Add(time.Hour), now0) {
+		if !add(i, auth(i), now0) {
 			t.Fatal("fresh entry refused")
 		}
 	}
-	if c.add(key(1), now0.Add(time.Hour), now0) {
+	if add(1, auth(1), now0) {
 		t.Fatal("replay accepted")
 	}
-	if !c.add(key(3), now0.Add(time.Hour), now0) || c.len() != 3 {
+	if !add(3, auth(3), now0) || c.len() != 3 {
 		t.Fatalf("full cache: len %d", c.len())
 	}
-	if !c.add(key(0), now0.Add(time.Hour), now0) {
-		t.Fatal("the oldest entry was not the one dropped")
+	if add(0, auth(0), now0) {
+		t.Fatal("the dropped oldest entry was accepted again")
 	}
-	if c.add(key(3), now0.Add(time.Hour), now0) {
+	if add(3, auth(3), now0) {
 		t.Fatal("a newer entry was dropped")
 	}
 	later := now0.Add(2 * time.Hour)
-	if !c.add(key(3), later.Add(time.Hour), later) || c.len() != 1 {
+	if !add(3, later, later) || c.len() != 1 {
 		t.Fatalf("expired entries kept: len %d", c.len())
+	}
+}
+
+// Evicting an unexpired entry raises a watermark, so a flush can't make the victim's initData acceptable again; fresher
+// initData still passes.
+func TestReplayWatermark(t *testing.T) {
+	t.Parallel()
+	c := newReplayCache(replayLimit)
+	key := func(i int) (k [sha256.Size]byte) { k[0], k[1], k[2] = byte(i), byte(i>>8), 1; return k }
+	victimAuth := now0
+	if !c.add(key(0), victimAuth, victimAuth.Add(replayWindow), now0) {
+		t.Fatal("victim refused")
+	}
+	for i := 1; i <= 10000; i++ {
+		a := now0.Add(time.Duration(i) * time.Millisecond)
+		if !c.add(key(i), a, a.Add(replayWindow), now0) {
+			t.Fatalf("flush entry %d refused", i)
+		}
+	}
+	if c.add(key(0), victimAuth, victimAuth.Add(replayWindow), now0) {
+		t.Fatal("the victim's initData was accepted again after a flush")
+	}
+	fresh := now0.Add(time.Minute)
+	if !c.add(key(20000), fresh, fresh.Add(replayWindow), now0) {
+		t.Fatal("fresh initData refused")
+	}
+}
+
+// Rotating addresses inside one /64 is one refusing client: one audit row a minute, not one per address; and the
+// refused map and the rows written stay bounded under a /48 rotation.
+func TestRefusedAuditPer64AndBounded(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	rows := 0
+	f.svc.o.OnRefused = func(context.Context, string, int64) { f.mu.Lock(); rows++; f.mu.Unlock() }
+	for i := range 25 {
+		_, _ = f.svc.Exchange(context.Background(), "hash=bad", fmt.Sprintf("2001:db8:1:2::%x", i+1))
+	}
+	if rows > 1 {
+		t.Fatalf("25 refusals from one /64 wrote %d audit rows", rows)
+	}
+	rows = 0
+	for i := range 3 * refusedLimit {
+		_, _ = f.svc.Exchange(context.Background(), "hash=bad", fmt.Sprintf("2001:db8:3:%x::1", i&0xffff))
+	}
+	f.svc.mu.Lock()
+	n := len(f.svc.refused)
+	f.svc.mu.Unlock()
+	if n > refusedLimit {
+		t.Fatalf("refused map holds %d entries (limit %d)", n, refusedLimit)
+	}
+	if rows > refusedRowsPerMinute {
+		t.Fatalf("%d audit rows in one minute (limit %d)", rows, refusedRowsPerMinute)
+	}
+}
+
+// A new key for the same bot ID (a token rotation) ends the sessions the old key opened.
+func TestSessionEndsOnKeyRotation(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	tok := f.mustExchange(42)
+	if _, err := f.svc.Authenticate(context.Background(), tok); err != nil {
+		t.Fatalf("before rotation: %v", err)
+	}
+	f.bot.Store(&Bot{ID: 123456789, Secret: SecretKey(testToken(t) + "x")})
+	if _, err := f.svc.Authenticate(context.Background(), tok); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("after rotation: %v", err)
 	}
 }
