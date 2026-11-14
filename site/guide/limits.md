@@ -50,6 +50,10 @@ Workers and diagnostic runs share the space's concurrency limit and the node's c
 support sessions and dreamer runs have their own pools and never count against them, so busy workers cannot keep a
 knowledge base from answering, and many support sessions cannot keep workers from starting.
 
+A worker or diagnostic run that is waiting for its Claude usage limit to reset (its process kept alive until the reset)
+doesn't count against the space's concurrency limit, so another run can start meanwhile. It still counts against the
+node's capacity, because its process is still running there.
+
 Support never starts more support without bound. At the default **support depth** of 1, a KB support session cannot ask
 any knowledge base; raising the depth allows that many levels. KB sessions never launch workers.
 

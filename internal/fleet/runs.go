@@ -392,6 +392,10 @@ func (svc *Service) queueCommandID(ctx context.Context, tx *store.Tx, nodeID, sp
 		CreatedAt: tx.NowMicros()})
 }
 
+// ErrLimitWaiting refuses idle-gated input to a run waiting for its usage limit to reset (ADR-0079 decision 3): typing
+// into it would start a turn that fails at once. The input waits for the clear; an operator's own input still goes.
+var ErrLimitWaiting = apperr.New(apperr.CodePrecondition, "the run is waiting for its usage limit to reset; notices wait until it clears")
+
 // QueueNotice queues safe (idle-gated) input for a running run inside the caller's transaction and returns the
 // command ID; the node refuses it while the program is busy (SM-COMM-003). Call KickRun after the commit.
 func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text string) (string, error) {
@@ -401,6 +405,9 @@ func (svc *Service) QueueNotice(ctx context.Context, tx *store.Tx, runID, text s
 	}
 	if r.Desired != "running" || ended(r.Observed) {
 		return "", apperr.New(apperr.CodePrecondition, "the run is not running")
+	}
+	if r.LimitKind != "" {
+		return "", ErrLimitWaiting
 	}
 	// Notices are automated input: none while an operator has taken over the terminal (SM-UI-004).
 	if err := refuseIfTakenOver(ctx, tx, r.ID); err != nil {
@@ -763,6 +770,9 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 			version += n
+			if err := svc.limitWindowTx(ctx, tx, r.ID, curLimit, nextLimit); err != nil {
+				return err
+			}
 		}
 		if sweep != nil {
 			// Nothing for the run may reach the node any more, and the node is no longer told to keep it (sendReconcile).
@@ -794,7 +804,10 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 				return err
 			}
 		}
-		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State)
+		// A limit that clears while the program is idle counts as turning idle: the notices held for it go out and
+		// control's idle stop is armed again (ADR-0079 decision 3).
+		limitCleared := limitChanged && curLimit.kind != "" && nextLimit.kind == ""
+		becameIdle = !ended(rep.State) && (rep.Status == "idle" || rep.Status == "done") && (r.Status != rep.Status || r.Observed != rep.State || limitCleared)
 		justEnded = ended(rep.State) && !ended(r.Observed)
 		if !r.StartedAt.Valid && (rep.State == proto.RunRunning || (justEnded && rep.State == proto.RunExited)) {
 			if err := svc.runEvent(ctx, tx, r, outbox.RunStarted{Run: outboxRun(r), Adopted: rep.Adopted}); err != nil {
