@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
+	"github.com/coder/websocket"
 )
 
 // RecordingDir is a run's local recording directory.
@@ -236,9 +237,18 @@ func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recor
 	}
 }
 
-// ship sends records to central in messages inside the protocol's limit, in order, and stops at the first failure: the
-// run is then marked for the catch-up after reconnecting.
-func (a *Agent) ship(ctx context.Context, runID, spaceID string, recs []recording.Record) error {
+// Recording shipments keep central's copy whole. Central stores only records above the last sequence it stored, so
+// a record must never reach it before an older one that is still missing (lost with a connection, or not sent yet):
+// the older one would be dropped for good. Live shipments (shipLive) therefore wait while a catch-up pass
+// (catchUpRecordings) may still have older records of the run to send, and every send goes on the connection it was
+// decided for, so nothing decided before a reconnect lands on the new connection ahead of the catch-up.
+
+// sendRecordingHook, when set (tests), runs before each recording message; an error fails that send (nothing is sent).
+var sendRecordingHook func(runID string) error
+
+// ship sends records to central on conn, in messages inside the protocol's limit, in order, and stops at the first
+// failure: the run is then marked for the next catch-up pass.
+func (a *Agent) ship(ctx context.Context, conn *websocket.Conn, runID, spaceID string, recs []recording.Record) error {
 	raws := make([]json.RawMessage, 0, len(recs))
 	for _, r := range recs {
 		b, err := json.Marshal(r)
@@ -246,31 +256,80 @@ func (a *Agent) ship(ctx context.Context, runID, spaceID string, recs []recordin
 			raws = append(raws, b)
 		}
 	}
+	at := 0
 	for _, part := range shipParts(raws, shipChunkBytes) {
-		if err := a.send(ctx, proto.TypeRecording, proto.RecordingChunk{RunID: runID, SpaceID: spaceID, Records: part}); err != nil {
+		var err error
+		if sendRecordingHook != nil {
+			err = sendRecordingHook(runID)
+		}
+		if err == nil {
+			err = a.sendOn(ctx, conn, proto.TypeRecording, proto.RecordingChunk{RunID: runID, SpaceID: spaceID, Records: part})
+		}
+		if err != nil {
 			a.markUnshipped(runID)
 			return err
 		}
+		at += len(part)
+		a.mu.Lock()
+		if a.sentSeq == nil {
+			a.sentSeq = map[string]uint64{}
+		}
+		a.sentSeq[runID] = max(a.sentSeq[runID], recs[at-1].Seq)
+		a.mu.Unlock()
 	}
 	return nil
 }
 
-// shipLive ships a recorder's records (already in the local recording) unless they could overtake older records not
-// yet in central's copy: central keeps only records above the last sequence it stored, so a newer record arriving
-// first would lose the older ones for good. While the node is not connected, a catch-up pass runs, or the run is
-// marked for one, the records are left to the catch-up, which reads them from the local recording. Once the pass has
-// caught the run up, its live shipments go ahead (they are newer than everything the pass sent).
+// heldRecords are records a live shipment kept back while it waited for a catch-up (sent after the run's local
+// recording). Records with no local copy (a close or trunc record after the local disk failed) are always kept;
+// others only up to heldMaxBytes, past which lost is set and the catch-up reads the local recording again.
+type heldRecords struct {
+	recs  []recording.Record
+	bytes int
+	lost  bool
+}
+
+// heldMaxBytes bounds the output a run keeps back in memory while it waits for a catch-up.
+const heldMaxBytes = 1 << 20
+
+// shipLive ships a recorder's records unless they could overtake older ones central may still be missing: while the
+// node is not connected, the run is marked for a catch-up, or the catch-up pass has not caught the run up yet, it
+// keeps them back for the pass instead (the pass reads the local recording first, then sends what was kept back).
+// It never blocks on a pass or a send of another run.
 func (a *Agent) shipLive(ctx context.Context, runID, spaceID string, recs []recording.Record) {
-	a.shipGate.RLock()
-	defer a.shipGate.RUnlock()
 	a.mu.Lock()
-	wait := !a.connected || a.unshipped[runID] || a.catchUps > 0 && !a.caughtUp[runID]
+	conn := a.conn
+	wait := !a.connected || conn == nil || a.unshipped[runID] || a.catching && !a.caughtUp[runID]
 	if wait {
 		a.markUnshippedLocked(runID)
+		a.holdLocked(runID, recs)
 	}
 	a.mu.Unlock()
 	if !wait {
-		_ = a.ship(ctx, runID, spaceID, recs)
+		_ = a.ship(ctx, conn, runID, spaceID, recs)
+	}
+}
+
+func (a *Agent) holdLocked(runID string, recs []recording.Record) {
+	if a.held == nil {
+		a.held = map[string]*heldRecords{}
+	}
+	h := a.held[runID]
+	if h == nil {
+		h = &heldRecords{}
+		a.held[runID] = h
+	}
+	for _, r := range recs {
+		if r.Kind == recording.KindClose || r.Kind == recording.KindTrunc {
+			h.recs = append(h.recs, r) // possibly the only copy (SM-REC-004)
+			continue
+		}
+		if h.bytes+len(r.Data) > heldMaxBytes {
+			h.lost = true
+			continue
+		}
+		h.recs = append(h.recs, r)
+		h.bytes += len(r.Data)
 	}
 }
 
@@ -310,112 +369,155 @@ func (a *Agent) markUnshippedLocked(runID string) {
 	a.unshipped[runID] = true
 }
 
-// beginCatchUp starts a catch-up pass (catchUpRecordings ends it): live shipments wait until it is done.
-func (a *Agent) beginCatchUp() {
-	a.shipGate.Lock()
+// startCatchUp asks for a catch-up pass on the current connection (before a relocation).
+func (a *Agent) startCatchUp() {
 	a.mu.Lock()
-	a.catchUps++
+	start := a.connected && a.startCatchUpLocked()
+	a.mu.Unlock()
+	if start {
+		go a.catchUpRecordings()
+	}
+}
+
+// startCatchUpLocked asks for a catch-up pass on the current connection: true when the caller must start it, false
+// when the running pass sweeps again on that connection instead (one pass at a time). Every run counts as not caught
+// up until the pass reaches it.
+func (a *Agent) startCatchUpLocked() bool {
 	a.caughtUp = map[string]bool{}
-	a.mu.Unlock()
-	a.shipGate.Unlock()
+	a.catchUpConn, a.catchUpCtx = a.conn, a.connCtx
+	if a.catching {
+		a.catchUpAgain = true
+		return false
+	}
+	a.catching = true
+	return true
 }
 
-// catchUpRecordings re-ships local recordings after the last acknowledged sequence (after connecting, or before a
-// relocation), and ends the pass beginCatchUp (or the welcome) started. Central stores each sequence once, so overlap
-// is harmless. Each run is caught up once per pass; from then on its live shipments go ahead (shipLive). It stops at
-// the first failed send (the connection is gone; the next pass resumes from what central acknowledged). Runs started
-// during the pass are caught up before it ends, so no live shipment waits for a pass that is no longer coming.
-func (a *Agent) catchUpRecordings(ctx context.Context) {
-	a.mu.Lock()
-	if a.caughtUp == nil {
-		a.caughtUp = map[string]bool{}
-	}
-	a.mu.Unlock()
-	ended := false
-	defer func() {
-		if !ended {
-			a.mu.Lock()
-			a.catchUps--
-			a.mu.Unlock()
-		}
-	}()
-	for first := true; ; first = false {
-		runs, err := a.j.runs(ctx, false)
-		if err != nil {
-			return
-		}
-		journaled := map[string]bool{}
-		for _, r := range runs {
-			journaled[r.RunID] = true
-			a.mu.Lock()
-			acked, known := a.acked[r.RunID]
-			dirty := a.unshipped[r.RunID]
-			if !dirty && (known || !first || a.caughtUp[r.RunID]) {
-				// Nothing to re-ship: everything shipped so far reached a live connection.
-				a.caughtUp[r.RunID] = true
-				a.mu.Unlock()
-				continue
-			}
-			a.mu.Unlock()
-			if err := a.catchUpRun(ctx, r, acked); err != nil {
-				return
-			}
-		}
-		// The pass ends when no run waits for it (a run started meanwhile may have), in the same lock live shipments
-		// decide under.
-		a.mu.Lock()
-		waiting := false
-		for id := range a.unshipped {
-			if journaled[id] {
-				waiting = true
-			} else {
-				delete(a.unshipped, id) // removed from the journal: nothing left to ship
-			}
-		}
-		if !waiting {
-			a.catchUps--
-			ended = true
-		}
-		a.mu.Unlock()
-		if ended {
-			return
-		}
-	}
-}
-
-// catchUpRunHook, when set (tests), runs after each pass over a run's local recording.
-var catchUpRunHook func(runID string)
-
-// catchUpRun ships a run's local records above from, in batches, until no live shipment waited meanwhile, then marks
-// the run caught up for this pass (atomically with that check, under the lock shipLive decides under).
-func (a *Agent) catchUpRun(ctx context.Context, r runRow, from uint64) error {
+// catchUpRecordings is the catch-up pass: it sweeps the journaled runs, re-shipping each run's local records above
+// central's acknowledged sequence where central may lack some, and sweeps again while another pass was asked for or
+// a run waits for it (a run started during a sweep). It ends when a sweep left no run waiting, or at the first failed
+// send (the connection is gone; the next connection's pass resumes from what central acknowledged). Central stores
+// each sequence once, so re-sent records are harmless. Runs are caught up one at a time: a run with a long backlog
+// delays the others (their live output is kept back meanwhile, see shipLive).
+func (a *Agent) catchUpRecordings() {
 	for {
 		a.mu.Lock()
-		delete(a.unshipped, r.RunID)
+		conn, ctx := a.catchUpConn, a.catchUpCtx
+		a.catchUpAgain = false
 		a.mu.Unlock()
-		res, err := recording.Read(a.RecordingDir(r.RunID), from)
-		if err == nil {
-			for start := 0; start < len(res.Records); start += 256 {
-				end := min(start+256, len(res.Records))
-				if err := a.ship(ctx, r.RunID, r.SpaceID, res.Records[start:end]); err != nil {
-					return err
-				}
-			}
-			if n := len(res.Records); n > 0 {
-				from = res.Records[n-1].Seq
-			}
-		}
-		if catchUpRunHook != nil {
-			catchUpRunHook(r.RunID)
-		}
+		err := a.catchUpSweep(ctx, conn)
 		a.mu.Lock()
-		again := a.unshipped[r.RunID]
-		if !again {
+		switch {
+		case a.catchUpAgain:
+		case err != nil || len(a.unshipped) == 0:
+			a.catching = false
+			a.mu.Unlock()
+			return
+		}
+		a.mu.Unlock()
+	}
+}
+
+// catchUpSweep is one sweep of the catch-up pass over the journal.
+func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn) error {
+	if ctx == nil || conn == nil {
+		return errors.New("not connected")
+	}
+	runs, err := a.j.runs(ctx, false)
+	if err != nil {
+		return err
+	}
+	journaled := map[string]bool{}
+	for _, r := range runs {
+		journaled[r.RunID] = true
+		a.mu.Lock()
+		acked, known := a.acked[r.RunID]
+		dirty := a.unshipped[r.RunID] || a.held[r.RunID] != nil
+		clean := !dirty && (a.caughtUp[r.RunID] || known && a.sentSeq[r.RunID] <= acked)
+		if clean {
+			// Everything sent so far was acknowledged (or this pass sent it): nothing to re-ship.
 			a.caughtUp[r.RunID] = true
 		}
 		a.mu.Unlock()
-		if !again {
+		if clean {
+			continue
+		}
+		if err := a.catchUpRun(ctx, conn, r, acked); err != nil {
+			return err
+		}
+	}
+	// Marks of runs no longer in the journal have nothing left to ship (a run is journaled before its program starts,
+	// so a run started during this sweep is in a later sweep's listing).
+	a.mu.Lock()
+	for id := range a.unshipped {
+		if !journaled[id] && a.held[id] == nil {
+			delete(a.unshipped, id)
+		}
+	}
+	a.mu.Unlock()
+	return nil
+}
+
+// shipBatchHook, when set (tests), runs after each batch a catch-up ships.
+var shipBatchHook func(runID string, batch int)
+
+// catchUpRun ships a run's local records above from in batches, then what live shipments kept back meanwhile, until
+// nothing more was kept back, and marks the run caught up (atomically with that check, under the lock shipLive decides
+// under).
+func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, r runRow, from uint64) error {
+	batch := 0
+	send := func(recs []recording.Record) error {
+		for start := 0; start < len(recs); start += 256 {
+			end := min(start+256, len(recs))
+			if err := a.ship(ctx, conn, r.RunID, r.SpaceID, recs[start:end]); err != nil {
+				return err
+			}
+			batch++
+			if shipBatchHook != nil {
+				shipBatchHook(r.RunID, batch)
+			}
+			from = max(from, recs[end-1].Seq)
+		}
+		return nil
+	}
+	readDisk := func() error {
+		res, err := recording.Read(a.RecordingDir(r.RunID), from)
+		if err != nil {
+			return nil // nothing readable to re-ship
+		}
+		return send(res.Records)
+	}
+	a.mu.Lock()
+	delete(a.unshipped, r.RunID)
+	a.mu.Unlock()
+	if err := readDisk(); err != nil {
+		return err
+	}
+	for {
+		a.mu.Lock()
+		h := a.held[r.RunID]
+		delete(a.held, r.RunID)
+		delete(a.unshipped, r.RunID)
+		if h == nil {
+			a.caughtUp[r.RunID] = true
+			a.mu.Unlock()
 			return nil
+		}
+		a.mu.Unlock()
+		if h.lost {
+			// Some output was not kept back: the local recording has it.
+			if err := readDisk(); err != nil {
+				return err
+			}
+		}
+		var later []recording.Record
+		for _, rec := range h.recs {
+			if rec.Seq > from {
+				later = append(later, rec)
+			}
+		}
+		if err := send(later); err != nil {
+			return err
 		}
 	}
 }
