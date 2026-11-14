@@ -27,6 +27,7 @@ flowchart TD
 | `another spaceman process owns this data directory` | Central is already running, or an offline command (`admin`, `keys`, `backup restore`) is run while it is. Stop the service first. |
 | `data directory … is on a nfs filesystem; a writable SQLite database requires local storage` | Move `data_dir` to a local disk. `SPACEMAN_ALLOW_NETWORK_FS=1` overrides this in development mode only. |
 | `database schema is newer than this binary` | An older binary on a newer database. Run the newer version, or restore a backup ([rollback](./upgrade#rollback)). Do not work around it. |
+| `database is missing migrations lower than its schema version: … never applied NNNN (…)` | This build has a migration numbered below one the database already ran, so it was never applied. Migrations run in number order only. Restore a backup or pre-migration snapshot taken below the lowest missing version and start again, or run a build with that migration renumbered. Never insert the version row by hand. |
 | `migration failed (… pre-migration snapshot in …)` | The database stays at the last good version. See [upgrade and rollback](./upgrade). |
 | `… restore from the latest verified backup` | The database is corrupt. [Restore](./backup#restore) a verified backup. |
 | `artifacts.s3.access_key_file: …` or `artifacts.s3: endpoint must use https` | The S3 artifact store's settings are wrong or a key file is unreadable by the service user ([Artifact storage](./storage#s3-compatible-storage)). The error never shows a key. |

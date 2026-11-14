@@ -24,6 +24,14 @@ var migrationFS embed.FS
 // ErrSchemaTooNew means the database was migrated by a newer SpaceMan; downgrades are refused (Hallpass HP-DB-005).
 var ErrSchemaTooNew = errors.New("database schema is newer than this binary")
 
+// ErrMissingMigrations means the binary embeds a migration lower than the database's version that was never applied: it
+// was added after a higher one had already run (branches merged out of number order). Goose applies migrations in order
+// only, so SpaceMan refuses to open instead of running with that migration silently skipped.
+var ErrMissingMigrations = errors.New("database is missing migrations lower than its schema version")
+
+// gooseTable is goose's version table (goose.DefaultTablename; the provider is created without WithTableName).
+const gooseTable = "goose_db_version"
+
 func newProvider(d *sql.DB, fsys fs.FS) (*goose.Provider, error) {
 	return goose.NewProvider(goose.DialectSQLite3, d, fsys, goose.WithDisableGlobalRegistry(true))
 }
@@ -75,6 +83,9 @@ func migrate(ctx context.Context, d *sql.DB, fsys fs.FS, dir string, keep int, c
 	if cur > latest {
 		return fmt.Errorf("%w: database at version %d, binary supports up to %d; run a newer spaceman or restore a backup", ErrSchemaTooNew, cur, latest)
 	}
+	if err := checkNoMissing(ctx, d, fsys, cur); err != nil {
+		return err
+	}
 	if cur == latest {
 		return nil
 	}
@@ -106,6 +117,49 @@ func migrate(ctx context.Context, d *sql.DB, fsys fs.FS, dir string, keep int, c
 			filepath.Join(dir, BackupsDir), classify(err))
 	}
 	return nil
+}
+
+// checkNoMissing fails with ErrMissingMigrations when an embedded migration lower than cur was never applied. Goose would
+// otherwise skip it silently when cur is the latest version, and fail the next upgrade with "missing (out-of-order)
+// migration". It costs one query: the applied versions, compared with the embedded sources. A database restored from an
+// older backup has no gaps below its version and migrates forward normally.
+func checkNoMissing(ctx context.Context, d *sql.DB, fsys fs.FS, cur int64) error {
+	if cur <= 0 {
+		return nil
+	}
+	p, err := newProvider(d, fsys)
+	if err != nil {
+		return err
+	}
+	rows, err := d.QueryContext(ctx, "SELECT DISTINCT version_id FROM "+gooseTable)
+	if err != nil {
+		return fmt.Errorf("list applied migrations: %w", classify(err))
+	}
+	defer func() { _ = rows.Close() }()
+	applied := map[int64]bool{}
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return fmt.Errorf("list applied migrations: %w", classify(err))
+		}
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("list applied migrations: %w", classify(err))
+	}
+	var missing []string
+	for _, src := range p.ListSources() {
+		if src.Version < cur && !applied[src.Version] {
+			missing = append(missing, fmt.Sprintf("%04d (%s)", src.Version, filepath.Base(src.Path)))
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: database at version %d never applied %s; migrations run in number order only, so a lower one "+
+		"added after a higher one already ran is not applied out of order. Fix: restore a backup or pre-migration snapshot "+
+		"taken below the lowest missing version and start again (it then migrates forward in order), or ship the migration "+
+		"renumbered above %d", ErrMissingMigrations, cur, strings.Join(missing, ", "), cur)
 }
 
 func pruneSnapshots(dir string, keep int, log *slog.Logger) {

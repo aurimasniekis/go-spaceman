@@ -16,6 +16,9 @@
 >
 > **v0.1.3 (2026-11-13):** §17 records the patch release: what it contains since v0.1.2, its upgrade notes (also from
 > v0.1.1, since v0.1.2 was rolled back) and the known issues it ships with.
+>
+> **v0.1.4 (2026-11-14):** §18 records the patch release: what it contains since v0.1.3, its upgrade notes and the
+> known issues it ships with.
 
 ## 1. Verdict
 
@@ -445,3 +448,48 @@ The full list is in `CHANGELOG.md` `[0.1.3]`.
 **Gates** (Linux, umask 022, at `main` after the last merge): `SM_TEST_TX_MAX=500ms make check`, `make web-check`,
 `make e2e` and `SM_SITE_A11Y=1 make site-check`, plus CI on every merged PR head. The results are in the release-prep
 PR description.
+
+## 18. v0.1.4 (2026-11-14)
+
+A patch release of three fixes on top of v0.1.3. The operator authorized it on 2026-11-14 (publish on tag): PR #51,
+PR #53 and PR #56, combined in one release PR with this prep, which merges all three. It is tagged `v0.1.4` on that
+merge; the release workflow builds the archives, images and SBOMs, and the release is published once the workflow is
+green. It still makes **no production-readiness claim**: §1's verdict stands.
+
+**Contents since v0.1.3:**
+- recordings over the message limit (PR #56): a burst of terminal output larger than the protocol's 4 MiB message
+  limit was sent as one message, central closed the connection, and the records were never sent again. The node now
+  splits recording shipments into messages of at most 1 MiB. After a reconnect it re-sends everything central has
+  not acknowledged before any newer output of that run, one catch-up at a time, so records sent just before a
+  disconnect no longer go missing either;
+- the web terminal's scrollback (ADR-0080, PR #53): ghostty-web's `scrollback` is a byte limit, so the old value of
+  10,000 kept about 300 rows at 160 columns. It is now 24 MiB: at least 10,000 rows at 160 columns;
+- missing lower migrations (PR #51): central and the node agent's journal refuse to open a database that already ran
+  a higher migration than a lower one in the binary, naming each missing migration, instead of skipping it silently
+  and failing the next upgrade with goose's "missing (out-of-order) migration".
+
+The full list is in `CHANGELOG.md` `[0.1.4]`.
+
+| Item | v0.1.4 |
+|---|---|
+| Migrations since v0.1.3 | None. Central stays at 0049, the agent journal at 0007. |
+| Node protocol | 1.11, unchanged. |
+| Configuration | No new setting. |
+| API | No change. |
+| Go | 1.27.4, unchanged. |
+
+**Upgrade notes** (also in the CHANGELOG):
+- From v0.1.3: no migration, protocol or setting change.
+- Upgrade central first and check that it starts (`/readyz`) before any node: a database with a missing lower
+  migration now refuses to start with `database is missing migrations lower than its schema version`. A database that
+  only ever ran released versions has none. The fix is a restore from below the lowest missing version, never a hand
+  edit of the version table. Each node agent runs the same check on its journal when it restarts.
+- From v0.1.1 or v0.1.2: §17's notes apply as well.
+
+**Known issues it ships with:** §17's list still applies.
+
+**Accepted risks:** unchanged from §14.
+
+**Gates** (Linux, umask 022, on the release branch with all three PRs merged): `GOFLAGS=-p=2 SM_TEST_TX_MAX=500ms
+make check`, `make check-fast`, `make web-check`, `make site-check`, and the recording-shipment tests under the race
+detector three times, plus CI on the release PR's head. The results are in the release PR description.
