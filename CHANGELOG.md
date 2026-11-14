@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- The "Restored from a backup" banner no longer comes back when an operator pauses a space later: only spaces the
+  restore paused and that have not been resumed since count as still paused (the notice now records `resumed_spaces`).
+
 ## [0.1.4] - 2026-11-14
 
 Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:

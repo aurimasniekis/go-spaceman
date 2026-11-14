@@ -21,6 +21,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
 	"github.com/aurimasniekis/go-spaceman/internal/memory"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
 
 // SM-STORE-003…006 end to end (simulated: in-memory runner, in-process NATS for the connection): a central with a
@@ -305,4 +306,76 @@ func TestBackupsOverHTTP(t *testing.T) {
 	expect(t, spaceAdmin.do("POST", "/system/backups/"+created.ID+"/verify", nil), 403)
 	expect(t, spaceAdmin.do("POST", "/system/restore/acknowledge", nil), 403)
 	expect(t, spaceAdmin.do("GET", "/system/restore", nil), 200)
+}
+
+// A restore's notice counts only the spaces the restore paused and that have not been resumed since: resuming one and
+// pausing it again later (a normal operator pause) never brings them back as "still paused after the restore".
+func TestRestoreNoticeIgnoresLaterPauses(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	rootSecret, _, _ := h.c.Auth.IssueRootToken(ctx)
+	root := h.client()
+	root.bearer = rootSecret
+	actor := audit.Actor{Type: audit.ActorUser, ID: "usr_test"}
+	en, _ := h.c.Fleet.CreateNode(ctx, actor, fleet.CreateNodeInput{Name: "node-r"})
+	mk := func(slug string) *fleet.Space {
+		sp, err := h.c.Fleet.CreateSpace(ctx, actor, fleet.CreateSpaceInput{Slug: slug, Name: slug, NodeID: en.Node.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sp
+	}
+	set := func(sp *fleet.Space, state, mode string) *fleet.Space {
+		cur, err := h.c.Fleet.GetSpace(ctx, sp.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := h.c.Fleet.SetSpaceState(ctx, actor, sp.ID, cur.Version, state, mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	a, b, c := mk("rst-a"), mk("rst-b"), mk("rst-c")
+	// The restore paused a and b (c was never part of it).
+	set(a, "paused", fleet.PauseHold)
+	set(b, "paused", fleet.PauseHold)
+	rs := backup.RestoreState{BackupID: "bkp_x", PausedSpaces: []string{a.ID, b.ID}}
+	raw, _ := json.Marshal(rs)
+	if err := h.c.Store.W().TxNamed(ctx, "test.seed_restore", func(tx *store.Tx) error {
+		return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: backup.SettingRestored, Value: string(raw), UpdatedAt: tx.NowMicros()})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	still := func() int {
+		var n struct {
+			StillPaused int `json:"still_paused"`
+			State       struct {
+				Paused []string `json:"paused_spaces"`
+			} `json:"state"`
+		}
+		root.do("GET", "/system/restore", nil).json(t, &n)
+		if len(n.State.Paused) != 2 {
+			t.Fatalf("paused_spaces %v", n.State.Paused)
+		}
+		return n.StillPaused
+	}
+	if got := still(); got != 2 {
+		t.Fatalf("right after the restore: %d still paused, want 2", got)
+	}
+	set(a, "active", "")
+	if got := still(); got != 1 {
+		t.Fatalf("after resuming one: %d, want 1", got)
+	}
+	set(b, "active", "")
+	if got := still(); got != 0 {
+		t.Fatalf("after resuming all: %d, want 0", got)
+	}
+	// Operator pauses: the restored ones again, and one that was not part of the restore.
+	set(a, "paused", fleet.PauseHold)
+	set(c, "paused", fleet.PauseInterrupt)
+	if got := still(); got != 0 {
+		t.Fatalf("after later operator pauses: %d still paused after the restore, want 0", got)
+	}
 }
