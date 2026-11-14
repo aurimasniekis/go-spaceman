@@ -4476,6 +4476,9 @@
          `evt.harborpilot.quota.window.recovered`, central drops the cached board and makes every quota hold due.
          The event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
          alone applies.
+       - **A gateway run parked after its hold cleared** resumes at once, not after the 1-hour backoff. The gateway hold
+         opens with the limit, so a missing hold means Harbor Pilot recovered, or the hold was cleared. A run still
+         kept alive when the hold clears is parked only at its 30-minute keep-alive (not changed here).
        - **No migration.** `usage_limits.source` already allowed both sources (0050). The protocol is unchanged.
   10. **Operator answers (2026-11-13, all proposed defaults accepted).**
       - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.

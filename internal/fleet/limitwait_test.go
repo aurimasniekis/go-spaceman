@@ -193,6 +193,8 @@ func TestParkAtAndResumeAt(t *testing.T) {
 		{"unknown, no hold: 1 h", unknown, nil, 0, 2 * time.Hour},
 		{"unknown, second attempt: 2 h", unknown, nil, 1, 3 * time.Hour},
 		{"unknown, many attempts: capped at the keep-alive", unknown, nil, 40, 7 * time.Hour},
+		{"gateway, its hold cleared (recovered): now", limitState{kind: proto.LimitGatewayQuota}, nil, 2, time.Hour},
+		{"gateway, its hold's estimate", limitState{kind: proto.LimitGatewayQuota}, &holdReset, 0, 10*time.Hour + 2*time.Minute},
 	} {
 		if got := waitResumeAt(now, c.lim, c.hold, c.attempts, kam); !got.Equal(t0.Add(c.want)) {
 			t.Errorf("%s: resume at +%v, want +%v", c.name, got.Sub(t0), c.want)
