@@ -140,6 +140,9 @@ type Options struct {
 	// FlushEvery and FlushRows bound the mapping writes (default 1 s and 100 rows).
 	FlushEvery time.Duration
 	FlushRows  int
+	// RetryAfter is how long after a failed (partial) read of the change feed the rest is read again without waiting
+	// for a new change (default 1 s).
+	RetryAfter time.Duration
 }
 
 // Notifier is the single change-feed consumer.
@@ -164,6 +167,9 @@ func New(o Options) *Notifier {
 	}
 	if o.FlushEvery <= 0 {
 		o.FlushEvery = time.Second
+	}
+	if o.RetryAfter <= 0 {
+		o.RetryAfter = time.Second
 	}
 	if o.FlushRows <= 0 {
 		o.FlushRows = 100
@@ -193,6 +199,7 @@ func (n *Notifier) Run(ctx context.Context) error {
 	start()
 	flush := time.NewTicker(n.o.FlushEvery)
 	defer flush.Stop()
+	var again <-chan time.Time // armed once after a failed feed read: the unread rest is processed without a new change
 	for {
 		select {
 		case <-ctx.Done():
@@ -204,6 +211,11 @@ func (n *Notifier) Run(ctx context.Context) error {
 		case <-retry.C:
 			if !started {
 				start()
+			}
+		case <-again:
+			again = nil
+			if n.process(ctx) {
+				again = time.After(n.o.RetryAfter)
 			}
 		case _, ok := <-sub.C:
 			if !ok {
@@ -219,7 +231,9 @@ func (n *Notifier) Run(ctx context.Context) error {
 			case <-n.o.After(Window):
 			}
 			n.drainWake(sub.C)
-			n.process(ctx)
+			if n.process(ctx) {
+				again = time.After(n.o.RetryAfter)
+			}
 		}
 	}
 }
@@ -287,11 +301,18 @@ func (n *Notifier) collect(ctx context.Context) (*window, error) {
 	}
 }
 
-func (n *Notifier) process(ctx context.Context) {
+// process handles one window. It reports whether reading the feed failed part-way (the rest is still unread).
+func (n *Notifier) process(ctx context.Context) (retry bool) {
 	w, err := n.collect(ctx)
 	if err != nil {
 		n.log.Warn("telegram notifier: reading changes failed", slog.String("error", err.Error()))
+		retry = true
 	}
+	n.handle(ctx, w)
+	return retry
+}
+
+func (n *Notifier) handle(ctx context.Context, w *window) {
 	if len(w.keys) == 0 && !w.overflow {
 		return
 	}
@@ -319,24 +340,27 @@ func (n *Notifier) process(ctx context.Context) {
 		if r == nil {
 			continue
 		}
-		if w.seen[k].Action != changefeed.Created {
-			n.cards.load(ctx, k) // a resource of interest whose card may exist from before a restart
-		}
-		n.deliver(snd, links, r, now)
+		n.deliver(ctx, snd, links, r, now, w.seen[k].Action == changefeed.Created)
 	}
 }
 
 // deliver enqueues the resource's card for every link that may see it.
-func (n *Notifier) deliver(snd *sender.Sender, links []Link, r *Resource, now time.Time) {
+func (n *Notifier) deliver(ctx context.Context, snd *sender.Sender, links []Link, r *Resource, now time.Time, created bool) {
 	set := n.o.Policy.Current()
 	sp := n.o.Policy.Space(r.SpaceID)
 	if !sp.Visible() {
 		return
 	}
+	loaded := false
 	for i := range links {
 		l := &links[i]
 		if !n.may(l, r, set, now) {
 			continue
+		}
+		if !created && !loaded {
+			// A card may exist from before a restart, but only for a link that may see the resource.
+			n.cards.load(ctx, r.Key)
+			loaded = true
 		}
 		card := n.cards.get(l.ChatID, r.Key)
 		if card == nil {
@@ -397,15 +421,22 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, sp settings
 	case r.Kind == KindAction:
 		prio = sender.NeedsYou
 	}
-	chat, res := l.ChatID, *r
-	text, entities := renderCard(&res, sp.ContentLevel == settings.ContentFull)
+	chat, linkID, res := l.ChatID, l.ID, *r
+	full := sp.ContentLevel == settings.ContentFull
+	text, entities := renderCard(&res, full)
+	protect := full && res.Detail != "" // plan 3.8: a card with a body can't be forwarded or saved
 	var done func(error)
 	if !edit {
 		done = n.cards.queue(chat, r.Key)
 	}
 	err := snd.Enqueue(sender.Message{ChatID: chat, Priority: prio, Key: "card:" + r.String(), Done: done,
 		Send: func(ctx context.Context, c *botapi.Client) error {
-			return n.cards.upsert(ctx, c, l.ID, chat, &res, sp.SpaceID, text, entities)
+			// The send may run long after it was queued (behind a chat's rate limit): access is checked again, from
+			// memory, so a revoked link, grant, mute or hidden space never gets a card that was queued before.
+			if !n.stillMay(linkID, chat, &res) {
+				return nil
+			}
+			return n.cards.upsert(ctx, c, linkID, chat, &res, sp.SpaceID, text, entities, protect)
 		}})
 	if err != nil {
 		if done != nil {
@@ -413,6 +444,21 @@ func (n *Notifier) enqueue(snd *sender.Sender, l *Link, r *Resource, sp settings
 		}
 		n.log.Debug("telegram notifier: enqueue refused", slog.String("error", err.Error()))
 	}
+}
+
+// stillMay re-runs the recipient check at send time against the current links, settings and space visibility. A link
+// that is gone, moved to another chat, or no longer allowed drops the send.
+func (n *Notifier) stillMay(linkID string, chat int64, r *Resource) bool {
+	if !n.o.Policy.Space(r.SpaceID).Visible() {
+		return false
+	}
+	links := n.o.Links.Snapshot()
+	for i := range links {
+		if links[i].ID == linkID {
+			return links[i].ChatID == chat && n.may(&links[i], r, n.o.Policy.Current(), n.o.Now())
+		}
+	}
+	return false
 }
 
 // overflow sends one "many changes" message per chat that may read one of the window's spaces.

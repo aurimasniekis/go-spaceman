@@ -174,7 +174,7 @@ func (c *cards) flush(ctx context.Context) error {
 
 // upsert sends the resource's card, or edits it when it was sent before. It runs on a sender goroutine, so it sees
 // the card of a send that completed ahead of it in the chat's queue.
-func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, chat int64, r *Resource, spaceID, text string, ents []botapi.MessageEntity) error {
+func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, chat int64, r *Resource, spaceID, text string, ents []botapi.MessageEntity, protect bool) error {
 	if cd := c.get(chat, r.Key); cd != nil {
 		_, err := cl.EditMessageText(ctx, botapi.EditMessageTextParams{ChatID: chat, MessageID: cd.messageID, Text: text, Entities: ents})
 		switch {
@@ -190,7 +190,7 @@ func (c *cards) upsert(ctx context.Context, cl *botapi.Client, linkID string, ch
 			return err
 		}
 	}
-	m, err := cl.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents})
+	m, err := cl.SendMessage(ctx, botapi.SendMessageParams{ChatID: chat, Text: text, Entities: ents, ProtectContent: protect})
 	if err != nil {
 		return err
 	}

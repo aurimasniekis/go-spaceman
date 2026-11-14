@@ -2,6 +2,7 @@ package notify_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/changefeed"
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
+	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/notify"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
@@ -28,6 +30,7 @@ type feed struct {
 	rows    []changefeed.Change
 	reads   atomic.Int64 // After calls
 	latests atomic.Int64
+	failAt  atomic.Int64 // the After call (1-based) that fails once; 0: none
 }
 
 func (f *feed) Latest(context.Context) (int64, error) {
@@ -41,7 +44,9 @@ func (f *feed) Latest(context.Context) (int64, error) {
 }
 
 func (f *feed) After(_ context.Context, after int64, limit int) ([]changefeed.Change, error) {
-	f.reads.Add(1)
+	if n := f.reads.Add(1); n == f.failAt.Load() {
+		return nil, errors.New("feed unavailable")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []changefeed.Change
@@ -91,13 +96,14 @@ type authorizer struct {
 	mu    sync.Mutex
 	space map[string]map[string]bool // subject -> space -> allowed
 	roles map[string]bool            // "subject|role"
+	deny  map[string]bool            // "subject|object:action": the subject lacks this permission everywhere
 }
 
-func (a *authorizer) AllowedAll(subjects []string, domain string, _ authz.Permission) bool {
+func (a *authorizer) AllowedAll(subjects []string, domain string, perm authz.Permission) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, s := range subjects {
-		if !a.space[s][domain] {
+		if !a.space[s][domain] || a.deny[s+"|"+perm.String()] {
 			return false
 		}
 	}
@@ -116,13 +122,22 @@ func (a *authorizer) HoldsRole(subjects []string, _ string, r authz.Role) bool {
 }
 
 type policy struct {
+	mu     sync.Mutex
 	set    settings.Settings
 	hidden map[string]bool
 	level  string
 }
 
 func (p *policy) Current() settings.Settings { return p.set }
+func (p *policy) hide(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.hidden[id] = true
+}
+
 func (p *policy) Space(id string) settings.Space {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	s := settings.DefaultSpace(id)
 	s.Enabled = !p.hidden[id]
 	if p.level != "" {
@@ -162,6 +177,18 @@ func (m *mappings) Lookup(_ context.Context, k notify.Key) ([]notify.Mapping, er
 	return out, nil
 }
 
+func (m *mappings) lookupCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lookups
+}
+
+func (m *mappings) resetLookups() {
+	m.mu.Lock()
+	m.lookups = 0
+	m.mu.Unlock()
+}
+
 func (m *mappings) counts() (saves, rows int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -183,6 +210,10 @@ type env struct {
 	window chan struct{} // the notifier's window ends when the test sends here
 	n      *notify.Notifier
 	stop   func()
+
+	flushEvery time.Duration // the notifier's mapping flush tick (0: its default)
+	retry      time.Duration // the notifier's retry after a failed feed read (0: its default)
+	authz      notify.Authorizer
 }
 
 func linkFor(i int) notify.Link {
@@ -208,7 +239,7 @@ func newEnv(t *testing.T, nLinks int) *env {
 		t.Fatal(err)
 	}
 	e := &env{t: t, fake: fake, clk: clk, snd: snd, bus: eventbus.New(), feed: &feed{}, rd: &reader{items: map[notify.Key]notify.Resource{}},
-		az: &authorizer{space: map[string]map[string]bool{}, roles: map[string]bool{}}, pol: &policy{set: settings.Defaults(), hidden: map[string]bool{}},
+		az: &authorizer{space: map[string]map[string]bool{}, roles: map[string]bool{}, deny: map[string]bool{}}, pol: &policy{set: settings.Defaults(), hidden: map[string]bool{}},
 		maps: &mappings{rows: map[[2]int64]notify.Mapping{}}, window: make(chan struct{}, 1)}
 	e.links = notify.NewLinks(nil, e.bus, nil, nil, 0)
 	var ls []notify.Link
@@ -241,7 +272,7 @@ func (e *env) allow(l notify.Link, space string) {
 func (e *env) run(m notify.Mappings) (stop func()) {
 	e.t.Helper()
 	opts := notify.Options{Feed: e.feed, Reader: e.rd, Authz: e.az, Policy: e.pol, Links: e.links, Sender: func() *sender.Sender { return e.snd },
-		Bus: e.bus, Now: e.clk.Now,
+		Bus: e.bus, Now: e.clk.Now, FlushEvery: e.flushEvery, RetryAfter: e.retry,
 		After: func(time.Duration) <-chan time.Time {
 			ch := make(chan time.Time, 1)
 			go func() { <-e.window; ch <- time.Now() }()
@@ -249,6 +280,9 @@ func (e *env) run(m notify.Mappings) (stop func()) {
 		}}
 	if m != nil {
 		opts.Store = m
+	}
+	if e.authz != nil {
+		opts.Authz = e.authz
 	}
 	n := notify.New(opts)
 	e.n = n
@@ -364,7 +398,7 @@ func TestBudget(t *testing.T) {
 	_ = saves
 
 	// A window of changes nobody may see sends and writes nothing.
-	e.pol.hidden["spc_1"] = true
+	e.pol.hide("spc_1")
 	e.rd.set(action("hum_x", 1, false))
 	before := e.feed.reads.Load()
 	e.feed.add("spc_1", notify.TypeHumanAction, "hum_x", changefeed.Created, 1)
@@ -429,20 +463,33 @@ func TestWindowIsBounded(t *testing.T) {
 	}
 }
 
+// TestRecipients: every denial is covered by a link that is denied only by that rule, so dropping a rule from the check
+// (the link cap, the space read, the type's read permission, the view role, the mute, the reconfirmation) sends to it.
 func TestRecipients(t *testing.T) {
-	e := newEnv(t, 4)
-	// link 2: no grant in the space; link 3: muted; link 4: lacks the type's view role.
+	e := newEnv(t, 8)
+	grantRole := func(i int, role string) {
+		e.az.roles[fmt.Sprintf("telegram:tgl_%d|%s", i, role)], e.az.roles[fmt.Sprintf("user:usr_%d|%s", i, role)] = true, true
+	}
 	e.az.mu.Lock()
+	for i := 1; i <= 8; i++ {
+		grantRole(i, "viewer")
+		if i != 4 {
+			grantRole(i, "operator")
+		}
+	}
+	// 2: the link's own grants (its cap) don't cover the space, though its user's do.
 	delete(e.az.space["telegram:tgl_2"], "spc_1")
+	// 5: may read the space but not the resource type.
+	e.az.deny["user:usr_5|"+authz.HumanRead.String()] = true
+	// 7: may read the resource type but not the space.
+	e.az.deny["telegram:tgl_7|"+authz.SpaceRead.String()] = true
 	e.az.mu.Unlock()
 	muted := []string{"spc_1"}
 	ls := e.links.Snapshot()
-	ls[2].Prefs.MutedSpaces = &muted
+	ls[2].Prefs.MutedSpaces = &muted       // 3: muted
+	ls[5].ReconfirmAt = t0.Add(-time.Hour) // 6: reconfirmation overdue
+	ls[7].ReconfirmAt = t0.Add(time.Hour)  // 8: reconfirmation due later: still usable
 	e.links.Set(ls)
-	e.az.mu.Lock()
-	e.az.roles["telegram:tgl_1|operator"], e.az.roles["user:usr_1|operator"] = true, true
-	e.az.roles["telegram:tgl_3|operator"], e.az.roles["user:usr_3|operator"] = true, true
-	e.az.mu.Unlock()
 	stop := e.run(nil)
 	defer stop()
 
@@ -452,15 +499,60 @@ func TestRecipients(t *testing.T) {
 	e.feed.add("spc_1", notify.TypeHumanAction, "hum_1", changefeed.Created, 1)
 	e.ring()
 	e.endWindow()
-	calls := e.waitCalls("sendMessage", 1)
-	time.Sleep(100 * time.Millisecond)
-	if n := len(e.fake.Calls("sendMessage")); n != 1 {
-		t.Fatalf("%d sends, want only link 1's", n)
+	e.waitCalls("sendMessage", 2)
+	time.Sleep(150 * time.Millisecond)
+	got := map[string]bool{}
+	for _, c := range e.fake.Calls("sendMessage") {
+		got[c.Params["chat_id"]] = true
 	}
-	if c := calls[0].Params["chat_id"]; c != "1001" {
-		t.Errorf("sent to chat %s, want 1001", c)
+	if len(got) != 2 || !got["1001"] || !got["1008"] {
+		t.Errorf("sent to %v, want only chats 1001 and 1008 (2: link cap, 3: muted, 4: view role, 5: type permission, 6: reconfirm overdue, 7: space read)", got)
 	}
 }
+
+// realSpace is a space ID the real engine accepts as a grant domain.
+const realSpace = "spc_0000000000000000000000000a"
+
+// TestRecipientsRealEnforcer runs the recipient check on the real authorization engine, with the real grants: the
+// link and its user must both hold the space, the type's permission and the view role.
+func TestRecipientsRealEnforcer(t *testing.T) {
+	grant := func(sub string, role authz.Role) db.RoleGrant {
+		return db.RoleGrant{Subject: sub, Role: string(role), Domain: realSpace, Source: "manual"}
+	}
+	engine, err := authz.New(context.Background(), loader{rows: []db.RoleGrant{
+		grant("user:usr_1", authz.RoleOperator), grant("telegram:tgl_1", authz.RoleOperator), // both operator: yes
+		grant("user:usr_2", authz.RoleOperator), grant("telegram:tgl_2", authz.RoleViewer), // the link's cap is viewer: no
+		grant("user:usr_3", authz.RoleViewer), grant("telegram:tgl_3", authz.RoleOperator), // the user is viewer: no
+		grant("user:usr_4", authz.RoleOperator),     // no link grant at all: no
+		grant("telegram:tgl_5", authz.RoleOperator), // no user grant: no
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t, 5)
+	e.authz = engine
+	stop := e.run(nil)
+	defer stop()
+
+	r := action("hum_1", 1, false)
+	r.SpaceID = realSpace
+	r.ViewRole = "operator"   // the human type's view role
+	r.Perm = authz.RunControl // a permission only operators hold
+	e.rd.set(r)
+	e.feed.add(realSpace, notify.TypeHumanAction, "hum_1", changefeed.Created, 1)
+	e.ring()
+	e.endWindow()
+	e.waitCalls("sendMessage", 1)
+	time.Sleep(150 * time.Millisecond)
+	calls := e.fake.Calls("sendMessage")
+	if len(calls) != 1 || calls[0].Params["chat_id"] != "1001" {
+		t.Errorf("%d sends, first to %v: want one, to chat 1001", len(calls), calls)
+	}
+}
+
+type loader struct{ rows []db.RoleGrant }
+
+func (l loader) ListRoleGrants(context.Context) ([]db.RoleGrant, error) { return l.rows, nil }
 
 func TestPreferences(t *testing.T) {
 	e := newEnv(t, 2)
