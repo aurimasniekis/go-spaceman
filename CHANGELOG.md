@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   same permission as the Inbox page and need no takeover; on a phone they are icons.
 
 ### Fixed
+- A run could show `starting` with no terminal while its program was running. A repeated launch made the node report an
+  older copy of the run, which could reach central after the `running` report and replace it. Central now ignores a run
+  report that is behind the state it already has (ADR-0086).
 - Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
   be writing the run's files and its journal after the agent had stopped, while the next agent process started.
 - Central's shutdown now waits for node connections and the work they started (memory syncs into the role-memory

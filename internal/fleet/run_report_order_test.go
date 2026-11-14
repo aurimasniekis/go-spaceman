@@ -1,7 +1,6 @@
 package fleet
 
 import (
-	"os"
 	"testing"
 
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -13,12 +12,8 @@ import (
 // ordered: when the duplicate's `starting` report (read before the launch finished) reaches central after the
 // `running` one, applyRunReport applies it, because nothing compares the two, and UpdateRunObserved overwrites
 // terminal_id with the stale empty value. This test delivers the reports in that order and expects central to keep
-// running + its terminal. It fails on main, so it is skipped unless SPACEMAN_LOST_RUN_UPDATE=1 until the fix (a central
-// guard or per-run ordering in the agent) is chosen; remove the skip with the fix.
+// running + its terminal. Central ignores a live report behind the recorded state (ADR-0086).
 func TestStaleStartingReportDoesNotOverwriteRunning(t *testing.T) {
-	if os.Getenv("SPACEMAN_LOST_RUN_UPDATE") != "1" {
-		t.Skip("known failing: a late duplicate-launch `starting` report overwrites `running` and clears terminal_id (set SPACEMAN_LOST_RUN_UPDATE=1 to run); awaiting the fix decision")
-	}
 	e := newStaleEnv(t)
 	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
 	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
@@ -42,5 +37,88 @@ func TestStaleStartingReportDoesNotOverwriteRunning(t *testing.T) {
 	}
 	if r := e.observed("run_dup"); r.Observed != proto.RunRunning || r.TerminalID != "term_1" {
 		t.Fatalf("lost update: central has observed=%q terminal_id=%q, want running / term_1", r.Observed, r.TerminalID)
+	}
+}
+
+// The guard ignores only reports behind the recorded state: the forward path, a reconnect after central marked the run
+// unknown, and an ended report still apply; an ignored report is not fenced (that would stop a live run), and a run
+// central wants stopped still gets its stop command (ADR-0086).
+func TestRunReportOrderGuard(t *testing.T) {
+	type step struct {
+		state, term string
+		want        string // observed afterwards
+		wantTerm    string
+	}
+	cases := []struct {
+		name    string
+		initial string
+		steps   []step
+	}{
+		{"forward path", "pending", []step{
+			{proto.RunStarting, "", proto.RunStarting, ""},
+			{proto.RunStarting, "", proto.RunStarting, ""}, // the managed launch reports starting twice
+			{proto.RunRunning, "t1", proto.RunRunning, "t1"},
+			{proto.RunStopping, "t1", proto.RunStopping, "t1"},
+			{proto.RunExited, "t1", proto.RunExited, "t1"},
+		}},
+		{"stale running after stopping", "pending", []step{
+			{proto.RunRunning, "t1", proto.RunRunning, "t1"},
+			{proto.RunStopping, "t1", proto.RunStopping, "t1"},
+			{proto.RunRunning, "t1", proto.RunStopping, "t1"},
+		}},
+		{"same state without the terminal", "pending", []step{
+			{proto.RunRunning, "t1", proto.RunRunning, "t1"},
+			{proto.RunRunning, "", proto.RunRunning, "t1"},
+		}},
+		{"stopped before start", "pending", []step{
+			{proto.RunStarting, "", proto.RunStarting, ""},
+			{proto.RunExited, "", proto.RunExited, ""},
+		}},
+		{"reconnect after unknown", "unknown", []step{
+			{proto.RunRunning, "t1", proto.RunRunning, "t1"},
+		}},
+		{"adopted after a node restart", "unknown", []step{
+			{proto.RunStarting, "", proto.RunStarting, ""},
+			{proto.RunRunning, "t2", proto.RunRunning, "t2"},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newStaleEnv(t)
+			e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
+			e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+			e.run("run_g", "spc_a", "nod_1", tc.initial, nil)
+			for i, s := range tc.steps {
+				fenced, err := e.svc.applyReport(e.ctx, "nod_1", proto.RunReport{RunID: "run_g", SpaceID: "spc_a", Generation: 1, State: s.state, TerminalID: s.term})
+				if err != nil || fenced {
+					t.Fatalf("step %d: fenced=%v err=%v", i, fenced, err)
+				}
+				if r := e.observed("run_g"); r.Observed != s.want || r.TerminalID != s.wantTerm {
+					t.Fatalf("step %d (%s/%q): observed=%q terminal=%q, want %q/%q", i, s.state, s.term, r.Observed, r.TerminalID, s.want, s.wantTerm)
+				}
+			}
+		})
+	}
+}
+
+// A stale report for a run central wants stopped is not applied but still re-sends the stop.
+func TestStaleReportStillStopsUnwantedRun(t *testing.T) {
+	e := newStaleEnv(t)
+	e.exec(`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`)
+	e.exec(`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`)
+	e.run("run_s", "spc_a", "nod_1", "pending", nil)
+	if _, err := e.svc.applyReport(e.ctx, "nod_1", proto.RunReport{RunID: "run_s", SpaceID: "spc_a", Generation: 1, State: proto.RunRunning, TerminalID: "t1"}); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(`UPDATE runs SET desired = 'stopped' WHERE id = 'run_s'`)
+	fenced, err := e.svc.applyReport(e.ctx, "nod_1", proto.RunReport{RunID: "run_s", SpaceID: "spc_a", Generation: 1, State: proto.RunStarting})
+	if err != nil || fenced {
+		t.Fatalf("fenced=%v err=%v", fenced, err)
+	}
+	if r := e.observed("run_s"); r.Observed != proto.RunRunning || r.TerminalID != "t1" {
+		t.Fatalf("observed=%q terminal=%q, want running/t1", r.Observed, r.TerminalID)
+	}
+	if n := e.count(`SELECT count(*) FROM node_commands WHERE run_id = 'run_s' AND kind = 'run.stop'`); n != 1 {
+		t.Fatalf("stop commands = %d, want 1", n)
 	}
 }
