@@ -309,8 +309,8 @@ func (q *Queries) GetUsageLimit(ctx context.Context, id string) (UsageLimit, err
 
 const insertLimitWait = `-- name: InsertLimitWait :exec
 INSERT INTO limit_waits (id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id,
-  resume_at, release_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  resume_at, release_at, attempts, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertLimitWaitParams struct {
@@ -328,6 +328,7 @@ type InsertLimitWaitParams struct {
 	UsageLimitID string
 	ResumeAt     int64
 	ReleaseAt    sql.NullInt64
+	Attempts     int64
 	CreatedAt    int64
 	UpdatedAt    int64
 }
@@ -348,6 +349,7 @@ func (q *Queries) InsertLimitWait(ctx context.Context, arg InsertLimitWaitParams
 		arg.UsageLimitID,
 		arg.ResumeAt,
 		arg.ReleaseAt,
+		arg.Attempts,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

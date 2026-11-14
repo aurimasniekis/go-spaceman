@@ -72,8 +72,8 @@ WHERE id = sqlc.arg(id) AND notified_humans_at IS NULL;
 
 -- name: InsertLimitWait :exec
 INSERT INTO limit_waits (id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id,
-  resume_at, release_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  resume_at, release_at, attempts, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetLimitWait :one
 SELECT * FROM limit_waits WHERE id = ?;

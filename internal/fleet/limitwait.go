@@ -210,6 +210,14 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 	switch {
 	case repark:
 		w.Attempts, w.ReleaseAt, w.TaskID = prev.Attempts, prev.ReleaseAt, prev.TaskID
+		// The resumed run was launched with the resume note: a later fresh session needs the original prompt.
+		var spec, first LaunchSpec
+		if json.Unmarshal([]byte(r.LaunchJson), &spec) == nil && json.Unmarshal([]byte(prev.LaunchJson), &first) == nil {
+			spec.Prompt = first.Prompt
+			if b, err := json.Marshal(spec); err == nil {
+				w.LaunchJson = string(b)
+			}
+		}
 	case !errors.Is(err, sql.ErrNoRows):
 		return nil, err
 	}
@@ -241,7 +249,7 @@ func (svc *Service) parkTx(ctx context.Context, tx *store.Tx, r db.Run, lim limi
 	w.ResumeAt = waitResumeAt(now, lim, hold, w.Attempts, ul.KeepAliveMax).UnixMicro()
 	if err := tx.Q.InsertLimitWait(ctx, db.InsertLimitWaitParams{ID: w.ID, SpaceID: w.SpaceID, RunID: w.RunID, TaskID: w.TaskID, RunKind: w.RunKind,
 		Role: w.Role, NodeID: w.NodeID, InstanceID: w.InstanceID, Harness: w.Harness, SessionID: w.SessionID, LaunchJson: w.LaunchJson,
-		UsageLimitID: w.UsageLimitID, ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
+		UsageLimitID: w.UsageLimitID, ResumeAt: w.ResumeAt, ReleaseAt: w.ReleaseAt, Attempts: w.Attempts, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}); err != nil {
 		return nil, err
 	}
 	if err := svc.record(ctx, tx, w.SpaceID, "limit_wait", w.ID, "created", 1); err != nil {
@@ -723,6 +731,17 @@ func (svc *Service) resume(ctx context.Context, actor audit.Actor, waitID string
 		}
 		if sp, err = tx.Q.GetSpace(ctx, w.SpaceID); err != nil {
 			return err
+		}
+		// The parked run has ended: it no longer holds the space's single control slot (or anything else) as wanted.
+		if old, err := tx.Q.GetRun(ctx, w.RunID); err != nil {
+			return err
+		} else if old.Desired != "stopped" {
+			if _, err := tx.Q.SetRunDesired(ctx, db.SetRunDesiredParams{Desired: "stopped", UpdatedAt: tx.NowMicros(), ID: old.ID}); err != nil {
+				return err
+			}
+			if err := svc.record(ctx, tx, old.SpaceID, "run", old.ID, "updated", old.Version+1); err != nil {
+				return err
+			}
 		}
 		n, err := tx.Q.UpdateLimitWait(ctx, db.UpdateLimitWaitParams{State: WaitResuming, ResumeAt: w.ResumeAt, NewRunID: "", Attempts: w.Attempts,
 			LastError: w.LastError, Now: tx.NowMicros(), ID: w.ID, Version: w.Version})
