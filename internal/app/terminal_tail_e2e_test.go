@@ -35,15 +35,31 @@ func TestTerminalTailCatchUp(t *testing.T) {
 	}
 	eventually(t, "running", func() bool { return e.run1(r.ID).Observed == "running" })
 	term := e.run.LiveByLabel("spaceman.run", r.ID)[0].ID
+	stored := func(want string) bool {
+		res, err := e.c.Fleet.Recordings().Read(ctx, r.ID, 0)
+		if err != nil {
+			return false
+		}
+		var out strings.Builder
+		for _, rec := range res.Records {
+			out.Write(rec.Data)
+		}
+		return strings.Contains(out.String(), want)
+	}
+	// The recorder is attached once its first output is stored: everything after it is recorded.
+	e.run.Output(term, "ready\r\n")
+	eventually(t, "recorder attached", func() bool { return stored("ready") })
+	// A few writes: the fake terminal drops output past a small buffer.
 	e.run.Output(term, "\x1b[?1049h\x1b[?25l")
-	for i := range 200 {
-		e.run.Output(term, fmt.Sprintf("line %03d of the earlier output\r\n", i))
+	for c := range 5 {
+		var b strings.Builder
+		for i := range 40 {
+			fmt.Fprintf(&b, "line %03d of the earlier output\r\n", c*40+i)
+		}
+		e.run.Output(term, b.String())
 	}
 	e.run.Output(term, "the last line\r\n")
-	eventually(t, "recording shipped", func() bool {
-		res, err := e.c.Fleet.Recordings().Read(ctx, r.ID, 0)
-		return err == nil && len(res.Records) > 0 && strings.Contains(string(res.Records[len(res.Records)-1].Data), "the last line")
-	})
+	eventually(t, "recording shipped", func() bool { return stored("the last line") })
 
 	rootSecret, _, err := e.c.Auth.IssueRootToken(ctx)
 	if err != nil {
