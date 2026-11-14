@@ -116,12 +116,14 @@ test('scrolling back through a live terminal', async ({ page, browser }) => {
     // The takeover's input bodies, recorded in the page (the API client sends Request objects, whose bodies the
     // browser's network log leaves out).
     await page.addInitScript(() => {
-      const w = window as unknown as { takeoverInput: string[] }
+      const w = window as unknown as { takeoverInput: string[]; runInput: unknown[] }
       w.takeoverInput = []
+      w.runInput = []
       const orig = window.fetch.bind(window)
       window.fetch = async (input, init) => {
         const req = new Request(input, init)
         if (req.method === 'POST' && /\/takeover\/[^/]+\/input$/.test(req.url)) w.takeoverInput.push(((await req.clone().json()) as { data: string }).data)
+        if (req.method === 'POST' && /\/runs\/[^/]+\/input$/.test(req.url)) w.runInput.push(await req.clone().json())
         return orig(req)
       }
     })
@@ -145,6 +147,12 @@ test('scrolling back through a live terminal', async ({ page, browser }) => {
     expect(await inputs()).not.toContain('\x1b[A')
     const held2 = await api.call<{ takeover?: { id: string } }>('GET', `/spaces/${sp.id}/runs/${full}`)
     if (held2.takeover) await api.call('POST', `/spaces/${sp.id}/runs/${full}/takeover/${held2.takeover.id}/end`, {})
+
+    // "Message the agent" types the text at once: the run page's box sends force: true (ADR-0084).
+    await expect(page.getByText('You have taken over this terminal')).toBeHidden({ timeout: 20_000 })
+    await page.getByLabel('Message the agent').fill('read the plan')
+    await page.getByLabel('Message the agent').press('Enter')
+    await expect.poll(() => page.evaluate(() => (window as unknown as { runInput: unknown[] }).runInput), { timeout: 5_000 }).toEqual([{ text: 'read the plan', force: true }])
   } finally {
     for (const id of started) await api.call('POST', `/spaces/${sp.id}/runs/${id}/stop`, {}).catch(() => {})
   }
