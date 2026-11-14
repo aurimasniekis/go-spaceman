@@ -37,6 +37,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/dream"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/events"
+	eventtemplate "github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/gateway"
 	"github.com/aurimasniekis/go-spaceman/internal/gitkeys"
@@ -109,6 +110,8 @@ type Central struct {
 	HarborPilotRuns *harborpilot.Lifecycle
 	// HarborPilotBudgets reads Harbor Pilot budget status: the early launch refusal and the Limits page (ADR-0060, HP-T5).
 	HarborPilotBudgets *harborpilot.Budgets
+	// HarborPilotWaits estimates gateway usage-limit holds from the quota board and budget status (ADR-0079 decision 9).
+	HarborPilotWaits *harborpilot.GatewayWaits
 	// Tools are the built-in agent tools served through the MCP bridge (SM-MCP-003).
 	Tools *agenttools.Registry
 	// Gateway serves external MCP servers' tools to granted runs (ADR-0023).
@@ -510,7 +513,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Tools = agenttools.New(agenttools.Deps{Inbox: c.Inbox, Queue: c.Queue, Attachments: c.Attachments, Human: c.Human,
 		Extra: []func(*agenttools.Registry){messages.Tools(c.Messages), control.Tools(c.Fleet, c.Queue), memory.Tools(c.Memory), kb.Tools(c.KB), repos.Tools(c.Repos), dream.Tools(c.Dreams), xspace.Tools(c.XSpace)}, Upstream: c.Gateway, Gate: c.Approvals})
 	c.Fleet.Hub().Tools = c.Limits.ToolCalls(c.Tools.Dispatch)
-	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), RateFor: func(ctx context.Context, spaceID string) int64 {
+	c.HarborPilotWaits = harborpilot.NewGatewayWaits(c.HarborPilotBudgets, c.Fleet, wakeDeadlines)
+	evOpts := events.Options{Clock: o.Clock, Metrics: m, Log: obs.Component(log, "events"), OnAccepted: c.gatewayQuotaKick, RateFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.IngestPerMinute)
 	}, DepthFor: func(ctx context.Context, spaceID string) int64 {
 		return c.Limits.Value(ctx, nil, spaceID, limits.EventDepth) // bounded automation across installations (SM-EVT-016)
@@ -795,6 +799,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "stale_run_sweep", Next: c.Fleet.NextStaleRunSweep, Due: c.Fleet.SweepStaleRuns},
 		// Runs at a usage limit: parked after the keep-alive, resumed at the reset, released after the maximum wait (ADR-0079).
 		human.Deadline{Name: "limit_waits", Next: c.Fleet.NextLimitWait, Due: c.Fleet.LimitWaitsDue},
+		// Gateway usage-limit holds: their reset estimated from Harbor Pilot, re-read every 15 minutes (ADR-0079 decision 9).
+		human.Deadline{Name: "gateway_waits", Next: c.HarborPilotWaits.Next, Due: c.HarborPilotWaits.Due},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.
@@ -944,4 +950,12 @@ type usageWithBudgets struct {
 func (u usageWithBudgets) Report(ctx context.Context, nodeID string, rep proto.UsageReport) {
 	u.Service.Report(ctx, nodeID, rep)
 	u.limits.OnUsage(ctx, rep.RunID)
+}
+
+// gatewayQuotaKick brings the gateway re-check forward when a subscription on the harbor-pilot-quota template accepts
+// Harbor Pilot's quota.window.recovered (ADR-0079 decision 9). The event only says "read the board again".
+func (c *Central) gatewayQuotaKick(slug string, e eventtemplate.Event) {
+	if slug == "harbor-pilot-quota" && e.Subject == "evt.harborpilot.quota.window.recovered" && c.HarborPilotWaits != nil {
+		c.HarborPilotWaits.Kick()
+	}
 }
