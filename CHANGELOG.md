@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   once an hour. The route answers 404 until bot configuration ships. New metrics `spaceman_telegram_webhook_requests_total`,
   `spaceman_telegram_updates_total`, `spaceman_telegram_updates_queued` and `spaceman_telegram_poll_errors_total`.
   **Migration 0051 must follow 0050** (the usage-limit work): it is released only after it.
+- Metrics: `spaceman_telegram_*` for the outbound queue of the planned Telegram bot (sends, drops, 429s, overflow
+  notices, queue depth and wait; ADR-0083). Nothing sends through it yet, so they stay at 0.
 
 ### Fixed
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header
