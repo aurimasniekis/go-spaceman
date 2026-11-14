@@ -81,10 +81,11 @@ func TestHelloReapplyOfUnchangedRunsWritesNothing(t *testing.T) {
 	}
 	connect := func(runs []proto.RunReport) time.Duration {
 		t.Helper()
-		start := time.Now()
 		n := dialRawNodeHello(t, e, proto.Hello{AgentVersion: "test", MinMinor: proto.MinMinor, MaxMinor: proto.MaxMinor, Runs: runs, Leases: []proto.LeaseState{}})
 		// The welcome follows the connect transaction, which queues behind the previous hello's run-ended hook writes.
 		n.nextWithin(t, proto.TypeWelcome, 2*time.Minute)
+		// The budget times applying the hello, not the welcome queue, so the clock starts once the welcome arrives.
+		start := time.Now()
 		// The reconcile is sent once every hello report is applied. Applying a hello that ends live runs queues a write
 		// transaction per run plus the asynchronous run-ended hooks (recordings, gateway, KB, repos, control notices),
 		// all through the one serialised writer, so under -race and a loaded machine it takes minutes. The wait is
