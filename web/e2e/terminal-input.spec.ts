@@ -1,4 +1,5 @@
 import { devices, expect, test, type Page } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
 import { readFileSync } from 'node:fs'
 
 import { Api, env, startAgent } from './stack'
@@ -25,6 +26,13 @@ const inputState = (page: Page) =>
       taTabIndex: ta.getAttribute('tabindex'),
     }
   })
+
+/** Fails on any axe WCAG 2.1 A/AA violation inside the terminal as shown (SM-UI-006), e.g. aria-allowed-attr. */
+async function axeTerminal(page: Page, what: string) {
+  const res = await new AxeBuilder({ page }).include('[data-testid="terminal"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  const found = res.violations.map((v) => `${v.id} [${v.impact}]: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ')}`)
+  expect(found, `${what}: accessibility violations`).toEqual([])
+}
 
 test('the terminal takes input only during a takeover', async ({ page, browser }) => {
   test.setTimeout(150_000)
@@ -135,6 +143,7 @@ test('the terminal takes input only during a takeover', async ({ page, browser }
     await page.keyboard.press('Enter')
     await page.waitForTimeout(300)
     expect(await sent(page)).toBe('')
+    await axeTerminal(page, 'watched terminal')
 
     // Taken over, the same click focuses the input and typing reaches the run.
     await takeOver(page)
@@ -142,6 +151,7 @@ test('the terminal takes input only during a takeover', async ({ page, browser }
     await expect.poll(() => inputState(page), { timeout: 5_000 }).toMatchObject({ activeInsideTerminal: true, editable: true })
     await page.keyboard.type('hi')
     await expect.poll(() => sent(page), { timeout: 5_000 }).toContain('hi')
+    await axeTerminal(page, 'taken-over terminal')
     await endTakeover()
   } finally {
     for (const id of started) await api.call('POST', `/spaces/${sp.id}/runs/${id}/stop`, {}).catch(() => {})

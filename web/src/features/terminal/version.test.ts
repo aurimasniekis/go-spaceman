@@ -12,7 +12,7 @@ describe('ghostty-web version', () => {
   it('is the version the ADR-0076 patches were verified against', () => {
     const dir = dirname(createRequire(import.meta.url).resolve('ghostty-web/ghostty-vt.wasm'))
     const { version } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { version: string }
-    expect(version, `ghostty-web is ${version}: re-verify ADR-0076 patches (ghostty.ts cacheViewport/skipBlankCells, vite.config.ts stripGhosttyInlineWasm), then update PATCHED_GHOSTTY_WEB`).toBe(PATCHED_GHOSTTY_WEB)
+    expect(version, `ghostty-web is ${version}: re-verify ADR-0076 patches (ghostty.ts cacheViewport/skipBlankCells, the input patches watchKeys/isComposing and the textarea focus override in setInputMode, vite.config.ts stripGhosttyInlineWasm), then update PATCHED_GHOSTTY_WEB`).toBe(PATCHED_GHOSTTY_WEB)
     expect(__GHOSTTY_WEB_VERSION__).toBe(version)
   })
 

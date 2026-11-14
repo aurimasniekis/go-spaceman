@@ -1,6 +1,6 @@
 import type { Terminal } from 'ghostty-web'
 import { SCROLLBACK_BYTES } from './scrollback'
-import { createTerminal, disposeTerminal, fitFont, holdDrawing, patchGhostty, PATCHED_GHOSTTY_WEB, scrollWithWheelAndTouch, setInputMode, skipBlankCells } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, holdDrawing, patchGhostty, PATCHED_GHOSTTY_WEB, scrollWithWheelAndTouch, setInputMode, skipBlankCells, watchKeys } from './ghostty'
 
 const ghostty = vi.hoisted(() => {
   const created: { options: { ghostty?: unknown; scrollback?: number }; disposed: boolean }[] = []
@@ -303,6 +303,19 @@ describe('setInputMode', () => {
     expect(document.activeElement).toBe(ta)
     el.remove()
   })
+  it('watching: the text left by the fallback copy is cleared when the textarea blurs, so the next tap cannot focus it', () => {
+    const { el, ta, term } = make()
+    setInputMode(term, false)
+    setInputMode(term, false) // one listener, however often it is set
+    ta.value = 'copied text'
+    ta.focus()
+    expect(document.activeElement).toBe(ta)
+    el.focus() // ghostty-web gives focus back after the copy
+    expect(ta.value).toBe('')
+    ta.focus() // a tap on the canvas
+    expect(document.activeElement).not.toBe(ta)
+    el.remove()
+  })
   it('taking over: editable, keyboard allowed, focused; back out undoes it', () => {
     const { el, ta, term } = make()
     setInputMode(term, false)
@@ -315,5 +328,26 @@ describe('setInputMode', () => {
     expect(document.activeElement).not.toBe(el)
     expect(el.hasAttribute('contenteditable')).toBe(false)
     el.remove()
+  })
+})
+
+describe('watchKeys', () => {
+  const key = (el: HTMLElement) => {
+    const seen: boolean[] = []
+    el.addEventListener('keydown', (e) => seen.push(e.isComposing)) // after the capture listener
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+    return seen[0]
+  }
+  it('marks keys as composing while the terminal is not in input mode, and stops once it is', () => {
+    const el = document.createElement('div')
+    const ta = document.createElement('textarea')
+    el.append(ta)
+    const term = { element: el, textarea: ta, options: { disableStdin: true }, focus: vi.fn() } as unknown as Terminal
+    watchKeys(term)
+    expect(key(el)).toBe(true)
+    setInputMode(term, true)
+    expect(key(el)).toBe(false)
+    setInputMode(term, false)
+    expect(key(el)).toBe(true)
   })
 })

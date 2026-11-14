@@ -221,6 +221,8 @@ export async function createTerminal(el: HTMLElement, cols = 120, rows = 40): Pr
 }
 
 const inputOn = new WeakSet<Terminal>()
+/** The terminals whose textarea already clears its copied text on blur (setInputMode). */
+const clearing = new WeakSet<Terminal>()
 
 /**
  * Stops ghostty-web 0.4.0 handling key presses while the terminal is not in input mode. Its key handler calls
@@ -228,7 +230,7 @@ const inputOn = new WeakSet<Terminal>()
  * shortcuts; it returns early for a composing event (isComposing, keyCode 229), so a watching terminal's keys are
  * marked as composing before it sees them. The event still propagates and keeps its default action.
  */
-function watchKeys(term: Terminal) {
+export function watchKeys(term: Terminal) {
   term.element?.addEventListener(
     'keydown',
     (e) => {
@@ -257,7 +259,6 @@ export function setInputMode(term: Terminal, on: boolean) {
     el.setAttribute('role', 'textbox')
     el.setAttribute('aria-label', 'Terminal input')
     el.setAttribute('aria-multiline', 'true')
-    el.removeAttribute('aria-readonly')
     el.removeAttribute('inputmode')
     ta.removeAttribute('inputmode')
     ta.removeAttribute('readonly')
@@ -270,7 +271,8 @@ export function setInputMode(term: Terminal, on: boolean) {
   el.removeAttribute('contenteditable')
   el.setAttribute('role', 'region')
   el.setAttribute('aria-label', 'Terminal output')
-  el.setAttribute('aria-readonly', 'true')
+  // A region allows neither aria-multiline (ghostty-web sets it) nor aria-readonly (axe aria-allowed-attr).
+  el.removeAttribute('aria-multiline')
   el.setAttribute('inputmode', 'none')
   ta.setAttribute('inputmode', 'none')
   ta.setAttribute('readonly', '')
@@ -280,6 +282,14 @@ export function setInputMode(term: Terminal, on: boolean) {
   const focus = HTMLElement.prototype.focus
   ta.focus = (o?: FocusOptions) => {
     if (ta.value) focus.call(ta, o)
+  }
+  // ghostty-web's fallback copy (no navigator.clipboard) leaves the selection in the textarea and moves focus back
+  // when done: clear it then, so the guard above keeps holding for the next tap.
+  if (!clearing.has(term)) {
+    clearing.add(term)
+    ta.addEventListener('blur', () => {
+      if (!inputOn.has(term)) ta.value = ''
+    })
   }
   const a = document.activeElement
   if (a === ta || a === el) (a as HTMLElement).blur()
