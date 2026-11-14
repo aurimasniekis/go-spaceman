@@ -27,6 +27,10 @@ type Rule struct {
 	// a global catalog any signed-in principal may read, as opposed to a personal operation (own profile, sign-out). Internal principals (the SpaceMan MCP, ADR-0063) may
 	// call it; they are refused on every other Session rule.
 	Filtered bool
+	// TelegramSelf marks a Telegram self-service operation (the caller's own Telegram settings, their own unlink,
+	// ADR-0083 §3.2): a Telegram principal may call it although it is a personal Session or UserOnly rule. It never
+	// lifts the refusal of Reauth or MFA, and such rules must not set it (TestTelegramSelfRules).
+	TelegramSelf bool
 }
 
 func public() Rule { return Rule{Public: true} }
@@ -106,11 +110,19 @@ func (d *Deps) authorizeOps(api huma.API) func(huma.Context, func(huma.Context))
 			writeHumaProblem(ctx, errForbidden())
 			return
 		}
+		p := PrincipalFrom(ctx.Context())
+		if ch := telegramChannelFrom(ctx.Context()); ch != channelNone || p.ViaTelegram() {
+			// The Telegram classification (ADR-0083 §3.3), before anything else: an entry point Telegram may not
+			// reach is refused whatever the principal's grants.
+			if prob := d.telegramOpRefusal(op.OperationID, rl, p, ch); prob != nil {
+				writeHumaProblem(ctx, prob)
+				return
+			}
+		}
 		if rl.Public {
 			next(ctx)
 			return
 		}
-		p := PrincipalFrom(ctx.Context())
 		if p == nil {
 			writeHumaProblem(ctx, errUnauthenticated())
 			return
@@ -124,6 +136,12 @@ func (d *Deps) authorizeOps(api huma.API) func(huma.Context, func(huma.Context))
 			// (ADR-0063). Bearer tokens skip step-up below; internal tokens and the external MCP endpoint must not. Reads filtered by the
 			// principal's grants are not personal and stay open.
 			writeHumaProblem(ctx, newProblem(403, apperr.CodeForbidden, "this operation is not available through the SpaceMan MCP", nil))
+			return
+		}
+		if p.ViaTelegram() && (rl.Reauth || rl.MFA || !rl.TelegramSelf && (rl.Session && !rl.Filtered || rl.UserOnly)) {
+			// A Telegram principal has no step-up and no own-account operations but its Telegram self-service ones
+			// (ADR-0083 §3.2 change 2). Step-up below would refuse it too (its AuthAt is zero), but never rely on that.
+			writeHumaProblem(ctx, errTelegramRefused())
 			return
 		}
 		if rl.UserOnly && p.User == nil {
@@ -149,10 +167,13 @@ func (d *Deps) authorizeOps(api huma.API) func(huma.Context, func(huma.Context))
 				return
 			}
 		}
-		if p.Method != "" && p.TokenID == "" && p.RootTokenID == "" && mutating(op.Method) && !p.VerifyCSRF(ctx.Header(CSRFHeader)) {
+		// CSRF protects the ambient cookie credential; a Telegram principal carries none (the bot is in process, the Mini
+		// App sends a header on a cookieless host), so it needs no CSRF token (ADR-0083 §3.2 change 3).
+		if p.Method != "" && p.TokenID == "" && p.RootTokenID == "" && !p.ViaTelegram() && mutating(op.Method) && !p.VerifyCSRF(ctx.Header(CSRFHeader)) {
 			writeHumaProblem(ctx, errCSRF())
 			return
 		}
+		// Unreachable for a Telegram principal (refused above); kept unchanged so it fails safe (ADR-0083 §3.2 change 4).
 		if (rl.Reauth || rl.MFA) && p.TokenID == "" && p.RootTokenID == "" {
 			if err := d.Auth.RequireRecentAuth(p, rl.MFA); err != nil {
 				writeHumaProblem(ctx, problemFor(err))

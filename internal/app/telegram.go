@@ -8,8 +8,8 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 

@@ -277,6 +277,12 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "human.respond", err)
 				}
+				if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {
+					// Fail closed (ADR-0083 §2.4, Q2): an approval, enforced (ADR-0024) or advisory, is decided on the web,
+					// never from Telegram, whatever the space's enforced_approvals setting. TG-7 relaxes this to the
+					// per-space "confirm" opt-in for enforced approvals.
+					return nil, d.fail(ctx, "human.respond", apperr.New(apperr.CodeForbidden, "approvals are decided on the web, not from Telegram"))
+				}
 				if cur.Type == human.TypeApproval {
 					p := PrincipalFrom(ctx)
 					if d.Authz == nil || !d.Authz.AllowedAll(p.Subjects(), in.SpaceID, authz.ApprovalDecide) {
@@ -325,8 +331,15 @@ func RegisterHuman(svc *human.Service) func(api huma.API, d *Deps) {
 				if err != nil {
 					return nil, d.fail(ctx, "human.cancel", err)
 				}
-				if _, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond); err != nil {
+				cur, err := d.humanAccess(ctx, svc).action(ctx, in.SpaceID, in.ActionID, humanRespond)
+				if err != nil {
 					return nil, d.fail(ctx, "human.cancel", err)
+				}
+				if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {
+					// Cancelling finalizes an approval too (approvals.onFinalized turns it into Revoked, which ends an
+					// enforced approval), so it is refused from Telegram exactly like a decision (see respond above).
+					// Assign, move, clarify and comment finalize nothing and stay allowed.
+					return nil, d.fail(ctx, "human.cancel", apperr.New(apperr.CodeForbidden, "approvals are decided on the web, not from Telegram"))
 				}
 				a, err := svc.Cancel(ctx, Actor(ctx), in.SpaceID, in.ActionID, v, in.Body.Reason)
 				if err != nil {

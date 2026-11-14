@@ -56,6 +56,14 @@ func (d *Deps) watchHandler() http.Handler {
 			writeProblem(w, errLimited())
 			return
 		}
+		var watchClass TelegramClass
+		if d.Telegram != nil {
+			watchClass = d.Telegram.Watch
+		}
+		if prob := telegramGate(telegramChannelFrom(ctx), p, watchClass); prob != nil {
+			writeProblem(w, prob)
+			return
+		}
 		after, err := parseAfter(r)
 		if err != nil {
 			writeProblem(w, newProblem(http.StatusUnprocessableEntity, "validation_failed", "after must be a non-negative integer", nil))
@@ -159,6 +167,9 @@ func parseAfter(r *http.Request) (int64, error) {
 // revalidate re-checks the stream's principal without marking the session active (it must not defeat the idle timeout).
 func (d *Deps) revalidate(ctx context.Context, r *http.Request, p *auth.Principal) (*auth.Principal, bool) {
 	switch {
+	case p.ViaTelegram():
+		// A Mini App stream: its session header, never the cookie (ADR-0083 §3.4.1).
+		return d.revalidateTelegram(ctx, p)
 	case p.RootTokenID != "", p.TokenID != "":
 		tok := r.Header.Get("Authorization")
 		if len(tok) <= len(bearerPrefix) {

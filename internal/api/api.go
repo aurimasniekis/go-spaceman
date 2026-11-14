@@ -66,6 +66,10 @@ type Deps struct {
 	ExtraRules map[string]Rule
 	// Raw are plain HTTP routes (streams, downloads), authorized per space.
 	Raw []RawRoute
+	// Telegram is the Telegram channel's policy (ADR-0083): the classification of every entry point, the Mini App
+	// session resolver, per-space features and the Mini App origin. Nil refuses every Telegram principal and every
+	// Mini App request.
+	Telegram *TelegramPolicy
 	// MCP serves the external MCP endpoint (MCPPath, ADR-0063) behind the API's middleware and mcpEndpoint's guard;
 	// nil leaves the path unserved.
 	MCP http.Handler
@@ -153,12 +157,13 @@ func WithInProcessPrincipal(ctx context.Context, p *auth.Principal) context.Cont
 	return context.WithValue(ctx, inProcessPrincipalKey{}, p)
 }
 
-// InProcessHandler serves the API's operations to callers inside central (the SpaceMan MCP, ADR-0063) with the
-// principal they inject through WithInProcessPrincipal, instead of authenticating a cookie or bearer token. Every
-// operation still runs its rule (authorizeOps), validation, idempotency and audit exactly as over HTTP; a request
-// without a principal is unauthenticated, and any principal but an internal token's or the external MCP endpoint's
-// (auth.Principal.ViaMCP) is forbidden. Only huma operations are served: the watch stream and the raw routes
-// (uploads, downloads, exports) are not.
+// InProcessHandler serves the API's operations to callers inside central (the SpaceMan MCP, ADR-0063, and the Telegram
+// bot, ADR-0083) with the principal they inject through WithInProcessPrincipal, instead of authenticating a cookie or
+// bearer token. Every operation still runs its rule (authorizeOps), validation, idempotency and audit exactly as over
+// HTTP; a request without a principal is unauthenticated, and any principal but an internal token's or the external
+// MCP endpoint's (auth.Principal.ViaMCP, with a token), or a Telegram principal's (auth.Principal.ViaTelegram, with no
+// token and not via MCP), is forbidden. A Telegram principal is served on the "chat" channel. Only huma operations are
+// served: the watch stream and the raw routes (uploads, downloads, exports) are not.
 func (d *Deps) InProcessHandler() http.Handler {
 	mux := http.NewServeMux()
 	Register(mux, d)
@@ -168,11 +173,11 @@ func (d *Deps) InProcessHandler() http.Handler {
 			writeProblem(w, errUnauthenticated())
 			return
 		}
-		if !p.ViaMCP() || p.IsRoot() || p.User == nil || p.TokenID == "" {
-			// Only an internal token's principal (auth.InternalPrincipal) or a bearer token's on the external MCP
-			// endpoint may be injected: any other kind would skip the MCP refusals and, with a token ID, step-up
-			// (ADR-0063).
-			writeProblem(w, newProblem(http.StatusForbidden, apperr.CodeForbidden, "only an MCP principal may call the API in process", nil))
+		if !inProcessAllowed(p) {
+			// Only an internal token's principal (auth.InternalPrincipal), a bearer token's on the external MCP
+			// endpoint, or a Telegram principal may be injected: any other kind would skip the MCP or Telegram
+			// refusals and, with a token ID, step-up (ADR-0063, ADR-0083).
+			writeProblem(w, newProblem(http.StatusForbidden, apperr.CodeForbidden, "only an MCP or Telegram principal may call the API in process", nil))
 			return
 		}
 		ids := []obs.CorrelationID{}
@@ -183,28 +188,46 @@ func (d *Deps) InProcessHandler() http.Handler {
 			ids = append(ids, obs.TokenID(p.TokenID))
 		}
 		ctx := context.WithValue(obs.WithIDs(r.Context(), ids...), principalKey{}, p)
+		if p.ViaTelegram() {
+			ctx = context.WithValue(ctx, telegramChannelKey{}, channelChat)
+		}
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 	h = d.limitBody(h)
 	return d.withRequest(h)
 }
 
+// inProcessAllowed is InProcessHandler's guard: (ViaMCP and a token ID) or (ViaTelegram, no token ID, no root token
+// ID and not via MCP), always with a user and never root (ADR-0083 §3.2 change 1).
+func inProcessAllowed(p *auth.Principal) bool {
+	if p.IsRoot() || p.User == nil {
+		return false
+	}
+	return (p.ViaMCP() && p.TokenID != "") || (p.ViaTelegram() && p.TokenID == "" && p.RootTokenID == "" && !p.ViaMCP())
+}
+
 // Handler returns the complete API handler with its middleware: security headers, request IDs, client IP, body
 // limit, authentication and the cross-site check. The watch stream and the OpenAPI document are served on the same mux.
-func (d *Deps) Handler() http.Handler {
+func (d *Deps) Handler() http.Handler { return d.handler(false) }
+
+// handler builds the API handler; miniapp builds it in Telegram mode (TelegramHandler).
+func (d *Deps) handler(miniapp bool) http.Handler {
 	mux := http.NewServeMux()
 	Register(mux, d)
 	mux.Handle("GET "+Prefix+"/watch", d.watchHandler())
 	for _, rt := range d.Raw {
 		mux.Handle(rt.Pattern, d.authorizeRaw(rt))
 	}
-	if d.MCP != nil {
+	if d.MCP != nil && !miniapp {
 		mux.Handle(MCPPath, d.mcpEndpoint(d.MCP))
 	}
 	var h http.Handler = mux
 	h = d.authenticate(h)
 	h = d.limitBody(h)
 	h = d.withRequest(h)
+	if miniapp {
+		h = d.telegramMode(h)
+	}
 	h = securityHeaders(h)
 	return d.Metrics.HTTPMiddleware(h)
 }

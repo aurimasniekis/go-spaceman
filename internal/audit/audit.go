@@ -70,6 +70,13 @@ const ChannelMCPEndpoint = "mcp_endpoint"
 // ViaSpacemanMCP prefixes Via for calls made through a SpaceMan MCP server's internal token (ADR-0063).
 const ViaSpacemanMCP = "spaceman_mcp:"
 
+// ViaTelegram prefixes Via for calls a person made through a Telegram link, "telegram:<link id>" (ADR-0083), and
+// ChannelTelegram is their Channel.
+const (
+	ViaTelegram     = "telegram:"
+	ChannelTelegram = "telegram"
+)
+
 // Internal reports whether the actor acted through a SpaceMan MCP server's internal token: an agent using its owner's
 // authority, never a person at the keyboard.
 func (a Actor) Internal() bool { return strings.HasPrefix(a.Via, ViaSpacemanMCP) }

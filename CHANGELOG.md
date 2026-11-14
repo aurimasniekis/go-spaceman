@@ -36,6 +36,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   quiet hours use it and stay off until you set one; there is no server-wide fallback.
 - Metrics: `spaceman_telegram_*` for the outbound queue of the planned Telegram bot (sends, drops, 429s, overflow
   notices, queue depth and wait; ADR-0083). Nothing sends through it yet, so they stay at 0.
+- Telegram security core (ADR-0083, not usable yet): the Telegram principal acts as its link's capped subject
+  intersected with the user's current grants, never with step-up, own-account operations or a token. Every API
+  operation, raw route and the change feed has a reviewed Telegram class (a new one is unreachable from Telegram until
+  classified). The main host answers `Authorization: Telegram …` with 401 before any cookie is read; the Mini App's
+  Telegram mode of the API accepts only that scheme, drops cookies and never sets one. Approvals can't be decided
+  from Telegram. Migration 0051 also rebuilds
+  `role_grants` (rows kept) to allow link grants.
 
 ### Fixed
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header

@@ -28,6 +28,8 @@ type revocation struct {
 	sessionKey string // one session (hex of its token hash)
 	sessionID  string // one session by display ID (with userID)
 	tokenID    string // an API token or the root token
+	// telegramLinkID: a Telegram link was revoked, suspended or narrowed (ADR-0083)
+	telegramLinkID string
 }
 
 // Revocations fans revocation signals out to the streams they may affect.
@@ -51,8 +53,10 @@ type StreamWatch struct {
 	sessionKey string
 	sessionID  string
 	tokenID    string
-	r          *Revocations
-	once       sync.Once
+	// telegramLinkID is the link of a Telegram principal's stream.
+	telegramLinkID string
+	r              *Revocations
+	once           sync.Once
 }
 
 // Watch registers a stream authenticated as p. Close it when the stream ends.
@@ -70,6 +74,7 @@ func (r *Revocations) Watch(p *Principal) *StreamWatch {
 		if p.RootTokenID != "" {
 			w.tokenID = p.RootTokenID
 		}
+		w.telegramLinkID = p.TelegramLinkID
 	}
 	r.mu.Lock()
 	r.watches[w] = struct{}{}
@@ -108,6 +113,8 @@ func (w *StreamWatch) matches(rev revocation) bool {
 		return w.userID == rev.userID
 	case rev.tokenID != "":
 		return w.tokenID == rev.tokenID
+	case rev.telegramLinkID != "":
+		return w.telegramLinkID == rev.telegramLinkID
 	}
 	return false
 }
