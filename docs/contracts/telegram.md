@@ -140,6 +140,12 @@ checks it):
 | A 429 answer carries `parameters.retry_after` (seconds). | https://core.telegram.org/bots/api#responseparameters |
 | A user who blocked the bot makes sends fail with 403. | https://core.telegram.org/bots/api#making-requests |
 
+Not documented, so SpaceMan's sender (`internal/telegram/sender`, TG-2) decides for itself:
+- Whether a 429 came from a chat's limit or the global one. The sender pauses the chat for `retry_after`, and every
+  chat when the call had no chat or a second chat got a 429 within a second.
+- Whether edits, deletes and media count toward the limits. The sender counts each as a send; a media group is one.
+- Whether a burst is allowed per group. The sender allows the full 20 at once, as the fake does.
+
 ## Mini Apps
 
 | Fact | Source |

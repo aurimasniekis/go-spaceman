@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Added
 - Configuration: `telegram.api_base_url` (default `https://api.telegram.org`), the Bot API endpoint for the planned
   Telegram bot (ADR-0083). It is settable only in central's configuration, never through the API. Nothing uses it yet.
+- Metrics: `spaceman_telegram_*` for the outbound queue of the planned Telegram bot (sends, drops, 429s, overflow
+  notices, queue depth and wait; ADR-0083). Nothing sends through it yet, so they stay at 0.
 
 ## [0.1.4] - 2026-11-14
 
