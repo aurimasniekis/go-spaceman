@@ -133,7 +133,7 @@ func gatewayLimit(kind string) bool {
 }
 
 func (svc *Service) ulSettings(ctx context.Context, q *db.Queries, spaceID string) UsageLimitSettings {
-	ul := UsageLimitSettings{KeepAliveMax: DefaultLimitKeepAliveMax, MaxWait: DefaultLimitMaxWait}
+	ul := UsageLimitSettings{KeepAliveMax: DefaultLimitKeepAliveMax, MaxWait: DefaultLimitMaxWait, NotifyAfter: DefaultLimitNotifyAfter}
 	if svc.opts.UsageLimitSettings != nil {
 		ul = svc.opts.UsageLimitSettings(ctx, q, spaceID)
 	}

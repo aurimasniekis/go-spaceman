@@ -67,6 +67,8 @@ const (
 	UsageLimitKeepAliveMax = "usage_limit_keep_alive_max_minutes"
 	// UsageLimitMaxWait is how long a worker parked at a usage limit waits before its task goes back to the queue (Q2).
 	UsageLimitMaxWait = "usage_limit_max_wait_hours"
+	// UsageLimitNotifyAfter is how far away a hold's reset must be for the space's people to be told once (Q5; 0: never).
+	UsageLimitNotifyAfter = "usage_limit_notify_after_hours"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -94,7 +96,7 @@ const (
 type Def struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
-	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,days,tokens,usd_cents,percent,depth,switch,columns,rows" doc:"switch: 1 on, 0 off"`
+	Unit        string `json:"unit" enum:"count,bytes,per_minute,minutes,hours,days,tokens,usd_cents,percent,depth,switch,columns,rows" doc:"switch: 1 on, 0 off"`
 	Scope       string `json:"scope" doc:"What one limit value bounds"`
 	Min         int64  `json:"min"`
 	Max         int64  `json:"max"`
@@ -174,6 +176,9 @@ var Defs = []Def{
 	{Key: UsageLimitMaxWait, Label: "Usage-limit maximum wait", Unit: "hours",
 		Scope:    "how long a worker or diagnostic run parked at a usage limit waits to be resumed before SpaceMan gives up on it and its task goes back to the queue, ready and unassigned (control is never given up on)",
 		Enforced: "usage-limit waits (release)", OnLower: "Applies to runs parked from then on; a wait already parked keeps its release time.", Overridable: true},
+	{Key: UsageLimitNotifyAfter, Label: "Usage-limit people notice", Unit: "hours", ZeroNone: true,
+		Scope:    "how far away the reset of an account (or gateway) held at a usage limit must be for the space's people to get one human action about it, once per account window (default 12: weekly limits, not 5-hour ones; 0: never)",
+		Enforced: "usage-limit holds (people notice, deadline timer)", OnLower: "Applies to holds not yet announced; an action already raised stays.", Overridable: true},
 }
 
 const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."

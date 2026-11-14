@@ -179,7 +179,7 @@ function EditLimits({ spaceId, l, canRetain, onClose }: { spaceId: string; l: Li
           data={[{ value: '', label: `Default (${limitValue(x.default, x.unit)})` }, { value: '1', label: 'On' }, { value: '0', label: 'Off' }]}
           onChange={(v) => f.handleChange(v === '1' ? 1 : v === '0' ? 0 : '')} />
       ) : <NumberInput label={x.label} disabled={isRetention(x) && !canRetain}
-        description={`${x.scope}${x.zero_means_none && !isTerminal(x) ? (isRetention(x) ? ' (0: keep)' : x.unit === 'minutes' ? ' (0: never)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
+        description={`${x.scope}${x.zero_means_none && !isTerminal(x) ? (isRetention(x) ? ' (0: keep)' : x.unit === 'minutes' || x.unit === 'hours' ? ' (0: never)' : ' (0: no limit)') : ''}${isRetention(x) && !canRetain ? ' · space admins only' : ''}`}
         min={x.min} max={x.max} allowDecimal={false}
         thousandSeparator="," placeholder={`Default: ${limitValue(x.default, x.unit, x.zero_means_none)}`} value={f.state.value ?? ''}
         onChange={(v) => f.handleChange(typeof v === 'number' ? v : '')} />}

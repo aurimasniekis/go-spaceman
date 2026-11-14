@@ -1155,6 +1155,62 @@ func (q *Queries) ListUsageLimitsToCheck(ctx context.Context, checkAt sql.NullIn
 	return items, nil
 }
 
+const listUsageLimitsToTellPeople = `-- name: ListUsageLimitsToTellPeople :many
+SELECT u.id, u.space_id, u.scope, u.account_id, u.gateway_ref, u.kind, u.resets_at, u.check_at, u.source, u.first_run_id, u.seen_at, u.cleared_at, u.cleared_by, u.notified_control_at, u.notified_humans_at, u.version, u.created_at, u.updated_at FROM usage_limits u JOIN spaces s ON s.id = u.space_id
+WHERE u.cleared_at IS NULL AND u.notified_humans_at IS NULL AND u.resets_at IS NOT NULL AND u.resets_at > ?1
+  AND s.state <> 'archived'
+ORDER BY u.seen_at, u.id LIMIT ?2
+`
+
+type ListUsageLimitsToTellPeopleParams struct {
+	After sql.NullInt64
+	Lim   int64
+}
+
+// Open holds with a known reset later than the given time whose space's people were not told yet, in spaces that
+// aren't archived (ADR-0079 Q5). The space's own threshold is applied by the caller.
+func (q *Queries) ListUsageLimitsToTellPeople(ctx context.Context, arg ListUsageLimitsToTellPeopleParams) ([]UsageLimit, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageLimitsToTellPeople, arg.After, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsageLimit{}
+	for rows.Next() {
+		var i UsageLimit
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Scope,
+			&i.AccountID,
+			&i.GatewayRef,
+			&i.Kind,
+			&i.ResetsAt,
+			&i.CheckAt,
+			&i.Source,
+			&i.FirstRunID,
+			&i.SeenAt,
+			&i.ClearedAt,
+			&i.ClearedBy,
+			&i.NotifiedControlAt,
+			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markUsageLimitControlNotified = `-- name: MarkUsageLimitControlNotified :execrows
 UPDATE usage_limits SET updated_at = ?1, notified_control_at = ?1, version = version + 1
 WHERE id = ?2 AND notified_control_at IS NULL

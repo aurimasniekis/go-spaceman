@@ -171,6 +171,10 @@ type LimitsConfig struct {
 	// its task goes back to the queue, ready and unassigned (1-720, default 168: 7 days; control is never given up on;
 	// ADR-0079 Q2).
 	UsageLimitMaxWaitHours int64 `yaml:"usage_limit_max_wait_hours"`
+	// UsageLimitNotifyAfterHours is how far away a usage-limit hold's reset must be for the space's people to get one
+	// human action about it, once per account window (0-720, default 12: weekly limits, not 5-hour ones; 0: never;
+	// ADR-0079 Q5).
+	UsageLimitNotifyAfterHours int64 `yaml:"usage_limit_notify_after_hours"`
 }
 
 // BackupsConfig configures where central keeps backups and the backup schedule (SM-STORE-005, ADR-0031). Manual

@@ -37,6 +37,9 @@ type UsageLimitSettings struct {
 	KeepAliveMax time.Duration
 	// MaxWait is how long a parked worker waits before its task is released (0: DefaultLimitMaxWait).
 	MaxWait time.Duration
+	// NotifyAfter is how far away a hold's reset must be for the space's people to be told once (Q5); 0: never. With
+	// no Options.UsageLimitSettings it is DefaultLimitNotifyAfter.
+	NotifyAfter time.Duration
 }
 
 // HoldTarget is what a launch would use that a usage-limit hold can hold: an account, or the gateway references of a
