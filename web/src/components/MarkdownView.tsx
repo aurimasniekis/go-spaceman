@@ -1,6 +1,7 @@
 import { Box } from '@mantine/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useAttachmentsHost } from '@/components/attachmentsHost'
 import { type AttachmentResolver, type DiagramPlan, MARKDOWN_LIMITS, planDiagrams, renderMarkdown } from '@/lib/markdown'
 import { enhanceCode } from './markdown/enhance'
 import { MermaidDiagram } from './markdown/MermaidDiagram'
@@ -57,8 +58,12 @@ type Diagram = { el: HTMLElement; source: string; plan: DiagramPlan }
  */
 export function MarkdownView({ source, spaceId, resolveAttachment }: { source: string; spaceId: string; resolveAttachment?: AttachmentResolver }) {
   const idPrefix = useAnchorPrefix(source)
-  const html = useMemo(() => renderMarkdown(source, spaceId, { resolveAttachment, idPrefix }), [source, spaceId, resolveAttachment, idPrefix])
+  const host = useAttachmentsHost()
+  const resolver = resolveAttachment ?? host?.resolver(spaceId)
+  const html = useMemo(() => renderMarkdown(source, spaceId, { resolveAttachment: resolver, idPrefix }), [source, spaceId, resolver, idPrefix])
   const ref = useRef<HTMLDivElement>(null)
+  // Another transport's attachments (the Mini App): gate images on visibility and route link clicks.
+  useEffect(() => (host && ref.current ? host.watch(ref.current) : undefined), [host, html])
   const [diagrams, setDiagrams] = useState<Diagram[]>([])
   const scrolled = useRef(false)
 

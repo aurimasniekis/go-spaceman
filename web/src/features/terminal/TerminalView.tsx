@@ -3,7 +3,7 @@ import { IconArrowDown, IconDownload, IconPlayerPauseFilled, IconPlayerPlayFille
 import type { Terminal } from 'ghostty-web'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, unwrap, type RecordingRecord, type Run } from '@/api/client'
-import { API_PREFIX } from '@/api/session'
+import { API_PREFIX, isMiniApp } from '@/api/session'
 import { endReason, sessionStillValid } from '@/api/streams'
 import { clock } from '@/lib/format'
 import { createTerminal, disposeTerminal, fitFont, followCursor, holdDrawing, regularCell, rowHeight, scrollWithWheelAndTouch } from './ghostty'
@@ -477,7 +477,22 @@ function ReplayTerminal({ spaceId, runId }: Omit<Props, 'mode'>) {
  * A run's terminal. Each run gets a terminal of its own (keyed by the run): what one run's terminal drew and how far
  * its stream had read never carry over to another run's, whoever renders this.
  */
-export function TerminalView({ spaceId, runId, mode, onInput, resize }: Props) {
+/**
+ * The terminal needs EventSource and a cookie session, which the Mini App has neither of (watch-only terminal is TG-10-3,
+ * off by default), so the Mini App shows a note instead of a stream it could not authenticate.
+ */
+export function TerminalView(props: Props) {
+  if (isMiniApp()) {
+    return (
+      <Text size="sm" c="dimmed">
+        The terminal is not available in the Telegram app. Open SpaceMan in the browser to watch it.
+      </Text>
+    )
+  }
+  return <BrowserTerminalView {...props} />
+}
+
+function BrowserTerminalView({ spaceId, runId, mode, onInput, resize }: Props) {
   const key = `${spaceId}/${runId}`
   return mode === 'live' ? <LiveTerminal key={key} spaceId={spaceId} runId={runId} onInput={onInput} resize={resize} /> : <ReplayTerminal key={key} spaceId={spaceId} runId={runId} />
 }

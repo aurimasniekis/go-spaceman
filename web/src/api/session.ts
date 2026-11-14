@@ -68,7 +68,7 @@ export function toLogin() {
  * (onEnded): there is no sign-in and no retry, because the initData behind it is single-use.
  */
 let tgToken = ''
-let tgEnded: (() => void) | null = null
+let tgEnded: ((reason?: string) => void) | null = null
 
 export function setTelegramSession(token: string) {
   tgToken = token
@@ -80,10 +80,18 @@ export function telegramToken(): string {
 
 /** True once the Mini App entry has installed its mode (before the exchange, so the exchange itself is cookieless). */
 let miniApp = false
-export function setMiniAppMode(onEnded: () => void) {
+export function setMiniAppMode(onEnded: (reason?: string) => void) {
   miniApp = true
   tgEnded = onEnded
 }
+
+/** True in the Telegram Mini App (its entry installed the mode). */
+export function isMiniApp(): boolean {
+  return miniApp
+}
+
+/** What a 401 with this problem code says to the person: MFA still to finish is a browser job, anything else a reopen. */
+export const MFA_PENDING_MESSAGE = 'Multi-factor authentication is required for your SpaceMan account. Finish setting it up in the browser, then reopen this app.'
 
 export function clearTelegramSession() {
   tgToken = ''
@@ -153,7 +161,7 @@ export const sessionMiddleware: Middleware = {
   },
   async onResponse({ request, response }) {
     if (miniApp) {
-      if (response.status === 401) tgEnded?.()
+      if (response.status === 401) tgEnded?.((await problemCode(response)) === 'mfa_required' ? MFA_PENDING_MESSAGE : undefined)
       return response
     }
     return after(originals.get(request), request, response, (r) => fetch(r))

@@ -60,6 +60,35 @@ describe('Mini App session', () => {
     expect(tg.isSessionEnded()).toBe(true)
   })
 
+  it('says to finish MFA in the browser on a 403 from the exchange and on a later 401 mfa_required', async () => {
+    const detail = 'multi-factor authentication is required for your SpaceMan account: finish setting it up in the browser'
+    const a = await load('q=1', () => Promise.resolve(json(403, { code: 'forbidden', detail })))
+    await a.tg.startSession()
+    expect(a.tg.isSessionEnded()).toBe(true)
+
+    const b = await load('q=1', () => Promise.resolve(json(201, { token: 't', expires_at: 'x', idle_timeout_seconds: 1 })))
+    await b.tg.startSession()
+    const { api } = await import('@/api/client')
+    b.f.mockResolvedValueOnce(json(401, { code: 'mfa_required' }))
+    await api.GET('/spaces')
+    expect(b.tg.isSessionEnded()).toBe(true)
+    // The message names the browser, not the generic reopen text.
+    const { MFA_PENDING_MESSAGE } = await import('@/api/session')
+    expect(MFA_PENDING_MESSAGE).toContain('browser')
+  })
+
+  it('reads its identity from /telegram/me, not /auth/me, and sends no CSRF token', async () => {
+    const { tg, f } = await load('q=1', () => Promise.resolve(json(201, { token: 't', expires_at: 'x', idle_timeout_seconds: 1 })))
+    await tg.startSession()
+    const { QueryClient } = await import('@tanstack/react-query')
+    const queryClient = new QueryClient()
+    const { meQuery } = await import('@/api/queries')
+    f.mockResolvedValueOnce(json(200, { root: false, method: 'telegram', session_id: '', limited: false, needs_enroll: false, expires_at: 'x', domains: [] }))
+    const me = await queryClient.fetchQuery(meQuery)
+    expect(me?.method).toBe('telegram')
+    expect(new URL((f.mock.calls[1][0] as Request).url).pathname).toBe('/api/v1/telegram/me')
+  })
+
   it('outside Telegram there is no exchange, only the reopen state', async () => {
     const { tg, f } = await load(undefined, () => Promise.reject(new Error('no')))
     await tg.startSession()

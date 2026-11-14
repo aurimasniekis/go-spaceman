@@ -46,7 +46,7 @@ let started: Promise<void> | undefined
  */
 export function startSession(): Promise<void> {
   started ??= (async () => {
-    setMiniAppMode(() => endSession())
+    setMiniAppMode((reason) => endSession(reason))
     const initData = webApp()?.initData
     if (!initData) return endSession('Open this app from Telegram.')
     try {
