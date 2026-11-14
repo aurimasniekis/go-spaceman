@@ -94,8 +94,8 @@ M = [
  ("appr-limited", "internal/app/central.go", 'if err != nil || p.User.ID != by.ID || p.Limited {', 'if err != nil || p.User.ID != by.ID {'),
  ("appr-subjects", "internal/app/central.go", 'return c.Authz.AllowedAll(p.Subjects(), spaceID, authz.ApprovalDecide)', 'return c.Authz.AllowedAll([]string{auth.UserSubject(by.ID)}, spaceID, authz.ApprovalDecide)'),
  # Approvals from Telegram: fail closed until TG-7
- ("approval-refusal", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {', 'if false && cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {'),
- ("approval-refusal-type", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {', 'if PrincipalFrom(ctx).ViaTelegram() {'),
+ ("approval-refusal", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Fail closed', 'if false && cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Fail closed'),
+ ("approval-refusal-type", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Fail closed', 'if PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Fail closed'),
  ("cancel-approval-refusal", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling', 'if false && cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling'),
  ("cancel-approval-refusal-type", "internal/api/human.go", 'if cur.Type == human.TypeApproval && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling', 'if cur.Type != "" && PrincipalFrom(ctx).ViaTelegram() {\n\t\t\t\t\t// Cancelling'),
  # Review of PR #77: the three surviving mutants, pinned
