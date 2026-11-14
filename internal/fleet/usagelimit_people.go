@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/store"
@@ -24,25 +25,35 @@ const (
 // alive at the limit, or parked under it), Tasks their tasks.
 type LongHold struct {
 	Hold UsageLimit
-	// Space is the space's name; Subject names what is held ("account \"x\" is at its weekly usage limit").
-	Space, Subject string
-	// AccountName is the held account's name (empty for a gateway hold).
-	AccountName string
-	Runs, Tasks int
-	NotifyAfter time.Duration
+	// Space and SpaceSlug are the space's name and slug; Subject names what is held ("account \"x\" is at its weekly
+	// usage limit").
+	Space, SpaceSlug, Subject string
+	Runs, Tasks               int
+	NotifyAfter               time.Duration
 }
 
 // LongHoldsToTell returns the open holds whose space's people should be told about, now: a known reset further away
 // than the space's usage_limit_notify_after_hours (0: never), not yet told, the space not archived. A hold with an
 // unknown reset is not announced: nobody knows the wait is long. A hold whose reset moves later is announced when it
-// crosses the threshold; once told, a hold never is again (MarkHoldTold).
+// crosses the threshold; once told, a hold never is again (MarkHoldTold). Every untold hold is read, a page at a
+// time, so holds that stay untold (a space's threshold above their wait, or a deferred notice) can't starve others.
 func (svc *Service) LongHoldsToTell(ctx context.Context) ([]LongHold, error) {
 	q := svc.s.R()
 	now := svc.now()
-	rows, err := q.ListUsageLimitsToTellPeople(ctx, db.ListUsageLimitsToTellPeopleParams{
-		After: sql.NullInt64{Int64: now.Add(minLimitNotifyAfter).UnixMicro(), Valid: true}, Lim: maxLimitRows})
-	if err != nil || len(rows) == 0 {
-		return nil, err
+	p := db.ListUsageLimitsToTellPeopleParams{After: sql.NullInt64{Int64: now.Add(minLimitNotifyAfter).UnixMicro(), Valid: true},
+		CursorReset: sql.NullInt64{Int64: math.MaxInt64, Valid: true}, Lim: maxLimitRows}
+	var rows []db.UsageLimit
+	for {
+		page, err := q.ListUsageLimitsToTellPeople(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, page...)
+		if len(page) < maxLimitRows {
+			break
+		}
+		last := page[len(page)-1]
+		p.CursorReset, p.CursorID = last.ResetsAt, last.ID
 	}
 	settings := map[string]UsageLimitSettings{}
 	var out []LongHold
@@ -61,13 +72,8 @@ func (svc *Service) LongHoldsToTell(ctx context.Context) ([]LongHold, error) {
 		if err != nil {
 			return nil, err
 		}
-		h := LongHold{Hold: usageLimitFromRow(u), Space: sp.Name, NotifyAfter: ul.NotifyAfter,
+		h := LongHold{Hold: usageLimitFromRow(u), Space: sp.Name, SpaceSlug: sp.Slug, NotifyAfter: ul.NotifyAfter,
 			Subject: holdSubject(ctx, q, HoldTarget{AccountID: u.AccountID}, u)}
-		if u.Scope == LimitScopeAccount {
-			if a, err := q.GetAccount(ctx, u.AccountID); err == nil {
-				h.AccountName = a.Name
-			}
-		}
 		if !liveRead {
 			if live, err = q.ListLimitedLiveRuns(ctx, maxLimitRows); err != nil {
 				return nil, err

@@ -2,6 +2,8 @@ package fleet
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,11 +73,11 @@ func TestLongHoldsToTell(t *testing.T) {
 		t.Fatalf("holds to tell %+v, want space A's weekly and space C's 5-hour", hs)
 	}
 	a := hs[aWeekly]
-	if a.Space != "A" || a.AccountName != "one" || a.Runs != 3 || a.Tasks != 2 || a.NotifyAfter != DefaultLimitNotifyAfter ||
+	if a.Space != "A" || a.SpaceSlug != "aaa" || a.Runs != 3 || a.Tasks != 2 || a.NotifyAfter != DefaultLimitNotifyAfter ||
 		a.Subject != `account "one" is at its weekly usage limit` || !a.Hold.ResetsAt.Equal(weekly) {
 		t.Fatalf("space A's hold %+v", a)
 	}
-	if c := hs[cFive]; c.Runs != 1 || c.Tasks != 0 || c.AccountName != "two" {
+	if c := hs[cFive]; c.Runs != 1 || c.Tasks != 0 || c.Subject != `account "two" is at its 5-hour usage limit` {
 		t.Fatalf("space C's hold %+v", c)
 	}
 
@@ -124,14 +126,45 @@ func TestLongHoldsDefaultThreshold(t *testing.T) {
 	for _, c := range []struct {
 		run   string
 		reset time.Duration
-	}{{"run_1", 11 * time.Hour}, {"run_2", 13 * time.Hour}} {
+		kind  string
+	}{{"run_1", 11 * time.Hour, proto.LimitSevenDay}, {"run_2", 13 * time.Hour, proto.LimitSevenDay}, {"run_3", 12 * time.Hour, proto.LimitSevenDayOpus}} {
 		reset := now.Add(c.reset)
-		account := map[string]string{"run_1": "acc_1", "run_2": "acc_2"}[c.run]
+		account := map[string]string{"run_1": "acc_1", "run_2": "acc_2", "run_3": "acc_1"}[c.run]
 		e.runOn(c.run, "spc_a", account, "")
-		e.report(c.run, "spc_a", 1, proto.RunRunning, &proto.RunLimit{Kind: proto.LimitSevenDay, ResetsAt: &reset, Since: now})
+		e.report(c.run, "spc_a", 1, proto.RunRunning, &proto.RunLimit{Kind: c.kind, ResetsAt: &reset, Since: now})
 	}
+	// A reset exactly the threshold away is not further away: run_3's weekly Opus hold is not told.
 	hs, err := e.svc.LongHoldsToTell(e.ctx)
-	if err != nil || len(hs) != 1 || hs[0].AccountName != "two" {
+	if err != nil || len(hs) != 1 || hs[0].Subject != `account "two" is at its weekly usage limit` {
+		t.Fatalf("holds %+v %v", hs, err)
+	}
+}
+
+// Holds that stay untold can't starve later ones (PR #63 review N1): more than two pages of untold holds in a space
+// that turned the notice off, all with the same reset, come before space A's hold in the scan order, and its hold is
+// still found; a hold of an unknown kind with a known reset is named without a kind.
+func TestLongHoldsNotStarved(t *testing.T) {
+	e := ulEnv(t)
+	e.svc.opts.UsageLimitSettings = func(_ context.Context, _ *db.Queries, spaceID string) UsageLimitSettings {
+		if spaceID == "spc_b" {
+			return UsageLimitSettings{}
+		}
+		return UsageLimitSettings{NotifyAfter: DefaultLimitNotifyAfter}
+	}
+	reset := e.clk.Now().Add(3 * 24 * time.Hour).UnixMicro()
+	var vals []string
+	var args []any
+	for i := range 2*maxLimitRows + 50 {
+		vals = append(vals, "(?, 'spc_b', 'gateway', '', ?, 'gateway_quota', ?, 'quota_board', 0, 0, 0)")
+		args = append(args, fmt.Sprintf("ulm_b_%03d", i), fmt.Sprintf("gw_%03d", i), reset)
+	}
+	e.exec(`INSERT INTO usage_limits (id, space_id, scope, account_id, gateway_ref, kind, resets_at, source, seen_at, created_at, updated_at) VALUES `+
+		strings.Join(vals, ", "), args...)
+	// Between ulm_b_200 and ulm_b_201 in id order, so on the second page, and seen last.
+	e.exec(`INSERT INTO usage_limits (id, space_id, scope, account_id, kind, resets_at, source, seen_at, created_at, updated_at)
+		VALUES ('ulm_b_2005', 'spc_a', 'account', 'acc_2', 'unknown', ?, 'operator', 1, 0, 0)`, reset)
+	hs, err := e.svc.LongHoldsToTell(e.ctx)
+	if err != nil || len(hs) != 1 || hs[0].Hold.ID != "ulm_b_2005" || hs[0].Subject != `account "two" is at a usage limit` {
 		t.Fatalf("holds %+v %v", hs, err)
 	}
 }

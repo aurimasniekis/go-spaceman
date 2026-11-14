@@ -172,7 +172,10 @@ func holdSubject(ctx context.Context, q *db.Queries, t HoldTarget, u db.UsageLim
 	if a, err := q.GetAccount(ctx, t.AccountID); err == nil {
 		name = a.Name
 	}
-	return fmt.Sprintf("account %q is at its %s usage limit", name, limitKindLabel(u.Kind))
+	if label := limitKindLabel(u.Kind); label != "" {
+		return fmt.Sprintf("account %q is at its %s usage limit", name, label)
+	}
+	return fmt.Sprintf("account %q is at a usage limit", name)
 }
 
 func limitKindLabel(kind string) string {
@@ -190,7 +193,7 @@ func limitKindLabel(kind string) string {
 	case proto.LimitOverage:
 		return "overage"
 	}
-	return "a"
+	return ""
 }
 
 // probeBackoff is the time to the next probe of a hold whose reset is unknown, after a probe at now: it doubles from
