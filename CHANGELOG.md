@@ -16,6 +16,47 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   checkboxes, `<link>`, `<meta>`, `<base>` and frames are removed. Deeply nested or delimiter-heavy bodies can no longer
   freeze the page. Mermaid renders in strict mode and its SVG is sanitized again (ADR-0082).
 
+## [0.1.4] - 2026-11-14
+
+Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:
+- recordings: a burst of terminal output over the protocol message limit, or output sent just before a node lost its
+  connection, no longer goes missing from central's copy of a run's recording (#56);
+- the web terminal keeps at least 10,000 rows of scrollback, instead of about 300 at 160 columns (ADR-0080, #53);
+- central and the node agent refuse to start on a database that is missing a lower-numbered migration, instead of
+  skipping it silently and failing the next upgrade (#51).
+
+**Upgrade notes:**
+- **From v0.1.3:** no new migration, no protocol change (node protocol stays 1.11) and no new setting.
+- **Upgrade central first and check that it starts** before upgrading any node. Central and every node agent now check
+  their database at startup: one that already ran a higher migration than a lower one in the binary refuses to start
+  with `database is missing migrations lower than its schema version` and names each missing migration. A database
+  that has only ever run released versions has no such gap; one that ran a development build might. The fix is to
+  restore a backup or pre-migration snapshot taken below the lowest missing version (Troubleshooting in the operator
+  docs); never insert the version row by hand. A node's journal gets the same check when its agent restarts.
+- **Restarting a node agent ends its runs**, as before: let them finish or pause the node's spaces first.
+- **From v0.1.1 or v0.1.2:** the v0.1.3 upgrade notes below apply as well.
+
+### Fixed
+
+- Central and the node agent's journal now refuse to open a database that is missing a migration lower than its
+  schema version, with `database is missing migrations lower than its schema version` naming each one. Before, a
+  migration that arrived after a higher one had already run (branches merged out of number order) was skipped
+  silently and the next upgrade failed with goose's "missing (out-of-order) migration". Migrations still run in
+  number order only. A database restored from an older backup has no such gap and migrates forward as before.
+- The web terminal keeps at least 10,000 rows of scrollback at 160 columns (about 11,000-12,000). ghostty-web's
+  `scrollback` option is a byte limit, not a line count, so the old setting of 10,000 kept only about 300 rows at 160
+  columns. It is now 24 MiB: a terminal with a full scrollback of plain text holds about 30 MiB of WebAssembly memory
+  (ADR-0080).
+- A burst of terminal output larger than the protocol message limit (4 MiB, e.g. megabytes printed within a second)
+  no longer goes missing from central's copy of a recording. The node sent it as one message, central closed the
+  connection, and the records in it were never sent again; the reconnect catch-up's batches could do the same. The node
+  now splits recording shipments into messages of at most 1 MiB.
+- Records sent just before a node lost its connection could still go missing from central's copy, because central
+  keeps only records above the last one it stored and the node's next output could arrive first. After a reconnect
+  the node now re-sends everything central has not acknowledged before any newer output of that run, one catch-up at
+  a time, and stops at the first failed send. Output that waits for the catch-up is kept back (up to 1 MiB per run in
+  memory, then read again from the node's recording); a run's exit record is kept even when the node's disk failed.
+
 ## [0.1.3] - 2026-11-13
 
 Patch release on top of v0.1.2. It makes no production-readiness claim (docs/RELEASE_READINESS.md §17). It contains:
@@ -1480,7 +1521,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...v0.1.1

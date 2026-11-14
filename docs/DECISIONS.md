@@ -4032,7 +4032,8 @@
     fail on 0.4.0's module. The browser test probe now reads an empty cell as a space: ghostty-web's
     `translateToString` drops it, which shifted the rest of the row.
   - **Side finding, not changed:** ghostty's `scrollbackLimit` is in bytes, but ghostty-web passes the `scrollback`
-    option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns.
+    option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns. Fixed in ADR-0080
+    (24 MiB, at least 10,000 rows at 160 columns).
 
 ### ADR-0077 — Node-managed Claude Code versions (security-relevant change)
 - **Status:** Accepted, 2026-11-13 (the operator chose the managed design and authorized shipping it in v0.1.2;
@@ -4206,6 +4207,42 @@
   runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
   reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
 - **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
+
+### ADR-0080 — The web terminal's scrollback is a byte limit: 24 MiB, at least 10,000 rows at 160 columns
+- **Status:** Accepted, 2026-11-13 (follow-up to ADR-0076's side finding).
+- **Context (code, at v0.1.3; measured against both WebAssembly modules):**
+  - `createTerminal` set `scrollback: 10_000`, meant as lines. ghostty-web 0.4.0's JavaScript passes the option
+    unchanged into the module's configuration as `scrollbackLimit` (`Terminal.buildWasmConfig`, then a `u32` in
+    `GhosttyTerminal`'s config block). Both the 0.4.0 module and the 0.4.0-next.21 module the page loads (ADR-0076)
+    read it as ghostty's `scrollback-limit`: the most bytes the pages of rows above the screen may hold. Pages are
+    dropped whole from the top past the limit; 0 means no limit. The typings and README don't name a unit.
+  - With 10,000 bytes a terminal kept a page's worth: about 1,100 rows at 80 columns and 290 to 470 at 160 (the
+    node's default width). A viewer scrolling back in a long Claude Code reply lost it after a few screens.
+  - A row costs about 13 bytes per column (its cells plus the page's room for styles, graphemes and links), up to
+    14.5 when nearly every row has a 24-bit colour of its own. Both modules measure the same.
+- **Decision:** the scrollback is `SCROLLBACK_BYTES` = 24 MiB, in one place (`web/src/features/terminal/scrollback.ts`),
+  with `scrollbackRows(cols)`, a conservative estimate of the rows kept (15 bytes per cell), for code that needs a
+  row count (a catch-up that writes only the tail). 24 MiB rather than 20 MiB, which keeps about 10,100 plain rows at
+  160 columns, so that output in per-row colours keeps 10,000 too. Rows kept, measured at the lowest and highest
+  point of the page cycle (plain text / per-row 24-bit colours):
+  - 160 columns: 12,090-12,380 / 10,900-11,200;
+  - 80 columns: 24,100-24,690 / 21,750-22,330;
+  - 200 columns: 9,670-9,900 / 8,720-8,960.
+- **Memory per terminal (WebAssembly memory, which never shrinks while the terminal is open):**
+  - Plain text, or output in a few dozen styles: about 30 MiB with a full scrollback (about 7 MiB before). It grows
+    with the output until the scrollback is full, so a short run costs what it did before.
+  - Output whose lines each have a style of their own grows the memory by about 3.5 MiB per 1,000 lines at 160
+    columns **whatever the limit**: 12,000 such lines of the stub's `/sparse` took 49.1 MiB in Chromium with 10,000
+    bytes and with 24 MiB alike. This is the module's style memory, not the scrollback, and is not changed here.
+  - The Terminals page and the run page mount one terminal at a time; switching disposes the previous terminal and
+    its instance (ADR-0076, `terminal-switch.spec.ts`). N browser tabs with a terminal each hold N times the above,
+    e.g. four tabs of full plain-text terminals about 120 MiB.
+- **Consequences:** a terminal keeps at least 10,000 rows at 160 columns. The catch-up (ADR-0076) still writes the
+  whole recording; rows past the limit are dropped as before, so its cost is unchanged. `scrollback.test.ts` checks
+  the unit and the rows kept against the shipped module (and that 0.4.0's JavaScript passes the value through);
+  `e2e/terminal-scrollback.spec.ts` checks at least 10,000 rows in a live terminal at 160×48 in Chromium (it fails
+  with the old value: 485 rows).
+- **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
 
 ### ADR-0082 — Rich Markdown rendering: GFM, lazily loaded code highlighting and Mermaid in strict mode (security-relevant change)
 - **Status:** Accepted, 2026-11-14 (operator request 2026-11-13: render Mermaid, highlighted code and all Markdown
