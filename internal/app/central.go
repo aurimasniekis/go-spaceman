@@ -564,6 +564,7 @@ func (c *Central) wireSpacemanMCP() error {
 	}
 	c.Gateway.Tokens = c.Auth
 	h := d.InProcessHandler()
+	c.wireTelegramChat(h)
 	c.Gateway.Spaceman = &spacemanmcp.Backend{Cat: cat, Handler: h, Tokens: c.Auth}
 	// The external MCP endpoint (ADR-0063 §External endpoint): the same catalog and executor for operators' own MCP
 	// clients, behind the API's guard (api.MCPPath).
