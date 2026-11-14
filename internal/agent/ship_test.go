@@ -111,3 +111,116 @@ func TestCatchUpShipsLargeRecordingInBoundedMessages(t *testing.T) {
 		}
 	}
 }
+
+// Central keeps only records above the last sequence it stored, so a live shipment must never overtake records a
+// catch-up still has to send: those would be lost for good. Here a run's records 11-20 were lost (marked unshipped),
+// a live shipment arrives while the run is marked and another while the pass is shipping it, and one after the pass.
+// What central would store is every record, 1-23, in order.
+func TestLiveShipmentsWaitForTheCatchUp(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := ccAgent(t, dir, nil, nil)
+	ctx := context.Background()
+	const run = "run_order"
+	row := runRow{RunID: run, SpaceID: ccSpace, Generation: 1, Kind: "worker", Role: "implementor", Harness: "claude-code", TerminalName: RunName(run)}
+	if err := a.j.insertRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	w, err := recording.Open(recording.Options{Dir: a.RecordingDir(run)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	add := func(n int) []recording.Record {
+		var out []recording.Record
+		for range n {
+			r, err := w.AddRecord(recording.Record{Kind: recording.KindOut, Data: []byte("x")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, r)
+		}
+		if err := w.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	add(10)
+
+	fc := newWSCentral(t, proto.MaxMinor)
+	runAgent(t, a, fc)
+	// What central stores: records above the last stored sequence, in arrival order.
+	var stored []uint64
+	receive := func(want int) {
+		t.Helper()
+		deadline := time.After(10 * time.Second)
+		for len(stored) < want {
+			select {
+			case env := <-fc.msgs:
+				if env.Type != proto.TypeRecording {
+					continue
+				}
+				var c proto.RecordingChunk
+				if err := env.Decode(&c); err != nil {
+					t.Fatal(err)
+				}
+				for _, raw := range c.Records {
+					var r recording.Record
+					_ = json.Unmarshal(raw, &r)
+					if len(stored) == 0 || r.Seq > stored[len(stored)-1] {
+						stored = append(stored, r.Seq)
+					}
+				}
+			case <-deadline:
+				t.Fatalf("central stored %v, want %d records", stored, want)
+			}
+		}
+	}
+	receive(10) // the first pass after connecting: the run was unknown
+	eventually := func(what string, ok func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); !ok(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+	eventually("the first pass to end", func() bool { a.mu.Lock(); defer a.mu.Unlock(); return a.catchUps == 0 })
+
+	// Records 11-20 were lost (a failed send marks the run); a live shipment of 21 must wait.
+	add(10)
+	a.markUnshipped(run)
+	a.shipLive(ctx, run, ccSpace, add(1))
+	select {
+	case env := <-fc.msgs:
+		if env.Type == proto.TypeRecording {
+			t.Fatal("a live shipment went ahead of the records the catch-up has to send")
+		}
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// The next pass; while it ships the run, another live shipment (22) waits and is caught up in the same pass.
+	calls := 0
+	catchUpRunHook = func(id string) {
+		if id == run && calls == 0 {
+			a.shipLive(ctx, run, ccSpace, add(1))
+		}
+		calls++
+	}
+	t.Cleanup(func() { catchUpRunHook = nil })
+	a.beginCatchUp()
+	a.catchUpRecordings(ctx)
+	receive(22)
+	// After the pass, live shipments go straight to central.
+	a.shipLive(ctx, run, ccSpace, add(1))
+	receive(23)
+	for i, s := range stored {
+		if s != uint64(i+1) {
+			t.Fatalf("central stored %v", stored)
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.catchUps != 0 || a.unshipped[run] {
+		t.Fatalf("after the pass: %d passes running, run marked %v", a.catchUps, a.unshipped[run])
+	}
+}

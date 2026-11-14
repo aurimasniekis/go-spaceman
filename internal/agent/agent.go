@@ -100,6 +100,13 @@ type Agent struct {
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
+	// catchUps counts recording catch-up passes in progress: live shipments wait for them (shipLive). shipGate is held
+	// shared by a live shipment from its check through its send, and exclusively to start a pass, so a pass never
+	// starts with a live shipment of the same records still on its way.
+	catchUps int
+	shipGate sync.RWMutex
+	// caughtUp marks the runs the current pass has caught up: their live shipments go ahead.
+	caughtUp map[string]bool
 	// minor is the negotiated protocol minor version of the current connection.
 	minor int
 	// toolCalls are the agent tool calls waiting for central's result, by call ID.
@@ -398,12 +405,18 @@ func (a *Agent) session(ctx context.Context) error {
 			if err := env.Decode(&w); err != nil {
 				return err
 			}
+			// Connected and catching up become true together: no live recording shipment can go ahead of the
+			// catch-up (shipLive).
+			a.shipGate.Lock()
 			a.mu.Lock()
 			a.connected, a.lostAt, a.minor = true, time.Time{}, w.Minor
 			if w.HeartbeatInterval > 0 {
 				a.heartbeat = w.HeartbeatInterval
 			}
+			a.catchUps++
+			a.caughtUp = map[string]bool{}
 			a.mu.Unlock()
+			a.shipGate.Unlock()
 			go a.heartbeatLoop(hbCtx)
 			go a.catchUpRecordings(hbCtx)
 			go a.mem.resume(hbCtx)
