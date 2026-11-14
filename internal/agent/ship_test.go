@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,6 +122,11 @@ type shipEnv struct {
 	fc     *wsCentral
 	stored map[string][]uint64
 	writer map[string]*recording.Writer
+	// lose, when set, is asked about each recording message central receives: true loses it (not stored, not
+	// acknowledged), as if it went with its connection.
+	lose func(c proto.RecordingChunk) bool
+	// drop, when set, closes the connection on a message, losing it (wsCentral.drop).
+	drop func(env proto.Envelope) bool
 }
 
 func newShipEnv(t *testing.T) *shipEnv {
@@ -145,11 +151,14 @@ func (e *shipEnv) run(id string) {
 }
 
 // add records n output records of a run locally, as its recorder does before shipping them.
-func (e *shipEnv) add(id string, n int) []recording.Record {
+func (e *shipEnv) add(id string, n int) []recording.Record { return e.addSized(id, n, 1) }
+
+// addSized is add with records of size bytes each.
+func (e *shipEnv) addSized(id string, n, size int) []recording.Record {
 	e.t.Helper()
 	var out []recording.Record
 	for range n {
-		r, err := e.writer[id].AddRecord(recording.Record{Kind: recording.KindOut, Data: []byte("x")})
+		r, err := e.writer[id].AddRecord(recording.Record{Kind: recording.KindOut, Data: bytes.Repeat([]byte("x"), size)})
 		if err != nil {
 			e.t.Fatal(err)
 		}
@@ -169,6 +178,8 @@ func (e *shipEnv) live(id string, recs []recording.Record) {
 func (e *shipEnv) connect() {
 	e.t.Helper()
 	e.fc = newWSCentral(e.t, proto.MaxMinor)
+	e.fc.drop = e.drop
+	e.a.o.ReconnectMax = 10 * time.Millisecond
 	runAgent(e.t, e.a, e.fc)
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
 		e.a.mu.Lock()
@@ -197,12 +208,19 @@ func (e *shipEnv) drain(id string, want int) {
 			if err := env.Decode(&c); err != nil {
 				e.t.Fatal(err)
 			}
+			if e.lose != nil && e.lose(c) {
+				continue
+			}
 			for _, raw := range c.Records {
 				var r recording.Record
 				_ = json.Unmarshal(raw, &r)
 				if s := e.stored[c.RunID]; len(s) == 0 || r.Seq > s[len(s)-1] {
 					e.stored[c.RunID] = append(s, r.Seq)
 				}
+			}
+			// Central acknowledges what it stored (RecordingAck), as the real one does after applying a message.
+			if s := e.stored[c.RunID]; len(s) > 0 {
+				e.a.recordingAck(proto.RecordingAck{RunID: c.RunID, Seq: s[len(s)-1]})
 			}
 		case <-deadline:
 			e.t.Fatalf("central stored %d records of %s, want %d (last %v)", len(e.stored[id]), id, want, tailOf(e.stored[id]))
@@ -330,36 +348,206 @@ func TestCatchUpSendsRecordsWithoutLocalCopy(t *testing.T) {
 	e.whole("run_r", 1, 6)
 }
 
-// A failed send ends the pass with the run marked, and later batches are not sent past the hole; the next pass sends
-// the run from where central's copy stopped.
+// A failed send stops the run's catch-up: no later batch goes past the hole (central would keep it and drop the
+// missing one). The pass tries again (here the connection is still there) from what central acknowledged.
 func TestCatchUpStopsAtTheFirstFailedSend(t *testing.T) {
 	e := newShipEnv(t)
 	e.run("run_r")
 	e.add("run_r", 800) // four batches
-	sends := 0
+	var sends atomic.Int32
 	sendRecordingHook = func(string) error {
-		if sends++; sends == 2 {
+		if sends.Add(1) == 2 {
 			return errors.New("connection lost")
 		}
 		return nil
 	}
 	e.connect()
-	e.idle()
-	e.a.mu.Lock()
-	marked := e.a.unshipped["run_r"]
-	e.a.mu.Unlock()
-	if !marked {
-		t.Fatal("the run is not marked after a failed send")
-	}
 	e.drain("run_r", 256)
 	select {
 	case env := <-e.fc.msgs:
 		if env.Type == proto.TypeRecording {
 			t.Fatal("a batch was sent past the failed one")
 		}
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(300 * time.Millisecond): // the retry waits a second
 	}
+	e.whole("run_r", 1, 800)
+	e.idle()
+}
+
+// A pass still sweeping for the old connection must not mark a run caught up for the new connection's pass: here the
+// run's only batch was lost with the old connection, and the run's next live record would otherwise go ahead of it
+// (B1′, the reviewer's probe).
+func TestCatchUpOfTheOldConnectionDoesNotCountForTheNewOne(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 10)
+	lost := false
+	e.lose = func(c proto.RecordingChunk) bool {
+		if !lost {
+			lost = true
+			return true
+		}
+		return false
+	}
+	reconnected := false
+	shipBatchHook = func(string, int) {
+		if !reconnected {
+			reconnected = true
+			e.a.mu.Lock()
+			e.a.startCatchUpLocked() // what a new connection's welcome does
+			e.a.mu.Unlock()
+		}
+	}
+	e.connect()
+	e.drain("run_x", 0)
+	e.idle()
+	e.live("run_x", e.add("run_x", 1))
+	e.whole("run_x", 1, 11)
+}
+
+// A real reconnect in the middle of a pass: central drops the connection on the first batch (losing it); the old
+// pass's next batch must not go out on the new connection, the new connection's pass sweeps again (catchUpAgain)
+// from what central acknowledged, and the run ends up whole.
+func TestCatchUpAcrossAReconnect(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 600) // three batches
+	var dropped atomic.Bool
+	e.drop = func(env proto.Envelope) bool {
+		return env.Type == proto.TypeRecording && dropped.CompareAndSwap(false, true)
+	}
+	var waited atomic.Bool
+	shipBatchHook = func(string, int) {
+		if !waited.CompareAndSwap(false, true) {
+			return
+		}
+		// Hold the old pass until the new connection's welcome asked for a sweep on it.
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			e.a.mu.Lock()
+			again := e.a.catchUpAgain
+			e.a.mu.Unlock()
+			if again {
+				return
+			}
+		}
+		t.Error("the agent did not reconnect")
+	}
+	e.connect()
+	e.whole("run_x", 1, 600)
+	e.idle()
+	e.live("run_x", e.add("run_x", 1))
+	e.whole("run_x", 1, 601)
+}
+
+// A run caught up on the old connection, whose last live record was lost with it, is caught up again on the new
+// connection's pass before its next record (the caught-up marks start afresh for every pass).
+func TestCatchUpAgainAfterAReconnect(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 10)
+	e.connect()
+	e.whole("run_x", 1, 10)
+	e.idle()
+	e.lose = func(c proto.RecordingChunk) bool { return true }
+	e.live("run_x", e.add("run_x", 1))               // 11, lost with the connection
+	for deadline := time.After(5 * time.Second); ; { // the lost message
+		select {
+		case env := <-e.fc.msgs:
+			if env.Type != proto.TypeRecording {
+				continue
+			}
+		case <-deadline:
+			t.Fatal("record 11 was not sent")
+		}
+		break
+	}
+	e.lose = nil
+	e.a.startCatchUp() // a new pass (a reconnect's welcome does the same)
+	e.idle()
+	e.live("run_x", e.add("run_x", 1))
+	e.whole("run_x", 1, 12)
+}
+
+// More than heldMaxBytes of live output while the pass ships the run: what could not be kept back is read again from
+// the local recording.
+func TestCatchUpReadsAgainWhatCouldNotBeKeptBack(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 300) // two batches
+	once := false
+	shipBatchHook = func(id string, batch int) {
+		if batch == 2 && !once {
+			once = true
+			e.live(id, e.addSized(id, 24, 64<<10)) // 1.5 MiB: past the bound
+		}
+	}
+	e.connect()
+	e.idle()
+	e.live("run_x", e.add("run_x", 1))
+	e.whole("run_x", 1, 325)
+}
+
+// A live send that fails keeps its records back, so a record with no local copy still reaches central after the
+// catch-up (a close record after the local disk failed).
+func TestFailedLiveShipmentKeepsRecordsWithoutLocalCopy(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 5)
+	e.connect()
+	e.whole("run_x", 1, 5)
+	e.idle()
+	sendRecordingHook = func(string) error { return errors.New("connection lost") }
+	code := 0
+	e.live("run_x", []recording.Record{{Seq: 6, Kind: recording.KindClose, ExitCode: &code, Reason: "exited"}})
+	sendRecordingHook = nil
 	e.a.startCatchUp()
 	e.idle()
-	e.whole("run_r", 1, 800)
+	e.whole("run_x", 1, 6)
+}
+
+// A live shipment of several messages that a reconnect interrupts: its later messages must not go out on the new
+// connection, where they would arrive before the catch-up re-sends the message lost with the old one.
+func TestLiveShipmentStaysOnItsConnection(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 10)
+	var armed atomic.Bool
+	e.drop = func(env proto.Envelope) bool {
+		return env.Type == proto.TypeRecording && armed.CompareAndSwap(true, false)
+	}
+	e.connect()
+	e.whole("run_x", 1, 10)
+	e.idle()
+
+	e.a.mu.Lock()
+	old := e.a.conn
+	e.a.mu.Unlock()
+	reconnected := func() bool {
+		e.a.mu.Lock()
+		defer e.a.mu.Unlock()
+		return e.a.connected && e.a.conn != old
+	}
+	var calls atomic.Int32
+	partTwoOut := make(chan struct{})
+	sendRecordingHook = func(string) error {
+		switch calls.Add(1) {
+		case 1: // the live shipment's first message: central drops the connection on it
+		case 2: // its second message: held until the agent has reconnected
+			for deadline := time.Now().Add(10 * time.Second); !reconnected(); time.Sleep(time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Error("the agent did not reconnect")
+					break
+				}
+			}
+			time.AfterFunc(20*time.Millisecond, func() { close(partTwoOut) })
+		default: // the new connection's catch-up waits until the second message has gone out (or failed)
+			<-partTwoOut
+		}
+		return nil
+	}
+	armed.Store(true)
+	e.live("run_x", e.addSized("run_x", 30, 64<<10)) // three messages
+	e.idle()
+	e.live("run_x", e.add("run_x", 1))
+	e.whole("run_x", 1, 41)
 }

@@ -132,7 +132,8 @@ func (a *Agent) record(ctx context.Context, row runRow, sizes <-chan [2]int) {
 }
 
 // pump copies one attachment into the recording; it returns true when the program ended. Records are shipped to
-// central after every flush (at most once a second); shipping never blocks recording.
+// central after every flush (at most once a second). Shipping runs in the pump: a send may take up to its write timeout,
+// but it never waits for a catch-up pass or another run's send (shipLive).
 // sizes are the terminal's size changes; cols and rows are the size last recorded, kept across reattaches.
 func (a *Agent) pump(ctx context.Context, row runRow, st runner.Stream, w *recording.Writer, flush *time.Ticker, prelude []recording.Record,
 	sizes <-chan [2]int, cols, rows *int) bool {
@@ -259,6 +260,15 @@ func (a *Agent) ship(ctx context.Context, conn *websocket.Conn, runID, spaceID s
 	}
 	at := 0
 	for _, part := range shipParts(raws, shipChunkBytes) {
+		at += len(part)
+		// Counted as sent before the write: a sweep that looks meanwhile must not take the run for clean while this
+		// part could still be lost with its connection.
+		a.mu.Lock()
+		if a.sentSeq == nil {
+			a.sentSeq = map[string]uint64{}
+		}
+		a.sentSeq[runID] = max(a.sentSeq[runID], recs[at-1].Seq)
+		a.mu.Unlock()
 		var err error
 		if sendRecordingHook != nil {
 			err = sendRecordingHook(runID)
@@ -270,13 +280,6 @@ func (a *Agent) ship(ctx context.Context, conn *websocket.Conn, runID, spaceID s
 			a.markUnshipped(runID)
 			return err
 		}
-		at += len(part)
-		a.mu.Lock()
-		if a.sentSeq == nil {
-			a.sentSeq = map[string]uint64{}
-		}
-		a.sentSeq[runID] = max(a.sentSeq[runID], recs[at-1].Seq)
-		a.mu.Unlock()
 	}
 	return nil
 }
@@ -290,8 +293,12 @@ type heldRecords struct {
 	lost  bool
 }
 
-// heldMaxBytes bounds the output a run keeps back in memory while it waits for a catch-up.
-const heldMaxBytes = 1 << 20
+// heldMaxBytes bounds the memory a run's kept-back records take while it waits for a catch-up, counting each record's
+// data plus heldRecordOverhead.
+const (
+	heldMaxBytes       = 1 << 20
+	heldRecordOverhead = 64
+)
 
 // shipLive ships a recorder's records unless they could overtake older ones central may still be missing: while the
 // node is not connected, the run is marked for a catch-up, or the catch-up pass has not caught the run up yet, it
@@ -306,8 +313,14 @@ func (a *Agent) shipLive(ctx context.Context, runID, spaceID string, recs []reco
 		a.holdLocked(runID, recs)
 	}
 	a.mu.Unlock()
-	if !wait {
-		_ = a.ship(ctx, conn, runID, spaceID, recs)
+	if wait {
+		return
+	}
+	if err := a.ship(ctx, conn, runID, spaceID, recs); err != nil {
+		// The run is marked; keep the records back too, so one with no local copy still goes after the catch-up.
+		a.mu.Lock()
+		a.holdLocked(runID, recs)
+		a.mu.Unlock()
 	}
 }
 
@@ -325,12 +338,13 @@ func (a *Agent) holdLocked(runID string, recs []recording.Record) {
 			h.recs = append(h.recs, r) // possibly the only copy (SM-REC-004)
 			continue
 		}
-		if h.bytes+len(r.Data) > heldMaxBytes {
+		size := len(r.Data) + heldRecordOverhead
+		if h.bytes+size > heldMaxBytes {
 			h.lost = true
 			continue
 		}
 		h.recs = append(h.recs, r)
-		h.bytes += len(r.Data)
+		h.bytes += size
 	}
 }
 
@@ -385,6 +399,7 @@ func (a *Agent) startCatchUp() {
 // up until the pass reaches it.
 func (a *Agent) startCatchUpLocked() bool {
 	a.caughtUp = map[string]bool{}
+	a.catchUpGen++
 	a.catchUpConn, a.catchUpCtx = a.conn, a.connCtx
 	if a.catching {
 		a.catchUpAgain = true
@@ -401,26 +416,37 @@ func (a *Agent) startCatchUpLocked() bool {
 // each sequence once, so re-sent records are harmless. Runs are caught up one at a time: a run with a long backlog
 // delays the others (their live output is kept back meanwhile, see shipLive).
 func (a *Agent) catchUpRecordings() {
+	retry := time.Second
 	for {
 		a.mu.Lock()
-		conn, ctx := a.catchUpConn, a.catchUpCtx
+		conn, ctx, gen := a.catchUpConn, a.catchUpCtx, a.catchUpGen
 		a.catchUpAgain = false
 		a.mu.Unlock()
-		err := a.catchUpSweep(ctx, conn)
+		err := a.catchUpSweep(ctx, conn, gen)
 		a.mu.Lock()
-		switch {
-		case a.catchUpAgain:
-		case err != nil || len(a.unshipped) == 0:
+		again := a.catchUpAgain
+		done := !again && err == nil && len(a.unshipped) == 0
+		// A failure while the connection is still the current one (the journal could not be read, say) is retried;
+		// one that came with the connection's end waits for the next connection's pass.
+		gone := err != nil && (!a.connected || a.conn != conn || ctx == nil || ctx.Err() != nil)
+		if done || !again && gone {
 			a.catching = false
 			a.mu.Unlock()
 			return
 		}
 		a.mu.Unlock()
+		if err != nil && !again {
+			select {
+			case <-ctx.Done():
+			case <-time.After(retry):
+			}
+			retry = min(retry*2, 30*time.Second)
+		}
 	}
 }
 
 // catchUpSweep is one sweep of the catch-up pass over the journal.
-func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn) error {
+func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint64) error {
 	if ctx == nil || conn == nil {
 		return errors.New("not connected")
 	}
@@ -435,7 +461,7 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn) error {
 		acked, known := a.acked[r.RunID]
 		dirty := a.unshipped[r.RunID] || a.held[r.RunID] != nil
 		clean := !dirty && (a.caughtUp[r.RunID] || known && a.sentSeq[r.RunID] <= acked)
-		if clean {
+		if clean && a.catchUpGen == gen {
 			// Everything sent so far was acknowledged (or this pass sent it): nothing to re-ship.
 			a.caughtUp[r.RunID] = true
 		}
@@ -443,15 +469,28 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn) error {
 		if clean {
 			continue
 		}
-		if err := a.catchUpRun(ctx, conn, r, acked); err != nil {
+		if err := a.catchUpRun(ctx, conn, gen, r, acked); err != nil {
 			return err
 		}
 	}
-	// Marks of runs no longer in the journal have nothing left to ship (a run is journaled before its program starts,
-	// so a run started during this sweep is in a later sweep's listing).
+	// Marks and kept-back records of runs no longer in the journal have nothing left to ship. Decided on a fresh
+	// listing: a run started during this sweep (journaled before its program starts) is not in the one above.
+	now, err := a.j.runs(ctx, false)
+	if err != nil {
+		return err
+	}
+	for _, r := range now {
+		journaled[r.RunID] = true
+	}
 	a.mu.Lock()
 	for id := range a.unshipped {
 		if !journaled[id] && a.held[id] == nil {
+			delete(a.unshipped, id)
+		}
+	}
+	for id := range a.held {
+		if !journaled[id] {
+			delete(a.held, id)
 			delete(a.unshipped, id)
 		}
 	}
@@ -465,7 +504,7 @@ var shipBatchHook func(runID string, batch int)
 // catchUpRun ships a run's local records above from in batches, then what live shipments kept back meanwhile, until
 // nothing more was kept back, and marks the run caught up (atomically with that check, under the lock shipLive decides
 // under).
-func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, r runRow, from uint64) error {
+func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, gen uint64, r runRow, from uint64) error {
 	batch := 0
 	send := func(recs []recording.Record) error {
 		for start := 0; start < len(recs); start += 256 {
@@ -500,7 +539,10 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, r runRow, 
 		delete(a.held, r.RunID)
 		delete(a.unshipped, r.RunID)
 		if h == nil {
-			a.caughtUp[r.RunID] = true
+			// Caught up for the request this sweep serves; after a newer one (a reconnect) the next sweep decides.
+			if a.catchUpGen == gen {
+				a.caughtUp[r.RunID] = true
+			}
 			a.mu.Unlock()
 			return nil
 		}
