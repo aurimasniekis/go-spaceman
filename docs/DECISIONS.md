@@ -4032,7 +4032,8 @@
     fail on 0.4.0's module. The browser test probe now reads an empty cell as a space: ghostty-web's
     `translateToString` drops it, which shifted the rest of the row.
   - **Side finding, not changed:** ghostty's `scrollbackLimit` is in bytes, but ghostty-web passes the `scrollback`
-    option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns.
+    option through as-is, so `scrollback: 10_000` keeps only about 290 lines at 160 columns. Fixed in ADR-0080
+    (24 MiB, at least 10,000 rows at 160 columns).
 
 ### ADR-0077 — Node-managed Claude Code versions (security-relevant change)
 - **Status:** Accepted, 2026-11-13 (the operator chose the managed design and authorized shipping it in v0.1.2;
@@ -4206,6 +4207,188 @@
   runs is about 90 KB. A tab's change-feed refetches are bounded by the window, not by the change rate. A stalled
   reader costs at most a minute of one response. Pruning the node journal or slicing the hello is a follow-up.
 - **Not a security-relevant change:** nothing is relaxed. Responses are bounded more tightly, and lists return less.
+- **Follow-up (journal prune and hello slicing, 2026-11-14):**
+  - No protocol minor bump and no journal migration. Central already answers a hello with a reconcile that lists the
+    node's runs it still considers active, after it applied the hello's reports. The agent treats an ended run it sent
+    and that central no longer lists as acknowledged (memory only; after a restart nothing is acknowledged until the
+    next connection went through the exchange).
+  - The hello carries live and adoptable runs, plus ended runs not yet acknowledged that ended within 24 hours. Older
+    unacknowledged ended runs follow the welcome as `run.report` in slices of 100 every 250 ms, outside the connect
+    deadline. Acknowledged ended runs are not sent at all, so the hello is bounded by live and recent runs.
+  - The journal deletes an ended run after `journal_retention` (default 30 days, never below the 30-day pin window of
+    ADR-0077, at most 1 year) only when central acknowledged its final state, its recording is fully acknowledged and no
+    recorder or kept-back records remain, no transcript upload is unfinished and no dream's evidence positions refer to
+    it. Live and adoptable runs are never deleted. A run's recording files stay on disk.
+  - Not covered: central's apply of a hello still costs one read per reported run, so the hello of a node that was offline
+    with many unacknowledged runs is as large as before once, then small.
+  - An ended run that central's reconcile lists as active is unacknowledged again (the agent forgets that it sent it) and
+    its final state is reported at once, whatever the agent counted before: a central restored from a backup, a
+    follow-up report lost with the connection or one central failed to apply would otherwise never be resent, and the
+    stale sweeper (ADR-0074) would end the run `lost` two minutes after the reconcile and fence its real final state.
+  - Consequences: restoring central from a backup older than the retention loses the runs pruned since: they are swept
+    `lost` if central still lists them, and their recordings are not shipped again. Every agent restart resends all
+    ended runs once as follow-up (acknowledgements are memory only). Pruning runs only on the reconcile, once per
+    connection, not on a timer. Recording directories of pruned runs are not garbage-collected yet (backlog).
+
+### ADR-0080 — The web terminal's scrollback is a byte limit: 24 MiB, at least 10,000 rows at 160 columns
+- **Status:** Accepted, 2026-11-13 (follow-up to ADR-0076's side finding).
+- **Context (code, at v0.1.3; measured against both WebAssembly modules):**
+  - `createTerminal` set `scrollback: 10_000`, meant as lines. ghostty-web 0.4.0's JavaScript passes the option
+    unchanged into the module's configuration as `scrollbackLimit` (`Terminal.buildWasmConfig`, then a `u32` in
+    `GhosttyTerminal`'s config block). Both the 0.4.0 module and the 0.4.0-next.21 module the page loads (ADR-0076)
+    read it as ghostty's `scrollback-limit`: the most bytes the pages of rows above the screen may hold. Pages are
+    dropped whole from the top past the limit; 0 means no limit. The typings and README don't name a unit.
+  - With 10,000 bytes a terminal kept a page's worth: about 1,100 rows at 80 columns and 290 to 470 at 160 (the
+    node's default width). A viewer scrolling back in a long Claude Code reply lost it after a few screens.
+  - A row costs about 13 bytes per column (its cells plus the page's room for styles, graphemes and links), up to
+    14.5 when nearly every row has a 24-bit colour of its own. Both modules measure the same.
+- **Decision:** the scrollback is `SCROLLBACK_BYTES` = 24 MiB, in one place (`web/src/features/terminal/scrollback.ts`),
+  with `scrollbackRows(cols)`, a conservative estimate of the rows kept (15 bytes per cell), for code that needs a
+  row count (a catch-up that writes only the tail). 24 MiB rather than 20 MiB, which keeps about 10,100 plain rows at
+  160 columns, so that output in per-row colours keeps 10,000 too. Rows kept, measured at the lowest and highest
+  point of the page cycle (plain text / per-row 24-bit colours):
+  - 160 columns: 12,090-12,380 / 10,900-11,200;
+  - 80 columns: 24,100-24,690 / 21,750-22,330;
+  - 200 columns: 9,670-9,900 / 8,720-8,960.
+- **Memory per terminal (WebAssembly memory, which never shrinks while the terminal is open):**
+  - Plain text, or output in a few dozen styles: about 30 MiB with a full scrollback (about 7 MiB before). It grows
+    with the output until the scrollback is full, so a short run costs what it did before.
+  - Output whose lines each have a style of their own grows the memory by about 3.5 MiB per 1,000 lines at 160
+    columns **whatever the limit**: 12,000 such lines of the stub's `/sparse` took 49.1 MiB in Chromium with 10,000
+    bytes and with 24 MiB alike. This is the module's style memory, not the scrollback, and is not changed here.
+  - The Terminals page and the run page mount one terminal at a time; switching disposes the previous terminal and
+    its instance (ADR-0076, `terminal-switch.spec.ts`). N browser tabs with a terminal each hold N times the above,
+    e.g. four tabs of full plain-text terminals about 120 MiB.
+- **Consequences:** a terminal keeps at least 10,000 rows at 160 columns. The catch-up (ADR-0076) still writes the
+  whole recording; rows past the limit are dropped as before, so its cost is unchanged. `scrollback.test.ts` checks
+  the unit and the rows kept against the shipped module (and that 0.4.0's JavaScript passes the value through);
+  `e2e/terminal-scrollback.spec.ts` checks at least 10,000 rows in a live terminal at 160×48 in Chromium (it fails
+  with the old value: 485 rows).
+- **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
+
+### ADR-0082 — Rich Markdown rendering: GFM, lazily loaded code highlighting and Mermaid in strict mode (security-relevant change)
+- **Status:** Accepted, 2026-11-14 (operator request 2026-11-13: render Mermaid, highlighted code and all Markdown
+  features in the inbox, queue and needs-you views).
+- **Context:** `web/src/lib/markdown.ts` (marked + DOMPurify) renders every untrusted body: inbox items, task objectives,
+  acceptance criteria and results, human-action bodies, details, answers and comments, messages, cross-space requests,
+  knowledge answers, dreams, memory files, prompts and the event preview. It already did GFM tables and task lists. It
+  forbade `<svg>`, showed fenced code as plain text and had no bound on nesting: a body of 2,000 nested list levels kept
+  marked busy for minutes, 8,000 unmatched `*a ` for 15 s.
+- **Decision:**
+  - The shared renderer adds footnotes (`marked-footnote` 1.4.0), heading anchors (GitHub-style slugs, unique per body)
+    and per-view ID prefixes (`user-content-<hash>-`, from an FNV-1a hash of the body so a link to a heading still works
+    after a reload or in a new tab; a second view of the same body on the page gets `user-content-<hash>-1-` once
+    mounted), so two bodies on a page never share an ID and no ID can clobber a DOM property. A body scrolls to the
+    heading or footnote the address names once it renders. In-page links stay in the tab; every other link keeps
+    `target="_blank"` and `rel="noopener noreferrer nofollow"`.
+  - Sanitizing uses a DOMPurify instance of its own, so its hooks never touch mermaid's sanitizing (the shared
+    instance). Images render only when they are attachment content URLs (`/api/v1/spaces/<space>/attachments/att_…/content`,
+    exact pattern) or URLs the renderer's attachment resolver produced; any other image becomes a link (http/https) or
+    its alt text. Forbidden in addition to before: `frame`, `button`, `textarea`, `select`, `link`, `meta`, `base`, the
+    `srcset` and `sizes` attributes, and every `input` except task-list checkboxes. Attachment references are resolved
+    in the sanitizer hook (one function, `AttachmentResolver`, so another transport such as the Telegram Mini App can
+    supply blob: URLs), no longer by rewriting the source text. DOMPurify's URI allow-list has no `blob:`; a `blob:`
+    URL is kept only when it is exactly one the resolver produced for this body, so a `blob:` URL written in a body is
+    still removed.
+  - Bounds before parsing, outside fenced code: indentation at most 64 columns, at most 16 stacked block markers per
+    line, and a paragraph with more than 256 emphasis delimiters has them escaped (shown literally). A parser failure
+    renders the body as escaped text.
+  - Code: fences with a language are highlighted after mount with **@tanstack/highlight 1.2.12** (MIT; class-based,
+    synchronous, about 15 kB for core plus the module, each of its 78 grammars a separate lazy chunk). Tokens are built
+    as text nodes, never parsed as HTML. At most 50 blocks of at most 20,000 characters each, one at a time, yielding
+    between blocks. Colors are app tokens (`--sm-code-*`, Night Owl / Light Owl like the docs site, each checked at
+    4.5:1 in `contrast.test.ts`). Every block gets a copy button (Clipboard API; on an insecure origin the text is
+    selected instead), and its `<pre>` is focusable for keyboard scrolling. Compared with Shiki (TextMate grammars plus a
+    regex engine, much larger, colors inlined per theme) and highlight.js or Prism (class-based too, but not
+    the package the operator asked for), TanStack Highlight is small, emits classes that follow both themes through
+    CSS, and is synchronous and SSR-safe.
+  - Mermaid: `mermaid` 11.17.2, the version the docs site uses (its configuration there is mermaid's defaults, so only
+    the version is shared), loaded only when a body has a diagram and only once the diagram is near the viewport.
+    `securityLevel: 'strict'`, `maxTextSize` 10,000 and `maxEdges` 500, at most 20 diagrams per body, renders serialized,
+    temporary render elements removed on failure, and a queued render whose view went away (unmounted, or its source or
+    theme changed) is skipped before mermaid starts. The returned SVG is sanitized again (DOMPurify SVG and HTML
+    profiles with mermaid's own `foreignobject` addition; scripts, `<a>`, `<image>`, `<img>`, `<animate>`, `<set>`,
+    `srcset` and handlers removed) before it reaches the DOM: an `<img>` in an HTML label would otherwise load any URL,
+    with the session cookie on the same origin, or a tracking pixel where no CSP applies. Theme: mermaid's `base`
+    theme with Night Owl or Light Owl colors, following the app's color scheme; `theme`, `themeVariables`, `themeCSS`,
+    `darkMode` and the font are added to mermaid's `secure` keys, so a diagram's `%%{init}%%` or front matter can't
+    change them.
+  - Main-thread work: the size limits alone don't bound it. 4,000 bare node IDs fit in 10,000 characters and took
+    7 seconds in one task; 21 such diagrams in one body, 66 seconds. Measured in Chromium (mermaid 11.17.2, node of
+    2026-11-14), a render costs about 2.5-5 ms per node for flowcharts, class, state, ER and block diagrams and more for
+    mind maps (50 nodes about 0.7 s, 100 about 1.4 s). So: a diagram has at most 500 statements (lines, `;` and `&`
+    separated parts) and a body's diagrams at most 25,000 characters of source in all; a diagram over either renders
+    as its source with the reason. A diagram of at most 50 statements and 2,500 characters renders on its own when
+    near the viewport; a larger one shows a "Render diagram" button and renders only when clicked.
+    `e2e/ui-markdown-diagrams.spec.ts` renders the slowest kinds at the automatic limit and checks that no long task
+    runs 1 s or more. A failed render shows a one-line message and the source; the source is always available under the
+    diagram as its text alternative. `MermaidDiagram` renders one diagram from source on its own (for a future "view
+    diagram" page).
+  - Bundle: the eager JS stays where it was (+2.0 kB raw, +1.1 kB gzip, from chunk reshuffling and the theme's token
+    variables); the MarkdownView chunks grow by 10.9 kB raw (4.7 kB gzip); the lazy highlighter is 14.8 kB (4.9 kB gzip) plus one small chunk per grammar, lazy mermaid 614 kB (148 kB gzip) plus its per-diagram-type chunks. `scripts/check-dist.mjs` fails the build when
+    mermaid or the highlighter appears in an eagerly loaded chunk, and prints the sizes.
+- **Security-relevant change:** SVG generated by mermaid from untrusted source now reaches the DOM (bodies still cannot
+  contain `<svg>`). It is bounded by mermaid's strict mode, a second sanitizing pass and the UI's CSP (`script-src 'self'`,
+  `img-src 'self' data: blob:`), which also stops a diagram's style from loading remote content. Everything else in
+  this decision tightens the sanitizer. Hostile inputs are tested in `markdown.test.ts` (XSS vectors, pathological
+  nesting and delimiters, huge bodies and diagrams, `blob:` URLs), `mermaid.test.ts` (configuration and secure keys,
+  SVG sanitizing including label images, statement limit, skipped renders) and `highlight.test.ts` (tokens as text).
+- **Consequences:** a body over the bounds still renders, just with less structure; pathological bodies take at most a
+  few seconds to render rather than minutes (raw HTML nesting has no separate depth limit). A diagram renders on the
+  main thread (mermaid needs the DOM): automatically up to about 1 s each, larger ones only on a click, and none over
+  the statement limit or the body's budget.
+
+### ADR-0084 — "Message the agent" is typed into the running session at once
+- **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
+- **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while
+  the program works (`ErrBusy`) and acknowledges it as rejected; central does not retry a rejected `run.input`. A message
+  sent while control was busy was therefore lost. The durable message path (Messages page, agent tools) is not affected:
+  its terminal notice is refused while busy but the item stays stored and is announced at the next idle report.
+- **Decision:** The box sends `force: true`: the text is typed into the session immediately and the harness decides when to
+  act on it (the fake runner queues typed input; real Claude Code and Codex are unverified). Safe input stays the rule for automated input (notices). Takeover
+  still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
+- **Consequences:** The text may sit in the harness's own queue while it works. A harness that reports `blocked` refuses
+  the text (hc refuses a blocked program without its own force) and the text is dropped, and the operator is not told yet;
+  central answers 202 when it queues the command, so the box says "Queued for the agent". The risk that a modal takes
+  the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
+  `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
+- **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.
+
+### ADR-0085 — Central bounds request bodies by progress and by a total (security-relevant change)
+- **Status:** Accepted, 2026-11-14. **Security-relevant change:** it adds limits to central's public listener, and the
+  security review of the first version (`httpguard.ReadProgress`, PR #78) found that version weakened one and bypassed
+  another; both are corrected here.
+- **Context:** the listener had no `ReadTimeout`: a client that declared a body and sent none, or trickled it, held a
+  connection and goroutine (T-43). A whole-request `ReadTimeout` would cut event streams, the agent WebSocket and
+  slow uploads. The first version gave every body read `http.read_idle_timeout` (30 s). The review found two defects:
+  - **Upgrade bypass (high).** It skipped any request whose headers said `Connection: Upgrade` and `Upgrade:
+    websocket`. A client adding those to `POST /api/v1/spaces` or `POST /` with a `Content-Length` and no body held the
+    connection indefinitely, on any route. `WriteProgress` had the same header-only skip.
+  - **Lost total bound (high).** huma gives every operation `BodyReadTimeout` (5 s total unless set) and applies it
+    as a read deadline; the guard reset the deadline to now+30 s on every read and so overrode it. A login body sent
+    one byte per 29 s was held for up to 1 MiB × 29 s (`http.max_body_bytes` is 1 MiB), where main answered 408 at
+    5.7 s.
+- **Decision:**
+  - Only a real WebSocket handshake is passed through (`websocketHandshake`): a body-less HTTP/1.1 `GET` with the
+    upgrade headers and no `Transfer-Encoding`. `ReadProgress` guards every request that has a body, whatever its
+    headers; `WriteProgress` skips only a real handshake.
+  - Progress and total are both enforced. The guard's response writer implements `SetReadDeadline`, which huma
+    finds by unwrapping: the deadline is recorded as the total cap, and each read waits for the sooner of now+idle and
+    the cap. JSON operations keep huma's 5 s. `upload-attachment` sets `BodyReadTimeout` to 10 minutes
+    (`api.UploadBodyReadTimeout`): 25 MiB (`http.max_upload_bytes`) at a floor of about 43 KiB/s, with the idle bound still
+    applying to every read.
+  - A body whose handler sets no deadline (routes outside huma: `/agent/v1/enroll`, unauthenticated, and the MCP endpoint's
+    batch check) gets `httpguard.DefaultBodyBound` (5 s, huma's default) from its first read; a handler raises or clears it
+    through `SetReadDeadline`. (Round 2 of the review: a 1-byte/400 ms trickle on enrolment was still held after 15 s.)
+  - No new setting: the total is the operation's own bound.
+- **Consequences (numbers per connection):** a JSON operation, the enrolment endpoint or the MCP endpoint: at most 5 s, ≤ 1 MiB buffered. An upload (it requires an
+  authenticated caller; the body is read after authentication): at most 10 min, ≤ 25 MiB. A stalled client is cut at
+  30 s regardless. There is **no per-IP or global connection cap**: N connections hold N goroutines for up to those
+  bounds, which is the residual in T-43. A client slower than 43 KiB/s can't upload 25 MiB, and gets a 408; a slower link
+  needs smaller files.
+- **Evidence:** `TestSlowOrEmptyBodyCannotHoldConnection` (upgrade-header rows), `TestTrickledBodyMeetsTotalBound` (408 at
+  about 5 s), `TestBodyGuardKeepsStreamsAndUploads`, and in `internal/httpguard` `TestUpgradeHeadersWithBodyAreStillGuarded`,
+  `TestHandlerDeadlineIsATotalBound`, `TestDefaultBodyBoundApplies`, `TestOnlyWebSocketUpgradesPassThrough`, and `TestTrickledEnrollBodyMeetsDefaultBound`. The bypass and trickle probes fail on 80a7f5f.
 
 ## 2. Open items and unresolved contracts
 

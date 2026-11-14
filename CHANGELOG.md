@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
+- Rich Markdown in every rendered body (inbox items, tasks, human actions, messages and the rest): footnotes, heading
+  anchors, highlighted code blocks with a copy button, and Mermaid diagrams in the app's light and dark theme. The
+  highlighter and mermaid load only when a body needs them (ADR-0082).
 - Web: a space's overview has a **New inbox item** action next to **Launch run**, for users who may add inbox items
   (operators and admins of the space). It opens the Inbox page's dialog, and a toast confirms the new item with a link
   to it. On a phone the action is an icon. An unsent draft now survives closing and reopening the dialog.
@@ -14,6 +17,96 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   **Send as inbox item** next to the message box's **Send**. The latter opens the same dialog prefilled with the text
   and a link to the run, sends nothing to the terminal and clears the message box once the item is added. Both use the
   same permission as the Inbox page and need no takeover; on a phone they are icons.
+
+### Fixed
+- Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
+  be writing the run's files and its journal after the agent had stopped, while the next agent process started.
+- Central's shutdown now waits for node connections and the work they started (memory syncs into the role-memory
+  repositories, usage, transcripts, tool calls, relocation transfers) before it closes its database. Before, that work
+  could still write after the database was closed. The wait shares the 5 s gateway mints already had, so a stop still
+  takes at most 43 s (30 s `shutdown.timeout`, 5 s, 8 s for the database), inside the units' `TimeoutStopSec=45s`.
+  Central also refuses new node connections once shutdown has begun; a memory sync still queued when its connection
+  ends is dropped (the node sends it again) and a tool call ends with its connection.
+- **A message typed into "Message the agent" (for example to control) while the agent was busy was lost.** The box sent
+  safe, idle-gated input; the node refused it while the program worked, and nothing tried again. The text is now typed
+  into the running session at once (the fake runner queues typed input; real Claude Code and Codex are not yet verified to). The placeholder
+  and the guides say so (ADR-0084). Messages from the Messages page and agents are unchanged: stored, then announced
+  by the terminal notice when the program is idle.
+- Resuming a paused space now starts control when work was waiting. The resume did not wake the control notifier, so
+  work that arrived while the space was paused started control only at the next slow sweep. Resuming kicks the
+  notifier; auto-start settings, limits and dedupe apply as before.
+- The "Restored from a backup" banner no longer comes back when an operator pauses a space later: only spaces the
+  restore paused and that have not been resumed since count as still paused (the notice now records `resumed_spaces`).
+
+### Changed
+
+- The node agent's hello carries only live and adoptable runs and the unacknowledged ended runs that are under 24 hours
+  old, instead of every run the node ever had (a node with 2500 ended runs sent a 1.1 MB hello on every connect). Older
+  unacknowledged ended runs follow the welcome in slices. An ended run that central's reconcile still lists as active
+  (a restored backup, a report lost with the connection) is reported again at once. No protocol change.
+- The node journal deletes ended runs after `journal_retention` (default `720h`, 30 days to 1 year), once central
+  acknowledged their final state, their recording is fully shipped and their transcript upload is finished. Live and
+  adoptable runs, and the runs that Claude Code cache GC's pins come from, are kept. See ADR-0078.
+
+### Security
+
+- Central's public listener no longer lets a client hold a connection by declaring a request body and not sending it.
+  A handler that refused such a request without reading the body (a 401, a POST to a UI path) made the server wait,
+  with no deadline, for up to 256 KiB that never came, and a handler reading a body the client stopped sending waited
+  forever. Every read of a request body must now bring data within **`http.read_idle_timeout`** (new, default `30s`,
+  1s to 10m): a large upload that keeps moving is never cut off. A response sent before the body was read to its end
+  closes the connection instead of draining the body. A body must also arrive within its operation's own bound
+  (5 s for JSON operations, 10 minutes for attachment uploads). Requests without a body (event streams) and real
+  WebSocket handshakes are unaffected; `Upgrade` headers on a request with a body exempt nothing (ADR-0085).
+- A kept-alive connection waiting for its next request is closed after **`http.idle_timeout`** (new, default `2m`, 1s
+  to 1h); before, it could wait forever.
+- The Markdown sanitizer is stricter: images render only from attachments, and buttons, form fields other than task
+  checkboxes, `<link>`, `<meta>`, `<base>`, frames and `srcset` are removed. Rendering a deeply nested or
+  delimiter-heavy body is bounded to a few seconds. Mermaid renders in strict mode, its SVG is sanitized again (images
+  in labels removed) and a diagram can't change its theme. Diagrams are bounded too: a large one renders only after a
+  "Render diagram" click, and one over 500 statements, or past 25,000 characters of diagrams in one body, shows its
+  source (ADR-0082).
+
+## [0.1.4] - 2026-11-14
+
+Patch release on top of v0.1.3. It makes no production-readiness claim (docs/RELEASE_READINESS.md §18). It contains:
+- recordings: a burst of terminal output over the protocol message limit, or output sent just before a node lost its
+  connection, no longer goes missing from central's copy of a run's recording (#56);
+- the web terminal keeps at least 10,000 rows of scrollback, instead of about 300 at 160 columns (ADR-0080, #53);
+- central and the node agent refuse to start on a database that is missing a lower-numbered migration, instead of
+  skipping it silently and failing the next upgrade (#51).
+
+**Upgrade notes:**
+- **From v0.1.3:** no new migration, no protocol change (node protocol stays 1.11) and no new setting.
+- **Upgrade central first and check that it starts** before upgrading any node. Central and every node agent now check
+  their database at startup: one that already ran a higher migration than a lower one in the binary refuses to start
+  with `database is missing migrations lower than its schema version` and names each missing migration. A database
+  that has only ever run released versions has no such gap; one that ran a development build might. The fix is to
+  restore a backup or pre-migration snapshot taken below the lowest missing version (Troubleshooting in the operator
+  docs); never insert the version row by hand. A node's journal gets the same check when its agent restarts.
+- **Restarting a node agent ends its runs**, as before: let them finish or pause the node's spaces first.
+- **From v0.1.1 or v0.1.2:** the v0.1.3 upgrade notes below apply as well.
+
+### Fixed
+
+- Central and the node agent's journal now refuse to open a database that is missing a migration lower than its
+  schema version, with `database is missing migrations lower than its schema version` naming each one. Before, a
+  migration that arrived after a higher one had already run (branches merged out of number order) was skipped
+  silently and the next upgrade failed with goose's "missing (out-of-order) migration". Migrations still run in
+  number order only. A database restored from an older backup has no such gap and migrates forward as before.
+- The web terminal keeps at least 10,000 rows of scrollback at 160 columns (about 11,000-12,000). ghostty-web's
+  `scrollback` option is a byte limit, not a line count, so the old setting of 10,000 kept only about 300 rows at 160
+  columns. It is now 24 MiB: a terminal with a full scrollback of plain text holds about 30 MiB of WebAssembly memory
+  (ADR-0080).
+- A burst of terminal output larger than the protocol message limit (4 MiB, e.g. megabytes printed within a second)
+  no longer goes missing from central's copy of a recording. The node sent it as one message, central closed the
+  connection, and the records in it were never sent again; the reconnect catch-up's batches could do the same. The node
+  now splits recording shipments into messages of at most 1 MiB.
+- Records sent just before a node lost its connection could still go missing from central's copy, because central
+  keeps only records above the last one it stored and the node's next output could arrive first. After a reconnect
+  the node now re-sends everything central has not acknowledged before any newer output of that run, one catch-up at
+  a time, and stops at the first failed send. Output that waits for the catch-up is kept back (up to 1 MiB per run in
+  memory, then read again from the node's recording); a run's exit record is kept even when the node's disk failed.
 
 ## [0.1.3] - 2026-11-13
 
@@ -1479,7 +1572,8 @@ First release candidate (pre-release; not production-ready, see docs/RELEASE_REA
 - Product contract (`docs/GOAL.md`), architectural decisions, execution plan, requirement traceability matrix and verified dependency
   contracts for herdr-core, Pulse, go-pulse-github, Porch, Hallpass, Claude Code and Codex.
 
-[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/aurimasniekis/go-spaceman/compare/v0.1.0...v0.1.1
