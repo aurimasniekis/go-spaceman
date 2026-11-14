@@ -447,7 +447,8 @@ func TestMiniAppPolicyChangeSignalsStreams(t *testing.T) {
 // unauthenticated end event and the session answers 401 from then on.
 func TestMiniAppSessionAndStreamEndOnUnlink(t *testing.T) {
 	t.Parallel()
-	e := newMiniAppEnv(t)
+	// The periodic re-check is pushed out so only the event-driven path can end the stream within revocationBound.
+	e := newMiniAppEnvWith(t, discard(), func(c *app.Central) { c.Cfg.Auth.StreamRevalidate = config.Duration(time.Minute) })
 	e.startBot(t)
 	_ = enrolledSession(t, e.h, "mini@example.com") // the link is Limited until its user has enrolled MFA
 	tok := e.exchange(t)
@@ -493,7 +494,7 @@ func TestMiniAppSessionAndStreamEndOnUnlink(t *testing.T) {
 	if line := readUntil("data:"); !strings.Contains(line, api.EndUnauthenticated) {
 		t.Fatalf("end reason: %s", line)
 	}
-	if d := time.Since(start); d > 30*time.Second {
+	if d := time.Since(start); d > revocationBound {
 		t.Fatalf("stream ended after %s", d)
 	}
 	if r := e.mini(t, "GET", api.Prefix+"/spaces", "", auth...); r.status != 401 {
