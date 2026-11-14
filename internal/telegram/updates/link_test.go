@@ -133,11 +133,11 @@ func TestDispatcherUnlinkAndReconfirm(t *testing.T) {
 	if got := rec.ids(); len(got) != 2 {
 		t.Fatalf("an overdue link's update reached the Handler: %v", got)
 	}
-	if len(ul.links) != 2 {
-		t.Fatalf("an overdue link unlinked: %+v", ul.links)
+	if len(ul.links) != 3 { // an overdue link can still be ended by its owner
+		t.Fatalf("an overdue link's /unlink: %+v", ul.links)
 	}
 	msgs := srv.Messages(5)
-	if len(msgs) != 3 || msgs[2].Text != ReconfirmText {
+	if len(msgs) != 4 || msgs[2].Text != ReconfirmText || msgs[3].Text != "Unlinked." {
 		t.Fatalf("overdue replies %+v", msgs)
 	}
 }

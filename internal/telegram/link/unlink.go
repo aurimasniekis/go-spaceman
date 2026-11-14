@@ -14,7 +14,6 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
-	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -186,7 +185,7 @@ func (s *Service) Reconfirm(ctx context.Context, p *auth.Principal, linkID strin
 // whether it saved. The stored preferences keep every other field: only "timezone" is set, and absent fields read as
 // their defaults.
 func saveTimezoneIfUnset(ctx context.Context, tx *store.Tx, userID, zone string) (bool, error) {
-	if zone == "" || !settings.ValidZone(zone) {
+	if zone == "" { // validated by the caller, outside the transaction (loading a zone reads files)
 		return false, nil
 	}
 	raw, err := json.Marshal(zone)
@@ -203,6 +202,9 @@ func saveTimezoneIfUnset(ctx context.Context, tx *store.Tx, userID, zone string)
 	m := map[string]json.RawMessage{}
 	if json.Unmarshal([]byte(row.PrefsJson), &m) != nil {
 		return false, nil //nolint:nilerr // unreadable stored preferences are left for the user to fix, the link still confirms
+	}
+	if m == nil { // stored "null"
+		m = map[string]json.RawMessage{}
 	}
 	var cur string
 	_ = json.Unmarshal(m["timezone"], &cur)

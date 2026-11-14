@@ -226,6 +226,11 @@ func (d *Dispatcher) Dispatch(ctx context.Context, u botapi.Update) {
 	if d.links != nil {
 		if l, ok := d.links.Lookup(from.ID); ok {
 			if !l.ReconfirmDueAt.IsZero() && !d.clock.Now().Before(l.ReconfirmDueAt) {
+				// An overdue link acts for nobody, but its owner can still end it.
+				if d.unlink != nil && isUnlink(&u) {
+					d.send(ctx, from.ID, d.unlink.Unlink(ctx, l))
+					return
+				}
 				d.reconfirm(ctx, &u, from.ID)
 				return
 			}

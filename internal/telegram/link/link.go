@@ -378,6 +378,9 @@ func (s *Service) Confirm(ctx context.Context, p *auth.Principal, id, maxRole, t
 		return nil, err
 	}
 	sso := p.Method == auth.MethodOIDC && pol.LinkSSOGrants
+	if !settings.ValidZone(timezone) {
+		timezone = "" // an invalid zone is ignored; validating here keeps zone-file reads out of the write transaction
+	}
 	var out *Link
 	err = s.o.Store.W().TxNamed(ctx, "telegram.link.confirm", func(tx *store.Tx) error {
 		r, err := s.ownCode(ctx, tx.Q, p, id)

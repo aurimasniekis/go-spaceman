@@ -224,11 +224,6 @@ func TestTelegramLinkMustBeReconfirmed(t *testing.T) {
 	if m := e.tg.Messages(3001); len(m) != 1 || m[0].Text != updates.ReconfirmText {
 		t.Fatalf("overdue reply %+v", m)
 	}
-	// /unlink works only for a link that acts: an overdue one is re-confirmed first, or ended from the web.
-	d.Dispatch(ctx, send(tg, 2, "/unlink"))
-	if e.linkState(t, l.ID) != "active" {
-		t.Fatal("an overdue link was unlinked from the bot")
-	}
 	r := e.root.do("GET", "/telegram/links", nil)
 	expect(t, r, 200)
 	var listed []tglink.Link
