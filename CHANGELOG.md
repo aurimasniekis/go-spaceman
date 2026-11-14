@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+- Rich Markdown in every rendered body (inbox items, tasks, human actions, messages and the rest): footnotes, heading
+  anchors, highlighted code blocks with a copy button, and Mermaid diagrams in the app's light and dark theme. The
+  highlighter and mermaid load only when a body needs them (ADR-0082).
+
 ### Fixed
 - Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
   be writing the run's files and its journal after the agent had stopped, while the next agent process started.
@@ -48,6 +53,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   WebSocket handshakes are unaffected; `Upgrade` headers on a request with a body exempt nothing (ADR-0085).
 - A kept-alive connection waiting for its next request is closed after **`http.idle_timeout`** (new, default `2m`, 1s
   to 1h); before, it could wait forever.
+- The Markdown sanitizer is stricter: images render only from attachments, and buttons, form fields other than task
+  checkboxes, `<link>`, `<meta>`, `<base>`, frames and `srcset` are removed. Rendering a deeply nested or
+  delimiter-heavy body is bounded to a few seconds. Mermaid renders in strict mode, its SVG is sanitized again (images
+  in labels removed) and a diagram can't change its theme. Diagrams are bounded too: a large one renders only after a
+  "Render diagram" click, and one over 500 statements, or past 25,000 characters of diagrams in one body, shows its
+  source (ADR-0082).
 
 ## [0.1.4] - 2026-11-14
 
