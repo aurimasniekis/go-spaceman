@@ -88,7 +88,8 @@ from Harbor Pilot itself:
 
 SpaceMan reads Harbor Pilot again every 15 minutes, and at once when a space subscribed with the Harbor Pilot quota
 event template receives `quota.window.recovered`. When the account it waited for is available again, or the budget no
-longer blocks, the hold clears and parked runs resume. Launches refused meanwhile say "until about …" with the
+longer blocks, the hold clears and parked runs resume. If that account's reset moves later instead, the estimate moves
+with it. Launches refused meanwhile say "until about …" with the
 estimate. It needs the connection's service-principal token (`usage.read`). Without it, or while Harbor Pilot names no
 reset, the hold is re-checked by letting one launch through from time to time, as for any unknown reset.
 

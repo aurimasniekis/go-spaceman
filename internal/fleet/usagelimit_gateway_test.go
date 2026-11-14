@@ -89,17 +89,29 @@ func TestGatewayBudgetWaitUsesPeriodEnd(t *testing.T) {
 		t.Fatalf("an estimated hold became a probe: %d blocking, %d probes", len(blocking), len(probes))
 	}
 
-	// The same estimate again moves only the re-check; a read of an older version writes nothing.
+	// The same estimate again writes nothing: no version, check_at or change event (the re-check keeps the next re-read
+	// in memory). A read of an older version writes nothing either.
 	before, wv := e.writeCount(), e.waitOf("run_g").Version
 	h = e.gatewayHold("ulm_b")
-	if wrote, err := e.svc.ApplyGatewayEstimate(e.ctx, h, GatewayEstimate{Source: SourceBudgetStatus, ResetsAt: periodEnd}); err != nil || !wrote {
+	check := e.limitRow("ulm_b").CheckAt
+	if wrote, err := e.svc.ApplyGatewayEstimate(e.ctx, h, GatewayEstimate{Source: SourceBudgetStatus, ResetsAt: periodEnd}); err != nil || wrote {
 		t.Fatal(wrote, err)
+	}
+	if u := e.limitRow("ulm_b"); u.Version != h.Version || u.CheckAt != check || e.writeCount() != before {
+		t.Fatalf("an unchanged estimate wrote: %+v, writes %d → %d", u, before, e.writeCount())
 	}
 	if w := e.waitOf("run_g"); w.ResumeAt != periodEnd.Add(limitResumeSlack).UnixMicro() || w.Version != wv {
 		t.Fatal("an unchanged estimate re-timed the wait")
 	}
-	if e.limitRow("ulm_b").CheckAt.Int64 != e.clk.Now().Add(GatewayRecheck).UnixMicro() {
-		t.Fatal("the re-check didn't move on")
+	periodEnd = periodEnd.Add(time.Hour)
+	if wrote, err := e.svc.ApplyGatewayEstimate(e.ctx, h, GatewayEstimate{Source: SourceBudgetStatus, ResetsAt: periodEnd}); err != nil || !wrote {
+		t.Fatal(wrote, err)
+	}
+	if u := e.limitRow("ulm_b"); u.ResetsAt.Int64 != periodEnd.UnixMicro() || u.CheckAt.Int64 != e.clk.Now().Add(GatewayRecheck).UnixMicro() {
+		t.Fatalf("a moved estimate: %+v", u)
+	}
+	if w := e.waitOf("run_g"); w.ResumeAt != periodEnd.Add(limitResumeSlack).UnixMicro() {
+		t.Fatal("a moved estimate didn't re-time the wait")
 	}
 	mid := e.writeCount()
 	if wrote, err := e.svc.ApplyGatewayEstimate(e.ctx, h, GatewayEstimate{Source: SourceBudgetStatus, Recovered: true}); err != nil || wrote {
@@ -163,5 +175,22 @@ func TestGatewayQuotaEstimateRetimesWaits(t *testing.T) {
 	}
 	if _, err := e.svc.ApplyGatewayEstimate(e.ctx, e.gatewayHold("ulm_q"), GatewayEstimate{Source: SourceQuotaBoard}); err == nil {
 		t.Fatal("an estimate without a reset was accepted")
+	}
+}
+
+// Only the connection-wide quota hold is read from the quota board: its reference and its kind.
+func TestGatewayHoldQuota(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		h    GatewayHold
+		want bool
+	}{
+		{GatewayHold{Ref: gatewayRefHP, Kind: proto.LimitGatewayQuota}, true},
+		{GatewayHold{Ref: gatewayRefHP, Kind: proto.LimitGatewayBudget}, false},
+		{GatewayHold{Ref: gatewayRefHPProject + "prj_web", Kind: proto.LimitGatewayQuota}, false},
+	} {
+		if got := c.h.Quota(); got != c.want {
+			t.Errorf("%+v: Quota() = %v", c.h, got)
+		}
 	}
 }

@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/events"
+	"github.com/aurimasniekis/go-spaceman/internal/events/pulsetest"
+	eventtemplate "github.com/aurimasniekis/go-spaceman/internal/events/template"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	"github.com/aurimasniekis/go-spaceman/internal/harborpilot"
 	"github.com/aurimasniekis/go-spaceman/internal/harborpilot/hpfake"
@@ -152,11 +156,78 @@ func TestGatewayQuotaWaitResumes(t *testing.T) {
 	})
 }
 
+// ADR-0079 decision 9, UL-8 (simulated): Harbor Pilot's quota.window.recovered, accepted by a subscription on the
+// harbor-pilot-quota template, brings the re-check forward. No time passes: without the event the hold would be read
+// again only at its 15-minute check_at; with it, central reads the board at once, the hold clears and the run resumes.
+func TestGatewayQuotaRecoveredEventResumes(t *testing.T) {
+	t.Parallel()
+	clk := clock.NewFake(time.Now().UTC().Truncate(time.Second))
+	f := hpfake.New(t)
+	h := newHPRunEnvOn(t, newFleetEnvClock(t, clk), f.URL(), f.Parent, f.Service, "prj_web")
+	ctx := context.Background()
+	until := clk.Now().Add(3 * time.Hour)
+	gatewayQuotaWait(t, h, quotaScript{
+		now: clk.Now,
+		exhaust: func(*testing.T) {
+			f.Set(func(x *hpfake.HP) {
+				x.Board = boardBody(t, harborpilot.AccountHealth{AccountID: "acc_a", Name: "team-1", Until: &until},
+					harborpilot.AccountHealth{AccountID: "acc_l", Name: "local", Available: true})
+			})
+		},
+		recover: func(t *testing.T) {
+			f.Set(func(x *hpfake.HP) {
+				x.Board = boardBody(t, harborpilot.AccountHealth{AccountID: "acc_a", Name: "team-1", Available: true},
+					harborpilot.AccountHealth{AccountID: "acc_l", Name: "local", Available: true})
+			})
+			if next, err := h.e.c.HarborPilotWaits.Next(ctx); err != nil || !next.After(clk.Now()) {
+				t.Fatalf("the hold is due before the event: %v %v", next, err)
+			}
+			nats := pulsetest.Start(t)
+			conn, err := h.e.c.Events.CreateConnection(ctx, admin, events.ConnectionInput{Name: "pulse", URL: nats.URL, Creds: string(nats.Creds("spaceman"))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var tv string
+			tpls, err := h.e.c.Events.ListTemplates(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, x := range tpls {
+				if x.Slug == "harbor-pilot-quota" {
+					tv = x.Versions[0].ID
+				}
+			}
+			sub, err := h.e.c.Events.CreateSubscription(ctx, admin, h.sp.ID, events.SubscriptionInput{Name: "quota", ConnectionID: conn.ID, TemplateVersionID: tv})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile("../events/template/testdata/harbor-pilot-quota-window-recovered.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var env struct{ ID, Name, Type string }
+			if err := json.Unmarshal(raw, &env); err != nil {
+				t.Fatal(err)
+			}
+			ev := eventtemplate.Event{ID: env.ID, Subject: "evt.harborpilot." + env.Name, Type: env.Type, Data: raw}
+			if err := h.e.c.Events.Process(ctx, sub.ID, ev, 1, events.Origin{}); err != nil {
+				t.Fatal(err)
+			}
+			// The kick made the hold due now (or the deadline loop already read the board and cleared it).
+			if next, err := h.e.c.HarborPilotWaits.Next(ctx); err != nil || next.After(clk.Now()) {
+				t.Fatalf("the event didn't bring the re-check forward: next in %v (%v)", next.Sub(clk.Now()), err)
+			}
+		},
+		until: &until,
+	})
+}
+
 // ADR-0079 decision 9, UL-8, against a real `harbor-pilot serve --demo` (opt-in: SPACEMAN_HARBOR_PILOT=1; the quota
 // board is in v0.1.3 and later; recorded with v0.1.6). Every demo quota monitor is set to exhausted_below 0.99, so all
 // monitored accounts are unavailable, and the run's own token gets Harbor Pilot's 429 "no eligible account". Central
-// estimates the hold from the real board; when the monitors go back to 0 (recovered), Harbor Pilot's recovery kick makes
-// central read the board again, the hold clears and the run resumes.
+// estimates the hold from the real board; when the monitors go back to 0 (recovered), the test calls Kick() directly
+// (as central does when a quota.window.recovered event is accepted; there is no Pulse relay here, see
+// TestGatewayQuotaRecoveredEventResumes), central reads the board again, the hold clears and the run resumes.
 func TestRealHarborPilotQuotaWait(t *testing.T) {
 	t.Parallel()
 	g := hptest.Start(t)

@@ -85,6 +85,8 @@ type Budgets struct {
 	usage    map[string]*cached[*ProjectUsage] // project id + from → usage
 	flights  map[string]*flight                // key → in-flight read
 	now      func() time.Time
+	// boardGen counts the times the cached board was dropped: a board read that started before a drop isn't cached.
+	boardGen uint64
 }
 
 type cached[T any] struct {
@@ -136,6 +138,7 @@ func (b *Budgets) Invalidate() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.status, b.system, b.board = nil, nil, nil
+	b.boardGen++
 	clear(b.covered)
 	clear(b.projects)
 	clear(b.usage)

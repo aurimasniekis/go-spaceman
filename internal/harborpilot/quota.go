@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -19,8 +20,9 @@ import (
 //   - a blocking budget (a project's hold): the latest `period_end` among the covering blocking budgets.
 //
 // The estimate is read once when the hold opens and again every 15 minutes (fleet.GatewayRecheck), or at once when
-// Harbor Pilot's quota.window.recovered event arrives (Kick). A hold clears when its accounts recover or no budget
-// blocks any more, which wakes the runs parked under it.
+// Harbor Pilot's quota.window.recovered event arrives (Kick). A quota hold clears when one of the accounts behind its
+// estimate is available again (or none is unavailable), a budget hold when no budget blocks any more, which wakes the
+// runs parked under it. An empty board, an unknown reset or a passed period end is no estimate: the hold keeps its probe.
 
 // AccountHealth is one provider account's routing view on the quota board (Harbor Pilot 0.1.3 or later).
 type AccountHealth struct {
@@ -53,82 +55,139 @@ func (c *Client) QuotaBoard(ctx context.Context, serviceToken string) (*QuotaBoa
 	return &b, nil
 }
 
-// quotaBoard returns the quota board (cached for QuotaFresh).
+// quotaBoard returns the quota board (cached for QuotaFresh). A read that started before the cached board was dropped
+// (a Kick racing it) is neither cached nor returned: the board is read again.
 func (b *Budgets) quotaBoard(ctx context.Context, r *reader) (*QuotaBoard, error) {
-	v, _, err := load(ctx, b, "quota_board", r.key, slot[*QuotaBoard]{get: func() *cached[*QuotaBoard] { return b.board }, set: func(c *cached[*QuotaBoard]) { b.board = c }},
-		b.o.QuotaFresh, func(ctx context.Context) (*QuotaBoard, error) {
-			qb, err := r.c.QuotaBoard(ctx, r.token)
-			if err != nil {
-				return nil, statusErr("quota board", err)
-			}
-			return qb, nil
-		})
-	return v, err
+	for {
+		b.mu.Lock()
+		gen := b.boardGen
+		b.mu.Unlock()
+		v, _, err := load(ctx, b, "quota_board", r.key, slot[*QuotaBoard]{
+			get: func() *cached[*QuotaBoard] { return b.board },
+			// set runs under b.mu.
+			set: func(c *cached[*QuotaBoard]) {
+				if b.boardGen == gen {
+					b.board = c
+				}
+			}},
+			b.o.QuotaFresh, func(ctx context.Context) (*QuotaBoard, error) {
+				qb, err := r.c.QuotaBoard(ctx, r.token)
+				if err != nil {
+					return nil, statusErr("quota board", err)
+				}
+				return qb, nil
+			})
+		b.mu.Lock()
+		dropped := b.boardGen != gen
+		b.mu.Unlock()
+		if !dropped || ctx.Err() != nil {
+			return v, err
+		}
+	}
 }
 
-// dropQuotaBoard forgets the cached quota board, so the next read asks Harbor Pilot.
+// dropQuotaBoard forgets the cached quota board, so the next read asks Harbor Pilot, and keeps a read already in
+// flight from being cached.
 func (b *Budgets) dropQuotaBoard() {
 	b.mu.Lock()
 	b.board = nil
+	b.boardGen++
 	b.mu.Unlock()
 }
 
 // sameInstant compares two Harbor Pilot times to the second (the board's precision).
 func sameInstant(a, b time.Time) bool { return a.Truncate(time.Second).Equal(b.Truncate(time.Second)) }
 
-// EstimateQuota is a quota board's finding about the connection-wide quota hold h at now:
-//   - recovered when no account is unavailable any more, or when h already has a board estimate and no unavailable
-//     account is expected back at that time any more (the account it waited for recovered: its until passed or went);
-//   - otherwise the estimate is the earliest future `until` among the unavailable accounts (known false when none has
-//     one: the hold keeps its probe).
+// Estimate is what a read of Harbor Pilot found about a gateway hold.
+type Estimate struct {
+	// Recovered clears the hold.
+	Recovered bool
+	// Until is the estimated reset when Known.
+	Until time.Time
+	Known bool
+	// Soon asks for the next read after the short retry rather than the 15-minute re-check, when there is no estimate
+	// for now (a blocking budget's period end has passed: the new period should start any moment).
+	Soon bool
+	// Accounts are the unavailable accounts whose until is the estimate (quota): the hold clears when one of them is
+	// available again.
+	Accounts []string
+}
+
+// EstimateQuota is a quota board's finding about the connection-wide quota hold at now. expected are the accounts
+// behind the hold's current board estimate (nil when there is none, or when central doesn't know them any more):
+//   - no estimate when the board lists no account at all: an empty, malformed or renamed account_health is no
+//     evidence, so the hold keeps its probe;
+//   - recovered when no account is unavailable any more, or when one of the expected accounts is available again;
+//   - otherwise the estimate is the earliest future `until` among the unavailable accounts, with the accounts behind it
+//     (known false when none has one: the hold keeps its probe). An expected account that is still out with a moved
+//     `until` re-times the hold; it never clears it.
 //
-// Accounts that are available are ignored either way: the board lists every account of the installation, also ones
-// the space's plan never routes to (a local model is always available).
-func EstimateQuota(qb *QuotaBoard, h fleet.GatewayHold, now time.Time) (recovered bool, until time.Time, known bool) {
+// Accounts that are available are otherwise ignored: the board lists every account of the installation, also ones the
+// space's plan never routes to (a local model is always available).
+func EstimateQuota(qb *QuotaBoard, expected []string, now time.Time) Estimate {
+	var e Estimate
+	if qb == nil || len(qb.AccountHealth) == 0 {
+		return e
+	}
 	unavailable := 0
-	expected := false
+	back := false
 	for _, a := range qb.AccountHealth {
 		if a.Available {
+			back = back || (a.AccountID != "" && slices.Contains(expected, a.AccountID))
 			continue
 		}
 		unavailable++
 		if a.Until == nil || !a.Until.After(now) {
 			continue
 		}
-		if h.Estimated() && sameInstant(*a.Until, *h.ResetsAt) {
-			expected = true
-		}
-		if !known || a.Until.Before(until) {
-			until, known = a.Until.UTC(), true
+		if !e.Known || a.Until.Before(e.Until) {
+			e.Until, e.Known = a.Until.UTC(), true
 		}
 	}
-	if unavailable == 0 || (h.Estimated() && h.Source == fleet.SourceQuotaBoard && !expected) {
-		return true, time.Time{}, false
+	if unavailable == 0 || back {
+		return Estimate{Recovered: true}
 	}
-	return false, until, known
+	if e.Known {
+		for _, a := range qb.AccountHealth {
+			if !a.Available && a.Until != nil && sameInstant(*a.Until, e.Until) && !slices.Contains(e.Accounts, a.AccountID) {
+				e.Accounts = append(e.Accounts, a.AccountID)
+			}
+		}
+	}
+	return e
 }
 
-// EstimateBudget is the covering budgets' finding about a project's budget hold: recovered when none blocks any more;
-// otherwise the latest period end among those that block (known false when one has none: a one-time budget without an
-// end never resets by itself).
-func EstimateBudget(cov []Covering) (recovered bool, until time.Time, known bool) {
-	blocking := 0
+// EstimateBudget is the covering budgets' finding about a project's budget hold at now: recovered when none blocks
+// any more; otherwise the latest period end among those that block. There is no estimate when one has no end (a
+// one-time budget never resets by itself), or when a blocking budget's period end has passed (Soon: Harbor Pilot
+// hasn't rolled the period yet, so the hold keeps its probe and is read again shortly).
+func EstimateBudget(cov []Covering, now time.Time) Estimate {
+	var e Estimate
+	blocking, passed := 0, false
 	for _, c := range cov {
 		if !c.Blocking {
 			continue
 		}
 		blocking++
 		if c.PeriodEnd == nil {
-			return false, time.Time{}, false
+			return Estimate{}
 		}
-		if c.PeriodEnd.After(until) {
-			until = c.PeriodEnd.UTC()
+		if !c.PeriodEnd.After(now) {
+			passed = true
+			continue
+		}
+		if c.PeriodEnd.After(e.Until) {
+			e.Until = c.PeriodEnd.UTC()
 		}
 	}
-	if blocking == 0 {
-		return true, time.Time{}, false
+	switch {
+	case blocking == 0:
+		return Estimate{Recovered: true}
+	case passed:
+		return Estimate{Soon: true}
 	}
-	return false, until, true
+	e.Known = true
+	return e
 }
 
 // GatewayHolds is what the gateway re-check needs from the fleet (implemented by *fleet.Service).
@@ -152,18 +211,34 @@ type GatewayWaits struct {
 	holds GatewayHolds
 
 	mu sync.Mutex
-	// kicked makes every quota hold due now (quota.window.recovered).
+	// kicked makes every quota hold due now (quota.window.recovered); gen counts the kicks, so a round clears kicked
+	// only when no kick came while it read.
 	kicked bool
-	// retry holds a hold back after a read that failed or estimated nothing, by hold id. Holds that are no longer open
-	// drop out on the next round.
-	retry map[string]time.Time
-	wake  func()
+	gen    uint64
+	// retry holds a hold back, by hold id, after a read that failed, estimated nothing or found the estimate the hold
+	// already has. It applies only to the hold's version it was set for: a hold that changed meanwhile is read at its
+	// own time.
+	retry map[string]heldBack
+	// expected are the accounts behind a quota hold's board estimate, by hold id, for the hold's version they were
+	// read for (in memory only: after a restart the next read finds them again).
+	expected map[string]heldAccounts
+	wake     func()
+}
+
+type heldBack struct {
+	at      time.Time
+	version int64
+}
+
+type heldAccounts struct {
+	ids     []string
+	version int64
 }
 
 // NewGatewayWaits returns the gateway re-check over b's connection (its reads and cache) and the fleet's holds. wake
 // (optional) wakes the deadline timer after a Kick.
 func NewGatewayWaits(b *Budgets, holds GatewayHolds, wake func()) *GatewayWaits {
-	return &GatewayWaits{b: b, holds: holds, retry: map[string]time.Time{}, wake: wake}
+	return &GatewayWaits{b: b, holds: holds, retry: map[string]heldBack{}, expected: map[string]heldAccounts{}, wake: wake}
 }
 
 // dueAt is when a hold is read next: a hold without Harbor Pilot's estimate yet at once, an estimated one at its
@@ -176,8 +251,8 @@ func (g *GatewayWaits) dueAt(h fleet.GatewayHold, now time.Time, kicked bool) ti
 	if h.Estimated() && h.CheckAt != nil {
 		at = *h.CheckAt
 	}
-	if r, ok := g.retry[h.ID]; ok && r.After(at) {
-		at = r
+	if r, ok := g.retry[h.ID]; ok && r.version == h.Version && r.at.After(at) {
+		at = r.at
 	}
 	return at
 }
@@ -206,6 +281,7 @@ func (g *GatewayWaits) Kick() {
 	g.b.dropQuotaBoard()
 	g.mu.Lock()
 	g.kicked = true
+	g.gen++
 	g.mu.Unlock()
 	if g.wake != nil {
 		g.wake()
@@ -214,7 +290,8 @@ func (g *GatewayWaits) Kick() {
 
 // Due reads Harbor Pilot for the gateway holds that are due, outside any transaction (one board read for the quota
 // hold of every space, one budget read per project), and applies each finding. It reads only the open holds when
-// none is due, and writes nothing for a hold whose read failed. It returns how many holds it wrote.
+// none is due, and writes nothing for a hold whose read failed or whose estimate is unchanged. It returns how many
+// holds it wrote.
 func (g *GatewayWaits) Due(ctx context.Context) (int, error) {
 	holds, err := g.holds.OpenGatewayHolds(ctx)
 	if err != nil {
@@ -222,25 +299,28 @@ func (g *GatewayWaits) Due(ctx context.Context) (int, error) {
 	}
 	now := g.b.now()
 	g.mu.Lock()
-	kicked := g.kicked
-	open := make(map[string]bool, len(holds))
+	// A kick with no quota hold open stays set: it makes nothing due, and the first board read clears it.
+	kicked, gen := g.kicked, g.gen
+	open := make(map[string]int64, len(holds))
 	var due []fleet.GatewayHold
 	for _, h := range holds {
-		open[h.ID] = true
+		open[h.ID] = h.Version
 		if !g.dueAt(h, now, kicked).After(now) {
 			due = append(due, h)
 		}
 	}
-	for id := range g.retry {
-		if !open[id] {
+	for id, r := range g.retry {
+		if v, ok := open[id]; !ok || v != r.version {
 			delete(g.retry, id)
+		}
+	}
+	for id, x := range g.expected {
+		if v, ok := open[id]; !ok || v != x.version {
+			delete(g.expected, id)
 		}
 	}
 	g.mu.Unlock()
 	if len(due) == 0 {
-		g.mu.Lock()
-		g.kicked = false
-		g.mu.Unlock()
 		return 0, nil
 	}
 	r, rerr := g.b.reader(ctx)
@@ -255,8 +335,7 @@ func (g *GatewayWaits) Due(ctx context.Context) (int, error) {
 	)
 	for _, h := range due {
 		var e fleet.GatewayEstimate
-		var recovered, known bool
-		var until time.Time
+		var est Estimate
 		var readErr error
 		switch {
 		case rerr != nil:
@@ -268,11 +347,13 @@ func (g *GatewayWaits) Due(ctx context.Context) (int, error) {
 				cancel()
 				boardRd = true
 				g.mu.Lock()
-				g.kicked = false
+				if g.gen == gen {
+					g.kicked = false
+				}
 				g.mu.Unlock()
 			}
 			if readErr = boardErr; readErr == nil {
-				recovered, until, known = EstimateQuota(board, h, now)
+				est = EstimateQuota(board, g.expectedFor(h), now)
 				e.Source = fleet.SourceQuotaBoard
 			}
 		case h.ProjectID != "":
@@ -291,12 +372,12 @@ func (g *GatewayWaits) Due(ctx context.Context) (int, error) {
 				readErr = budErrs[h.ProjectID]
 			}
 			if readErr == nil {
-				recovered, until, known = EstimateBudget(cov)
+				est = EstimateBudget(cov, now)
 				e.Source = fleet.SourceBudgetStatus
 			}
 		default:
 			// A gateway reference this version doesn't estimate: its probe stays in charge.
-			g.holdBack(h.ID, now.Add(fleet.GatewayRecheck))
+			g.holdBack(h, now.Add(fleet.GatewayRecheck))
 			continue
 		}
 		if readErr != nil {
@@ -306,34 +387,69 @@ func (g *GatewayWaits) Due(ctx context.Context) (int, error) {
 				// No usable connection or service token: nothing changes that soon.
 				retry = fleet.GatewayRecheck
 			}
-			g.holdBack(h.ID, now.Add(retry))
+			g.holdBack(h, now.Add(retry))
 			continue
 		}
-		if !recovered && !known {
-			// Exhausted, but Harbor Pilot names no reset: the hold keeps its probe (decision 7), read again later.
-			g.holdBack(h.ID, now.Add(fleet.GatewayRecheck))
+		if !est.Recovered && !est.Known {
+			// Exhausted, but Harbor Pilot names no reset (or the board lists nothing): the hold keeps its probe
+			// (decision 7), read again later.
+			retry := fleet.GatewayRecheck
+			if est.Soon {
+				retry = gatewayRetry
+			}
+			g.holdBack(h, now.Add(retry))
 			continue
 		}
-		e.Recovered, e.ResetsAt = recovered, until
+		e.Recovered, e.ResetsAt = est.Recovered, est.Until
 		wrote, err := g.holds.ApplyGatewayEstimate(ctx, h, e)
 		if err != nil {
 			errs = append(errs, err)
-			g.holdBack(h.ID, now.Add(gatewayRetry))
+			g.holdBack(h, now.Add(gatewayRetry))
 			continue
 		}
-		g.mu.Lock()
-		delete(g.retry, h.ID)
-		g.mu.Unlock()
+		version := h.Version
 		if wrote {
+			// The fleet moves an estimated hold's version on by one (SetUsageLimitEstimate).
+			version++
 			done++
 		}
+		g.mu.Lock()
+		if e.Recovered {
+			delete(g.retry, h.ID)
+			delete(g.expected, h.ID)
+		} else {
+			if e.Source == fleet.SourceQuotaBoard {
+				g.expected[h.ID] = heldAccounts{ids: est.Accounts, version: version}
+			}
+			if wrote {
+				// check_at is the next re-read.
+				delete(g.retry, h.ID)
+			} else {
+				// Unchanged (or changed meanwhile, when the hold-back doesn't apply): the next re-read is kept here.
+				g.retry[h.ID] = heldBack{at: now.Add(fleet.GatewayRecheck), version: h.Version}
+			}
+		}
+		g.mu.Unlock()
 	}
 	return done, errors.Join(errs...)
 }
 
-func (g *GatewayWaits) holdBack(id string, at time.Time) {
+// expectedFor returns the accounts behind h's board estimate, when central still knows them for h's version.
+func (g *GatewayWaits) expectedFor(h fleet.GatewayHold) []string {
+	if !h.Estimated() || h.Source != fleet.SourceQuotaBoard {
+		return nil
+	}
 	g.mu.Lock()
-	g.retry[id] = at
+	defer g.mu.Unlock()
+	if x, ok := g.expected[h.ID]; ok && x.version == h.Version {
+		return x.ids
+	}
+	return nil
+}
+
+func (g *GatewayWaits) holdBack(h fleet.GatewayHold, at time.Time) {
+	g.mu.Lock()
+	g.retry[h.ID] = heldBack{at: at, version: h.Version}
 	g.mu.Unlock()
 }
 

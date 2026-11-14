@@ -4456,25 +4456,33 @@
          latest `period_end` among the covering blocking budgets. It is stored as the hold's `resets_at`, with
          `source` `quota_board` or `budget_status` and `check_at = now + 15 min`. Waits parked under the hold are
          re-timed to the estimate plus the 2-minute slack. A gateway wait put off as `account_held` is moved only
-         earlier.
+         earlier. An estimate the hold already has writes nothing (no version, `check_at` or change event); the job
+         keeps the next re-read in memory.
        - **An estimated hold's `check_at` is the re-read, never a probe.** The hold refuses launches until its
-         reset, and the refusal says "until about <time> (estimated from Harbor Pilot's quota board …)" or "until
-         <time>, when the budget's period ends". The probe of decision 7 stays in charge while Harbor Pilot names no
-         reset: every unavailable account has a null or past `until`, a blocking one-time budget has no end, or Harbor
-         Pilot can't be read. Such a hold is read again after 15 minutes, or after 2 minutes when a read failed. A
+         reset, and the refusal says "until about `<time>` (estimated from Harbor Pilot's quota board …)" or "until
+         `<time>`, when the budget's period ends". The probe of decision 7 stays in charge while Harbor Pilot names no
+         reset: the board lists no account at all (an empty, missing or renamed `account_health` is no evidence, never
+         a recovery), every unavailable account has a null or past `until`, a blocking one-time budget has no end, a
+         blocking budget's `period_end` has passed (Harbor Pilot hasn't rolled the period yet), or Harbor Pilot can't
+         be read. Such a hold is read again after 15 minutes, or after 2 minutes when a read failed or a period end
+         has passed. A
          node's evidence from another space sets `check_at = now` as before. On an estimated hold that means "read
          again now".
        - **Recovery.** The board lists every account of the installation, including ones the space's plan never
          routes to. For example, the demo's local model has no monitor and is always available. So "any account
-         available" is no signal. A quota hold clears when no account is unavailable any more, or when it has a
-         board estimate and no unavailable account is still expected back at that time: the account it waited for
-         recovered, or its `until` passed or moved. A newly exhausted account with an earlier `until` moves the
-         estimate earlier. A budget hold clears when no covering budget blocks any more. The clear has `cleared_by`
-         `quota_board` or `budget_status` and wakes the waits, as other clears do.
+         available" is no signal. With each board estimate the job remembers the accounts behind it (those whose
+         `until` is the estimate), in memory, for the hold's id and version. A quota hold clears when no account is
+         unavailable any more, or when one of those accounts is available again. An account behind the estimate that
+         is still out with a moved `until` re-times the hold to the new earliest `until`; it never clears it. When the
+         job doesn't know the accounts (after a restart, or the hold changed meanwhile), it only re-estimates. A newly
+         exhausted account with an earlier `until` moves the estimate earlier. A budget hold clears when no covering
+         budget blocks any more. The clear has `cleared_by` `quota_board` or `budget_status` and wakes the waits, as
+         other clears do.
        - **Kick.** `events.Options.OnAccepted` is called after an event becomes a new item. When the subscription
          uses the built-in `harbor-pilot-quota` template and the subject is
          `evt.harborpilot.quota.window.recovered`, central drops the cached board and makes every quota hold due.
-         The event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
+         A board read already in flight when the kick arrives is neither cached nor used: it is read again. The
+         event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
          alone applies.
        - **A gateway run parked after its hold cleared** resumes at once, not after the 1-hour backoff. The gateway hold
          opens with the limit, so a missing hold means Harbor Pilot recovered, or the hold was cleared. A run still

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 )
@@ -51,7 +52,7 @@ type GatewayHold struct {
 }
 
 // Quota reports whether the hold is the connection-wide quota hold (read from the quota board).
-func (h GatewayHold) Quota() bool { return h.Ref == gatewayRefHP }
+func (h GatewayHold) Quota() bool { return h.Ref == gatewayRefHP && h.Kind == proto.LimitGatewayQuota }
 
 // Estimated reports whether Harbor Pilot already estimated the hold's reset.
 func (h GatewayHold) Estimated() bool {
@@ -90,7 +91,8 @@ type GatewayEstimate struct {
 // ApplyGatewayEstimate applies a re-check to the hold h, as read: it is skipped (false) when the hold changed or
 // cleared meanwhile, and the next round reads it again. A recovered hold is cleared (cleared_by is the source), which
 // wakes the waits it kept. Otherwise the hold gets the estimate as its reset, the next re-check as check_at, and the
-// waits parked under it are re-timed to the new reset. It returns whether anything was written.
+// waits parked under it are re-timed to the new reset. An estimate the hold already has writes nothing (no version,
+// check_at or change event): the caller keeps the next re-read in memory. It returns whether anything was written.
 func (svc *Service) ApplyGatewayEstimate(ctx context.Context, h GatewayHold, e GatewayEstimate) (bool, error) {
 	if e.Source != SourceQuotaBoard && e.Source != SourceBudgetStatus {
 		return false, errors.New("fleet: gateway estimate needs a source")
@@ -115,6 +117,9 @@ func (svc *Service) ApplyGatewayEstimate(ctx context.Context, h GatewayHold, e G
 			return svc.clearHoldTx(ctx, tx, u, e.Source, u.ID)
 		}
 		reset := sql.NullInt64{Int64: e.ResetsAt.UnixMicro(), Valid: true}
+		if u.ResetsAt == reset && u.Source == e.Source {
+			return nil
+		}
 		check := sql.NullInt64{Int64: tx.Now.Add(GatewayRecheck).UnixMicro(), Valid: true}
 		n, err := tx.Q.SetUsageLimitEstimate(ctx, db.SetUsageLimitEstimateParams{ResetsAt: reset, CheckAt: check, Source: e.Source, Now: tx.NowMicros(),
 			ID: u.ID, Version: u.Version})
@@ -124,9 +129,6 @@ func (svc *Service) ApplyGatewayEstimate(ctx context.Context, h GatewayHold, e G
 		wrote = true
 		if err := svc.record(ctx, tx, u.SpaceID, "usage_limit", u.ID, "updated", u.Version+1); err != nil {
 			return err
-		}
-		if u.ResetsAt == reset {
-			return nil
 		}
 		return svc.retimeHoldWaitsTx(ctx, tx, u, time.UnixMicro(reset.Int64).Add(limitResumeSlack))
 	})
