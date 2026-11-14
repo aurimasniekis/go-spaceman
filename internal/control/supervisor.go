@@ -205,6 +205,10 @@ func (sv *Supervisor) OnRunEnded(runID string) {
 			return
 		}
 		if r.Kind != agenttools.KindControl {
+			// A run parked at its usage limit is announced by its parked message (OnLimitWaitTx), not as ended.
+			if w, err := sv.fl.LimitWaitForRun(ctx, r.ID); err != nil || w != nil {
+				return
+			}
 			task := ""
 			if l, _, err := sv.q.List(ctx, r.SpaceID); err == nil {
 				for _, t := range l {
@@ -238,6 +242,11 @@ func (sv *Supervisor) recover(ctx context.Context, r *fleet.Run) {
 	// or auto-start for waiting work once the hold lets a launch through).
 	if r.EndReason == fleet.EndUsageLimit {
 		sv.log.Info("control ended at a usage limit; not restarted", slog.String(obs.FieldRunID, r.ID))
+		return
+	}
+	// A control with a limit wait (swept while at its limit, or a failed resume) comes back through the wait.
+	if w, err := sv.fl.LimitWaitForRun(ctx, r.ID); err != nil || w != nil {
+		sv.log.Info("control parked at a usage limit; not restarted", slog.String(obs.FieldRunID, r.ID))
 		return
 	}
 	sp, err := sv.fl.GetSpace(ctx, r.SpaceID)

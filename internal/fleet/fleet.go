@@ -73,8 +73,23 @@ type Options struct {
 	OnRunLaunched func(runID string)
 	// OnRunEnded is called after a run was recorded as ended (exited, failed or lost).
 	OnRunEnded func(runID string)
-	// OnRunIdle is called after a run's program reported idle or done (turn finished): pending deliveries can go out.
+	// OnRunIdle is called after a run's program reported idle or done (turn finished), or a usage limit cleared while it
+	// was idle: pending deliveries can go out.
 	OnRunIdle func(runID string)
+	// OnRunLimitTx is called inside the report transaction when a run's usage limit changes window: ended is the limit
+	// that ended (nil: none) and opened the one that opened (nil: none); a newer window ends the old one and opens the
+	// new one in one call. A repeat or a reclassified limit (the same since) is no change. r is the run as the report
+	// left it. It is how control is told once per limit (ADR-0079 decision 11). Nil: nobody is told.
+	OnRunLimitTx func(ctx context.Context, tx *store.Tx, r *Run, ended, opened *RunLimit) error
+	// OnLimitWaitTx is called inside the transaction that parks a run, resumes it or releases its wait (ADR-0079
+	// decisions 4–6), so control is told once per change. Nil: nobody is told.
+	OnLimitWaitTx func(ctx context.Context, tx *store.Tx, ev LimitWaitEvent) error
+	// RepointTaskTx points a parked run's task at the run that resumed it, inside the launch transaction; false when the
+	// task is no longer the parked run's (the resume is then given up). Nil: tasks are not touched.
+	RepointTaskTx func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, fromRun, toRun string) (bool, error)
+	// ReleaseTaskTx gives a parked run's task back when its wait is released: ready and unassigned, or, in review, only
+	// unassigned. It returns the task's status after the change ("" when it changed nothing). Nil: tasks are not touched.
+	ReleaseTaskTx func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (string, error)
 	// OnSpaceState is called after an operator paused, resumed, archived or restored a space (SetSpaceState), with
 	// the new state: deferred work can go out on resume, and subscriptions that stop while paused stop or start.
 	OnSpaceState func(spaceID, state string)
@@ -128,6 +143,7 @@ type Service struct {
 	rec     *Recordings
 	reloc   relocEngine
 	tko     takeovers
+	lw      limitWaitJob
 	// MemoryExport writes central's role memory for a relocation's destination (nil: spaces with memory cannot relocate).
 	MemoryExport MemoryExporter
 	// Grants removes a purged space's role grants and reloads the authorization engine after commit (the auth
@@ -177,6 +193,7 @@ func New(s *store.Store, kr *keyring.Keyring, aw *audit.Writer, bus *eventbus.Bu
 	}
 	svc := &Service{s: s, kr: kr, audit: aw, bus: bus, changes: ch, opts: o, reloc: relocEngine{retain: make(chan struct{}, 1)},
 		tko: takeovers{meters: map[string]*takeoverMeter{}, wake: make(chan struct{}, 1)}}
+	svc.lw.started = o.Clock.Now()
 	svc.hub = newHub(svc)
 	svc.rec = newRecordings(o.RecordingsDir, o.RecordingStore, obs.Component(o.Log, "recordings"), o.Clock.Now)
 	return svc

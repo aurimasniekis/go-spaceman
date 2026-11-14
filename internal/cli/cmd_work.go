@@ -201,6 +201,10 @@ func (a *App) limitsCmd() *cobra.Command {
 			scoped: true, args: pos("limit")}),
 		a.cmd(opts{use: "waits", short: "A space's runs parked at a usage limit, waiting to resume", op: "list-space-limit-waits",
 			scoped: true, view: view{items: "items", cols: waitCols, empty: "No runs waiting for a usage limit."}}),
+		a.cmd(opts{use: "resume", short: "Resume a run parked at a usage limit now (the usual launch checks apply)", op: "resume-limit-wait",
+			scoped: true, args: pos("wait")}),
+		a.cmd(opts{use: "release", short: "Give up on a run parked at a usage limit; its task goes back to the queue", op: "release-limit-wait",
+			scoped: true, args: pos("wait")}),
 		a.cmd(opts{use: "definitions", short: "Every limit: unit, bounds, default and enforcement point", op: "list-limit-definitions",
 			view: view{items: "items", cols: []col{c("KEY", "key"), c("UNIT", "unit"), c("DEFAULT", "default"), c("MIN", "min"), c("MAX", "max"), c("ENFORCED", "enforced")}}}),
 	)

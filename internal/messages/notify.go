@@ -135,6 +135,9 @@ func (n *Notifier) Sweep(ctx context.Context) error {
 		if errors.Is(err, fleet.ErrTakenOver) {
 			continue // an operator has taken over the terminal: the notice waits until the takeover ends (SM-UI-004)
 		}
+		if errors.Is(err, fleet.ErrLimitWaiting) {
+			continue // the run reached a usage limit after the candidates were read: the notice waits for the clear
+		}
 		if err != nil {
 			n.log.Warn("notice", slog.String(obs.FieldRunID, r.ID), obs.Err(err))
 			continue

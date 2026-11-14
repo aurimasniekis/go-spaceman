@@ -72,8 +72,8 @@ WHERE id = sqlc.arg(id) AND notified_humans_at IS NULL;
 
 -- name: InsertLimitWait :exec
 INSERT INTO limit_waits (id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id,
-  resume_at, release_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  resume_at, release_at, attempts, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetLimitWait :one
 SELECT * FROM limit_waits WHERE id = ?;
@@ -102,3 +102,44 @@ SELECT * FROM limit_waits WHERE state = 'waiting' AND release_at IS NOT NULL AND
 UPDATE limit_waits SET state = sqlc.arg(state), resume_at = sqlc.arg(resume_at), new_run_id = sqlc.arg(new_run_id),
   attempts = sqlc.arg(attempts), last_error = sqlc.arg(last_error), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
+
+-- Parking (UL-7). Live runs at a limit that SpaceMan may park when they outlive the keep-alive (control, worker and
+-- diagnostic runs that are still wanted); uses ix_runs_observed_live.
+-- name: ListLimitedLiveRuns :many
+SELECT * FROM runs WHERE observed IN ('starting', 'running', 'stopping') AND limit_kind <> '' AND desired = 'running'
+  AND kind IN ('control', 'worker', 'diagnostic')
+ORDER BY id LIMIT ?;
+
+-- The wait a run was resumed from (a re-park carries its release time and attempts forward).
+-- name: GetLimitWaitResumedInto :one
+SELECT * FROM limit_waits WHERE space_id = ? AND new_run_id = ? AND state = 'resumed' ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- Waits left in resuming by a central that stopped mid-resume.
+-- name: ListStuckLimitWaits :many
+SELECT * FROM limit_waits WHERE state = 'resuming' AND updated_at < ? ORDER BY updated_at, id LIMIT ?;
+
+-- name: NextLimitWaitRelease :one
+SELECT CAST(coalesce(min(release_at), 0) AS INTEGER) AS at FROM limit_waits WHERE state = 'waiting' AND release_at IS NOT NULL;
+
+-- Waits a space's control is waiting in (autostart leaves control to its wait).
+-- name: GetActiveControlLimitWait :one
+SELECT * FROM limit_waits WHERE space_id = ? AND run_kind = 'control' AND state IN ('waiting', 'resuming') LIMIT 1;
+
+-- Waits that were put off for a reason that has just gone (the node said hello, the space resumed) are due now.
+-- name: ListDeferredLimitWaits :many
+SELECT * FROM limit_waits WHERE space_id = ? AND state = 'waiting' AND last_error = ? AND resume_at > ? ORDER BY created_at, id LIMIT ?;
+
+-- A task's waiting waits (limit_waits(task_id) index): cancelled when the task is done with or given to another run.
+-- name: ListTaskLimitWaits :many
+SELECT * FROM limit_waits WHERE task_id = ? AND state = 'waiting' ORDER BY created_at, id;
+
+-- Another live run of an instance than the one being launched (a resume re-checks it in its launch transaction).
+-- name: CountOtherLiveRunsOfInstance :one
+SELECT count(*) FROM runs WHERE space_id = ? AND instance_id = ? AND id <> ? AND observed IN ('pending', 'starting', 'running', 'stopping', 'unknown');
+
+-- Waiting waits a cleared hold may let resume: parked under it, or put off because an account was held. Uses the
+-- waiting-waits index (ix_limit_waits_due): only waits not yet due.
+-- name: ListHoldWaitsToWake :many
+SELECT * FROM limit_waits WHERE state = 'waiting' AND resume_at > sqlc.arg(now)
+  AND (usage_limit_id = sqlc.arg(usage_limit_id) OR last_error = 'account_held')
+ORDER BY resume_at, id LIMIT sqlc.arg(lim);

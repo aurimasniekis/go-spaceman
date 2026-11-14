@@ -20,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/agent"
 	"github.com/aurimasniekis/go-spaceman/internal/app"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/clock"
 	"github.com/aurimasniekis/go-spaceman/internal/config"
 	"github.com/aurimasniekis/go-spaceman/internal/fleet"
 	hns "github.com/aurimasniekis/go-spaceman/internal/harness"
@@ -49,12 +50,21 @@ type fleetEnv struct {
 	bridge string
 	// staleGrace overrides the stale-run sweeper's grace on the next startCentral (0: the default, ADR-0074).
 	staleGrace time.Duration
+	// clk is central's clock (nil: the system clock); newFleetEnvClock sets a fake one.
+	clk clock.Clock
 }
 
 // newFleetEnv starts central for an end-to-end test. Leases last 5 s with a 1 s grace by default, so that restarting
 // the agent under the race detector never outlives a lease; tests whose runs must survive restartCentral pass
 // longLease, and tests of lease expiry pass shortLease.
 func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
+	t.Helper()
+	return newFleetEnvClock(t, nil, opts...)
+}
+
+// newFleetEnvClock is newFleetEnv with central on clk (the store's transactions, leases and the deadline jobs read it).
+// Nodes keep their own real clock.
+func newFleetEnvClock(t *testing.T, clk clock.Clock, opts ...func(*config.Config)) *fleetEnv {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Default()
@@ -78,7 +88,7 @@ func newFleetEnv(t *testing.T, opts ...func(*config.Config)) *fleetEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sock) })
-	e := &fleetEnv{t: t, cfg: cfg, run: runnertest.New(), agentDir: filepath.Join(dir, "agent"), bridge: filepath.Join(sock, "b.sock")}
+	e := &fleetEnv{t: t, cfg: cfg, run: runnertest.New(), agentDir: filepath.Join(dir, "agent"), bridge: filepath.Join(sock, "b.sock"), clk: clk}
 	e.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { (*e.handler.Load()).ServeHTTP(w, r) }))
 	cfg.PublicURL = "http://" + e.srv.Listener.Addr().String()
 	e.startCentral()
@@ -110,7 +120,7 @@ func (e *fleetEnv) startCentral() {
 	storetest.Seed(e.t, e.cfg.DataDir)
 	// A small reader pool keeps a restart well inside the lease: store.Open checks every reader connection, and with the
 	// default (one per CPU) that alone took 5-7 s on a 32-CPU host under -race, so leases lapsed during restartCentral.
-	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace})
+	c, err := app.OpenCentral(context.Background(), e.cfg, testLog(), app.Options{Environ: []string{}, StoreReaders: 4, StaleRunGrace: e.staleGrace, Clock: e.clk})
 	if err != nil {
 		e.t.Fatal(err)
 	}

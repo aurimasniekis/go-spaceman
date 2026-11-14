@@ -67,6 +67,10 @@ func (sv *Supervisor) ControlWanted(ctx context.Context, spaceID string) {
 	if sv.stillDeferred(ctx, spaceID) {
 		return
 	}
+	// Control parked at its usage limit comes back through its wait, with its session, at the reset (ADR-0079).
+	if parked, err := sv.fl.ControlParked(ctx, spaceID); err != nil || parked {
+		return
+	}
 	sp, err := sv.fl.GetSpace(ctx, spaceID)
 	if err != nil || sp.State != "active" || sp.Lease == nil || !sp.Lease.Valid {
 		return // paused, archived or its node is away: the work waits
@@ -222,6 +226,8 @@ func (sv *Supervisor) ArmIdleTimers(ctx context.Context) {
 	}
 }
 
+// armIdle (re)arms a control run's idle stop. A control run waiting for its usage limit to reset is waiting, not idle
+// (ADR-0079 decision 3): its timer is dropped, and the idle report that follows the clear arms a new one.
 func (sv *Supervisor) armIdle(ctx context.Context, r *fleet.Run) {
 	if sv.Limit == nil {
 		return
@@ -233,7 +239,7 @@ func (sv *Supervisor) armIdle(ctx context.Context, r *fleet.Run) {
 		t.Stop()
 		delete(sv.idle, r.ID)
 	}
-	if mins <= 0 {
+	if mins <= 0 || r.Limit != nil {
 		return
 	}
 	id, turn := r.ID, r.Turn
@@ -252,6 +258,9 @@ func (sv *Supervisor) idleCheck(ctx context.Context, runID string, turn int64) {
 	r, err := sv.fl.GetRun(ctx, runID)
 	if err != nil || r.Desired != "running" || r.Observed != "running" || r.Turn != turn || (r.Status != "idle" && r.Status != "done") {
 		return // ended, stopping, or working again: its next idle point arms a new timer
+	}
+	if r.Limit != nil {
+		return // at a usage limit since the timer was armed: the clear arms a new one (ADR-0079 decision 3)
 	}
 	waiting, err := sv.msgs.Waiting(ctx, r.SpaceID, r.ID, r.Role, true)
 	if err != nil {

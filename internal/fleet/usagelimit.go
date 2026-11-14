@@ -327,6 +327,10 @@ func (svc *Service) clearHoldTx(ctx context.Context, tx *store.Tx, u db.UsageLim
 		Correlation: correlation}); err != nil {
 		return err
 	}
+	// Runs parked under it, or put off by it, may resume now (on the job's next round).
+	if err := svc.wakeHoldWaitsTx(ctx, tx, u); err != nil {
+		return err
+	}
 	return svc.record(ctx, tx, u.SpaceID, "usage_limit", u.ID, "updated", u.Version+1)
 }
 
@@ -359,6 +363,30 @@ func (svc *Service) applyLimitTx(ctx context.Context, tx *store.Tx, r db.Run, cu
 		err = svc.clearHoldsTx(ctx, tx, r, cur)
 	}
 	return n, err
+}
+
+// limitWindowTx calls OnRunLimitTx when a run's limit window changed: a limit opened, ended, or was replaced by one with
+// another since. The same since with another kind or reset is the same window.
+func (svc *Service) limitWindowTx(ctx context.Context, tx *store.Tx, runID string, cur, next limitState) error {
+	if svc.opts.OnRunLimitTx == nil || cur.kind != "" && next.kind != "" && cur.since == next.since {
+		return nil
+	}
+	r, err := tx.Q.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	var endedLimit, opened *RunLimit
+	if cur.kind != "" {
+		endedLimit = cur.runLimit()
+	}
+	if next.kind != "" {
+		opened = next.runLimit()
+	}
+	return svc.opts.OnRunLimitTx(ctx, tx, runFromRow(r), endedLimit, opened)
+}
+
+func (l limitState) runLimit() *RunLimit {
+	return runLimitOf(db.Run{LimitKind: l.kind, LimitResetsAt: l.resets, LimitSince: l.since})
 }
 
 // supersedeHoldTx clears the open hold of kind in the run's space if this run opened it.
