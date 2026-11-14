@@ -71,15 +71,15 @@ func (b *progressBody) Read(p []byte) (int, error) {
 // which stops net/http from draining the rest of the body (with no deadline) before it sends the header.
 type unreadGuardWriter struct {
 	http.ResponseWriter
-	body  *progressBody
-	wrote bool
+	body *progressBody
 }
 
+// commit marks the response Connection: close if its final header is being written with the body unread. Interim
+// responses (1xx, a 101 included: its Connection header says Upgrade) are left alone.
 func (w *unreadGuardWriter) commit(code int) {
-	if w.wrote || (code >= 100 && code < 200 && code != http.StatusSwitchingProtocols) {
+	if code >= 100 && code < 200 {
 		return
 	}
-	w.wrote = true
 	if !w.body.eof.Load() {
 		w.Header().Set("Connection", "close")
 	}

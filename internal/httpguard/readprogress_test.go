@@ -360,3 +360,140 @@ func TestReadGuardOverHTTP2(t *testing.T) {
 		t.Fatal("the handler is still reading a body the client stopped sending")
 	}
 }
+
+// serveUnit runs h behind ReadProgress on a recorder with a body the handler has not read, the way a refusal sees it.
+func serveUnit(t *testing.T, major int, body io.ReadCloser, h http.HandlerFunc) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req.Body = body
+	req.ProtoMajor = major
+	rec := httptest.NewRecorder()
+	ReadProgress(h, time.Minute).ServeHTTP(rec, req)
+	return rec
+}
+
+func unreadBody() io.ReadCloser { return io.NopCloser(strings.NewReader("abc")) }
+
+// Which responses get Connection: close, and when: the header is marked as it is committed (a write, a flush or an
+// explicit WriteHeader), never for an interim 1xx or a 101, never for HTTP/2, and not for a nil body.
+func TestConnectionCloseMarking(t *testing.T) {
+	closeOf := func(w http.ResponseWriter) string { return w.Header().Get("Connection") }
+	t.Run("write commits", func(t *testing.T) {
+		serveUnit(t, 1, unreadBody(), func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("x"))
+			if closeOf(w) != "close" {
+				t.Error("Write did not mark Connection: close")
+			}
+		})
+	})
+	t.Run("flush commits", func(t *testing.T) {
+		serveUnit(t, 1, unreadBody(), func(w http.ResponseWriter, _ *http.Request) {
+			if err := http.NewResponseController(w).Flush(); err != nil {
+				t.Error(err)
+			}
+			if closeOf(w) != "close" {
+				t.Error("Flush did not mark Connection: close")
+			}
+		})
+	})
+	t.Run("interim 1xx does not commit", func(t *testing.T) {
+		serveUnit(t, 1, unreadBody(), func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusEarlyHints)
+			if closeOf(w) != "" {
+				t.Error("an interim response was marked Connection: close")
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			if closeOf(w) != "close" {
+				t.Error("the final response was not marked")
+			}
+		})
+	})
+	t.Run("101 is left alone", func(t *testing.T) {
+		serveUnit(t, 1, unreadBody(), func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusSwitchingProtocols)
+			if closeOf(w) != "" {
+				t.Error("a 101 was marked Connection: close")
+			}
+		})
+	})
+	t.Run("HTTP/2 is left alone", func(t *testing.T) {
+		serveUnit(t, 2, unreadBody(), func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("x"))
+			if closeOf(w) != "" {
+				t.Error("an HTTP/2 response was marked Connection: close")
+			}
+		})
+	})
+	t.Run("nil body is left alone", func(t *testing.T) {
+		serveUnit(t, 1, nil, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("x"))
+			if closeOf(w) != "" {
+				t.Error("a request without a body was marked Connection: close")
+			}
+		})
+	})
+}
+
+// A flush the underlying writer cannot do is reported, not swallowed.
+func TestFlushErrorIsReported(t *testing.T) {
+	type bare struct{ http.ResponseWriter } // hides the recorder's Flush
+	req := httptest.NewRequest(http.MethodPost, "/x", unreadBody())
+	var got error
+	h := ReadProgress(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		got = http.NewResponseController(w).Flush()
+	}), time.Minute)
+	h.ServeHTTP(bare{httptest.NewRecorder()}, req)
+	if !errors.Is(got, http.ErrNotSupported) {
+		t.Fatalf("flush error %v, want ErrNotSupported", got)
+	}
+}
+
+// A zero bound turns the guard off: a body that pauses is still read.
+func TestZeroIdleDisablesReadGuard(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		fmt.Fprintf(w, "%d %v", len(b), err)
+	})
+	srv := httptest.NewServer(ReadProgress(inner, 0))
+	t.Cleanup(srv.Close)
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write([]byte("ab"))
+		time.Sleep(3 * idle)
+		_, _ = pw.Write([]byte("cd"))
+		_ = pw.Close()
+	}()
+	res, err := http.Post(srv.URL, "text/plain", pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if string(b) != "4 <nil>" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+// An upgrade request that carries a body gets no read deadline from the guard, even though a handler reads part of it.
+func TestUpgradeWithBodyGetsNoDeadline(t *testing.T) {
+	srv, done := readServer(t, idle, func(w http.ResponseWriter, r *http.Request) error {
+		if _, err := io.ReadFull(r.Body, make([]byte, 2)); err != nil {
+			return err
+		}
+		time.Sleep(3 * idle)
+		// A deadline left by the guard has expired by now: reading the rest of the body would fail.
+		_, err := io.ReadAll(r.Body)
+		return err
+	})
+	c := dial(t, srv, "POST /agent/ HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nContent-Length: 4\r\n", "ab")
+	time.Sleep(4 * idle)
+	_, _ = io.WriteString(c, "cd")
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("an upgrade's body read was cut off: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+}
