@@ -4684,7 +4684,7 @@
     reloads it after commit and publishes `telegram.settings` on the in-process event bus (never the change feed), and
     the service's `Run` reloads on that event. Listeners registered with `OnChange` get every change of the global
     settings in order: central applies `updates_per_second` to the Intake's rate and the per-link limits to the new
-    in-memory limiter at once; `BindSender` applies `send_limits` to an outbound sender (TG-3b binds the sender it
+    in-memory limiter at once; `BindSender` applies `send_limits` to an outbound sender (central binds it once, through the bot service, which carries the limits to the sender it
     builds with the bot). Content level `off` hides a space like `enabled = false` (decision 13).
   - **Inbound limiter:** per link, in memory, token buckets for actions (every linked update in the dispatcher),
     inbox items and downloads (for the capture and download paths of TG-8a/TG-9a); idle links are forgotten after

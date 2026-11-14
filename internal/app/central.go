@@ -395,6 +395,8 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 	c.Supervisor = control.NewSupervisor(c.Fleet, c.Queue, c.Messages, c.Human, log, o.Clock)
 	c.newTelegram(ctx)
 	c.TelegramBot = c.newTelegramBot()
+	// Once: the settings keep their listeners, and the bot carries the limits to every sender it makes.
+	c.TelegramSettings.BindSender(c.TelegramBot)
 	c.Queue.Workers = c.Fleet
 	c.Queue.Notify = c.Supervisor.Notify
 	c.Supervisor.Inbox = c.Inbox

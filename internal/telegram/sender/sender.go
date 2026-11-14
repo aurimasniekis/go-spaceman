@@ -276,6 +276,13 @@ func (s *Sender) SetLimits(l Limits) error {
 	return nil
 }
 
+// Limits returns the limits in force.
+func (s *Sender) Limits() Limits {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.limits
+}
+
 func (s *Sender) chatRateLocked(group bool) (rate, capacity float64) {
 	if group {
 		return float64(s.limits.GroupPerMinute) / 60, float64(s.limits.GroupPerMinute)

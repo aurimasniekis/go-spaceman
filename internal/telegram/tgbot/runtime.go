@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -197,6 +199,7 @@ func (svc *Service) offLocked() {
 		u.Dispatcher.SetBot(nil)
 	}
 	svc.run.client = nil
+	svc.stopSender()
 	empty := ""
 	svc.miniAppHost.Store(&empty)
 }
@@ -264,6 +267,7 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 	}
 	svc.stopPollerLocked()
 	svc.run.client = c
+	svc.startSender(c)
 	host := row.MiniappHost
 	svc.miniAppHost.Store(&host)
 	svc.setState(func(rt *runtime) { rt.infoClient = c })
@@ -419,5 +423,67 @@ func (svc *Service) refreshInfo(ctx context.Context) {
 	rt.infoAt, rt.infoErr = now, err != nil
 	if err == nil {
 		rt.info = &info
+	}
+}
+
+// Sender is the live bot's outbound queue, or nil while the bot is off. It is replaced whenever the bot is
+// reconfigured (a new token, another mode), so callers read it per use and don't keep it.
+func (svc *Service) Sender() *sender.Sender {
+	svc.sndMu.Lock()
+	defer svc.sndMu.Unlock()
+	return svc.snd
+}
+
+// SetLimits keeps the send limits for the live sender and for every sender made later. It is what
+// settings.Service.BindSender is given, once: the settings' listeners can't be removed, so the listener must outlive
+// the sender it was first made for. A refused limit set (outside the sender's bounds) changes nothing.
+func (svc *Service) SetLimits(l sender.Limits) error {
+	if err := l.Validate(); err != nil {
+		return err
+	}
+	svc.sndMu.Lock()
+	defer svc.sndMu.Unlock()
+	svc.limits = l
+	if svc.snd != nil {
+		return svc.snd.SetLimits(l)
+	}
+	return nil
+}
+
+// startSender replaces the outbound sender with one for c, running on central's serving context (nothing sends before
+// Start gives it one; a sender made earlier is replaced then). Must hold svc.mu.
+func (svc *Service) startSender(c *botapi.Client) {
+	svc.stopSender()
+	svc.sndMu.Lock()
+	defer svc.sndMu.Unlock()
+	snd, err := sender.New(sender.Options{Client: c, Limits: svc.limits, Metrics: svc.o.Metrics,
+		Logger: obs.Component(svc.o.Log, "telegram.sender")})
+	if err != nil {
+		svc.o.Log.Warn("telegram: starting the outbound sender failed", slog.String("error", err.Error()))
+		return
+	}
+	svc.snd = snd
+	base := svc.run.baseCtx
+	if base == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(base)
+	done := make(chan struct{})
+	svc.sndStop, svc.sndDone = cancel, done
+	go func() {
+		defer close(done)
+		_ = snd.Run(ctx)
+	}()
+}
+
+// stopSender stops the outbound sender and waits for it: what it still queued is dropped. Must hold svc.mu.
+func (svc *Service) stopSender() {
+	svc.sndMu.Lock()
+	stop, done := svc.sndStop, svc.sndDone
+	svc.snd, svc.sndStop, svc.sndDone = nil, nil, nil
+	svc.sndMu.Unlock()
+	if stop != nil {
+		stop()
+		<-done
 	}
 }

@@ -30,7 +30,8 @@ func (c *Central) trustedProxies() []netip.Prefix {
 //
 // The settings are read once here, so the first update already sees them; a failure only logs and keeps the defaults
 // until the settings' Run reloads. Every later change reaches the Intake's rate and the per-link limiter through
-// OnChange. The outbound sender is bound when the bot is configured (TG-3b: c.TelegramSettings.BindSender).
+// OnChange. The outbound sender is bound once, in OpenCentral, through the bot service (tgbot.Service.SetLimits), which
+// also applies the limits to every sender it makes later.
 func (c *Central) newTelegram(ctx context.Context) {
 	log := obs.Component(c.Log, "telegram")
 	c.TelegramSettings = tgsettings.New(c.Store, c.Audit, c.Bus, log)
@@ -54,7 +55,7 @@ func (c *Central) newTelegram(ctx context.Context) {
 // dispatcher client, poller) whenever the bot is written and at start (Serve calls Start).
 func (c *Central) newTelegramBot() *tgbot.Service {
 	return tgbot.New(c.Store, c.Audit, c.Keyring, tgbot.Options{BaseURL: c.Cfg.Telegram.APIBaseURL, PublicURL: c.Cfg.PublicURL,
-		Updates: c.TelegramUpdates, Bus: c.Bus, Log: obs.Component(c.Log, "telegram")})
+		Updates: c.TelegramUpdates, Metrics: c.Metrics, Bus: c.Bus, Log: obs.Component(c.Log, "telegram")})
 }
 
 // auditTelegramUnauthorized records webhook requests refused for their secret token (at most once a minute, with the

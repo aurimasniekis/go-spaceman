@@ -31,9 +31,11 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/sender"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
 )
 
@@ -96,8 +98,10 @@ type Options struct {
 	Updates *updates.Service
 	// PollerOptions configure polling mode (tests shorten the wait).
 	PollerOptions updates.PollerOptions
-	Bus           *eventbus.Bus
-	Log           *slog.Logger
+	// Metrics receives the outbound sender's telegram_* metrics (nil: none).
+	Metrics *metrics.Metrics
+	Bus     *eventbus.Bus
+	Log     *slog.Logger
 }
 
 // Service keeps the bot row and runs the live bot.
@@ -116,6 +120,14 @@ type Service struct {
 
 	// miniAppHost is the Mini App host of a running bot ("" when off): central's host routing reads it per request.
 	miniAppHost atomic.Pointer[string]
+
+	// The outbound sender of the live bot (nil when the bot is off). snd, limits and sndDone are guarded by sndMu:
+	// SetLimits (the settings' change listener) must not wait for a reconfiguration that holds mu.
+	sndMu   sync.Mutex
+	snd     *sender.Sender
+	limits  sender.Limits // the latest send limits; a sender made later starts with them
+	sndStop context.CancelFunc
+	sndDone chan struct{}
 }
 
 // New returns the service. Call Start once central serves, to bring the configured bot up.
