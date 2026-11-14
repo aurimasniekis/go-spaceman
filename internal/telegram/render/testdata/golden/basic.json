@@ -1,0 +1,127 @@
+{
+  "parts": [
+    {
+      "text": "Release notes\n\nHello bold, italic, struck, code and both. A soft break joins lines; a hard break\nstarts a new one.\n\nSecond heading with code\n\n──────────\n\nEscapes: *not italic*, & © 😀 and a literal \\ backslash.",
+      "entities": [
+        {
+          "type": "bold",
+          "offset": 0,
+          "length": 13,
+          "covers": "Release notes"
+        },
+        {
+          "type": "bold",
+          "offset": 21,
+          "length": 4,
+          "covers": "bold"
+        },
+        {
+          "type": "italic",
+          "offset": 27,
+          "length": 6,
+          "covers": "italic"
+        },
+        {
+          "type": "strikethrough",
+          "offset": 35,
+          "length": 6,
+          "covers": "struck"
+        },
+        {
+          "type": "code",
+          "offset": 43,
+          "length": 4,
+          "covers": "code"
+        },
+        {
+          "type": "bold",
+          "offset": 52,
+          "length": 4,
+          "covers": "both"
+        },
+        {
+          "type": "italic",
+          "offset": 52,
+          "length": 4,
+          "covers": "both"
+        },
+        {
+          "type": "bold",
+          "offset": 116,
+          "length": 19,
+          "covers": "Second heading with"
+        },
+        {
+          "type": "code",
+          "offset": 136,
+          "length": 4,
+          "covers": "code"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "heading",
+        "text": "Release notes",
+        "size": 1
+      },
+      {
+        "type": "paragraph",
+        "text": [
+          "Hello ",
+          {
+            "type": "bold",
+            "text": "bold"
+          },
+          ", ",
+          {
+            "type": "italic",
+            "text": "italic"
+          },
+          ", ",
+          {
+            "type": "strikethrough",
+            "text": "struck"
+          },
+          ", ",
+          {
+            "type": "code",
+            "text": "code"
+          },
+          " and ",
+          {
+            "type": "italic",
+            "text": {
+              "type": "bold",
+              "text": "both"
+            }
+          },
+          ". A soft break joins lines; a hard break",
+          "\n",
+          "starts a new one."
+        ]
+      },
+      {
+        "type": "heading",
+        "text": [
+          "Second heading with ",
+          {
+            "type": "code",
+            "text": "code"
+          }
+        ],
+        "size": 2
+      },
+      {
+        "type": "divider"
+      },
+      {
+        "type": "paragraph",
+        "text": "Escapes: *not italic*, \u0026 © 😀 and a literal \\ backslash."
+      }
+    ]
+  },
+  "markdown": "**Release notes**\n\nHello **bold**, *italic*, ~~struck~~, `code` and ***both***. A soft break joins lines; a hard break\\\nstarts a new one.\n\n**Second heading with** `code`\n\n──────────\n\nEscapes: \\*not italic\\*, \\& © 😀 and a literal \\\\ backslash."
+}

@@ -1,0 +1,29 @@
+{
+  "parts": [
+    {
+      "text": "Screenshot: 🖼 the screen Again 🖼 image and another 🖼 b. Bad id x stays text.",
+      "entities": []
+    }
+  ],
+  "attachments": [
+    "att_0123456789abcdefghijklmnop",
+    "att_zzzzzzzzzzzzzzzzzzzzzzzzzz"
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "paragraph",
+        "text": [
+          "Screenshot: ",
+          "🖼 the screen",
+          " Again ",
+          "🖼 image",
+          " and another ",
+          "🖼 b",
+          ". Bad id x stays text."
+        ]
+      }
+    ]
+  },
+  "markdown": "Screenshot: 🖼 the screen Again 🖼 image and another 🖼 b. Bad id x stays text."
+}

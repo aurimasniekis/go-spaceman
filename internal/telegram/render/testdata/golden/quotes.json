@@ -1,0 +1,101 @@
+{
+  "parts": [
+    {
+      "text": "A quote with bold and a link.\nA nested quote stays in the same quote.\necho inside\nAfter the code.\n\nA long quote line one line two line three line four line five line six",
+      "entities": [
+        {
+          "type": "blockquote",
+          "offset": 0,
+          "length": 69,
+          "covers": "A quote with bold and a link.\nA nested quote stays in the same quote."
+        },
+        {
+          "type": "bold",
+          "offset": 13,
+          "length": 4,
+          "covers": "bold"
+        },
+        {
+          "type": "text_link",
+          "offset": 22,
+          "length": 6,
+          "url": "https://example.com",
+          "covers": "a link"
+        },
+        {
+          "type": "pre",
+          "offset": 70,
+          "length": 11,
+          "language": "sh",
+          "covers": "echo inside"
+        },
+        {
+          "type": "blockquote",
+          "offset": 82,
+          "length": 15,
+          "covers": "After the code."
+        },
+        {
+          "type": "blockquote",
+          "offset": 99,
+          "length": 70,
+          "covers": "A long quote line one line two line three line four line five line six"
+        }
+      ]
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "blockquote",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": [
+              "A quote with ",
+              {
+                "type": "bold",
+                "text": "bold"
+              },
+              " and ",
+              {
+                "type": "url",
+                "text": "a link",
+                "url": "https://example.com"
+              },
+              "."
+            ]
+          },
+          {
+            "type": "blockquote",
+            "blocks": [
+              {
+                "type": "paragraph",
+                "text": "A nested quote stays in the same quote."
+              }
+            ]
+          },
+          {
+            "type": "pre",
+            "text": "echo inside",
+            "language": "sh"
+          },
+          {
+            "type": "paragraph",
+            "text": "After the code."
+          }
+        ]
+      },
+      {
+        "type": "blockquote",
+        "blocks": [
+          {
+            "type": "paragraph",
+            "text": "A long quote line one line two line three line four line five line six"
+          }
+        ]
+      }
+    ]
+  },
+  "markdown": "> A quote with **bold** and [a link](<https://example.com>).\\\n> A nested quote stays in the same quote.\n\n```sh\necho inside\n```\n> After the code.\n\n> A long quote line one line two line three line four line five line six"
+}

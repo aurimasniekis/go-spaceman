@@ -1,0 +1,25 @@
+{
+  "parts": [
+    {
+      "text": "Inline bold tag and alert(1) line\nbreak.\n\nBlock html & text",
+      "entities": []
+    }
+  ],
+  "rich": {
+    "blocks": [
+      {
+        "type": "paragraph",
+        "text": [
+          "Inline bold tag and alert(1) line",
+          "\n",
+          "break."
+        ]
+      },
+      {
+        "type": "paragraph",
+        "text": "Block html \u0026 text"
+      }
+    ]
+  },
+  "markdown": "Inline bold tag and alert(1) line\\\nbreak.\n\nBlock html \\& text"
+}

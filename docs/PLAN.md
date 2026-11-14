@@ -150,7 +150,7 @@ number) in TG-3a; no agent migration and no protocol change. TG-12a/b/c are in t
 | TG-3c | Settings operations (global and per space), limits wiring, `timezone` in `NotificationPrefs` | SM-TG-009, SM-TG-010, SM-TG-014 | todo |
 | TG-4a | Security core: Telegram principal, B1/B2/B4 changes, classification test, audit | SM-TG-002, SM-TG-003, SM-TG-012, SM-TG-013 | todo |
 | TG-4b | Linking: codes, both confirmations, unlink, link-cap grants, reconfirmation | SM-TG-001, SM-TG-002 | todo |
-| TG-5 | Renderer: Markdown AST → entities and rich blocks, inbound entities → Markdown | SM-TG-010 | todo |
+| TG-5 | Renderer: Markdown AST → entities and rich blocks, inbound entities → Markdown | SM-TG-010 | implemented, tested (simulated): `internal/telegram/render` (goldmark v1.8.7); not wired to a sender yet |
 | TG-6 | Notifier: change-feed consumer, recipients, card edits, digest in each user's timezone | SM-TG-009 | todo |
 | TG-7 | Needs-you chat forms for every type | SM-TG-003, SM-TG-006 | todo |
 | TG-8a | Spaces and inbox in chat, inbox capture | SM-TG-007, SM-TG-008 | todo |
