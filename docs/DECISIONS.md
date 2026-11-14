@@ -4666,7 +4666,7 @@
     TG-6 and TG-10.
   - **Timezone:** `NotificationPrefs.timezone` is optional in the schema (older clients still save), trimmed, at most
     64 characters, an IANA name from the embedded zone database (`Local` refused) or empty. The web Account page shows
-    it with a "Use <browser zone>" button and never fills it in by itself; the audit row records only whether one is
+    it with a "Use (browser zone)" button and never fills it in by itself; the audit row records only whether one is
     set.
 
 ## 2. Open items and unresolved contracts
