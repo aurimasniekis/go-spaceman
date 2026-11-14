@@ -4446,6 +4446,37 @@
      accounts (quota), or the covering blocking budget's `period_end` (budget). The board is re-read every 15 min,
      cached for 60 s, never inside a transaction; HP's `quota.window.recovered` event may kick the job early (Q9). The
      re-check is scheduled by the hold's `usage_limits.check_at`, as is the probe of decision 7.
+     - **Amended 2026-11-14 (UL-8).**
+       - **The job.** `gateway_waits` runs on central's shared deadline timer. It reads every open gateway hold of every
+         space (indexed, at most 200). A hold without an estimate yet is read at once; an estimated one at its
+         `check_at`. One board read serves the quota hold of every space, and one budget read serves each project.
+         Reads use the connection's service-principal token outside any transaction. The board is cached for 60 s;
+         budget status keeps its own 30 s cache, shared with the launch check.
+       - **The estimate.** Quota: the earliest future `until` among the board's unavailable accounts. Budget: the
+         latest `period_end` among the covering blocking budgets. It is stored as the hold's `resets_at`, with
+         `source` `quota_board` or `budget_status` and `check_at = now + 15 min`. Waits parked under the hold are
+         re-timed to the estimate plus the 2-minute slack. A gateway wait put off as `account_held` is moved only
+         earlier.
+       - **An estimated hold's `check_at` is the re-read, never a probe.** The hold refuses launches until its
+         reset, and the refusal says "until about <time> (estimated from Harbor Pilot's quota board …)" or "until
+         <time>, when the budget's period ends". The probe of decision 7 stays in charge while Harbor Pilot names no
+         reset: every unavailable account has a null or past `until`, a blocking one-time budget has no end, or Harbor
+         Pilot can't be read. Such a hold is read again after 15 minutes, or after 2 minutes when a read failed. A
+         node's evidence from another space sets `check_at = now` as before. On an estimated hold that means "read
+         again now".
+       - **Recovery.** The board lists every account of the installation, including ones the space's plan never
+         routes to. For example, the demo's local model has no monitor and is always available. So "any account
+         available" is no signal. A quota hold clears when no account is unavailable any more, or when it has a
+         board estimate and no unavailable account is still expected back at that time: the account it waited for
+         recovered, or its `until` passed or moved. A newly exhausted account with an earlier `until` moves the
+         estimate earlier. A budget hold clears when no covering budget blocks any more. The clear has `cleared_by`
+         `quota_board` or `budget_status` and wakes the waits, as other clears do.
+       - **Kick.** `events.Options.OnAccepted` is called after an event becomes a new item. When the subscription
+         uses the built-in `harbor-pilot-quota` template and the subject is
+         `evt.harborpilot.quota.window.recovered`, central drops the cached board and makes every quota hold due.
+         The event is untrusted and only brings the read forward. Without such a subscription the 15-minute re-check
+         alone applies.
+       - **No migration.** `usage_limits.source` already allowed both sources (0050). The protocol is unchanged.
   10. **Operator answers (2026-11-13, all proposed defaults accepted).**
       - **Q1 failover:** off by default, a per-space setting; no gateway → direct fallback.
       - **Q2 maximum wait:** 7 days for a worker's task, then released to the queue; control is never released.

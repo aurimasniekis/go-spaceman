@@ -77,6 +77,21 @@ it then. A run that ends at its limit, or whose node is lost while it waits, is 
 - A wait ends without a resume when its task is finished, cancelled, back in the queue or given to another run, or when
   the space is archived.
 
+**Runs through Harbor Pilot.** A gateway run's limit names no reset: Harbor Pilot refuses with "no eligible account"
+when every account it could route to is exhausted, or names the blocking budget. SpaceMan then estimates the reset
+from Harbor Pilot itself:
+
+- **Exhausted accounts:** the earliest reset among the accounts Harbor Pilot's quota board shows as unavailable. The
+  board lists every account of the Harbor Pilot installation, not only the ones the space's plan uses, so this is an
+  estimate. A run may resume early, hit the limit again and be parked again.
+- **A used-up budget:** the budget's period end.
+
+SpaceMan reads Harbor Pilot again every 15 minutes, and at once when a space subscribed with the Harbor Pilot quota
+event template receives `quota.window.recovered`. When the account it waited for is available again, or the budget no
+longer blocks, the hold clears and parked runs resume. Launches refused meanwhile say "until about …" with the
+estimate. It needs the connection's service-principal token (`usage.read`). Without it, or while Harbor Pilot names no
+reset, the hold is re-checked by letting one launch through from time to time, as for any unknown reset.
+
 KB support and dreamer runs are neither stopped at the keep-alive nor parked: their schedulers start them when needed.
 
 `spaceman limits waits` lists a space's waits. `spaceman limits resume <wait>` resumes one now (the usual launch checks
