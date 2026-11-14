@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,8 +47,8 @@ type Service struct {
 	listeners []func(Settings)
 
 	// Reload pacing, fields so tests can shorten them: while the last Load failed it is retried with a backoff from
-	// retryMin up to retryMax; otherwise the cache is reloaded every reloadEvery, which also picks up space archives and
-	// purges, which publish nothing.
+	// retryMin up to retryMax; otherwise the cache is reloaded every reloadEvery, the backstop for dropped events and
+	// backup restores (archives and purges publish an event too).
 	retryMin, retryMax, reloadEvery time.Duration
 	loader                          func(context.Context) error
 }
@@ -69,8 +70,8 @@ func New(s *store.Store, aw *audit.Writer, bus *eventbus.Bus, log *slog.Logger) 
 }
 
 // Run reloads the cache whenever a settings or space change is published, until ctx ends. A failed load is retried
-// with a backoff until one succeeds; after that the cache is reloaded periodically, because an archived or purged
-// space publishes nothing.
+// with a backoff until one succeeds; after that the cache is reloaded periodically, the backstop for dropped events (the
+// bus drops when a queue is full) and for backup restores, which publish nothing.
 func (svc *Service) Run(ctx context.Context) {
 	var events <-chan eventbus.Event
 	if svc.sub != nil {
@@ -220,7 +221,7 @@ func (svc *Service) liveSpaces(ctx context.Context) (map[string]bool, error) {
 }
 
 // effective applies a stored row to the defaults. A row that no longer validates (bounds tightened in a later release)
-// is applied field by field: the fields that still validate keep their stored values (so a stricter link cap stays),
+// is applied leaf by leaf: the leaves that still validate keep their stored values (so a stricter link cap stays),
 // the others take their defaults, logged, rather than stopping Telegram.
 func (svc *Service) effective(r db.TelegramSetting) Settings {
 	var in Input
@@ -235,24 +236,42 @@ func (svc *Service) effective(r db.TelegramSetting) Settings {
 		svc.log.Warn("telegram: the stored settings are unreadable; using the defaults", slog.String("error", err.Error()))
 		return Defaults()
 	}
-	keys := make([]string, 0, len(fields))
-	for k := range fields {
-		keys = append(keys, k)
+	// One candidate per leaf: a nested object (send_limits, inbound_limits, notification_defaults) is split into its own
+	// fields, so one invalid sibling never widens a stricter stored leaf.
+	type leaf struct {
+		path string
+		raw  json.RawMessage
 	}
-	slices.Sort(keys)
+	var leaves []leaf
+	for k, v := range fields {
+		var sub map[string]json.RawMessage
+		if v[0] == '{' && json.Unmarshal(v, &sub) == nil {
+			for sk, sv := range sub {
+				raw, _ := json.Marshal(map[string]map[string]json.RawMessage{k: {sk: sv}})
+				leaves = append(leaves, leaf{k + "." + sk, raw})
+			}
+			continue
+		}
+		raw, _ := json.Marshal(map[string]json.RawMessage{k: v})
+		leaves = append(leaves, leaf{k, raw})
+	}
+	slices.SortFunc(leaves, func(a, b leaf) int { return strings.Compare(a.path, b.path) })
 	s := Defaults()
-	for _, k := range keys {
+	for _, l := range leaves {
 		var one Input
-		raw, _ := json.Marshal(map[string]json.RawMessage{k: fields[k]})
 		cand := s
-		if err := json.Unmarshal(raw, &one); err == nil {
+		if err := json.Unmarshal(l.raw, &one); err == nil {
 			cand.Apply(one)
 			if err = cand.Validate(); err == nil {
 				s = cand
 				continue
 			}
 		}
-		svc.log.Warn("telegram: a stored setting is out of bounds; using its default", slog.String("field", k))
+		svc.log.Warn("telegram: a stored setting is out of bounds; using its default", slog.String("field", l.path))
+		if l.path == "link_default_max_role" {
+			// An unknown cap is read as the stricter one, not the wider default.
+			s.LinkDefaultMaxRole = RoleViewer
+		}
 	}
 	return s
 }

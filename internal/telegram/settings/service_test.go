@@ -142,7 +142,7 @@ func TestOutOfBoundsRowFallsBack(t *testing.T) {
 }
 
 func TestSpaceSettingsLifecycle(t *testing.T) {
-	t.Parallel()
+	// Not parallel: a cascade delete holds the write lock for 100+ ms (HP-DB-004), so only one runs at a time.
 	svc, s := newSvc(t, nil)
 	ctx := context.Background()
 	sp, err := svc.GetSpace(ctx, "spc_a")
@@ -361,7 +361,7 @@ func testClient(t *testing.T) *botapi.Client {
 
 // A purge or archive publishes on the bus; the running service reloads and drops the space without any other write.
 func TestArchiveAndPurgeEventsDropTheSpace(t *testing.T) {
-	t.Parallel()
+	// Not parallel: a cascade delete holds the write lock for 100+ ms (HP-DB-004), so only one runs at a time.
 	bus := eventbus.New()
 	svc, s := newSvc(t, bus)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -439,5 +439,43 @@ func TestOutOfBoundsFieldKeepsTheStricterCap(t *testing.T) {
 	got := svc.Current()
 	if got.LinkDefaultMaxRole != RoleViewer || got.InboundLimits.UpdatesPerSecond != 5 || got.LinksPerUser != Defaults().LinksPerUser {
 		t.Fatalf("effective %+v: want viewer cap and the valid limit kept, the invalid field at its default", got)
+	}
+}
+
+func seedRaw(t *testing.T, svc *Service, s *store.Store, js string) Settings {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.W().TxNamed(ctx, "seed", func(tx *store.Tx) error {
+		_, err := tx.SQL.ExecContext(ctx, `INSERT INTO telegram_settings (singleton, settings_json, updated_at, updated_by) VALUES (1, ?, 0, 't')`, js)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return svc.Current()
+}
+
+// One invalid sibling inside a nested object keeps the other stored leaves of that object.
+func TestInvalidNestedSiblingKeepsStoredLeaves(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t, nil)
+	got := seedRaw(t, svc, s, `{"inbound_limits":{"actions_per_minute":5,"updates_per_second":500},"send_limits":{"chat_burst":2,"global_per_second":99}}`)
+	d := Defaults()
+	if got.InboundLimits.ActionsPerMinute != 5 || got.InboundLimits.UpdatesPerSecond != d.InboundLimits.UpdatesPerSecond {
+		t.Fatalf("inbound_limits %+v: want actions_per_minute 5 kept, updates_per_second at its default", got.InboundLimits)
+	}
+	if got.SendLimits.ChatBurst != 2 || got.SendLimits.GlobalPerSecond != d.SendLimits.GlobalPerSecond {
+		t.Fatalf("send_limits %+v: want chat_burst 2 kept, global_per_second at its default", got.SendLimits)
+	}
+}
+
+// An unknown stored link cap falls back to viewer, the stricter choice, not to the operator default.
+func TestUnknownLinkCapFallsBackToViewer(t *testing.T) {
+	t.Parallel()
+	svc, s := newSvc(t, nil)
+	if got := seedRaw(t, svc, s, `{"link_default_max_role":"guest","links_per_user":2}`); got.LinkDefaultMaxRole != RoleViewer || got.LinksPerUser != 2 {
+		t.Fatalf("effective %+v: want viewer cap and links_per_user 2", got)
 	}
 }
