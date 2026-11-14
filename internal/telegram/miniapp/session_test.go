@@ -450,17 +450,20 @@ func TestRefusedAuditConserved(t *testing.T) {
 	f := newFx(t)
 	var recorded, refused int64
 	f.svc.o.OnRefused = func(_ context.Context, _ string, n int64) { f.mu.Lock(); recorded += n; f.mu.Unlock() }
+	// refuse counts only the refusals that answered errInvalid: a 429 is not a refused exchange.
 	refuse := func(ip string) {
-		refused++
-		_, _ = f.svc.Exchange(context.Background(), "hash=bad", ip)
+		if _, err := f.svc.Exchange(context.Background(), "hash=bad", ip); errors.Is(err, errInvalid) {
+			refused++
+		}
 	}
-	for i := range refusedRowsPerMinute { // a probe uses up the minute's budget with junk /64s
-		refuse(fmt.Sprintf("2001:db8:%x::1", i+1))
-	}
-	for range 20 { // then an address refuses 20 times, all over the budget
+	refuse("192.0.2.7") // the address gets its row first ...
+	for range 10 {      // ... then 10 more refusals inside its window: they are held back in its counter
 		refuse("192.0.2.7")
 	}
-	for i := range refusedLimit + 1 { // and is evicted by a flood of other addresses
+	for i := range refusedRowsPerMinute - 1 { // a probe uses up the rest of the minute's budget with junk /64s
+		refuse(fmt.Sprintf("2001:db8:%x::1", i+1))
+	}
+	for i := range refusedLimit + 1 { // and a flood of other addresses evicts the address while it holds its 10
 		refuse(fmt.Sprintf("2001:db8:ffff:%x::1", i))
 	}
 	f.svc.mu.Lock()

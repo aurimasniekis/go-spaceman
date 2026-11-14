@@ -119,13 +119,18 @@ func miniAppNotFound(w http.ResponseWriter, _ *http.Request) {
 }
 
 // auditMiniAppRefused records refused Mini App session exchanges (forged, malformed, expired or replayed initData), at
-// most once a minute per address, with the number refused since the last record. The initData is never recorded.
+// most once a minute per address, with the number refused since the last record. The initData is never recorded. The
+// overflow row (source address miniapp.OverflowKey) carries details.overflow, so it is told from a per-address row.
 func (c *Central) auditMiniAppRefused(ctx context.Context, clientIP string, refused int64) {
 	ctx = context.WithoutCancel(ctx)
+	details := map[string]any{"reason": "init_data", "refused": refused}
+	if clientIP == miniapp.OverflowKey {
+		details["overflow"] = true
+	}
 	err := c.Store.W().TxNamed(ctx, "telegram.miniapp_refused", func(tx *store.Tx) error {
 		_, err := c.Audit.Append(ctx, tx, audit.Event{Actor: audit.System, Action: "telegram.miniapp.session.refused",
 			Target: audit.Target{Type: "telegram_miniapp"}, Outcome: audit.OutcomeDenied, SourceIP: clientIP,
-			Details: map[string]any{"reason": "init_data", "refused": refused}})
+			Details: details})
 		return err
 	})
 	if err != nil {

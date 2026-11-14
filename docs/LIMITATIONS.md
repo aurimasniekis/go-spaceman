@@ -728,6 +728,7 @@
   the 60-row cap), so the rows add up to every refusal; the overflow row appears with the next refusal after its minute,
   so the latest count can wait for it. At most 10,000 addresses are tracked, the oldest dropped first, so a flood from very
   many addresses costs per-address detail (an address's refusals then show only in the overflow row), not counts.
+  An address's held-back count waits for its next refusal or its eviction before it is recorded.
 - **Unlinked Telegram users can fill the replay cache.** Valid initData from any Telegram user is remembered before the
   link check, so users without a link can push entries through the 10,000-entry cache like linked ones (the watermark above
   still keeps a flushed initData from being reused).
