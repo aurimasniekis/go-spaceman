@@ -543,3 +543,54 @@ func TestHandlerDeadlineIsATotalBound(t *testing.T) {
 		}
 	})
 }
+
+// A handler that never calls SetReadDeadline (a plain net/http route) still gets the default total bound, counted from
+// the first read; one that raises or clears it through the ResponseController is not held to the default.
+func TestDefaultBodyBoundApplies(t *testing.T) {
+	old := DefaultBodyBound
+	DefaultBodyBound = 6 * idle
+	t.Cleanup(func() { DefaultBodyBound = old })
+	trickle := func(t *testing.T, srv *httptest.Server, for_ time.Duration) {
+		c := dial(t, srv, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n", "")
+		end := time.Now().Add(for_)
+		for time.Now().Before(end) {
+			time.Sleep(idle / 2)
+			if _, err := io.WriteString(c, "x"); err != nil {
+				return
+			}
+		}
+	}
+	for _, p := range []struct {
+		name string
+		set  func(w http.ResponseWriter)
+		cut  bool
+	}{
+		{"no deadline set: default cap", func(http.ResponseWriter) {}, true},
+		{"raised by the handler", func(w http.ResponseWriter) {
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(20 * idle))
+		}, false},
+		{"cleared by the handler", func(w http.ResponseWriter) {
+			_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+		}, false},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			srv, done := readServer(t, 4*idle, func(w http.ResponseWriter, r *http.Request) error {
+				p.set(w)
+				start := time.Now()
+				_, err := io.ReadAll(r.Body)
+				took := time.Since(start)
+				if p.cut && (err == nil || took < DefaultBodyBound-idle || took > DefaultBodyBound+3*idle) {
+					return fmt.Errorf("read ended after %v with %w, want an error near %v", took, err, DefaultBodyBound)
+				}
+				if !p.cut && took < DefaultBodyBound+2*idle {
+					return fmt.Errorf("read ended after %v (%w), inside the default bound it was meant to escape", took, err)
+				}
+				return nil
+			})
+			go trickle(t, srv, 14*idle)
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

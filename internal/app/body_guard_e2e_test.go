@@ -233,3 +233,42 @@ func TestTrickledBodyMeetsTotalBound(t *testing.T) {
 		t.Fatalf("408 after %v, want about 5s", took)
 	}
 }
+
+// The enrolment endpoint sits outside huma, so it sets no body deadline of its own. A client trickling its (unauthenticated)
+// JSON body one byte inside every idle bound must still be cut off at the default total bound (5 s), not held for as long
+// as it keeps sending.
+func TestTrickledEnrollBodyMeetsDefaultBound(t *testing.T) {
+	t.Parallel()
+	_, addr := guardedHarness(t)
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	start := time.Now()
+	if _, err := io.WriteString(c, "POST "+fleet.EnrollPath+" HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 4000\r\n\r\n{"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(guardIdle * 2 / 5):
+			}
+			if _, err := io.WriteString(c, " "); err != nil {
+				return
+			}
+		}
+	}()
+	_ = c.SetReadDeadline(time.Now().Add(9 * time.Second))
+	b, err := io.ReadAll(c)
+	if err != nil && !strings.Contains(err.Error(), "connection reset") {
+		t.Fatalf("the trickled enrol body held the connection past the default bound (read %q): %v", b, err)
+	}
+	if took := time.Since(start); took < 4*time.Second || took > 7*time.Second {
+		t.Fatalf("connection ended after %v (%q), want about 5s", took, b)
+	}
+}

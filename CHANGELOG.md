@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   1s to 10m): a large upload that keeps moving is never cut off. A response sent before the body was read to its end
   closes the connection instead of draining the body. A body must also arrive within its operation's own bound
   (5 s for JSON operations, 10 minutes for attachment uploads). Requests without a body (event streams) and real
-  WebSocket handshakes are unaffected; `Upgrade` headers on a request with a body exempt nothing (ADR-0081).
+  WebSocket handshakes are unaffected; `Upgrade` headers on a request with a body exempt nothing (ADR-0085).
 - A kept-alive connection waiting for its next request is closed after **`http.idle_timeout`** (new, default `2m`, 1s
   to 1h); before, it could wait forever.
 

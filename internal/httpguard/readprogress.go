@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// DefaultBodyBound is the total time a request body may take when the handler sets no read deadline of its own (huma's
+// BodyReadTimeout default is the same 5 s). It starts at the body's first read. A handler raises or clears it through
+// http.ResponseController.SetReadDeadline, as huma does for the attachment upload.
+var DefaultBodyBound = 5 * time.Second
+
 // ReadProgress wraps next so a request body must make progress: every read of the body gets idle to bring data, so a
 // client that declares a body and then sends nothing (or stops half-way) is cut off instead of holding a goroutine and
 // its connection. Progress alone is not a total bound, so a deadline the handler sets (huma's BodyReadTimeout, 5 s
@@ -55,14 +60,16 @@ type progressBody struct {
 	idle time.Duration
 	eof  atomic.Bool
 
-	mu  sync.Mutex
-	cap time.Time // the handler's own deadline (zero: none), the total bound
+	mu     sync.Mutex
+	cap    time.Time // the total bound: the handler's own deadline, or the default one started at the first read
+	capSet bool      // the handler set (or cleared) the bound itself, so the default no longer applies
 }
 
 // setCap records the deadline the handler asked for and applies it at once.
 func (b *progressBody) setCap(t time.Time) error {
 	b.mu.Lock()
 	b.cap = t
+	b.capSet = true
 	b.mu.Unlock()
 	if t.IsZero() {
 		return nil
@@ -72,8 +79,14 @@ func (b *progressBody) setCap(t time.Time) error {
 
 // next is the deadline for one more read: now+idle, but never later than the handler's own.
 func (b *progressBody) next() time.Time {
-	d := time.Now().Add(b.idle)
+	now := time.Now()
+	d := now.Add(b.idle)
 	b.mu.Lock()
+	if !b.capSet && b.cap.IsZero() {
+		// The handler has set no deadline (routes outside huma: enrolment, the MCP endpoint): the body gets the default
+		// total from its first read, so a client trickling inside the idle bound can't hold the request.
+		b.cap = now.Add(DefaultBodyBound)
+	}
 	c := b.cap
 	b.mu.Unlock()
 	if !c.IsZero() && c.Before(d) {
