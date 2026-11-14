@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Resuming a paused space now starts control when work was waiting. The resume did not wake the control notifier, so
   work that arrived while the space was paused started control only at the next slow sweep. Resuming kicks the
   notifier; auto-start settings, limits and dedupe apply as before.
+- The "Restored from a backup" banner no longer comes back when an operator pauses a space later: only spaces the
+  restore paused and that have not been resumed since count as still paused (the notice now records `resumed_spaces`).
 
 ### Changed
 

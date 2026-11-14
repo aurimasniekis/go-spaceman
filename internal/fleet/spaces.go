@@ -3,9 +3,11 @@ package fleet
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -267,6 +269,11 @@ func (svc *Service) SetSpaceState(ctx context.Context, actor audit.Actor, id str
 		if err := svc.record(ctx, tx, id, "space", id, "updated", version+1); err != nil {
 			return err
 		}
+		if sp.State == "paused" && state != "paused" {
+			if err := markRestorePauseResumed(ctx, tx, id); err != nil {
+				return err
+			}
+		}
 		action := "space." + state
 		if state == "active" && sp.State == "archived" {
 			action = "space.restored"
@@ -398,4 +405,39 @@ func (svc *Service) leaseFor(ctx context.Context, tx *store.Tx, sp db.Space) (pr
 	}
 	return proto.LeaseGrant{LeaseState: proto.LeaseState{SpaceID: sp.ID, Generation: gen, ExpiresAt: exp}, Workdir: sp.Workdir,
 		DisconnectPolicy: sp.DisconnectPolicy, Grace: svc.opts.DisconnectGrace}, nil
+}
+
+// settingRestored is the settings key of the last restore's notice (backup.SettingRestored; fleet cannot import backup).
+const settingRestored = "backup.restored"
+
+// markRestorePauseResumed records, in the restore notice, that the space the restore paused was resumed, so a later
+// operator pause of it is not counted as "still paused after the restore". Without a restore notice, or for a space the
+// restore did not pause, nothing changes. Only the notice's resumed_spaces list is touched; unknown fields are kept.
+func markRestorePauseResumed(ctx context.Context, tx *store.Tx, spaceID string) error {
+	s, err := tx.Q.GetSetting(ctx, settingRestored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s.Value), &doc); err != nil {
+		return nil //nolint:nilerr // an unreadable notice is not this transition's problem
+	}
+	var paused, resumed []string
+	_ = json.Unmarshal(doc["paused_spaces"], &paused)
+	_ = json.Unmarshal(doc["resumed_spaces"], &resumed)
+	if !slices.Contains(paused, spaceID) || slices.Contains(resumed, spaceID) {
+		return nil
+	}
+	b, err := json.Marshal(append(resumed, spaceID))
+	if err != nil {
+		return err
+	}
+	doc["resumed_spaces"] = b
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	return tx.Q.UpsertSetting(ctx, db.UpsertSettingParams{Key: settingRestored, Value: string(out), UpdatedAt: tx.NowMicros(), UpdatedBy: s.UpdatedBy})
 }
