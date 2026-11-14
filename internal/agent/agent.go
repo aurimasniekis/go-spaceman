@@ -109,6 +109,7 @@ type Agent struct {
 	held         map[string]*heldRecords
 	catching     bool
 	catchUpAgain bool
+	catchUpGen   uint64 // counts requests: a sweep marks runs caught up only for the request it serves
 	catchUpConn  *websocket.Conn
 	catchUpCtx   context.Context
 	caughtUp     map[string]bool

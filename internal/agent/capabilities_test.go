@@ -26,6 +26,9 @@ type wsCentral struct {
 	msgs chan proto.Envelope
 	// hold, when set, delays each welcome until it is closed.
 	hold chan struct{}
+	// drop, when set (before the agent connects), is asked about every message: true closes the connection without
+	// forwarding it (the message is lost with the connection).
+	drop func(env proto.Envelope) bool
 }
 
 func newWSCentral(t *testing.T, minor int) *wsCentral { return newHeldWSCentral(t, minor, nil) }
@@ -49,6 +52,9 @@ func newHeldWSCentral(t *testing.T, minor int, hold chan struct{}) *wsCentral {
 			}
 			env, err := proto.Decode(b)
 			if err != nil {
+				return
+			}
+			if fc.drop != nil && fc.drop(env) {
 				return
 			}
 			select {
