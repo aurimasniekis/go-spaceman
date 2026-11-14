@@ -8,9 +8,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
-- The node agent's hello carries only live and adoptable runs, runs that ended within 24 hours and ended runs central has
-  not acknowledged yet, instead of every run the node ever had (a node with 2500 ended runs sent a 1.1 MB hello on every
-  connect). Older unacknowledged runs follow the welcome in slices. No protocol change.
+- The node agent's hello carries only live and adoptable runs and the unacknowledged ended runs that are under 24 hours
+  old, instead of every run the node ever had (a node with 2500 ended runs sent a 1.1 MB hello on every connect). Older
+  unacknowledged ended runs follow the welcome in slices. An ended run that central's reconcile still lists as active
+  (a restored backup, a report lost with the connection) is reported again at once. No protocol change.
 - The node journal deletes ended runs after `journal_retention` (default `720h`, 30 days to 1 year), once central
   acknowledged their final state, their recording is fully shipped and their transcript upload is finished. Live and
   adoptable runs, and the runs that Claude Code cache GC's pins come from, are kept. See ADR-0078.

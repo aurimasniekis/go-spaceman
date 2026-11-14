@@ -115,9 +115,12 @@ func TestHelloBoundedByLiveAndRecentRuns(t *testing.T) {
 		t.Fatalf("second hello %v, follow-up %d", ids(hello), len(follow))
 	}
 	ack(a, "run_old_0007") // central still lists this one as active: its report did not apply
-	hello, _, _ = a.helloRuns(ctx)
+	hello, follow, _ = a.helloRuns(ctx)
 	if got := ids(hello); !slices.Equal(got, []string{"run_adopt", "run_live"}) {
 		t.Fatalf("hello after the acknowledgement %v", got)
+	}
+	if got := ids(follow); !slices.Equal(got, []string{"run_old_0007"}) {
+		t.Fatalf("follow-up after the acknowledgement %v", got)
 	}
 }
 
@@ -133,6 +136,7 @@ func TestHelloKeepsUnacknowledgedRuns(t *testing.T) {
 	if hello, _, _ = a.helloRuns(ctx); len(hello) != 1 {
 		t.Fatalf("unacknowledged run dropped from the hello: %d", len(hello))
 	}
+	a.noteSent(hello) // central listed it: it was reported again, and the next connection's hello sends it too
 	ack(a)
 	if hello, _, _ = a.helloRuns(ctx); len(hello) != 0 {
 		t.Fatalf("acknowledged run still in the hello: %d", len(hello))
@@ -325,5 +329,72 @@ func TestPruneAfterRestart(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Segments on disk while central's acknowledgement is unknown (after a restart) keep the run even when reading them yields
+// no records: the recording may still be shipped (or relocated), so nothing is deleted on a guess.
+func TestPruneKeepsRecordingWithUnknownAckAndNoRecords(t *testing.T) {
+	ctx := context.Background()
+	a := pruneAgent(t, t.TempDir())
+	seedRun(t, a, "run_seg", proto.RunExited, 45*day)
+	dir := a.RecordingDir("run_seg")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, recording.SegmentName(1)), nil, 0o600); err != nil { // a segment holding no record
+		t.Fatal(err)
+	}
+	if !hasSegments(dir) {
+		t.Fatal("setup: no segment")
+	}
+	if res, err := recording.Read(dir, 0); err != nil || len(res.Records) != 0 {
+		t.Fatalf("setup: %d records, %v", len(res.Records), err)
+	}
+	r, _ := a.j.getRun(ctx, "run_seg")
+	a.noteSent([]runRow{r})
+	ack(a)
+	if got := runIDs(t, a); !slices.Equal(got, []string{"run_seg"}) {
+		t.Fatalf("run with segments and an unknown acknowledgement was pruned: %v", got)
+	}
+	// Once central acknowledged the recording (known), nothing is left to ship and the run goes.
+	a.mu.Lock()
+	a.acked = map[string]uint64{"run_seg": 0}
+	a.mu.Unlock()
+	if n := a.pruneRuns(ctx); n != 1 {
+		t.Fatalf("pruned %d with the acknowledgement known", n)
+	}
+}
+
+// The follow-up goes out on the connection it was started for, and skips a run whose row changed since the snapshot.
+func TestSendFollowUpSkipsChangedRowAndUsesItsConn(t *testing.T) {
+	ctx := context.Background()
+	a := pruneAgent(t, t.TempDir())
+	conn, reports := wsSink(t, a)
+	a.mu.Lock()
+	a.conn = nil // the agent's current connection is not the one the follow-up belongs to
+	a.mu.Unlock()
+	seedRun(t, a, "run_a", proto.RunExited, 3*day)
+	seedRun(t, a, "run_b", proto.RunExited, 3*day)
+	seedRun(t, a, "run_c", proto.RunExited, 3*day)
+	_, follow, _ := a.helloRuns(ctx)
+	row, _ := a.j.getRun(ctx, "run_b")
+	row.Reason = "changed"
+	if err := a.j.updateRun(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	a.sendFollowUp(ctx, conn, follow)
+	expectReport(t, reports, "run_a")
+	expectReport(t, reports, "run_c")
+	select {
+	case id := <-reports:
+		t.Fatalf("unexpected report for %s", id)
+	case <-time.After(200 * time.Millisecond):
+	}
+	a.mu.Lock()
+	_, sentB := a.finalSent["run_b"]
+	a.mu.Unlock()
+	if sentB {
+		t.Fatal("the skipped run was marked sent")
 	}
 }

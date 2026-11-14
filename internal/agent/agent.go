@@ -439,7 +439,7 @@ func (a *Agent) session(ctx context.Context) error {
 			go a.resendRelocationReports(hbCtx)
 			go a.capsAfterHello(hbCtx, helloCaps)
 			if len(follow) > 0 {
-				go a.sendFollowUp(hbCtx, follow)
+				go a.sendFollowUp(hbCtx, conn, follow)
 			}
 			a.log.Info("connected to central", slog.String(obs.FieldNodeID, w.NodeID), slog.Int("protocol_minor", w.Minor))
 		case proto.TypeLeaseGrant:

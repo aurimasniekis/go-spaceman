@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
@@ -79,12 +81,17 @@ func (a *Agent) noteSent(rs []runRow) {
 	}
 }
 
-// sendFollowUp reports the older unacknowledged ended runs in slices, on the connection ctx belongs to.
-func (a *Agent) sendFollowUp(ctx context.Context, rs []runRow) {
+// sendFollowUp reports the older unacknowledged ended runs in slices, on conn (the connection ctx belongs to). A run
+// whose row changed since the snapshot rs was taken is skipped: the change is reported on its own.
+func (a *Agent) sendFollowUp(ctx context.Context, conn *websocket.Conn, rs []runRow) {
 	for len(rs) > 0 {
 		n := min(followUpSlice, len(rs))
 		for _, r := range rs[:n] {
-			if err := a.send(ctx, proto.TypeRunReport, r.report()); err != nil {
+			cur, err := a.j.getRun(ctx, r.RunID)
+			if err != nil || cur.UpdatedAt != r.UpdatedAt {
+				continue
+			}
+			if err := a.sendOn(ctx, conn, proto.TypeRunReport, r.report()); err != nil {
 				return
 			}
 			a.noteSent([]runRow{r})
@@ -102,7 +109,9 @@ func (a *Agent) sendFollowUp(ctx context.Context, rs []runRow) {
 }
 
 // finalAck handles central's reconcile: the ended runs this process sent that central no longer lists as active are
-// acknowledged. It then prunes.
+// acknowledged. An ended run central still lists as active did not get its final state applied (a restored backup, a
+// report lost with the connection, an apply failure): it is unacknowledged again and reported at once, well inside the
+// stale sweeper's grace (ADR-0074), which would otherwise end it lost and fence the real final state. It then prunes.
 func (a *Agent) finalAck(ctx context.Context, rec proto.Reconcile) {
 	active := make(map[string]bool, len(rec.Runs))
 	for _, d := range rec.Runs {
@@ -112,16 +121,26 @@ func (a *Agent) finalAck(ctx context.Context, rec proto.Reconcile) {
 	if err != nil {
 		return
 	}
+	var resend []runRow
 	a.mu.Lock()
 	if a.finalAcked == nil {
 		a.finalAcked = map[string]int64{}
 	}
 	for _, r := range runs {
+		if ended(r.State) && active[r.RunID] {
+			delete(a.finalAcked, r.RunID)
+			delete(a.finalSent, r.RunID)
+			resend = append(resend, r)
+			continue
+		}
 		if ended(r.State) && !active[r.RunID] && a.finalSent[r.RunID] >= r.UpdatedAt && r.UpdatedAt > a.finalAcked[r.RunID] {
 			a.finalAcked[r.RunID] = r.UpdatedAt
 		}
 	}
 	a.mu.Unlock()
+	for _, r := range resend {
+		a.report(ctx, r)
+	}
 	a.pruneRuns(ctx)
 }
 
