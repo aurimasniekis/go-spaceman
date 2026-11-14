@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -231,11 +233,15 @@ func TestWebhookRefusals(t *testing.T) {
 		{"10.1.2.3:443", "149.154.167.1", 200},
 		{"10.1.2.3:443", "149.154.167.1, 203.0.113.9", 403}, // the right-most untrusted entry wins
 		{"[::ffff:149.154.167.1]:443", "", 200},
+		{"10.1.2.3:443", "149.154.167.1|203.0.113.9", 403}, // every X-Forwarded-For line counts: the last one too
+		{"10.1.2.3:443", "203.0.113.9|149.154.167.1, 10.4.4.4", 200},
 	} {
 		r := post(w, ipPath, "application/json", ip.Secret, bytes.NewReader(body(t, privateMsg(int64(100+i), 5, "x"))), func(r *http.Request) {
 			r.RemoteAddr = c.remote
 			if c.xff != "" {
-				r.Header.Set("X-Forwarded-For", c.xff)
+				for line := range strings.SplitSeq(c.xff, "|") {
+					r.Header.Add("X-Forwarded-For", line)
+				}
 			}
 		})
 		if r.Code != c.want {
@@ -275,6 +281,140 @@ func TestWebhookUnauthorizedAuditedOncePerMinute(t *testing.T) {
 	bad()
 	if len(calls) != 2 || calls[1].refused != 3 {
 		t.Fatalf("calls after a minute: %+v", calls)
+	}
+}
+
+// SM-TG-004: refusals pending when a burst of wrong secrets stops are still recorded, once the minute has passed,
+// by the flush Service.Run runs on a timer; with nothing pending the flush records nothing.
+func TestWebhookUnauthorizedFlushedAfterBurst(t *testing.T) {
+	clk := clock.NewFake(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC))
+	var mu sync.Mutex
+	var calls []int64
+	var ips []string
+	w := NewWebhook(NewIntake(IntakeOptions{}), WebhookOptions{Clock: clk, OnUnauthorized: func(_ context.Context, ip string, n int64) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls, ips = append(calls, n), append(ips, ip)
+	}})
+	got := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return fmt.Sprint(calls, ips)
+	}
+	cfg := testConfig(t)
+	if err := w.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	bad := func(remote string) {
+		post(w, WebhookPath+cfg.HookID, "application/json", "wrong", strings.NewReader("{}"), func(r *http.Request) { r.RemoteAddr = remote })
+	}
+	bad("198.51.100.7:1")
+	bad("198.51.100.8:1")
+	bad("198.51.100.9:1")
+	w.flushUnauthorized(context.Background()) // within the minute: nothing
+	if g := got(); g != "[1] [198.51.100.7]" {
+		t.Fatalf("after the burst: %s", g)
+	}
+	clk.Advance(rejectAuditEvery)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { w.auditLoop(ctx, time.Millisecond); close(done) }()
+	waitFor(t, "the flush", func() bool { return got() == "[1 2] [198.51.100.7 198.51.100.9]" })
+	clk.Advance(rejectAuditEvery)
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+	if g := got(); g != "[1 2] [198.51.100.7 198.51.100.9]" {
+		t.Fatalf("a flush with nothing pending recorded something: %s", g)
+	}
+}
+
+// rawRequest sends head (a request without its body) on a fresh connection to srv and returns everything the server
+// sends back before closing the connection. It fails the test when the response or the close takes over 3 seconds.
+func rawRequest(t *testing.T, srv *httptest.Server, head string) string {
+	t.Helper()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := io.WriteString(conn, head); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	b, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("no prompt response and close (got %q): %v", b, err)
+	}
+	return string(b)
+}
+
+// SM-TG-004: a refusal before the body is read answers at once and closes the connection, even when the client
+// declared a body (chunked or with a Content-Length) and never sends it. Otherwise net/http would wait, with no
+// deadline (central's server sets no ReadTimeout), to drain the body first, and every such connection would hold a
+// goroutine without ever being told 401.
+func TestWebhookRefusalBeforeBodyClosesConnection(t *testing.T) {
+	s := New(Options{Intake: IntakeOptions{Rate: -1}})
+	s.Webhook.setRunning(true)
+	cfg := testConfig(t)
+	if err := s.Webhook.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(s.Webhook)
+	srv.Config.ErrorLog = slog.NewLogLogger(slog.DiscardHandler, slog.LevelError)
+	srv.Start()
+	defer srv.Close()
+	path := WebhookPath + cfg.HookID
+	for _, c := range []struct {
+		name, path, ctype, secret, framing string
+		want                               string
+	}{
+		{"wrong secret, chunked", path, "application/json", randomB64(t, 32), "Transfer-Encoding: chunked", "401"},
+		{"wrong secret, Content-Length", path, "application/json", randomB64(t, 32), "Content-Length: 1000", "401"},
+		{"wrong hook id, chunked", WebhookPath + randomB64(t, 16), "application/json", cfg.Secret, "Transfer-Encoding: chunked", "404"},
+		{"wrong content type", path, "text/plain", cfg.Secret, "Content-Length: 1000", "415"},
+		{"declared too large", path, "application/json", cfg.Secret, fmt.Sprintf("Content-Length: %d", MaxBodyBytes+1), "413"},
+	} {
+		head := "POST " + c.path + " HTTP/1.1\r\nHost: example.com\r\nContent-Type: " + c.ctype + "\r\n" + SecretHeader + ": " + c.secret +
+			"\r\n" + c.framing + "\r\n\r\n"
+		start := time.Now()
+		resp := rawRequest(t, srv, head)
+		if !strings.HasPrefix(resp, "HTTP/1.1 "+c.want+" ") {
+			t.Errorf("%s: response %q, want %s", c.name, resp, c.want)
+		}
+		if !strings.Contains(strings.ToLower(resp), "\r\nconnection: close\r\n") {
+			t.Errorf("%s: no Connection: close in %q", c.name, resp)
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Errorf("%s: took %v", c.name, d)
+		}
+	}
+}
+
+// SM-TG-004: the queue bound is per shard (QueueSize / Workers): with 4 slots over 2 workers, each chat's shard holds
+// 2 updates and the third gets 503, while the other shard still has room.
+func TestWebhookQueueBoundPerShard(t *testing.T) {
+	s := New(Options{Intake: IntakeOptions{QueueSize: 4, Workers: 2, Rate: -1}})
+	s.Webhook.setRunning(true) // no workers run: nothing leaves the queue
+	cfg := testConfig(t)
+	if err := s.Webhook.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	deliver := func(id, chat int64) int {
+		return post(s.Webhook, WebhookPath+cfg.HookID, "application/json", cfg.Secret, bytes.NewReader(body(t, privateMsg(id, chat, "x"))), nil).Code
+	}
+	id := int64(0)
+	for _, chat := range []int64{2, 3} { // shards 0 and 1
+		for i := range 3 {
+			id++
+			want := http.StatusOK
+			if i == 2 {
+				want = http.StatusServiceUnavailable
+			}
+			if c := deliver(id, chat); c != want {
+				t.Fatalf("chat %d, update %d: %d, want %d", chat, i+1, c, want)
+			}
+		}
 	}
 }
 

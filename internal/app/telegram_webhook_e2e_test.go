@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func tgRandom(t *testing.T, n int) string {
 
 // SM-TG-004: central's public handler serves the Telegram webhook as its own route group, outside the API handler:
 // 404 until a bot is configured; then a wrong secret is refused with 401 and audited (once a minute, without the
-// token), a body over 256 KiB is 413, and a valid update needs no session, CSRF token or Origin (the API's middleware
+// token), a body over 256 KiB is 413 (declared or chunked), a valid update of about 200 KiB is accepted, and a valid update needs no session, CSRF token or Origin (the API's middleware
 // doesn't apply). An update from an unlinked user reaches the dispatcher, which sends only the linking instructions.
 func TestTelegramWebhookRoute(t *testing.T) {
 	t.Parallel()
@@ -85,9 +86,36 @@ func TestTelegramWebhookRoute(t *testing.T) {
 	if code := deliver(secret, bytes.Repeat([]byte(" "), updates.MaxBodyBytes+1)); code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized body: %d", code)
 	}
+	// A chunked body declares no length, so only the streamed limit can refuse it.
+	chunked, err := http.NewRequestWithContext(ctx, http.MethodPost, url, io.MultiReader(bytes.NewReader(update(2)),
+		bytes.NewReader(bytes.Repeat([]byte(" "), 640<<10))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunked.ContentLength, chunked.TransferEncoding = -1, []string{"chunked"}
+	chunked.Header.Set("Content-Type", "application/json")
+	chunked.Header.Set(updates.SecretHeader, secret)
+	resp, err := http.DefaultClient.Do(chunked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("chunked 640 KiB body: %d", resp.StatusCode)
+	}
 	// The fake posts with no cookie, CSRF token or Origin: the API's same-origin check would refuse it.
 	if code := deliver(secret, update(3)); code != http.StatusOK {
 		t.Fatalf("valid update: %d", code)
+	}
+	// A large valid update takes several reads; the body's read deadline is on the real clock, not central's (fake)
+	// one, which is days behind here.
+	large, err := json.Marshal(botapi.Update{UpdateID: 5, Message: &botapi.Message{MessageID: 2, From: &botapi.User{ID: 4243, FirstName: "Other"},
+		Chat: botapi.Chat{ID: 4243, Type: botapi.ChatPrivate}, Text: strings.Repeat("a", 200<<10)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := deliver(secret, large); code != http.StatusOK {
+		t.Fatalf("valid %d KiB update: %d", len(large)>>10, code)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for len(tg.Messages(4242)) == 0 {
@@ -105,7 +133,7 @@ func TestTelegramWebhookRoute(t *testing.T) {
 		}
 	}
 	// Other paths under /telegram/ aren't the webhook.
-	resp, err := http.Post(h.srv.URL+updates.WebhookPath, "application/json", bytes.NewReader(update(4)))
+	resp, err = http.Post(h.srv.URL+updates.WebhookPath, "application/json", bytes.NewReader(update(4)))
 	if err != nil {
 		t.Fatal(err)
 	}

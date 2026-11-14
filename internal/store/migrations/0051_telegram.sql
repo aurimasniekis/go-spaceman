@@ -67,7 +67,7 @@ CREATE INDEX telegram_link_codes_user ON telegram_link_codes (user_id);
 CREATE INDEX telegram_link_codes_expiry ON telegram_link_codes (expires_at);
 
 -- A Telegram user linked to a SpaceMan user. The link's capped grants are ordinary role grants of the subject
--- telegram:<id> in the grants table (the API-token path), so they need no table here.
+-- telegram:<link_id> in the grants table (the API-token path), so they need no table here.
 CREATE TABLE telegram_links (
   id               TEXT PRIMARY KEY,
   user_id          TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,

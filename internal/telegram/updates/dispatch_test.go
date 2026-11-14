@@ -27,7 +27,8 @@ func fakeBot(t *testing.T) (*tgtest.Server, *botapi.Client) {
 }
 
 // SM-TG-004: an unlinked user gets the linking instructions at most once an hour, at most one such reply goes out per
-// second over every user, and nothing else happens for them: no handler call and no other Bot API call. The per-user
+// second over every user, and nothing else happens for them: no handler call and no other Bot API call but an empty
+// answer to a button tap. The per-user
 // memory is an LRU, so many users can't grow it without bound.
 func TestDispatcherUnlinkedUsers(t *testing.T) {
 	srv, bot := fakeBot(t)
@@ -40,7 +41,13 @@ func TestDispatcherUnlinkedUsers(t *testing.T) {
 
 	d.Dispatch(ctx, privateMsg(1, 101, "/start"))
 	d.Dispatch(ctx, privateMsg(2, 101, "hello"))
-	d.Dispatch(ctx, botapi.Update{UpdateID: 3, CallbackQuery: &botapi.CallbackQuery{ID: "cb", From: botapi.User{ID: 101}, Data: "x"}})
+	tap := botapi.Update{UpdateID: 3, CallbackQuery: &botapi.CallbackQuery{ID: "cb", From: botapi.User{ID: 101}, Data: "x"}}
+	srv.PushUpdate(tap) // the fake accepts answers only for taps it issued
+	d.Dispatch(ctx, tap)
+	// A tap is always answered (an empty answer stops the client's spinner), even when no reply is allowed.
+	if a := srv.CallbackAnswers(); len(a) != 1 || a[0] != (botapi.AnswerCallbackQueryParams{CallbackQueryID: "cb"}) {
+		t.Fatalf("callback answers %+v", a)
+	}
 	if replies(101) != 1 {
 		t.Fatalf("user 101 got %d replies, want 1", replies(101))
 	}
@@ -83,7 +90,7 @@ func TestDispatcherUnlinkedUsers(t *testing.T) {
 		t.Fatalf("LRU holds %d users, want 3", n)
 	}
 	for _, c := range srv.Calls() {
-		if c.Method != "sendMessage" {
+		if c.Method != "sendMessage" && c.Method != "answerCallbackQuery" {
 			t.Fatalf("unexpected Bot API call %s for an unlinked user", c.Method)
 		}
 	}

@@ -47,6 +47,7 @@ type Handler interface {
 type Bot interface {
 	SendMessage(ctx context.Context, p botapi.SendMessageParams) (botapi.Message, error)
 	LeaveChat(ctx context.Context, chatID int64) error
+	AnswerCallbackQuery(ctx context.Context, p botapi.AnswerCallbackQueryParams) error
 }
 
 // DispatcherOptions configure a Dispatcher. Zero durations and sizes take the defaults.
@@ -205,9 +206,14 @@ func (d *Dispatcher) leaveGroup(ctx context.Context, c *botapi.ChatMemberUpdated
 }
 
 // unlinked answers a user without a link: the instructions, within the per-user and global bounds, or nothing. Only
-// a message or a button tap is answered; a membership change (the user blocking or starting the bot) never is.
+// a message or a button tap is answered; a membership change (the user blocking or starting the bot) never is. A
+// button tap is always acknowledged with an empty answerCallbackQuery, so the client's spinner stops (Telegram requires
+// an answer); Telegram only sends one for a button on a message the bot sent, so it isn't a channel strangers control.
 func (d *Dispatcher) unlinked(ctx context.Context, u *botapi.Update, tgUserID int64) {
 	bot := d.client()
+	if bot != nil && u.CallbackQuery != nil {
+		d.answerCallback(ctx, bot, u.CallbackQuery.ID)
+	}
 	if bot == nil || u.MyChatMember != nil || !d.allowReply(tgUserID) {
 		d.metrics.TelegramUpdate(metrics.TelegramUpdateUnlinkedDropped)
 		return
@@ -222,6 +228,15 @@ func (d *Dispatcher) unlinked(ctx context.Context, u *botapi.Update, tgUserID in
 		return
 	}
 	d.metrics.TelegramUpdate(metrics.TelegramUpdateUnlinkedReplied)
+}
+
+// answerCallback acknowledges a button tap without text. A failure is only logged: the update is still handled.
+func (d *Dispatcher) answerCallback(ctx context.Context, bot Bot, id string) {
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	if err := bot.AnswerCallbackQuery(ctx, botapi.AnswerCallbackQueryParams{CallbackQueryID: id}); err != nil {
+		d.log.Debug("telegram: a button tap was not answered", slog.String("error", err.Error()))
+	}
 }
 
 // allowReply takes a reply slot for tgUserID: none while the global interval hasn't passed (without touching the

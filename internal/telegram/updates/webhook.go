@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"mime"
-	"net"
 	"net/http"
 	"net/netip"
 	"regexp"
@@ -20,6 +19,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-spaceman/internal/clock"
+	"github.com/aurimasniekis/go-spaceman/internal/httpguard"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 )
@@ -35,8 +35,8 @@ const SecretHeader = "X-Telegram-Bot-Api-Secret-Token" //nolint:gosec // G101: a
 // characters of text plus entities.
 const MaxBodyBytes = 256 << 10
 
-// bodyReadTimeout bounds reading an authenticated request's body.
-const bodyReadTimeout = 10 * time.Second
+// readTimeout bounds reading one request's body, on the real clock (central's server sets no ReadTimeout).
+const readTimeout = 10 * time.Second
 
 // rejectAuditEvery is the most often OnUnauthorized is called.
 const rejectAuditEvery = time.Minute
@@ -69,7 +69,8 @@ type WebhookOptions struct {
 	// TrustedProxies may set X-Forwarded-For; other peers' headers are ignored (central's http.trusted_proxies).
 	TrustedProxies []netip.Prefix
 	// OnUnauthorized records a request refused for its secret token (an audit row), at most once a minute. It gets the
-	// client address and how many were refused since the last call; it must not block for long.
+	// client address (of the latest refusal) and how many were refused since the last call; it must not block for long.
+	// Refusals still pending when a burst stops are recorded by Service.Run's timer once the minute has passed.
 	OnUnauthorized func(ctx context.Context, clientIP string, refused int64)
 	Clock          clock.Clock
 	Metrics        *metrics.Metrics
@@ -86,6 +87,9 @@ type WebhookOptions struct {
 //  5. the body is at most MaxBodyBytes (413) and is one valid update (400);
 //  6. a duplicate update_id is acknowledged and dropped (200);
 //  7. the update is queued (200), or its shard is full (503, so Telegram retries).
+//
+// Reading one request is bounded to readTimeout on the real clock. A refusal before the body is read (1-4, and a
+// declared length over the limit) also closes the connection, so a client can't hold it open by never sending the body.
 type Webhook struct {
 	intake   *Intake
 	trusted  []netip.Prefix
@@ -100,6 +104,7 @@ type Webhook struct {
 	rejMu      sync.Mutex
 	rejLast    time.Time
 	rejPending int64
+	rejIP      string // the latest refused client, for a timer flush
 }
 
 // NewWebhook returns a webhook feeding intake.
@@ -138,40 +143,51 @@ func (w *Webhook) refuse(rw http.ResponseWriter, code int, r metrics.TelegramWeb
 	http.Error(rw, http.StatusText(code), code)
 }
 
+// refuseUnread refuses a request whose body was never read and closes the connection. Without this net/http would
+// try to drain up to 256 KiB of the unread body to reuse the connection, before the response (to keep the connection)
+// or after it (to find the body's end), so an unauthenticated client that declares a body and never sends it would
+// hold a goroutine. Connection: close skips the first drain; a read deadline of now ends the second at once.
+func (w *Webhook) refuseUnread(rw http.ResponseWriter, code int, r metrics.TelegramWebhookResult) {
+	rw.Header().Set("Connection", "close")
+	w.refuse(rw, code, r)
+	_ = http.NewResponseController(rw).SetReadDeadline(time.Now())
+}
+
 // ServeHTTP implements http.Handler.
 func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	// Real time, not w.clock: the deadline is for the network connection. It bounds the whole request, refusals too.
+	_ = http.NewResponseController(rw).SetReadDeadline(time.Now().Add(readTimeout))
 	cfg := w.cfg.Load()
 	hook, ok := strings.CutPrefix(r.URL.Path, WebhookPath)
 	// The hook id is not a secret (the secret token is), but comparing it in constant time costs nothing.
 	if cfg == nil || !ok || subtle.ConstantTimeCompare([]byte(hook), cfg.hookID) != 1 {
-		w.refuse(rw, http.StatusNotFound, metrics.TelegramWebhookNotFound)
+		w.refuseUnread(rw, http.StatusNotFound, metrics.TelegramWebhookNotFound)
 		return
 	}
 	if r.Method != http.MethodPost {
 		rw.Header().Set("Allow", http.MethodPost)
-		w.refuse(rw, http.StatusMethodNotAllowed, metrics.TelegramWebhookBadMethod)
+		w.refuseUnread(rw, http.StatusMethodNotAllowed, metrics.TelegramWebhookBadMethod)
 		return
 	}
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-		w.refuse(rw, http.StatusUnsupportedMediaType, metrics.TelegramWebhookBadType)
+		w.refuseUnread(rw, http.StatusUnsupportedMediaType, metrics.TelegramWebhookBadType)
 		return
 	}
 	// Hashing first makes the comparison independent of the presented token's length as well as its content.
 	got := sha256.Sum256([]byte(r.Header.Get(SecretHeader)))
 	if subtle.ConstantTimeCompare(got[:], cfg.secretHash[:]) != 1 {
 		w.unauthorized(r)
-		w.refuse(rw, http.StatusUnauthorized, metrics.TelegramWebhookUnauthorized)
+		w.refuseUnread(rw, http.StatusUnauthorized, metrics.TelegramWebhookUnauthorized)
 		return
 	}
 	if len(cfg.allowed) > 0 && !w.allowedSource(r, cfg.allowed) {
-		w.refuse(rw, http.StatusForbidden, metrics.TelegramWebhookForbiddenIP)
+		w.refuseUnread(rw, http.StatusForbidden, metrics.TelegramWebhookForbiddenIP)
 		return
 	}
 	if r.ContentLength > MaxBodyBytes {
-		w.refuse(rw, http.StatusRequestEntityTooLarge, metrics.TelegramWebhookTooLarge)
+		w.refuseUnread(rw, http.StatusRequestEntityTooLarge, metrics.TelegramWebhookTooLarge)
 		return
 	}
-	_ = http.NewResponseController(rw).SetReadDeadline(w.clock.Now().Add(bodyReadTimeout))
 	body, err := io.ReadAll(http.MaxBytesReader(rw, r.Body, MaxBodyBytes))
 	if err != nil {
 		if mbe := (*http.MaxBytesError)(nil); errors.As(err, &mbe) {
@@ -221,21 +237,34 @@ func (w *Webhook) unauthorized(r *http.Request) {
 	if w.onUnauth == nil {
 		return
 	}
-	now := w.clock.Now()
+	ip := httpguard.ClientIP(r, w.trusted).String()
 	w.rejMu.Lock()
 	w.rejPending++
-	if !w.rejLast.IsZero() && now.Sub(w.rejLast) < rejectAuditEvery {
+	w.rejIP = ip
+	w.rejMu.Unlock()
+	w.flushUnauthorized(r.Context())
+}
+
+// flushUnauthorized calls OnUnauthorized with the refusals counted since the last call, if there are any and
+// rejectAuditEvery has passed since it. Service.Run calls it on a timer, so a burst that stops is still recorded.
+func (w *Webhook) flushUnauthorized(ctx context.Context) {
+	if w.onUnauth == nil {
+		return
+	}
+	now := w.clock.Now()
+	w.rejMu.Lock()
+	if w.rejPending == 0 || (!w.rejLast.IsZero() && now.Sub(w.rejLast) < rejectAuditEvery) {
 		w.rejMu.Unlock()
 		return
 	}
-	n := w.rejPending
+	n, ip := w.rejPending, w.rejIP
 	w.rejLast, w.rejPending = now, 0
 	w.rejMu.Unlock()
-	w.onUnauth(r.Context(), clientIP(r, w.trusted).String(), n)
+	w.onUnauth(ctx, ip, n)
 }
 
 func (w *Webhook) allowedSource(r *http.Request, allowed []netip.Prefix) bool {
-	ip := clientIP(r, w.trusted)
+	ip := httpguard.ClientIP(r, w.trusted)
 	if !ip.IsValid() {
 		return false
 	}
@@ -245,40 +274,4 @@ func (w *Webhook) allowedSource(r *http.Request, allowed []netip.Prefix) bool {
 		}
 	}
 	return false
-}
-
-// clientIP is the request's client address: the peer, or, when the peer is a trusted proxy, the right-most
-// X-Forwarded-For entry that isn't one (the same rule as the API's). Invalid when the peer address is unparsable.
-func clientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	peer, err := netip.ParseAddr(host)
-	if err != nil {
-		return netip.Addr{}
-	}
-	peer = peer.Unmap()
-	isTrusted := func(a netip.Addr) bool {
-		for _, p := range trusted {
-			if p.Contains(a) {
-				return true
-			}
-		}
-		return false
-	}
-	if !isTrusted(peer) {
-		return peer
-	}
-	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
-		if err != nil {
-			break
-		}
-		if a = a.Unmap(); !isTrusted(a) {
-			return a
-		}
-	}
-	return peer
 }

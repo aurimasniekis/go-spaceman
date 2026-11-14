@@ -17,6 +17,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/httpguard"
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 )
 
@@ -90,39 +91,16 @@ func (d *Deps) withRequest(next http.Handler) http.Handler {
 }
 
 // clientIP is the TCP peer, or the rightmost X-Forwarded-For entry not in a trusted proxy range when the peer is a
-// trusted proxy.
+// trusted proxy (httpguard.ClientIP); the raw peer host when it isn't an address.
 func (d *Deps) clientIP(r *http.Request) string {
+	if ip := httpguard.ClientIP(r, d.TrustedProxies); ip.IsValid() {
+		return ip.String()
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	peer, err := netip.ParseAddr(host)
-	if err != nil {
-		return host
-	}
-	if !d.trusted(peer) {
-		return peer.Unmap().String()
-	}
-	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
-		if err != nil {
-			break
-		}
-		if !d.trusted(a) {
-			return a.Unmap().String()
-		}
-	}
-	return peer.Unmap().String()
-}
-
-func (d *Deps) trusted(a netip.Addr) bool {
-	for _, p := range d.TrustedProxies {
-		if p.Contains(a.Unmap()) {
-			return true
-		}
-	}
-	return false
+	return host
 }
 
 // limitBody caps request bodies (uploads use their own, larger limit on their own route).

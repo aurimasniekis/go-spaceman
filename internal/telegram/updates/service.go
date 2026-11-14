@@ -1,6 +1,9 @@
 package updates
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Options configure a Service.
 type Options struct {
@@ -26,11 +29,35 @@ func New(o Options) *Service {
 	return &Service{Intake: in, Webhook: NewWebhook(in, o.Webhook), Dispatcher: NewDispatcher(o.Dispatcher)}
 }
 
-// Run dispatches queued updates until ctx ends. The webhook answers 503 while Run isn't running.
+// Run dispatches queued updates until ctx ends. The webhook answers 503 while Run isn't running. It also records the
+// webhook's pending refused-secret counts on a timer.
 func (s *Service) Run(ctx context.Context) {
 	s.Webhook.setRunning(true)
 	defer s.Webhook.setRunning(false)
+	done := make(chan struct{})
+	defer func() { <-done }()
+	go func() {
+		defer close(done)
+		s.Webhook.auditLoop(ctx, auditFlushEvery)
+	}()
 	s.Intake.Run(ctx, s.Dispatcher.Dispatch)
+}
+
+// auditFlushEvery is how often Run looks for refused-secret counts nobody recorded because the refusals stopped.
+const auditFlushEvery = rejectAuditEvery / 4
+
+// auditLoop calls flushUnauthorized every interval until ctx ends.
+func (w *Webhook) auditLoop(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			w.flushUnauthorized(ctx)
+		}
+	}
 }
 
 // Poll runs the long-polling mode with bot until ctx ends (the webhook must be off: Webhook.Set(nil), deleteWebhook).
