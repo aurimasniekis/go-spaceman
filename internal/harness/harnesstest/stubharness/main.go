@@ -20,7 +20,10 @@
 // rule and its terminal size at the start and again whenever the terminal is resized (SIGWINCH), the way a full-screen
 // program redraws for a new size. A "/sparse <n>" line prints n long lines in 24-bit colours, each ending in a style
 // reset, then 60 short lines written the way Claude Code writes text: each word placed with a column move (CHA) over
-// cells it expects to be blank in a row that has just scrolled in.
+// cells it expects to be blank in a row that has just scrolled in. A "/redraw <n>" line redraws a four-line status box
+// at the bottom n times, the way Claude Code's classic renderer repaints its prompt area (a synchronized update that
+// erases the box's lines and draws them again), with a static output line above it every 50 frames: much output, little
+// scrollback (ADR-0081).
 // Not part of any release.
 package main
 
@@ -155,6 +158,41 @@ func longReply(prompt string) {
 			fmt.Fprintf(os.Stdout, "\x1b[3Gsparse\x1b[10Gline\x1b[15G%d\r\n", i)
 		}
 	}
+	for _, line := range strings.Split(prompt, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "/redraw ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 {
+			continue
+		}
+		redraw(min(n, 20000))
+	}
+}
+
+// redraw draws n frames of a four-line status box, each erasing the previous one first, with a static line above it
+// every 50 frames.
+func redraw(n int) {
+	rule := strings.Repeat("─", 76)
+	spin := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	for i := 1; i <= n; i++ {
+		var b strings.Builder
+		b.WriteString("\x1b[?2026h")
+		if i > 1 {
+			b.WriteString(strings.Repeat("\x1b[2K\x1b[1A", 3) + "\x1b[2K\x1b[G")
+		}
+		if i%50 == 0 {
+			fmt.Fprintf(&b, "static line %d of %d\r\n", i/50, n/50)
+		}
+		c := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", 40+i%200, 90, 160)
+		fmt.Fprintf(&b, "%s╭%s╮\x1b[0m\r\n", c, rule)
+		fmt.Fprintf(&b, "%s│\x1b[0m %c Working… frame %6d of %6d%s%s│\x1b[0m\r\n", c, spin[i%10], i, n, strings.Repeat(" ", 44), c)
+		fmt.Fprintf(&b, "%s╰%s╯\x1b[0m\r\n", c, rule)
+		b.WriteString("  ? for shortcuts\x1b[?2026l")
+		_, _ = os.Stdout.WriteString(b.String())
+	}
+	_, _ = os.Stdout.WriteString("\r\n")
 }
 
 // hasMCPLines reports whether the prompt has a line that needs the MCP server.

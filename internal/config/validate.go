@@ -58,6 +58,10 @@ func (c *Config) Validate() error {
 	v.positive64("http.max_body_bytes", c.HTTP.MaxBodyBytes)
 	v.positive64("http.max_upload_bytes", c.HTTP.MaxUploadBytes)
 	v.durationRange("http.write_idle_timeout", c.HTTP.WriteIdleTimeout, time.Second, 10*time.Minute)
+	if c.HTTP.CatchUpConcurrency < 1 || c.HTTP.CatchUpConcurrency > 256 {
+		v.add("http.catch_up_concurrency must be within 1..256, got %d", c.HTTP.CatchUpConcurrency)
+	}
+	v.durationRange("http.catch_up_wait", c.HTTP.CatchUpWait, 0, time.Minute)
 	v.logConfig(c.Log)
 
 	v.durationRange("auth.session_idle", c.Auth.SessionIdle, time.Minute, 24*time.Hour)

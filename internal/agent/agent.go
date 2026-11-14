@@ -100,6 +100,20 @@ type Agent struct {
 	// acked is central's highest stored recording sequence per run; unshipped marks runs needing catch-up.
 	acked     map[string]uint64
 	unshipped map[string]bool
+	// Recording shipping (record.go). sentSeq is the last sequence a send of each run went out for (above acked: on
+	// its way, or lost with a connection). held are records a live shipment kept back while it waited for a catch-up.
+	// catching is set while the catch-up pass runs, on catchUpConn with catchUpCtx (the newest connection's);
+	// catchUpAgain asks it for another sweep; caughtUp are the runs it has caught up. connCtx is the current
+	// connection's context.
+	sentSeq      map[string]uint64
+	held         map[string]*heldRecords
+	catching     bool
+	catchUpAgain bool
+	catchUpGen   uint64 // counts requests: a sweep marks runs caught up only for the request it serves
+	catchUpConn  *websocket.Conn
+	catchUpCtx   context.Context
+	caughtUp     map[string]bool
+	connCtx      context.Context
 	// minor is the negotiated protocol minor version of the current connection.
 	minor int
 	// toolCalls are the agent tool calls waiting for central's result, by call ID.
@@ -398,14 +412,20 @@ func (a *Agent) session(ctx context.Context) error {
 			if err := env.Decode(&w); err != nil {
 				return err
 			}
+			// Connected and catching up start together: no live recording shipment can go ahead of the catch-up
+			// (shipLive).
 			a.mu.Lock()
 			a.connected, a.lostAt, a.minor = true, time.Time{}, w.Minor
 			if w.HeartbeatInterval > 0 {
 				a.heartbeat = w.HeartbeatInterval
 			}
+			a.connCtx = hbCtx
+			startPass := a.startCatchUpLocked()
 			a.mu.Unlock()
+			if startPass {
+				go a.catchUpRecordings()
+			}
 			go a.heartbeatLoop(hbCtx)
-			go a.catchUpRecordings(hbCtx)
 			go a.mem.resume(hbCtx)
 			go a.resendKBResults(hbCtx)
 			go a.resumeTranscripts(hbCtx)
@@ -502,6 +522,19 @@ func (a *Agent) send(ctx context.Context, typ string, body any) error {
 	a.mu.Lock()
 	conn := a.conn
 	a.mu.Unlock()
+	return writeTo(ctx, conn, b)
+}
+
+// sendOn is send on a given connection: it fails, rather than use a newer one, when that connection is gone.
+func (a *Agent) sendOn(ctx context.Context, conn *websocket.Conn, typ string, body any) error {
+	b, err := proto.Encode(ids.New(ids.Message), typ, a.now(), body)
+	if err != nil {
+		return err
+	}
+	return writeTo(ctx, conn, b)
+}
+
+func writeTo(ctx context.Context, conn *websocket.Conn, b []byte) error {
 	if conn == nil {
 		return errors.New("not connected")
 	}

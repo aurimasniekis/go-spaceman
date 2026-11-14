@@ -6,7 +6,27 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+- A run's terminal opens on its newest output. The live view and replay load only the last 1 MiB of a run's recording
+  first, with the terminal size and modes in effect there, instead of the whole recording (tens of MB for a long
+  session). **Load earlier output** at the top of the scrollback fetches more on demand. Replay seeks draw at most 1 MiB
+  before their position. Central streams catch-ups and recording pages instead of reading whole recordings into memory
+  for each viewer. The API adds optional `tail` parameters to the terminal stream and the recording endpoint; older
+  clients and servers keep working (ADR-0081).
+- Central reads at most `http.catch_up_concurrency` stored recordings at once (new setting, default 8). A terminal
+  catch-up or recording page waits up to `http.catch_up_wait` (default 5 s) for a slot, then gets 503 with
+  `Retry-After`; the web UI retries. A recording page's `gaps` now cover the records up to the end of the page.
+
 ### Fixed
+- A burst of terminal output larger than the protocol message limit (4 MiB, e.g. megabytes printed within a second)
+  no longer goes missing from central's copy of a recording. The node sent it as one message, central closed the
+  connection, and the records in it were never sent again; the reconnect catch-up's batches could do the same. The node
+  now splits recording shipments into messages of at most 1 MiB.
+- Records sent just before a node lost its connection could still go missing from central's copy, because central
+  keeps only records above the last one it stored and the node's next output could arrive first. After a reconnect
+  the node now re-sends everything central has not acknowledged before any newer output of that run, one catch-up at
+  a time, and stops at the first failed send. Output that waits for the catch-up is kept back (up to 1 MiB per run in
+  memory, then read again from the node's recording); a run's exit record is kept even when the node's disk failed.
 - The web terminal keeps at least 10,000 rows of scrollback at 160 columns (about 11,000-12,000). ghostty-web's
   `scrollback` option is a byte limit, not a line count, so the old setting of 10,000 kept only about 300 rows at 160
   columns. It is now 24 MiB: a terminal with a full scrollback of plain text holds about 30 MiB of WebAssembly memory

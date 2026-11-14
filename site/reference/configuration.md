@@ -51,6 +51,8 @@ Configures the web/API listener and the separate management listener (SM-OBS-002
 | `http.max_upload_bytes` | `26214400` | `SPACEMAN_HTTP_MAX_UPLOAD_BYTES` | Bounds one attachment upload (SM-ATT-002). |
 | `http.read_header_timeout` | `10s` | `SPACEMAN_HTTP_READ_HEADER_TIMEOUT` | Bounds how long a client may take to send request headers. |
 | `http.write_idle_timeout` | `1m0s` | `SPACEMAN_HTTP_WRITE_IDLE_TIMEOUT` | Bounds how long one piece (32 KiB) of a response may wait for the client to read it (1s to 10m). It bounds progress, not the whole response: a slow download that keeps moving is never cut off, but a client that stops reading is disconnected instead of holding the response in central's memory. WebSocket connections (nodes, terminals) keep their own timeouts. |
+| `http.catch_up_concurrency` | `8` | `SPACEMAN_HTTP_CATCH_UP_CONCURRENCY` | Bounds how many terminal catch-ups and recording reads central runs at once (1-256). Each decompresses a run's stored recording; past the bound, a request waits up to catch_up_wait and is then refused with 503 and Retry-After (ADR-0081). |
+| `http.catch_up_wait` | `5s` | `SPACEMAN_HTTP_CATCH_UP_WAIT` | Bounds how long a terminal catch-up or recording read waits for one of catch_up_concurrency's slots (0 to 1m; 0 refuses at once). |
 
 ### `log`
 
