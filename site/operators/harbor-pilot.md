@@ -31,7 +31,7 @@ One installation has one connection. Under **Integrations → Harbor Pilot**, an
 - **Service-principal token** (optional): an `hpa_…` token with `usage.read` and `config.read`. SpaceMan uses it to
   check projects, read budget status for the Limits page and early launch refusals, read back per-run usage, and read
   the quota board to estimate when runs waiting on exhausted accounts can resume
-  ([Parked runs](../guide/limits.md#parked-runs)). Without it, budget status is unavailable, runs' usage isn't read
+  ([Runs through Harbor Pilot](../guide/usage-limits.md#runs-through-harbor-pilot)). Without it, budget status is unavailable, runs' usage isn't read
   back, and gateway waits have no estimated reset.
 - **Allow plain HTTP**: for tests and trusted local networks only. Every token then crosses the network in clear text,
   and the page says so.

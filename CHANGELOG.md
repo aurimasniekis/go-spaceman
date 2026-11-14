@@ -7,11 +7,20 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ## [Unreleased]
 
 ### Added
-- Usage limits, groundwork (ADR-0079, Proposed): central migration 0050 (a run's reported limit, the `usage_limits` and
+- **Runs survive Claude usage limits** (ADR-0079, Accepted; SM-RUN-004..006). When a Claude Code run reaches its
+  subscription's 5-hour or weekly limit, or a Harbor Pilot gateway runs out of accounts or budget, SpaceMan holds the
+  account until the reset, keeps a short wait alive, parks a long one with its session and task, resumes it at the
+  reset with `--resume`, and tells control and (for waits over 12 hours) the space's people once. The entries below
+  give the details. New guide page "When an account runs out", and a "Usage limits" section in Known limitations.
+  Read it before you rely on this: no live subscription limit has been observed on a SpaceMan run, so the tests are
+  simulated (scripted node, fake transcript records, fake clock, fake Harbor Pilot; the gateway side also ran against a
+  real Harbor Pilot demo, still with a scripted node); a gateway reset is an estimate from Harbor Pilot's quota board;
+  and Codex runs are not covered.
+- Usage limits, groundwork (ADR-0079): central migration 0050 (a run's reported limit, the `usage_limits` and
   `limit_waits` tables), the agent's journal migration 0008, and node protocol 1.12, whose run reports may carry the
-  limit a node detected. Nothing detects or acts on limits yet. Both migrations are forward-only in production: take a
-  backup first. Upgrade central first, then the node agents; a node agent below 1.12 keeps working as before.
-- Usage-limit detection on the node (ADR-0079, Proposed): when a Claude Code run's turn ends, and when it ends, the
+  limit a node detected. Both migrations are forward-only in production: take a backup first. Upgrade central first,
+  then the node agents; a node agent below 1.12 keeps working as before.
+- Usage-limit detection on the node (ADR-0079): when a Claude Code run's turn ends, and when it ends, the
   node agent reads the typed usage-limit fields of the run's transcript (from where it stopped last time) and reports
   the limit (kind, reset time, since) or its clear with the run, once per change. No transcript text is logged or
   sent.
