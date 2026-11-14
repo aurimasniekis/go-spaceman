@@ -106,6 +106,7 @@ func (c *cards) bound() {
 			break
 		}
 		delete(c.byCard, k)
+		delete(c.loaded, k.key) // so the database is asked again for a resource whose card was forgotten
 	}
 	for k := range c.loaded {
 		if len(c.loaded) < maxCards {

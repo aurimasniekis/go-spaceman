@@ -305,11 +305,12 @@ func (n *Notifier) process(ctx context.Context) {
 	}
 	now := n.o.Now()
 	scope := map[string]any{}
+	if w.overflow {
+		// Above the cap the details are skipped: one "many changes" notice per chat (plan 4.2 step 3).
+		n.overflow(snd, links, w.spaces, now)
+		return
+	}
 	for _, k := range w.keys {
-		c := w.seen[k]
-		if c.Action != changefeed.Created {
-			n.cards.load(ctx, k) // one read for a resource whose card may exist from before a restart
-		}
 		r, err := n.o.Reader.Read(ctx, scope, k)
 		if err != nil {
 			n.log.Warn("telegram notifier: reading a resource failed", slog.String("type", k.Type), slog.String("error", err.Error()))
@@ -318,10 +319,10 @@ func (n *Notifier) process(ctx context.Context) {
 		if r == nil {
 			continue
 		}
+		if w.seen[k].Action != changefeed.Created {
+			n.cards.load(ctx, k) // a resource of interest whose card may exist from before a restart
+		}
 		n.deliver(snd, links, r, now)
-	}
-	if w.overflow {
-		n.overflow(snd, links, w.spaces, now)
 	}
 }
 

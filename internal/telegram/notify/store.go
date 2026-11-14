@@ -82,8 +82,7 @@ func (r StoreReader) Read(ctx context.Context, scope map[string]any, k Key) (*Re
 	case TypeInboxItem:
 		var it db.InboxItem
 		if it, err = q.GetInboxItem(ctx, k.ID); err == nil {
-			out = &Resource{Key: k, SpaceID: it.SpaceID, Version: it.Version, Kind: KindInbox, Perm: authz.InboxRead, Label: "Inbox",
-				Title: it.Title, Detail: it.Body, State: it.Status, Notify: it.Status == "new" || it.Status == "open", Final: it.Status != "new" && it.Status != "open"}
+			out = inboxResource(k, it)
 		}
 	case TypeTask:
 		var t db.Task
@@ -94,18 +93,12 @@ func (r StoreReader) Read(ctx context.Context, scope map[string]any, k Key) (*Re
 	case TypeMessage:
 		var m db.Message
 		if m, err = q.GetMessage(ctx, k.ID); err == nil {
-			out = &Resource{Key: k, SpaceID: m.SpaceID, Version: m.Version, Kind: KindMessage, Perm: authz.MessageRead, Label: "Message",
-				Title: m.Subject, Detail: m.Body, State: m.State, Notify: m.ToKind == "operator" && m.State == "pending"}
+			out = messageResource(k, m)
 		}
 	case TypeRun:
 		var ru db.Run
 		if ru, err = q.GetRun(ctx, k.ID); err == nil {
-			failed := ru.StatusKind == "failed" || ru.StatusKind == "lost"
-			out = &Resource{Key: k, SpaceID: ru.SpaceID, Version: ru.Version, Kind: KindFailedRun, Perm: authz.RunRead, Label: "Run",
-				Title: ru.Role, State: ru.Status, Notify: failed}
-			if !failed {
-				out = nil // a run that isn't failure-like isn't notified (plan §4.2 step 3)
-			}
+			out = runResource(k, ru)
 		}
 	default:
 		return nil, errUnknownType
@@ -156,4 +149,30 @@ func humanLabel(t, slug string) string {
 		return slug
 	}
 	return "Action"
+}
+
+func inboxResource(k Key, it db.InboxItem) *Resource {
+	fresh := it.Status == "new"
+	return &Resource{Key: k, SpaceID: it.SpaceID, Version: it.Version, Kind: KindInbox, Perm: authz.InboxRead, Label: "Inbox",
+		Title: it.Title, Detail: it.Body, State: it.Status, Notify: fresh, Final: it.Status == "done" || it.Status == "rejected"}
+}
+
+// messageResource: only messages to the operators are notified (to_kind operators); acknowledged or resolved ones are final.
+func messageResource(k Key, m db.Message) *Resource {
+	if m.ToKind != "operators" {
+		return nil
+	}
+	open := m.State == "stored" || m.State == "available"
+	return &Resource{Key: k, SpaceID: m.SpaceID, Version: m.Version, Kind: KindMessage, Perm: authz.MessageRead, Label: "Message",
+		Title: m.Subject, Detail: m.Body, State: m.State, Notify: open, Final: !open}
+}
+
+// runResource: a run is notified only when it failed or was lost (runs.observed); other states are of no interest
+// (plan 4.2 step 3).
+func runResource(k Key, ru db.Run) *Resource {
+	if ru.Observed != "failed" && ru.Observed != "lost" {
+		return nil
+	}
+	return &Resource{Key: k, SpaceID: ru.SpaceID, Version: ru.Version, Kind: KindFailedRun, Perm: authz.RunRead, Label: "Run",
+		Title: ru.Role, State: ru.Observed, Notify: true}
 }

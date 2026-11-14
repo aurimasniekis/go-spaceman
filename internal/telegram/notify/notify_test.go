@@ -410,10 +410,10 @@ func TestWindowIsBounded(t *testing.T) {
 	}
 	e.ring()
 	e.endWindow()
-	e.waitCalls("sendMessage", 2*notify.MaxKeys+2)
-	time.Sleep(100 * time.Millisecond)
-	if r := e.rd.reads.Load(); r != notify.MaxKeys {
-		t.Errorf("%d reads, want the cap %d", r, notify.MaxKeys)
+	e.waitCalls("sendMessage", 2)
+	time.Sleep(200 * time.Millisecond)
+	if r := e.rd.reads.Load(); r != 0 {
+		t.Errorf("%d reads, want none: above the cap the details are skipped", r)
 	}
 	many := 0
 	for _, c := range e.fake.Calls("sendMessage") {
@@ -424,8 +424,8 @@ func TestWindowIsBounded(t *testing.T) {
 	if many != 2 {
 		t.Errorf("%d overflow notices for 2 chats, want one each", many)
 	}
-	if c := len(e.fake.Calls("sendMessage")); c != 2*notify.MaxKeys+2 {
-		t.Errorf("%d sends, want %d", c, 2*notify.MaxKeys+2)
+	if c := len(e.fake.Calls("sendMessage")); c != 2 {
+		t.Errorf("%d sends, want one notice per chat", c)
 	}
 }
 
