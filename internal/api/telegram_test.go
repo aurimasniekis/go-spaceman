@@ -312,6 +312,8 @@ func TestTelegramModeAuthentication(t *testing.T) {
 		"bearer api token":            {"Bearer spaceman_at_x"},
 		"bearer root token":           {"Bearer spaceman_rt_x"},
 		"basic":                       {"Basic Zm9vOmJhcg=="},
+		"a session under bearer":      {"Bearer good"},
+		"a session under basic":       {"Basic good"},
 		"unknown session":             {"Telegram nope"},
 		"empty token":                 {"Telegram"},
 		"two headers":                 {"Telegram good", "Telegram good"},
