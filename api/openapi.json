@@ -16392,6 +16392,10 @@
           "storage": {
             "$ref": "#/components/schemas/SystemStorage"
           },
+          "telegram": {
+            "$ref": "#/components/schemas/TgbotStatus",
+            "description": "The Telegram bot's health (webhook_status off when no bot is configured)"
+          },
           "uptime_seconds": {
             "format": "int64",
             "type": "integer"
@@ -16407,7 +16411,8 @@
           "schema",
           "protocol",
           "storage",
-          "counts"
+          "counts",
+          "telegram"
         ],
         "type": "object"
       },
@@ -16826,6 +16831,235 @@
         },
         "required": [
           "name"
+        ],
+        "type": "object"
+      },
+      "TgbotBot": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TgbotBot.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bot_id": {
+            "description": "The bot's Telegram user ID, from getMe",
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Central runs the bot (webhook or polling); false: Telegram is off and the webhook is removed",
+            "type": "boolean"
+          },
+          "has_token": {
+            "description": "A bot token is stored (it is never returned)",
+            "type": "boolean"
+          },
+          "health": {
+            "$ref": "#/components/schemas/TgbotStatus"
+          },
+          "miniapp_host": {
+            "description": "The Mini App's own host (e.g. tg.central.example.com); empty: the Mini App is off",
+            "type": "string"
+          },
+          "mode": {
+            "description": "How updates arrive: webhook (public HTTPS) or polling (getUpdates, outbound only)",
+            "enum": [
+              "webhook",
+              "polling"
+            ],
+            "type": "string"
+          },
+          "token_version": {
+            "description": "Incremented each time a token is written",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "string"
+          },
+          "username": {
+            "description": "The bot's username (without @), from getMe",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "webhook_ip_allowlist": {
+            "description": "CIDRs the webhook accepts requests from (after trusted proxies); empty: no source check",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "webhook_status": {
+            "description": "health.webhook_status",
+            "enum": [
+              "off",
+              "starting",
+              "polling",
+              "ok",
+              "error",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "mode",
+          "miniapp_host",
+          "webhook_ip_allowlist",
+          "has_token",
+          "token_version",
+          "bot_id",
+          "username",
+          "webhook_status",
+          "health",
+          "warnings",
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by",
+          "version"
+        ],
+        "type": "object"
+      },
+      "TgbotInput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "/api/v1/schemas/TgbotInput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bot_token": {
+            "description": "The token BotFather gave (123456:ABC…). Required on create; empty keeps the stored one. Checked with getMe before it is stored. Never returned",
+            "maxLength": 256,
+            "type": "string",
+            "writeOnly": true
+          },
+          "enabled": {
+            "description": "Run the bot (default false)",
+            "type": "boolean"
+          },
+          "miniapp_host": {
+            "description": "The Mini App's host: a lower-case DNS name, not an IP address, without scheme, port or path, and not the host of central's public_url. Empty: Mini App off",
+            "maxLength": 253,
+            "type": "string"
+          },
+          "mode": {
+            "description": "webhook (default; needs central's public_url to be https) or polling",
+            "enum": [
+              "webhook",
+              "polling",
+              ""
+            ],
+            "type": "string"
+          },
+          "webhook_ip_allowlist": {
+            "description": "CIDRs (e.g. 149.154.160.0/20) the webhook accepts requests from, in canonical form; empty: no check. Only safe when the client address behind the proxy is trustworthy",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TgbotStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "bot_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "checked_at": {
+            "description": "When Telegram was last asked (getWebhookInfo)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "configured": {
+            "description": "A bot is configured",
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "error": {
+            "description": "Why the bot isn't working (startup, or Telegram's last delivery error)",
+            "type": "string"
+          },
+          "last_error_at": {
+            "description": "Telegram's last failed webhook delivery",
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_error_message": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "webhook",
+              "polling",
+              ""
+            ],
+            "type": "string"
+          },
+          "pending_update_count": {
+            "description": "Updates Telegram holds for the webhook",
+            "format": "int64",
+            "type": "integer"
+          },
+          "username": {
+            "description": "The bot's username, without @",
+            "type": "string"
+          },
+          "webhook_status": {
+            "description": "off: no bot or disabled; starting: being configured; polling: getUpdates runs; ok: the webhook is registered and Telegram reports no delivery error since; error: see error; unknown: Telegram couldn't be asked",
+            "enum": [
+              "off",
+              "starting",
+              "polling",
+              "ok",
+              "error",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "configured",
+          "enabled",
+          "webhook_status",
+          "pending_update_count"
         ],
         "type": "object"
       },
@@ -32256,7 +32490,7 @@
     },
     "/system": {
       "get": {
-        "description": "Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.",
+        "description": "Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health installation-wide counts and the Telegram bot's health. For administrators (system:read); the version alone is public in get-system-info. It contains no key material, key paths or tokens.",
         "operationId": "get-system",
         "responses": {
           "200": {
@@ -32516,6 +32750,137 @@
         "summary": "Dismiss the restore notice",
         "tags": [
           "backups"
+        ]
+      }
+    },
+    "/telegram/bot": {
+      "delete": {
+        "description": "Removes the webhook and the stored token: Telegram is off. Links stay, and resume if the same bot is configured again. Needs system:write and a step-up.",
+        "operationId": "delete-telegram-bot",
+        "parameters": [
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove the Telegram bot's configuration",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "get": {
+        "description": "The bot's settings, has_token and token_version (the token is never returned), the bot's ID and username from getMe, and its live health: in webhook mode Telegram's getWebhookInfo (reused for 30 seconds). Needs system:read.",
+        "operationId": "get-telegram-bot",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TgbotBot"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The Telegram bot's connection and health (never its token)",
+        "tags": [
+          "telegram"
+        ]
+      },
+      "put": {
+        "description": "Without If-Match this creates the configuration (bot_token required); with it, it replaces every field, and an empty bot_token keeps the stored token. A new token is checked with Telegram's getMe before it is stored, sealed and never returned; the webhook secret is generated by central and rotates with it. Configuring a different bot (another bot ID) revokes every Telegram link, because their chats belong to the old bot; a new token of the same bot keeps them. Then central reconfigures the running bot (commands, menu button, setWebhook or polling); a failure there is reported in health, not as an error. The Bot API's address is not settable here (central's configuration file only). Needs system:write and a step-up.",
+        "operationId": "put-telegram-bot",
+        "parameters": [
+          {
+            "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+            "in": "header",
+            "name": "If-Match",
+            "schema": {
+              "description": "The resource version this update was based on, as \"\u003cversion\u003e\" (required)",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TgbotInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TgbotBot"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Configure the Telegram bot, or replace its configuration",
+        "tags": [
+          "telegram"
         ]
       }
     },

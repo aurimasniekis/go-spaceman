@@ -48,6 +48,29 @@ function Ok({ ok, yes, no }: { ok: boolean | undefined; yes: string; no: string 
   return <Badge color={ok ? 'owlGreen' : 'owlRed'} variant="light">{ok ? yes : no}</Badge>
 }
 
+const tgColor: Record<string, string> = { ok: 'owlGreen', polling: 'owlGreen', starting: 'gray', off: 'gray', unknown: 'owlYellow', error: 'owlRed' }
+
+/** The Telegram bot's health (ADR-0083): who the bot is, how updates arrive and what Telegram reports. */
+function TelegramCard({ tg }: { tg: SystemStatus['telegram'] }) {
+  return (
+    <Card data-testid="system-telegram">
+      <CardTitle>Telegram</CardTitle>
+      {!tg.configured ? <Text size="sm" c="dimmed">No Telegram bot is configured.</Text> : (
+        <Stack gap="sm">
+          <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} spacing="md">
+            <Field label="Bot"><Text size="sm" className="mono">{tg.username ? `@${tg.username}` : '—'}</Text></Field>
+            <Field label="Mode"><Text size="sm">{tg.enabled ? tg.mode : 'disabled'}</Text></Field>
+            <Field label="Status"><Badge color={tgColor[tg.webhook_status] ?? 'gray'} variant="light">{tg.mode === 'webhook' && tg.webhook_status === 'ok' ? 'webhook: ok' : tg.webhook_status}</Badge></Field>
+            {tg.mode === 'webhook' && tg.enabled && <Field label="Pending updates"><Text size="sm">{tg.pending_update_count}</Text></Field>}
+          </SimpleGrid>
+          {tg.error && <Text size="sm" c="owlRed" style={{ wordBreak: 'break-word' }}>{tg.error}</Text>}
+          {tg.last_error_at && <Text size="xs" c="dimmed">Last delivery error {datetime(tg.last_error_at)}{tg.last_error_message ? `: ${tg.last_error_message}` : ''}</Text>}
+        </Stack>
+      )}
+    </Card>
+  )
+}
+
 /** This instance's status for administrators (SM-OBS-006): health, build and versions, activity and where it runs. */
 export function SystemView({ s }: { s: SystemStatus }) {
   const st = s.storage
@@ -86,6 +109,7 @@ export function SystemView({ s }: { s: SystemStatus }) {
           <Field label="Live streams"><Count value={s.counts.live_streams} /></Field>
         </SimpleGrid>
       </Card>
+      {s.telegram && <TelegramCard tg={s.telegram} />}
       <Card data-testid="system-instance">
         <CardTitle>This instance</CardTitle>
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">

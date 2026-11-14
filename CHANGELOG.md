@@ -16,6 +16,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   once an hour. The route answers 404 until bot configuration ships. New metrics `spaceman_telegram_webhook_requests_total`,
   `spaceman_telegram_updates_total`, `spaceman_telegram_updates_queued` and `spaceman_telegram_poll_errors_total`.
   **Migration 0051 must follow 0050** (the usage-limit work): it is released only after it.
+- Telegram bot configuration (ADR-0083, not usable yet): `get-telegram-bot`, `put-telegram-bot` and
+  `delete-telegram-bot` (`/api/v1/telegram/bot`, CLI `spaceman telegram bot get|set|delete`; system:read to read,
+  system:write with a step-up to change). The bot token is write-only: checked with Telegram's getMe, sealed, and never
+  returned, logged or audited (reads show `has_token` and `token_version`); the webhook secret is generated and rotates
+  with each token. Settings: `enabled`, `mode` (webhook, which needs an https `public_url`, or polling),
+  `miniapp_host` (a lower-case DNS name, not an IP address or the public URL's host) and `webhook_ip_allowlist`
+  (canonical CIDRs). Central brings the bot up at start and on every change (commands, menu button, then `setWebhook`
+  or polling) and retries a failed start. Configuring a different bot revokes every Telegram link. The System page and
+  `get-system` show the bot's health from `getWebhookInfo`.
 
 ### Fixed
 - The client address behind a trusted proxy (`http.trusted_proxies`) now reads every `X-Forwarded-For` header

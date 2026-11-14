@@ -10,6 +10,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/buildinfo"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 )
 
 // SystemStatusRules: the instance's status is for administrators (system:read). The version alone stays public in
@@ -36,6 +37,8 @@ type SystemSources struct {
 	StoreSizes func() (dbBytes, walBytes int64)
 	// LiveStreams returns the number of connected live-event streams (change feed and terminal streams).
 	LiveStreams func() int64
+	// Telegram returns the Telegram bot's live health (ADR-0083).
+	Telegram func(ctx context.Context) tgbot.Status
 }
 
 // SystemStatus is the instance's own status for administrators (SM-OBS-006). It carries no secrets: no key material,
@@ -51,6 +54,7 @@ type SystemStatus struct {
 	Protocol      SystemProtocol `json:"protocol"`
 	Storage       SystemStorage  `json:"storage"`
 	Counts        SystemCounts   `json:"counts"`
+	Telegram      tgbot.Status   `json:"telegram" doc:"The Telegram bot's health (webhook_status off when no bot is configured)"`
 }
 
 // SystemSchema is the database schema version: the latest applied goose migration and the newest this binary has.
@@ -96,7 +100,7 @@ func RegisterSystemStatus(src *SystemSources) func(api huma.API, d *Deps) {
 		huma.Register(api, huma.Operation{OperationID: "get-system", Method: http.MethodGet, Path: "/system",
 			Summary: "This instance's status", Tags: []string{"system"},
 			Description: "Version and build, start time and uptime, boot ID, database schema version, the node protocol range, storage health " +
-				"and installation-wide counts. For administrators (system:read); the version alone is public in get-system-info. " +
+				"installation-wide counts and the Telegram bot's health. For administrators (system:read); the version alone is public in get-system-info. " +
 				"It contains no key material, key paths or tokens."},
 			func(ctx context.Context, _ *struct{}) (*struct{ Body SystemStatus }, error) {
 				return &struct{ Body SystemStatus }{Body: *d.systemStatus(ctx, src)}, nil
@@ -148,6 +152,10 @@ func (d *Deps) systemStatus(ctx context.Context, src *SystemSources) *SystemStat
 	}
 	if src.LiveStreams != nil {
 		out.Counts.LiveStreams = src.LiveStreams()
+	}
+	out.Telegram = tgbot.Status{WebhookStatus: tgbot.StateOff}
+	if src.Telegram != nil {
+		out.Telegram = src.Telegram(ctx)
 	}
 	return out
 }
