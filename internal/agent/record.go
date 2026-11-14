@@ -497,8 +497,8 @@ func (a *Agent) catchUpSweep(ctx context.Context, conn *websocket.Conn, gen uint
 			delete(a.unshipped, id)
 		}
 	}
-	// The journal keeps ended runs (it never deletes them), so this drops only records of IDs that were never
-	// journaled: none in practice; it keeps a stray entry from making the pass sweep forever.
+	// Records of IDs that are not journaled (pruned runs are only deleted with their recording fully shipped, so
+	// none in practice) are dropped, which keeps a stray entry from making the pass sweep forever.
 	for id := range a.held {
 		if !journaled[id] {
 			delete(a.held, id)

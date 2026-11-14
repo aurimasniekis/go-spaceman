@@ -143,6 +143,9 @@ func TestTerminalTakeover(t *testing.T) {
 	if code, b := call(opTok, "/input", map[string]any{"text": "hello"}); code != http.StatusConflict {
 		t.Fatalf("send-input during takeover: %d %s", code, b)
 	}
+	if code, b := call(opTok, "/input", map[string]any{"text": "hello", "force": true}); code != http.StatusConflict {
+		t.Fatalf("forced send-input during takeover: %d %s", code, b)
+	}
 	if _, _, err := e.c.Messages.Send(ctx, admin, sp.ID, messages.From{Kind: "operator", ID: "usr_test", Label: "Test"},
 		messages.SendInput{To: "run:" + r.ID, Kind: "message", Subject: "s", Body: "b"}); err != nil {
 		t.Fatal(err)
@@ -252,5 +255,43 @@ func TestTerminalTakeover(t *testing.T) {
 	}
 	if code, _ := call(adminTok, "/takeover", nil); code != http.StatusConflict {
 		t.Fatalf("takeover of an ended run: %d", code)
+	}
+}
+
+// Root cause of lost operator messages to a busy agent: "Message the agent" sent safe (idle-gated) input, the node
+// refused it while the program worked, and nothing retried it. The web box now forces delivery, which types the text
+// into the busy session (Claude Code and Codex queue typed input); an unforced send stays refused.
+func TestMessageBusyAgentIsDeliveredAtOnce(t *testing.T) {
+	e := newFleetEnv(t)
+	ctx := context.Background()
+	e.enroll()
+	e.startAgent()
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "busymsg", Name: "Busy", NodeID: nodes[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	for _, h := range []string{hns.KindClaude, hns.KindCodex} {
+		r, err := e.c.Fleet.LaunchRun(ctx, admin, sp.ID, fleet.LaunchInput{Kind: "worker", Role: "impl-" + h, Harness: h})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "running", func() bool { return e.run1(r.ID).Observed == "running" })
+		term := e.run1(r.ID).TerminalID
+		e.run.SetStatus(term, "working")
+
+		if err := e.c.Fleet.SendInput(ctx, admin, r.ID, "unforced", false); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.c.Fleet.SendInput(ctx, admin, r.ID, "read the plan now", true); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, h+": forced message typed into the busy session", func() bool { return len(e.run.Inputs(term)) == 1 })
+		if in := e.run.Inputs(term); in[0] != "read the plan now" {
+			t.Fatalf("%s: inputs %q", h, in)
+		}
 	}
 }
