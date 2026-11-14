@@ -13,8 +13,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Security
 - The Markdown sanitizer is stricter: images render only from attachments, and buttons, form fields other than task
-  checkboxes, `<link>`, `<meta>`, `<base>` and frames are removed. Deeply nested or delimiter-heavy bodies can no longer
-  freeze the page. Mermaid renders in strict mode and its SVG is sanitized again (ADR-0082).
+  checkboxes, `<link>`, `<meta>`, `<base>`, frames and `srcset` are removed. Rendering a deeply nested or
+  delimiter-heavy body is bounded to a few seconds. Mermaid renders in strict mode, its SVG is sanitized again (images
+  in labels removed) and a diagram can't change its theme. Diagrams are bounded too: a large one renders only after a
+  "Render diagram" click, and one over 500 statements, or past 25,000 characters of diagrams in one body, shows its
+  source (ADR-0082).
 
 ## [0.1.4] - 2026-11-14
 
