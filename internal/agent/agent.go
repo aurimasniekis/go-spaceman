@@ -81,8 +81,10 @@ type Agent struct {
 	connected bool
 	leases    map[string]leaseRow
 	heartbeat time.Duration
-	// recorders are the live recordings by run ID.
-	recorders map[string]*recorder
+	// recorders are the live recordings by run ID. recordersStopped is set at shutdown (stopRecorders): no recorder
+	// starts after it, so a launch still finishing during drain leaves none running past Run.
+	recorders        map[string]*recorder
+	recordersStopped bool
 	// lostAt is when central was last lost (zero while connected).
 	lostAt time.Time
 	wake   chan struct{}
@@ -228,12 +230,7 @@ func RunName(runID string) string     { return "r-" + strings.TrimPrefix(runID, 
 // agent adopts its programs instead of starting duplicates (SM-NODE-009).
 func (a *Agent) Run(ctx context.Context) error {
 	a.mem.base = context.WithoutCancel(ctx)
-	defer a.drain(30 * time.Second)
-	// Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
-	// recorder attached when the next one adopts the run.
-	defer a.stopRecorders()
-	defer a.stopTakeovers()
-	defer a.stopHolds()
+	defer a.shutdown(30 * time.Second)
 	for _, d := range []string{"spaces", "runs", "leases"} {
 		if err := os.MkdirAll(filepath.Join(a.o.DataDir, d), 0o700); err != nil {
 			return err
@@ -279,10 +276,22 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
-// stopRecorders ends every live recording (each flushes and closes its writer).
+// shutdown is Run's stop sequence: holds, takeovers and recordings end first, then background work drains (bounded
+// by limit). Recorders outlive the commands that start them, not the agent: a stopped agent must not keep a second
+// recorder attached when the next one adopts the run, so none starts once they stopped, not even from a launch that
+// finishes during the drain.
+func (a *Agent) shutdown(limit time.Duration) {
+	a.stopHolds()
+	a.stopTakeovers()
+	a.stopRecorders()
+	a.drain(limit)
+}
+
+// stopRecorders ends every live recording (each flushes and closes its writer) and refuses new ones.
 func (a *Agent) stopRecorders() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.recordersStopped = true
 	for _, r := range a.recorders {
 		r.cancel()
 	}

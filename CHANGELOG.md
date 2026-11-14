@@ -9,10 +9,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 ### Fixed
 - Stopping the node agent now waits for the run launches and stops it already accepted. Before, a launch could still
   be writing the run's files and its journal after the agent had stopped, while the next agent process started.
-- Central's shutdown now waits, for up to 10 s, for node connections and the work they started (memory syncs into the
-  role-memory repositories, usage, transcripts, tool calls, relocation transfers) before it closes its database. Before,
-  that work could still write after the database was closed. Central also refuses new node connections once shutdown
-  has begun.
+- Central's shutdown now waits for node connections and the work they started (memory syncs into the role-memory
+  repositories, usage, transcripts, tool calls, relocation transfers) before it closes its database. Before, that work
+  could still write after the database was closed. The wait shares the 5 s gateway mints already had, so a stop still
+  takes at most 43 s (30 s `shutdown.timeout`, 5 s, 8 s for the database), inside the units' `TimeoutStopSec=45s`.
+  Central also refuses new node connections once shutdown has begun; a memory sync still queued when its connection
+  ends is dropped (the node sends it again) and a tool call ends with its connection.
 
 ## [0.1.4] - 2026-11-14
 

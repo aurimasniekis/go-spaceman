@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -90,17 +91,29 @@ type Hub struct {
 	mintStopped bool
 
 	// work tracks node connections (ServeHTTP) and every goroutine they start, so central's shutdown (Shutdown) waits
-	// for their writes before it closes the store. stopped (guarded by mu) refuses new connections once it began.
+	// for their writes before it closes the store; working counts them for Shutdown's warning. stopped (guarded by mu)
+	// refuses new connections once it began.
 	work    sync.WaitGroup
+	working atomic.Int64
 	stopped bool
+}
+
+func (h *Hub) workAdd() {
+	h.working.Add(1)
+	h.work.Add(1)
+}
+
+func (h *Hub) workDone() {
+	h.working.Add(-1)
+	h.work.Done()
 }
 
 // spawn runs f on its own goroutine as work Shutdown waits for. Only called while a connection is tracked (its count
 // keeps work above zero, so the Add never races Shutdown's Wait).
 func (h *Hub) spawn(f func()) {
-	h.work.Add(1)
+	h.workAdd()
 	go func() {
-		defer h.work.Done()
+		defer h.workDone()
 		f()
 	}()
 }
@@ -120,7 +133,8 @@ func (h *Hub) Shutdown(reason string, grace time.Duration) {
 	select {
 	case <-done:
 	case <-t.C:
-		obs.Component(h.svc.opts.Log, "fleet").Warn("node connection work still running at shutdown")
+		obs.Component(h.svc.opts.Log, "fleet").Warn("node connection work still running at shutdown",
+			slog.Int64("running", h.working.Load()))
 	}
 }
 
@@ -393,9 +407,9 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close(websocket.StatusGoingAway, "central shutting down")
 		return
 	}
-	h.work.Add(1)
+	h.workAdd()
 	h.mu.Unlock()
-	defer h.work.Done()
+	defer h.workDone()
 	conn.SetReadLimit(proto.MaxMessage)
 	s := &session{nodeID: node.ID, credID: credID, conn: conn, out: make(chan []byte, 256), kick: make(chan struct{}, 1), done: make(chan struct{}), tools: make(chan struct{}, 8), memory: make(chan struct{}, 1),
 		log: obs.Component(h.svc.opts.Log, "fleet").With(slog.String(obs.FieldNodeID, node.ID))}
@@ -587,6 +601,14 @@ func (h *Hub) writer(ctx context.Context, s *session) {
 func (h *Hub) toolCall(ctx context.Context, s *session, call proto.ToolCall) {
 	ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
 	defer cancel()
+	// The call ends with its connection (nobody is left to receive the result), so it never runs on past Shutdown's grace.
+	go func() {
+		select {
+		case <-s.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	reply := func(res proto.ToolResult) {
 		res.CallID = call.CallID
 		_ = s.send(proto.TypeToolResult, h.svc.now(), res)
@@ -674,9 +696,11 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		h.spawn(func() {
 			ack := proto.MemoryAck{SyncID: m.SyncID, SpaceID: m.SpaceID, Role: m.Role, Result: proto.MemoryError, Message: "central does not store memory"}
 			if h.Memory != nil {
+				// A sync still queued behind another when the connection ends is dropped (the node sends it again); the
+				// one running finishes, as work Shutdown waits for.
 				select {
 				case s.memory <- struct{}{}:
-				case <-ctx.Done():
+				case <-s.done:
 					return
 				}
 				ack = h.Memory.Apply(ctx, s.nodeID, m)

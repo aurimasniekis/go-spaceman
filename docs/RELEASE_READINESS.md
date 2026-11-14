@@ -274,7 +274,8 @@ with instance protection and the auto-memory relocation (ADR-0068), and the stor
 - A `PermissionRequest` hook denies every permission dialog; an `ask` rule now works like a deny.
 - A profile's own `autoMemoryDirectory` is ignored (the node logs a warning).
 - Closing the store waits at most 8 s (WAL checkpoint and connections still in use), inside the units'
-  `TimeoutStopSec=45s`.
+  `TimeoutStopSec=45s`. (Since PR #74, unreleased: node connection work waits inside the 5 s for gateway mints, so
+  the worst case stays 30 + 5 + 8 = 43 s.)
 - Operators should remove any profile `additionalDirectories` entry that grants the node's whole `spaces/` folder, and
   any dialog-denying hook script: v0.1.0 adds the run's own space folder and the hook automatically.
 - If a node ran Codex with an API-key account on an earlier release, rotate that key.
