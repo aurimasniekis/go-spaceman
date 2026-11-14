@@ -4244,6 +4244,22 @@
   with the old value: 485 rows).
 - **Not a security-relevant change:** nothing is relaxed; the browser keeps more of output the viewer may already see.
 
+### ADR-0084 — "Message the agent" is typed into the running session at once
+- **Status:** Accepted, 2026-11-14 (operator request). No migration, no node protocol change.
+- **Context:** The run page's message box sent `run.input` as safe input (`force` unset). The node refuses safe input while
+  the program works (`ErrBusy`) and acknowledges it as rejected; central does not retry a rejected `run.input`. A message
+  sent while control was busy was therefore lost. The durable message path (Messages page, agent tools) is not affected:
+  its terminal notice is refused while busy but the item stays stored and is announced at the next idle report.
+- **Decision:** The box sends `force: true`: the text is typed into the session immediately and the harness decides when to
+  act on it (the fake runner queues typed input; real Claude Code and Codex are unverified). Safe input stays the rule for automated input (notices). Takeover
+  still pauses it (SM-UI-004). No durable message is created, so nothing is delivered twice.
+- **Consequences:** The text may sit in the harness's own queue while it works. A harness that reports `blocked` refuses
+  the text (hc refuses a blocked program without its own force) and the text is dropped, and the operator is not told yet;
+  central answers 202 when it queues the command, so the box says "Queued for the agent". The risk that a modal takes
+  the text as an answer applies only to modals not reported as blocked (Codex status reporting is unverified,
+  `docs/contracts/harnesses.md`). Operators who want a safe, announced message use the Messages page. See LIMITATIONS.md.
+- **Not a security-relevant change:** the box already needed the same permission; only the idle gate is dropped for it.
+
 ## 2. Open items and unresolved contracts
 
 | ID | Item | Blocks | Plan |

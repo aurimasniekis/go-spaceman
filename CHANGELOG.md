@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   takes at most 43 s (30 s `shutdown.timeout`, 5 s, 8 s for the database), inside the units' `TimeoutStopSec=45s`.
   Central also refuses new node connections once shutdown has begun; a memory sync still queued when its connection
   ends is dropped (the node sends it again) and a tool call ends with its connection.
+- **A message typed into "Message the agent" (for example to control) while the agent was busy was lost.** The box sent
+  safe, idle-gated input; the node refused it while the program worked, and nothing tried again. The text is now typed
+  into the running session at once (the fake runner queues typed input; real Claude Code and Codex are not yet verified to). The placeholder
+  and the guides say so (ADR-0084). Messages from the Messages page and agents are unchanged: stored, then announced
+  by the terminal notice when the program is idle.
+- Resuming a paused space now starts control when work was waiting. The resume did not wake the control notifier, so
+  work that arrived while the space was paused started control only at the next slow sweep. Resuming kicks the
+  notifier; auto-start settings, limits and dedupe apply as before.
 
 ## [0.1.4] - 2026-11-14
 

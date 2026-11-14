@@ -563,6 +563,9 @@
   are metrics (SM-OBS-001).
 
 ## Messaging
+- **A forced "Message the agent" can still be dropped.** The run page's box types the text at once (`force`), but a
+  program reported as `blocked` (a permission prompt, for example) refuses it, as does a takeover that starts in
+  between or a run that is ending. Central has already answered 202 and the operator is not told yet (ADR-0084).
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself. herdr-core's
   own gate accepts only idle, so a `done` program gets the notice ungated after a fresh status check (ADR-0052).
