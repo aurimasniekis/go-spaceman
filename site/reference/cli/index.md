@@ -91,6 +91,7 @@ Every other operation of the API has a command. These belong to the browser's si
 |---|---|
 | `create-telegram-download-link` | mints a signed, single-purpose download link for the Telegram Mini App: served only on the Mini App host, to a Mini App session (ADR-0083) |
 | `create-telegram-session` | the Telegram Mini App's session exchange: served only on the Mini App host, from the Mini App's origin, with initData Telegram signs for the app (ADR-0083) |
+| `get-telegram-me` | the Telegram Mini App's own identity (the get-me document): served only on the Mini App host, to a Mini App session (ADR-0083) |
 | `login` | interactive sign-in: it creates a browser session (cookie and CSRF token); the CLI authenticates with an API token |
 | `logout` | ends the browser session it is called from; an API token has none (revoke tokens with `spaceman token revoke`) |
 | `oidc-callback` | the identity provider's browser redirect back to central |

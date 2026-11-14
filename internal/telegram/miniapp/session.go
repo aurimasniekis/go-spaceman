@@ -162,6 +162,8 @@ var (
 	errInvalid   = apperr.New(apperr.CodeUnauthorized, "invalid or expired Telegram data: close and reopen the app")
 	errNotLinked = apperr.New(apperr.CodeForbidden, "this Telegram account is not linked to SpaceMan: link it from your account page first")
 	errFull      = apperr.New(apperr.CodeRateLimited, "too many Mini App sessions; try again later")
+	// errMFAPending is a user whose MFA is required but not set up: the Mini App cannot do that step, so it says where.
+	errMFAPending = apperr.New(apperr.CodeForbidden, "multi-factor authentication is required for your SpaceMan account: finish setting it up in the browser, then reopen the app")
 )
 
 // Exchange validates initData and opens a session for its user's active link (plan §3.4.2). Forged, malformed,
@@ -197,11 +199,17 @@ func (svc *Service) Exchange(ctx context.Context, initData, clientIP string) (*S
 	if err != nil {
 		return nil, err
 	}
-	if _, err := svc.o.Principal(ctx, linkID); err != nil {
+	p, err := svc.o.Principal(ctx, linkID)
+	if err != nil {
 		if errors.Is(err, auth.ErrUnauthorized) {
 			return nil, errNotLinked
 		}
 		return nil, err
+	}
+	if p.Limited {
+		// Every request of such a session would be refused (resolve): say why now, once, instead of a session that
+		// opens and then fails on its first call.
+		return nil, errMFAPending
 	}
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {

@@ -48,6 +48,8 @@ var Ops = map[string]api.TelegramClass{
 	"resolve-message": api.TelegramBoth,
 	// The Mini App's session exchange: public, on the Mini App host only.
 	"create-telegram-session": api.TelegramExchange,
+	// The Mini App's identity (get-me is not served on its host): the same document for the link's user.
+	"get-telegram-me": api.TelegramMiniApp,
 	// Signed single-purpose download links for attachments (§3.4.3): the Mini App mints, /tg-dl/ redeems.
 	"create-telegram-download-link": api.TelegramMiniApp,
 	// Runs (Q3: stop, never launch).

@@ -96,3 +96,38 @@ func TestTelegramDownloadMintGuards(t *testing.T) {
 		}
 	}
 }
+
+// get-telegram-me answers only a Telegram principal on the Mini App channel: /auth/me is not served on that host.
+func TestTelegramMe(t *testing.T) {
+	t.Parallel()
+	user := &auth.Principal{User: &auth.User{ID: "usr_tg"}, Method: auth.MethodPassword}
+	for name, c := range map[string]struct {
+		p    *auth.Principal
+		ch   telegramChannel
+		want int
+	}{
+		"telegram principal on the Mini App": {tgPrincipal(), channelMiniApp, 200},
+		"non-Telegram principal":             {user, channelMiniApp, 404},
+		"chat channel":                       {tgPrincipal(), channelChat, 404},
+		"no channel":                         {tgPrincipal(), channelNone, 404},
+	} {
+		mux := http.NewServeMux()
+		RegisterTelegramMiniApp(fakeExchanger{})(humago.NewWithPrefix(mux, Prefix, Config()), &Deps{Authz: tgAuthz(t)})
+		req := httptest.NewRequest(http.MethodGet, Prefix+"/telegram/me", nil)
+		req = req.WithContext(context.WithValue(context.WithValue(req.Context(), principalKey{}, c.p), telegramChannelKey{}, c.ch))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("%s: %d %s, want %d", name, rec.Code, rec.Body, c.want)
+		}
+		if c.want == 200 && (!strings.Contains(rec.Body.String(), `"usr_`) || strings.Contains(rec.Body.String(), "csrf_token")) {
+			t.Errorf("%s: body %s", name, rec.Body)
+		}
+	}
+}
+
+type fakeExchanger struct{}
+
+func (fakeExchanger) Exchange(context.Context, string, string) (*miniapp.Session, error) {
+	return nil, nil
+}
