@@ -34496,6 +34496,38 @@
         ]
       }
     },
+    "/telegram/me": {
+      "get": {
+        "description": "Mini App host only (404 elsewhere). The same document as get-me, for the Telegram link's user, so the Mini App can tell what the person may do. It carries no CSRF token and the session never needs one.",
+        "operationId": "get-telegram-me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The Mini App session's principal",
+        "tags": [
+          "telegram"
+        ]
+      }
+    },
     "/telegram/session": {
       "post": {
         "description": "Served only on the Mini App host (miniapp_host; 404 elsewhere). The initData must carry a valid signature of the configured bot, be at most init_data_max_age_seconds old and not used before (each initData opens one session); its Telegram user needs an active link. Refused initData is 401 whatever the reason. Rate limited per address and per Telegram user. The session lives in memory only and ends on idle, absolute expiry, unlink, user disable, a bot change or a restart; the Mini App then asks to be reopened.",

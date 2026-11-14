@@ -546,6 +546,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `GET` | `/telegram/links` | `list-telegram-links` | Every linked Telegram account |
 | `DELETE` | `/telegram/links/{link_id}` | `delete-telegram-link` | Unlink anyone's Telegram account |
 | `POST` | `/telegram/download-links` | `create-telegram-download-link` | Mint a signed download link for an attachment |
+| `GET` | `/telegram/me` | `get-telegram-me` | The Mini App session's principal |
 | `POST` | `/telegram/session` | `create-telegram-session` | Exchange Telegram Mini App initData for a session |
 | `DELETE` | `/telegram/settings` | `delete-telegram-settings` | Reset the Telegram bot's policy and defaults |
 | `GET` | `/telegram/settings` | `get-telegram-settings` | The Telegram bot's policy and defaults |

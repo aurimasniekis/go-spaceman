@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>SpaceMan</title>
+    <!-- Telegram's official loader, pinned by this exact URL in the Mini App CSP (web/handler.go MiniAppScriptURL);
+         scripts/check-dist.mjs fails the build if the two differ. -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/tg/main.tsx"></script>
+  </body>
+</html>

@@ -40,6 +40,8 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     chunkSizeWarningLimit: 2500,
+    // Two entries of one build: the web UI and the Telegram Mini App shell (tg.html, ADR-0083 §4.6).
+    rollupOptions: { input: { main: fileURLToPath(new URL('./index.html', import.meta.url)), tg: fileURLToPath(new URL('./tg.html', import.meta.url)) } },
   },
   server: { proxy: { '/api': { target: api, changeOrigin: false } } },
   test: {

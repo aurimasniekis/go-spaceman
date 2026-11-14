@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -499,5 +500,54 @@ func TestMiniAppSessionAndStreamEndOnUnlink(t *testing.T) {
 	}
 	if r := e.mini(t, "GET", api.Prefix+"/spaces", "", auth...); r.status != 401 {
 		t.Fatalf("session after unlink: %d", r.status)
+	}
+}
+
+// get-telegram-me goes through the middleware's Mini App rule (Session and TelegramSelf): a real Mini App session gets
+// the linked user's own Me on the Mini App host, the main host serves nothing there (404), and no session is a 401.
+func TestMiniAppMeThroughMiddleware(t *testing.T) {
+	t.Parallel()
+	e := newMiniAppEnv(t)
+	e.startBot(t)
+	_ = enrolledSession(t, e.h, "mini@example.com") // the link is Limited until its user has enrolled MFA
+	tok := e.exchange(t)
+	hdr := []string{"Authorization", "Telegram " + tok}
+
+	r := e.mini(t, "GET", api.Prefix+"/telegram/me", "", hdr...)
+	expect(t, r, 200)
+	var me api.Me
+	r.json(t, &me)
+	if me.User == nil || me.User.ID != e.userID || me.Method != auth.MethodTelegram || me.Limited || me.CSRFToken != "" {
+		t.Fatalf("me %+v", me)
+	}
+	if !slices.Contains(me.Domains, e.space) {
+		t.Fatalf("domains %v lack %s", me.Domains, e.space)
+	}
+	// The main host: a web principal reaches the handler and is not found; the Mini App's token is no credential there.
+	expect(t, e.root.do("GET", "/telegram/me", nil), 404)
+	if r := e.send(t, "", "GET", api.Prefix+"/telegram/me", "", hdr...); r.status != 401 {
+		t.Fatalf("main host with a Mini App token: %d", r.status)
+	}
+	if r := e.mini(t, "GET", api.Prefix+"/telegram/me", ""); r.status != 401 {
+		t.Fatalf("no session: %d", r.status)
+	}
+}
+
+// A Limited principal is refused (resolve, and the middleware behind it): when MFA becomes required for the user (here: their factor is gone) while a
+// Mini App session is open, its next request is a 401 and not served.
+func TestMiniAppSessionRefusedWhenMFABecomesRequired(t *testing.T) {
+	t.Parallel()
+	e := newMiniAppEnv(t)
+	e.startBot(t)
+	_ = enrolledSession(t, e.h, "mini@example.com")
+	tok := e.exchange(t)
+	hdr := []string{"Authorization", "Telegram " + tok}
+	expect(t, e.mini(t, "GET", api.Prefix+"/spaces", "", hdr...), 200)
+
+	e.exec(t, `DELETE FROM mfa_totp`)
+	for _, path := range []string{"/spaces", "/telegram/me"} {
+		if r := e.mini(t, "GET", api.Prefix+path, "", hdr...); r.status != 401 {
+			t.Fatalf("%s after MFA became required: %d %s", path, r.status, r.body)
+		}
 	}
 }

@@ -4313,6 +4313,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/telegram/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Mini App session's principal
+         * @description Mini App host only (404 elsewhere). The same document as get-me, for the Telegram link's user, so the Mini App can tell what the person may do. It carries no CSRF token and the session never needs one.
+         */
+        get: operations["get-telegram-me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/telegram/session": {
         parameters: {
             query?: never;
@@ -22077,6 +22097,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
             };
             /** @description Error */
             default: {

@@ -1,6 +1,6 @@
 import { keepPreviousData, queryOptions, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api, unwrap } from './client'
-import { setSession } from './session'
+import { isMiniApp, setSession } from './session'
 
 /** Query keys, shared by the watch feed's invalidation. */
 /**
@@ -118,6 +118,11 @@ export interface AuditFilter {
 export const meQuery = queryOptions({
   queryKey: keys.me,
   queryFn: async ({ signal }) => {
+    // The Mini App host does not serve /auth/*: its session's identity is /telegram/me (same document, no CSRF token).
+    if (isMiniApp()) {
+      const res = await api.GET('/telegram/me', { signal })
+      return res.response.status === 401 ? null : unwrap(res)
+    }
     const res = await api.GET('/auth/me', { signal })
     if (res.response.status === 401) {
       setSession('')
