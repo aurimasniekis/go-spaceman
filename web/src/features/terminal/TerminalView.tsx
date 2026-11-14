@@ -6,7 +6,7 @@ import { api, unwrap, type RecordingRecord, type Run } from '@/api/client'
 import { API_PREFIX } from '@/api/session'
 import { endReason, sessionStillValid } from '@/api/streams'
 import { clock } from '@/lib/format'
-import { createTerminal, disposeTerminal, fitFont, followCursor, holdDrawing, regularCell, rowHeight, scrollWithWheelAndTouch } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, followCursor, holdDrawing, regularCell, rowHeight, scrollWithWheelAndTouch, setInputMode } from './ghostty'
 import { jumpToLive, keepingPosition, scrolledAway } from './scroll'
 import { apply, emptySummary, feed, type Feed, indexAt, MAX_IDLE_MS, offsetMs, type RecordingSummary } from './records'
 import { fitDimensions, TerminalSizeControl } from './TerminalSize'
@@ -206,12 +206,11 @@ function LiveTerminal({ spaceId, runId, onInput, resize }: Omit<Props, 'mode'>) 
   // Watch-only unless the viewer holds a takeover; ghostty-web reads disableStdin on every key (0.4.0 source).
   useEffect(() => {
     if (!term || !onInput) return
-    term.options.disableStdin = false
+    setInputMode(term, true)
     const sub = term.onData(onInput)
-    term.focus()
     return () => {
       sub.dispose()
-      term.options.disableStdin = true
+      setInputMode(term, false)
     }
   }, [term, onInput])
   const [sum, setSum] = useState<RecordingSummary>(emptySummary)

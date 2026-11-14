@@ -35,6 +35,7 @@ vi.mock('./ghostty', () => ({
   regularCell: () => null,
   rowHeight: () => 0,
   scrollWithWheelAndTouch: () => () => {},
+  setInputMode: (t: { options: { disableStdin?: boolean } }, on: boolean) => void (t.options.disableStdin = !on),
 }))
 vi.mock('./scroll', () => ({ jumpToLive: () => {}, keepingPosition: (_t: unknown, w: () => void) => w(), scrolledAway: () => false }))
 vi.mock('./records', async (original) => {

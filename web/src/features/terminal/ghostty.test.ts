@@ -1,6 +1,6 @@
 import type { Terminal } from 'ghostty-web'
 import { SCROLLBACK_BYTES } from './scrollback'
-import { createTerminal, disposeTerminal, fitFont, holdDrawing, patchGhostty, PATCHED_GHOSTTY_WEB, scrollWithWheelAndTouch, skipBlankCells } from './ghostty'
+import { createTerminal, disposeTerminal, fitFont, holdDrawing, patchGhostty, PATCHED_GHOSTTY_WEB, scrollWithWheelAndTouch, setInputMode, skipBlankCells } from './ghostty'
 
 const ghostty = vi.hoisted(() => {
   const created: { options: { ghostty?: unknown; scrollback?: number }; disposed: boolean }[] = []
@@ -274,5 +274,46 @@ describe('skipBlankCells', () => {
     r.hoveredLinkRange = { startY: 0 }
     r.renderCellText(cell(0))
     expect(drawn).toEqual([65, 32, 32, 32, 0, 0])
+  })
+})
+
+describe('setInputMode', () => {
+  const make = () => {
+    const el = document.createElement('div')
+    el.setAttribute('tabindex', '0')
+    el.setAttribute('contenteditable', 'true')
+    const ta = document.createElement('textarea')
+    el.append(ta)
+    document.body.append(el)
+    return { el, ta, term: { element: el, textarea: ta, options: { disableStdin: false }, focus: vi.fn(() => el.focus()) } as unknown as Terminal }
+  }
+  it('watching: not editable, no keyboard, the textarea refuses focus except to copy', () => {
+    const { el, ta, term } = make()
+    ta.focus()
+    setInputMode(term, false)
+    expect(document.activeElement).not.toBe(ta)
+    expect(el.hasAttribute('contenteditable')).toBe(false)
+    expect(el.getAttribute('tabindex')).toBe('0')
+    expect([ta.getAttribute('inputmode'), ta.readOnly, ta.getAttribute('tabindex')]).toEqual(['none', true, '-1'])
+    expect(term.options.disableStdin).toBe(true)
+    ta.focus() // a tap on the canvas
+    expect(document.activeElement).not.toBe(ta)
+    ta.value = 'copied text'
+    ta.focus() // the copy path
+    expect(document.activeElement).toBe(ta)
+    el.remove()
+  })
+  it('taking over: editable, keyboard allowed, focused; back out undoes it', () => {
+    const { el, ta, term } = make()
+    setInputMode(term, false)
+    setInputMode(term, true)
+    expect(el.getAttribute('contenteditable')).toBe('true')
+    expect(ta.hasAttribute('inputmode') || ta.readOnly).toBe(false)
+    expect(term.options.disableStdin).toBe(false)
+    expect(term.focus).toHaveBeenCalled()
+    setInputMode(term, false)
+    expect(document.activeElement).not.toBe(el)
+    expect(el.hasAttribute('contenteditable')).toBe(false)
+    el.remove()
   })
 })

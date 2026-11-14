@@ -213,9 +213,76 @@ export async function createTerminal(el: HTMLElement, cols = 120, rows = 40): Pr
     cursorBlink: false,
   })
   term.open(el)
+  watchKeys(term)
+  setInputMode(term, false)
   installProbe()
   live.set(term, (ghostty as unknown as { memory?: WebAssembly.Memory }).memory)
   return term
+}
+
+const inputOn = new WeakSet<Terminal>()
+
+/**
+ * Stops ghostty-web 0.4.0 handling key presses while the terminal is not in input mode. Its key handler calls
+ * preventDefault on the keys it maps, even with disableStdin, which would break scrolling a focused region and page
+ * shortcuts; it returns early for a composing event (isComposing, keyCode 229), so a watching terminal's keys are
+ * marked as composing before it sees them. The event still propagates and keeps its default action.
+ */
+function watchKeys(term: Terminal) {
+  term.element?.addEventListener(
+    'keydown',
+    (e) => {
+      if (!inputOn.has(term)) Object.defineProperty(e, 'isComposing', { value: true })
+    },
+    { capture: true },
+  )
+}
+
+/**
+ * Puts a terminal in or out of input mode (SM-UI-004). Out (watching, replay, someone else's takeover): the element is
+ * not editable and its hidden textarea is read-only, out of the tab order, with no on-screen keyboard (inputmode none)
+ * and cannot be focused by a tap or click, so a phone shows no keyboard and no key is captured. The element stays
+ * focusable (tabindex 0, not editable) for scrolling; selection and copy keep working (the textarea still takes focus
+ * when it holds text to copy). In: ghostty-web's own setup, which focuses the input.
+ */
+export function setInputMode(term: Terminal, on: boolean) {
+  const el = term.element
+  const ta = term.textarea
+  if (!el || !ta) return
+  if (on) inputOn.add(term)
+  else inputOn.delete(term)
+  term.options.disableStdin = !on
+  if (on) {
+    el.setAttribute('contenteditable', 'true')
+    el.setAttribute('role', 'textbox')
+    el.setAttribute('aria-label', 'Terminal input')
+    el.setAttribute('aria-multiline', 'true')
+    el.removeAttribute('aria-readonly')
+    el.removeAttribute('inputmode')
+    ta.removeAttribute('inputmode')
+    ta.removeAttribute('readonly')
+    ta.setAttribute('tabindex', '0')
+    ta.removeAttribute('aria-hidden')
+    delete (ta as { focus?: unknown }).focus
+    term.focus()
+    return
+  }
+  el.removeAttribute('contenteditable')
+  el.setAttribute('role', 'region')
+  el.setAttribute('aria-label', 'Terminal output')
+  el.setAttribute('aria-readonly', 'true')
+  el.setAttribute('inputmode', 'none')
+  ta.setAttribute('inputmode', 'none')
+  ta.setAttribute('readonly', '')
+  ta.setAttribute('tabindex', '-1')
+  ta.setAttribute('aria-hidden', 'true')
+  // ghostty-web focuses the textarea on every tap or click of the canvas; only its copy path sets text first.
+  const focus = HTMLElement.prototype.focus
+  ta.focus = (o?: FocusOptions) => {
+    if (ta.value) focus.call(ta, o)
+  }
+  const a = document.activeElement
+  if (a === ta || a === el) (a as HTMLElement).blur()
 }
 
 /**
