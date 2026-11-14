@@ -890,7 +890,9 @@ func (a *Agent) startRecorder(ctx context.Context, row runRow) {
 	rctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	rec := &recorder{cancel: cancel, sizes: make(chan [2]int, 16)}
 	a.recorders[row.RunID] = rec
+	a.recWG.Add(1) // under a.mu, with recordersStopped checked above: stopRecorders never Waits concurrently with an Add
 	go func() {
+		defer a.recWG.Done()
 		defer func() {
 			a.mu.Lock()
 			if a.recorders[row.RunID] == rec {
