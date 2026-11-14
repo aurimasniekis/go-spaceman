@@ -125,8 +125,10 @@ type shipEnv struct {
 	// lose, when set, is asked about each recording message central receives: true loses it (not stored, not
 	// acknowledged), as if it went with its connection.
 	lose func(c proto.RecordingChunk) bool
-	// drop, when set, closes the connection on a message, losing it (wsCentral.drop).
+	// drop, when set, closes the connection on a message, losing it (wsCentral.drop); skip loses it and keeps the
+	// connection (wsCentral.skip).
 	drop func(env proto.Envelope) bool
+	skip func(env proto.Envelope) bool
 }
 
 func newShipEnv(t *testing.T) *shipEnv {
@@ -178,7 +180,7 @@ func (e *shipEnv) live(id string, recs []recording.Record) {
 func (e *shipEnv) connect() {
 	e.t.Helper()
 	e.fc = newWSCentral(e.t, proto.MaxMinor)
-	e.fc.drop = e.drop
+	e.fc.drop, e.fc.skip = e.drop, e.skip
 	e.a.o.ReconnectMax = 10 * time.Millisecond
 	runAgent(e.t, e.a, e.fc)
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(time.Millisecond) {
@@ -550,4 +552,92 @@ func TestLiveShipmentStaysOnItsConnection(t *testing.T) {
 	e.idle()
 	e.live("run_x", e.add("run_x", 1))
 	e.whole("run_x", 1, 41)
+}
+
+// Records kept back that a catch-up could not send go back for the next pass: a close record with no local copy
+// exists only there (B1″, the reviewer's probe).
+func TestCatchUpKeepsBackWhatItCouldNotSend(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 300) // two batches
+	code := 0
+	once := false
+	shipBatchHook = func(id string, batch int) {
+		if batch == 1 && !once {
+			once = true
+			e.live(id, []recording.Record{{Seq: 301, Kind: recording.KindClose, ExitCode: &code, Reason: "exited"}}) // no local copy
+		}
+	}
+	var sends atomic.Int32
+	sendRecordingHook = func(string) error {
+		if sends.Add(1) == 3 { // the send of what was kept back, once; the connection stays
+			return errors.New("write failed")
+		}
+		return nil
+	}
+	e.connect()
+	e.whole("run_x", 1, 301)
+	e.idle()
+}
+
+// A send counts as sent before it is written: a pass asked for while it is on its way (a reconnect) must not take the
+// run for clean, or the record, lost with the old connection, would be missing before the run's next one (S1″).
+func TestLiveShipmentOnItsWayIsNotTakenForSent(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.add("run_x", 10)
+	var seen atomic.Int32 // recording messages central received
+	var lose atomic.Bool
+	e.skip = func(env proto.Envelope) bool {
+		if env.Type != proto.TypeRecording {
+			return false
+		}
+		seen.Add(1)
+		return lose.CompareAndSwap(true, false)
+	}
+	e.connect()
+	e.whole("run_x", 1, 10)
+	e.idle()
+	before := seen.Load()
+	once := false
+	sendRecordingHook = func(string) error {
+		if once {
+			return nil
+		}
+		once = true
+		e.a.startCatchUp() // a reconnect's pass, while record 11 is on its way
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			e.a.mu.Lock()
+			busy := e.a.catching
+			e.a.mu.Unlock()
+			if !busy {
+				break
+			}
+		}
+		// Let central receive what the pass sent (if anything), then lose the live message itself.
+		for deadline := time.Now().Add(300 * time.Millisecond); seen.Load() == before && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		}
+		lose.Store(true)
+		return nil
+	}
+	e.live("run_x", e.add("run_x", 1))
+	sendRecordingHook = nil
+	e.live("run_x", e.add("run_x", 1))
+	e.whole("run_x", 1, 12)
+}
+
+// The memory a run keeps back is bounded counting each record's overhead, not only its data: many small records
+// overflow it (and are then read again from the local recording).
+func TestLiveShipmentKeptBackIsBounded(t *testing.T) {
+	e := newShipEnv(t)
+	e.run("run_x")
+	e.live("run_x", e.add("run_x", 20000)) // not connected: kept back; 20 KB of data, 1.3 MB with overhead
+	e.a.mu.Lock()
+	h := e.a.held["run_x"]
+	e.a.mu.Unlock()
+	if h == nil || !h.lost || h.bytes > heldMaxBytes || len(h.recs) >= 20000 {
+		t.Fatalf("kept back %d records, %d bytes, lost %v", len(h.recs), h.bytes, h.lost)
+	}
+	e.connect()
+	e.whole("run_x", 1, 20000)
 }

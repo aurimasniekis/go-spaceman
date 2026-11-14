@@ -29,6 +29,9 @@ type wsCentral struct {
 	// drop, when set (before the agent connects), is asked about every message: true closes the connection without
 	// forwarding it (the message is lost with the connection).
 	drop func(env proto.Envelope) bool
+	// skip, when set (before the agent connects), is asked about every message: true loses it (not forwarded) while
+	// the connection stays.
+	skip func(env proto.Envelope) bool
 }
 
 func newWSCentral(t *testing.T, minor int) *wsCentral { return newHeldWSCentral(t, minor, nil) }
@@ -56,6 +59,9 @@ func newHeldWSCentral(t *testing.T, minor int, hold chan struct{}) *wsCentral {
 			}
 			if fc.drop != nil && fc.drop(env) {
 				return
+			}
+			if fc.skip != nil && fc.skip(env) {
+				continue
 			}
 			select {
 			case fc.msgs <- env:
