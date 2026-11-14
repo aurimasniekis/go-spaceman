@@ -4654,6 +4654,10 @@
     allow that source, rows copied as they are.
   - **Approver recheck.** A decision with `Via telegram:<link>` is rechecked through `TelegramPrincipal` (same user,
     not Limited) and `AllowedAll(subjects, approval:decide)`.
+  - **Approvals fail closed until TG-7** (control's ruling, 2026-11-14): `respond-human-action` refuses a Telegram
+    principal on every `approval` action (enforced ones are always that type, ADR-0024), whatever the space's
+    `enforced_approvals` setting; questions, todos, messages and custom types stay open. TG-7 relaxes this guard to the
+    per-space `confirm` opt-in for enforced approvals.
 
 ## 2. Open items and unresolved contracts
 

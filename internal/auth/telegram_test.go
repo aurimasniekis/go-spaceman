@@ -72,6 +72,7 @@ func TestTelegramPrincipal(t *testing.T) {
 	link("tgl_blocked", "blocked", 102, 0, nil)
 	link("tgl_revoked", "revoked", 103, 0, nil)
 	link("tgl_sso", "active", 104, 1, f.clk.Now().Add(time.Hour).UnixMicro())
+	link("tgl_local", "active", 105, 0, f.clk.Now().Add(time.Hour).UnixMicro())
 
 	p, err := f.svc.TelegramPrincipal(f.ctx, "tgl_active", TelegramOptions{SSOGrants: true})
 	must(t, err)
@@ -100,6 +101,9 @@ func TestTelegramPrincipal(t *testing.T) {
 	if p, err := f.svc.TelegramPrincipal(f.ctx, "tgl_sso", TelegramOptions{SSOGrants: true}); err != nil || !p.TelegramSSO ||
 		!slices.Equal(p.Subjects(), []string{"telegram:tgl_sso", "user:" + bob.ID + "#sso"}) {
 		t.Fatalf("policy on: %+v %v", p, err)
+	}
+	if p, err := f.svc.TelegramPrincipal(f.ctx, "tgl_local", TelegramOptions{SSOGrants: true}); err != nil || p.TelegramSSO {
+		t.Fatalf("not confirmed from SSO: %+v %v", p, err)
 	}
 	f.clk.Advance(time.Hour)
 	if p, err := f.svc.TelegramPrincipal(f.ctx, "tgl_sso", TelegramOptions{SSOGrants: true}); err != nil || p.TelegramSSO {

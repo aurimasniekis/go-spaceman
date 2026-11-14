@@ -296,8 +296,10 @@ func TestTelegramModeAuthentication(t *testing.T) {
 	nouser := tgPrincipal()
 	nouser.User = nil
 	plain := &auth.Principal{User: &auth.User{ID: "usr_tg"}, SessionID: "ses_1", Method: auth.MethodPassword}
+	long := strings.Repeat("a", 257)
+	// The resolver accepts the empty and the oversized token too, so only authenticateTelegram's own checks refuse them.
 	sessions := &fakeSessions{p: map[string]*auth.Principal{"good": tgPrincipal(), "bearer": bearerLike, "tok": tokenAndLink,
-		"root": rootAndLink, "nouser": nouser, "plain": plain}}
+		"root": rootAndLink, "nouser": nouser, "plain": plain, "": tgPrincipal(), long: tgPrincipal()}}
 	h := tgDeps(t, sessions).TelegramHandler()
 	path := tgPath("probe-both")
 	if rec := miniApp(h, http.MethodPost, path, "Telegram good"); rec.Code != 204 {
@@ -319,7 +321,7 @@ func TestTelegramModeAuthentication(t *testing.T) {
 		"resolver returns root+link":  {"Telegram root"},
 		"resolver returns no user":    {"Telegram nouser"},
 		"resolver returns a session":  {"Telegram plain"},
-		"oversized token":             {"Telegram " + strings.Repeat("a", 257)},
+		"oversized token":             {"Telegram " + long},
 	} {
 		if rec := miniApp(h, http.MethodPost, path, hdrs...); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())
@@ -419,7 +421,7 @@ func TestTelegramModeCookiesAndHosts(t *testing.T) {
 			return func(w http.ResponseWriter, r *http.Request) {
 				sawCookie = append(sawCookie, r.Header.Get("Cookie"))
 				http.SetCookie(w, &http.Cookie{Name: "planted", Value: "1"})
-				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("ok")) // no WriteHeader: the implicit 200 must not carry the cookie either
 			}
 		}}}
 	d.MCP = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
@@ -442,8 +444,26 @@ func TestTelegramModeCookiesAndHosts(t *testing.T) {
 	if rec := miniApp(h, http.MethodPost, MCPPath, "Telegram good"); rec.Code != http.StatusNotFound {
 		t.Errorf("MCP path in Telegram mode: %d", rec.Code)
 	}
-	// Main host: the Telegram scheme is 401 whatever else the request carries, and never reaches the mux.
+	// Main host: the Telegram scheme is 401 whatever else the request carries, and never reaches the mux. The target is
+	// a public operation, which answers 204 to the same request without the Telegram header.
 	before := sessions.calls
+	mainReq := func(hdrs ...string) int {
+		req := httptest.NewRequest(http.MethodPost, tgPath("probe-public"), nil)
+		req.Header.Set("Origin", "https://central.example.com")
+		for _, v := range hdrs {
+			req.Header.Add("Authorization", v)
+		}
+		req.Header.Set("Cookie", "__Host-sm_session=abc")
+		rec := httptest.NewRecorder()
+		main.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := mainReq(); got != http.StatusNoContent {
+		t.Fatalf("main host, public op without Authorization: %d", got)
+	}
+	if got := mainReq("Basic x"); got != http.StatusNoContent {
+		t.Fatalf("main host, another scheme: %d", got)
+	}
 	for name, hdrs := range map[string][]string{
 		"telegram":           {"Telegram good"},
 		"lower case":         {"telegram good"},
@@ -452,15 +472,8 @@ func TestTelegramModeCookiesAndHosts(t *testing.T) {
 		"padded":             {"  Telegram good"},
 		"scheme without arg": {"Telegram"},
 	} {
-		req := httptest.NewRequest(http.MethodGet, tgPath("probe-cookie"), nil)
-		for _, v := range hdrs {
-			req.Header.Add("Authorization", v)
-		}
-		req.Header.Set("Cookie", "__Host-sm_session=abc")
-		rec := httptest.NewRecorder()
-		main.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("main host %s: %d %s", name, rec.Code, rec.Body.String())
+		if got := mainReq(hdrs...); got != http.StatusUnauthorized {
+			t.Errorf("main host %s: %d", name, got)
 		}
 	}
 	if sessions.calls != before {

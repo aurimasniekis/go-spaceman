@@ -432,3 +432,46 @@ func enrolledSession(t *testing.T, h *harness, email string) *client {
 	ui.csrf = me.CSRFToken
 	return ui
 }
+
+// Fail closed until TG-7 (control's ruling on the TG-4a review): a Telegram principal is refused on
+// respond-human-action for any approval, enforced or advisory, whatever the space's setting; the same user decides it
+// on the web, and a question is answered from Telegram as before.
+func TestTelegramRefusesApprovalResponses(t *testing.T) {
+	t.Parallel()
+	s := newTelegramSetup(t)
+	base := "/spaces/" + s.space
+	var ap, q, ap2 struct {
+		ID string `json:"id"`
+	}
+	s.root.do("POST", base+"/human-actions", map[string]any{"type": "approval", "title": "Deploy?", "request": map[string]any{"action": "deploy"}}).json(t, &ap)
+	s.root.do("POST", base+"/human-actions", map[string]any{"type": "approval", "title": "Deploy again?", "request": map[string]any{"action": "deploy"}}).json(t, &ap2)
+	s.root.do("POST", base+"/human-actions", map[string]any{"type": "question", "title": "Which region?"}).json(t, &q)
+	if ap.ID == "" || q.ID == "" || ap2.ID == "" {
+		t.Fatal("actions not created")
+	}
+	for _, outcome := range []string{"approved", "denied"} {
+		r := s.mini(t, "POST", base+"/human-actions/"+ap.ID+"/respond", `{"outcome":"`+outcome+`"}`, "Authorization", "Telegram good", "If-Match", `"1"`)
+		expect(t, r, http.StatusForbidden)
+		if !strings.Contains(string(r.body), "decided on the web") {
+			t.Fatalf("refusal reason: %s", r.body)
+		}
+	}
+	// The bot (in process) is refused the same way.
+	p, err := s.h.c.Auth.TelegramPrincipal(context.Background(), s.linkID, auth.TelegramOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, api.Prefix+base+"/human-actions/"+ap2.ID+"/respond", strings.NewReader(`{"outcome":"approved"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", `"1"`)
+	s.deps.InProcessHandler().ServeHTTP(rec, req.WithContext(api.WithInProcessPrincipal(context.Background(), p)))
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "decided on the web") {
+		t.Fatalf("bot on an approval: %d %s", rec.Code, rec.Body.String())
+	}
+	// The same user may decide it on the web (so the refusal isn't a missing permission), and answer a question from
+	// Telegram.
+	expect(t, s.ui.do("POST", base+"/human-actions/"+ap.ID+"/respond", map[string]any{"outcome": "approved"}, "If-Match", `"1"`), 200)
+	expect(t, s.mini(t, "POST", base+"/human-actions/"+q.ID+"/respond", `{"outcome":"answered","answer":"eu-west"}`,
+		"Authorization", "Telegram good", "If-Match", `"1"`), 200)
+}
