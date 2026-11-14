@@ -89,6 +89,20 @@ describe('Usage limits card', () => {
     expect(await axeViolations()).toEqual([])
   })
 
+  it("offers an operator who is not a global admin no action on another space's hold", async () => {
+    setup(operator, [shared], [])
+    const h = await screen.findByTestId('usage-hold')
+    expect(h).toHaveTextContent('shared · another space')
+    expect(within(h).queryByRole('button')).toBeNull()
+  })
+
+  it('names who cleared a hold in words, never the raw principal', async () => {
+    setup(viewer, [hold({ id: 'ulm_old', cleared_at: '2026-11-14T08:00:00Z', cleared_by: 'user:usr_1' })], [])
+    const c = await screen.findByTestId('usage-holds-cleared')
+    expect(c).toHaveTextContent('(an operator)')
+    expect(c).not.toHaveTextContent('usr_1')
+  })
+
   it('offers viewers no actions, and says when nothing is held or waiting', async () => {
     setup(viewer, [hold({ id: 'ulm_old', cleared_at: '2026-11-14T08:00:00Z', cleared_by: 'run:run_9' })], [wait({ id: 'lwt_old', state: 'resumed', new_run_id: 'run_2' })])
     expect(await screen.findByTestId('usage-holds-empty')).toBeInTheDocument()

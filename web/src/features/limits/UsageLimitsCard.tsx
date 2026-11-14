@@ -104,7 +104,7 @@ export function UsageLimitsCard({ spaceId }: { spaceId: string }) {
       <Title order={5}>Usage limits</Title>
       <Text size="sm" c="dimmed" mb="sm">
         An account at its usage limit is held: launches on it are refused until it resets. Runs that reach a limit wait for the reset, kept
-        alive or parked and resumed afterwards. Times are in your time zone; hover or focus one for UTC.
+        alive or parked and resumed afterwards. Times are in your time zone; hover over, focus or tap one for UTC.
       </Text>
       <ErrorAlert error={holds.error ?? waits.error} />
 
@@ -147,7 +147,7 @@ export function UsageLimitsCard({ spaceId }: { spaceId: string }) {
                           </Button>
                         )}
                         {canAccounts && u.scope === 'account' && u.account_id && (
-                          <Button size="xs" variant="default" color="owlRed" loading={busy === `clear-account:${u.account_id}`}
+                          <Button size="xs" variant="light" color="owlRed" loading={busy === `clear-account:${u.account_id}`}
                             onClick={() => setPending({ what: 'clear-account', hold: u, label: target })}>
                             Clear in every space
                           </Button>
@@ -201,7 +201,7 @@ export function UsageLimitsCard({ spaceId }: { spaceId: string }) {
                     {canControl && w.state === 'waiting' && (
                       <Group gap="xs" wrap="wrap">
                         <Button size="xs" loading={busy === `resume:${w.id}`} onClick={() => void resume(w)}>Resume now</Button>
-                        <Button size="xs" variant="default" color="owlRed" loading={busy === `release:${w.id}`} onClick={() => setPending({ what: 'release', wait: w })}>Release</Button>
+                        <Button size="xs" variant="light" color="owlRed" loading={busy === `release:${w.id}`} onClick={() => setPending({ what: 'release', wait: w })}>Release</Button>
                       </Group>
                     )}
                   </Group>

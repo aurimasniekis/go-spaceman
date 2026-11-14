@@ -44,9 +44,10 @@ function LimitsPage() {
       <SectionHeader title="Limits" description="Limits and budgets in force in this space, and where each comes from"
         actions={canWrite && l && <Button leftSection={<IconPencil size={14} />} onClick={() => setEditing(true)}>Edit limits</Button>} />
       <ErrorAlert error={limits.error} />
-      {l && (
-        <Stack gap="md">
-          <UsageLimitsCard spaceId={spaceId} />
+      <Stack gap="md">
+        {/* Usage limits come from their own queries, so they show even when this space's limits fail to load. */}
+        <UsageLimitsCard spaceId={spaceId} />
+        {l && (<>
           <HarborPilotLimitsCard spaceId={spaceId} />
           <BudgetCard l={l} />
           <Card p={0}>
@@ -107,8 +108,8 @@ function LimitsPage() {
               </Table.Tbody>
             </Table>
           </Card>
-        </Stack>
-      )}
+        </>)}
+      </Stack>
       {editing && l && <EditLimits spaceId={spaceId} l={l} canRetain={atLeast(roleIn(me, spaceId), 'admin')} onClose={() => setEditing(false)} />}
     </>
   )

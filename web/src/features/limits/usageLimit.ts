@@ -27,16 +27,17 @@ export const ACCOUNT_KINDS: readonly string[] = ['five_hour', 'seven_day', 'seve
 const valid = (iso: string | undefined | null): iso is string => !!iso && !Number.isNaN(Date.parse(iso))
 
 /**
- * A time in the viewer's zone, with the zone named: "Fri 14 Nov, 15:05 EET". A time within the next or last 20 hours
- * leaves out the day: "15:05 EET". timeZone is for tests; the browser's own zone otherwise.
+ * A time in the viewer's zone, with the zone named: "Fri 14 Nov, 15:05 EET". A time on the same calendar day as now, in
+ * that zone, leaves out the day: "15:05 EET". timeZone is for tests; the browser's own zone otherwise.
  */
 export function localTime(iso: string | undefined | null, now = Date.now(), timeZone?: string): string {
   if (!valid(iso)) return 'unknown'
   const t = Date.parse(iso)
-  const near = Math.abs(t - now) < 20 * 3600_000
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+  const today = day.format(t) === day.format(now)
   return new Intl.DateTimeFormat('en-GB', {
     timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short',
-    ...(near ? {} : { weekday: 'short', day: 'numeric', month: 'short' }),
+    ...(today ? {} : { weekday: 'short', day: 'numeric', month: 'short' }),
   }).format(t)
 }
 
@@ -88,10 +89,13 @@ export function holdTarget(u: UsageLimit, accountName: (id: string) => string | 
   return 'Harbor Pilot gateway'
 }
 
-/** Who cleared a hold, in words. */
+/** Who cleared a hold, in words: never a raw principal reference ("user:usr_…"). */
 export function clearedBy(by: string | undefined): string {
   if (!by) return ''
   if (by.startsWith('run:')) return 'a run reported it over'
   if (by === 'evidence') return "another space's run reported it over"
-  return by
+  const type = by.split(':', 1)[0]
+  if (type === 'agent') return 'an agent'
+  if (type === 'system' || type === 'policy') return 'SpaceMan'
+  return 'an operator' // a signed-in user, their API token, root or the CLI
 }

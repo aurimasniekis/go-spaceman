@@ -20,6 +20,20 @@ describe('usage-limit wording', () => {
     expect(localTime('2026-11-20T13:05:00Z', now, 'UTC')).toBe('Fri 20 Nov, 13:05 UTC')
     expect(utcTime('2026-11-14T13:05:42Z')).toBe('2026-11-14 13:05 UTC')
     expect(localTime(undefined, now)).toBe('unknown')
+  })
+
+  it('shows the day whenever the time is not on the same calendar day in the zone, however near', () => {
+    const now = Date.parse('2026-11-14T13:00:00Z')
+    // Tomorrow at 08:00, 19 hours away, and yesterday at 18:00, 19 hours ago.
+    expect(localTime('2026-11-15T08:00:00Z', now, 'UTC')).toBe('Sun 15 Nov, 08:00 UTC')
+    expect(localTime('2026-11-13T18:00:00Z', now, 'UTC')).toBe('Fri 13 Nov, 18:00 UTC')
+    // The same instants in Vilnius (13:00 EET now): tomorrow 08:00 and yesterday 18:00 there.
+    expect(localTime('2026-11-15T06:00:00Z', Date.parse('2026-11-14T11:00:00Z'), 'Europe/Vilnius')).toMatch(/^Sun 15 Nov, 08:00 (EET|GMT\+2)$/)
+    expect(localTime('2026-11-13T16:00:00Z', Date.parse('2026-11-14T11:00:00Z'), 'Europe/Vilnius')).toMatch(/^Fri 13 Nov, 18:00 (EET|GMT\+2)$/)
+    // Early and late on the same day stay without it; midnight UTC is still the 14th in Vilnius.
+    expect(localTime('2026-11-14T00:05:00Z', now, 'UTC')).toBe('00:05 UTC')
+    expect(localTime('2026-11-14T23:55:00Z', now, 'UTC')).toBe('23:55 UTC')
+    expect(localTime('2026-11-14T21:30:00Z', now, 'Europe/Vilnius')).toMatch(/^23:30 (EET|GMT\+2)$/)
     expect(utcTime('not a time')).toBe('unknown')
   })
 
@@ -37,6 +51,9 @@ describe('usage-limit wording', () => {
     expect(waitReason(undefined)).toBe('')
     expect(clearedBy('run:run_1')).toBe('a run reported it over')
     expect(clearedBy('evidence')).toBe("another space's run reported it over")
-    expect(clearedBy('user:usr_1')).toBe('user:usr_1')
+    expect(clearedBy('user:usr_1')).toBe('an operator')
+    expect(clearedBy('token:atk_1')).toBe('an operator')
+    expect(clearedBy('agent:run_1')).toBe('an agent')
+    expect(clearedBy('system:spaceman')).toBe('SpaceMan')
   })
 })
