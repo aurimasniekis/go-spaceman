@@ -713,6 +713,12 @@
   NATS) and MCP upstream transports (`gateway.Transport`). Adapters are compiled in. The gateway speaks only streamable
   HTTP to upstream servers (no stdio or SSE-only transport), and Pulse is the only inbound event system.
 
+- **Central has no per-IP or global connection cap** (T-43, ADR-0085). Slow-body clients are bounded per connection (5 s on
+  a JSON operation and on the enrolment and MCP endpoints, 10 minutes on an attachment upload, which needs a valid
+  credential, 30 s without progress), but many connections
+  at once each hold a goroutine for that long. A reverse proxy or firewall in front of central is the place for connection
+  limits. A client below about 43 KiB/s can't upload a 25 MiB attachment within its 10 minutes.
+
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The
   mechanism needs the hc core and holder to be alive, and it can be defeated by a node operator. It cannot prove that processes an agent spawned
