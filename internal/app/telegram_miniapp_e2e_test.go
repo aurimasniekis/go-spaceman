@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -438,5 +439,64 @@ func TestMiniAppPolicyChangeSignalsStreams(t *testing.T) {
 	case <-w.C:
 		t.Fatal("re-check without a policy change")
 	default:
+	}
+}
+
+// Integration (TG-9a with TG-4b): a Mini App session and its change-feed stream are rebuilt through
+// auth.Service.TelegramPrincipal, the link service's path, so an unlink reaches them: the stream ends with an
+// unauthenticated end event and the session answers 401 from then on.
+func TestMiniAppSessionAndStreamEndOnUnlink(t *testing.T) {
+	t.Parallel()
+	e := newMiniAppEnv(t)
+	e.startBot(t)
+	_ = enrolledSession(t, e.h, "mini@example.com") // the link is Limited until its user has enrolled MFA
+	tok := e.exchange(t)
+	auth := []string{"Authorization", "Telegram " + tok}
+	expect(t, e.mini(t, "GET", api.Prefix+"/spaces", "", auth...), 200)
+
+	req, err := http.NewRequest(http.MethodGet, e.h.srv.URL+api.Prefix+"/watch?live=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = miniHost + ":" + e.port
+	req.Header.Set("Origin", e.origin())
+	req.Header.Set("Authorization", "Telegram "+tok)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	res, err := http.DefaultClient.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("watch: %d", res.StatusCode)
+	}
+	br := bufio.NewReader(res.Body)
+	readUntil := func(prefix string) string {
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				t.Fatalf("stream ended before %q: %v", prefix, err)
+			}
+			if strings.HasPrefix(line, prefix) {
+				return line
+			}
+		}
+	}
+	readUntil("event: position")
+
+	// The real unlink path (an administrator's), not a row edit.
+	expect(t, e.root.do("DELETE", "/telegram/links/"+e.linkID, nil), 204)
+
+	start := time.Now()
+	readUntil("event: end")
+	if line := readUntil("data:"); !strings.Contains(line, api.EndUnauthenticated) {
+		t.Fatalf("end reason: %s", line)
+	}
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("stream ended after %s", d)
+	}
+	if r := e.mini(t, "GET", api.Prefix+"/spaces", "", auth...); r.status != 401 {
+		t.Fatalf("session after unlink: %d", r.status)
 	}
 }
