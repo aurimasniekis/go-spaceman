@@ -267,7 +267,7 @@ func (svc *Service) applyLocked(ctx context.Context, row *db.TelegramBot, drop b
 	}
 	svc.stopPollerLocked()
 	svc.run.client = c
-	svc.startSender(c)
+	svc.startSender(c) //nolint:contextcheck // the sender runs on central's serving context, like the poller
 	host := row.MiniappHost
 	svc.miniAppHost.Store(&host)
 	svc.setState(func(rt *runtime) { rt.infoClient = c })
