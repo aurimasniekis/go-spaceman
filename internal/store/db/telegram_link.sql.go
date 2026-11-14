@@ -231,17 +231,19 @@ func (q *Queries) InsertTelegramLinkCode(ctx context.Context, arg InsertTelegram
 
 const moveTelegramLinkCodeSession = `-- name: MoveTelegramLinkCodeSession :exec
 UPDATE telegram_link_codes SET created_session_id = ?1
-WHERE created_session_id = ?2 AND ?2 <> '' AND state IN ('new', 'redeemed')
+WHERE created_session_id = ?2 AND ?2 <> '' AND user_id = ?3
+  AND state IN ('new', 'redeemed')
 `
 
 type MoveTelegramLinkCodeSessionParams struct {
 	NewSessionID string
 	OldSessionID string
+	UserID       string
 }
 
 // A web session was rotated (MFA, re-authentication): its unfinished link codes follow it to the new session.
 func (q *Queries) MoveTelegramLinkCodeSession(ctx context.Context, arg MoveTelegramLinkCodeSessionParams) error {
-	_, err := q.db.ExecContext(ctx, moveTelegramLinkCodeSession, arg.NewSessionID, arg.OldSessionID)
+	_, err := q.db.ExecContext(ctx, moveTelegramLinkCodeSession, arg.NewSessionID, arg.OldSessionID, arg.UserID)
 	return err
 }
 

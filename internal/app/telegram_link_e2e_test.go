@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
@@ -713,5 +714,85 @@ func TestTelegramLinkCapUsesTheGrantsAtConfirmation(t *testing.T) {
 	}
 	if p := e.login(t, "eli@example.com", eli.secret).do("POST", "/me/telegram/link-codes/"+c2.ID+"/confirm", nil).problem(t); p.Status != 403 {
 		t.Fatalf("confirmation from a new sign-in after a grant change: %+v", p)
+	}
+}
+
+// SM-TG-001 (security review of PR #86): the display name is user-controlled, so it must not be able to look like the
+// masked e-mail. The e-mail has its own labelled line outside the name (and the bold entities), an empty e-mail shows
+// "(no e-mail)", and the name can't add a line of its own.
+func TestTelegramLinkPromptNameCannotImitateTheEmail(t *testing.T) {
+	t.Parallel()
+	e := newLinkEnv(t)
+	vera := e.user(t, "vera@real.example", "Vera (v***@victim.example)", []map[string]string{{"role": "operator", "domain": e.space}})
+	prompt := e.start(tgPerson(801, "Target"), vera.createCode(t).Code)
+	buttons(t, prompt)
+	lines := strings.Split(prompt.Text, "\n")
+	if len(lines) < 2 || lines[1] != "E-mail: v***@real.example" || strings.Count(prompt.Text, "E-mail:") != 1 {
+		t.Fatalf("the e-mail is not on its own labelled line: %q", prompt.Text)
+	}
+	if !strings.HasSuffix(lines[0], " as Vera (v***@victim.example)?") || strings.Contains(lines[0], "real.example") {
+		t.Fatalf("the name line %q", lines[0])
+	}
+	// The e-mail is outside both bold entities (host, name).
+	emailAt := len(utf16.Encode([]rune(strings.Join(lines[:1], "\n") + "\n")))
+	for _, en := range prompt.Entities {
+		if en.Offset+en.Length > emailAt-1 {
+			t.Fatalf("a bold entity %+v reaches the e-mail line", en)
+		}
+	}
+
+	// A name with line breaks can't start a line that looks like the e-mail line.
+	forged := e.user(t, "mal@real.example", "Mal\nE-mail: v***@victim.example", []map[string]string{{"role": "operator", "domain": e.space}})
+	p2 := e.start(tgPerson(802, "Target2"), forged.createCode(t).Code)
+	if l2 := strings.Split(p2.Text, "\n"); len(l2) < 2 || l2[1] != "E-mail: m***@real.example" || strings.HasPrefix(l2[0], "E-mail:") || strings.Count(p2.Text, "\nE-mail:") != 1 {
+		t.Fatalf("a name with a newline forged the e-mail line: %q", p2.Text)
+	}
+
+	// No e-mail on record.
+	nomail := e.user(t, "nomail@real.example", "Nomi", []map[string]string{{"role": "operator", "domain": e.space}})
+	(&telegramSetup{h: e.h}).exec(t, `UPDATE users SET email = NULL WHERE id = ?`, nomail.id)
+	p3 := e.start(tgPerson(803, "Target3"), nomail.createCode(t).Code)
+	if !strings.Contains(p3.Text, "\nE-mail: (no e-mail)\n") || strings.Contains(p3.Text, "(***") {
+		t.Fatalf("the prompt without an e-mail: %q", p3.Text)
+	}
+}
+
+// SM-TG-001: a disabled user's code is never redeemed (the disabled-user guard in /start): the reply is the vague
+// refusal and the code stays unredeemed, not bound to the Telegram account.
+func TestTelegramLinkDisabledUsersCodeIsNotRedeemed(t *testing.T) {
+	t.Parallel()
+	e := newLinkEnv(t)
+	dan := e.user(t, "dan@example.com", "Dan", []map[string]string{{"role": "operator", "domain": e.space}})
+	code := dan.createCode(t)
+	(&telegramSetup{h: e.h}).exec(t, `UPDATE users SET enabled = 0 WHERE id = ?`, dan.id)
+	r := e.start(tgPerson(811, "Dan"), code.Code)
+	if !r.Bounded || r.Markup != nil || strings.Contains(r.Text, "Dan") {
+		t.Fatalf("a disabled user's code was redeemed: %+v", r)
+	}
+	if n := e.count(t, `SELECT count(*) FROM telegram_link_codes WHERE user_id = ? AND state = 'new' AND redeemed_tg_user_id IS NULL`, dan.id); n != 1 {
+		t.Fatalf("the code was bound to the Telegram account (%d unredeemed codes)", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM audit_events WHERE action = 'telegram.link_code.redeemed'`); n != 0 {
+		t.Fatalf("%d redemption audit rows", n)
+	}
+}
+
+// SM-TG-001: two codes of different users redeemed and confirmed in Telegram by the same account (possible while it has
+// no link) can't both link it. The first web confirmation links; the second is a 409 from the explicit check, not a 500
+// from the unique index.
+func TestTelegramLinkSecondConfirmForALinkedTelegramAccountIsConflict(t *testing.T) {
+	t.Parallel()
+	e := newLinkEnv(t)
+	ann := e.user(t, "ann2@example.com", "Ann", []map[string]string{{"role": "operator", "domain": e.space}})
+	bea := e.user(t, "bea@example.com", "Bea", []map[string]string{{"role": "operator", "domain": e.space}})
+	tg := tgPerson(821, "Shared")
+	c1 := e.confirmedInTelegram(t, ann, tg)
+	c2 := e.confirmedInTelegram(t, bea, tg)
+	expect(t, ann.confirm(c1.ID, nil), 201)
+	if p := bea.confirm(c2.ID, nil).problem(t); p.Status != 409 || p.Code != "conflict" {
+		t.Fatalf("the second confirmation for a linked Telegram account: %+v", p)
+	}
+	if n := e.count(t, `SELECT count(*) FROM telegram_links WHERE tg_user_id = ?`, 821); n != 1 {
+		t.Fatalf("%d links for the Telegram account", n)
 	}
 }

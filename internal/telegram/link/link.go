@@ -582,10 +582,15 @@ func (s *Service) prompt(id, name, email string) updates.LinkReply {
 	bold(s.host)
 	b.WriteString(" as ")
 	bold(name)
+	// The e-mail is on its own labelled line: the name is user-controlled (one line, no newlines: see clean), so it
+	// can't pass for, or imitate, the masked address.
+	b.WriteString("?\nE-mail: ")
 	if email != "" {
-		b.WriteString(" (" + email + ")")
+		b.WriteString(email)
+	} else {
+		b.WriteString("(no e-mail)")
 	}
-	b.WriteString("?\n\nOnly confirm if you started this in your own browser just now. If someone sent you this link, tap \"This wasn't me\".")
+	b.WriteString("\n\nOnly confirm if you started this in your own browser just now. If someone sent you this link, tap \"This wasn't me\".")
 	return updates.LinkReply{Text: b.String(), Entities: ents, Markup: &botapi.InlineKeyboardMarkup{InlineKeyboard: [][]botapi.InlineKeyboardButton{{
 		{Text: "Confirm", CallbackData: callbackOK + id, Style: botapi.StyleSuccess},
 		{Text: "This wasn't me", CallbackData: callbackRefuse + id, Style: botapi.StyleDanger},

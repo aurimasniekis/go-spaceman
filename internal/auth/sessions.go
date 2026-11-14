@@ -168,7 +168,7 @@ func (svc *Service) rotatedSession(ctx context.Context, tx *store.Tx, oldDisplay
 	if err != nil {
 		return "", err
 	}
-	if err := tx.Q.MoveTelegramLinkCodeSession(ctx, db.MoveTelegramLinkCodeSessionParams{OldSessionID: oldDisplayID, NewSessionID: displayID}); err != nil {
+	if err := tx.Q.MoveTelegramLinkCodeSession(ctx, db.MoveTelegramLinkCodeSessionParams{OldSessionID: oldDisplayID, NewSessionID: displayID, UserID: userID}); err != nil {
 		return "", err
 	}
 	return token, nil

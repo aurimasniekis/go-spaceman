@@ -50,4 +50,5 @@ SELECT * FROM telegram_links WHERE id = ?;
 -- name: MoveTelegramLinkCodeSession :exec
 -- A web session was rotated (MFA, re-authentication): its unfinished link codes follow it to the new session.
 UPDATE telegram_link_codes SET created_session_id = sqlc.arg(new_session_id)
-WHERE created_session_id = sqlc.arg(old_session_id) AND sqlc.arg(old_session_id) <> '' AND state IN ('new', 'redeemed');
+WHERE created_session_id = sqlc.arg(old_session_id) AND sqlc.arg(old_session_id) <> '' AND user_id = sqlc.arg(user_id)
+  AND state IN ('new', 'redeemed');
