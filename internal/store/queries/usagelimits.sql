@@ -70,6 +70,16 @@ WHERE id = sqlc.arg(id) AND notified_control_at IS NULL;
 UPDATE usage_limits SET updated_at = sqlc.arg(now), notified_humans_at = sqlc.arg(now), version = version + 1
 WHERE id = sqlc.arg(id) AND notified_humans_at IS NULL;
 
+-- Open holds with a known reset later than the given time whose space's people were not told yet, in spaces that
+-- aren't archived (ADR-0079 Q5). The space's own threshold is applied by the caller. A keyset page, furthest reset
+-- first, after the cursor (resets_at, id): the caller reads every page, so holds it skips can't starve later ones.
+-- name: ListUsageLimitsToTellPeople :many
+SELECT u.* FROM usage_limits u JOIN spaces s ON s.id = u.space_id
+WHERE u.cleared_at IS NULL AND u.notified_humans_at IS NULL AND u.resets_at > sqlc.arg(after)
+  AND (u.resets_at < sqlc.arg(cursor_reset) OR (u.resets_at = sqlc.arg(cursor_reset) AND u.id < sqlc.arg(cursor_id)))
+  AND s.state <> 'archived'
+ORDER BY u.resets_at DESC, u.id DESC LIMIT sqlc.arg(lim);
+
 -- name: InsertLimitWait :exec
 INSERT INTO limit_waits (id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id,
   resume_at, release_at, attempts, created_at, updated_at)

@@ -33,6 +33,7 @@ it comes from and where SpaceMan enforces it.
 | Usage-limit failover (`usage_limit_failover`) | off (0) | 0 off, 1 on | when the account a launch would use is held at a usage limit, use another account bound to the space for the same harness that isn't held; a space routed through Harbor Pilot never falls back to a direct account | run launch |
 | Usage-limit keep-alive (`usage_limit_keep_alive_max_minutes`) | 360 | 1–1,440 | how long a run at a usage limit waits for the reset with its process kept alive (after that, or at once when the reset is further away, SpaceMan stops it and parks it to resume at the reset); also the longest gap between re-checks of a hold whose reset time is unknown | usage-limit holds and parking |
 | Usage-limit maximum wait (`usage_limit_max_wait_hours`) | 168 (7 days) | 1–720 | how long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned; control is never given up on | usage-limit waits |
+| Usage-limit people notice (`usage_limit_notify_after_hours`) | 12 | 0–720 (0: never) | how far away the reset of an account held at a usage limit must be for the space's people to get one human action about it, once per account and limit window (12 h: weekly limits, not 5-hour ones) | usage-limit holds |
 
 Some limits are set elsewhere and only shown here: the node's **capacity** (the node agent's `capacity` setting, shared
 by every space on the node), each knowledge base's own session limit, human-action rate limits per type
@@ -78,6 +79,22 @@ it then. A run that ends at its limit, or whose node is lost while it waits, is 
   the space is archived.
 
 KB support and dreamer runs are neither stopped at the keep-alive nor parked: their schedulers start them when needed.
+
+### Telling people about long waits
+
+When an account (or the Harbor Pilot gateway) is held until a reset more than **12 hours** away
+(`usage_limit_notify_after_hours`), typically a weekly limit, the space gets one **human action**: an informational
+message from SpaceMan ("Usage limits") with normal priority, in the space's Needs-you list. It names the account, the
+reset time, and how many runs (and tasks) are waiting on it, and says what you can do: nothing, if the work can wait;
+bind another account of the same harness and turn on usage-limit failover; or, if the account works again, clear the
+hold. The action gives the hold's ID: `spaceman limits clear <hold id> --space <space>` clears it in this space only
+(`spaceman limits holds --space <space>` lists the space's holds), and launches on the account stay refused while
+another space still holds it; `spaceman account clear-holds <account>` (needs `account:write`) clears the account's
+holds in every space.
+
+There is one such action per space and limit window, however many runs hit the limit and however often they report it.
+A 5-hour wait raises none. A hold whose reset time is unknown raises none either, since nobody knows the wait is long.
+Set the limit to 0 to turn the notice off for a space. Control is told about runs at their limit separately (above).
 
 `spaceman limits waits` lists a space's waits. `spaceman limits resume <wait>` resumes one now (the usual launch checks
 apply), and `spaceman limits release <wait>` gives one up now; both need the permission that launches runs in the space

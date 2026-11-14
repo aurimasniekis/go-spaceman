@@ -53,6 +53,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   audited. A hold that clears lets the runs parked under it resume on the next round. A resume whose `--resume` fails
   before the first turn starts once more in a fresh session. A released task in review stays in review, with only its
   assignee cleared.
+- People are told about long usage-limit waits (ADR-0079 Q5): when an account (or the Harbor Pilot gateway) is held
+  until a reset more than 12 hours away, the space gets one informational human action naming the account, the reset
+  and what waits on it, once per space and limit window. New space limit `usage_limit_notify_after_hours` (0–720,
+  default 12; 0 turns it off). The `usage_limit_*` limits are validated like every limit, and the limits API now lists
+  `hours` among the units.
 
 ## [0.1.3] - 2026-11-13
 
