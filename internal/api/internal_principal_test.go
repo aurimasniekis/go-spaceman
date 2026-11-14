@@ -109,7 +109,7 @@ func TestInProcessHandler(t *testing.T) {
 	} {
 		rec = httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, Prefix+"/auth/me", nil).WithContext(WithInProcessPrincipal(context.Background(), p)))
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "only an MCP principal") {
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "only an MCP or Telegram principal") {
 			t.Errorf("%s principal: %d %s", name, rec.Code, rec.Body.String())
 		}
 	}

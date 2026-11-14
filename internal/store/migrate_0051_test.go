@@ -22,6 +22,8 @@ func TestTelegramMigrationFrom0049(t *testing.T) {
 		`INSERT INTO nodes (id, name, state, created_at, created_by, updated_at) VALUES ('nod_1', 'n1', 'active', 0, 't', 0)`,
 		`INSERT INTO spaces (id, slug, name, node_id, state, workdir, created_at, created_by, updated_at) VALUES ('spc_a', 'aaa', 'A', 'nod_1', 'active', 'a', 0, 't', 0)`,
 		`INSERT INTO users (id, display_name, enabled, provisioned_via, created_at, created_by, updated_at) VALUES ('usr_1', 'A', 1, 'admin', 0, 't', 0)`,
+		`INSERT INTO role_grants (subject, role, domain, source, source_ref, created_at, created_by) VALUES ('user:usr_1', 'admin', '*', 'manual', '', 7, 't'),
+			('user:usr_1#sso', 'viewer', 'spc_a', 'sso', 'eng', 8, 't')`,
 	} {
 		if _, err := s.wdb.ExecContext(ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)
@@ -61,6 +63,19 @@ func TestTelegramMigrationFrom0049(t *testing.T) {
 	if count(`SELECT count(*) FROM spaces WHERE id = 'spc_a'`) != 1 {
 		t.Fatal("space lost by the migration")
 	}
+	// role_grants is rebuilt to allow the 'telegram' source: rows kept as they were, the index back, other sources refused.
+	if count(`SELECT count(*) FROM role_grants WHERE (subject, role, domain, source, source_ref, created_at) IN
+		(VALUES ('user:usr_1', 'admin', '*', 'manual', '', 7), ('user:usr_1#sso', 'viewer', 'spc_a', 'sso', 'eng', 8))`) != 2 ||
+		count(`SELECT count(*) FROM role_grants`) != 2 {
+		t.Fatal("role grants changed by the migration")
+	}
+	if count(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_role_grants_domain' AND tbl_name = 'role_grants'`) != 1 {
+		t.Fatal("role_grants domain index lost")
+	}
+	grant := `INSERT INTO role_grants (subject, role, domain, source, created_at, created_by) VALUES ('telegram:tgl_1', 'viewer', 'spc_a', ?, 0, 't')`
+	exec(grant, "telegram")
+	refused("an unknown grant source", grant, "chat")
+	refused("a duplicate grant", grant, "telegram")
 
 	bot := `INSERT INTO telegram_bot (singleton, token_enc, webhook_secret_enc, hook_id, mode, created_at, created_by, updated_at, updated_by)
 		VALUES (?, x'00', x'00', ?, ?, 0, 't', 0, 't')`

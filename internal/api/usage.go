@@ -61,6 +61,7 @@ func RegisterUsage(svc *usage.Service) func(api huma.API, d *Deps) {
 // TranscriptDownload serves a run's stored native transcript (may contain secrets; download only, never rendered).
 func TranscriptDownload(svc *usage.Service) RawRoute {
 	return RawRoute{Pattern: "GET " + Prefix + "/spaces/{space_id}/runs/{run_id}/transcript", Perm: authz.RecordingRead,
+		Telegram: TelegramExcluded,
 		Handler: func(d *Deps) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
 				f, t, err := svc.OpenTranscript(r.Context(), r.PathValue("space_id"), r.PathValue("run_id"))

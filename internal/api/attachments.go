@@ -83,6 +83,7 @@ func RegisterAttachments(svc *attachments.Service) func(api huma.API, d *Deps) {
 // with a neutral type; always nosniff and a sandboxing CSP, so nothing uploaded can run in SpaceMan's origin.
 func AttachmentContent(svc *attachments.Service) RawRoute {
 	return RawRoute{Pattern: "GET " + Prefix + "/spaces/{space_id}/attachments/{attachment_id}/content", Perm: authz.AttachmentRead,
+		Telegram: TelegramMiniApp,
 		Handler: func(d *Deps) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
 				a, rc, err := svc.Open(r.Context(), r.PathValue("space_id"), r.PathValue("attachment_id"))
