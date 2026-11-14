@@ -1234,6 +1234,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/telegram/link-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start linking your Telegram account
+         * @description Returns a single-use code and a t.me deep link that sends /start <code> to the bot. The code is returned only here and expires after link_code_ttl_seconds; creating one cancels your unfinished codes. The bot then asks the Telegram account to confirm, naming this server and your account; after that, confirm-telegram-link from this same browser session finishes the link. Needs a browser session with a recent re-authentication; API tokens can't link.
+         */
+        post: operations["create-telegram-link-code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/link-codes/{code_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One of your Telegram link codes
+         * @description The page polls this while it is open. Once the Telegram account confirmed in the bot, the state is telegram_confirmed and the answer names that account.
+         */
+        get: operations["get-telegram-link-code"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/link-codes/{code_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel one of your Telegram link codes
+         * @description Cancelling a used or cancelled code changes nothing.
+         */
+        post: operations["cancel-telegram-link-code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/telegram/link-codes/{code_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link the Telegram account that confirmed your code
+         * @description Only after the Telegram account confirmed in the bot, before the code expires, from the browser session that created the code and with a recent re-authentication. The link's grants are your grants capped at max_role; every request through it is also checked against your current grants.
+         */
+        post: operations["confirm-telegram-link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/nodes": {
         parameters: {
             query?: never;
@@ -8111,6 +8191,37 @@ export interface components {
             source: string;
             value: string;
         };
+        Link: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/Link.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            confirmed_at: string;
+            /** @description The link's capped grants; each request is also checked against the user's current grants */
+            grants: components["schemas"]["AuthzGrant"][];
+            id: string;
+            /**
+             * @description The link's cap: it never has a stronger role than this in any space
+             * @enum {string}
+             */
+            max_role: "viewer" | "operator" | "admin";
+            /** Format: date-time */
+            reconfirm_due_at?: string;
+            /**
+             * Format: date-time
+             * @description Until when the user's SSO grants count for the link
+             */
+            sso_until?: string;
+            /** @enum {string} */
+            state: "active" | "suspended" | "blocked" | "revoked";
+            telegram: components["schemas"]["LinkTelegramUser"];
+            user_id: string;
+            /** @description Confirmed from an SSO session with SSO grants allowed through Telegram */
+            via_sso: boolean;
+        };
         "Link-user-identityRequest": {
             /**
              * Format: uri
@@ -8120,6 +8231,26 @@ export interface components {
             readonly $schema?: string;
             provider_id: string;
             subject: string;
+        };
+        LinkCode: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/LinkCode.json
+             */
+            readonly $schema?: string;
+            /** @description The single-use code, returned only when it is created */
+            code?: string;
+            /** @description t.me link that sends /start <code> to the bot, returned only when the code is created */
+            deep_link?: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The code's ID (not the code): use it to read, cancel or confirm */
+            id: string;
+            /** @enum {string} */
+            state: "new" | "redeemed" | "telegram_confirmed" | "confirmed" | "cancelled" | "expired";
+            /** @description The Telegram account that wants to link, once it confirmed in the bot */
+            telegram?: components["schemas"]["LinkTelegramUser"];
         };
         LinkInvite: {
             /**
@@ -8134,6 +8265,17 @@ export interface components {
             token: string;
             /** @description Open this path in the browser to sign in at the provider and link the identity */
             url: string;
+        };
+        LinkTelegramUser: {
+            /**
+             * Format: int64
+             * @description Telegram user ID
+             */
+            id: number;
+            /** @description The account's name as Telegram shows it */
+            name: string;
+            /** @description Telegram username without @ (empty when the account has none) */
+            username: string;
         };
         "List-account-kindsResponse": {
             /**
@@ -11138,6 +11280,19 @@ export interface components {
             status?: "backlog" | "ready";
             title: string;
             workspace?: string;
+        };
+        TelegramLinkConfirmIn: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/TelegramLinkConfirmIn.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description The link's cap; empty takes the policy default. viewer and operator are allowed up to the default; admin (same as your grants) only when the policy allows the admin cap
+             * @enum {string}
+             */
+            max_role?: "viewer" | "operator" | "admin" | "";
         };
         TemplateDefinition: {
             body: string;
@@ -14508,6 +14663,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GatewayServer"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "create-telegram-link-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkCode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "get-telegram-link-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The code's ID (not the code) */
+                code_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkCode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "cancel-telegram-link-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The code's ID (not the code) */
+                code_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkCode"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "confirm-telegram-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The code's ID (not the code) */
+                code_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TelegramLinkConfirmIn"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"];
                 };
             };
             /** @description Error */

@@ -83,6 +83,7 @@ const (
 	Preemption     = "tpr" // a task's or worker's preemption by an incident (SM-QUEUE-009)
 	Operation      = "op"  // long-running operation
 	HarborPilot    = "hpc" // the Harbor Pilot connection (ADR-0060)
+	TelegramLink   = "tgl" // a Telegram user linked to a SpaceMan user (ADR-0083)
 )
 
 const encoding = "0123456789abcdefghjkmnpqrstvwxyz"

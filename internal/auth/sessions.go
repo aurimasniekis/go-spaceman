@@ -156,13 +156,33 @@ type SessionMeta struct {
 
 // createSession inserts a new session inside tx and returns the bearer token (cookie value).
 func (svc *Service) createSession(ctx context.Context, tx *store.Tx, userID, method string, mfaAt *time.Time, meta SessionMeta) (string, error) {
-	token, err := randomToken()
+	token, _, err := svc.newSession(ctx, tx, userID, method, mfaAt, meta)
+	return token, err
+}
+
+// rotatedSession creates the session that replaces the (already revoked) session oldDisplayID and carries what is
+// bound to the old session over to it: the user's unfinished Telegram link codes, which only their creating session
+// may confirm (ADR-0083 decision 2).
+func (svc *Service) rotatedSession(ctx context.Context, tx *store.Tx, oldDisplayID, userID, method string, mfaAt *time.Time, meta SessionMeta) (string, error) {
+	token, displayID, err := svc.newSession(ctx, tx, userID, method, mfaAt, meta)
 	if err != nil {
 		return "", err
 	}
+	if err := tx.Q.MoveTelegramLinkCodeSession(ctx, db.MoveTelegramLinkCodeSessionParams{OldSessionID: oldDisplayID, NewSessionID: displayID}); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// newSession inserts a session and returns its token and display ID.
+func (svc *Service) newSession(ctx context.Context, tx *store.Tx, userID, method string, mfaAt *time.Time, meta SessionMeta) (token, displayID string, err error) {
+	token, err = randomToken()
+	if err != nil {
+		return "", "", err
+	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
-		return "", err
+		return "", "", err
 	}
 	var mfa sql.NullInt64
 	if mfaAt != nil {
@@ -171,19 +191,20 @@ func (svc *Service) createSession(ctx context.Context, tx *store.Tx, userID, met
 	if len(meta.UserAgent) > 256 {
 		meta.UserAgent = meta.UserAgent[:256]
 	}
+	displayID = ids.New(ids.WebSession)
 	err = tx.Q.InsertWebSession(ctx, db.InsertWebSessionParams{
 		IDHash: hashSessionToken(token), UserID: userID, CsrfSecret: secret, AuthMethod: method, MfaAt: mfa,
 		AuthAt: tx.NowMicros(), CreatedAt: tx.NowMicros(), LastSeenAt: tx.NowMicros(),
-		AbsoluteExpiresAt: tx.Now.Add(svc.opts.SessionAbsolute).UnixMicro(), Ip: meta.IP, UserAgent: meta.UserAgent, DisplayID: ids.New(ids.WebSession),
+		AbsoluteExpiresAt: tx.Now.Add(svc.opts.SessionAbsolute).UnixMicro(), Ip: meta.IP, UserAgent: meta.UserAgent, DisplayID: displayID,
 		AuthProvider: meta.Provider,
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := tx.Q.TouchUserLogin(ctx, db.TouchUserLoginParams{LastLoginAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true}, ID: userID}); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return token, nil
+	return token, displayID, nil
 }
 
 // ErrUnauthorized means no valid session.
@@ -296,7 +317,7 @@ func (svc *Service) Rotate(ctx context.Context, p *Principal, meta SessionMeta) 
 			mfa = &t
 		}
 		meta.Provider = old.AuthProvider
-		token, err = svc.createSession(ctx, tx, old.UserID, old.AuthMethod, mfa, meta)
+		token, err = svc.rotatedSession(ctx, tx, old.DisplayID, old.UserID, old.AuthMethod, mfa, meta)
 		if err != nil {
 			return err
 		}
@@ -318,7 +339,7 @@ func (svc *Service) rotateTx(ctx context.Context, tx *store.Tx, p *Principal, au
 		return "", ErrUnauthorized
 	}
 	meta.Provider = p.Provider
-	token, err := svc.createSession(ctx, tx, p.User.ID, p.Method, mfaAt, meta)
+	token, err := svc.rotatedSession(ctx, tx, p.SessionID, p.User.ID, p.Method, mfaAt, meta)
 	if err != nil {
 		return "", err
 	}

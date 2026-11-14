@@ -64,6 +64,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram"
+	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
 	tgsettings "github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/tgbot"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/updates"
@@ -164,6 +165,8 @@ type Central struct {
 	TelegramSettings *tgsettings.Service
 	// TelegramLimiter holds each link's inbound limits (plan §3.5).
 	TelegramLimiter *updates.Limiter
+	// TelegramLink runs the linking protocol (ADR-0083 decision 2): web codes, /start and both confirmations.
+	TelegramLink *tglink.Service
 	// TelegramSSOGrants reports the link_sso_grants setting (ADR-0083 Q8; TG-3c wires it): whether a link confirmed
 	// from an SSO session acts with the user's SSO grants until that session's absolute expiry. Nil: off, so every
 	// Telegram principal acts with the user's local grants only.
@@ -612,7 +615,7 @@ func (c *Central) APIDeps() *api.Deps {
 		StreamRevalidate: c.Cfg.Auth.StreamRevalidate.D(), ExtraRules: rules(),
 		Extra: []func(huma.API, *api.Deps){api.RegisterFleet(c.Fleet), api.RegisterRelocations(c.Fleet), api.RegisterRecordings(c.Fleet), api.RegisterAttachments(c.Attachments),
 			api.RegisterInbox(c.Inbox), api.RegisterEvents(c.Events),
-			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings)},
+			api.RegisterQueue(c.Queue, c.Inbox), api.RegisterHuman(c.Human), api.RegisterAccounts(c.Accounts), api.RegisterMessages(c.Messages), api.RegisterCatalog(c.Catalog, c.Store), api.RegisterGateway(c.Gateway), api.RegisterApprovals(c.Approvals), api.RegisterMemory(c.Memory), api.RegisterKB(c.KB), api.RegisterDreams(c.Dreams), api.RegisterUsage(c.Usage), api.RegisterOIDC(c.OIDC), api.RegisterOutbox(c.Outbox), api.RegisterBackups(c.Backups), api.RegisterLimits(c.Limits, c.Schedules), api.RegisterXSpace(c.XSpace), api.RegisterRepositories(c.Repos), api.RegisterGitKeys(c.GitKeys), api.RegisterHarborPilot(c.HarborPilot, c.HarborPilotBudgets), api.RegisterRetention(c.Retention, c.Exports), api.RegisterAttention(c.attentionSources()), api.RegisterSystemStatus(c.systemSources()), api.RegisterTelegramBot(c.TelegramBot), api.RegisterTelegramSettings(c.TelegramSettings), api.RegisterTelegramLink(c.TelegramLink)},
 		Raw:      rawRoutes(c.Fleet, c.Attachments, c.Usage, c.Exports),
 		Telegram: &api.TelegramPolicy{Ops: telegram.Ops, Watch: telegram.Watch}}
 	d.Ready = func() bool { r, ok := c.Health.Last(); return ok && r.Status == health.StatusReady }
@@ -866,7 +869,7 @@ func (c *Central) housekeeping(ctx context.Context) {
 func SpecDeps() *api.Deps {
 	return &api.Deps{ExtraRules: rules(), Extra: []func(huma.API, *api.Deps){api.RegisterFleet(nil), api.RegisterRelocations(nil), api.RegisterRecordings(nil),
 		api.RegisterAttachments(nil), api.RegisterInbox(nil), api.RegisterEvents(nil), api.RegisterQueue(nil, nil),
-		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil), api.RegisterTelegramBot(nil), api.RegisterTelegramSettings(nil)},
+		api.RegisterHuman(nil), api.RegisterAccounts(nil), api.RegisterMessages(nil), api.RegisterCatalog(nil, nil), api.RegisterGateway(nil), api.RegisterApprovals(nil), api.RegisterMemory(nil), api.RegisterKB(nil), api.RegisterDreams(nil), api.RegisterUsage(nil), api.RegisterOIDC(nil), api.RegisterOutbox(nil), api.RegisterBackups(nil), api.RegisterLimits(nil, nil), api.RegisterXSpace(nil), api.RegisterRepositories(nil), api.RegisterGitKeys(nil), api.RegisterHarborPilot(nil, nil), api.RegisterRetention(nil, nil), api.RegisterAttention(nil), api.RegisterSystemStatus(nil), api.RegisterTelegramBot(nil), api.RegisterTelegramSettings(nil), api.RegisterTelegramLink(nil)},
 		Raw: rawRoutes(nil, nil, nil, nil)}
 }
 
@@ -879,7 +882,7 @@ func rawRoutes(f *fleet.Service, att *attachments.Service, us *usage.Service, ex
 // rules merges the authorization rules of every feature's operations.
 func rules() map[string]api.Rule {
 	out := map[string]api.Rule{}
-	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules, api.TelegramBotRules, api.TelegramSettingsRules} {
+	for _, m := range []map[string]api.Rule{api.FleetRules, api.RelocationRules, api.RecordingRules, api.AttachmentRules, api.InboxRules, api.EventRules, api.QueueRules, api.HumanRules, api.HumanTypePermissionRules, api.AccountRules, api.MessageRules, api.CatalogRules, api.GatewayRules, api.ApprovalRules, api.MemoryRules, api.KBRules, api.DreamRules, api.UsageRules, api.OIDCRules, api.OutboxRules, api.BackupRules, api.LimitRules, api.XSpaceRules, api.RepositoryRules, api.GitKeyRules, api.HarborPilotRules, api.RetentionRules, api.AttentionRules, api.SystemStatusRules, api.TelegramBotRules, api.TelegramSettingsRules, api.TelegramLinkRules} {
 		for k, v := range m {
 			out[k] = v
 		}

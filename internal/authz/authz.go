@@ -209,6 +209,34 @@ func Covers(holder []Grant, want Grant) bool {
 	return false
 }
 
+// Cap lowers holder's grants to at most max (a Telegram link's cap, ADR-0083 decision 3): one grant per domain the
+// holder has a valid grant in, with the holder's strongest role there or max, whichever is weaker, sorted by domain.
+// Grants with an unknown role or domain, or an unknown max, give nothing. Every grant returned is covered by holder.
+func Cap(holder []Grant, maxRole Role) []Grant {
+	if !maxRole.Valid() {
+		return nil
+	}
+	best := map[string]Role{}
+	for _, h := range holder {
+		if !h.Role.Valid() || !ValidDomain(h.Domain) {
+			continue
+		}
+		r := h.Role
+		if !maxRole.atLeast(r) {
+			r = maxRole
+		}
+		if cur, ok := best[h.Domain]; !ok || r.atLeast(cur) {
+			best[h.Domain] = r
+		}
+	}
+	out := make([]Grant, 0, len(best))
+	for d, r := range best {
+		out = append(out, Grant{Role: r, Domain: d})
+	}
+	slices.SortFunc(out, func(a, b Grant) int { return strings.Compare(a.Domain, b.Domain) })
+	return out
+}
+
 // ValidDomain reports whether d is "*" or a space ID.
 func ValidDomain(d string) bool {
 	return d == Global || (strings.HasPrefix(d, "spc_") && len(d) == 30)

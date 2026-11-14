@@ -6,6 +6,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aurimasniekis/go-spaceman/internal/apperr"
+	"github.com/aurimasniekis/go-spaceman/internal/audit"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 )
 
@@ -60,4 +63,46 @@ func (svc *Service) TelegramPrincipal(ctx context.Context, linkID string, o Tele
 // Every change that revokes, suspends or narrows a link calls it (TG-4b).
 func (svc *Service) TelegramLinkChangedAfterCommit(tx *store.Tx, linkID string) {
 	svc.revokedAfterCommit(tx, revocation{telegramLinkID: linkID})
+}
+
+// GrantTelegramLinkTx writes a newly confirmed link's capped grants (ADR-0083 decision 3) inside the caller's
+// transaction: the grants userID holds now, read in tx (the local subject's, plus the SSO subject's when sso is set),
+// each lowered to maxRole (authz.Cap), checked with authz.Covers against those grants and stored as grants of the
+// subject telegram:<linkID> with source "telegram", the path API tokens use. The engine reloads after commit. It
+// returns the grants written; a user without grants gets none, so the link can do nothing.
+func (svc *Service) GrantTelegramLinkTx(ctx context.Context, tx *store.Tx, linkID, userID string, sso bool, maxRole authz.Role, actor audit.Actor) ([]authz.Grant, error) {
+	if linkID == "" || userID == "" || !maxRole.Valid() {
+		return nil, apperr.New(apperr.CodeInvalid, "invalid Telegram link cap")
+	}
+	subjects := []string{UserSubject(userID)}
+	if sso {
+		subjects = append(subjects, SSOSubject(userID))
+	}
+	var holder []authz.Grant
+	for _, sub := range subjects {
+		rows, err := tx.Q.ListRoleGrantsBySubject(ctx, sub)
+		if err != nil {
+			return nil, err
+		}
+		holder = append(holder, grantsFromRows(rows)...)
+	}
+	capped := authz.Cap(holder, maxRole)
+	in := make([]GrantInput, 0, len(capped))
+	for _, g := range capped {
+		if !authz.Covers(holder, g) {
+			return nil, apperr.New(apperr.CodeForbidden, "a Telegram link cannot hold more than its user")
+		}
+		in = append(in, GrantInput{Role: g.Role, Domain: g.Domain})
+	}
+	subject := TelegramSubject(linkID)
+	if err := tx.Q.DeleteRoleGrantsBySubject(ctx, subject); err != nil {
+		return nil, err
+	}
+	if err := svc.insertGrants(ctx, tx, subject, in, "telegram", actor); err != nil {
+		return nil, err
+	}
+	for i := range capped {
+		capped[i].Subject, capped[i].Source = subject, "telegram"
+	}
+	return capped, nil
 }
