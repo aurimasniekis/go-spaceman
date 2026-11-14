@@ -536,6 +536,7 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `DELETE` | `/telegram/bot` | `delete-telegram-bot` | Remove the Telegram bot's configuration |
 | `GET` | `/telegram/bot` | `get-telegram-bot` | The Telegram bot's connection and health (never its token) |
 | `PUT` | `/telegram/bot` | `put-telegram-bot` | Configure the Telegram bot, or replace its configuration |
+| `POST` | `/telegram/download-links` | `create-telegram-download-link` | Mint a signed download link for an attachment |
 | `POST` | `/telegram/session` | `create-telegram-session` | Exchange Telegram Mini App initData for a session |
 | `DELETE` | `/telegram/settings` | `delete-telegram-settings` | Reset the Telegram bot's policy and defaults |
 | `GET` | `/telegram/settings` | `get-telegram-settings` | The Telegram bot's policy and defaults |
