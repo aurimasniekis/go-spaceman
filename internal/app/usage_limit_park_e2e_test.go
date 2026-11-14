@@ -147,7 +147,10 @@ func TestUsageLimitParkAndResume(t *testing.T) {
 	n.command(t, w1.ID, proto.CmdStop)
 	n.send(t, proto.TypeRunReport, proto.RunReport{RunID: w1.ID, SpaceID: sp.ID, Generation: gen, State: proto.RunExited, Reason: "stopped", Turn: 2,
 		SessionID: "ses-park", Limit: limited, ObservedAt: time.Now().UTC()})
-	eventually(t, "parked", func() bool { r := e.run1(w1.ID); return r.Observed == proto.RunExited && r.EndReason == fleet.EndUsageLimit })
+	eventually(t, "parked", func() bool {
+		r := e.run1(w1.ID)
+		return r.Observed == proto.RunExited && r.EndReason == fleet.EndUsageLimit
+	})
 	wait, err := e.c.Fleet.LimitWaitForRun(ctx, w1.ID)
 	if err != nil || wait == nil || wait.State != fleet.WaitWaiting || wait.TaskID != task.ID || !wait.ResumeAt.Equal(reset.Add(2*time.Minute)) {
 		t.Fatalf("wait %+v %v", wait, err)
@@ -241,7 +244,10 @@ func TestUsageLimitParkRelocatedAndReleased(t *testing.T) {
 	e.cred = credB
 	nb := dialRawNodeHello(t, e, parkHello())
 	e.cred = credA
-	eventually(t, "lease on B", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid && s.NodeID == nodeB })
+	eventually(t, "lease on B", func() bool {
+		s, _ := e.c.Fleet.GetSpace(ctx, sp.ID)
+		return s.Lease != nil && s.Lease.Valid && s.NodeID == nodeB
+	})
 
 	// One hour later the worker on B is given up; at the 5-hour reset the other resumes on B in a fresh session.
 	clk.Set(now.Add(time.Hour))

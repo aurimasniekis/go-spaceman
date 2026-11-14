@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `usage_limit`. New reads: `GET /spaces/{id}/usage-limits` (including other spaces' holds on the same accounts),
   `GET /spaces/{id}/limit-waits` and `GET /accounts/{id}/usage-limits`, also available as `spaceman limits holds`,
   `spaceman limits waits` and `spaceman account holds`. New events: `fleet.usage_limit.reached` and
-  `fleet.usage_limit.cleared`. Holds don't block launches yet.
+  `fleet.usage_limit.cleared`.
 - Runs waiting for a usage limit to reset are kept alive and protected (ADR-0079 decision 3): a worker or diagnostic run
   at its limit no longer counts against the space's concurrency limit (it still counts against the node's capacity),
   gets no terminal notices until the limit clears (its messages wait, then are noticed), and control's idle stop is not
@@ -39,6 +39,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   hold and says when other spaces still hold the account; `POST /accounts/{id}/usage-limits/clear`
   (`spaceman account clear-holds`, account:write) clears every space's holds on the account. Both are audited, and
   each cleared space's control is told once.
+- Runs at a usage limit are parked and resumed at the reset (ADR-0079 decisions 4–6). A run whose reset is further away
+  than the keep-alive is stopped at once, one still limited after the keep-alive is stopped then, and one that ends, is
+  lost or is swept while at its limit is parked too (control, worker and diagnostic runs). At the reset, SpaceMan
+  resumes it as a new run of the same instance with `--resume` of its session (a fresh session with its original
+  prompt when the space moved node), and its task points at the new run. Control resumes first, then the oldest, at
+  most five every 10 seconds. A wait that can't resume yet (node away, space paused or full, account still held) keeps
+  waiting, and the node's hello or the space's resume brings it forward. After `usage_limit_max_wait_hours` (new
+  space limit, default 168) a worker's task goes back to the queue, ready and unassigned; control is never given up
+  on. Control gets one message per park, resume and release, in place of the run-ended notice, and a parked control
+  isn't auto-started. A task that is finished, cancelled or reassigned ends its run's wait. New endpoints
+  `POST /spaces/{id}/limit-waits/{wait_id}/resume` and `.../release` (`spaceman limits resume|release`, run:control),
+  audited.
 
 ## [0.1.3] - 2026-11-13
 

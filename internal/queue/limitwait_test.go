@@ -91,19 +91,31 @@ func TestRepointAndReleaseRunTask(t *testing.T) {
 	a := f.assigned("A", "run_old")
 	tx := func(fn func(tx *store.Tx) error) { must(t, f.s.W().TxNamed(f.ctx, "t", fn)) }
 	var ok bool
-	tx(func(tx *store.Tx) (err error) { ok, err = f.svc.RepointRunTaskTx(f.ctx, tx, op, a.ID, "run_x", "run_new"); return })
+	tx(func(tx *store.Tx) (err error) {
+		ok, err = f.svc.RepointRunTaskTx(f.ctx, tx, op, a.ID, "run_x", "run_new")
+		return
+	})
 	if ok || f.get(a.ID).AssigneeRun != "run_old" {
 		t.Fatal("re-pointed a task another run holds")
 	}
-	tx(func(tx *store.Tx) (err error) { ok, err = f.svc.RepointRunTaskTx(f.ctx, tx, op, a.ID, "run_old", "run_new"); return })
+	tx(func(tx *store.Tx) (err error) {
+		ok, err = f.svc.RepointRunTaskTx(f.ctx, tx, op, a.ID, "run_old", "run_new")
+		return
+	})
 	if got := f.get(a.ID); !ok || got.AssigneeRun != "run_new" || got.Status != Running {
 		t.Fatalf("re-point: %v %+v", ok, got)
 	}
-	tx(func(tx *store.Tx) (err error) { ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, a.ID, "run_old", "too long"); return })
+	tx(func(tx *store.Tx) (err error) {
+		ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, a.ID, "run_old", "too long")
+		return
+	})
 	if ok || f.get(a.ID).Status != Running {
 		t.Fatal("released a task another run holds")
 	}
-	tx(func(tx *store.Tx) (err error) { ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, a.ID, "run_new", "too long"); return })
+	tx(func(tx *store.Tx) (err error) {
+		ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, a.ID, "run_new", "too long")
+		return
+	})
 	if got := f.get(a.ID); !ok || got.Status != Ready || got.AssigneeRun != "" || got.StatusReason != "too long" {
 		t.Fatalf("release: %v %+v", ok, got)
 	}
@@ -111,7 +123,10 @@ func TestRepointAndReleaseRunTask(t *testing.T) {
 	b := f.assigned("B", "run_b")
 	b, err := f.svc.SetStatus(f.ctx, op, "spc_a", b.ID, b.Version, StatusInput{Status: Done})
 	must(t, err)
-	tx(func(tx *store.Tx) (err error) { ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, b.ID, "run_b", "too long"); return })
+	tx(func(tx *store.Tx) (err error) {
+		ok, err = f.svc.ReleaseRunTaskTx(f.ctx, tx, op, b.ID, "run_b", "too long")
+		return
+	})
 	if ok || f.get(b.ID).Status != Done {
 		t.Fatal("released a finished task")
 	}

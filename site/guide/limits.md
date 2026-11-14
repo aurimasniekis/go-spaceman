@@ -55,6 +55,34 @@ A worker or diagnostic run that is waiting for its Claude usage limit to reset (
 doesn't count against the space's concurrency limit, so another run can start meanwhile. It still counts against the
 node's capacity, because its process is still running there.
 
+### Parked runs
+
+A run isn't kept alive for longer than the **usage-limit keep-alive** (6 hours by default). When its reset is further
+away than that (a weekly limit), SpaceMan stops it at once; when the limit is still open after the keep-alive, it stops
+it then. A run that ends at its limit, or whose node is lost while it waits, is treated the same way. The run is
+**parked**: its process ends, but its session and its task are kept, and a **wait** brings it back.
+
+- **At the reset** (2 minutes after it, or at the hold's next re-check when the reset time is unknown), SpaceMan resumes
+  the run as a new run of the **same instance**, resuming its conversation (`--resume`), with a short prompt saying the
+  limit reset. Its task now points at the new run. Control comes back first, then the oldest waits, a few at a time,
+  so a reset doesn't start every waiting run at once.
+- **If it can't resume yet**, the wait keeps waiting: the space is paused, its node isn't connected, the space is at its
+  run limit, or the account is still held. A resume never stops another run to make room. When the node connects again
+  or the space resumes, waiting runs resume at once.
+- **If the space moved to another node** since, the conversation can't be carried over (sessions stay on their node):
+  the run starts a fresh session there with its original prompt and a note, and control is told.
+- **After the maximum wait** (7 days by default, `usage_limit_max_wait_hours`), SpaceMan gives up on a worker or
+  diagnostic run: its task goes back to the queue, ready and unassigned, and control is told. Control itself is never
+  given up on.
+- A wait ends without a resume when its task is finished, cancelled, back in the queue or given to another run, or when
+  the space is archived.
+
+KB support and dreamer runs are neither stopped at the keep-alive nor parked: their schedulers start them when needed.
+
+`spaceman limits waits` lists a space's waits. `spaceman limits resume <wait>` resumes one now (the usual launch checks
+apply), and `spaceman limits release <wait>` gives one up now; both need the permission that launches runs in the space
+and are audited.
+
 Support never starts more support without bound. At the default **support depth** of 1, a KB support session cannot ask
 any knowledge base; raising the depth allows that many levels. KB sessions never launch workers.
 
