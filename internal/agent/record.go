@@ -13,11 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
 	"github.com/aurimasniekis/go-spaceman/internal/recording"
 	"github.com/aurimasniekis/go-spaceman/internal/runner"
-	"github.com/coder/websocket"
 )
 
 // RecordingDir is a run's local recording directory.
@@ -483,7 +484,7 @@ func (a *Agent) catchUpRun(ctx context.Context, conn *websocket.Conn, r runRow, 
 	readDisk := func() error {
 		res, err := recording.Read(a.RecordingDir(r.RunID), from)
 		if err != nil {
-			return nil // nothing readable to re-ship
+			return nil //nolint:nilerr // an unreadable local recording has nothing to re-ship; only a failed send ends the pass
 		}
 		return send(res.Records)
 	}
