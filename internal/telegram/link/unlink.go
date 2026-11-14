@@ -49,10 +49,10 @@ func grantsOf(ctx context.Context, q *db.Queries, linkID string) ([]authz.Grant,
 	return out, nil
 }
 
-// ListMine returns the calling user's live links.
+// ListMine returns the calling user's live links to their own browser session (never an API token).
 func (s *Service) ListMine(ctx context.Context, p *auth.Principal) ([]*Link, error) {
-	if p == nil || p.User == nil || p.ViaTelegram() {
-		return nil, apperr.New(apperr.CodeForbidden, "only a signed-in person lists their own Telegram links")
+	if err := webSession(p); err != nil {
+		return nil, err
 	}
 	rows, err := s.o.Store.R().ListLiveTelegramLinksByUser(ctx, p.User.ID)
 	if err != nil {
@@ -111,10 +111,11 @@ func (s *Service) revoke(ctx context.Context, linkID, via string, actor audit.Ac
 	})
 }
 
-// UnlinkMine ends one of the calling user's own links from the web (another user's link is not found).
+// UnlinkMine ends one of the calling user's own links from the web, from their own browser session (another user's
+// link is not found).
 func (s *Service) UnlinkMine(ctx context.Context, p *auth.Principal, linkID string) error {
-	if p == nil || p.User == nil || p.ViaTelegram() {
-		return apperr.New(apperr.CodeForbidden, "only a signed-in person unlinks their own Telegram account")
+	if err := webSession(p); err != nil {
+		return err
 	}
 	return s.revoke(ctx, linkID, viaWeb, userActor(p), textUnlinkedOther, func(l db.TelegramLink) bool { return l.UserID == p.User.ID })
 }

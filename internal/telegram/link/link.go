@@ -87,6 +87,7 @@ const (
 	textTelegramConfirm = "Confirmed. Now finish in the browser where you started: it shows this Telegram account and asks you to confirm once more."
 	textRefused         = "Cancelled: nothing was linked. If you didn't start this, someone sent you their own link: ignore it."
 	textUsed            = "This link code was already used, so it is cancelled now. If you didn't link it yourself, don't use it."
+	textUsedLinked      = "This link code was already used and can't be used again. If you didn't link it yourself, don't use it."
 	textReused          = "A link request for this Telegram account was cancelled: another Telegram account presented the same code. If you didn't share it, nobody was linked."
 	textUnlinked        = "Unlinked. This Telegram account no longer acts on SpaceMan."
 	textUnlinkedOther   = "This Telegram account was unlinked from SpaceMan."
@@ -182,7 +183,7 @@ func errNotFound() error { return apperr.New(apperr.CodeNotFound, "link code not
 func webSession(p *auth.Principal) error {
 	if p == nil || p.User == nil || p.SessionID == "" || p.TokenID != "" || p.RootTokenID != "" || p.ViaTelegram() || p.ViaMCP() ||
 		p.Method != auth.MethodPassword && p.Method != auth.MethodOIDC {
-		return apperr.New(apperr.CodeForbidden, "Telegram is linked only from a signed-in browser session")
+		return apperr.New(apperr.CodeForbidden, "Your Telegram links are managed only from a signed-in browser session")
 	}
 	return nil
 }
@@ -627,6 +628,9 @@ func (s *Service) reused(ctx context.Context, tx *store.Tx, hash []byte, from bo
 	if cancelled && s.o.Notify != nil {
 		redeemer := r.RedeemedTgUserID.Int64
 		tx.AfterCommit(func() { s.o.Notify(redeemer, textReused) })
+	}
+	if !cancelled {
+		return refusal(textUsedLinked), nil // already confirmed: the link stands, nothing was cancelled
 	}
 	return refusal(textUsed), nil
 }

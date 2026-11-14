@@ -8,6 +8,7 @@ import (
 
 	"github.com/aurimasniekis/go-spaceman/internal/api"
 	"github.com/aurimasniekis/go-spaceman/internal/auth"
+	"github.com/aurimasniekis/go-spaceman/internal/authz"
 	"github.com/aurimasniekis/go-spaceman/internal/eventbus"
 	"github.com/aurimasniekis/go-spaceman/internal/telegram/botapi"
 	tglink "github.com/aurimasniekis/go-spaceman/internal/telegram/link"
@@ -385,7 +386,7 @@ func TestTelegramLinkReusedCodeWarnsItsOwner(t *testing.T) {
 	ok2, _ := buttons(t, start(victimTG, c2.Code))
 	e.tap(victimTG, ok2)
 	expect(t, vera.confirm(c2.ID, nil), 201)
-	if r := start(eve, c2.Code); !r.Bounded || !strings.Contains(r.Text, "so it is cancelled") {
+	if r := start(eve, c2.Code); !r.Bounded || strings.Contains(r.Text, "cancelled") || !strings.Contains(r.Text, "can't be used again") {
 		t.Fatalf("reply to a confirmed code %+v", r)
 	}
 	if st := vera.getCode(t, c2.ID); st.State != tglink.StateConfirmed || st.ReuseAttempted {
@@ -402,4 +403,62 @@ func TestTelegramLinkReusedCodeWarnsItsOwner(t *testing.T) {
 	if n := e.count(t, `SELECT count(*) FROM audit_events WHERE action = 'telegram.link_code.reused'`); n != before {
 		t.Fatalf("%d extra reuse rows", n-before)
 	}
+}
+
+// SM-TG-001 (TG-4b, review PR #86): unlinking from the web re-checks the link's open streams (a Mini App session ends at
+// once): a watch opened for the link's principal is signalled by DELETE /me/telegram/links/{id}.
+func TestTelegramUnlinkSignalsTheLinksStreams(t *testing.T) {
+	t.Parallel()
+	e := newLinkEnv(t)
+	u := e.user(t, "dee@example.com", "Dee", []map[string]string{{"role": "operator", "domain": e.space}})
+	l := e.link(t, u, tgPerson(3001, "Dee"), nil)
+	p, err := e.h.c.Auth.TelegramPrincipal(context.Background(), l.ID, auth.TelegramOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := e.h.c.Auth.Revocations().Watch(p)
+	defer w.Close()
+	select {
+	case <-w.C:
+		t.Fatal("the watch was signalled before anything changed")
+	default:
+	}
+	expect(t, u.ui.do("DELETE", "/me/telegram/links/"+l.ID, nil), 204)
+	select {
+	case <-w.C:
+	case <-time.After(5 * time.Second):
+		t.Fatal("unlinking did not signal the link's open streams")
+	}
+}
+
+// SM-TG-001 (review PR #86): listing and unlinking your own links need your own browser session, as re-confirming does:
+// an API token of the very user who owns the link gets 403 and changes nothing, while the browser session still works.
+func TestTelegramOwnLinksNeedABrowserSession(t *testing.T) {
+	t.Parallel()
+	e := newLinkEnv(t)
+	grants := []map[string]string{{"role": "operator", "domain": e.space}}
+	u := e.user(t, "fay@example.com", "Fay", grants)
+	l := e.link(t, u, tgPerson(4001, "Fay"), nil)
+	ctx := context.Background()
+	user, err := e.h.c.Auth.Get(ctx, u.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, secret, err := e.h.c.Auth.CreateAPIToken(ctx, &auth.Principal{User: user}, "own", []auth.GrantInput{{Role: authz.RoleOperator, Domain: e.space}}, 24*time.Hour, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := e.h.client()
+	tok.bearer = secret
+	if p := tok.do("GET", "/me/telegram/links", nil).problem(t); p.Status != 403 {
+		t.Fatalf("an API token listed the links: %+v", p)
+	}
+	if p := tok.do("DELETE", "/me/telegram/links/"+l.ID, nil).problem(t); p.Status != 403 {
+		t.Fatalf("an API token unlinked: %+v", p)
+	}
+	if e.linkState(t, l.ID) != "active" {
+		t.Fatal("an API token ended the link")
+	}
+	expect(t, u.ui.do("GET", "/me/telegram/links", nil), 200)
+	expect(t, u.ui.do("DELETE", "/me/telegram/links/"+l.ID, nil), 204)
 }
