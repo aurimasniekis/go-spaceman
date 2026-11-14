@@ -578,7 +578,7 @@ func TestRetryAfterWrite(t *testing.T) {
 
 	// A refused token is not retried.
 	e.tg.FailNext("getMe", http.StatusUnauthorized, "Unauthorized", 0)
-	b = e.put(b.Version, Input{Enabled: true})
+	_ = e.put(b.Version, Input{Enabled: true})
 	n := len(e.tg.Calls("getMe"))
 	time.Sleep(100 * time.Millisecond)
 	if got := len(e.tg.Calls("getMe")); got != n || e.svc.Status(ctx).WebhookStatus != StateError {
