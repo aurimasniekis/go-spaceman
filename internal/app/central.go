@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -560,8 +561,11 @@ const (
 	dataReservePercent = 2
 )
 
-// mintShutdownGrace is how long Close lets background gateway mints finish before it cancels them.
-const mintShutdownGrace = 5 * time.Second
+// shutdownGrace is how long Close lets background gateway mints, node connections and the work those started (memory
+// syncs, usage, transcripts, tool calls) finish before it cancels the mints and closes the store. The two waits run
+// side by side under this one grace, so a stop takes at most shutdown.timeout (30 s by default) + 5 s + the store's
+// 8 s = 43 s, inside the units' TimeoutStopSec=45s.
+const shutdownGrace = 5 * time.Second
 
 // Close closes node connections, then releases storage and the data-directory lock.
 func (c *Central) Close() error {
@@ -572,8 +576,11 @@ func (c *Central) Close() error {
 		c.Retention.Wait()
 	}
 	if c.Fleet != nil {
-		c.Fleet.Hub().CloseAll("central shutting down")
-		c.Fleet.Hub().StopMints(mintShutdownGrace)
+		hub := c.Fleet.Hub()
+		var wg sync.WaitGroup
+		wg.Go(func() { hub.StopMints(shutdownGrace) })
+		hub.Shutdown("central shutting down", shutdownGrace)
+		wg.Wait()
 		c.Fleet.Recordings().Close()
 	}
 	if c.Gateway != nil {

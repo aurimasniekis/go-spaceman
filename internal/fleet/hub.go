@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -88,6 +89,53 @@ type Hub struct {
 	mintCtx     context.Context
 	mintStop    context.CancelFunc
 	mintStopped bool
+
+	// work tracks node connections (ServeHTTP) and every goroutine they start, so central's shutdown (Shutdown) waits
+	// for their writes before it closes the store; working counts them for Shutdown's warning. stopped (guarded by mu)
+	// refuses new connections once it began.
+	work    sync.WaitGroup
+	working atomic.Int64
+	stopped bool
+}
+
+func (h *Hub) workAdd() {
+	h.working.Add(1)
+	h.work.Add(1)
+}
+
+func (h *Hub) workDone() {
+	h.working.Add(-1)
+	h.work.Done()
+}
+
+// spawn runs f on its own goroutine as work Shutdown waits for. Only called while a connection is tracked (its count
+// keeps work above zero, so the Add never races Shutdown's Wait).
+func (h *Hub) spawn(f func()) {
+	h.workAdd()
+	go func() {
+		defer h.workDone()
+		f()
+	}()
+}
+
+// Shutdown closes every node connection and refuses new ones, then waits up to grace for the connections and the
+// work they started (memory syncs, usage, transcripts, tool calls, relocation transfers) to finish (central's
+// shutdown, before the store is closed).
+func (h *Hub) Shutdown(reason string, grace time.Duration) {
+	h.mu.Lock()
+	h.stopped = true
+	h.mu.Unlock()
+	h.CloseAll(reason)
+	done := make(chan struct{})
+	go func() { h.work.Wait(); close(done) }()
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+		obs.Component(h.svc.opts.Log, "fleet").Warn("node connection work still running at shutdown",
+			slog.Int64("running", h.working.Load()))
+	}
 }
 
 // mintJob is a gateway run's token mint the dispatch loop stopped waiting for. It holds only the outcome: once it is
@@ -353,6 +401,15 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close(websocket.StatusPolicyViolation, "subprotocol "+proto.Subprotocol+" required")
 		return
 	}
+	h.mu.Lock()
+	if h.stopped {
+		h.mu.Unlock()
+		_ = conn.Close(websocket.StatusGoingAway, "central shutting down")
+		return
+	}
+	h.workAdd()
+	h.mu.Unlock()
+	defer h.workDone()
 	conn.SetReadLimit(proto.MaxMessage)
 	s := &session{nodeID: node.ID, credID: credID, conn: conn, out: make(chan []byte, 256), kick: make(chan struct{}, 1), done: make(chan struct{}), tools: make(chan struct{}, 8), memory: make(chan struct{}, 1),
 		log: obs.Component(h.svc.opts.Log, "fleet").With(slog.String(obs.FieldNodeID, node.ID))}
@@ -420,6 +477,11 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	s.minor = minor
 	s.connectedAt = svc.opts.Clock.Now()
 	h.mu.Lock()
+	if h.stopped {
+		// Shutdown's CloseAll ran before this session was registered: it would never be closed.
+		h.mu.Unlock()
+		return net.ErrClosed
+	}
 	old := h.sessions[s.nodeID]
 	h.sessions[s.nodeID] = s
 	h.mu.Unlock()
@@ -431,7 +493,7 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 	m.NodeConnected(1)
 	s.counted = true
 
-	go h.writer(ctx, s)
+	h.spawn(func() { h.writer(ctx, s) })
 	if err := s.send(proto.TypeWelcome, svc.now(), proto.Welcome{NodeID: s.nodeID, Minor: minor, ServerTime: svc.now(),
 		HeartbeatInterval: svc.opts.HeartbeatInterval, LeaseTTL: svc.opts.LeaseTTL, DisconnectGrace: svc.opts.DisconnectGrace}); err != nil {
 		return err
@@ -476,12 +538,12 @@ func (h *Hub) run(ctx context.Context, s *session, ip string) error {
 			return err
 		}
 	}
-	go h.dispatchLoop(ctx, s)
-	go h.credentialLoop(ctx, s)
+	h.spawn(func() { h.dispatchLoop(ctx, s) })
+	h.spawn(func() { h.credentialLoop(ctx, s) })
 	// Relocations waiting for this node resume now (for example after a central restart).
 	svc.kickNodeRelocations(ctx, s.nodeID)
 	if h.OnConnected != nil {
-		go h.OnConnected(context.WithoutCancel(ctx), s.nodeID)
+		h.spawn(func() { h.OnConnected(context.WithoutCancel(ctx), s.nodeID) })
 	}
 	s.kick <- struct{}{}
 
@@ -539,6 +601,14 @@ func (h *Hub) writer(ctx context.Context, s *session) {
 func (h *Hub) toolCall(ctx context.Context, s *session, call proto.ToolCall) {
 	ctx, cancel := context.WithTimeout(ctx, toolCallTimeout)
 	defer cancel()
+	// The call ends with its connection (nobody is left to receive the result), so it never runs on past Shutdown's grace.
+	go func() {
+		select {
+		case <-s.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	reply := func(res proto.ToolResult) {
 		res.CallID = call.CallID
 		_ = s.send(proto.TypeToolResult, h.svc.now(), res)
@@ -595,7 +665,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		cmd, _ := svc.s.R().GetNodeCommand(ctx, a.CommandID)
 		svc.opts.Metrics.NodeCommand(metrics.CommandType(cmd.Kind), metrics.CommandResult(a.Result))
 		if proto.IsRelocation(cmd.Kind) && a.Result == proto.AckRejected && cmd.NodeID == s.nodeID {
-			go svc.relocationRejected(context.WithoutCancel(ctx), a.CommandID, truncate(a.Reason, 300))
+			h.spawn(func() { svc.relocationRejected(context.WithoutCancel(ctx), a.CommandID, truncate(a.Reason, 300)) })
 		}
 		return svc.s.W().TxNamed(ctx, "fleet.ack", func(tx *store.Tx) error {
 			n, err := tx.Q.AckCommand(ctx, db.AckCommandParams{State: a.Result, Reason: truncate(a.Reason, 500), AckedAt: sql.NullInt64{Int64: tx.NowMicros(), Valid: true},
@@ -623,19 +693,21 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if err := env.Decode(&m); err != nil {
 			return err
 		}
-		go func() {
+		h.spawn(func() {
 			ack := proto.MemoryAck{SyncID: m.SyncID, SpaceID: m.SpaceID, Role: m.Role, Result: proto.MemoryError, Message: "central does not store memory"}
 			if h.Memory != nil {
+				// A sync still queued behind another when the connection ends is dropped (the node sends it again); the
+				// one running finishes, as work Shutdown waits for.
 				select {
 				case s.memory <- struct{}{}:
-				case <-ctx.Done():
+				case <-s.done:
 					return
 				}
 				ack = h.Memory.Apply(ctx, s.nodeID, m)
 				<-s.memory
 			}
 			_ = s.send(proto.TypeMemoryAck, svc.now(), ack)
-		}()
+		})
 		return nil
 	case proto.TypeUsage:
 		var rep proto.UsageReport
@@ -643,7 +715,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			return err
 		}
 		if h.Usage != nil {
-			go h.Usage.Report(context.WithoutCancel(ctx), s.nodeID, rep)
+			h.spawn(func() { h.Usage.Report(context.WithoutCancel(ctx), s.nodeID, rep) })
 		}
 		return nil
 	case proto.TypeTranscript:
@@ -651,13 +723,13 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if err := env.Decode(&ch); err != nil {
 			return err
 		}
-		go func() {
+		h.spawn(func() {
 			ack := proto.TranscriptAck{RunID: ch.RunID, Error: "central does not store transcripts"}
 			if h.Usage != nil {
 				ack = h.Usage.Chunk(context.WithoutCancel(ctx), s.nodeID, ch)
 			}
 			_ = s.send(proto.TypeTranscriptAck, svc.now(), ack)
-		}()
+		})
 		return nil
 	case proto.TypeKBResult:
 		var res proto.KBResult
@@ -665,7 +737,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			return err
 		}
 		if h.KBResult != nil {
-			go h.KBResult(context.WithoutCancel(ctx), s.nodeID, res)
+			h.spawn(func() { h.KBResult(context.WithoutCancel(ctx), s.nodeID, res) })
 		}
 		return nil
 	case proto.TypeRepoStatus:
@@ -674,7 +746,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			return err
 		}
 		if h.RepoStatus != nil {
-			go h.RepoStatus(context.WithoutCancel(ctx), s.nodeID, rep)
+			h.spawn(func() { h.RepoStatus(context.WithoutCancel(ctx), s.nodeID, rep) })
 		}
 		return nil
 	case proto.TypeMemoryStatus:
@@ -683,7 +755,7 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 			return err
 		}
 		if h.Memory != nil {
-			go h.Memory.Report(context.WithoutCancel(ctx), s.nodeID, st)
+			h.spawn(func() { h.Memory.Report(context.WithoutCancel(ctx), s.nodeID, st) })
 		}
 		return nil
 	case proto.TypeToolCall:
@@ -693,10 +765,10 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		}
 		select {
 		case s.tools <- struct{}{}:
-			go func() {
+			h.spawn(func() {
 				defer func() { <-s.tools }()
 				h.toolCall(ctx, s, call)
-			}()
+			})
 		default:
 			_ = s.send(proto.TypeToolResult, svc.now(), proto.ToolResult{CallID: call.CallID, Error: "too many concurrent tool calls from this node; retry",
 				Code: string(apperr.CodeRateLimited)})
@@ -707,16 +779,16 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if err := env.Decode(&rep); err != nil {
 			return err
 		}
-		go svc.relocationReport(context.WithoutCancel(ctx), s.nodeID, rep)
+		h.spawn(func() { svc.relocationReport(context.WithoutCancel(ctx), s.nodeID, rep) })
 		return nil
 	case proto.TypeRelocationUpload:
 		var up proto.RelocationUpload
 		if err := env.Decode(&up); err != nil {
 			return err
 		}
-		go func() {
+		h.spawn(func() {
 			_ = s.send(proto.TypeRelocationUploadAck, svc.now(), svc.relocationUpload(context.WithoutCancel(ctx), s.nodeID, up))
-		}()
+		})
 		return nil
 	case proto.TypeMemoryFlushed:
 		var res proto.MemoryFlushed
@@ -730,9 +802,9 @@ func (h *Hub) handle(ctx context.Context, s *session, env proto.Envelope) error 
 		if err := env.Decode(&f); err != nil {
 			return err
 		}
-		go func() {
+		h.spawn(func() {
 			_ = s.send(proto.TypeRelocationData, svc.now(), svc.relocationFetch(context.WithoutCancel(ctx), s.nodeID, f))
-		}()
+		})
 		return nil
 	case proto.TypeNodeCapabilities:
 		return h.nodeCapabilities(ctx, s, env)
