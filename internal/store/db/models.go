@@ -1399,6 +1399,21 @@ type SpaceSchedule struct {
 	Version         int64
 }
 
+type SpaceTelegramSetting struct {
+	SpaceID           string
+	Enabled           int64
+	ContentLevel      string
+	EnforcedApprovals string
+	Topics            int64
+	TerminalWatch     int64
+	GroupChatID       sql.NullInt64
+	CreatedAt         int64
+	CreatedBy         string
+	UpdatedAt         int64
+	UpdatedBy         string
+	Version           int64
+}
+
 type StoreSpaceProbe struct {
 	ID   int64
 	Data []byte
@@ -1488,6 +1503,83 @@ type TaskPreemption struct {
 	ResumedAt  sql.NullInt64
 	ResumedBy  string
 	Outcome    string
+}
+
+type TelegramBot struct {
+	Singleton              int64
+	BotID                  int64
+	Username               string
+	TokenEnc               []byte
+	TokenVersion           int64
+	WebhookSecretEnc       []byte
+	HookID                 string
+	Mode                   string
+	Enabled                int64
+	MiniappHost            string
+	WebhookIpAllowlistJson string
+	CreatedAt              int64
+	CreatedBy              string
+	UpdatedAt              int64
+	UpdatedBy              string
+	Version                int64
+}
+
+type TelegramLink struct {
+	ID             string
+	UserID         string
+	BotID          int64
+	TgUserID       int64
+	TgUsername     string
+	TgName         string
+	ChatID         int64
+	State          string
+	ViaSso         int64
+	SsoUntil       sql.NullInt64
+	MaxRole        string
+	SpacesJson     string
+	CurrentSpaceID sql.NullString
+	TopicsJson     string
+	PrefsJson      string
+	CreatedAt      int64
+	ConfirmedAt    sql.NullInt64
+	ReconfirmDueAt sql.NullInt64
+	RevokedAt      sql.NullInt64
+	RevokedBy      string
+	UpdatedAt      int64
+	Version        int64
+}
+
+type TelegramLinkCode struct {
+	CodeHash             []byte
+	UserID               string
+	CreatedSessionMethod string
+	CreatedAt            int64
+	ExpiresAt            int64
+	State                string
+	RedeemedTgUserID     sql.NullInt64
+	RedeemedTgUsername   string
+	RedeemedTgName       string
+	RedeemedAt           sql.NullInt64
+}
+
+type TelegramMessage struct {
+	ChatID          int64
+	MessageID       int64
+	LinkID          sql.NullString
+	SpaceID         sql.NullString
+	Kind            string
+	ResourceType    string
+	ResourceID      string
+	ResourceVersion int64
+	CreatedAt       int64
+}
+
+type TelegramSetting struct {
+	Singleton    int64
+	SettingsJson string
+	UpdatedAt    int64
+	UpdatedBy    string
+	Version      int64
 }
 
 type User struct {

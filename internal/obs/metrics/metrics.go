@@ -75,6 +75,7 @@ type Metrics struct {
 	runsStale       *prometheus.CounterVec
 	gwRevokeFailed  prometheus.Gauge
 	ingest          ingestMetrics
+	tgUpdates       telegramUpdateMetrics
 	fs              *fsCollector
 	handlerTimeout  time.Duration
 	handlerInFlight int
@@ -136,6 +137,7 @@ func New() *Metrics {
 	m.runsStale = f.counterVec("runs_reconciled_stale_total", "Runs central's stale-run sweeper moved to lost, by end reason (ADR-0074).", "reason")
 	m.gwRevokeFailed = f.gauge("gateway_revocations_failed", "LLM gateway (Harbor Pilot) credential revocations that failed: each credential stays valid until it expires unless a person revokes it, or its parent, in the gateway.")
 	m.ingest = newIngestMetrics(f)
+	m.tgUpdates = newTelegramUpdateMetrics(f)
 
 	reg.MustRegister(
 		collectors.NewGoCollector(),

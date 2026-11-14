@@ -59,6 +59,15 @@ func (s *Server) dispatch(r *http.Request, method string, p params, files map[st
 		return s.deleteMessageLocked(p)
 	case "answerCallbackQuery":
 		return s.answerCallbackLocked(p)
+	case "leaveChat":
+		id, ok := p.int64("chat_id")
+		if !ok || id == 0 {
+			return nil, badRequest("chat not found")
+		}
+		if s.chatLocked(id).Type == botapi.ChatPrivate {
+			return nil, badRequest("chat member status can't be changed in private chats")
+		}
+		return true, nil
 	case "setMyCommands":
 		var cmds []botapi.BotCommand
 		if err := p.json("commands", &cmds); err != nil {
