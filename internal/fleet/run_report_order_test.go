@@ -70,6 +70,16 @@ func TestRunReportOrderGuard(t *testing.T) {
 			{proto.RunRunning, "t1", proto.RunRunning, "t1"},
 			{proto.RunRunning, "", proto.RunRunning, "t1"},
 		}},
+		// Same rank, a new terminal: not behind the recorded state, so it applies (a `<=` in the rank check would drop it).
+		{"same state with a new terminal", "pending", []step{
+			{proto.RunRunning, "t1", proto.RunRunning, "t1"},
+			{proto.RunRunning, "t2", proto.RunRunning, "t2"},
+		}},
+		// pending ranks below starting: a pending report read before the launch's starting report is behind it.
+		{"stale pending after starting", "pending", []step{
+			{proto.RunStarting, "", proto.RunStarting, ""},
+			{proto.RunPending, "", proto.RunStarting, ""},
+		}},
 		{"stopped before start", "pending", []step{
 			{proto.RunStarting, "", proto.RunStarting, ""},
 			{proto.RunExited, "", proto.RunExited, ""},

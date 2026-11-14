@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"regexp"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/harness/dist"
 	"github.com/aurimasniekis/go-spaceman/internal/ids"
 	"github.com/aurimasniekis/go-spaceman/internal/keyring"
+	"github.com/aurimasniekis/go-spaceman/internal/obs"
 	"github.com/aurimasniekis/go-spaceman/internal/obs/metrics"
 	"github.com/aurimasniekis/go-spaceman/internal/outbox"
 	"github.com/aurimasniekis/go-spaceman/internal/proto"
@@ -675,6 +677,11 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		// clear terminal_id (ADR-0086). It is ignored, not fenced: fencing would stop a live run. A run central wants
 		// stopped still gets its stop command.
 		if staleReport(r, rep) {
+			// Logged after commit: the write transaction does no I/O (AGENTS.md). Only ids and states are logged.
+			tx.AfterCommit(func() {
+				obs.Component(svc.opts.Log, "fleet").Debug("run report ignored: behind the recorded state",
+					slog.String(obs.FieldRunID, r.ID), slog.String("run.recorded_state", r.Observed), slog.String("run.reported_state", rep.State))
+			})
 			if r.Desired == "stopped" {
 				return svc.queueCommand(ctx, tx, r.NodeID, r.SpaceID, r.ID, r.Generation, proto.CmdStop, "stop:"+r.ID+":reconcile",
 					proto.StopPayload{Mode: "interrupt", Grace: 15, Reason: "central wants this run stopped"})
