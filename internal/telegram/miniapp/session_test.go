@@ -27,6 +27,7 @@ type fx struct {
 	mu     sync.Mutex
 	links  map[int64]string // tg user → active link
 	dead   map[string]bool  // links whose principal is refused (revoked, user disabled)
+	lim    map[string]bool  // links whose principal is Limited (MFA required, no factor)
 	built  atomic.Int64     // principals built
 	seq    atomic.Int64
 	limits Limits
@@ -35,7 +36,7 @@ type fx struct {
 
 func newFx(t *testing.T) *fx {
 	t.Helper()
-	f := &fx{t: t, clk: clock.NewFake(now0), tok: testToken(t), links: map[int64]string{42: "tgl_a", 43: "tgl_b"}, dead: map[string]bool{},
+	f := &fx{t: t, clk: clock.NewFake(now0), tok: testToken(t), links: map[int64]string{42: "tgl_a", 43: "tgl_b"}, dead: map[string]bool{}, lim: map[string]bool{},
 		limits: DefaultLimits}
 	f.bot.Store(&Bot{ID: 123456789, Secret: SecretKey(f.tok)})
 	f.svc = New(Options{
@@ -62,7 +63,7 @@ func newFx(t *testing.T) *fx {
 			if f.dead[linkID] {
 				return nil, auth.ErrUnauthorized
 			}
-			return &auth.Principal{User: &auth.User{ID: "usr_" + linkID}, Method: auth.MethodTelegram, TelegramLinkID: linkID}, nil
+			return &auth.Principal{User: &auth.User{ID: "usr_" + linkID}, Method: auth.MethodTelegram, TelegramLinkID: linkID, Limited: f.lim[linkID]}, nil
 		},
 		OnRefused: func(_ context.Context, _ string, n int64) { f.mu.Lock(); f.refusd = append(f.refusd, n); f.mu.Unlock() },
 		Clock:     f.clk,
@@ -492,5 +493,22 @@ func TestSessionEndsOnKeyRotation(t *testing.T) {
 	f.bot.Store(&Bot{ID: 123456789, Secret: SecretKey(testToken(t) + "x")})
 	if _, err := f.svc.Authenticate(context.Background(), tok); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Fatalf("after rotation: %v", err)
+	}
+}
+
+// A link whose user is Limited (MFA required, no factor) gets no principal from LinkPrincipal, as a Mini App session
+// gets none from Validate: a download minted before the user became Limited is refused on redemption.
+func TestLinkPrincipalRefusesLimited(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	p, err := f.svc.LinkPrincipal(context.Background(), "tgl_a")
+	if err != nil || p.TelegramLinkID != "tgl_a" {
+		t.Fatalf("LinkPrincipal = %v, %v", p, err)
+	}
+	f.mu.Lock()
+	f.lim["tgl_a"] = true
+	f.mu.Unlock()
+	if _, err := f.svc.LinkPrincipal(context.Background(), "tgl_a"); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("Limited link: %v, want ErrUnauthorized", err)
 	}
 }

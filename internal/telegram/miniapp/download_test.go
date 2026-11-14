@@ -2,6 +2,7 @@ package miniapp
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,14 +95,68 @@ func TestDownloadSweepAndCap(t *testing.T) {
 	if d.Len() != 1 {
 		t.Fatalf("Len = %d after sweep, want 1", d.Len())
 	}
-	first, _ := d.Mint(grantA)
-	for i := 0; i < downloadLimit; i++ {
-		_, _ = d.Mint(grantA)
+}
+
+// One link minting past its cap drops its own oldest grants and never another link's.
+func TestDownloadPerLinkCapNeverEvictsOthers(t *testing.T) {
+	d := NewDownloads(clock.NewFake(time.Unix(1000, 0)))
+	grantB := DownloadGrant{LinkID: "tgl_b", SpaceID: "spc_1", AttachmentID: "att_1"}
+	b, err := d.Mint(grantB)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if d.Len() > downloadLimit {
-		t.Fatalf("Len = %d over the cap", d.Len())
+	var ids []string
+	for i := 0; i < downloadPerLink*3; i++ {
+		id, err := d.Mint(grantA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
 	}
-	if _, err := d.Redeem(first); !errors.Is(err, ErrDownloadGone) {
-		t.Fatal("the oldest grant survived the cap")
+	if n := len(d.byLink["tgl_a"]); n != downloadPerLink {
+		t.Fatalf("link a holds %d grants, want %d", n, downloadPerLink)
+	}
+	if d.Len() != downloadPerLink+1 {
+		t.Fatalf("Len = %d, want %d", d.Len(), downloadPerLink+1)
+	}
+	if _, err := d.Redeem(ids[0]); !errors.Is(err, ErrDownloadGone) {
+		t.Error("the link's oldest grant survived its cap")
+	}
+	if _, err := d.Redeem(ids[len(ids)-1]); err != nil {
+		t.Errorf("the link's newest grant: %v", err)
+	}
+	if g, err := d.Redeem(b); err != nil || g != grantB {
+		t.Errorf("another link's grant was evicted: %v", err)
+	}
+}
+
+// At the global cap Mint refuses rather than evict a live grant; room comes back when grants expire or are used up.
+func TestDownloadGlobalCapRefuses(t *testing.T) {
+	clk := clock.NewFake(time.Unix(1000, 0))
+	d := NewDownloads(clk)
+	first, err := d.Mint(DownloadGrant{LinkID: "tgl_0", SpaceID: "s", AttachmentID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < downloadLimit; i++ {
+		if _, err := d.Mint(DownloadGrant{LinkID: "tgl_" + strconv.Itoa(i/downloadPerLink), SpaceID: "s", AttachmentID: "a"}); err != nil {
+			t.Fatalf("mint %d: %v", i, err)
+		}
+	}
+	if d.Len() != downloadLimit {
+		t.Fatalf("Len = %d, want %d", d.Len(), downloadLimit)
+	}
+	if _, err := d.Mint(DownloadGrant{LinkID: "tgl_new", SpaceID: "s", AttachmentID: "a"}); !errors.Is(err, ErrDownloadsFull) {
+		t.Fatalf("mint at the cap = %v, want ErrDownloadsFull", err)
+	}
+	if d.Len() != downloadLimit {
+		t.Fatalf("a refused mint changed Len to %d", d.Len())
+	}
+	if _, err := d.Redeem(first); err != nil {
+		t.Fatalf("the refused mint evicted a live grant: %v", err)
+	}
+	clk.Advance(DownloadTTL)
+	if _, err := d.Mint(DownloadGrant{LinkID: "tgl_new", SpaceID: "s", AttachmentID: "a"}); err != nil {
+		t.Fatalf("mint after expiry: %v", err)
 	}
 }

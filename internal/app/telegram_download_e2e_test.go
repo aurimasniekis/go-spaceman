@@ -173,6 +173,9 @@ func TestMiniAppDownload(t *testing.T) {
 	if ct := r.header.Get("Content-Type"); ct != "application/octet-stream" {
 		t.Errorf("Content-Type = %q", ct)
 	}
+	if csp := r.header.Get("Content-Security-Policy"); csp != "default-src 'none'; sandbox" {
+		t.Errorf("download Content-Security-Policy = %q", csp)
+	}
 	// Range retries of a download manager count as uses: 3 in all, then the link is gone.
 	if r := e.get(t, id, "Range", "bytes=4-"); r.status != 206 || string(r.body) != dlBody[4:] {
 		t.Errorf("range: %d %q", r.status, r.body)
@@ -323,5 +326,41 @@ func TestMiniAppDownloadLogsRedactTheID(t *testing.T) {
 	}
 	if strings.Contains(out, "/tg-dl/") && strings.Contains(strings.ReplaceAll(out, "/tg-dl/<redacted>", ""), "/tg-dl/") {
 		t.Errorf("a log line names a /tg-dl/ path other than the redacted one:\n%s", out)
+	}
+}
+
+// A link is held to a handful of live downloads: the 17th mint replaces its oldest (a session cannot crowd out the
+// store, or anyone else's grants).
+func TestMiniAppDownloadPerLinkCap(t *testing.T) {
+	t.Parallel()
+	e := newDLEnv(t)
+	var ids []string
+	for i := 0; i < 17; i++ {
+		_, id := e.mint(t, e.space, e.att)
+		if id == "" {
+			t.Fatalf("mint %d refused", i)
+		}
+		ids = append(ids, id)
+	}
+	if r := e.get(t, ids[0]); r.status != 404 {
+		t.Errorf("the oldest link past the cap: %d", r.status)
+	}
+	if r := e.get(t, ids[1]); r.status != 200 {
+		t.Errorf("the second link: %d", r.status)
+	}
+	if r := e.get(t, ids[16]); r.status != 200 {
+		t.Errorf("the newest link: %d", r.status)
+	}
+}
+
+// A link minted before the user became Limited (MFA required, no factor) is refused on redemption, as the Mini App
+// session would be.
+func TestMiniAppDownloadLimitedPrincipal(t *testing.T) {
+	t.Parallel()
+	e := newDLEnv(t)
+	_, id := e.mint(t, e.space, e.att)
+	e.exec(t, `DELETE FROM mfa_totp`)
+	if r := e.get(t, id); r.status != 404 || strings.Contains(string(r.body), dlBody) {
+		t.Errorf("after the user lost MFA: %d %q", r.status, r.body)
 	}
 }

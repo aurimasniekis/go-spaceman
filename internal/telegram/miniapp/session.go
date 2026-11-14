@@ -346,7 +346,7 @@ func (svc *Service) resolve(ctx context.Context, token string, touch bool) (*aut
 		}
 		return nil, err
 	}
-	if !p.ViaTelegram() || p.TelegramLinkID != linkID {
+	if !p.ViaTelegram() || p.TelegramLinkID != linkID || p.Limited {
 		return nil, auth.ErrUnauthorized
 	}
 	return p, nil
@@ -420,13 +420,13 @@ func (l *keyedLimiter) allow(key string) bool {
 
 // LinkPrincipal builds a link's principal with the current grants and policy, for a request that is authorized by
 // something other than a session token (a signed download link). A revoked link, a disabled user and the like are
-// auth.ErrUnauthorized.
+// auth.ErrUnauthorized, and so is a Limited principal (MFA required and not enrolled), as for a session.
 func (svc *Service) LinkPrincipal(ctx context.Context, linkID string) (*auth.Principal, error) {
 	p, err := svc.o.Principal(ctx, linkID)
 	if err != nil {
 		return nil, err
 	}
-	if !p.ViaTelegram() || p.TelegramLinkID != linkID {
+	if !p.ViaTelegram() || p.TelegramLinkID != linkID || p.Limited {
 		return nil, auth.ErrUnauthorized
 	}
 	return p, nil

@@ -86,6 +86,9 @@ func RegisterTelegramDownloads(dl TelegramDownloads, att *attachments.Service, o
 				}
 				now := d.now()
 				id, err := dl.Mint(miniapp.DownloadGrant{LinkID: p.TelegramLinkID, SpaceID: in.Body.SpaceID, AttachmentID: in.Body.AttachmentID})
+				if errors.Is(err, miniapp.ErrDownloadsFull) {
+					return nil, d.fail(ctx, "telegram.download", apperr.New(apperr.CodeRateLimited, "too many live download links; retry shortly"))
+				}
 				if err != nil {
 					return nil, d.fail(ctx, "telegram.download", err)
 				}

@@ -19,8 +19,11 @@ const (
 	DownloadTTL = 60 * time.Second
 	// DownloadMaxUses is how many redemptions one link allows (download managers retry with Range requests).
 	DownloadMaxUses = 3
-	// downloadLimit caps the grants held in memory; expired ones go first, then the oldest.
+	// downloadLimit caps the grants held in memory. Expired ones are swept first; at the cap Mint refuses
+	// (ErrDownloadsFull) rather than evict another link's live grant.
 	downloadLimit = 10000
+	// downloadPerLink caps the live grants of one Telegram link; a new mint past it drops that link's own oldest.
+	downloadPerLink = 16
 	// downloadIDLen is the length of an ID: 32 random bytes as unpadded base64url.
 	downloadIDLen = 43
 )
@@ -35,6 +38,9 @@ type DownloadGrant struct {
 	AttachmentID string
 }
 
+// ErrDownloadsFull is Mint's answer when the store is at its global cap: the caller should retry later (429).
+var ErrDownloadsFull = errors.New("miniapp: too many live download links")
+
 type downloadEntry struct {
 	DownloadGrant
 	expires time.Time
@@ -48,6 +54,7 @@ type Downloads struct {
 	mu      sync.Mutex
 	entries map[[sha256.Size]byte]*downloadEntry
 	order   [][sha256.Size]byte // insertion order, for dropping the oldest
+	byLink  map[string][][sha256.Size]byte
 }
 
 // NewDownloads returns an empty store (a nil clock is the system clock).
@@ -55,7 +62,8 @@ func NewDownloads(clk clock.Clock) *Downloads {
 	if clk == nil {
 		clk = clock.System{}
 	}
-	return &Downloads{clk: clk, entries: map[[sha256.Size]byte]*downloadEntry{}}
+	return &Downloads{clk: clk, entries: map[[sha256.Size]byte]*downloadEntry{},
+		byLink: map[string][][sha256.Size]byte{}}
 }
 
 // ValidDownloadID reports whether s has the shape of an ID, so a malformed one is refused without a lookup.
@@ -84,12 +92,16 @@ func (d *Downloads) Mint(g DownloadGrant) (string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.sweepLocked(now)
-	for len(d.entries) >= downloadLimit && len(d.order) > 0 {
-		delete(d.entries, d.order[0])
-		d.order = d.order[1:]
+	// One link never holds more than downloadPerLink grants: it replaces its own oldest, never another link's.
+	for len(d.byLink[g.LinkID]) >= downloadPerLink {
+		d.dropLocked(d.byLink[g.LinkID][0])
+	}
+	if len(d.entries) >= downloadLimit {
+		return "", ErrDownloadsFull
 	}
 	d.entries[h] = &downloadEntry{DownloadGrant: g, expires: now.Add(DownloadTTL)}
 	d.order = append(d.order, h)
+	d.byLink[g.LinkID] = append(d.byLink[g.LinkID], h)
 	return id, nil
 }
 
@@ -128,6 +140,20 @@ func (d *Downloads) Len() int {
 }
 
 func (d *Downloads) dropLocked(h [sha256.Size]byte) {
+	if e, ok := d.entries[h]; ok {
+		l := d.byLink[e.LinkID]
+		for i, o := range l {
+			if o == h {
+				l = append(l[:i], l[i+1:]...)
+				break
+			}
+		}
+		if len(l) == 0 {
+			delete(d.byLink, e.LinkID)
+		} else {
+			d.byLink[e.LinkID] = l
+		}
+	}
 	delete(d.entries, h)
 	for i, o := range d.order {
 		if o == h {
@@ -145,7 +171,6 @@ func (d *Downloads) sweepLocked(now time.Time) {
 		if ok && now.Before(e.expires) {
 			return
 		}
-		delete(d.entries, d.order[0])
-		d.order = d.order[1:]
+		d.dropLocked(d.order[0])
 	}
 }

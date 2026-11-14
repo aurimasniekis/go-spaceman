@@ -121,3 +121,19 @@ func TestMainHandlerNeverServesTgHTML(t *testing.T) {
 		}
 	}
 }
+
+// miniAppHeaders sets every header of the Mini App host's pages, whichever branch of the handler answers.
+func TestMiniAppHeadersFunction(t *testing.T) {
+	h := http.Header{}
+	miniAppHeaders(h)
+	for k, v := range map[string]string{"Content-Security-Policy": MiniAppCSP, "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+		"Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin"} {
+		if got := h.Get(k); got != v {
+			t.Errorf("%s = %q, want %q", k, got, v)
+		}
+	}
+	if r := miniGet(MiniAppHandler(miniFiles), http.MethodPost, "/"); r.Code != http.StatusMethodNotAllowed ||
+		r.Header().Get("Cross-Origin-Opener-Policy") != "same-origin" || r.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+		t.Errorf("405: %d %v", r.Code, r.Header())
+	}
+}
