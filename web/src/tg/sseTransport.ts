@@ -73,6 +73,11 @@ export const fetchSseTransport: WatchTransport = {
       done = true
       h.onClosed(status)
     }
+    // A response we will not read: abort the request and drop its body, so the connection is not left open.
+    const discard = (res: Response) => {
+      ac.abort()
+      res.body?.cancel().catch(() => undefined)
+    }
     void (async () => {
       try {
         const res = await fetch(url, {
@@ -82,11 +87,17 @@ export const fetchSseTransport: WatchTransport = {
           signal: ac.signal,
         })
         if (res.status === 401) {
+          // Step-up 401s (mfa_required) also end here. Eventually they should show a "finish MFA" message rather than
+          // the generic reopen screen; TG-9b-2 and the Limited-consistency task own that. Behaviour is unchanged until then.
+          discard(res)
           done = true
           endSession()
           return
         }
-        if (!res.ok || !res.body || !(res.headers.get('Content-Type') ?? '').startsWith('text/event-stream')) return closed(res.status)
+        if (!res.ok || !res.body || !(res.headers.get('Content-Type') ?? '').startsWith('text/event-stream')) {
+          discard(res)
+          return closed(res.status)
+        }
         h.onOpen()
         const parser = new SseParser((e) => {
           if (!done) h.onEvent(e.type, e.data, e.id)

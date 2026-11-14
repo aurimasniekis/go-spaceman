@@ -3,7 +3,7 @@ import { act, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eventSourceTransport, setWatchTransport, type StreamHandlers, type WatchTransport } from './transport'
-import { useWatch } from './watch'
+import { RETRY_BASE_MS, useWatch } from './watch'
 
 // useWatch over a transport other than EventSource (the Mini App's fetch transport plugs in the same way).
 function fake() {
@@ -42,7 +42,8 @@ describe('useWatch with another transport', () => {
     act(() => f.opened[0].h.onEvent('change', JSON.stringify({ seq: 5, at: 0, resource_type: 'token', resource_id: 'x', action: 'updated' }), '5'))
     act(() => f.opened[0].h.onClosed(502))
     expect(result.current).toBe('offline')
-    await tick(1000)
+    // The first retry waits retryDelay(0): 800–1200 ms with jitter. The upper bound always fires, whatever Math.random returns.
+    await tick(RETRY_BASE_MS * 1.2)
     expect(f.opened[1].url).toBe('/api/v1/watch?after=5')
   })
 

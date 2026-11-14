@@ -99,6 +99,26 @@ describe('fetchSseTransport', () => {
     expect(b.calls).toEqual(['closed:200'])
   })
 
+  it.each([
+    ['401', 401, 'text/event-stream'],
+    ['502', 502, 'text/event-stream'],
+    ['a wrong content type', 200, 'text/plain'],
+  ])('cancels the body and aborts the request on %s', async (_name, status, type) => {
+    const cancelled = vi.fn()
+    const body = new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode('data: x\n\n')), cancel: cancelled })
+    const f = vi.fn().mockResolvedValue(new Response(body, { status, headers: { 'Content-Type': type } }))
+    vi.stubGlobal('fetch', f)
+    const end = vi.spyOn(tg, 'endSession').mockImplementation(() => {})
+    session.setTelegramSession('tok')
+    const { h } = handlers()
+    fetchSseTransport.open('/u', h)
+    await settle()
+    const init = f.mock.calls[0][1] as RequestInit
+    expect(cancelled).toHaveBeenCalledOnce()
+    expect(init.signal?.aborted).toBe(true)
+    end.mockRestore()
+  })
+
   it('stays quiet after close()', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('x', 'AbortError')))
     const { calls, h } = handlers()
