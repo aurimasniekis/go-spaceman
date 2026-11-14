@@ -102,3 +102,33 @@ SELECT * FROM limit_waits WHERE state = 'waiting' AND release_at IS NOT NULL AND
 UPDATE limit_waits SET state = sqlc.arg(state), resume_at = sqlc.arg(resume_at), new_run_id = sqlc.arg(new_run_id),
   attempts = sqlc.arg(attempts), last_error = sqlc.arg(last_error), version = version + 1, updated_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND version = sqlc.arg(version);
+
+-- Parking (UL-7). Live runs at a limit that SpaceMan may park when they outlive the keep-alive (control, worker and
+-- diagnostic runs that are still wanted); uses ix_runs_observed_live.
+-- name: ListLimitedLiveRuns :many
+SELECT * FROM runs WHERE observed IN ('starting', 'running', 'stopping') AND limit_kind <> '' AND desired = 'running'
+  AND kind IN ('control', 'worker', 'diagnostic')
+ORDER BY id LIMIT ?;
+
+-- The wait a run was resumed from (a re-park carries its release time and attempts forward).
+-- name: GetLimitWaitResumedInto :one
+SELECT * FROM limit_waits WHERE space_id = ? AND new_run_id = ? AND state = 'resumed' ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- Waits left in resuming by a central that stopped mid-resume.
+-- name: ListStuckLimitWaits :many
+SELECT * FROM limit_waits WHERE state = 'resuming' AND updated_at < ? ORDER BY updated_at, id LIMIT ?;
+
+-- name: NextLimitWaitRelease :one
+SELECT CAST(coalesce(min(release_at), 0) AS INTEGER) AS at FROM limit_waits WHERE state = 'waiting' AND release_at IS NOT NULL;
+
+-- Waits a space's control is waiting in (autostart leaves control to its wait).
+-- name: GetActiveControlLimitWait :one
+SELECT * FROM limit_waits WHERE space_id = ? AND run_kind = 'control' AND state IN ('waiting', 'resuming') LIMIT 1;
+
+-- Waits that were put off for a reason that has just gone (the node said hello, the space resumed) are due now.
+-- name: ListDeferredLimitWaits :many
+SELECT * FROM limit_waits WHERE space_id = ? AND state = 'waiting' AND last_error = ? AND resume_at > ? ORDER BY created_at, id LIMIT ?;
+
+-- A task's waiting waits (limit_waits(task_id) index): cancelled when the task is done with or given to another run.
+-- name: ListTaskLimitWaits :many
+SELECT * FROM limit_waits WHERE task_id = ? AND state = 'waiting' ORDER BY created_at, id;

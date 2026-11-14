@@ -67,3 +67,67 @@ func limitTask(ctx context.Context, tx *store.Tx, runID string) string {
 	}
 	return fmt.Sprintf(" Its task %s (%s) is %s.", t.ID, t.Title, t.Status)
 }
+
+// OnLimitWaitTx tells control, inside the transaction of the change, when a run is parked at its usage limit, when it
+// is resumed and when its wait is released (fleet OnLimitWaitTx, ADR-0079 decisions 4–6 and 11): one message per wait
+// and change, deduplicated on the wait. A re-park of a resumed run (an unknown reset probed again) and the later
+// resumes of the same chain are not announced again. Control's own wait isn't announced to it: a resumed control is
+// told by its prompt, a fresh session's prompt included.
+func (sv *Supervisor) OnLimitWaitTx(ctx context.Context, tx *store.Tx, ev fleet.LimitWaitEvent) error {
+	w := ev.Wait
+	if w.RunKind == agenttools.KindControl {
+		return nil
+	}
+	task := ""
+	if w.TaskID != "" {
+		if t, err := tx.Q.GetTask(ctx, w.TaskID); err == nil {
+			task = fmt.Sprintf(" Its task is %s (%s).", t.ID, t.Title)
+		}
+	}
+	var key, subject, body string
+	switch ev.Change {
+	case fleet.LimitWaitParked:
+		if ev.Repark {
+			return nil
+		}
+		release := ""
+		if w.ReleaseAt != nil {
+			release = fmt.Sprintf(" If it hasn't resumed by %s, SpaceMan gives up on it and its task goes back to the queue, ready and unassigned.",
+				w.ReleaseAt.UTC().Format(time.RFC3339))
+		}
+		key, subject = "limit-wait:"+w.ID, fmt.Sprintf("%s run parked at its usage limit", w.Role)
+		body = fmt.Sprintf("Run %s (%s, %s) is parked at its usage limit: its process ended and its session is kept. SpaceMan resumes it as a new run "+
+			"of the same instance at %s (or when the account's hold lets it through).%s%s Don't relaunch or reassign it; you get one message when it "+
+			"resumes. Its wait is %s (spaceman limits waits).", w.RunID, w.RunKind, w.Role, w.ResumeAt.UTC().Format(time.RFC3339), task, release, w.ID)
+	case fleet.LimitWaitResumed:
+		if !ev.FirstResume && !ev.Fresh {
+			return nil
+		}
+		key, subject = "limit-wait-resumed:"+w.ID, fmt.Sprintf("%s run resumed after its usage limit", w.Role)
+		body = fmt.Sprintf("Run %s (%s, %s), parked at its usage limit, was resumed as run %s on the same instance with its session.%s",
+			w.RunID, w.RunKind, w.Role, ev.NewRunID, taskNow(task, ev.NewRunID))
+		if ev.Fresh {
+			body = fmt.Sprintf("Run %s (%s, %s), parked at its usage limit, was resumed as run %s in a fresh session: the space moved to another node "+
+				"since, so its conversation could not be carried over. It was given its original prompt again and works from the workspace's state.%s",
+				w.RunID, w.RunKind, w.Role, ev.NewRunID, taskNow(task, ev.NewRunID))
+		}
+	case fleet.LimitWaitReleased:
+		key, subject = "limit-wait-released:"+w.ID, fmt.Sprintf("%s run given up at its usage limit", w.Role)
+		body = fmt.Sprintf("Run %s (%s, %s) waited at its usage limit since %s and was not resumed; SpaceMan gave up on it (%s).%s",
+			w.RunID, w.RunKind, w.Role, w.CreatedAt.UTC().Format(time.RFC3339), w.LastError, task)
+		if w.TaskID != "" {
+			body += " The task is back in the queue, ready and unassigned: launch a worker for it when an account is free."
+		}
+	default:
+		return nil
+	}
+	_, err := sv.msgs.NotifyControlTx(ctx, tx, w.SpaceID, key, subject, body)
+	return err
+}
+
+func taskNow(task, runID string) string {
+	if task == "" {
+		return ""
+	}
+	return task + " It now points at run " + runID + "."
+}

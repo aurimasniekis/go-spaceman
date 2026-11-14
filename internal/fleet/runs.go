@@ -133,6 +133,10 @@ type LaunchInput struct {
 	// TerminalSize is the size the run's terminal is held at from the start: the space's terminal_cols and
 	// terminal_rows limits, filled by launch resolution (not part of the API, ADR-0075). nil: the node's default.
 	TerminalSize *TerminalSize `json:"-"`
+	// inTx runs inside the launch transaction once the run is inserted (a resume marks its wait and re-points its task
+	// there); an error rolls the launch back. manifest adds to the run's manifest. Neither is part of the API.
+	inTx     func(ctx context.Context, tx *store.Tx, runID string) error
+	manifest map[string]any
 	// AuthorizeKind checks the caller may launch the resolved kind (the API: diagnostics need run:diagnose,
 	// SM-CTRL-004). It runs after the space role decided the kind and before anything is written.
 	AuthorizeKind func(kind string) error `json:"-"`
@@ -330,6 +334,9 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 		for k, v := range resolved {
 			m[k] = v
 		}
+		for k, v := range in.manifest {
+			m[k] = v
+		}
 		manifest, _ := json.Marshal(m)
 		var termCols, termRows sql.NullInt64
 		// A node known to predate minor 10 cannot hold a size: storing one would show a size the run doesn't have.
@@ -354,6 +361,11 @@ func (svc *Service) LaunchRun(ctx context.Context, actor audit.Actor, spaceID st
 			RecordingMaxBytes: in.RecordingMaxBytes}
 		if err := svc.queueCommand(ctx, tx, sp.NodeID, spaceID, runID, lease.Generation, proto.CmdLaunch, "launch:"+runID, payload); err != nil {
 			return err
+		}
+		if in.inTx != nil {
+			if err := in.inTx(ctx, tx, runID); err != nil {
+				return err
+			}
 		}
 		if err := svc.record(ctx, tx, spaceID, "run", runID, "created", 1); err != nil {
 			return err
@@ -731,7 +743,16 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		nodeReason := rep.Reason
 		// The override applies to the report that ends the run; an end already recorded keeps its reason (only an end
 		// recorded as usage_limit is restored when a later report repeats the node's own reason).
-		if sweep == nil && ended(rep.State) && (!ended(r.Observed) && nextLimit.kind != "" && r.Desired != "stopped" || ended(r.Observed) && r.EndReason == EndUsageLimit) {
+		// A run central stopped to park it at its limit (it has a limit wait) ended because of the limit too (UL-7).
+		parked := false
+		if sweep == nil && ended(rep.State) && !ended(r.Observed) && r.Desired == "stopped" {
+			if _, err := tx.Q.GetLimitWaitByRun(ctx, r.ID); err == nil {
+				parked = true
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+		if sweep == nil && ended(rep.State) && (!ended(r.Observed) && (nextLimit.kind != "" && r.Desired != "stopped" || parked) || ended(r.Observed) && r.EndReason == EndUsageLimit) {
 			rep.Reason = EndUsageLimit
 		}
 		// A report that changes nothing (every hello re-reports the node's whole journal, ended runs included) writes
@@ -773,6 +794,8 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 			if err := svc.limitWindowTx(ctx, tx, r.ID, curLimit, nextLimit); err != nil {
 				return err
 			}
+			// When the run is parked depends on its limit (the limit-wait job's next due time).
+			tx.AfterCommit(svc.wakeDeadlines)
 		}
 		if sweep != nil {
 			// Nothing for the run may reach the node any more, and the node is no longer told to keep it (sendReconcile).
@@ -817,6 +840,22 @@ func (svc *Service) applyRunReport(ctx context.Context, nodeID string, rep proto
 		if justEnded {
 			if err := svc.endRunTakeoverTx(ctx, tx, r); err != nil {
 				return err
+			}
+			// A run that ends, or is lost or swept, while at its limit is parked: it comes back at the reset (ADR-0079
+			// decision 4). One somebody asked to stop is not.
+			if nextLimit.kind != "" && r.Desired != "stopped" {
+				pr := r
+				if rep.SessionID != "" {
+					pr.SessionID = rep.SessionID
+				}
+				pr.Turn = max(pr.Turn, int64(min(rep.Turn, math.MaxInt64))) //nolint:gosec // saturated
+				why := rep.State
+				if sweep != nil {
+					why = sweep.Reason
+				}
+				if _, err := svc.parkTx(ctx, tx, pr, nextLimit, why); err != nil {
+					return err
+				}
 			}
 			ev := outbox.RunEnded{Run: outboxRun(r), State: rep.State, EndReason: outbox.CleanID(rep.Reason)}
 			if nodeReason != rep.Reason {

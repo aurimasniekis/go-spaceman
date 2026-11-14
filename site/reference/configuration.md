@@ -183,6 +183,7 @@ Holds the installation defaults of the limits model (SM-LIMIT-001, ADR-0036). Sp
 | `limits.terminal_rows` | `0` | `SPACEMAN_LIMITS_TERMINAL_ROWS` | The height new runs' terminals are held at: 10-200 rows, or 0 (the default) for the node's runner.terminal_size. A size applies only when terminal_cols is set too. |
 | `limits.usage_limit_failover` | `0` | `SPACEMAN_LIMITS_USAGE_LIMIT_FAILOVER` | Lets a launch or resume whose account is held at a usage limit use another account bound to the space for the same harness that is not held (1: on; 0: off, the default). A space routed through an LLM gateway never falls back to a direct account (ADR-0079 decision 8). |
 | `limits.usage_limit_keep_alive_max_minutes` | `360` | `SPACEMAN_LIMITS_USAGE_LIMIT_KEEP_ALIVE_MAX_MINUTES` | How long a run at a usage limit waits for the reset with its process kept alive, and the longest gap between checks of a hold whose reset time is unknown (1-1440, default 360; ADR-0079). |
+| `limits.usage_limit_max_wait_hours` | `168` | `SPACEMAN_LIMITS_USAGE_LIMIT_MAX_WAIT_HOURS` | How long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned (1-720, default 168: 7 days; control is never given up on; ADR-0079 Q2). |
 
 ### `retention`
 

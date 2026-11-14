@@ -44,6 +44,10 @@ var FleetRules = map[string]Rule{
 	// on an account with the permission that manages accounts (accounts are global).
 	"clear-space-usage-limit":    InSpace(authz.RunControl),
 	"clear-account-usage-limits": Global(authz.AccountWrite),
+	// A parked run's wait (decisions 5 and 6): resume it now, or give it up and its task back to the queue, with the
+	// permission that launches and stops runs in the space.
+	"resume-limit-wait":  InSpace(authz.RunControl),
+	"release-limit-wait": InSpace(authz.RunControl),
 
 	// Terminal takeover (takeover.go).
 	"start-takeover": TakeoverRules["start-takeover"],
@@ -332,6 +336,35 @@ func RegisterFleet(f *fleet.Service) func(api huma.API, d *Deps) {
 				}{}
 				out.Body.Items = ws
 				return out, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "resume-limit-wait", Method: http.MethodPost, Path: "/spaces/{space_id}/limit-waits/{wait_id}/resume",
+			Summary: "Resume a run parked at a usage limit now",
+			Description: "Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is " +
+				"still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space " +
+				"or a node that isn't connected refuses it, and the wait keeps waiting. Audited.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				WaitID string `path:"wait_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.LimitWait }, error) {
+				w, err := f.ResumeLimitWait(ctx, Actor(ctx), in.SpaceID, in.WaitID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.resume", err)
+				}
+				return &struct{ Body *fleet.LimitWait }{Body: w}, nil
+			})
+		huma.Register(api, huma.Operation{OperationID: "release-limit-wait", Method: http.MethodPost, Path: "/spaces/{space_id}/limit-waits/{wait_id}/release",
+			Summary: "Give up on a run parked at a usage limit",
+			Description: "Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and " +
+				"unassigned, and control is told. Audited.", Tags: tags},
+			func(ctx context.Context, in *struct {
+				SpacePath
+				WaitID string `path:"wait_id" maxLength:"64"`
+			}) (*struct{ Body *fleet.LimitWait }, error) {
+				w, err := f.ReleaseLimitWait(ctx, Actor(ctx), in.SpaceID, in.WaitID)
+				if err != nil {
+					return nil, d.fail(ctx, "limit_waits.release", err)
+				}
+				return &struct{ Body *fleet.LimitWait }{Body: w}, nil
 			})
 		huma.Register(api, huma.Operation{OperationID: "list-account-usage-limits", Method: http.MethodGet, Path: "/accounts/{account_id}/usage-limits",
 			Summary: "An account's open usage-limit holds in every space", Tags: []string{"accounts"}},

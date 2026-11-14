@@ -31,7 +31,8 @@ it comes from and where SpaceMan enforces it.
 | Start control on new work (`control_autostart`) | on (1) | 0 off, 1 on | whether work waiting for control starts the space's control role ([Control](/guide/control#starting-and-stopping-on-its-own)) | control supervisor |
 | Stop idle control (`control_idle_stop_minutes`) | 30 | 0–10,080 (0: never) | how long control sits idle before it is stopped | control supervisor |
 | Usage-limit failover (`usage_limit_failover`) | off (0) | 0 off, 1 on | when the account a launch would use is held at a usage limit, use another account bound to the space for the same harness that isn't held; a space routed through Harbor Pilot never falls back to a direct account | run launch |
-| Usage-limit keep-alive (`usage_limit_keep_alive_max_minutes`) | 360 | 1–1,440 | how long a run at a usage limit waits for the reset with its process kept alive; also the longest gap between re-checks of a hold whose reset time is unknown | usage-limit holds |
+| Usage-limit keep-alive (`usage_limit_keep_alive_max_minutes`) | 360 | 1–1,440 | how long a run at a usage limit waits for the reset with its process kept alive (after that, or at once when the reset is further away, SpaceMan stops it and parks it to resume at the reset); also the longest gap between re-checks of a hold whose reset time is unknown | usage-limit holds and parking |
+| Usage-limit maximum wait (`usage_limit_max_wait_hours`) | 168 (7 days) | 1–720 | how long a worker or diagnostic run parked at a usage limit waits to be resumed before its task goes back to the queue, ready and unassigned; control is never given up on | usage-limit waits |
 
 Some limits are set elsewhere and only shown here: the node's **capacity** (the node agent's `capacity` setting, shared
 by every space on the node), each knowledge base's own session limit, human-action rate limits per type

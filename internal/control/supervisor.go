@@ -205,6 +205,10 @@ func (sv *Supervisor) OnRunEnded(runID string) {
 			return
 		}
 		if r.Kind != agenttools.KindControl {
+			// A run parked at its usage limit is announced by its parked message (OnLimitWaitTx), not as ended.
+			if w, err := sv.fl.LimitWaitForRun(ctx, r.ID); err != nil || w != nil {
+				return
+			}
 			task := ""
 			if l, _, err := sv.q.List(ctx, r.SpaceID); err == nil {
 				for _, t := range l {

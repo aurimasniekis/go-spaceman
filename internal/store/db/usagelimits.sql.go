@@ -56,6 +56,40 @@ func (q *Queries) ClearUsageLimitsByAccount(ctx context.Context, arg ClearUsageL
 	return result.RowsAffected()
 }
 
+const getActiveControlLimitWait = `-- name: GetActiveControlLimitWait :one
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE space_id = ? AND run_kind = 'control' AND state IN ('waiting', 'resuming') LIMIT 1
+`
+
+// Waits a space's control is waiting in (autostart leaves control to its wait).
+func (q *Queries) GetActiveControlLimitWait(ctx context.Context, spaceID string) (LimitWait, error) {
+	row := q.db.QueryRowContext(ctx, getActiveControlLimitWait, spaceID)
+	var i LimitWait
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.RunID,
+		&i.TaskID,
+		&i.RunKind,
+		&i.Role,
+		&i.NodeID,
+		&i.InstanceID,
+		&i.Harness,
+		&i.SessionID,
+		&i.LaunchJson,
+		&i.UsageLimitID,
+		&i.ResumeAt,
+		&i.ReleaseAt,
+		&i.State,
+		&i.NewRunID,
+		&i.Attempts,
+		&i.LastError,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getActiveLimitWait = `-- name: GetActiveLimitWait :one
 SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE space_id = ? AND instance_id = ? AND state IN ('waiting', 'resuming')
 `
@@ -133,6 +167,45 @@ SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harn
 
 func (q *Queries) GetLimitWaitByRun(ctx context.Context, runID string) (LimitWait, error) {
 	row := q.db.QueryRowContext(ctx, getLimitWaitByRun, runID)
+	var i LimitWait
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.RunID,
+		&i.TaskID,
+		&i.RunKind,
+		&i.Role,
+		&i.NodeID,
+		&i.InstanceID,
+		&i.Harness,
+		&i.SessionID,
+		&i.LaunchJson,
+		&i.UsageLimitID,
+		&i.ResumeAt,
+		&i.ReleaseAt,
+		&i.State,
+		&i.NewRunID,
+		&i.Attempts,
+		&i.LastError,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLimitWaitResumedInto = `-- name: GetLimitWaitResumedInto :one
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE space_id = ? AND new_run_id = ? AND state = 'resumed' ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+type GetLimitWaitResumedIntoParams struct {
+	SpaceID  string
+	NewRunID string
+}
+
+// The wait a run was resumed from (a re-park carries its release time and attempts forward).
+func (q *Queries) GetLimitWaitResumedInto(ctx context.Context, arg GetLimitWaitResumedIntoParams) (LimitWait, error) {
+	row := q.db.QueryRowContext(ctx, getLimitWaitResumedInto, arg.SpaceID, arg.NewRunID)
 	var i LimitWait
 	err := row.Scan(
 		&i.ID,
@@ -319,6 +392,68 @@ func (q *Queries) InsertUsageLimit(ctx context.Context, arg InsertUsageLimitPara
 		arg.UpdatedAt,
 	)
 	return err
+}
+
+const listDeferredLimitWaits = `-- name: ListDeferredLimitWaits :many
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE space_id = ? AND state = 'waiting' AND last_error = ? AND resume_at > ? ORDER BY created_at, id LIMIT ?
+`
+
+type ListDeferredLimitWaitsParams struct {
+	SpaceID   string
+	LastError string
+	ResumeAt  int64
+	Limit     int64
+}
+
+// Waits that were put off for a reason that has just gone (the node said hello, the space resumed) are due now.
+func (q *Queries) ListDeferredLimitWaits(ctx context.Context, arg ListDeferredLimitWaitsParams) ([]LimitWait, error) {
+	rows, err := q.db.QueryContext(ctx, listDeferredLimitWaits,
+		arg.SpaceID,
+		arg.LastError,
+		arg.ResumeAt,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LimitWait{}
+	for rows.Next() {
+		var i LimitWait
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.RunID,
+			&i.TaskID,
+			&i.RunKind,
+			&i.Role,
+			&i.NodeID,
+			&i.InstanceID,
+			&i.Harness,
+			&i.SessionID,
+			&i.LaunchJson,
+			&i.UsageLimitID,
+			&i.ResumeAt,
+			&i.ReleaseAt,
+			&i.State,
+			&i.NewRunID,
+			&i.Attempts,
+			&i.LastError,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDueLimitWaits = `-- name: ListDueLimitWaits :many
@@ -527,6 +662,78 @@ func (q *Queries) ListLimitWaitsToRelease(ctx context.Context, releaseAt sql.Nul
 	return items, nil
 }
 
+const listLimitedLiveRuns = `-- name: ListLimitedLiveRuns :many
+SELECT id, space_id, node_id, generation, kind, role, harness, instance_id, session_id, desired, observed, terminal_id, core_id, identity, pid, exit_code, end_reason, error, status, status_kind, turn, adopted, launch_json, manifest_json, version, created_at, created_by, started_at, ended_at, observed_at, updated_at, recording_deleted_at, terminal_cols, terminal_rows, harness_version, harness_requested, harness_fallback, limit_kind, limit_resets_at, limit_since FROM runs WHERE observed IN ('starting', 'running', 'stopping') AND limit_kind <> '' AND desired = 'running'
+  AND kind IN ('control', 'worker', 'diagnostic')
+ORDER BY id LIMIT ?
+`
+
+// Parking (UL-7). Live runs at a limit that SpaceMan may park when they outlive the keep-alive (control, worker and
+// diagnostic runs that are still wanted); uses ix_runs_observed_live.
+func (q *Queries) ListLimitedLiveRuns(ctx context.Context, limit int64) ([]Run, error) {
+	rows, err := q.db.QueryContext(ctx, listLimitedLiveRuns, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Run{}
+	for rows.Next() {
+		var i Run
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.NodeID,
+			&i.Generation,
+			&i.Kind,
+			&i.Role,
+			&i.Harness,
+			&i.InstanceID,
+			&i.SessionID,
+			&i.Desired,
+			&i.Observed,
+			&i.TerminalID,
+			&i.CoreID,
+			&i.Identity,
+			&i.Pid,
+			&i.ExitCode,
+			&i.EndReason,
+			&i.Error,
+			&i.Status,
+			&i.StatusKind,
+			&i.Turn,
+			&i.Adopted,
+			&i.LaunchJson,
+			&i.ManifestJson,
+			&i.Version,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.ObservedAt,
+			&i.UpdatedAt,
+			&i.RecordingDeletedAt,
+			&i.TerminalCols,
+			&i.TerminalRows,
+			&i.HarnessVersion,
+			&i.HarnessRequested,
+			&i.HarnessFallback,
+			&i.LimitKind,
+			&i.LimitResetsAt,
+			&i.LimitSince,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOpenUsageLimitsByAccount = `-- name: ListOpenUsageLimitsByAccount :many
 SELECT id, space_id, scope, account_id, gateway_ref, kind, resets_at, check_at, source, first_run_id, seen_at, cleared_at, cleared_by, notified_control_at, notified_humans_at, version, created_at, updated_at FROM usage_limits WHERE scope = 'account' AND account_id = ? AND cleared_at IS NULL ORDER BY seen_at, id
 `
@@ -649,6 +856,111 @@ func (q *Queries) ListOpenUsageLimitsBySpace(ctx context.Context, spaceID string
 			&i.ClearedBy,
 			&i.NotifiedControlAt,
 			&i.NotifiedHumansAt,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStuckLimitWaits = `-- name: ListStuckLimitWaits :many
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE state = 'resuming' AND updated_at < ? ORDER BY updated_at, id LIMIT ?
+`
+
+type ListStuckLimitWaitsParams struct {
+	UpdatedAt int64
+	Limit     int64
+}
+
+// Waits left in resuming by a central that stopped mid-resume.
+func (q *Queries) ListStuckLimitWaits(ctx context.Context, arg ListStuckLimitWaitsParams) ([]LimitWait, error) {
+	rows, err := q.db.QueryContext(ctx, listStuckLimitWaits, arg.UpdatedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LimitWait{}
+	for rows.Next() {
+		var i LimitWait
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.RunID,
+			&i.TaskID,
+			&i.RunKind,
+			&i.Role,
+			&i.NodeID,
+			&i.InstanceID,
+			&i.Harness,
+			&i.SessionID,
+			&i.LaunchJson,
+			&i.UsageLimitID,
+			&i.ResumeAt,
+			&i.ReleaseAt,
+			&i.State,
+			&i.NewRunID,
+			&i.Attempts,
+			&i.LastError,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskLimitWaits = `-- name: ListTaskLimitWaits :many
+SELECT id, space_id, run_id, task_id, run_kind, role, node_id, instance_id, harness, session_id, launch_json, usage_limit_id, resume_at, release_at, state, new_run_id, attempts, last_error, version, created_at, updated_at FROM limit_waits WHERE task_id = ? AND state = 'waiting' ORDER BY created_at, id
+`
+
+// A task's waiting waits (limit_waits(task_id) index): cancelled when the task is done with or given to another run.
+func (q *Queries) ListTaskLimitWaits(ctx context.Context, taskID string) ([]LimitWait, error) {
+	rows, err := q.db.QueryContext(ctx, listTaskLimitWaits, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LimitWait{}
+	for rows.Next() {
+		var i LimitWait
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.RunID,
+			&i.TaskID,
+			&i.RunKind,
+			&i.Role,
+			&i.NodeID,
+			&i.InstanceID,
+			&i.Harness,
+			&i.SessionID,
+			&i.LaunchJson,
+			&i.UsageLimitID,
+			&i.ResumeAt,
+			&i.ReleaseAt,
+			&i.State,
+			&i.NewRunID,
+			&i.Attempts,
+			&i.LastError,
 			&i.Version,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -806,6 +1118,17 @@ SELECT CAST(coalesce(min(resume_at), 0) AS INTEGER) AS at FROM limit_waits WHERE
 
 func (q *Queries) NextLimitWaitDue(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, nextLimitWaitDue)
+	var at int64
+	err := row.Scan(&at)
+	return at, err
+}
+
+const nextLimitWaitRelease = `-- name: NextLimitWaitRelease :one
+SELECT CAST(coalesce(min(release_at), 0) AS INTEGER) AS at FROM limit_waits WHERE state = 'waiting' AND release_at IS NOT NULL
+`
+
+func (q *Queries) NextLimitWaitRelease(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, nextLimitWaitRelease)
 	var at int64
 	err := row.Scan(&at)
 	return at, err

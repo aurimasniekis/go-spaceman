@@ -330,6 +330,19 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			}
 			return c.Supervisor.OnRunLimitTx(ctx, tx, r, ended, opened) // control told once per limit (ADR-0079)
 		},
+		// Parked runs (ADR-0079 decisions 4–6): control told once per park, resume and release; the task follows its run.
+		OnLimitWaitTx: func(ctx context.Context, tx *store.Tx, ev fleet.LimitWaitEvent) error {
+			if c.Supervisor == nil {
+				return nil
+			}
+			return c.Supervisor.OnLimitWaitTx(ctx, tx, ev)
+		},
+		RepointTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, fromRun, toRun string) (bool, error) {
+			return c.Queue.RepointRunTaskTx(ctx, tx, actor, taskID, fromRun, toRun)
+		},
+		ReleaseTaskTx: func(ctx context.Context, tx *store.Tx, actor audit.Actor, taskID, runID, reason string) (bool, error) {
+			return c.Queue.ReleaseRunTaskTx(ctx, tx, actor, taskID, runID, reason)
+		},
 		OnCommandAck: func(ctx context.Context, tx *store.Tx, commandID, kind, result, reason string) error {
 			if kind == proto.CmdDreamDone {
 				if c.Dreams == nil {
@@ -345,11 +358,14 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 		Outbox: c.Outbox, Admit: c.Limits.Admit, Gateway: c.HarborPilotRuns, OnGatewayRevocation: wakeDeadlines,
 		// ADR-0079: failover and the probe backoff cap are space limits.
 		UsageLimitSettings: func(ctx context.Context, q *db.Queries, spaceID string) fleet.UsageLimitSettings {
-			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax}
+			out := fleet.UsageLimitSettings{KeepAliveMax: fleet.DefaultLimitKeepAliveMax, MaxWait: fleet.DefaultLimitMaxWait}
 			if v, err := c.Limits.For(ctx, q, spaceID); err == nil {
 				out.Failover = v.Get(limits.UsageLimitFailover) != 0
 				if m := v.Get(limits.UsageLimitKeepAliveMax); m > 0 {
 					out.KeepAliveMax = time.Duration(m) * time.Minute
+				}
+				if h := v.Get(limits.UsageLimitMaxWait); h > 0 {
+					out.MaxWait = time.Duration(h) * time.Hour
 				}
 			}
 			return out
@@ -777,6 +793,8 @@ func (c *Central) Serve(ctx context.Context) error {
 		human.Deadline{Name: "gateway_lease_sweep", Next: c.Fleet.NextGatewayLeaseSweep, Due: c.Fleet.SweepGatewayLeases},
 		// Runs counted as live whose process is gone (a node agent restart, a lost lease) end as lost (ADR-0074).
 		human.Deadline{Name: "stale_run_sweep", Next: c.Fleet.NextStaleRunSweep, Due: c.Fleet.SweepStaleRuns},
+		// Runs at a usage limit: parked after the keep-alive, resumed at the reset, released after the maximum wait (ADR-0079).
+		human.Deadline{Name: "limit_waits", Next: c.Fleet.NextLimitWait, Due: c.Fleet.LimitWaitsDue},
 		// Ended gateway runs' usage, read back from Harbor Pilot (HP-T5).
 		human.Deadline{Name: "gateway_usage", Next: c.HarborPilotRuns.NextUsageRead, Due: c.HarborPilotRuns.ReadDueUsage},
 		// The daily retention pass (ADR-0045): one due time for the whole installation, never per space.

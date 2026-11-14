@@ -65,6 +65,8 @@ const (
 	// its process kept alive (also the cap of the probe backoff of a hold whose reset is unknown).
 	UsageLimitFailover     = "usage_limit_failover"
 	UsageLimitKeepAliveMax = "usage_limit_keep_alive_max_minutes"
+	// UsageLimitMaxWait is how long a worker parked at a usage limit waits before its task goes back to the queue (Q2).
+	UsageLimitMaxWait = "usage_limit_max_wait_hours"
 )
 
 // RetentionKeys are the limits that delete data in the daily retention pass.
@@ -168,7 +170,10 @@ var Defs = []Def{
 		Enforced: "run launch (account resolution)", OnLower: "Turning it off never stops a run; later launches on a held account are refused until its reset.", Overridable: true},
 	{Key: UsageLimitKeepAliveMax, Label: "Usage-limit keep-alive", Unit: "minutes",
 		Scope:    "how long a run at a usage limit waits for the reset with its process kept alive; also the longest gap between checks of a hold whose reset time is unknown",
-		Enforced: "usage-limit holds (probe backoff)", OnLower: "Applies from the next check of a hold.", Overridable: true},
+		Enforced: "usage-limit holds (probe backoff) and parking (a limited run is stopped and parked after it)", OnLower: "Applies from the next check of a hold or a limited run.", Overridable: true},
+	{Key: UsageLimitMaxWait, Label: "Usage-limit maximum wait", Unit: "hours",
+		Scope:    "how long a worker or diagnostic run parked at a usage limit waits to be resumed before SpaceMan gives up on it and its task goes back to the queue, ready and unassigned (control is never given up on)",
+		Enforced: "usage-limit waits (release)", OnLower: "Applies to runs parked from then on; a wait already parked keeps its release time.", Overridable: true},
 }
 
 const terminalLower = "Runs already started keep their size; an operator with terminal takeover can resize a live run's terminal."

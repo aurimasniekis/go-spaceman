@@ -2548,6 +2548,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/spaces/{space_id}/limit-waits/{wait_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give up on a run parked at a usage limit
+         * @description Ends the wait without resuming the run. Its task, if it is still the parked run's, goes back to the queue, ready and unassigned, and control is told. Audited.
+         */
+        post: operations["release-limit-wait"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spaces/{space_id}/limit-waits/{wait_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a run parked at a usage limit now
+         * @description Resumes the parked run now, whatever its resume time, as a new run of the same instance (with its session when the space is still on the same node); its task points at the new run. The usual checks apply: a held account (429), a full space, a paused space or a node that isn't connected refuses it, and the wait keeps waiting. Audited.
+         */
+        post: operations["resume-limit-wait"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spaces/{space_id}/limits": {
         parameters: {
             query?: never;
@@ -6187,6 +6227,12 @@ export interface components {
             valid: boolean;
         };
         FleetLimitWait: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example /api/v1/schemas/FleetLimitWait.json
+             */
+            readonly $schema?: string;
             /** Format: int64 */
             attempts: number;
             /** Format: date-time */
@@ -17372,6 +17418,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["List-space-limit-waitsResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "release-limit-wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                wait_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetLimitWait"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    "resume-limit-wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                space_id: string;
+                wait_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FleetLimitWait"];
                 };
             };
             /** @description Error */
