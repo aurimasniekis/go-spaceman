@@ -563,6 +563,9 @@
   are metrics (SM-OBS-001).
 
 ## Messaging
+- **A forced "Message the agent" can still be dropped.** The run page's box types the text at once (`force`), but a
+  program reported as `blocked` (a permission prompt, for example) refuses it, as does a takeover that starts in
+  between or a run that is ending. Central has already answered 202 and the operator is not told yet (ADR-0084).
 - **Terminal notices need an idle program.** Notices are typed only when the harness reports idle or done through
   OSC 7501; a program that never reports status gets no notices and must call `spaceman_messages` itself. herdr-core's
   own gate accepts only idle, so a `done` program gets the notice ungated after a fresh status check (ADR-0052).
@@ -709,6 +712,12 @@
   outbound publication (`outbox.Publisher`), inbound event sources (`events.Source`: Pulse durable consumers and core
   NATS) and MCP upstream transports (`gateway.Transport`). Adapters are compiled in. The gateway speaks only streamable
   HTTP to upstream servers (no stdio or SSE-only transport), and Pulse is the only inbound event system.
+
+- **Central has no per-IP or global connection cap** (T-43, ADR-0085). Slow-body clients are bounded per connection (5 s on
+  a JSON operation and on the enrolment and MCP endpoints, 10 minutes on an attachment upload, which needs a valid
+  credential, 30 s without progress), but many connections
+  at once each hold a goroutine for that long. A reverse proxy or firewall in front of central is the place for connection
+  limits. A client below about 43 KiB/s can't upload a 25 MiB attachment within its 10 minutes.
 
 ## Pending verification (not yet guaranteed)
 - **Dead-daemon enforcement** (ADR-0017) uses a lease-guard parent terminal. hc's parent/child semantics were verified (spike S-2). The

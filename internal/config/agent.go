@@ -22,6 +22,10 @@ type AgentConfig struct {
 	ManagementListen string `yaml:"management_listen"`
 	// Capacity is the maximum number of concurrent runs this node accepts (SM-LIMIT-001; 1-256).
 	Capacity int `yaml:"capacity"`
+	// JournalRetention is how long the journal keeps an ended run after its final state: older ended runs are deleted once
+	// central acknowledged their final state, their recording is fully shipped and their transcript upload is finished
+	// (30 days to 1 year; default 30 days, the harness pin window of ADR-0077).
+	JournalRetention Duration `yaml:"journal_retention"`
 }
 
 // CentralConfig locates the central service and the node credential.
