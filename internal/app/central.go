@@ -272,6 +272,9 @@ func OpenCentral(ctx context.Context, cfg *config.Config, log *slog.Logger, o Op
 			if c.Supervisor != nil {
 				c.Supervisor.OnSpaceState(spaceID, state) // notices deferred while paused go out on resume
 			}
+			if state == "active" && c.Notifier != nil {
+				c.Notifier.Kick() // work that waited while paused starts control now, not at the next slow sweep (ADR-0056)
+			}
 		},
 		OnRunIdle: func(runID string) {
 			if c.Notifier != nil {

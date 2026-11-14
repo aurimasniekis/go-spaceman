@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+- Resuming a paused space now starts control when work waited for it while the space was paused (ADR-0056): the
+  notifier sweeps right away instead of ignoring the waiting items until its next slow sweep. Auto-start limits and
+  settings still apply, and control starts once.
+
 ## [0.1.0-rc.8] - 2026-11-06
 
 Eighth release candidate (pre-release; not production-ready, see docs/RELEASE_READINESS.md): shared Git SSH keys, so one

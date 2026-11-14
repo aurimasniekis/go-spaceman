@@ -326,3 +326,67 @@ func TestControlAutostart(t *testing.T) {
 		t.Fatalf("control started with auto-start off: %d control runs", len(controls()))
 	}
 }
+
+// Unpausing a space with work waiting for control starts control at once (ADR-0056), not at the next slow sweep; it
+// starts nothing when nothing waits or auto-start is off.
+func TestControlAutostartOnUnpause(t *testing.T) {
+	e := newFleetEnv(t, func(c *config.Config) { c.Limits.ControlAutostart, c.Limits.ControlIdleStopMinutes = 1, 60 })
+	e.enroll()
+	e.startAgent()
+	ctx := context.Background()
+	admin := audit.Actor{Type: audit.ActorUser, ID: "usr_admin"}
+	nctx, stop := context.WithCancel(ctx)
+	t.Cleanup(stop)
+	go e.c.Notifier.Run(nctx)
+	nodes, _ := e.c.Fleet.ListNodes(ctx)
+	eventually(t, "node connected", func() bool { n, _ := e.c.Fleet.GetNode(ctx, nodes[0].ID); return n.Connected })
+	sp, err := e.c.Fleet.CreateSpace(ctx, admin, fleet.CreateSpaceInput{Slug: "unpause", Name: "Unpause", NodeID: nodes[0].ID, StarterRoles: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindStubAccounts(t, e.c, sp.ID)
+	eventually(t, "lease granted", func() bool { s, _ := e.c.Fleet.GetSpace(ctx, sp.ID); return s.Lease != nil && s.Lease.Valid })
+	controls := func() int {
+		runs, _ := e.c.Fleet.ListRuns(ctx, sp.ID, 50)
+		n := 0
+		for _, r := range runs {
+			if r.Kind == "control" {
+				n++
+			}
+		}
+		return n
+	}
+	setState := func(state, mode string) {
+		s, err := e.c.Fleet.GetSpace(ctx, sp.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.c.Fleet.SetSpaceState(ctx, admin, sp.ID, s.Version, state, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Nothing waits: resuming starts nothing.
+	setState("paused", fleet.PauseHold)
+	setState("active", "")
+	time.Sleep(500 * time.Millisecond)
+	if n := controls(); n != 0 {
+		t.Fatalf("%d control runs started with nothing waiting", n)
+	}
+
+	// An item arrives while paused: nothing starts until the resume, which starts control once.
+	setState("paused", fleet.PauseHold)
+	if _, _, err := e.c.Inbox.Create(ctx, admin, sp.ID, inbox.CreateInput{SourceKind: "operator", SourceID: "usr_admin", Body: "Waiting while paused"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if n := controls(); n != 0 {
+		t.Fatalf("control started while paused: %d", n)
+	}
+	setState("active", "")
+	eventually(t, "control started by the resume", func() bool { return controls() == 1 })
+	time.Sleep(500 * time.Millisecond)
+	if n := controls(); n != 1 {
+		t.Fatalf("control started %d times", n)
+	}
+}
