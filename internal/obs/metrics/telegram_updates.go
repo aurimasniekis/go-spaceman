@@ -34,6 +34,7 @@ const (
 	TelegramUpdateLeftChat        TelegramUpdateOutcome = "left_chat"        // the bot left a group it was added to
 	TelegramUpdateIgnored         TelegramUpdateOutcome = "ignored"          // a kind, chat type or sender the bot doesn't handle
 	TelegramUpdateFailed          TelegramUpdateOutcome = "failed"           // the handler panicked or a reply failed
+	TelegramUpdateThrottled       TelegramUpdateOutcome = "throttled"        // a linked user over the inbound action limit
 )
 
 var (
@@ -41,7 +42,7 @@ var (
 		TelegramWebhookUnauthorized, TelegramWebhookNotFound, TelegramWebhookBadMethod, TelegramWebhookBadType,
 		TelegramWebhookForbiddenIP, TelegramWebhookTooLarge, TelegramWebhookBadRequest, TelegramWebhookUnavailable)
 	enumTelegramUpdateOutcome = newEnum(TelegramUpdateLinked, TelegramUpdateUnlinkedReplied, TelegramUpdateUnlinkedDropped,
-		TelegramUpdateLeftChat, TelegramUpdateIgnored, TelegramUpdateFailed)
+		TelegramUpdateLeftChat, TelegramUpdateIgnored, TelegramUpdateFailed, TelegramUpdateThrottled)
 )
 
 type telegramUpdateMetrics struct {

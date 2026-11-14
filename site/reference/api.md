@@ -526,6 +526,18 @@ Administrative API for SpaceMan. Browser sessions use a session cookie and send 
 | `POST` | `/spaces/{space_id}/subscriptions/{subscription_id}/replay` | `replay-subscription` | Replay a subscription from a position |
 | `GET` | `/spaces/{space_id}/subscriptions/{subscription_id}/replays` | `list-subscription-replays` | A subscription's replay history, newest first |
 
+### telegram
+
+| Method | Path | Operation | Summary |
+|---|---|---|---|
+| `DELETE` | `/spaces/{space_id}/telegram` | `delete-space-telegram` | Remove a space's Telegram settings (Telegram is off for it again) |
+| `GET` | `/spaces/{space_id}/telegram` | `get-space-telegram` | A space's Telegram settings |
+| `PUT` | `/spaces/{space_id}/telegram` | `put-space-telegram` | Set a space's Telegram settings |
+| `DELETE` | `/telegram/settings` | `delete-telegram-settings` | Reset the Telegram bot's policy and defaults |
+| `GET` | `/telegram/settings` | `get-telegram-settings` | The Telegram bot's policy and defaults |
+| `PUT` | `/telegram/settings` | `put-telegram-settings` | Set the Telegram bot's policy and defaults |
+| `GET` | `/telegram/spaces` | `list-space-telegram` | Spaces' Telegram settings |
+
 ### usage
 
 | Method | Path | Operation | Summary |

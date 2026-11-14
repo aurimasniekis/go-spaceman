@@ -16,6 +16,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   once an hour. The route answers 404 until bot configuration ships. New metrics `spaceman_telegram_webhook_requests_total`,
   `spaceman_telegram_updates_total`, `spaceman_telegram_updates_queued` and `spaceman_telegram_poll_errors_total`.
   **Migration 0051 must follow 0050** (the usage-limit work): it is released only after it.
+- Telegram settings (ADR-0083, TG-3c; the bot itself is not usable yet): `get/put/delete-telegram-settings` for the link
+  policy, link-code and Mini App lifetimes, send and inbound limits, notification defaults and the topics-mode default,
+  and `get/put/delete-space-telegram` plus `list-space-telegram` for each space's opt-in, content level, enforced
+  approvals, topics and terminal watch. Every write needs `If-Match` and a step-up and is audited; a field left out
+  takes its built-in default and only what was set is stored. Changes apply without a restart. Spaces stay invisible to
+  Telegram until enabled. Linked users over the inbound action limit get one "slow down" answer (new outcome
+  `throttled` on `spaceman_telegram_updates_total`).
+- Notification preferences: an optional `timezone` (IANA name) on the Account page. The planned Telegram digest and
+  quiet hours use it and stay off until you set one; there is no server-wide fallback.
 - Metrics: `spaceman_telegram_*` for the outbound queue of the planned Telegram bot (sends, drops, 429s, overflow
   notices, queue depth and wait; ADR-0083). Nothing sends through it yet, so they stay at 0.
 

@@ -183,7 +183,8 @@ func (a *App) notificationsCmd() *cobra.Command {
 					boolean("new-actions", "new_actions", "new pending actions").boolean("assigned-to-me", "assigned_to_me", "actions assigned to you").
 					boolean("escalations", "escalations", "escalations").boolean("reminders", "reminders", "reminders").
 					boolean("clarifications", "clarifications", "clarification requests and replies").
-					str("min-priority", "min_priority", "low, normal, high or urgent").list("mute", "muted_spaces", "space ID never announced (repeatable; replaces the list)")
+					str("min-priority", "min_priority", "low, normal, high or urgent").list("mute", "muted_spaces", "space ID never announced (repeatable; replaces the list)").
+					str("timezone", "timezone", "your IANA time zone, e.g. Europe/Vilnius (the Telegram digest and quiet hours use it)")
 			}}),
 	)
 }

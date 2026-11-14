@@ -44,4 +44,5 @@ API: `get-notification-preferences`, `set-notification-preferences` ([HTTP API](
 | `--mute` | string, repeatable |  | space ID never announced (repeatable; replaces the list) (repeatable or comma-separated) |
 | `--new-actions` | bool |  | new pending actions |
 | `--reminders` | bool |  | reminders |
+| `--timezone` | string |  | your IANA time zone, e.g. Europe/Vilnius (the Telegram digest and quiet hours use it) |
 

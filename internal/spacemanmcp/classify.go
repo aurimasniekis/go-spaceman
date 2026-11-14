@@ -57,6 +57,7 @@ const (
 	rUsers      = "user accounts and identities are managed by people only"
 	rTokens     = "token management: an agent never mints, lists or revokes credentials"
 	rSignIn     = "sign-in providers and settings are managed by people only"
+	rTelegram   = "Telegram link policy and what spaces send to Telegram are managed by people only"
 	rMCP        = "HTTP MCP server and grant writes: outbound calls (SSRF) and tool reach of other runs; AM-5 also refuses spaceman-kind targets"
 	rDelete     = "deletes configuration or data"
 	rSecret     = "handles credentials or keys (write-only secrets pass through the model's context)"
@@ -182,6 +183,15 @@ var Table = map[string]Entry{
 	"get-space-harbor-pilot-status":  {Read, rRead},
 	"put-space-harbor-pilot":         {Dangerous, "chooses which Harbor Pilot project (and spend) a space's runs bill against"},
 	"delete-space-harbor-pilot":      {Write, rSpaceWrite},
+	// Telegram settings (ADR-0083): who may link, with which cap, and what a space sends to Telegram's servers are a
+	// person's decision.
+	"put-telegram-settings":    {Excluded, rTelegram},
+	"delete-telegram-settings": {Excluded, rTelegram},
+	"put-space-telegram":       {Excluded, rTelegram},
+	"delete-space-telegram":    {Excluded, rTelegram},
+	"get-telegram-settings":    {Read, rRead},
+	"list-space-telegram":      {Read, rRead},
+	"get-space-telegram":       {Read, rRead},
 
 	// Human-action policies.
 	"delete-human-policy":       {Dangerous, rPolicy},

@@ -99,6 +99,16 @@ func NewIntake(o IntakeOptions) *Intake {
 	return in
 }
 
+// SetRate changes how many updates per second the workers handle together, at once (the burst follows the rate). It
+// does nothing for an Intake built without a rate limit.
+func (in *Intake) SetRate(r float64) {
+	if in.limiter == nil || r <= 0 {
+		return
+	}
+	in.limiter.SetLimit(rate.Limit(r))
+	in.limiter.SetBurst(max(1, int(r)))
+}
+
 // chatOf is the chat an update belongs to, which picks its shard (0 when it names none).
 func chatOf(u *botapi.Update) int64 {
 	switch {

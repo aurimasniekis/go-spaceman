@@ -15,13 +15,14 @@ import (
 	"github.com/aurimasniekis/go-spaceman/internal/audit"
 	"github.com/aurimasniekis/go-spaceman/internal/store"
 	"github.com/aurimasniekis/go-spaceman/internal/store/db"
+	"github.com/aurimasniekis/go-spaceman/internal/telegram/settings"
 )
 
 // NotificationPrefs are a user's notification preferences (SM-HUI-006). They decide which human-action changes the
 // web UI announces to the user while it is open, and whether it also shows a desktop notification. SpaceMan sends no
 // e-mail; external systems subscribe to the outbound lifecycle events instead. Chat notifications through a Telegram
-// bot are proposed in ADR-0083 (SM-TG-009) and not implemented: they will have their own per-link preferences, and
-// this type gains only the user's timezone for the digest and quiet hours.
+// bot (ADR-0083, SM-TG-009) have their own per-link preferences; this type holds only the user's time zone, which the
+// bot's digest and quiet hours use. Without one, the user gets neither: there is no server-wide fallback zone.
 type NotificationPrefs struct {
 	Enabled        bool     `json:"enabled" doc:"Announce human-action changes in the web UI"`
 	Desktop        bool     `json:"desktop" doc:"Also show a desktop notification (the browser asks for permission)"`
@@ -32,6 +33,7 @@ type NotificationPrefs struct {
 	Clarifications bool     `json:"clarifications" doc:"Replies to clarification requests, and clarification requests on actions you asked"`
 	MinPriority    string   `json:"min_priority" enum:"low,normal,high,urgent" doc:"Only actions of at least this priority (assignments to you always count)"`
 	MutedSpaces    []string `json:"muted_spaces" maxItems:"200" doc:"Spaces whose actions are never announced"`
+	Timezone       string   `json:"timezone" required:"false" maxLength:"64" doc:"Your IANA time zone, such as Europe/Vilnius (empty: unset). The Telegram digest and quiet hours use it, and are off while it is unset"`
 }
 
 // NotificationPrefsOut is the stored preferences with their version (0: defaults, never saved).
@@ -106,6 +108,12 @@ func registerPrefs(api huma.API, d *Deps) {
 			if b.MutedSpaces == nil {
 				b.MutedSpaces = []string{}
 			}
+			b.Timezone = strings.TrimSpace(b.Timezone)
+			if !settings.ValidZone(b.Timezone) {
+				v := &apperr.Validation{}
+				v.Add("timezone", "must be an IANA time zone such as UTC or Europe/Vilnius, or empty")
+				return nil, d.fail(ctx, "prefs.set", v.Err())
+			}
 			raw, _ := json.Marshal(b)
 			uid := PrincipalFrom(ctx).User.ID
 			err := d.Store.W().TxNamed(ctx, "prefs.set", func(tx *store.Tx) error {
@@ -123,7 +131,7 @@ func registerPrefs(api huma.API, d *Deps) {
 					return apperr.New(apperr.CodePrecondition, "your preferences changed since version %d; reload them", v)
 				}
 				_, err = d.Audit.Append(ctx, tx, audit.Event{Actor: Actor(ctx), Action: "user.notification_preferences_saved", Target: audit.Target{Type: "user", ID: uid},
-					Details: map[string]any{"enabled": b.Enabled, "desktop": b.Desktop}})
+					Details: map[string]any{"enabled": b.Enabled, "desktop": b.Desktop, "timezone_set": b.Timezone != ""}})
 				return err
 			})
 			if err != nil {

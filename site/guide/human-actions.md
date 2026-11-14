@@ -58,7 +58,10 @@ to announce (assignments to you always are); spaces to mute; and whether to also
 browser asks for permission). Preferences are stored per user (`GET`/`PUT /api/v1/auth/me/notification-preferences`,
 `spaceman notifications set`). SpaceMan itself sends no e-mail or chat notifications; the outbound lifecycle events
 (`human.action.*`) can feed such a system. A Telegram bot for linked users is proposed (ADR-0083 in the
-[decision log](/security/decisions)) and not implemented yet.
+[decision log](/security/decisions)) and not implemented yet. The same page holds your **time zone** (an IANA name such
+as `Europe/Vilnius`, or `spaceman notifications set --timezone`). The bot's daily digest and quiet hours will use it,
+and stay off until you set one: there is no server-wide fallback. **Use <your browser's zone>** fills it in from the
+browser; nothing sets it without you.
 
 <Shot name="account-notifications" alt="The notification preferences on the Account page: new actions, assignments, escalations and clarifications announced, high priority and above, the infrastructure space muted" caption="Notification preferences" />
 

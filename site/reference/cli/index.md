@@ -75,6 +75,7 @@ Every command accepts these.
 | [`spaceman space`](./space) | Spaces: create, edit, pause, archive, purge, relocate and usage |
 | [`spaceman system`](./system) | A running central: version, status, backups, outbox, restore and break-glass notices, root token |
 | [`spaceman task`](./task) | The execution queue: tasks, blockers, dependencies, escalation, decisions and policy (--space) |
+| [`spaceman telegram`](./telegram) | The Telegram bot's policy and defaults, and a space's Telegram settings (ADR-0083) |
 | [`spaceman token`](./token) | API tokens: list, create and revoke |
 | [`spaceman user`](./user) | Users: list, show, create, disable, enable, grants, reset tokens and identities |
 | [`spaceman version`](./version) | Print build information |

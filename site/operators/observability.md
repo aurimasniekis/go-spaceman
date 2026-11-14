@@ -101,7 +101,7 @@ long-polling mode, which share one bounded queue and dispatcher. No label carrie
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `spaceman_telegram_webhook_requests_total` | counter | `result` | Webhook requests. `result` is `accepted` (queued), `duplicate` (an `update_id` already seen), `queue_full` (503, Telegram retries later), `unauthorized` (401, wrong or missing secret token), `not_found` (no webhook configured or a wrong hook id), `bad_method`, `bad_type` (not JSON), `forbidden_ip` (outside the source-IP allowlist), `too_large` (413, over 256 KiB), `bad_request` or `unavailable` (the dispatcher isn't running). A rising `unauthorized` count means someone is probing the route. |
-| `spaceman_telegram_updates_total` | counter | `outcome` | Updates the dispatcher handled: `linked` (handed on for a linked user), `unlinked_replied` (the linking instructions, at most once an hour per user and once a second overall), `unlinked_dropped`, `left_chat` (the bot left a group it was added to), `ignored` or `failed`. |
+| `spaceman_telegram_updates_total` | counter | `outcome` | Updates the dispatcher handled: `linked` (handed on for a linked user), `unlinked_replied` (the linking instructions, at most once an hour per user and once a second overall), `unlinked_dropped`, `left_chat` (the bot left a group it was added to), `ignored`, `failed` or `throttled` (a linked user over the inbound action limit, who gets one "slow down" answer). |
 | `spaceman_telegram_updates_queued` | gauge | | Accepted updates waiting for a dispatcher worker (at most 1024). |
 | `spaceman_telegram_poll_errors_total` | counter | | Failed `getUpdates` calls in polling mode. |
 
