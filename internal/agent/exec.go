@@ -884,7 +884,7 @@ func writeSecrets(runDir string, env map[string]string, runToken string) error {
 func (a *Agent) startRecorder(ctx context.Context, row runRow) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if _, ok := a.recorders[row.RunID]; ok {
+	if _, ok := a.recorders[row.RunID]; ok || a.recordersStopped {
 		return
 	}
 	rctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
