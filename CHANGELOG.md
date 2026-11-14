@@ -21,9 +21,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - A burst of terminal output larger than the protocol message limit (4 MiB, e.g. megabytes printed within a second)
   no longer goes missing from central's copy of a recording. The node sent it as one message, central closed the
   connection, and the records in it were never sent again; the reconnect catch-up's batches could do the same. The node
-  now splits recording shipments into messages of at most 1 MiB. After a reconnect, a live shipment no longer goes
-  ahead of the records the catch-up still has to send (central keeps only records above the last one it stored, so
-  the older ones were lost), and the catch-up stops at the first failed send.
+  now splits recording shipments into messages of at most 1 MiB.
+- Records sent just before a node lost its connection could still go missing from central's copy, because central
+  keeps only records above the last one it stored and the node's next output could arrive first. After a reconnect
+  the node now re-sends everything central has not acknowledged before any newer output of that run, one catch-up at
+  a time, and stops at the first failed send. Output that waits for the catch-up is kept back (up to 1 MiB per run in
+  memory, then read again from the node's recording); a run's exit record is kept even when the node's disk failed.
 - The web terminal keeps at least 10,000 rows of scrollback at 160 columns (about 11,000-12,000). ghostty-web's
   `scrollback` option is a byte limit, not a line count, so the old setting of 10,000 kept only about 300 rows at 160
   columns. It is now 24 MiB: a terminal with a full scrollback of plain text holds about 30 MiB of WebAssembly memory
