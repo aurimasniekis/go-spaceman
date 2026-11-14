@@ -529,3 +529,24 @@ func TestExchangeRefusesLimitedWithMessage(t *testing.T) {
 		t.Fatalf("a session was opened for a Limited link")
 	}
 }
+
+// A session opened while the user could act stops resolving once MFA becomes required for them (Limited): Authenticate
+// and Validate (stream re-checks) both refuse it with ErrUnauthorized, and it resolves again if the user is no longer Limited.
+func TestResolveRefusesLimitedPrincipal(t *testing.T) {
+	t.Parallel()
+	f := newFx(t)
+	tok := f.mustExchange(42)
+	ctx := context.Background()
+	if _, err := f.svc.Authenticate(ctx, tok); err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	f.mu.Lock()
+	f.lim["tgl_a"] = true
+	f.mu.Unlock()
+	if _, err := f.svc.Authenticate(ctx, tok); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("Authenticate with a Limited principal: %v, want ErrUnauthorized", err)
+	}
+	if _, err := f.svc.Validate(ctx, tok); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("Validate with a Limited principal: %v, want ErrUnauthorized", err)
+	}
+}
